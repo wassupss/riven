@@ -1,0 +1,14 @@
+node_modules
+out
+dist
+release
+.vite
+.DS_Store
+*.log
+
+# env / secrets
+.env
+.env.*
+*.local
+*.pem
+*.key

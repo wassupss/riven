@@ -1,0 +1,53 @@
+# riven
+
+An AI-first desktop IDE built around agent orchestration. Left explorer · a center of dockable AI terminals/agents · a Monaco code editor and web preview — all as freely dockable panels.
+
+## Stack
+
+- **Electron** + electron-vite + React + TypeScript
+- **Monaco** editor with direct model management (one editor, many models keyed by file URI)
+- **xterm.js** + **node-pty** — real PTYs, kept alive in the main process so terminals survive renderer reloads
+- **dockview** — VSCode-style fluid docking; every area (explorer / editor / preview / terminal) is a draggable panel, poppable into its own window
+- **Shiki** for TextMate-grade syntax highlighting (tsx/jsx as first-class languages)
+- **typescript-language-server** over vscode-jsonrpc for real LSP (completion, hover, go-to-definition, diagnostics)
+- zustand for state
+
+## Run
+
+```bash
+npm install      # postinstall rebuilds node-pty against the Electron ABI
+npm run dev
+```
+
+If the node-pty rebuild fails:
+
+```bash
+npm run rebuild
+```
+
+## Features
+
+- **Per-workspace sessions** — open multiple projects at once; each keeps its own tabs, layout, and terminals. Switching workspaces never kills terminals. Layout and open tabs are persisted and restored on restart.
+- **Persistent terminals** — PTYs live in the main process and reconnect with a serialized screen snapshot, surviving `⌘R` and panel remounts.
+- **Agent-aware terminals** — running-state and attention (bell / task-done) are detected from actual agent child processes, not raw output, so your own typing never trips a false "running".
+- **AI ↔ context bridge** — send editor selections, files, or diagnostics to the focused terminal; `@`-mention files from the explorer.
+- **Inline agent-edit review** — a file watcher detects edits made by agents, auto-opens the file, and shows a multi-hunk inline diff (added/removed lines, per-hunk revert) against a cached or git baseline.
+- **Full-text search**, live file tree, colored file-type icons, custom keybindings, and themes.
+
+## Keybindings (defaults, rebindable via `⌥⌘K`)
+
+| Action | Key |
+| --- | --- |
+| Switch workspace 1–9 | `⌘1`–`⌘9` |
+| Focus editor / terminal | `⌘E` / `⌘J` |
+| Cycle panels | `⌥⌘←` / `⌥⌘→` |
+| New terminal | `⌘T` |
+| Explorer / Search / Git / CLI | `⌘B` / `⌘⇧F` / `⌘⇧G` / `⌘⇧L` |
+| Preview / Pop out panel | `⌘⇧V` / `⌘⇧P` |
+| Settings / Keybindings | `⌘,` / `⌥⌘K` |
+
+## LSP smoke test
+
+```bash
+node scripts/test-lsp.mjs
+```
