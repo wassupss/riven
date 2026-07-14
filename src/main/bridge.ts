@@ -9,6 +9,7 @@ import chokidar, { FSWatcher } from 'chokidar'
 
 let watcher: FSWatcher | null = null
 let shotSeq = 0
+const CAPTURE_CAP = 40 // keep only the newest N preview screenshots on disk
 
 export function registerBridgeHandlers(): void {
   ipcMain.handle('capture:save', async (_event, folder: string, dataUrl: string): Promise<string> => {
@@ -17,6 +18,18 @@ export function registerBridgeHandlers(): void {
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
     const file = path.join(dir, `shot-${Date.now()}-${++shotSeq}.png`)
     await fs.writeFile(file, Buffer.from(base64, 'base64'))
+    // Retention: prune old shots so .riven/captures never grows unbounded.
+    // Names are shot-<ms>-<seq>.png, so a lexical sort is chronological.
+    try {
+      const shots = (await fs.readdir(dir))
+        .filter((f) => f.startsWith('shot-') && f.endsWith('.png'))
+        .sort()
+      for (const old of shots.slice(0, -CAPTURE_CAP)) {
+        await fs.unlink(path.join(dir, old)).catch(() => {})
+      }
+    } catch {
+      /* best-effort cleanup */
+    }
     return file
   })
 
