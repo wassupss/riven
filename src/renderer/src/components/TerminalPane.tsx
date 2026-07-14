@@ -135,13 +135,16 @@ export default function TerminalPane({
       let snapTimer: ReturnType<typeof setTimeout> | null = null
       const scheduleSnapshot = (id: string): void => {
         if (snapTimer) clearTimeout(snapTimer)
+        // Coarse debounce: this periodic snapshot is only a crash-recovery backup
+        // (normal reload/⌘R and teardown snapshot on unmount), so serializing the
+        // whole screen every ~2s during streaming is plenty and far cheaper.
         snapTimer = setTimeout(() => {
           try {
             window.api.pty.snapshot(id, serialize.serialize({ scrollback: 400 }))
           } catch {
             /* serialize can throw on dispose */
           }
-        }, 500)
+        }, 2000)
       }
 
       let webgl: WebglAddon | null = null

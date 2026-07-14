@@ -149,7 +149,13 @@ function didOpen(model: monaco.editor.ITextModel): void {
   })
 }
 
-function didChange(model: monaco.editor.ITextModel): void {
+// didChange is debounced so a burst of keystrokes sends one full-document sync
+// instead of one per character. Before any LSP request we flush the pending
+// change (flushChange) so the server never answers against a stale buffer.
+const changeTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const CHANGE_DEBOUNCE_MS = 200
+
+function sendChange(model: monaco.editor.ITextModel): void {
   const serverKey = serverKeyFor(model.getLanguageId())
   if (!serverKey) return
   const uri = model.uri.toString()
@@ -161,10 +167,38 @@ function didChange(model: monaco.editor.ITextModel): void {
   })
 }
 
+function didChange(model: monaco.editor.ITextModel): void {
+  const uri = model.uri.toString()
+  const existing = changeTimers.get(uri)
+  if (existing) clearTimeout(existing)
+  changeTimers.set(
+    uri,
+    setTimeout(() => {
+      changeTimers.delete(uri)
+      sendChange(model)
+    }, CHANGE_DEBOUNCE_MS)
+  )
+}
+
+function flushChange(model: monaco.editor.ITextModel): void {
+  const uri = model.uri.toString()
+  const t = changeTimers.get(uri)
+  if (t) {
+    clearTimeout(t)
+    changeTimers.delete(uri)
+    sendChange(model)
+  }
+}
+
 function didClose(model: monaco.editor.ITextModel): void {
   const serverKey = serverKeyFor(model.getLanguageId())
   if (!serverKey) return
   const uri = model.uri.toString()
+  const pending = changeTimers.get(uri)
+  if (pending) {
+    clearTimeout(pending)
+    changeTimers.delete(uri)
+  }
   versions.delete(uri)
   window.api.lsp.notify(serverKey, 'textDocument/didClose', { textDocument: { uri } })
 }
@@ -178,6 +212,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return { suggestions: [] }
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/completion', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
@@ -218,6 +253,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/hover', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
@@ -237,6 +273,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/definition', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
@@ -264,6 +301,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/references', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position),
@@ -286,6 +324,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/implementation', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
@@ -311,6 +350,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/typeDefinition', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
@@ -336,6 +376,7 @@ function registerProviders(): void {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
       await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
       const res = (await window.api.lsp.request(serverKey, 'textDocument/signatureHelp', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)

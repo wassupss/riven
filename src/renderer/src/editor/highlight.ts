@@ -1,43 +1,48 @@
 import * as monaco from 'monaco-editor'
-import { createHighlighter } from 'shiki'
+import { createHighlighterCore } from 'shiki/core'
+import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 import { shikiToMonaco } from '@shikijs/monaco'
 
 // Monaco's built-in tokenizer doesn't understand JSX and mis-colors it. We swap
 // in Shiki (the same TextMate grammars + themes VSCode uses) so .tsx/.jsx and
 // everything else colorize exactly like VSCode.
 
-const LANGS = [
-  'typescript',
-  'javascript',
-  'tsx',
-  'jsx',
-  'json',
-  'css',
-  'scss',
-  'less',
-  'html',
-  'markdown',
-  'python',
-  'rust',
-  'go',
-  'yaml',
-  'sql',
-  'toml',
-  'java',
-  'cpp',
-  'csharp',
-  'ruby',
-  'php',
-  'swift',
-  'kotlin',
-  'shellscript',
-  'ini',
-  'xml',
-  'vue',
-  'svelte',
-  'graphql',
-  'docker',
-  'make'
+// Fine-grained Shiki: only the grammars/themes we actually use are imported, so
+// the bundler emits just these chunks instead of the whole ~200-language
+// registry. import() specifiers must be string literals (a template literal
+// would glob every language back in).
+const SHIKI_LANGS = [
+  import('@shikijs/langs/typescript'),
+  import('@shikijs/langs/javascript'),
+  import('@shikijs/langs/tsx'),
+  import('@shikijs/langs/jsx'),
+  import('@shikijs/langs/json'),
+  import('@shikijs/langs/css'),
+  import('@shikijs/langs/scss'),
+  import('@shikijs/langs/less'),
+  import('@shikijs/langs/html'),
+  import('@shikijs/langs/markdown'),
+  import('@shikijs/langs/python'),
+  import('@shikijs/langs/rust'),
+  import('@shikijs/langs/go'),
+  import('@shikijs/langs/yaml'),
+  import('@shikijs/langs/sql'),
+  import('@shikijs/langs/toml'),
+  import('@shikijs/langs/java'),
+  import('@shikijs/langs/cpp'),
+  import('@shikijs/langs/csharp'),
+  import('@shikijs/langs/ruby'),
+  import('@shikijs/langs/php'),
+  import('@shikijs/langs/swift'),
+  import('@shikijs/langs/kotlin'),
+  import('@shikijs/langs/shellscript'),
+  import('@shikijs/langs/ini'),
+  import('@shikijs/langs/xml'),
+  import('@shikijs/langs/vue'),
+  import('@shikijs/langs/svelte'),
+  import('@shikijs/langs/graphql'),
+  import('@shikijs/langs/docker'),
+  import('@shikijs/langs/make')
 ]
 
 // JSX/TSX aren't first-class Monaco languages — register them so we can attach
@@ -79,13 +84,13 @@ function registerLang(id: string, extensions: string[]): void {
 // JSON is lazy-loaded per theme, so adding light entries costs nothing until
 // a light app-theme is activated.
 const SHIKI_THEMES = [
-  'vesper',
-  'night-owl',
-  'kanagawa-wave',
-  'houston',
-  'dark-plus',
-  'github-light',
-  'solarized-light'
+  import('@shikijs/themes/vesper'),
+  import('@shikijs/themes/night-owl'),
+  import('@shikijs/themes/kanagawa-wave'),
+  import('@shikijs/themes/houston'),
+  import('@shikijs/themes/dark-plus'),
+  import('@shikijs/themes/github-light'),
+  import('@shikijs/themes/solarized-light')
 ]
 
 let started = false
@@ -118,9 +123,10 @@ export async function initHighlighting(): Promise<void> {
   registerLang('svelte', ['.svelte'])
   registerLang('make', [])
   try {
-    const highlighter = await createHighlighter({
+    const highlighter = await createHighlighterCore({
+      engine: createOnigurumaEngine(import('shiki/wasm')),
       themes: SHIKI_THEMES,
-      langs: LANGS
+      langs: SHIKI_LANGS
     })
     shikiToMonaco(highlighter, monaco)
     shikiReady = true

@@ -37,7 +37,8 @@ export function registerBridgeHandlers(): void {
       awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 }
     })
     const emit = (type: string) => (p: string) => {
-      console.log(`[watch] ${type} ${p}`)
+      // No per-event log here: during agent bulk edits this fires thousands of
+      // times/sec and floods the main-process console.
       if (!sender.isDestroyed()) sender.send('fs:changed', { type, path: p })
     }
     watcher.on('change', emit('change'))
