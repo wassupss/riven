@@ -12,7 +12,7 @@
     "rebuild": "electron-rebuild -f -w node-pty",
     "postinstall": "electron-rebuild -f -w node-pty",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder --mac"
+    "dist": "npm run build && electron-builder --mac --publish never"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
