@@ -190,11 +190,12 @@ const api = {
         untracked: boolean
       }>
     }> => ipcRenderer.invoke('git:status', folder),
-    stage: (folder: string, relPath: string): Promise<void> =>
+    stage: (folder: string, relPath: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('git:stage', folder, relPath),
-    unstage: (folder: string, relPath: string): Promise<void> =>
+    unstage: (folder: string, relPath: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('git:unstage', folder, relPath),
-    stageAll: (folder: string): Promise<void> => ipcRenderer.invoke('git:stageAll', folder),
+    stageAll: (folder: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:stageAll', folder),
     discard: (folder: string, relPath: string, untracked: boolean): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('git:discard', folder, relPath, untracked),
     push: (folder: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('git:push', folder),

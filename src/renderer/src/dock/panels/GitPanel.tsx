@@ -65,15 +65,18 @@ export default function GitPanel({ workspace }: { workspace: string }): JSX.Elem
   }
 
   const stage = async (rel: string): Promise<void> => {
-    await window.api.git.stage(workspace, rel)
+    const r = await window.api.git.stage(workspace, rel)
+    if (!r.ok) window.alert(r.error ?? 'git stage failed')
     refresh()
   }
   const unstage = async (rel: string): Promise<void> => {
-    await window.api.git.unstage(workspace, rel)
+    const r = await window.api.git.unstage(workspace, rel)
+    if (!r.ok) window.alert(r.error ?? 'git unstage failed')
     refresh()
   }
   const stageAll = async (): Promise<void> => {
-    await window.api.git.stageAll(workspace)
+    const r = await window.api.git.stageAll(workspace)
+    if (!r.ok) window.alert(r.error ?? 'git stage failed')
     refresh()
   }
   const commit = async (): Promise<void> => {

@@ -168,17 +168,27 @@ export function registerGitHandlers(): void {
     return run(folder, ['checkout', '--', relPath])
   })
 
-  ipcMain.handle('git:stage', async (_e, folder: string, relPath: string) => {
-    await pexec('git', ['-C', folder, 'add', '--', relPath])
-  })
+  // Return {ok,error} (like git:commit) instead of throwing, so a failed stage
+  // (e.g. a lock file, a vanished path) doesn't become an unhandled rejection in
+  // the renderer.
+  const gitOk = async (args: string[]): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await pexec('git', args)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    }
+  }
 
-  ipcMain.handle('git:unstage', async (_e, folder: string, relPath: string) => {
-    await pexec('git', ['-C', folder, 'reset', '-q', 'HEAD', '--', relPath])
-  })
+  ipcMain.handle('git:stage', (_e, folder: string, relPath: string) =>
+    gitOk(['-C', folder, 'add', '--', relPath])
+  )
 
-  ipcMain.handle('git:stageAll', async (_e, folder: string) => {
-    await pexec('git', ['-C', folder, 'add', '-A'])
-  })
+  ipcMain.handle('git:unstage', (_e, folder: string, relPath: string) =>
+    gitOk(['-C', folder, 'reset', '-q', 'HEAD', '--', relPath])
+  )
+
+  ipcMain.handle('git:stageAll', (_e, folder: string) => gitOk(['-C', folder, 'add', '-A']))
 
   ipcMain.handle('git:commit', async (_e, folder: string, message: string) => {
     try {
