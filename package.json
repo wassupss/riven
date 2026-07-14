@@ -40,16 +40,19 @@
     "yaml-language-server": "^1.24.0",
     "zustand": "^5.0.2"
   },
+  "overrides": {
+    "minimatch": "^10.2.5"
+  },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.1",
+    "@electron/rebuild": "^4.2.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^43.1.0",
     "electron-builder": "^26.15.3",
-    "electron-vite": "^2.3.0",
+    "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
-    "vite": "^5.4.11"
+    "vite": "^7.3.6"
   }
 }
