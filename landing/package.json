@@ -1,0 +1,6 @@
+{
+  "name": "riven-landing",
+  "version": "0.0.2",
+  "private": true,
+  "description": "riven landing page — static site (no build step)"
+}
