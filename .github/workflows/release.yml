@@ -28,6 +28,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # VITE_SUPABASE_* are baked into the renderer at build time (and are public
+      # client values — the anon key is RLS-protected, not a secret). CI has no
+      # .env, so write one from the repo secrets/vars to enable account sync in
+      # released builds. Safe to skip if the vars are unset (feature stays off).
+      - name: Configure Supabase env
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_SUPABASE_REDIRECT=${{ secrets.VITE_SUPABASE_REDIRECT }}"
+          } > .env
+
       - name: Build · sign · notarize · staple
         env:
           # Signing cert: base64 of the exported "Developer ID Application" .p12.
