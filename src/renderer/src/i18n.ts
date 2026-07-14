@@ -166,6 +166,28 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.title': { ko: '설정', en: 'Settings' },
   'settings.tab.general': { ko: '일반', en: 'General' },
   'settings.tab.keys': { ko: '단축키', en: 'Shortcuts' },
+  'settings.tab.account': { ko: '계정', en: 'Account' },
+  'settings.account.title': { ko: '계정 & 동기화', en: 'Account & Sync' },
+  'settings.account.notConfigured': {
+    ko: 'Supabase가 설정되지 않았습니다. 프로젝트 URL과 anon 키를 아래 환경변수로 지정하면 로그인·설정 동기화가 활성화됩니다.',
+    en: 'Supabase is not configured. Set the project URL and anon key via the env vars below to enable login and settings sync.'
+  },
+  'settings.account.signInIntro': {
+    ko: '로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 다른 기기에서도 그대로 이어집니다.',
+    en: 'Sign in to store your settings (theme, fonts, keymap, …) in the cloud and carry them across devices.'
+  },
+  'settings.account.continueGoogle': { ko: 'Google로 계속', en: 'Continue with Google' },
+  'settings.account.continueGithub': { ko: 'GitHub로 계속', en: 'Continue with GitHub' },
+  'settings.account.waiting': { ko: '로그인 창에서 인증을 완료해 주세요…', en: 'Complete sign-in in the login window…' },
+  'settings.account.signOut': { ko: '로그아웃', en: 'Sign out' },
+  'settings.account.syncNow': { ko: '지금 동기화', en: 'Sync now' },
+  'settings.account.syncing': { ko: '동기화 중…', en: 'Syncing…' },
+  'settings.account.synced': { ko: '동기화됨', en: 'Synced' },
+  'settings.account.syncError': { ko: '동기화 실패', en: 'Sync failed' },
+  'settings.account.syncNote': {
+    ko: 'API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.',
+    en: 'Sensitive values like API keys are never synced — they stay on this device.'
+  },
   'settings.language': { ko: '언어', en: 'Language' },
   'settings.theme': { ko: '테마', en: 'Theme' },
   'settings.editor': { ko: '에디터', en: 'Editor' },

@@ -2783,6 +2783,107 @@ select {
   padding: 1px 5px;
   border-radius: var(--radius-xs);
 }
+/* account & settings sync */
+.account-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0 8px;
+}
+.account-provider-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.account-provider-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--accent-border);
+}
+.account-provider-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.account-provider-btn svg {
+  flex: 0 0 auto;
+}
+.account-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  margin: 4px 0 10px;
+}
+.account-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.account-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-muted);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.account-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.account-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-email {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-sync-row {
+  justify-content: space-between;
+  align-items: center;
+}
+.account-sync-status {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.account-sync-synced {
+  color: #3fb950;
+}
+.account-sync-error {
+  color: #f85149;
+}
+.account-error {
+  color: #f85149;
+}
+.account-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  background: var(--hover-strong);
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  word-break: break-all;
+}
+
 /* keybinding settings embedded in the settings modal */
 .kb-settings .kb-tabs {
   margin-bottom: 4px;

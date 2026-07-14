@@ -209,6 +209,12 @@ const api = {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data)
   },
+  auth: {
+    // Runs the provider OAuth flow in a dedicated window and resolves with the
+    // PKCE `code` from our callback URL (rejects with 'cancelled' if closed).
+    oauth: (authorizeUrl: string, redirectTo: string): Promise<string> =>
+      ipcRenderer.invoke('auth:oauth', authorizeUrl, redirectTo)
+  },
   menu: {
     onCloseTab: (cb: () => void): (() => void) => {
       const listener = (): void => cb()

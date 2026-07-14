@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type PaletteMode = 'files' | 'commands' | null
-export type SettingsTab = 'general' | 'ai' | 'keys'
+export type SettingsTab = 'general' | 'ai' | 'keys' | 'account'
 
 interface UIState {
   keybindingsOpen: boolean

@@ -15,6 +15,7 @@ import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
 import { registerAiHandlers } from './ai'
 import { registerUsageHandlers } from './usage'
+import { registerAuthHandlers } from './auth'
 import { buildMenu } from './menu'
 
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
@@ -97,6 +98,7 @@ app.whenReady().then(() => {
   registerPortsHandlers()
   registerAiHandlers()
   registerUsageHandlers()
+  registerAuthHandlers()
   buildMenu()
 
   const claudePath = resolveClaude()

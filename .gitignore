@@ -7,9 +7,13 @@ release
 *.log
 *.tsbuildinfo
 
+# local landing-page preview asset (ship the dmg via a real host / CDN instead)
+landing/*.dmg
+
 # env / secrets
 .env
 .env.*
+!.env.example
 *.local
 *.pem
 *.key

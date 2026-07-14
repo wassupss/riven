@@ -14,6 +14,7 @@ import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions } from './state/session'
 import { loadEnv } from './state/env'
 import { loadSettings, getSettings, useSettings } from './state/settings'
+import { useAuth } from './state/auth'
 import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
 import { registerInlineComplete } from './editor/inlineComplete'
@@ -54,6 +55,8 @@ export default function App(): JSX.Element {
       applyEditorKeymap(getSettings().editorKeymap)
       await keymap.load()
       await loadPersistedSessions()
+      // Settings are loaded — now restore any cloud session and start sync.
+      void useAuth.getState().initAuth()
     })()
     window.addEventListener('keydown', keymap.handle, { capture: true })
     // ⌘W closes whatever dockview panel is active: the editor closes its focused
