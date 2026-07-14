@@ -1,0 +1,64 @@
+name: Release
+
+# Push a version tag (e.g. v0.0.3) → build, sign, notarize, staple on a macOS
+# runner, then attach the dmg/zip to a GitHub Release. The slow notarization
+# wait happens here, not on your laptop.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # needed to create/update the GitHub Release
+
+jobs:
+  release-mac:
+    # macos-14 is an Apple Silicon (arm64) runner — matches our arm64 target,
+    # so node-pty and the app build natively.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # postinstall runs electron-rebuild for node-pty against the Electron ABI.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build · sign · notarize · staple
+        env:
+          # Signing cert: base64 of the exported "Developer ID Application" .p12.
+          # electron-builder imports it into a temp keychain automatically.
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          # Notarization credentials (read by electron-builder's notarize step).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist
+
+      # electron-builder notarizes the app (inside the zip) but not the dmg
+      # container itself, so the downloaded dmg would trip Gatekeeper on first
+      # open. Notarize + staple the dmg directly.
+      - name: Notarize & staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          DMG=$(ls release/*.dmg | head -1)
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.dmg
+            release/*.zip
+          fail_on_unmatched_files: true
+          generate_release_notes: true

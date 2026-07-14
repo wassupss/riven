@@ -25,9 +25,16 @@ mac:
       arch: [arm64]
   category: public.app-category.developer-tools
   icon: build/icon.icns
-  # Unsigned for now (local build). To ship: set an identity + notarize.
-  identity: null
-  notarize: false
+  # Signed + notarized distribution. The "Developer ID Application" cert is
+  # auto-detected from the login keychain. Notarization credentials are read
+  # from environment variables at build time (never commit them):
+  #   APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+  # (or the App Store Connect API key trio: APPLE_API_KEY / _KEY_ID / _ISSUER)
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: true
 dmg:
   title: ${productName}
 win:
