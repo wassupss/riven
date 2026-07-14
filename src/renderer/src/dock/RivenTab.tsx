@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { IDockviewPanelHeaderProps } from 'dockview-react'
+import { useTabBadge } from '../state/tabBadge'
+import { X } from 'lucide-react'
 
 // Custom dockview tab: double-click the title to rename the panel. The name is
 // persisted with the layout (dockview serializes the title).
@@ -7,6 +9,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const { api } = props
   const [title, setTitle] = useState(api.title ?? '')
   const [editing, setEditing] = useState(false)
+  const badge = useTabBadge((s) => s.badges[api.id])
 
   useEffect(() => {
     const d = api.onDidTitleChange(() => setTitle(api.title ?? ''))
@@ -34,7 +37,10 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
           }}
         />
       ) : (
-        <span className="riven-tab-title">{title}</span>
+        <span className="riven-tab-title">
+          {badge && <span className={`tab-dot ${badge}`} />}
+          {title}
+        </span>
       )}
       <span
         className="riven-tab-close"
@@ -44,7 +50,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
           api.close()
         }}
       >
-        ✕
+        <X size={11} />
       </span>
     </div>
   )

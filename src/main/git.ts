@@ -41,6 +41,56 @@ export function registerGitHandlers(): void {
     }
   })
 
+  // Per-line blame for the inline (GitLens-style) annotation. Returns a map of
+  // 1-based line number → { author, time (epoch seconds), summary, hash }.
+  // Uncommitted lines (all-zero hash) are omitted.
+  ipcMain.handle(
+    'git:blame',
+    async (
+      _e,
+      folder: string,
+      relPath: string
+    ): Promise<{
+      ok: boolean
+      lines?: Record<number, { author: string; time: number; summary: string; hash: string }>
+      error?: string
+    }> => {
+      try {
+        const { stdout } = await pexec(
+          'git',
+          ['-C', folder, 'blame', '--line-porcelain', '--', relPath],
+          { maxBuffer: 50 * 1024 * 1024 }
+        )
+        const meta: Record<string, { author: string; time: number; summary: string }> = {}
+        const lines: Record<number, { author: string; time: number; summary: string; hash: string }> =
+          {}
+        let hash = ''
+        let finalLine = 0
+        for (const raw of stdout.split('\n')) {
+          const header = raw.match(/^([0-9a-f]{40}) \d+ (\d+)/)
+          if (header) {
+            hash = header[1]
+            finalLine = parseInt(header[2], 10)
+            if (!meta[hash]) meta[hash] = { author: '', time: 0, summary: '' }
+            continue
+          }
+          if (raw.startsWith('author ')) meta[hash].author = raw.slice(7)
+          else if (raw.startsWith('author-time ')) meta[hash].time = parseInt(raw.slice(12), 10)
+          else if (raw.startsWith('summary ')) meta[hash].summary = raw.slice(8)
+          else if (raw.startsWith('\t')) {
+            // Content line — commit the annotation for this final line.
+            if (!/^0{40}$/.test(hash)) {
+              lines[finalLine] = { hash, ...meta[hash] }
+            }
+          }
+        }
+        return { ok: true, lines }
+      } catch (e) {
+        return { ok: false, error: (e as Error).message }
+      }
+    }
+  )
+
   ipcMain.handle('git:status', async (_e, folder: string) => {
     try {
       const { stdout: br } = await pexec('git', ['-C', folder, 'rev-parse', '--abbrev-ref', 'HEAD'])
@@ -66,10 +116,56 @@ export function registerGitHandlers(): void {
             untracked
           }
         })
-      return { branch: br.trim(), files, isRepo: true }
+      let ahead = 0
+      let behind = 0
+      let hasUpstream = false
+      try {
+        const { stdout: lr } = await pexec('git', [
+          '-C',
+          folder,
+          'rev-list',
+          '--left-right',
+          '--count',
+          '@{upstream}...HEAD'
+        ])
+        const [b, a] = lr.trim().split(/\s+/).map(Number)
+        behind = b || 0
+        ahead = a || 0
+        hasUpstream = true
+      } catch {
+        /* no upstream configured */
+      }
+      return { branch: br.trim(), files, isRepo: true, ahead, behind, hasUpstream }
     } catch {
-      return { branch: null, files: [], isRepo: false }
+      return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false }
     }
+  })
+
+  const run = async (folder: string, args: string[]): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      await pexec('git', ['-C', folder, ...args], { maxBuffer: 10 * 1024 * 1024 })
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    }
+  }
+
+  ipcMain.handle('git:push', (_e, folder: string) => run(folder, ['push']))
+  ipcMain.handle('git:pull', (_e, folder: string) => run(folder, ['pull', '--ff-only']))
+
+  // Discard local changes to a file: revert tracked files to HEAD; delete
+  // untracked files.
+  ipcMain.handle('git:discard', async (_e, folder: string, relPath: string, untracked: boolean) => {
+    if (untracked) {
+      try {
+        await fs.promises.rm(path.join(folder, relPath), { force: true })
+      } catch {
+        /* ignore */
+      }
+      return { ok: true }
+    }
+    await run(folder, ['reset', '-q', 'HEAD', '--', relPath]) // unstage if staged
+    return run(folder, ['checkout', '--', relPath])
   })
 
   ipcMain.handle('git:stage', async (_e, folder: string, relPath: string) => {

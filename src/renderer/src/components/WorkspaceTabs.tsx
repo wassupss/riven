@@ -1,12 +1,16 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession } from '../state/session'
+import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
+import { useT } from '../i18n'
+import { Plus, X, GitBranch } from 'lucide-react'
 
+// Vertical workspace rail — cmux-style cards. Workspaces are the primary
+// navigation unit (each is an agent/project context), so each card surfaces its
+// live activity, path, and git state at a glance.
 export default function WorkspaceTabs(): JSX.Element {
+  const t = useT()
   const openWorkspaces = useSession((s) => s.openWorkspaces)
-  const activeWorkspace = useSession((s) => s.activeWorkspace)
   const openWorkspace = useSession((s) => s.openWorkspace)
-  const closeWorkspace = useSession((s) => s.closeWorkspace)
-  const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
 
   const pick = useCallback(async () => {
     const picked = await window.api.workspace.pickFolder()
@@ -14,30 +18,98 @@ export default function WorkspaceTabs(): JSX.Element {
   }, [openWorkspace])
 
   return (
-    <div className="ws-tabs">
-      {openWorkspaces.map((ws, i) => (
-        <div
-          key={ws}
-          className={`ws-tab${ws === activeWorkspace ? ' active' : ''}`}
-          title={`${ws}  (⌘${i + 1})`}
-          onClick={() => setActiveWorkspace(ws)}
+    <div className="ws-rail">
+      <div className="ws-rail-head">
+        <span className="ws-rail-title">{t('ws.title')}</span>
+        <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
+          <Plus size={14} />
+        </button>
+      </div>
+      <div className="ws-list">
+        {openWorkspaces.map((ws, i) => (
+          <WorkspaceCard key={ws} ws={ws} index={i} />
+        ))}
+        {openWorkspaces.length === 0 && <div className="ws-empty">{t('ws.empty')}</div>}
+      </div>
+    </div>
+  )
+}
+
+const ACTIVITY_LABEL_KEY: Record<PaneActivity, string> = {
+  attn: 'ws.activity.attn',
+  busy: 'ws.activity.busy',
+  idle: 'ws.activity.idle'
+}
+
+function shortenPath(p: string): string {
+  return p.replace(/^\/(?:Users|home)\/[^/]+/, '~')
+}
+
+interface GitState {
+  branch: string | null
+  dirty: number
+}
+
+function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Element {
+  const t = useT()
+  const activeWorkspace = useSession((s) => s.activeWorkspace)
+  const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
+  const closeWorkspace = useSession((s) => s.closeWorkspace)
+  const active = ws === activeWorkspace
+  const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
+  const [git, setGit] = useState<GitState | null>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+
+  // Scroll the active workspace card into view when it becomes active.
+  useEffect(() => {
+    if (active) cardRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [active])
+
+  useEffect(() => {
+    let alive = true
+    window.api.git
+      .status(ws)
+      .then((st) => {
+        if (!alive) return
+        setGit(st.isRepo ? { branch: st.branch, dirty: st.files.length } : null)
+      })
+      .catch(() => alive && setGit(null))
+    return () => {
+      alive = false
+    }
+    // Refetch when this workspace becomes active (cheap, catches commits/switches).
+  }, [ws, active])
+
+  return (
+    <div
+      ref={cardRef}
+      className={`ws-card${active ? ' active' : ''} ${activity}`}
+      title={`${ws}  (⌘${index + 1})`}
+      onClick={() => setActiveWorkspace(ws)}
+    >
+      <div className="ws-card-top">
+        <span className={`ws-card-dot ${activity}`} title={t(ACTIVITY_LABEL_KEY[activity])} />
+        <span className="ws-card-title">{ws.split('/').pop()}</span>
+        <span
+          className="ws-card-close"
+          title={t('ws.close')}
+          onClick={(e) => {
+            e.stopPropagation()
+            closeWorkspace(ws)
+          }}
         >
-          <span className="ws-tab-name">🗂 {ws.split('/').pop()}</span>
-          <span
-            className="ws-tab-close"
-            title="워크스페이스 닫기"
-            onClick={(e) => {
-              e.stopPropagation()
-              closeWorkspace(ws)
-            }}
-          >
-            ✕
-          </span>
+          <X size={12} />
+        </span>
+      </div>
+      <div className="ws-card-meta">
+        <span className="ws-card-path">{shortenPath(ws)}</span>
+      </div>
+      {git && (
+        <div className="ws-card-git">
+          <span className="ws-card-branch"><GitBranch size={12} /> {git.branch ?? 'detached'}</span>
+          {git.dirty > 0 && <span className="ws-card-dirty">±{git.dirty}</span>}
         </div>
-      ))}
-      <button className="ws-add" title="폴더 열기" onClick={pick}>
-        +
-      </button>
+      )}
     </div>
   )
 }

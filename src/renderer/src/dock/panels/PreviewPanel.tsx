@@ -1,8 +1,11 @@
 import { useRef, useState } from 'react'
 import { useSession } from '../../state/session'
 import { contextBus } from '../../bridge/contextBus'
+import { useT } from '../../i18n'
+import { SendHorizontal } from 'lucide-react'
 
 export default function PreviewPanel({ workspace }: { workspace: string }): JSX.Element {
+  const t = useT()
   const previewUrl = useSession((s) => s.sessions[workspace]?.previewUrl ?? '')
   const patch = useSession((s) => s.patch)
   const [urlInput, setUrlInput] = useState(previewUrl || 'http://localhost:3000')
@@ -33,22 +36,22 @@ export default function PreviewPanel({ workspace }: { workspace: string }): JSX.
           placeholder="http://localhost:3000"
         />
         <button className="btn-small" onClick={() => open(urlInput)}>
-          열기
+          {t('common.open')}
         </button>
         <button
           className="btn-small"
           disabled={!previewUrl || !contextBus.hasSink(workspace)}
-          title="현재 화면을 캡처해 claude에 전달"
+          title={t('preview.captureTitle')}
           onClick={captureToClaude}
         >
-          ➤ 캡처
+          <SendHorizontal size={13} /> {t('preview.capture')}
         </button>
       </div>
       {previewUrl ? (
         // @ts-expect-error webview is an Electron intrinsic element
         <webview ref={webviewRef} src={previewUrl} className="preview-webview" />
       ) : (
-        <div className="empty-hint center">실행 중인 서버 주소를 열어 미리 봐.</div>
+        <div className="empty-hint center">{t('preview.empty')}</div>
       )}
     </div>
   )

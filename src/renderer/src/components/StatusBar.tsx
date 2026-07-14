@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { useSession } from '../state/session'
 import { useUI } from '../state/ui'
 import { togglePanel } from '../dock/registry'
+import { useT } from '../i18n'
+import UsageWidget from './UsageWidget'
+import ScriptRunner from './ScriptRunner'
+import { Folder, FolderOpen, GitBranch, Plug, Settings } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -10,10 +14,10 @@ interface Info {
 }
 
 export default function StatusBar(): JSX.Element {
+  const t = useT()
   const folder = useSession((s) => s.activeWorkspace)
   const patch = useSession((s) => s.patch)
-  const setKeybindingsOpen = useUI((s) => s.setKeybindingsOpen)
-  const setSettingsOpen = useUI((s) => s.setSettingsOpen)
+  const openSettings = useUI((s) => s.openSettings)
   const [info, setInfo] = useState<Info | null>(null)
   const [ports, setPorts] = useState<number[]>([])
 
@@ -67,17 +71,17 @@ export default function StatusBar(): JSX.Element {
       {folder ? (
         <>
           <span className="status-item repo" title={folder}>
-            📁 {info?.repoName ?? folder.split('/').pop()}
+            <Folder size={13} /> {info?.repoName ?? folder.split('/').pop()}
           </span>
           {info?.isRepo && (
-            <span className="status-item branch" title="현재 브랜치">
-              ⑂ {info.branch}
+            <span className="status-item branch" title={t('status.branch')}>
+              <GitBranch size={13} /> {info.branch}
             </span>
           )}
-          {info && !info.isRepo && <span className="status-item dim">git 아님</span>}
+          {info && !info.isRepo && <span className="status-item dim">{t('status.notGit')}</span>}
           {ports.length > 0 && (
-            <span className="status-item ports" title="이 레포에서 리스닝 중인 포트 (클릭: 프리뷰)">
-              🔌
+            <span className="status-item ports" title={t('status.ports')}>
+              <Plug size={13} />
               {ports.map((p) => (
                 <span key={p} className="port-chip" onClick={() => openPort(p)}>
                   {p}
@@ -87,18 +91,15 @@ export default function StatusBar(): JSX.Element {
           )}
         </>
       ) : (
-        <span className="status-item dim">📂 열린 폴더 없음 — 폴더를 열어주세요</span>
+        <span className="status-item dim">
+          <FolderOpen size={13} /> {t('status.noFolder')}
+        </span>
       )}
+      {folder && <ScriptRunner />}
       <span className="status-spacer" />
-      <span className="status-item click" title="설정" onClick={() => setSettingsOpen(true)}>
-        ⚙ 설정
-      </span>
-      <span
-        className="status-item click"
-        title="단축키 설정 (⌥⌘K)"
-        onClick={() => setKeybindingsOpen(true)}
-      >
-        ⌨ 단축키
+      <UsageWidget />
+      <span className="status-item click" title={t('status.settingsTitle')} onClick={() => openSettings('general')}>
+        <Settings size={13} /> {t('status.settings')}
       </span>
     </div>
   )

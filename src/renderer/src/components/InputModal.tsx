@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useT } from '../i18n'
 
 export default function InputModal({
   title,
@@ -14,6 +15,7 @@ export default function InputModal({
   onSubmit: (value: string) => void
   onCancel: () => void
 }): JSX.Element {
+  const t = useT()
   const [value, setValue] = useState(initial)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -47,10 +49,10 @@ export default function InputModal({
           />
           <div className="input-modal-actions">
             <button className="btn-small" onClick={onCancel}>
-              취소
+              {t('common.cancel')}
             </button>
             <button className="btn-small primary" onClick={submit}>
-              확인
+              {t('common.confirm')}
             </button>
           </div>
         </div>

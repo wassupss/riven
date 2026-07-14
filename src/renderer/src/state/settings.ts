@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 export interface Settings {
   theme: string
+  editorKeymap: string
   editorFontFamily: string
   editorFontSize: number
   terminalFontFamily: string
@@ -9,18 +10,36 @@ export interface Settings {
   terminalBackground: string
   terminalForeground: string
   terminalCursor: string
+  // AI inline completion (ghost text) — off by default to stay lightweight.
+  aiComplete: boolean
+  aiProvider: string
+  aiCompleteEndpoint: string
+  aiCompleteModel: string
+  aiApiKey: string
+  language: 'ko' | 'en'
+  importedFonts: Array<{ family: string; dataUrl: string }>
+  usagePinned: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'ember',
+  editorKeymap: 'vscode',
   editorFontFamily: 'Menlo, Monaco, "Courier New", monospace',
   editorFontSize: 13,
+  aiComplete: false,
+  aiProvider: 'ollama',
+  aiCompleteEndpoint: 'http://localhost:11434',
+  aiCompleteModel: 'qwen2.5-coder:1.5b',
+  aiApiKey: '',
+  language: 'ko',
+  importedFonts: [],
+  usagePinned: false,
   terminalFontFamily:
     '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   terminalFontSize: 12,
-  terminalBackground: '#15171a',
-  terminalForeground: '#d6dae0',
-  terminalCursor: '#ff6b3d'
+  terminalBackground: '#101113',
+  terminalForeground: '#e3e5ea',
+  terminalCursor: '#ff7847'
 }
 
 interface SettingsState {

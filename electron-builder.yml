@@ -1,0 +1,39 @@
+appId: dev.riven.app
+productName: riven
+copyright: Copyright © 2026 riven
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**
+  - package.json
+# These packages are spawned as real child processes (node-pty's spawn-helper,
+# the language servers run via Electron-as-Node against a real file path), so
+# they must live on disk outside the asar archive.
+asarUnpack:
+  - node_modules/node-pty/**
+  - node_modules/typescript-language-server/**
+  - node_modules/typescript/**
+  - node_modules/pyright/**
+  - node_modules/yaml-language-server/**
+  - node_modules/bash-language-server/**
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  # Unsigned for now (local build). To ship: set an identity + notarize.
+  identity: null
+  notarize: false
+dmg:
+  title: ${productName}
+win:
+  target: nsis
+  icon: build/icon.png
+linux:
+  target: AppImage
+  category: Development
+  icon: build/icon.png

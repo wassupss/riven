@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="160" viewBox="0 0 480 160" role="img" aria-label="riven">
+  <!--
+    riven wordmark — monoline geometric lowercase, drawn as paths (no fonts).
+    The stem of the "i" is the ember seam: a hairline crack with a spark for its dot.
+    Transparent background; letterforms in off-white #e3e5ea for dark surfaces.
+  -->
+  <defs>
+    <linearGradient id="wm-seam" gradientUnits="userSpaceOnUse" x1="152" y1="60" x2="152" y2="118">
+      <stop offset="0" stop-color="#ff8a5c"/>
+      <stop offset="0.45" stop-color="#ff7847"/>
+      <stop offset="1" stop-color="#e0602f"/>
+    </linearGradient>
+    <filter id="wm-glow" x="-120%" y="-60%" width="340%" height="220%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+
+  <g fill="none" stroke="#e3e5ea" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+    <!-- r -->
+    <path d="M85 65 V113"/>
+    <path d="M85 88 C85 72 97 65 117 69"/>
+    <!-- v -->
+    <path d="M187 65 L211 113 L235 65"/>
+    <!-- e -->
+    <path d="M267 89 H315"/>
+    <path d="M315 89 A24 24 0 1 0 308 106"/>
+    <!-- n -->
+    <path d="M347 65 V113"/>
+    <path d="M347 90 C347 73 358 65 371 65 C384 65 395 73 395 90 V113"/>
+  </g>
+
+  <!-- i — the ember seam -->
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <g filter="url(#wm-glow)" opacity="0.55">
+      <path d="M154 65 L149 86 L155 94 L151 113" stroke="#ff7847" stroke-width="14"/>
+      <circle cx="152" cy="39" r="8" fill="#ff7847" stroke="none"/>
+    </g>
+    <path d="M154 65 L149 86 L155 94 L151 113" stroke="url(#wm-seam)" stroke-width="14"/>
+    <circle cx="152" cy="39" r="8" fill="#ff8a5c" stroke="none"/>
+  </g>
+</svg>

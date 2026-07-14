@@ -1,10 +1,5 @@
 import { ipcMain } from 'electron'
-import { execFile } from 'child_process'
-import { promisify } from 'util'
-import { promises as fsp, constants as fsc } from 'fs'
-import * as path from 'path'
-
-const pexec = promisify(execFile)
+import { getPathDirs, resolveBin } from './shellPath'
 
 interface CliDef {
   name: string
@@ -40,37 +35,11 @@ const CANDIDATES: CliDef[] = [
   { name: 'htop', cmd: 'htop', group: 'System' }
 ]
 
-let pathDirs: string[] | null = null
-async function getPathDirs(): Promise<string[]> {
-  if (pathDirs) return pathDirs
-  try {
-    const loginShell = process.env.SHELL || '/bin/zsh'
-    const { stdout } = await pexec(loginShell, ['-lic', 'echo $PATH'], { timeout: 5000 })
-    pathDirs = stdout.trim().split(':').filter(Boolean)
-  } catch {
-    pathDirs = (process.env.PATH || '').split(':').filter(Boolean)
-  }
-  return pathDirs
-}
-
-async function resolve(cmd: string, dirs: string[]): Promise<string | null> {
-  for (const d of dirs) {
-    const p = path.join(d, cmd)
-    try {
-      await fsp.access(p, fsc.X_OK)
-      return p
-    } catch {
-      /* not here */
-    }
-  }
-  return null
-}
-
 export function registerCliHandlers(): void {
   ipcMain.handle('cli:list', async () => {
-    const dirs = await getPathDirs()
+    await getPathDirs() // warm the login-shell PATH cache once
     const results = await Promise.all(
-      CANDIDATES.map(async (c) => ({ ...c, path: await resolve(c.cmd, dirs) }))
+      CANDIDATES.map(async (c) => ({ ...c, path: await resolveBin(c.cmd) }))
     )
     return results.filter((r) => r.path)
   })

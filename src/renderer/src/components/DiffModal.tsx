@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import * as monaco from 'monaco-editor'
 import { languageForPath } from '../editor/EditorPane'
 import { editorTheme } from '../editor/highlight'
+import { useT } from '../i18n'
 
 export default function DiffModal({
   path,
@@ -15,6 +16,7 @@ export default function DiffModal({
   modified: string
   onClose: () => void
 }): JSX.Element {
+  const t = useT()
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -41,9 +43,9 @@ export default function DiffModal({
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal diff-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <span>변경 비교 — {path.split('/').pop()} (왼쪽: 이전 · 오른쪽: 에이전트 수정)</span>
+          <span>{t('diff.title', { name: path.split('/').pop() ?? '' })}</span>
           <button className="btn-small" onClick={onClose}>
-            닫기
+            {t('common.close')}
           </button>
         </div>
         <div className="diff-body" ref={ref} />

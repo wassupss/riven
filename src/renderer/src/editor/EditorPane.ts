@@ -25,6 +25,8 @@ export interface EditorPaneProps {
   agentEdit?: AgentEditView | null
   // Called with the new full content when the user reverts one hunk.
   onAgentRevert?: (newAfter: string) => void
+  // Dismiss the whole agent-edit review (accept everything as-is).
+  onDismiss?: () => void
 }
 
 export type EditorPaneComponent = ComponentType<EditorPaneProps>
@@ -46,17 +48,57 @@ const EXT_TO_LANG: Record<string, string> = {
   rs: 'rust',
   go: 'go',
   java: 'java',
-  c: 'c',
+  c: 'cpp',
   cpp: 'cpp',
   h: 'cpp',
+  cc: 'cpp',
+  cxx: 'cpp',
+  hpp: 'cpp',
+  cs: 'csharp',
+  rb: 'ruby',
+  php: 'php',
+  swift: 'swift',
+  kt: 'kotlin',
   sh: 'shell',
+  bash: 'shell',
+  zsh: 'shell',
+  fish: 'shell',
   yml: 'yaml',
   yaml: 'yaml',
-  toml: 'ini',
+  toml: 'toml',
+  ini: 'ini',
+  conf: 'ini',
+  cfg: 'ini',
+  properties: 'ini',
+  env: 'ini',
+  xml: 'xml',
+  svg: 'xml',
+  vue: 'vue',
+  svelte: 'svelte',
+  graphql: 'graphql',
+  gql: 'graphql',
+  dockerfile: 'dockerfile',
   sql: 'sql'
 }
 
+// Files identified by name rather than extension (Dockerfile, .env, …).
+// Values are Monaco language ids (must match a registered language).
+const NAME_TO_LANG: Array<[RegExp, string]> = [
+  [/^dockerfile$/, 'dockerfile'],
+  [/^dockerfile\./, 'dockerfile'],
+  [/\.dockerfile$/, 'dockerfile'],
+  [/^\.env($|\.)/, 'ini'], // .env, .env.local, .env.production…
+  [/^\.?(bash|zsh)rc$/, 'shell'],
+  [/^\.?(bash_profile|profile|zprofile|zshenv)$/, 'shell'],
+  [/^makefile$/, 'make'],
+  [/^(gemfile|rakefile)$/, 'ruby']
+]
+
 export function languageForPath(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  const base = (path.split('/').pop() ?? '').toLowerCase()
+  for (const [re, lang] of NAME_TO_LANG) {
+    if (re.test(base)) return lang
+  }
+  const ext = base.includes('.') ? base.split('.').pop()! : ''
   return EXT_TO_LANG[ext] ?? 'plaintext'
 }

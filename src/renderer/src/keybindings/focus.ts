@@ -39,3 +39,14 @@ export function registerPaneFocuser(id: number, fn: () => void): () => void {
 export function focusPane(id: number): void {
   paneFocusers.get(id)?.()
 }
+
+const paneClearers = new Map<number, () => void>()
+export function registerPaneClearer(id: number, fn: () => void): () => void {
+  paneClearers.set(id, fn)
+  return () => paneClearers.delete(id)
+}
+// Clear the currently-focused terminal, if any.
+export function clearFocusedTerminal(): void {
+  const r = focusRegion
+  if (r.kind === 'terminal') paneClearers.get(r.paneId)?.()
+}

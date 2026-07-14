@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useSession } from '../../state/session'
 import { useNav } from '../../state/nav'
 import { ensureEditor } from '../registry'
+import { useT } from '../../i18n'
+import { FileText } from 'lucide-react'
 
 interface Match {
   file: string
@@ -13,6 +15,7 @@ interface Match {
 }
 
 export default function SearchPanel({ workspace }: { workspace: string }): JSX.Element {
+  const t = useT()
   const [query, setQuery] = useState('')
   const [matches, setMatches] = useState<Match[]>([])
   const [truncated, setTruncated] = useState(false)
@@ -52,30 +55,34 @@ export default function SearchPanel({ workspace }: { workspace: string }): JSX.E
           ref={inputRef}
           className="url-input"
           value={query}
-          placeholder="전체 파일에서 검색"
+          placeholder={t('search.placeholder')}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') run()
           }}
         />
         <button className="btn-small" onClick={run}>
-          검색
+          {t('common.search')}
         </button>
       </div>
       <div className="search-summary">
         {searching
-          ? '검색 중…'
+          ? t('search.searching')
           : matches.length
-            ? `${matches.length}개 결과${truncated ? '+ (일부 생략)' : ''} · ${grouped.size}개 파일`
+            ? t('search.summary', {
+                n: matches.length,
+                more: truncated ? t('search.more') : '',
+                files: grouped.size
+              })
             : query
-              ? '결과 없음'
+              ? t('common.noResults')
               : ''}
       </div>
       <div className="search-results">
         {[...grouped.entries()].map(([file, ms]) => (
           <div key={file} className="search-file">
             <div className="search-file-name" title={file}>
-              📄 {rel(file)}
+              <FileText size={13} /> {rel(file)}
             </div>
             {ms.map((m, i) => (
               <div

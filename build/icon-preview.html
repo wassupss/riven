@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riven — icon &amp; wordmark preview</title>
+<style>
+  :root {
+    --ink-0: #0d0e10;
+    --ink-1: #16181b;
+    --ink-2: #1e2126;
+    --off-white: #e3e5ea;
+    --ember: #ff7847;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #232529;
+    color: var(--off-white);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 48px;
+  }
+  h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 4px; }
+  p.sub { color: #9a9fa8; margin-bottom: 40px; }
+  h2 {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.12em; color: #7c828c; margin: 48px 0 16px;
+  }
+  .row { display: flex; align-items: flex-end; gap: 40px; flex-wrap: wrap; }
+  .cell { text-align: center; }
+  .cell .label { margin-top: 10px; font-size: 11px; color: #9a9fa8; font-variant-numeric: tabular-nums; }
+  .cell svg { display: block; }
+  .strip {
+    display: inline-flex; align-items: center; gap: 24px;
+    padding: 20px 28px; border-radius: 12px;
+  }
+  .strip.dark  { background: var(--ink-0); }
+  .strip.light { background: #f2f3f5; }
+  .strip .label { font-size: 11px; color: #9a9fa8; margin-right: 4px; }
+  .wordmark-panel {
+    display: inline-block; padding: 40px 56px; border-radius: 16px;
+    background: linear-gradient(180deg, var(--ink-1), var(--ink-0));
+    border: 1px solid rgba(255,255,255,0.05);
+  }
+  .big { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+
+<!-- ============ shared defs: the icon mark as a reusable symbol ============ -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="riven-icon" viewBox="0 0 1024 1024">
+    <defs>
+      <clipPath id="tile"><rect width="1024" height="1024" rx="180"/></clipPath>
+      <linearGradient id="basalt" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#16181b"/>
+        <stop offset="1" stop-color="#0d0e10"/>
+      </linearGradient>
+      <radialGradient id="ambient" cx="0.48" cy="0.42" r="0.62">
+        <stop offset="0" stop-color="#ff7847" stop-opacity="0.16"/>
+        <stop offset="0.55" stop-color="#ff7847" stop-opacity="0.05"/>
+        <stop offset="1" stop-color="#ff7847" stop-opacity="0"/>
+      </radialGradient>
+      <linearGradient id="seam" gradientUnits="userSpaceOnUse" x1="0" y1="-340" x2="0" y2="340">
+        <stop offset="0" stop-color="#f4693b"/>
+        <stop offset="0.24" stop-color="#ff8a5c"/>
+        <stop offset="0.5" stop-color="#ff7847"/>
+        <stop offset="1" stop-color="#d8552c"/>
+      </linearGradient>
+      <linearGradient id="core" gradientUnits="userSpaceOnUse" x1="0" y1="-340" x2="0" y2="340">
+        <stop offset="0" stop-color="#ffb890"/>
+        <stop offset="0.26" stop-color="#ffd9c0"/>
+        <stop offset="0.55" stop-color="#ffb088"/>
+        <stop offset="1" stop-color="#ff8a5c"/>
+      </linearGradient>
+      <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+        <feGaussianBlur stdDeviation="34"/>
+      </filter>
+      <filter id="soften" x="-40%" y="-40%" width="180%" height="180%">
+        <feGaussianBlur stdDeviation="7"/>
+      </filter>
+    </defs>
+    <g clip-path="url(#tile)">
+      <rect width="1024" height="1024" fill="url(#basalt)"/>
+      <path d="M0 0 H466 L418 456 L458 540 L405 1024 H0 Z" fill="#0b0c0e" opacity="0.5"/>
+      <path d="M466 0 L448 228 M430 796 L405 1024" stroke="#000000" stroke-opacity="0.35" stroke-width="6" fill="none"/>
+      <rect width="1024" height="1024" fill="url(#ambient)"/>
+      <g transform="translate(440,512)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <g stroke="url(#seam)" stroke-width="112" filter="url(#glow)" opacity="0.5">
+          <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
+          <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
+        </g>
+        <g stroke="url(#seam)" stroke-width="112">
+          <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
+          <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
+        </g>
+        <g stroke="url(#core)" stroke-width="36" filter="url(#soften)" opacity="0.9">
+          <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
+          <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
+        </g>
+      </g>
+      <rect x="3" y="3" width="1018" height="1018" rx="177" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="3"/>
+    </g>
+  </symbol>
+</svg>
+
+<h1>riven — brand preview</h1>
+<p class="sub">obsidian workbench, ember filament · #ff7847 on #0d0e10</p>
+
+<h2>App icon · 128 / 64 / 32 / 16</h2>
+<div class="row">
+  <div class="cell"><svg width="128" height="128"><use href="#riven-icon"/></svg><div class="label">128</div></div>
+  <div class="cell"><svg width="64" height="64"><use href="#riven-icon"/></svg><div class="label">64</div></div>
+  <div class="cell"><svg width="32" height="32"><use href="#riven-icon"/></svg><div class="label">32</div></div>
+  <div class="cell"><svg width="16" height="16"><use href="#riven-icon"/></svg><div class="label">16</div></div>
+</div>
+
+<h2>Small sizes in context (dock / taskbar backgrounds)</h2>
+<div class="row">
+  <div class="strip dark">
+    <span class="label">on #0d0e10</span>
+    <svg width="32" height="32"><use href="#riven-icon"/></svg>
+    <svg width="24" height="24"><use href="#riven-icon"/></svg>
+    <svg width="16" height="16"><use href="#riven-icon"/></svg>
+  </div>
+  <div class="strip light">
+    <span class="label">on light</span>
+    <svg width="32" height="32"><use href="#riven-icon"/></svg>
+    <svg width="24" height="24"><use href="#riven-icon"/></svg>
+    <svg width="16" height="16"><use href="#riven-icon"/></svg>
+  </div>
+</div>
+
+<h2>Wordmark</h2>
+<div class="wordmark-panel">
+  <!-- inlined build/wordmark.svg -->
+  <svg width="360" height="120" viewBox="0 0 480 160" role="img" aria-label="riven">
+    <defs>
+      <linearGradient id="wm-seam" gradientUnits="userSpaceOnUse" x1="152" y1="60" x2="152" y2="118">
+        <stop offset="0" stop-color="#ff8a5c"/>
+        <stop offset="0.45" stop-color="#ff7847"/>
+        <stop offset="1" stop-color="#e0602f"/>
+      </linearGradient>
+      <filter id="wm-glow" x="-120%" y="-60%" width="340%" height="220%">
+        <feGaussianBlur stdDeviation="5"/>
+      </filter>
+    </defs>
+    <g fill="none" stroke="#e3e5ea" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M85 65 V113"/>
+      <path d="M85 88 C85 72 97 65 117 69"/>
+      <path d="M187 65 L211 113 L235 65"/>
+      <path d="M267 89 H315"/>
+      <path d="M315 89 A24 24 0 1 0 308 106"/>
+      <path d="M347 65 V113"/>
+      <path d="M347 90 C347 73 358 65 371 65 C384 65 395 73 395 90 V113"/>
+    </g>
+    <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <g filter="url(#wm-glow)" opacity="0.55">
+        <path d="M154 65 L149 86 L155 94 L151 113" stroke="#ff7847" stroke-width="14"/>
+        <circle cx="152" cy="39" r="8" fill="#ff7847" stroke="none"/>
+      </g>
+      <path d="M154 65 L149 86 L155 94 L151 113" stroke="url(#wm-seam)" stroke-width="14"/>
+      <circle cx="152" cy="39" r="8" fill="#ff8a5c" stroke="none"/>
+    </g>
+  </svg>
+</div>
+
+<h2>App icon · 1024 (master)</h2>
+<div class="cell">
+  <svg class="big" width="1024" height="1024"><use href="#riven-icon"/></svg>
+  <div class="label" style="text-align:left; margin-top:12px;">1024 — rasterize icon-mark.svg at this size for .icns / .ico</div>
+</div>
+
+</body>
+</html>

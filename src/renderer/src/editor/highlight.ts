@@ -22,7 +22,22 @@ const LANGS = [
   'go',
   'yaml',
   'sql',
-  'toml'
+  'toml',
+  'java',
+  'cpp',
+  'csharp',
+  'ruby',
+  'php',
+  'swift',
+  'kotlin',
+  'shellscript',
+  'ini',
+  'xml',
+  'vue',
+  'svelte',
+  'graphql',
+  'docker',
+  'make'
 ]
 
 // JSX/TSX aren't first-class Monaco languages — register them so we can attach
@@ -60,7 +75,18 @@ function registerLang(id: string, extensions: string[]): void {
   }
 }
 
-const SHIKI_THEMES = ['vesper', 'night-owl', 'kanagawa-wave', 'houston', 'dark-plus']
+// Dark themes plus the light themes the light app-themes map to. Shiki theme
+// JSON is lazy-loaded per theme, so adding light entries costs nothing until
+// a light app-theme is activated.
+const SHIKI_THEMES = [
+  'vesper',
+  'night-owl',
+  'kanagawa-wave',
+  'houston',
+  'dark-plus',
+  'github-light',
+  'solarized-light'
+]
 
 let started = false
 let shikiReady = false
@@ -84,6 +110,13 @@ export async function initHighlighting(): Promise<void> {
   started = true
   registerLang('tsx', ['.tsx'])
   registerLang('jsx', ['.jsx'])
+  // Languages Monaco has no built-in for — register so Shiki's grammar attaches.
+  // (dockerfile/shell/cpp/ini/xml/graphql/csharp/ruby/php/swift/kotlin are
+  // Monaco built-ins already; Shiki matches them via id/alias.)
+  registerLang('toml', ['.toml'])
+  registerLang('vue', ['.vue'])
+  registerLang('svelte', ['.svelte'])
+  registerLang('make', [])
   try {
     const highlighter = await createHighlighter({
       themes: SHIKI_THEMES,

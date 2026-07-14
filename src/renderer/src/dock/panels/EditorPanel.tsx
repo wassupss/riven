@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import MonacoEditorPane from '../../editor/MonacoEditorPane'
 import type { EditorPaneComponent, OpenFile } from '../../editor/EditorPane'
 import { closeDocument } from '../../lsp/client'
 import { setEditorCloser } from '../../keybindings/focus'
 import { useSession } from '../../state/session'
+import { useExplorerReveal } from '../../state/explorerReveal'
 import { useAgentEdits, cacheSet } from '../../state/agentEdits'
 import DiffModal from '../../components/DiffModal'
+import { useT, t as staticT } from '../../i18n'
+import { X, Bot } from 'lucide-react'
 
 const EditorPane: EditorPaneComponent = MonacoEditorPane
 
 export default function EditorPanel({ workspace }: { workspace: string }): JSX.Element {
+  const t = useT()
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const session = useSession((s) => s.sessions[workspace])
   const openFile = useSession((s) => s.openFile)
@@ -24,10 +29,19 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   const setEdit = useAgentEdits((s) => s.set)
   const appliedAgentAfter = useRef<string | null>(null)
 
+  const revealInExplorer = useExplorerReveal((s) => s.reveal)
   const [file, setFile] = useState<OpenFile | null>(null)
   const [dirty, setDirty] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
   const revisions = useRef(new Map<string, number>())
+  const fileTabsRef = useRef<HTMLDivElement>(null)
+  const activeTabRef = useRef<HTMLDivElement>(null)
+
+  // Scroll the open file's tab into view when it changes.
+  useEffect(() => {
+    activeTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activePath])
 
   const isActiveWs = workspace === activeWorkspace
   const stateRef = useRef({ activePath, dirty, isActiveWs })
@@ -109,7 +123,7 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
     if (
       path === activePath &&
       dirty &&
-      !window.confirm('저장하지 않은 변경이 있어. 그래도 닫을까?')
+      !window.confirm(staticT('editor.unsavedConfirm'))
     ) {
       return
     }
@@ -118,6 +132,32 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   }
   const closeTabRef = useRef(closeTab)
   closeTabRef.current = closeTab
+
+  // Bulk close (others / to the right / all). Prompts once if the dirty active
+  // file is in the set.
+  const closeMany = (paths: string[]): void => {
+    if (
+      activePath &&
+      dirty &&
+      paths.includes(activePath) &&
+      !window.confirm(staticT('editor.unsavedConfirm'))
+    ) {
+      return
+    }
+    for (const p of paths) {
+      closeTabAction(p)
+      closeDocument(p)
+    }
+  }
+
+  const openTabMenu = (e: React.MouseEvent, path: string): void => {
+    e.preventDefault()
+    setTabMenu({
+      x: Math.min(e.clientX, window.innerWidth - 210),
+      y: Math.min(e.clientY, window.innerHeight - 250),
+      path
+    })
+  }
 
   useEffect(() => {
     if (!isActiveWs) return
@@ -130,17 +170,21 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   }, [isActiveWs])
 
   const showConflict = !!agentEdit && dirty
-  const showAgentBar = !!agentEdit && !dirty
+  // With a baseline we show inline hunks (nav + hover) instead of a banner; the
+  // banner remains only as a fallback for whole-file edits with no baseline.
+  const showAgentBar = !!agentEdit && !dirty && !agentEdit.hasBaseline
 
   return (
     <div className="editor-panel">
       {openTabs.length > 0 && (
-        <div className="file-tabs">
+        <div className="file-tabs" ref={fileTabsRef}>
           {openTabs.map((p) => (
             <div
               key={p}
+              ref={p === activePath ? activeTabRef : undefined}
               className={`file-tab${p === activePath ? ' active' : ''}`}
               onClick={() => openFile(p)}
+              onContextMenu={(e) => openTabMenu(e, p)}
               title={p}
             >
               <span className="file-tab-name">
@@ -155,7 +199,7 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
                   closeTab(p)
                 }}
               >
-                ✕
+                <X size={12} />
               </span>
             </div>
           ))}
@@ -164,26 +208,34 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
 
       {showConflict && (
         <div className="ext-banner">
-          🤖 에이전트가 수정함 · 저장 안 한 변경과 충돌
-          <button className="btn-small" onClick={reloadFromDisk}>
-            디스크 버전 불러오기
-          </button>
+          <span className="banner-label">
+            <Bot size={14} /> {t('editor.conflictBanner')}
+          </span>
+          <span className="agent-banner-actions">
+            <button className="btn-small" onClick={reloadFromDisk}>
+              {t('editor.loadDisk')}
+            </button>
+            <button
+              className="btn-small"
+              title={t('common.close')}
+              onClick={() => activePath && clearEdit(activePath)}
+            >
+              <X size={12} />
+            </button>
+          </span>
         </div>
       )}
       {showAgentBar && (
         <div className="agent-banner">
-          <span>🤖 에이전트가 이 파일을 수정함{agentEdit?.hasBaseline ? '' : ' (전체)'}</span>
+          <span className="banner-label">
+            <Bot size={14} /> {t('editor.agentEditedFull')}
+          </span>
           <span className="agent-banner-actions">
-            {agentEdit?.hasBaseline && (
-              <button className="btn-small" onClick={() => setShowDiff(true)}>
-                비교
-              </button>
-            )}
             <button className="btn-small" onClick={revertAgentEdit}>
-              되돌리기
+              {t('editor.revert')}
             </button>
             <button className="btn-small" onClick={() => activePath && clearEdit(activePath)}>
-              ✕
+              <X size={12} />
             </button>
           </span>
         </div>
@@ -199,6 +251,7 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
             : null
         }
         onAgentRevert={onAgentRevert}
+        onDismiss={() => activePath && clearEdit(activePath)}
       />
 
       {showDiff && agentEdit && activePath && (
@@ -209,6 +262,83 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
           onClose={() => setShowDiff(false)}
         />
       )}
+
+      {tabMenu &&
+        createPortal(
+          <div
+            className="ctx-backdrop"
+            onClick={() => setTabMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setTabMenu(null)
+            }}
+          >
+          <div
+            className="ctx-menu"
+            style={{ left: tabMenu.x, top: tabMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="ctx-item"
+              onClick={() => {
+                closeTab(tabMenu.path)
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.close')}
+            </button>
+            <button
+              className="ctx-item"
+              disabled={openTabs.length < 2}
+              onClick={() => {
+                closeMany(openTabs.filter((x) => x !== tabMenu.path))
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.closeOthers')}
+            </button>
+            <button
+              className="ctx-item"
+              disabled={openTabs.indexOf(tabMenu.path) >= openTabs.length - 1}
+              onClick={() => {
+                closeMany(openTabs.slice(openTabs.indexOf(tabMenu.path) + 1))
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.closeRight')}
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                closeMany([...openTabs])
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.closeAll')}
+            </button>
+            <div className="ctx-sep" />
+            <button
+              className="ctx-item"
+              onClick={() => {
+                navigator.clipboard.writeText(tabMenu.path)
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.copyPath')}
+            </button>
+            <button
+              className="ctx-item"
+              onClick={() => {
+                revealInExplorer(tabMenu.path)
+                setTabMenu(null)
+              }}
+            >
+              {t('tab.revealExplorer')}
+            </button>
+          </div>
+        </div>,
+          document.body
+        )}
     </div>
   )
 }

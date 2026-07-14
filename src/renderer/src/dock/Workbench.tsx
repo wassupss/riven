@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DockviewReact, type DockviewReadyEvent, type IDockviewPanelProps } from 'dockview-react'
 import { themeAbyss, type DockviewApi } from 'dockview-core'
 import 'dockview-core/dist/styles/dockview.css'
+import { SquareTerminal, FileCode } from 'lucide-react'
 import EditorPanel from './panels/EditorPanel'
 import PreviewPanel from './panels/PreviewPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
-import CliPanel from './panels/CliPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import { useSession } from '../state/session'
-import { setActiveApi, nextPaneId, bumpPaneSeq } from './registry'
+import { setActiveApi, nextPaneId, bumpPaneSeq, addTerminal, togglePanel } from './registry'
+import { useT } from '../i18n'
 
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
+  const t = useT()
   const apiRef = useRef<DockviewApi | null>(null)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const patch = useSession((s) => s.patch)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [empty, setEmpty] = useState(false)
 
   const components = useMemo(
     () => ({
@@ -24,7 +27,6 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       preview: () => <PreviewPanel workspace={workspace} />,
       search: () => <SearchPanel workspace={workspace} />,
       git: () => <GitPanel workspace={workspace} />,
-      cli: (props: IDockviewPanelProps) => <CliPanel api={props.api} />,
       terminal: (props: IDockviewPanelProps<TerminalParams>) => (
         <TerminalPanel workspace={workspace} params={props.params} api={props.api} />
       )
@@ -70,6 +72,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         }
       }
       if (!restored) buildDefault(api)
+      setEmpty(api.panels.length === 0)
 
       if (workspace === useSession.getState().activeWorkspace) setActiveApi(api)
 
@@ -81,6 +84,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
 
       // Persist layout changes (debounced), after initial build.
       api.onDidLayoutChange(() => {
+        setEmpty(api.panels.length === 0)
         if (saveTimer.current) clearTimeout(saveTimer.current)
         saveTimer.current = setTimeout(() => patch(workspace, { dockLayout: api.toJSON() }), 500)
       })
@@ -95,13 +99,31 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
   }, [activeWorkspace, workspace])
 
   return (
-    <DockviewReact
-      className="workbench"
-      theme={themeAbyss}
-      defaultRenderer="always"
-      defaultTabComponent={RivenTab}
-      components={components}
-      onReady={onReady}
-    />
+    <div className="workbench-wrap">
+      <DockviewReact
+        className="workbench"
+        theme={themeAbyss}
+        defaultRenderer="always"
+        defaultTabComponent={RivenTab}
+        components={components}
+        onReady={onReady}
+      />
+      {empty && (
+        <div className="dock-empty">
+          <div className="dock-empty-inner">
+            <div className="dock-empty-mark">riven</div>
+            <div className="dock-empty-tag">{t('empty.tagline')}</div>
+            <div className="dock-empty-actions">
+              <button className="dock-empty-btn primary" onClick={() => addTerminal()}>
+                <SquareTerminal size={15} /> {t('empty.addTerminal')}
+              </button>
+              <button className="dock-empty-btn" onClick={() => togglePanel('editor')}>
+                <FileCode size={15} /> {t('empty.addEditor')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

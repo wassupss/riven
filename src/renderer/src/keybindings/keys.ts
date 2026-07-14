@@ -2,10 +2,18 @@
 // override any binding (persisted to userData/keybindings.json). A global
 // capture-phase listener matches chords and runs the action.
 
+import { getFocusRegion } from './focus'
+
+// 'riven' actions fire anywhere; 'terminal' actions fire only while a terminal
+// pane is focused (so they don't shadow editor typing). Code-editor shortcuts are
+// owned by Monaco (see editorKeymaps.ts), configured separately.
+export type KeyContext = 'riven' | 'terminal'
+
 export interface KeyAction {
   id: string
   label: string
   category: string
+  context: KeyContext
   def: string // default chord, e.g. 'Mod+1'
   run: () => void
 }
@@ -93,13 +101,16 @@ class Keymap {
   handle = (e: KeyboardEvent): void => {
     const chord = chordFromEvent(e)
     if (!chord) return
+    const focused = getFocusRegion().kind
     for (const a of this.actions.values()) {
-      if (this.binding(a.id) === chord) {
-        e.preventDefault()
-        e.stopPropagation()
-        a.run()
-        return
-      }
+      if (this.binding(a.id) !== chord) continue
+      // Terminal-scoped actions only fire while a terminal is focused, so they
+      // never steal keys from the code editor (or vice-versa).
+      if (a.context === 'terminal' && focused !== 'terminal') continue
+      e.preventDefault()
+      e.stopPropagation()
+      a.run()
+      return
     }
   }
 

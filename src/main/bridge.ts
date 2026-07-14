@@ -27,7 +27,11 @@ export function registerBridgeHandlers(): void {
       watcher = null
     }
     watcher = chokidar.watch(folder, {
-      ignored: /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache)([/\\]|$)/,
+      // Build/cache/vcs dirs churn constantly (esp. Next/turbopack, which
+      // rewrites .next/**/*.sst thousands of times/sec) — never watch them, or
+      // AgentWatch drowns opening transient files and pins the CPU.
+      ignored:
+        /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target)([/\\]|$)/,
       ignoreInitial: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 }

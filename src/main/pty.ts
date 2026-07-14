@@ -21,6 +21,7 @@ interface Session {
   busyStart: number
   startupUntil: number
   agentPresent: boolean
+  agentName: string | null
   lastInput: number
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
@@ -44,17 +45,20 @@ function defaultShell(): string {
   return process.env.SHELL || '/bin/zsh'
 }
 
-async function agentRunning(shellPid: number): Promise<boolean> {
+// Returns the name of the agent running as the shell's foreground child, or null.
+async function agentRunning(shellPid: number): Promise<string | null> {
   try {
     const { stdout: kidsOut } = await pexec('pgrep', ['-P', String(shellPid)], { timeout: 1500 })
     const kids = kidsOut.split('\n').filter(Boolean)
-    if (!kids.length) return false
+    if (!kids.length) return null
     const { stdout: args } = await pexec('ps', ['-o', 'args=', '-p', kids.join(',')], {
       timeout: 1500
     })
-    return AGENT_RE.test(args)
+    const m = args.match(AGENT_RE)
+    if (!m) return null
+    return m[1] ?? 'claude' // the path-based branch (no capture group) is claude
   } catch {
-    return false
+    return null
   }
 }
 
@@ -127,6 +131,7 @@ export function registerPtyHandlers(): void {
         busyStart: 0,
         startupUntil: Date.now() + 3000,
         agentPresent: false,
+        agentName: null,
         lastInput: 0,
         poll: null,
         polling: false,
@@ -146,8 +151,16 @@ export function registerPtyHandlers(): void {
       s.poll = setInterval(async () => {
         if (s.polling) return
         s.polling = true
-        s.agentPresent = await agentRunning(proc.pid)
+        const was = s.agentPresent
+        const wasName = s.agentName
+        const name = await agentRunning(proc.pid)
+        s.agentPresent = !!name
+        s.agentName = name
         s.polling = false
+        // Notify the renderer when an LLM agent appears/disappears (or changes) in
+        // this pane — used for context routing + auto tab titles.
+        if (s.agentPresent !== was || name !== wasName)
+          send(s, 'pty:agent', { key, agent: s.agentPresent, name })
         // Agent gone → definitely not running.
         if (!s.agentPresent && s.busy) {
           s.busy = false

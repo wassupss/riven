@@ -5,6 +5,7 @@ release
 .vite
 .DS_Store
 *.log
+*.tsbuildinfo
 
 # env / secrets
 .env

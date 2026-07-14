@@ -1,14 +1,18 @@
-import { useEffect, useState, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import type { DirEntry } from '../../../../preload'
 import { useSession } from '../../state/session'
 import { useTree } from '../../state/tree'
 import { useAgentEdits } from '../../state/agentEdits'
+import { useGitStatus, GIT_BADGE } from '../../state/gitStatus'
 import { useSelection } from '../../state/selection'
+import { useExplorerReveal } from '../../state/explorerReveal'
 import { contextBus } from '../../bridge/contextBus'
 import { closeDocument } from '../../lsp/client'
 import { ensureEditor } from '../registry'
 import ContextMenu, { type MenuItem } from '../../components/ContextMenu'
 import InputModal from '../../components/InputModal'
+import { FileIcon } from '../../components/FileIcon'
+import { useT } from '../../i18n'
 
 const dirname = (p: string): string => p.slice(0, p.lastIndexOf('/')) || '/'
 const join = (dir: string, name: string): string => `${dir}/${name}`
@@ -19,133 +23,13 @@ type Edit =
   | { kind: 'rename'; target: DirEntry }
   | null
 
-/* ---- icons (colored by file type, VSCode-like) --------------------------- */
-const FILE_COLORS: Record<string, string> = {
-  ts: '#3178c6',
-  tsx: '#3178c6',
-  js: '#e8d44d',
-  jsx: '#e8d44d',
-  mjs: '#e8d44d',
-  cjs: '#e8d44d',
-  json: '#cbcb41',
-  css: '#519aba',
-  scss: '#cd6799',
-  less: '#cd6799',
-  html: '#e34c26',
-  vue: '#41b883',
-  svelte: '#ff3e00',
-  md: '#6a9fb5',
-  mdx: '#6a9fb5',
-  py: '#4b8bbe',
-  rs: '#dea584',
-  go: '#00add8',
-  java: '#cc3e44',
-  kt: '#a97bff',
-  rb: '#cc342d',
-  php: '#a074c4',
-  c: '#599eff',
-  h: '#a074c4',
-  cpp: '#599eff',
-  cs: '#68217a',
-  swift: '#f05138',
-  sh: '#89e051',
-  zsh: '#89e051',
-  bash: '#89e051',
-  yml: '#cb8f3f',
-  yaml: '#cb8f3f',
-  toml: '#9c4221',
-  ini: '#6d8086',
-  sql: '#dad8d8',
-  png: '#a074c4',
-  jpg: '#a074c4',
-  jpeg: '#a074c4',
-  gif: '#a074c4',
-  svg: '#ffb13b',
-  webp: '#a074c4',
-  ico: '#a074c4',
-  lock: '#8f8f8f',
-  gitignore: '#e8534f',
-  env: '#e8d44d',
-  txt: '#c5c5c5'
-}
-function fileColor(name: string): string {
-  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  return FILE_COLORS[ext] ?? '#b6bcc4'
-}
-
+/* ---- icons ---------------------------------------------------------------- */
 function Chevron({ open }: { open: boolean }): JSX.Element {
   return (
     <svg className={`ex-chevron${open ? ' open' : ''}`} width="16" height="16" viewBox="0 0 16 16">
       <path fill="currentColor" d="M5.7 3.3L10.4 8l-4.7 4.7-.7-.7L8.9 8 5 4z" />
     </svg>
   )
-}
-function FolderIcon({ open }: { open: boolean }): JSX.Element {
-  return (
-    <svg className="ex-icon" width="16" height="16" viewBox="0 0 16 16" style={{ color: '#8bb3d9' }}>
-      {open ? (
-        <path fill="currentColor" d="M1.5 3h4l1 1.5H14a.5.5 0 01.48.63l-1.2 4.5A1 1 0 0112.3 14H2a1 1 0 01-1-1V3.5A.5.5 0 011.5 3z" />
-      ) : (
-        <path fill="currentColor" d="M1.5 3h4l1 1.5H14a1 1 0 011 1V13a1 1 0 01-1 1H1.5a.5.5 0 01-.5-.5v-10A.5.5 0 011.5 3z" />
-      )}
-    </svg>
-  )
-}
-const CONFIG_NAMES = new Set([
-  'package.json',
-  'package-lock.json',
-  'yarn.lock',
-  'pnpm-lock.yaml',
-  'tsconfig.json',
-  'jsconfig.json',
-  'dockerfile',
-  'docker-compose.yml',
-  'docker-compose.yaml',
-  'makefile',
-  'cargo.toml',
-  'go.mod',
-  'go.sum',
-  'requirements.txt',
-  'pyproject.toml'
-])
-function isConfigFile(name: string): boolean {
-  const n = name.toLowerCase()
-  if (n.startsWith('.')) return true // dotfiles (.gitignore, .env, .eslintrc, …)
-  if (CONFIG_NAMES.has(n)) return true
-  if (n.includes('tsconfig') || n.includes('.config.') || n.endsWith('.lock')) return true
-  return false
-}
-
-function ConfigIcon(): JSX.Element {
-  return (
-    <svg className="ex-icon" width="16" height="16" viewBox="0 0 16 16" style={{ color: '#8b9bb0' }}>
-      <path
-        fill="currentColor"
-        d="M8 5.2A2.8 2.8 0 108 10.8 2.8 2.8 0 008 5.2zm0 1.5a1.3 1.3 0 110 2.6 1.3 1.3 0 010-2.6zM7 1l-.3 1.6a5.5 5.5 0 00-1.2.7L4 2.7 2.7 4l.6 1.5c-.3.4-.5.8-.7 1.2L1 7v2l1.6.3c.2.4.4.8.7 1.2L2.7 12 4 13.3l1.5-.6c.4.3.8.5 1.2.7L7 15h2l.3-1.6c.4-.2.8-.4 1.2-.7l1.5.6L13.3 12l-.6-1.5c.3-.4.5-.8.7-1.2L15 9V7l-1.6-.3a5.5 5.5 0 00-.7-1.2L13.3 4 12 2.7l-1.5.6a5.5 5.5 0 00-1.2-.7L9 1H7z"
-      />
-    </svg>
-  )
-}
-function FileGlyph(): JSX.Element {
-  return (
-    <svg className="ex-icon" width="16" height="16" viewBox="0 0 16 16" style={{ color: '#b6bcc4' }}>
-      <path fill="currentColor" d="M9.5 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V4.5L9.5 1zM9 5V2l3 3H9z" />
-    </svg>
-  )
-}
-function FileChip({ name }: { name: string }): JSX.Element {
-  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
-  return (
-    <span className="ex-chip" style={{ background: fileColor(name) }}>
-      {ext.slice(0, 3).toUpperCase()}
-    </span>
-  )
-}
-function FileNode({ name }: { name: string }): JSX.Element {
-  if (isConfigFile(name)) return <ConfigIcon />
-  const dot = name.lastIndexOf('.')
-  if (dot > 0) return <FileChip name={name} />
-  return <FileGlyph />
 }
 function ActionIcon({ type }: { type: 'new-file' | 'new-folder' | 'refresh' | 'collapse' }): JSX.Element {
   const p =
@@ -175,8 +59,11 @@ function TreeNode({
   onMenu: (e: ReactMouseEvent, entry: DirEntry) => void
   onNew: (kind: 'new-file' | 'new-folder', dir: string) => void
 }): JSX.Element {
+  const t = useT()
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<DirEntry[] | null>(null)
+  const rowRef = useRef<HTMLDivElement>(null)
+  const revealTarget = useExplorerReveal((s) => s.target)
   const activePath = useSession((s) =>
     s.activeWorkspace ? (s.sessions[s.activeWorkspace]?.activePath ?? null) : null
   )
@@ -184,6 +71,7 @@ function TreeNode({
   const version = useTree((s) => s.versions[entry.path] ?? 0)
   const collapseToken = useTree((s) => s.collapseToken)
   const edited = useAgentEdits((s) => entry.path in s.edits)
+  const gitCat = useGitStatus((s) => (entry.isDirectory ? s.dirs[entry.path] : s.files[entry.path]))
   const isSelected = useSelection((s) => s.selected.includes(entry.path))
   const single = useSelection((s) => s.single)
   const toggleSel = useSelection((s) => s.toggle)
@@ -220,10 +108,27 @@ function TreeNode({
     if (collapseToken > 0) setExpanded(false)
   }, [collapseToken])
 
+  // Reveal: auto-expand folders on the path to the target file; scroll it in view.
+  useEffect(() => {
+    if (!revealTarget) return
+    if (entry.isDirectory) {
+      if (revealTarget.startsWith(entry.path + '/') && !expanded) {
+        void (async () => {
+          if (children === null) await load()
+          setExpanded(true)
+        })()
+      }
+    } else if (revealTarget === entry.path) {
+      rowRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealTarget, entry.path, entry.isDirectory])
+
   return (
     <div>
       <div
-        className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}`}
+        ref={rowRef}
+        className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}${gitCat ? ' git-' + gitCat : ''}`}
         onClick={toggle}
         onContextMenu={(e) => onMenu(e, entry)}
       >
@@ -231,13 +136,19 @@ function TreeNode({
           <span key={i} className="ex-guide" />
         ))}
         <span className="ex-twist">{entry.isDirectory ? <Chevron open={expanded} /> : null}</span>
-        {entry.isDirectory ? <FolderIcon open={expanded} /> : <FileNode name={entry.name} />}
+        <span
+          className="ex-icon"
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <FileIcon name={entry.name} dir={entry.isDirectory} open={expanded} />
+        </span>
         <span className="ex-label">{entry.name}</span>
-        {edited && <span className="ex-edit-dot" title="에이전트가 수정함">●</span>}
+        {edited && <span className="ex-edit-dot" title={t('explorer.agentEdited')}>●</span>}
+        {gitCat && !entry.isDirectory && <span className="ex-git-badge">{GIT_BADGE[gitCat]}</span>}
         {entry.isDirectory && (
           <span className="ex-row-actions">
             <button
-              title="새 파일"
+              title={t('explorer.newFile')}
               onClick={(e) => {
                 e.stopPropagation()
                 onNew('new-file', entry.path)
@@ -246,7 +157,7 @@ function TreeNode({
               <ActionIcon type="new-file" />
             </button>
             <button
-              title="새 폴더"
+              title={t('explorer.newFolder')}
               onClick={(e) => {
                 e.stopPropagation()
                 onNew('new-folder', entry.path)
@@ -267,6 +178,7 @@ function TreeNode({
 
 /* ---- panel --------------------------------------------------------------- */
 export default function ExplorerPanel({ workspace }: { workspace: string }): JSX.Element {
+  const t = useT()
   const [roots, setRoots] = useState<DirEntry[]>([])
   const [menu, setMenu] = useState<Menu | null>(null)
   const [edit, setEdit] = useState<Edit>(null)
@@ -277,6 +189,28 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const closeTab = useSession((s) => s.closeTab)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const selection = useSelection((s) => s.selected)
+  const activePath = useSession((s) => s.sessions[workspace]?.activePath ?? null)
+  const reveal = useExplorerReveal((s) => s.reveal)
+  const refreshGit = useGitStatus((s) => s.refresh)
+  const gitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const scheduleGit = useCallback(() => {
+    if (workspace !== activeWorkspace) return
+    if (gitTimer.current) clearTimeout(gitTimer.current)
+    gitTimer.current = setTimeout(() => void refreshGit(workspace), 300)
+  }, [workspace, activeWorkspace, refreshGit])
+
+  // Keep the tree in sync with the open file: reveal it (expand ancestors, scroll).
+  useEffect(() => {
+    if (activePath && workspace === activeWorkspace) reveal(activePath)
+  }, [activePath, workspace, activeWorkspace, reveal])
+
+  // Working-tree decorations: refresh on activation, on git HEAD/index changes,
+  // and (debounced) whenever files change on disk.
+  useEffect(() => {
+    if (workspace === activeWorkspace) void refreshGit(workspace)
+  }, [workspace, activeWorkspace, rootVersion, refreshGit])
+  useEffect(() => window.api.git.onChanged(() => scheduleGit()), [scheduleGit])
 
   useEffect(() => {
     window.api.workspace.readDir(workspace).then(setRoots)
@@ -286,8 +220,9 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
     return window.api.bridge.onFsChanged(({ type, path }) => {
       if (workspace !== activeWorkspace) return
       if (type === 'add' || type === 'unlink') bump(dirname(path))
+      scheduleGit()
     })
-  }, [workspace, activeWorkspace, bump])
+  }, [workspace, activeWorkspace, bump, scheduleGit])
 
   const openMenu = useCallback((e: ReactMouseEvent, entry: DirEntry | null) => {
     e.preventDefault()
@@ -323,32 +258,32 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const menuItems = (entry: DirEntry | null): MenuItem[] => {
     const dir = targetDir(entry)
     const items: MenuItem[] = [
-      { label: '새 파일', onClick: () => setEdit({ kind: 'new-file', dir }) },
-      { label: '새 폴더', onClick: () => setEdit({ kind: 'new-folder', dir }) }
+      { label: t('explorer.newFile'), onClick: () => setEdit({ kind: 'new-file', dir }) },
+      { label: t('explorer.newFolder'), onClick: () => setEdit({ kind: 'new-folder', dir }) }
     ]
     const targets = sendTargets(entry)
     if (targets.length) {
       const n = targets.length
       items.push(
         { label: '', onClick: () => {}, separator: true },
-        { label: `터미널로 @멘션 (${n})`, onClick: () => sendMentions(targets) },
-        { label: `터미널로 내용 전송 (${n})`, onClick: () => sendContents(targets) }
+        { label: t('explorer.mentionInTerminal', { n }), onClick: () => sendMentions(targets) },
+        { label: t('explorer.sendToTerminal', { n }), onClick: () => sendContents(targets) }
       )
     }
     if (entry) {
       items.push(
         { label: '', onClick: () => {}, separator: true },
-        { label: '이름 변경', onClick: () => setEdit({ kind: 'rename', target: entry }) },
-        { label: '삭제', danger: true, onClick: () => doDelete(entry) },
+        { label: t('explorer.rename'), onClick: () => setEdit({ kind: 'rename', target: entry }) },
+        { label: t('explorer.delete'), danger: true, onClick: () => doDelete(entry) },
         { label: '', onClick: () => {}, separator: true },
-        { label: 'Finder에서 보기', onClick: () => window.api.workspace.reveal(entry.path) }
+        { label: t('explorer.revealInFinder'), onClick: () => window.api.workspace.reveal(entry.path) }
       )
     }
     return items
   }
 
   const doDelete = async (entry: DirEntry): Promise<void> => {
-    if (!window.confirm(`'${entry.name}' 을(를) 삭제할까? 되돌릴 수 없어.`)) return
+    if (!window.confirm(t('explorer.deleteConfirm', { name: entry.name }))) return
     await window.api.workspace.delete(entry.path)
     if (!entry.isDirectory) {
       closeTab(entry.path)
@@ -387,16 +322,16 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
       <div className="ex-header">
         <span className="ex-title">{workspace.split('/').pop()}</span>
         <span className="ex-header-actions">
-          <button title="새 파일" onClick={() => onNew('new-file', workspace)}>
+          <button title={t('explorer.newFile')} onClick={() => onNew('new-file', workspace)}>
             <ActionIcon type="new-file" />
           </button>
-          <button title="새 폴더" onClick={() => onNew('new-folder', workspace)}>
+          <button title={t('explorer.newFolder')} onClick={() => onNew('new-folder', workspace)}>
             <ActionIcon type="new-folder" />
           </button>
-          <button title="새로고침" onClick={() => bump(workspace)}>
+          <button title={t('common.refresh')} onClick={() => bump(workspace)}>
             <ActionIcon type="refresh" />
           </button>
-          <button title="모두 접기" onClick={collapseAll}>
+          <button title={t('explorer.collapseAll')} onClick={collapseAll}>
             <ActionIcon type="collapse" />
           </button>
         </span>
@@ -413,10 +348,14 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
       {edit && (
         <InputModal
           title={
-            edit.kind === 'new-file' ? '새 파일 이름' : edit.kind === 'new-folder' ? '새 폴더 이름' : '이름 변경'
+            edit.kind === 'new-file'
+              ? t('explorer.newFileName')
+              : edit.kind === 'new-folder'
+                ? t('explorer.newFolderName')
+                : t('explorer.rename')
           }
           initial={edit.kind === 'rename' ? edit.target.name : ''}
-          placeholder="이름 입력"
+          placeholder={t('explorer.namePlaceholder')}
           onSubmit={submitEdit}
           onCancel={() => setEdit(null)}
         />

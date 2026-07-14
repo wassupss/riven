@@ -13,7 +13,12 @@ import { registerConfigHandlers } from './config'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
+import { registerAiHandlers } from './ai'
+import { registerUsageHandlers } from './usage'
 import { buildMenu } from './menu'
+
+// Product name for the app menu / About panel / dock (in dev it'd be "Electron").
+app.setName('riven')
 
 function resolveClaude(): string | null {
   // Prefer a PATH-resolved claude (via login shell so profiles load),
@@ -51,10 +56,12 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
-  // Forward renderer console (prefixed) to the main stdout for debugging.
-  mainWindow.webContents.on('console-message', (_e, _level, message) => {
-    if (message.startsWith('[riven]')) console.log(message)
-  })
+  // Forward renderer console (prefixed) to the main stdout — dev only.
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('console-message', (_e, _level, message) => {
+      if (message.startsWith('[riven]')) console.log(message)
+    })
+  }
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     const u = details.url
@@ -88,6 +95,8 @@ app.whenReady().then(() => {
   registerSearchHandlers()
   registerCliHandlers()
   registerPortsHandlers()
+  registerAiHandlers()
+  registerUsageHandlers()
   buildMenu()
 
   const claudePath = resolveClaude()

@@ -18,6 +18,11 @@ const api = {
   workspace: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke('workspace:pickFolder'),
     readDir: (dir: string): Promise<DirEntry[]> => ipcRenderer.invoke('workspace:readDir', dir),
+    listFiles: (folder: string): Promise<string[]> => ipcRenderer.invoke('workspace:listFiles', folder),
+    scripts: (folder: string): Promise<{ manager: string; scripts: string[] }> =>
+      ipcRenderer.invoke('scripts:list', folder),
+    importFont: (): Promise<{ family: string; dataUrl: string } | null> =>
+      ipcRenderer.invoke('font:import'),
     readFile: (file: string): Promise<string> => ipcRenderer.invoke('workspace:readFile', file),
     writeFile: (file: string, content: string): Promise<void> =>
       ipcRenderer.invoke('workspace:writeFile', file, content),
@@ -74,6 +79,12 @@ const api = {
       ipcRenderer.on('pty:status', listener)
       return () => ipcRenderer.removeListener('pty:status', listener)
     },
+    onAgent: (cb: (e: { key: string; agent: boolean; name?: string | null }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { key: string; agent: boolean; name?: string | null }): void =>
+        cb(payload)
+      ipcRenderer.on('pty:agent', listener)
+      return () => ipcRenderer.removeListener('pty:agent', listener)
+    },
     onBell: (cb: (e: { key: string }) => void): (() => void) => {
       const listener = (_e: unknown, payload: { key: string }): void => cb(payload)
       ipcRenderer.on('pty:bell', listener)
@@ -86,6 +97,8 @@ const api = {
     }
   },
   lsp: {
+    servers: (rootPath: string): Promise<string[]> =>
+      ipcRenderer.invoke('lsp:servers', rootPath),
     start: (serverKey: string, rootPath: string): Promise<unknown> =>
       ipcRenderer.invoke('lsp:start', serverKey, rootPath),
     request: (serverKey: string, method: string, params: unknown): Promise<unknown> =>
@@ -119,6 +132,24 @@ const api = {
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
       ipcRenderer.invoke('cli:list')
   },
+  ai: {
+    complete: (
+      prefix: string,
+      suffix: string,
+      opts: { mode: string; endpoint: string; model: string; apiKey?: string }
+    ): Promise<string> => ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
+  },
+  usage: {
+    today: (): Promise<{
+      totalCost: number
+      totalTokens: number
+      perModel: Array<{ model: string; input: number; output: number; cacheWrite: number; cacheRead: number; cost: number }>
+    }> => ipcRenderer.invoke('usage:today'),
+    limits: (): Promise<{
+      session: { usedPct: number; resetsAt: string | null } | null
+      weekly: { usedPct: number; resetsAt: string | null } | null
+    }> => ipcRenderer.invoke('usage:limits')
+  },
   ports: {
     list: (folder: string): Promise<number[]> => ipcRenderer.invoke('ports:list', folder)
   },
@@ -127,11 +158,22 @@ const api = {
       ipcRenderer.invoke('git:info', folder),
     showFile: (folder: string, relPath: string): Promise<string | null> =>
       ipcRenderer.invoke('git:showFile', folder, relPath),
+    blame: (
+      folder: string,
+      relPath: string
+    ): Promise<{
+      ok: boolean
+      lines?: Record<number, { author: string; time: number; summary: string; hash: string }>
+      error?: string
+    }> => ipcRenderer.invoke('git:blame', folder, relPath),
     status: (
       folder: string
     ): Promise<{
       branch: string | null
       isRepo: boolean
+      ahead: number
+      behind: number
+      hasUpstream: boolean
       files: Array<{
         path: string
         x: string
@@ -146,6 +188,10 @@ const api = {
     unstage: (folder: string, relPath: string): Promise<void> =>
       ipcRenderer.invoke('git:unstage', folder, relPath),
     stageAll: (folder: string): Promise<void> => ipcRenderer.invoke('git:stageAll', folder),
+    discard: (folder: string, relPath: string, untracked: boolean): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:discard', folder, relPath, untracked),
+    push: (folder: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('git:push', folder),
+    pull: (folder: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('git:pull', folder),
     commit: (folder: string, message: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('git:commit', folder, message),
     watch: (folder: string): Promise<void> => ipcRenderer.invoke('git:watch', folder),

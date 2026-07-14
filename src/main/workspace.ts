@@ -8,7 +8,29 @@ export interface DirEntry {
   isDirectory: boolean
 }
 
-const IGNORED = new Set(['.git', 'node_modules', '.DS_Store', 'out', 'dist', '.cache'])
+const IGNORED = new Set([
+  '.git',
+  'node_modules',
+  '.DS_Store',
+  'out',
+  'dist',
+  '.cache',
+  '.next',
+  '.turbo',
+  '.svelte-kit',
+  '.nuxt',
+  '.output',
+  '.vercel',
+  '.vite',
+  '.parcel-cache',
+  'coverage',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.venv',
+  'venv',
+  'target'
+])
 
 export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:pickFolder', async () => {
@@ -94,6 +116,73 @@ export function registerWorkspaceHandlers(): void {
             /* skip unreadable */
           }
         }
+      }
+    }
+    await walk(folder)
+    return out
+  })
+
+  // Import a local font file → return a family name + data URL for @font-face.
+  ipcMain.handle(
+    'font:import',
+    async (): Promise<{ family: string; dataUrl: string } | null> => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const res = await dialog.showOpenDialog(win, {
+        title: '폰트 파일 가져오기',
+        properties: ['openFile'],
+        filters: [{ name: 'Fonts', extensions: ['ttf', 'otf', 'woff', 'woff2'] }]
+      })
+      if (res.canceled || !res.filePaths[0]) return null
+      const file = res.filePaths[0]
+      const ext = path.extname(file).slice(1).toLowerCase()
+      const mime =
+        ext === 'woff2' ? 'font/woff2' : ext === 'woff' ? 'font/woff' : ext === 'otf' ? 'font/otf' : 'font/ttf'
+      const buf = await fs.readFile(file)
+      const family = path.basename(file, path.extname(file))
+      return { family, dataUrl: `data:${mime};base64,${buf.toString('base64')}` }
+    }
+  )
+
+  // package.json scripts + detected package manager, for the run-script launcher.
+  ipcMain.handle(
+    'scripts:list',
+    async (_e, folder: string): Promise<{ manager: string; scripts: string[] }> => {
+      let manager = 'npm'
+      try {
+        if (await fs.stat(path.join(folder, 'pnpm-lock.yaml')).catch(() => null)) manager = 'pnpm'
+        else if (await fs.stat(path.join(folder, 'yarn.lock')).catch(() => null)) manager = 'yarn'
+        else if (await fs.stat(path.join(folder, 'bun.lockb')).catch(() => null)) manager = 'bun'
+      } catch {
+        /* default npm */
+      }
+      try {
+        const pkg = JSON.parse(await fs.readFile(path.join(folder, 'package.json'), 'utf8')) as {
+          scripts?: Record<string, string>
+        }
+        return { manager, scripts: Object.keys(pkg.scripts ?? {}) }
+      } catch {
+        return { manager, scripts: [] }
+      }
+    }
+  )
+
+  // Fast flat list of workspace-relative file paths (no content) for quick-open.
+  ipcMain.handle('workspace:listFiles', async (_e, folder: string): Promise<string[]> => {
+    const out: string[] = []
+    const walk = async (dir: string): Promise<void> => {
+      if (out.length >= 20000) return
+      let entries
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      for (const e of entries) {
+        if (out.length >= 20000) return
+        if (IGNORED.has(e.name)) continue
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) await walk(full)
+        else if (e.isFile()) out.push(path.relative(folder, full))
       }
     }
     await walk(folder)

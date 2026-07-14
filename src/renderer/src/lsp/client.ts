@@ -4,17 +4,42 @@ import * as monaco from 'monaco-editor'
 // sync to a real language server running in the main process. Kept isolated in
 // lsp/ so it can be replaced by monaco-languageclient later without touching UI.
 
-const SUPPORTED_LANGS = ['typescript', 'javascript', 'tsx', 'jsx']
-
-function serverKeyFor(languageId: string): string | null {
-  return SUPPORTED_LANGS.includes(languageId) ? 'typescript' : null
+// Maps a Monaco language id to the server that owns it + the LSP languageId that
+// server expects. To support a new language, add an entry here and a matching
+// resolver in src/main/lsp.ts. Languages Monaco validates on its own via bundled
+// web workers (json/css/scss/less/html) are intentionally left out.
+interface LangSpec {
+  server: string
+  lspId: string
 }
+const LANG_SPECS: Record<string, LangSpec> = {
+  typescript: { server: 'typescript', lspId: 'typescript' },
+  javascript: { server: 'typescript', lspId: 'javascript' },
+  tsx: { server: 'typescript', lspId: 'typescriptreact' },
+  jsx: { server: 'typescript', lspId: 'javascriptreact' },
+  python: { server: 'pyright', lspId: 'python' },
+  go: { server: 'gopls', lspId: 'go' },
+  rust: { server: 'rust', lspId: 'rust' },
+  c: { server: 'clangd', lspId: 'c' },
+  cpp: { server: 'clangd', lspId: 'cpp' },
+  shell: { server: 'bash', lspId: 'shellscript' },
+  yaml: { server: 'yaml', lspId: 'yaml' }
+}
+const ALL_LANGS = Object.keys(LANG_SPECS)
 
-// Monaco language id -> LSP languageId that tsserver expects.
+// Populated at init from the main process — only servers that are installed.
+let availableServers = new Set<string>()
+
+function langSpecFor(languageId: string): LangSpec | null {
+  const spec = LANG_SPECS[languageId]
+  return spec && availableServers.has(spec.server) ? spec : null
+}
+function serverKeyFor(languageId: string): string | null {
+  return langSpecFor(languageId)?.server ?? null
+}
+// Monaco language id -> LSP languageId the server expects.
 function lspLanguageId(monacoLang: string): string {
-  if (monacoLang === 'tsx') return 'typescriptreact'
-  if (monacoLang === 'jsx') return 'javascriptreact'
-  return monacoLang
+  return langSpecFor(monacoLang)?.lspId ?? monacoLang
 }
 
 let root: string | null = null
@@ -104,7 +129,7 @@ function markdownFromContents(contents: unknown): string {
 // ---- document synchronization ---------------------------------------------
 
 function isManaged(model: monaco.editor.ITextModel): boolean {
-  return model.uri.scheme === 'file' && SUPPORTED_LANGS.includes(model.getLanguageId())
+  return model.uri.scheme === 'file' && serverKeyFor(model.getLanguageId()) != null
 }
 
 function didOpen(model: monaco.editor.ITextModel): void {
@@ -147,7 +172,7 @@ function didClose(model: monaco.editor.ITextModel): void {
 // ---- provider registration -------------------------------------------------
 
 function registerProviders(): void {
-  monaco.languages.registerCompletionItemProvider(SUPPORTED_LANGS, {
+  monaco.languages.registerCompletionItemProvider(ALL_LANGS, {
     triggerCharacters: ['.', '"', "'", '/', '@', '<', ' '],
     async provideCompletionItems(model, position) {
       const serverKey = serverKeyFor(model.getLanguageId())
@@ -188,7 +213,7 @@ function registerProviders(): void {
     }
   })
 
-  monaco.languages.registerHoverProvider(SUPPORTED_LANGS, {
+  monaco.languages.registerHoverProvider(ALL_LANGS, {
     async provideHover(model, position) {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
@@ -207,7 +232,7 @@ function registerProviders(): void {
     }
   })
 
-  monaco.languages.registerDefinitionProvider(SUPPORTED_LANGS, {
+  monaco.languages.registerDefinitionProvider(ALL_LANGS, {
     async provideDefinition(model, position) {
       const serverKey = serverKeyFor(model.getLanguageId())
       if (!serverKey) return null
@@ -232,7 +257,80 @@ function registerProviders(): void {
     }
   })
 
-  monaco.languages.registerSignatureHelpProvider(SUPPORTED_LANGS, {
+  // Find All References (Shift+F12 / right-click). Without this provider monaco
+  // shows "No references found" no matter what — the LSP is never queried.
+  monaco.languages.registerReferenceProvider(ALL_LANGS, {
+    async provideReferences(model, position, context) {
+      const serverKey = serverKeyFor(model.getLanguageId())
+      if (!serverKey) return null
+      await ensureStarted(serverKey)
+      const res = (await window.api.lsp.request(serverKey, 'textDocument/references', {
+        textDocument: { uri: model.uri.toString() },
+        position: toLspPos(position),
+        context: { includeDeclaration: context.includeDeclaration }
+      })) as Array<{ uri: string; range: LspRange }> | null
+      if (!res) return []
+      return res
+        .map((loc) =>
+          loc?.uri && loc?.range
+            ? { uri: monaco.Uri.parse(loc.uri), range: toMonacoRange(loc.range) }
+            : null
+        )
+        .filter(Boolean) as monaco.languages.Location[]
+    }
+  })
+
+  // Go to Implementation (⌘F12).
+  monaco.languages.registerImplementationProvider(ALL_LANGS, {
+    async provideImplementation(model, position) {
+      const serverKey = serverKeyFor(model.getLanguageId())
+      if (!serverKey) return null
+      await ensureStarted(serverKey)
+      const res = (await window.api.lsp.request(serverKey, 'textDocument/implementation', {
+        textDocument: { uri: model.uri.toString() },
+        position: toLspPos(position)
+      })) as
+        | { uri: string; range: LspRange }
+        | Array<{ uri?: string; targetUri?: string; range?: LspRange; targetRange?: LspRange }>
+        | null
+      if (!res) return null
+      const arr = Array.isArray(res) ? res : [res]
+      return arr
+        .map((loc) => {
+          const uri = loc.uri ?? loc.targetUri
+          const range = loc.range ?? loc.targetRange
+          return uri && range ? { uri: monaco.Uri.parse(uri), range: toMonacoRange(range) } : null
+        })
+        .filter(Boolean) as monaco.languages.Definition
+    }
+  })
+
+  // Go to Type Definition.
+  monaco.languages.registerTypeDefinitionProvider(ALL_LANGS, {
+    async provideTypeDefinition(model, position) {
+      const serverKey = serverKeyFor(model.getLanguageId())
+      if (!serverKey) return null
+      await ensureStarted(serverKey)
+      const res = (await window.api.lsp.request(serverKey, 'textDocument/typeDefinition', {
+        textDocument: { uri: model.uri.toString() },
+        position: toLspPos(position)
+      })) as
+        | { uri: string; range: LspRange }
+        | Array<{ uri?: string; targetUri?: string; range?: LspRange; targetRange?: LspRange }>
+        | null
+      if (!res) return null
+      const arr = Array.isArray(res) ? res : [res]
+      return arr
+        .map((loc) => {
+          const uri = loc.uri ?? loc.targetUri
+          const range = loc.range ?? loc.targetRange
+          return uri && range ? { uri: monaco.Uri.parse(uri), range: toMonacoRange(range) } : null
+        })
+        .filter(Boolean) as monaco.languages.Definition
+    }
+  })
+
+  monaco.languages.registerSignatureHelpProvider(ALL_LANGS, {
     signatureHelpTriggerCharacters: ['(', ','],
     async provideSignatureHelp(model, position) {
       const serverKey = serverKeyFor(model.getLanguageId())
@@ -303,6 +401,20 @@ export function closeDocument(path: string): void {
   monaco.editor.getModel(uri)?.dispose()
 }
 
+const changeWired = new WeakSet<monaco.editor.ITextModel>()
+
+// Open a model with its owning server + keep it synced. Safe to call repeatedly.
+function manage(model: monaco.editor.ITextModel): void {
+  if (!isManaged(model)) return
+  didOpen(model)
+  if (!changeWired.has(model)) {
+    changeWired.add(model)
+    model.onDidChangeContent(() => {
+      if (isManaged(model)) didChange(model)
+    })
+  }
+}
+
 export function ensureLspInitialized(workspaceRoot: string): void {
   root = workspaceRoot
   if (initialized) return
@@ -311,18 +423,21 @@ export function ensureLspInitialized(workspaceRoot: string): void {
   registerProviders()
   wireDiagnostics()
 
-  monaco.editor.getModels().forEach((m) => {
-    if (isManaged(m)) didOpen(m)
-  })
-  monaco.editor.onDidCreateModel((m) => {
-    if (isManaged(m)) {
-      didOpen(m)
-      m.onDidChangeContent(() => {
-        if (isManaged(m)) didChange(m)
-      })
-    }
-  })
+  // Providers/sync listeners are registered immediately, but which languages are
+  // actually served depends on installed servers — fetch that, then open models.
+  monaco.editor.onDidCreateModel((m) => manage(m))
   monaco.editor.onWillDisposeModel((m) => {
     if (isManaged(m)) didClose(m)
   })
+
+  window.api.lsp
+    .servers(workspaceRoot)
+    .then((keys) => {
+      availableServers = new Set(keys)
+      // Retroactively open any models created before availability was known.
+      monaco.editor.getModels().forEach((m) => manage(m))
+    })
+    .catch(() => {
+      // No servers reachable — Monaco's built-in workers still validate json/css/html.
+    })
 }

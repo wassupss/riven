@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react'
+import { TriangleAlert } from 'lucide-react'
 
 interface Props {
   children: ReactNode
@@ -25,7 +26,10 @@ export default class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="crash">
           <div>
-            <p>⚠ 이 영역에서 오류가 발생했어{this.props.label ? ` (${this.props.label})` : ''}.</p>
+            <p>
+              <TriangleAlert size={14} /> 이 영역에서 오류가 발생했어요
+              {this.props.label ? ` (${this.props.label})` : ''}.
+            </p>
             <pre>{this.state.error.message}</pre>
             <button className="btn-small" onClick={() => this.setState({ error: null })}>
               다시 시도

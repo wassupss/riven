@@ -7,19 +7,27 @@ import Toolbar from './components/Toolbar'
 import StatusBar from './components/StatusBar'
 import ErrorBoundary from './components/ErrorBoundary'
 import AgentWatch from './components/AgentWatch'
-import KeybindingsModal from './keybindings/KeybindingsModal'
 import SettingsModal from './components/SettingsModal'
+import Palette from './components/Palette'
+import AgentPicker from './components/AgentPicker'
 import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions } from './state/session'
 import { loadEnv } from './state/env'
-import { loadSettings, getSettings } from './state/settings'
+import { loadSettings, getSettings, useSettings } from './state/settings'
 import { applyTheme } from './state/themes'
+import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
+import { registerInlineComplete } from './editor/inlineComplete'
+import { injectImportedFonts } from './state/fonts'
+import { useUsage } from './state/usage'
+import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { getEditorCloser } from './keybindings/focus'
 import { getActiveApi } from './dock/registry'
+import { useT } from './i18n'
 
 export default function App(): JSX.Element {
+  const t = useT()
   const ready = useSession((s) => s.ready)
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
@@ -31,12 +39,19 @@ export default function App(): JSX.Element {
     if (activeWorkspace) window.api.bridge.watchStart(activeWorkspace)
   }, [activeWorkspace])
 
+  const usagePinned = useSettings((s) => s.settings.usagePinned)
+
   useEffect(() => {
     registerDefaultActions()
+    registerInlineComplete()
+    useUsage.getState().start()
     void (async () => {
       await loadEnv()
       await loadSettings()
+      injectImportedFonts()
       applyTheme(getSettings().theme)
+      await loadEditorKeymap()
+      applyEditorKeymap(getSettings().editorKeymap)
       await keymap.load()
       await loadPersistedSessions()
     })()
@@ -63,28 +78,49 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app">
-      <div className="titlebar">
-        <WorkspaceTabs />
-        <span className="titlebar-spacer" />
-        <Toolbar />
-      </div>
-
       <PanelGroup direction="horizontal" className="body">
-        {showExplorer && activeWorkspace && (
-          <>
-            <Panel id="sidebar" order={1} defaultSize={13} minSize={8} maxSize={40} className="sidebar">
-              <ExplorerPanel workspace={activeWorkspace} />
-            </Panel>
-            <PanelResizeHandle className="resize-handle-v" />
-          </>
-        )}
+        <Panel id="sidebar" order={1} defaultSize={17} minSize={11} maxSize={40} className="sidebar">
+          <div className="sidebar-inner">
+            {/* Header reaches the top of the window: traffic-light drag area on the
+                left, the toolbar collected on the right. */}
+            <div className="sidebar-head">
+              <Toolbar />
+            </div>
+            {/* The stacked regions (workspaces / explorer / usage) are each
+                independently resizable. */}
+            <PanelGroup direction="vertical" className="sidebar-stack">
+              <Panel id="ws" order={1} defaultSize={34} minSize={12} className="sidebar-region">
+                <WorkspaceTabs />
+              </Panel>
+              {showExplorer && activeWorkspace && (
+                <>
+                  <PanelResizeHandle className="resize-handle-h" />
+                  <Panel id="explorer" order={2} minSize={12} className="sidebar-region">
+                    <div className="sidebar-explorer">
+                      <ExplorerPanel workspace={activeWorkspace} />
+                    </div>
+                  </Panel>
+                </>
+              )}
+              {usagePinned && (
+                <>
+                  <PanelResizeHandle className="resize-handle-h" />
+                  <Panel id="usage" order={3} defaultSize={22} minSize={10} maxSize={50} className="sidebar-region">
+                    <UsagePinned />
+                  </Panel>
+                </>
+              )}
+            </PanelGroup>
+          </div>
+        </Panel>
+        <PanelResizeHandle className="resize-handle-v" />
         {/* One dockview workbench per open workspace; only the active is visible so
             switching projects never tears down running terminals. Closing dock
             panels never grows the sidebar (it's a separate panel). */}
         <Panel id="dock" order={2} className="dock-col">
           <div className="grid-host">
             {ready && openWorkspaces.length === 0 && (
-              <div className="empty-hint center">타이틀바의 + 로 폴더를 열어 프로젝트를 시작해.</div>
+              <div className="empty-hint center">{t('app.emptyHint')}</div>
             )}
             {openWorkspaces.map((ws) => (
               <div
@@ -101,11 +137,12 @@ export default function App(): JSX.Element {
         </Panel>
       </PanelGroup>
 
-      <ErrorBoundary label="상태바">
+      <ErrorBoundary label={t('app.statusBarLabel')}>
         <StatusBar />
       </ErrorBoundary>
-      <KeybindingsModal />
       <SettingsModal />
+      <Palette />
+      <AgentPicker />
       <AgentWatch />
     </div>
   )

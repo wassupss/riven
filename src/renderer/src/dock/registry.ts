@@ -1,4 +1,5 @@
 import type { DockviewApi } from 'dockview'
+import { t } from '../i18n'
 
 // Points at the active workspace's dockview instance so global toolbar buttons
 // and keybindings can add terminals / focus singleton panels.
@@ -29,10 +30,46 @@ export function addTerminal(initialCommand?: string): void {
   api.addPanel({
     id: `term-${paneId}`,
     component: 'terminal',
-    title: initialCommand ? `❯ ${initialCommand}` : '❯ 터미널',
+    title: initialCommand ? `❯ ${initialCommand}` : `❯ ${t('title.terminal')}`,
     params: { paneId, initialCommand },
     renderer: 'always'
   })
+}
+
+// Split: add a terminal beside/below the active panel (cmux-style pane splits).
+export function splitTerminal(direction: 'right' | 'below'): void {
+  const api = activeApi
+  if (!api) return
+  const paneId = nextPaneId()
+  const ref = api.activePanel
+  api.addPanel({
+    id: `term-${paneId}`,
+    component: 'terminal',
+    title: '❯ 터미널',
+    params: { paneId },
+    renderer: 'always',
+    position: ref ? { referencePanel: ref.id, direction } : undefined
+  })
+}
+
+// Cycle tabs within the active group (next/prev terminal tab).
+export function cycleGroupTab(delta: number): void {
+  const api = activeApi
+  const group = api?.activeGroup
+  if (!api || !group) return
+  const panels = group.panels
+  if (panels.length < 2) return
+  const i = panels.findIndex((p) => p.id === group.activePanel?.id)
+  const next = panels[(((i < 0 ? 0 : i) + delta) % panels.length + panels.length) % panels.length]
+  next.api.setActive()
+}
+
+// Focus the nth terminal (1-based) in the active workspace.
+export function selectTerminal(n: number): void {
+  const api = activeApi
+  if (!api) return
+  const terms = api.panels.filter((p) => p.id.startsWith('term-'))
+  terms[n - 1]?.api.setActive()
 }
 
 // Cycle the active dockview panel (keyboard navigation across the grid).
@@ -72,18 +109,17 @@ export function ensureEditor(): void {
   api.addPanel({
     id: 'editor',
     component: 'editor',
-    title: '코드',
+    title: t('title.editor'),
     renderer: 'always',
     position: term ? { referencePanel: term.id, direction: 'right' } : undefined
   })
 }
 
-const SINGLETONS: Record<string, { title: string; direction: 'left' | 'right' | 'below' }> = {
-  editor: { title: '코드', direction: 'right' },
-  preview: { title: '프리뷰', direction: 'right' },
-  search: { title: '검색', direction: 'left' },
-  git: { title: 'Git', direction: 'left' },
-  cli: { title: 'CLI', direction: 'left' }
+const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right' | 'below' }> = {
+  editor: { titleKey: 'title.editor', direction: 'right' },
+  preview: { titleKey: 'title.preview', direction: 'right' },
+  search: { titleKey: 'title.search', direction: 'left' },
+  git: { titleKey: 'title.git', direction: 'left' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).
@@ -101,6 +137,12 @@ export function togglePanel(id: keyof typeof SINGLETONS): void {
     existing.api.setActive()
   } else {
     const cfg = SINGLETONS[id]
-    api.addPanel({ id, component: id, title: cfg.title, renderer: 'always', position: { direction: cfg.direction } })
+    api.addPanel({
+      id,
+      component: id,
+      title: t(cfg.titleKey),
+      renderer: 'always',
+      position: { direction: cfg.direction }
+    })
   }
 }

@@ -1,28 +1,58 @@
-import { useEffect, useRef, useState, useReducer } from 'react'
+import { useEffect, useMemo, useRef, useState, useReducer } from 'react'
 import * as monaco from 'monaco-editor'
 import type { EditorPaneProps } from './EditorPane'
 import { languageForPath } from './EditorPane'
 import { computeHunks, type Hunk } from './diffLines'
 import { ensureLspInitialized } from '../lsp/client'
 import { useSession } from '../state/session'
+import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
+import { installCrossFileNavigation } from './gotoDefinition'
 import { contextBus } from '../bridge/contextBus'
 import { setEditorFocuser, setFocusRegion } from '../keybindings/focus'
 import { editorTheme } from './highlight'
 import { useSettings, getSettings } from '../state/settings'
+import { useT, t as staticT } from '../i18n'
+import { SendHorizontal, Bot, ChevronLeft, ChevronRight, Check, Undo2 } from 'lucide-react'
+
+type BlameLine = { author: string; time: number; summary: string; hash: string }
+
+// GitLens-style relative time. Language follows the app setting.
+function blameRelTime(epochSec: number): string {
+  const ko = getSettings().language !== 'en'
+  const d = Math.max(0, Date.now() / 1000 - epochSec)
+  const n = (v: number): number => Math.floor(v)
+  if (d < 60) return ko ? '방금 전' : 'just now'
+  if (d < 3600) return ko ? `${n(d / 60)}분 전` : `${n(d / 60)}m ago`
+  if (d < 86400) return ko ? `${n(d / 3600)}시간 전` : `${n(d / 3600)}h ago`
+  if (d < 86400 * 7) return ko ? `${n(d / 86400)}일 전` : `${n(d / 86400)}d ago`
+  if (d < 86400 * 30) return ko ? `${n(d / (86400 * 7))}주 전` : `${n(d / (86400 * 7))}w ago`
+  if (d < 86400 * 365) return ko ? `${n(d / (86400 * 30))}개월 전` : `${n(d / (86400 * 30))}mo ago`
+  return ko ? `${n(d / (86400 * 365))}년 전` : `${n(d / (86400 * 365))}y ago`
+}
+
+function truncateSummary(s: string, max = 50): string {
+  const trimmed = s.trim()
+  return trimmed.length > max ? trimmed.slice(0, max - 1) + '…' : trimmed
+}
 
 export default function MonacoEditorPane({
   file,
   onSave,
   onDirtyChange,
   agentEdit,
-  onAgentRevert
+  onAgentRevert,
+  onDismiss
 }: EditorPaneProps): JSX.Element {
+  const t = useT()
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const lineDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const glyphDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
+  const blameDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
+  const blameRef = useRef<Record<number, BlameLine> | null>(null)
+  const updateBlameRef = useRef<() => void>(() => {})
   const viewZoneIds = useRef<string[]>([])
   const lineToHunk = useRef(new Map<number, Hunk>())
   const savedVersions = useRef(new Map<string, number>())
@@ -30,6 +60,19 @@ export default function MonacoEditorPane({
   const [dirty, setDirty] = useState(false)
   const [hunks, setHunks] = useState<Hunk[]>([])
   const [hunkIdx, setHunkIdx] = useState(0)
+  const [selBox, setSelBox] = useState<{ top: number; left: number; lines: number } | null>(null)
+  // Cursor-style per-hunk review: accepted (dismissed) hunks + hover toolbar.
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  const [hunkHover, setHunkHover] = useState<{ top: number; idx: number } | null>(null)
+  const hunkLineMapRef = useRef(new Map<number, number>())
+  const displayedRef = useRef<Hunk[]>([])
+  const hoverHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onDismissRef = useRef(onDismiss)
+  onDismissRef.current = onDismiss
+
+  const hunkKey = (h: Hunk): string => `${h.beforeStart}:${h.beforeCount}:${h.afterStart}:${h.afterCount}`
+  const displayed = useMemo(() => hunks.filter((h) => !dismissed.has(hunkKey(h))), [hunks, dismissed])
+  displayedRef.current = displayed
 
   const fileRef = useRef(file)
   fileRef.current = file
@@ -40,6 +83,37 @@ export default function MonacoEditorPane({
 
   const [, forceRender] = useReducer((x) => x + 1, 0)
   useEffect(() => contextBus.subscribe(forceRender), [])
+
+  // Inline (GitLens-style) blame annotation on the cursor line.
+  const updateBlame = (): void => {
+    const ed = editorRef.current
+    const coll = blameDecoRef.current
+    if (!ed || !coll) return
+    const lines = blameRef.current
+    const pos = ed.getPosition()
+    const model = ed.getModel()
+    if (!lines || !pos || !model) {
+      coll.clear()
+      return
+    }
+    const info = lines[pos.lineNumber]
+    if (!info) {
+      coll.clear()
+      return
+    }
+    const col = model.getLineMaxColumn(pos.lineNumber)
+    const content = `   ${info.author}, ${blameRelTime(info.time)}  ·  ${truncateSummary(info.summary)}`
+    coll.set([
+      {
+        range: new monaco.Range(pos.lineNumber, col, pos.lineNumber, col),
+        options: {
+          after: { content, inlineClassName: 'git-blame-inline' },
+          showIfCollapsed: true
+        }
+      }
+    ])
+  }
+  updateBlameRef.current = updateBlame
 
   const recomputeDirty = (): void => {
     const model = editorRef.current?.getModel()
@@ -96,7 +170,7 @@ export default function MonacoEditorPane({
         range: new monaco.Range(startLine, 1, startLine, 1),
         options: {
           glyphMarginClassName: 'agent-revert-glyph',
-          glyphMarginHoverMessage: { value: '이 변경 되돌리기' }
+          glyphMarginHoverMessage: { value: staticT('editor.revertThisChange') }
         }
       })
     }
@@ -142,55 +216,60 @@ export default function MonacoEditorPane({
 
   const gotoHunk = (i: number): void => {
     const ed = editorRef.current
-    if (!ed || hunks.length === 0) return
-    const idx = ((i % hunks.length) + hunks.length) % hunks.length
+    const list = displayedRef.current
+    if (!ed || list.length === 0) return
+    const idx = ((i % list.length) + list.length) % list.length
     setHunkIdx(idx)
-    const line = hunks[idx].afterStart + 1
+    const line = list[idx].afterStart + 1
     ed.revealLineInCenter(Math.max(1, line))
     ed.setPosition({ lineNumber: Math.max(1, line), column: 1 })
   }
 
+  // Accept (dismiss) one hunk — keeps the applied change, clears its highlight.
+  const acceptHunk = (h: Hunk): void => {
+    setDismissed((s) => new Set(s).add(hunkKey(h)))
+    setHunkHover(null)
+  }
+  const scheduleHideHover = (): void => {
+    if (hoverHideRef.current) clearTimeout(hoverHideRef.current)
+    hoverHideRef.current = setTimeout(() => setHunkHover(null), 220)
+  }
+  const cancelHideHover = (): void => {
+    if (hoverHideRef.current) clearTimeout(hoverHideRef.current)
+  }
+
   // ---- context bridge --------------------------------------------------------
-  const sendToClaude = (): void => {
+  // Send the current selection (or whole file) to the focused terminal's LLM,
+  // tagged with `@file:startLine-endLine` + a fenced code block.
+  const sendSelection = (): void => {
     const ed = editorRef.current
     const model = ed?.getModel()
     const f = fileRef.current
     if (!ed || !model || !f) return
     const sel = ed.getSelection()
-    const [code, kind] =
-      sel && !sel.isEmpty()
-        ? ([model.getValueInRange(sel), 'selection'] as const)
-        : ([model.getValue(), 'file'] as const)
     const root = useSession.getState().activeWorkspace
     const rel = root && f.path.startsWith(root) ? f.path.slice(root.length + 1) : f.path
-    contextBus.sendCode(root, rel, code, kind)
-  }
-  const sendRef = useRef(sendToClaude)
-  sendRef.current = sendToClaude
-
-  const sendDiagnostics = (): void => {
-    const ed = editorRef.current
-    const model = ed?.getModel()
-    const f = fileRef.current
-    if (!ed || !model || !f) return
-    const markers = monaco.editor
-      .getModelMarkers({ resource: model.uri })
-      .filter((m) => m.severity >= monaco.MarkerSeverity.Warning)
-    const root = useSession.getState().activeWorkspace
-    const rel = root && f.path.startsWith(root) ? f.path.slice(root.length + 1) : f.path
-    if (markers.length === 0) {
-      contextBus.sendText(root, `\n[진단 (${rel})] 에러/경고 없음\n`)
-      return
+    const lang = languageForPath(f.path)
+    let loc: string
+    let code: string
+    if (sel && !sel.isEmpty()) {
+      loc = `${rel}:${sel.startLineNumber}-${sel.endLineNumber}`
+      code = model.getValueInRange(sel)
+    } else {
+      loc = rel
+      code = model.getValue()
     }
-    const lines = markers.map((m) => {
-      const sev = m.severity === monaco.MarkerSeverity.Error ? 'error' : 'warning'
-      return `${rel}:${m.startLineNumber}:${m.startColumn} ${sev}: ${m.message}`
-    })
-    contextBus.sendText(root, `\n[진단 (${rel})]\n${lines.join('\n')}\n`)
+    const ok = contextBus.sendText(root, `\n@${loc}\n\`\`\`${lang}\n${code}\n\`\`\`\n`)
+    setSelBox(null)
+    // No agent running → offer to launch one (the text was queued, flushed on up).
+    if (!ok && root) useUI.getState().setAgentPicker(root)
   }
+  const sendRef = useRef(sendSelection)
+  sendRef.current = sendSelection
 
   // ---- editor lifecycle ------------------------------------------------------
   useEffect(() => {
+    installCrossFileNavigation()
     const cfg = getSettings()
     const ed = monaco.editor.create(containerRef.current!, {
       theme: editorTheme(),
@@ -201,14 +280,42 @@ export default function MonacoEditorPane({
       automaticLayout: true,
       scrollBeyondLastLine: false,
       tabSize: 2,
-      renderWhitespace: 'selection'
+      renderWhitespace: 'selection',
+      inlineSuggest: { enabled: true }
     })
     editorRef.current = ed
+    blameDecoRef.current = ed.createDecorationsCollection([])
+    ed.onDidChangeCursorPosition(() => updateBlameRef.current())
     const offSettings = useSettings.subscribe((s) =>
       ed.updateOptions({ fontFamily: s.settings.editorFontFamily, fontSize: s.settings.editorFontSize })
     )
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSaveRef.current())
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => sendRef.current())
+
+    // Selection → floating "send to terminal" chip (Copilot/Cursor style).
+    const refreshSelBox = (): void => {
+      const sel = ed.getSelection()
+      if (!sel || sel.isEmpty()) {
+        setSelBox(null)
+        return
+      }
+      const pos = ed.getScrolledVisiblePosition({
+        lineNumber: sel.startLineNumber,
+        column: sel.startColumn
+      })
+      if (!pos) {
+        setSelBox(null)
+        return
+      }
+      const top = (containerRef.current?.offsetTop ?? 0) + pos.top
+      setSelBox({
+        top: Math.max(0, top - 30),
+        left: Math.min(pos.left, (containerRef.current?.clientWidth ?? 400) - 160),
+        lines: sel.endLineNumber - sel.startLineNumber + 1
+      })
+    }
+    ed.onDidChangeCursorSelection(refreshSelBox)
+    ed.onDidScrollChange(refreshSelBox)
 
     ed.onDidChangeModelContent(() => recomputeDirty())
     // Click the gutter ↩ glyph to revert that hunk.
@@ -219,6 +326,23 @@ export default function MonacoEditorPane({
       const h = lineToHunk.current.get(line)
       if (h) revertHunkRef.current(h)
     })
+    // Hover over a changed region → floating accept/revert toolbar (Cursor style).
+    ed.onMouseMove((e) => {
+      const line = e.target.position?.lineNumber
+      const idx = line != null ? hunkLineMapRef.current.get(line) : undefined
+      if (idx == null) {
+        scheduleHideHover()
+        return
+      }
+      cancelHideHover()
+      const h = displayedRef.current[idx]
+      if (!h) return
+      const pos = ed.getScrolledVisiblePosition({ lineNumber: Math.max(1, h.afterStart + 1), column: 1 })
+      if (!pos) return
+      const top = (containerRef.current?.offsetTop ?? 0) + pos.top
+      setHunkHover({ top: Math.max(0, top), idx })
+    })
+    ed.onMouseLeave(() => scheduleHideHover())
     ed.onDidFocusEditorText(() => setFocusRegion({ kind: 'editor' }))
     ed.onDidFocusEditorWidget(() => setFocusRegion({ kind: 'editor' }))
     setEditorFocuser(() => ed.focus())
@@ -263,10 +387,33 @@ export default function MonacoEditorPane({
   useEffect(() => {
     const hs = agentEdit ? computeHunks(agentEdit.before, agentEdit.after) : []
     setHunks(hs)
-    setHunkIdx((i) => (i < hs.length ? i : 0))
-    decorateHunks(hs)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentEdit?.before, agentEdit?.after, file?.path, file?.content])
+
+  // Fresh review per file — clear accepted set when switching files.
+  useEffect(() => {
+    setDismissed(new Set())
+    setHunkHover(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file?.path])
+
+  // Decorate the still-under-review hunks + build the line→hunk map for hover.
+  useEffect(() => {
+    decorateHunks(displayed)
+    const m = new Map<number, number>()
+    displayed.forEach((h, i) => {
+      if (h.afterCount > 0) {
+        for (let l = h.afterStart + 1; l <= h.afterStart + h.afterCount; l++) m.set(l, i)
+      } else {
+        m.set(Math.max(1, h.afterStart), i)
+      }
+    })
+    hunkLineMapRef.current = m
+    setHunkIdx((i) => (i < displayed.length ? i : 0))
+    // All hunks accepted → dismiss the whole review.
+    if (hunks.length > 0 && displayed.length === 0) onDismissRef.current?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayed, file?.content])
 
   useEffect(() => {
     onDirtyChange?.(dirty)
@@ -284,46 +431,79 @@ export default function MonacoEditorPane({
     clearReveal()
   }, [reveal, file?.path])
 
+  // Fetch git blame for the open file (drives the inline annotation).
+  useEffect(() => {
+    blameRef.current = null
+    blameDecoRef.current?.clear()
+    const p = file?.path
+    if (!p || !activeWorkspace) return
+    let cancelled = false
+    window.api.git
+      .blame(activeWorkspace, p)
+      .then((res) => {
+        if (cancelled || !res.ok || !res.lines) return
+        blameRef.current = res.lines
+        updateBlameRef.current()
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [file?.path, activeWorkspace, dirty])
+
   return (
     <div className="editor-wrap">
-      <div className="editor-tabbar">
-        <span className="editor-tab">
-          {file ? file.path.split('/').pop() : '—'}
-          {dirty ? ' •' : ''}
-        </span>
-        <span className="editor-path">{file?.path ?? ''}</span>
+      {/* Floating "send to terminal LLM" chip, appears at the selection. */}
+      {selBox && file && (
         <button
-          className="btn-small diag-btn"
-          disabled={!file || !contextBus.hasSink(activeWorkspace)}
-          title="이 파일의 에러/경고를 터미널로 전송"
-          onClick={sendDiagnostics}
-        >
-          ⚠ 진단
-        </button>
-        <button
-          className="btn-small send-btn"
-          disabled={!file || !contextBus.hasSink(activeWorkspace)}
+          className="sel-send"
+          style={{ top: selBox.top, left: selBox.left }}
           title={
-            contextBus.hasSink(activeWorkspace)
-              ? `포커스된 터미널에 전송 (선택영역/파일, ⌘L)`
-              : '터미널을 먼저 열어'
+            contextBus.hasAgent(activeWorkspace)
+              ? t('editor.sendSelTitle')
+              : t('editor.noAgentTitle')
           }
-          onClick={sendToClaude}
+          onMouseDown={(e) => {
+            e.preventDefault()
+            sendSelection()
+          }}
         >
-          ➤ 터미널
+          <SendHorizontal size={13} /> {contextBus.hasAgent(activeWorkspace) ? t('editor.toAgent') : t('editor.openAgent')} ({t('editor.lines', { n: selBox.lines })})
         </button>
-      </div>
+      )}
 
-      {hunks.length > 0 && (
+      {displayed.length > 0 && (
         <div className="hunk-nav">
-          <span className="hunk-count">🤖 변경 {hunkIdx + 1}/{hunks.length}</span>
-          <button className="hunk-btn" title="이전 변경" onClick={() => gotoHunk(hunkIdx - 1)}>
-            ‹
+          <span className="hunk-count"><Bot size={13} /> {t('editor.change', { cur: Math.min(hunkIdx + 1, displayed.length), total: displayed.length })}</span>
+          <button className="hunk-btn" title={t('editor.prevChange')} onClick={() => gotoHunk(hunkIdx - 1)}>
+            <ChevronLeft size={14} />
           </button>
-          <button className="hunk-btn" title="다음 변경" onClick={() => gotoHunk(hunkIdx + 1)}>
-            ›
+          <button className="hunk-btn" title={t('editor.nextChange')} onClick={() => gotoHunk(hunkIdx + 1)}>
+            <ChevronRight size={14} />
           </button>
-          <span className="hunk-hint">거터의 ↩ 클릭 = 해당 구간 되돌리기</span>
+        </div>
+      )}
+
+      {/* Per-hunk hover toolbar — accept keeps the change, revert undoes it. */}
+      {hunkHover && displayed[hunkHover.idx] && (
+        <div
+          className="hunk-hover"
+          style={{ top: hunkHover.top }}
+          onMouseEnter={cancelHideHover}
+          onMouseLeave={scheduleHideHover}
+        >
+          <button className="hunk-hover-btn accept" onClick={() => acceptHunk(displayed[hunkHover.idx])}>
+            <Check size={13} /> {t('editor.accept')}
+          </button>
+          <button
+            className="hunk-hover-btn revert"
+            onClick={() => {
+              revertHunk(displayed[hunkHover.idx])
+              setHunkHover(null)
+            }}
+          >
+            <Undo2 size={13} /> {t('editor.revert')}
+          </button>
         </div>
       )}
 
@@ -331,8 +511,8 @@ export default function MonacoEditorPane({
       {!file && (
         <div className="empty-pane">
           <div>
-            <p>파일을 선택하면 여기서 편집할 수 있어.</p>
-            <p className="hint">저장 ⌘S · claude 전송 ⌘L</p>
+            <p>{t('editor.emptyTitle')}</p>
+            <p className="hint">{t('editor.emptyHint')}</p>
           </div>
         </div>
       )}
