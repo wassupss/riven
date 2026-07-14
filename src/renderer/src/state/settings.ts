@@ -19,6 +19,8 @@ export interface Settings {
   language: 'ko' | 'en'
   importedFonts: Array<{ family: string; dataUrl: string }>
   usagePinned: boolean
+  // Run the language formatter on ⌘S before writing to disk.
+  formatOnSave: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   language: 'ko',
   importedFonts: [],
   usagePinned: false,
+  formatOnSave: false,
   terminalFontFamily:
     '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   terminalFontSize: 12,

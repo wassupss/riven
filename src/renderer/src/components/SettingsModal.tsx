@@ -139,6 +139,14 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(e) => upd('editorFontSize', Number(e.target.value))}
                 />
               </div>
+              <label className="set-row set-toggle">
+                <input
+                  type="checkbox"
+                  checked={settings.formatOnSave}
+                  onChange={(e) => upd('formatOnSave', e.target.checked)}
+                />
+                <span className="set-label">{t('settings.formatOnSave')}</span>
+              </label>
 
               <div className="section-label">{t('settings.terminal')}</div>
               <div className="set-row">

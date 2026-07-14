@@ -82,7 +82,20 @@ export default function MonacoEditorPane({
   onRevertRef.current = onAgentRevert
 
   const [, forceRender] = useReducer((x) => x + 1, 0)
-  useEffect(() => contextBus.subscribe(forceRender), [])
+  // The editor reads contextBus only for the send-to-agent chip's hasAgent
+  // state, so re-render only when THAT flips — not on every bus emit (sink
+  // register/unregister, the 900ms agent poll, active-terminal changes).
+  const hasAgentRef = useRef(contextBus.hasAgent(activeWorkspace))
+  useEffect(() => {
+    hasAgentRef.current = contextBus.hasAgent(activeWorkspace)
+    return contextBus.subscribe(() => {
+      const now = contextBus.hasAgent(activeWorkspace)
+      if (now !== hasAgentRef.current) {
+        hasAgentRef.current = now
+        forceRender()
+      }
+    })
+  }, [activeWorkspace])
 
   // Inline (GitLens-style) blame annotation on the cursor line.
   const updateBlame = (): void => {
@@ -122,11 +135,20 @@ export default function MonacoEditorPane({
     setDirty(saved !== undefined && model.getAlternativeVersionId() !== saved)
   }
 
-  const doSave = (): void => {
+  const doSave = async (): Promise<void> => {
     const ed = editorRef.current
     const model = ed?.getModel()
     const f = fileRef.current
     if (!ed || !model || !f) return
+    if (getSettings().formatOnSave) {
+      // Run the language's formatter first; if none is registered this is a
+      // harmless no-op / throw that we swallow so the save still happens.
+      try {
+        await ed.getAction('editor.action.formatDocument')?.run()
+      } catch {
+        /* no formatter for this language */
+      }
+    }
     onSaveRef.current(f.path, model.getValue())
     savedVersions.current.set(model.uri.toString(), model.getAlternativeVersionId())
     recomputeDirty()
