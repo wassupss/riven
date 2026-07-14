@@ -21,6 +21,8 @@ export interface Settings {
   usagePinned: boolean
   // Run the language formatter on ⌘S before writing to disk.
   formatOnSave: boolean
+  // Named "new terminal" presets: each runs `command` in a fresh terminal.
+  terminalProfiles: Array<{ name: string; command: string }>
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   importedFonts: [],
   usagePinned: false,
   formatOnSave: false,
+  terminalProfiles: [{ name: 'claude', command: 'claude' }],
   terminalFontFamily:
     '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   terminalFontSize: 12,

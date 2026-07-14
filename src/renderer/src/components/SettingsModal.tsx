@@ -168,6 +168,54 @@ export default function SettingsModal(): JSX.Element | null {
                 />
               </div>
 
+              <div className="section-label">{t('settings.terminalProfiles')}</div>
+              <div className="set-note">{t('settings.terminalProfilesHint')}</div>
+              {settings.terminalProfiles.map((p, i) => (
+                <div className="set-row" key={i}>
+                  <input
+                    className="url-input set-num"
+                    value={p.name}
+                    placeholder={t('settings.profileName')}
+                    onChange={(e) => {
+                      const next = settings.terminalProfiles.map((x, j) =>
+                        j === i ? { ...x, name: e.target.value } : x
+                      )
+                      upd('terminalProfiles', next)
+                    }}
+                  />
+                  <input
+                    className="url-input"
+                    value={p.command}
+                    placeholder={t('settings.profileCommand')}
+                    onChange={(e) => {
+                      const next = settings.terminalProfiles.map((x, j) =>
+                        j === i ? { ...x, command: e.target.value } : x
+                      )
+                      upd('terminalProfiles', next)
+                    }}
+                  />
+                  <button
+                    className="btn-small"
+                    title={t('common.close')}
+                    onClick={() =>
+                      upd('terminalProfiles', settings.terminalProfiles.filter((_, j) => j !== i))
+                    }
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <div className="set-actions">
+                <button
+                  className="btn-small"
+                  onClick={() =>
+                    upd('terminalProfiles', [...settings.terminalProfiles, { name: 'new', command: '' }])
+                  }
+                >
+                  {t('settings.addProfile')}
+                </button>
+              </div>
+
               <div className="set-actions">
                 <button className="btn-small" onClick={reset}>
                   {t('settings.resetDefaults')}

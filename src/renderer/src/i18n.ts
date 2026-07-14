@@ -203,6 +203,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.font': { ko: '폰트', en: 'Font' },
   'settings.size': { ko: '크기', en: 'Size' },
   'settings.formatOnSave': { ko: '저장 시 자동 포맷', en: 'Format on save' },
+  'settings.terminalProfiles': { ko: '터미널 프로파일', en: 'Terminal profiles' },
+  'settings.terminalProfilesHint': {
+    ko: '패널 메뉴에서 새 터미널로 실행할 명령 프리셋입니다.',
+    en: 'Command presets launched as a new terminal from the panels menu.'
+  },
+  'settings.profileName': { ko: '이름', en: 'Name' },
+  'settings.profileCommand': { ko: '실행 명령', en: 'Command' },
+  'settings.addProfile': { ko: '+ 프로파일 추가', en: '+ Add profile' },
   'settings.resetDefaults': { ko: '기본값으로', en: 'Reset to defaults' },
   'settings.customFont': { ko: '커스텀…', en: 'Custom…' },
   'settings.importFontTitle': { ko: '폰트 파일(.ttf/.otf/.woff) 가져오기', en: 'Import a font file (.ttf/.otf/.woff)' },

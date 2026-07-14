@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, ChevronDown, Bot } from 'lucide-react'
+import { Plus, ChevronDown, Bot, TerminalSquare } from 'lucide-react'
 import { useSession } from '../state/session'
+import { useSettings } from '../state/settings'
 import { useUI } from '../state/ui'
 import { addTerminal, togglePanel, popoutActive } from '../dock/registry'
 import { useT } from '../i18n'
@@ -17,6 +18,7 @@ export default function Toolbar(): JSX.Element {
   const t = useT()
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const hasWs = activeWorkspace != null
+  const profiles = useSettings((s) => s.settings.terminalProfiles)
   const toggleExplorer = useUI((s) => s.toggleExplorer)
   const setAgentPicker = useUI((s) => s.setAgentPicker)
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null)
@@ -71,6 +73,21 @@ export default function Toolbar(): JSX.Element {
       {pos &&
         createPortal(
           <div className="tb-menu" style={{ top: pos.top, right: pos.right }}>
+            {profiles.map((p) => (
+              <div
+                key={p.name}
+                className="tb-menu-item"
+                onClick={() => {
+                  addTerminal(p.command)
+                  close()
+                }}
+              >
+                <span className="tb-menu-icon">
+                  <TerminalSquare size={14} /> {p.name}
+                </span>
+              </div>
+            ))}
+            {profiles.length > 0 && <div className="tb-menu-sep" />}
             <div
               className="tb-menu-item"
               onClick={() => {
