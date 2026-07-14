@@ -88,4 +88,56 @@ export function registerSearchHandlers(): void {
       return { matches, truncated: false }
     }
   )
+
+  // Literal find-and-replace across the workspace. Matches the same guards as
+  // search (skip ignored dirs, binary, and large files) and writes atomically.
+  ipcMain.handle(
+    'search:replaceInFiles',
+    async (
+      _e,
+      opts: { root: string; query: string; replacement: string; caseSensitive?: boolean }
+    ): Promise<{ files: number; replacements: number }> => {
+      const { root, query, replacement, caseSensitive } = opts
+      if (!query) return { files: 0, replacements: 0 }
+      // Escape the query so it matches literally; escape `$` in the replacement
+      // so RegExp replace treats it as text, not a capture reference.
+      const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const re = new RegExp(escapeRe(query), caseSensitive ? 'g' : 'gi')
+      const safeRepl = replacement.replace(/\$/g, '$$$$')
+
+      let files = 0
+      let replacements = 0
+      for await (const file of walk(root)) {
+        let stat
+        try {
+          stat = await fs.stat(file)
+        } catch {
+          continue
+        }
+        if (stat.size > MAX_FILE_BYTES) continue
+
+        let content: string
+        try {
+          content = await fs.readFile(file, 'utf8')
+        } catch {
+          continue
+        }
+        if (content.includes(NUL)) continue // binary
+
+        const count = content.match(re)?.length ?? 0
+        if (!count) continue
+        const next = content.replace(re, safeRepl)
+        try {
+          const tmp = `${file}.tmp`
+          await fs.writeFile(tmp, next)
+          await fs.rename(tmp, file)
+          files++
+          replacements += count
+        } catch {
+          /* skip unwritable files */
+        }
+      }
+      return { files, replacements }
+    }
+  )
 }

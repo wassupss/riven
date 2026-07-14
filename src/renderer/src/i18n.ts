@@ -103,6 +103,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'search.searching': { ko: '검색 중…', en: 'Searching…' },
   'search.summary': { ko: '{n}개 결과{more} · {files}개 파일', en: '{n} results{more} · {files} files' },
   'search.more': { ko: '+ (일부 생략)', en: '+ (truncated)' },
+  'search.replacePlaceholder': { ko: '치환할 내용', en: 'Replace with' },
+  'search.replaceAll': { ko: '모두 치환', en: 'Replace all' },
+  'search.replaceConfirm': {
+    ko: "'{q}'를 {files}개 파일에서 모두 치환할까요? 되돌리기 어렵습니다.",
+    en: "Replace '{q}' across {files} files? This is hard to undo."
+  },
+  'search.replaced': { ko: '{r}곳 치환됨 · {f}개 파일', en: 'Replaced {r} · {f} files' },
 
   // ---- GitPanel ----
   'git.status.M': { ko: '수정', en: 'Modified' },

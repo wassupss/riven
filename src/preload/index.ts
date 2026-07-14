@@ -46,7 +46,14 @@ const api = {
         matchLength: number
       }>
       truncated: boolean
-    }> => ipcRenderer.invoke('search:inFiles', opts)
+    }> => ipcRenderer.invoke('search:inFiles', opts),
+    replaceInFiles: (opts: {
+      root: string
+      query: string
+      replacement: string
+      caseSensitive?: boolean
+    }): Promise<{ files: number; replacements: number }> =>
+      ipcRenderer.invoke('search:replaceInFiles', opts)
   },
   pty: {
     open: (opts: {

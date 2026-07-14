@@ -17,6 +17,7 @@ interface Match {
 export default function SearchPanel({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
   const [query, setQuery] = useState('')
+  const [replacement, setReplacement] = useState('')
   const [matches, setMatches] = useState<Match[]>([])
   const [truncated, setTruncated] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -48,6 +49,17 @@ export default function SearchPanel({ workspace }: { workspace: string }): JSX.E
     grouped.get(m.file)!.push(m)
   }
 
+  const doReplace = async (): Promise<void> => {
+    if (!query.trim() || !matches.length) return
+    // Writing to disk is hard to undo — confirm with the affected file count.
+    if (!window.confirm(t('search.replaceConfirm', { q: query, files: grouped.size }))) return
+    setSearching(true)
+    const res = await window.api.search.replaceInFiles({ root: workspace, query, replacement })
+    setSearching(false)
+    window.alert(t('search.replaced', { r: res.replacements, f: res.files }))
+    run() // refresh the result list against the new file contents
+  }
+
   return (
     <div className="search-panel">
       <div className="search-bar">
@@ -63,6 +75,20 @@ export default function SearchPanel({ workspace }: { workspace: string }): JSX.E
         />
         <button className="btn-small" onClick={run}>
           {t('common.search')}
+        </button>
+      </div>
+      <div className="search-bar">
+        <input
+          className="url-input"
+          value={replacement}
+          placeholder={t('search.replacePlaceholder')}
+          onChange={(e) => setReplacement(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') doReplace()
+          }}
+        />
+        <button className="btn-small" disabled={!matches.length || searching} onClick={doReplace}>
+          {t('search.replaceAll')}
         </button>
       </div>
       <div className="search-summary">
