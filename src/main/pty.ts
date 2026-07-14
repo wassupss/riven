@@ -23,6 +23,7 @@ interface Session {
   agentPresent: boolean
   agentName: string | null
   lastInput: number
+  lastData: number
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
@@ -31,6 +32,7 @@ interface Session {
 const sessions = new Map<string, Session>()
 const BUFFER_CAP = 200_000
 const POLL_MS = 900
+const IDLE_POLL_MS = 5000 // skip the pgrep/ps child-process probe after this much silence
 const ACTIVE_MS = 800 // output must flow within this window to count as "working"
 const INPUT_ECHO_MS = 350 // output within this long after a keystroke = echo, ignore
 const NOTIFY_MIN_BUSY_MS = 1200
@@ -114,13 +116,20 @@ export function registerPtyHandlers(): void {
         ? ['-i', '-l', '-c', `${opts.initialCommand}; exec ${shell} -il`]
         : []
 
-      const proc = pty.spawn(shell, args, {
-        name: 'xterm-256color',
-        cols: opts.cols ?? 80,
-        rows: opts.rows ?? 24,
-        cwd: opts.cwd || os.homedir(),
-        env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
-      })
+      let proc: pty.IPty
+      try {
+        proc = pty.spawn(shell, args, {
+          name: 'xterm-256color',
+          cols: opts.cols ?? 80,
+          rows: opts.rows ?? 24,
+          cwd: opts.cwd || os.homedir(),
+          env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+        })
+      } catch (e) {
+        // A bad shell / cwd shouldn't reject the invoke and break the pane.
+        console.error('[riven] pty spawn failed', e)
+        return { id: key, existed: false, buffer: '', error: e instanceof Error ? e.message : String(e) }
+      }
 
       const s: Session = {
         key,
@@ -133,6 +142,7 @@ export function registerPtyHandlers(): void {
         agentPresent: false,
         agentName: null,
         lastInput: 0,
+        lastData: Date.now(),
         poll: null,
         polling: false,
         activeTimer: null
@@ -140,6 +150,7 @@ export function registerPtyHandlers(): void {
       sessions.set(key, s)
 
       proc.onData((data) => {
+        s.lastData = Date.now()
         send(s, `pty:data:${key}`, data)
         if (data.includes('\x07')) send(s, 'pty:bell', { key })
         // Ignore output that's just an echo of the user's own keystrokes; only
@@ -150,6 +161,10 @@ export function registerPtyHandlers(): void {
       // Track whether an agent is the foreground child.
       s.poll = setInterval(async () => {
         if (s.polling) return
+        // When no agent is present and the terminal has been silent, skip the
+        // pgrep/ps probe entirely — an agent can only appear after output flows
+        // (its startup banner / the echoed command), which refreshes lastData.
+        if (!s.agentPresent && Date.now() - s.lastData > IDLE_POLL_MS) return
         s.polling = true
         const was = s.agentPresent
         const wasName = s.agentName

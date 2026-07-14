@@ -22,6 +22,11 @@ import { buildMenu } from './menu'
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
 app.setName('riven')
 
+// Backstop so a stray async rejection in the main process (a failed fs op, an
+// LSP/pty edge case) logs instead of, on newer Electron/Node, terminating the app.
+process.on('unhandledRejection', (reason) => console.error('[riven] unhandledRejection', reason))
+process.on('uncaughtException', (err) => console.error('[riven] uncaughtException', err))
+
 function resolveClaude(): string | null {
   // Prefer a PATH-resolved claude (via login shell so profiles load),
   // then fall back to the cmux-bundled binary.
@@ -103,7 +108,23 @@ function createWindow(): void {
       shell.openExternal(u)
       return { action: 'deny' }
     }
-    return { action: 'allow' }
+    // Unknown scheme → deny by default (don't open arbitrary protocol windows).
+    return { action: 'deny' }
+  })
+
+  // Keep the main frame pinned to the trusted app origin. A top-level navigation
+  // away from it (injected link, redirect) would keep the preload surface —
+  // handing arbitrary web content our filesystem/shell/git IPC — so block it and
+  // send real http(s) links to the default browser instead.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const rendererUrl = process.env['ELECTRON_RENDERER_URL']
+    const trusted =
+      url.startsWith('file://') ||
+      (rendererUrl ? url.startsWith(rendererUrl) : url.startsWith('http://localhost'))
+    if (!trusted) {
+      event.preventDefault()
+      if (/^https?:/.test(url)) shell.openExternal(url)
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {

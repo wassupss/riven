@@ -55,7 +55,7 @@ const api = {
       initialCommand?: string
       cols?: number
       rows?: number
-    }): Promise<{ id: string; existed: boolean; buffer: string }> =>
+    }): Promise<{ id: string; existed: boolean; buffer: string; error?: string }> =>
       ipcRenderer.invoke('pty:open', opts),
     write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
     snapshot: (id: string, data: string): void => ipcRenderer.send('pty:snapshot', id, data),
