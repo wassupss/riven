@@ -89,10 +89,6 @@ export default function AccountSettings(): JSX.Element {
       <div className="section-label">{t('settings.account.title')}</div>
       <div className="set-note">{t('settings.account.signInIntro')}</div>
       <div className="account-providers">
-        <button className="account-provider-btn" disabled={busy} onClick={() => void signIn('google')}>
-          <ProviderIcon provider="google" />
-          <span>{t('settings.account.continueGoogle')}</span>
-        </button>
         <button className="account-provider-btn" disabled={busy} onClick={() => void signIn('github')}>
           <ProviderIcon provider="github" />
           <span>{t('settings.account.continueGithub')}</span>

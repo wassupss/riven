@@ -57,6 +57,26 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
+  // Dev affordance: RIVEN_CAPTURE=<path> [RIVEN_CAPTURE_DELAY=ms] captures the
+  // real rendered UI to a PNG once loaded, then quits. Used to grab authentic
+  // screenshots (e.g. for the landing page) instead of hand-drawn mockups.
+  if (process.env.RIVEN_CAPTURE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      const delay = Number(process.env.RIVEN_CAPTURE_DELAY) || 7000
+      setTimeout(async () => {
+        try {
+          const img = await mainWindow.webContents.capturePage()
+          const { promises: fsp } = await import('fs')
+          await fsp.writeFile(process.env.RIVEN_CAPTURE as string, img.toPNG())
+          console.log('[riven] captured', process.env.RIVEN_CAPTURE)
+        } catch (e) {
+          console.error('[riven] capture failed', e)
+        }
+        app.quit()
+      }, delay)
+    })
+  }
+
   // Forward renderer console (prefixed) to the main stdout — dev only.
   if (!app.isPackaged) {
     mainWindow.webContents.on('console-message', (_e, _level, message) => {

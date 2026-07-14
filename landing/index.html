@@ -4,1227 +4,391 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
-<meta name="description" content="riven — AI 에이전트가 일급 시민인 AI-first 데스크톱 IDE. Monaco 에디터, 도킹 패널, 영속 터미널, 멀티 언어 LSP." />
-<title>riven — AI 에이전트가 일급 시민인 IDE</title>
+<title>riven — AI 에이전트를 위한 데스크톱 IDE</title>
+<meta name="description" content="riven — 실제 터미널에서 AI 에이전트를 돌리고, 그 편집을 에디터에서 바로 검토하는 AI-first 데스크톱 IDE. 자유 도킹 패널, 영속 터미널, 멀티 언어 LSP." />
 <style>
-  /* ============ tokens ============ */
   :root {
-    --bg: #faf6f1;
-    --bg-raised: #ffffff;
-    --ink: #201812;
-    --ink-strong: #140e09;
-    --muted: #6e6259;
-    --line: #e7ddd2;
-    --line-strong: #d8ccbf;
-    --accent: #ff7847;
-    --accent-ink: #c1470f;
-    --accent-soft: rgba(255, 120, 71, 0.10);
-    --btn-ink: #1c0d05;
-    --shadow: 0 24px 60px -24px rgba(52, 30, 16, 0.25);
-    --ok: #2e9e5b;
-
-    /* fixed mock palette (dark in both themes, like a screenshot) */
-    --m-bg: #0c0a09;
-    --m-panel: #14100d;
-    --m-panel-2: #181310;
-    --m-chrome: #1e1814;
-    --m-line: #2a221c;
-    --m-text: #d8cfc6;
-    --m-dim: #8b7f74;
-    --m-faint: #5c534b;
-    --m-accent: #ff7847;
-    --m-green: #7fd68f;
-    --m-blue: #7cb7ff;
-    --m-purple: #c39bff;
-    --m-yellow: #e8c66a;
-    --m-cyan: #6fd6d0;
-    --m-red: #ff7a6e;
-    --m-add: rgba(127, 214, 143, 0.10);
+    --bg: #faf7f3;
+    --panel: #ffffff;
+    --raised: #ffffff;
+    --line: #ece3d8;
+    --line-strong: #ddd0c1;
+    --fg: #1c150f;
+    --fg-soft: #4a4038;
+    --muted: #7a6e62;
+    --accent: #e5561f;
+    --accent-fg: #ffffff;
+    --accent-soft: rgba(229, 86, 31, 0.1);
+    --shadow: 0 30px 60px -30px rgba(60, 34, 18, 0.28);
+    --radius: 14px;
+    --mono: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0f0c0a;
-      --bg-raised: #171310;
-      --ink: #ede6df;
-      --ink-strong: #faf5ef;
-      --muted: #a2968c;
-      --line: #2a231d;
-      --line-strong: #3a3129;
+      --bg: #0c0a09;
+      --panel: #14100d;
+      --raised: #181310;
+      --line: #26201b;
+      --line-strong: #342b23;
+      --fg: #ece7e0;
+      --fg-soft: #c3bab0;
+      --muted: #928779;
       --accent: #ff7847;
-      --accent-ink: #ff8f63;
-      --accent-soft: rgba(255, 120, 71, 0.09);
-      --btn-ink: #1c0d05;
-      --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
-      --ok: #6fce93;
+      --accent-fg: #1c0d05;
+      --accent-soft: rgba(255, 120, 71, 0.12);
+      --shadow: 0 40px 80px -32px rgba(0, 0, 0, 0.7);
     }
   }
-  :root[data-theme="dark"] {
-    --bg: #0f0c0a;
-    --bg-raised: #171310;
-    --ink: #ede6df;
-    --ink-strong: #faf5ef;
-    --muted: #a2968c;
-    --line: #2a231d;
-    --line-strong: #3a3129;
-    --accent: #ff7847;
-    --accent-ink: #ff8f63;
-    --accent-soft: rgba(255, 120, 71, 0.09);
-    --btn-ink: #1c0d05;
-    --shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
-    --ok: #6fce93;
-  }
   :root[data-theme="light"] {
-    --bg: #faf6f1;
-    --bg-raised: #ffffff;
-    --ink: #201812;
-    --ink-strong: #140e09;
-    --muted: #6e6259;
-    --line: #e7ddd2;
-    --line-strong: #d8ccbf;
-    --accent: #ff7847;
-    --accent-ink: #c1470f;
-    --accent-soft: rgba(255, 120, 71, 0.10);
-    --btn-ink: #1c0d05;
-    --shadow: 0 24px 60px -24px rgba(52, 30, 16, 0.25);
-    --ok: #2e9e5b;
+    --bg: #faf7f3; --panel: #ffffff; --raised: #ffffff; --line: #ece3d8; --line-strong: #ddd0c1;
+    --fg: #1c150f; --fg-soft: #4a4038; --muted: #7a6e62; --accent: #e5561f; --accent-fg: #ffffff;
+    --accent-soft: rgba(229, 86, 31, 0.1); --shadow: 0 30px 60px -30px rgba(60, 34, 18, 0.28);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0c0a09; --panel: #14100d; --raised: #181310; --line: #26201b; --line-strong: #342b23;
+    --fg: #ece7e0; --fg-soft: #c3bab0; --muted: #928779; --accent: #ff7847; --accent-fg: #1c0d05;
+    --accent-soft: rgba(255, 120, 71, 0.12); --shadow: 0 40px 80px -32px rgba(0, 0, 0, 0.7);
   }
 
-  /* ============ base ============ */
-  * { box-sizing: border-box; }
-  :root {
-    color-scheme: light dark;
-  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
   body {
-    margin: 0;
+    font-family: var(--sans);
     background: var(--bg);
-    color: var(--ink);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
-      "Noto Sans KR", "Malgun Gothic", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 16px;
-    line-height: 1.65;
+    color: var(--fg);
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
-    overflow-x: hidden;
     word-break: keep-all;
+    overflow-x: hidden;
   }
-  .mono {
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
-      "Liberation Mono", monospace;
-  }
-  a { color: var(--accent-ink); text-decoration: none; }
-  a:hover { text-decoration: underline; text-underline-offset: 3px; }
-  a:focus-visible, button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 3px;
-    border-radius: 4px;
-  }
-  ::selection { background: var(--accent); color: var(--btn-ink); }
+  a { color: inherit; text-decoration: none; }
+  ::selection { background: var(--accent); color: var(--accent-fg); }
 
-  .wrap {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 24px;
+  .wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600;
   }
 
-  /* ============ nav ============ */
-  .nav {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    background: color-mix(in srgb, var(--bg) 84%, transparent);
-    -webkit-backdrop-filter: blur(14px);
-    backdrop-filter: blur(14px);
+  /* nav */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    backdrop-filter: saturate(180%) blur(14px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
     border-bottom: 1px solid var(--line);
   }
-  .nav-inner {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    height: 58px;
-  }
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--ink-strong);
-    font-weight: 700;
-    font-size: 1.06rem;
-    letter-spacing: -0.01em;
-  }
-  .brand:hover { text-decoration: none; }
-  .brand svg { display: block; }
+  .nav-in { display: flex; align-items: center; gap: 18px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+  .brand .mark { width: 22px; height: 22px; border-radius: 6px; display: block; }
   .nav-spacer { flex: 1; }
-  .nav-links {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    font-size: 0.9rem;
+  .nav-link { color: var(--muted); font-size: 14px; font-weight: 500; transition: color 0.15s; }
+  .nav-link:hover { color: var(--fg); }
+  .lang-toggle {
+    display: inline-flex; border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden;
+    font-family: var(--mono); font-size: 12px;
   }
-  .nav-links a { color: var(--muted); }
-  .nav-links a:hover { color: var(--ink); text-decoration: none; }
-  .nav-cta {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 14px;
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--btn-ink) !important;
-    font-weight: 650;
-    font-size: 0.86rem;
+  .lang-toggle button {
+    border: 0; background: transparent; color: var(--muted); padding: 5px 10px; cursor: pointer; font-family: inherit;
+    transition: background 0.15s, color 0.15s;
   }
-  .nav-cta:hover { text-decoration: none; filter: brightness(1.06); }
+  .lang-toggle button.on { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px;
+    padding: 9px 16px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+    transition: transform 0.12s, background 0.15s, border-color 0.15s;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); }
+  .btn-primary:hover { transform: translateY(-1px); }
+  .btn-ghost { border-color: var(--line-strong); color: var(--fg); background: var(--panel); }
+  .btn-ghost:hover { border-color: var(--accent); }
+  .nav .btn { padding: 7px 14px; }
 
-  /* ============ hero ============ */
-  .hero {
-    position: relative;
-    padding: clamp(64px, 10vw, 120px) 0 clamp(28px, 4vw, 48px);
-  }
-  .hero::before {
-    content: "";
-    position: absolute;
-    inset: -180px -20% auto;
-    height: 520px;
-    background:
-      radial-gradient(560px 300px at 24% 20%, var(--accent-soft), transparent 70%),
-      radial-gradient(700px 340px at 78% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 70%);
+  /* hero */
+  header.hero { padding: 84px 0 40px; position: relative; overflow: hidden; }
+  header.hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(60% 50% at 50% -8%, var(--accent-soft), transparent 70%);
     pointer-events: none;
   }
-  .hero .wrap { position: relative; }
-  .eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    font-size: 0.76rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted);
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    padding: 6px 13px;
-    background: var(--bg-raised);
+  .hero-in { position: relative; text-align: center; max-width: 760px; margin: 0 auto; }
+  h1 {
+    font-size: clamp(34px, 6vw, 58px); line-height: 1.08; letter-spacing: -0.025em;
+    font-weight: 780; margin: 18px 0 0;
   }
-  .eyebrow .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-soft);
-  }
-  .hero h1 {
-    margin: 26px 0 0;
-    font-size: clamp(2.35rem, 6.2vw, 4.35rem);
-    line-height: 1.12;
-    letter-spacing: -0.035em;
-    font-weight: 800;
-    color: var(--ink-strong);
-    text-wrap: balance;
-    max-width: 18ch;
-  }
-  .hero h1 em {
-    font-style: normal;
-    color: var(--accent-ink);
-    position: relative;
-    white-space: nowrap;
-  }
-  .hero h1 em::after {
-    content: "";
-    position: absolute;
-    left: 0.02em;
-    right: 0.02em;
-    bottom: 0.02em;
-    height: 0.14em;
-    background: var(--accent);
-    opacity: 0.32;
-    border-radius: 2px;
-  }
-  .hero p.lede {
-    margin: 22px 0 0;
-    max-width: 62ch;
-    font-size: clamp(1.02rem, 1.6vw, 1.16rem);
-    color: var(--muted);
-  }
-  .hero p.lede strong { color: var(--ink); font-weight: 600; }
-  .cta-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 14px;
-    margin-top: 34px;
-  }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    border-radius: 10px;
-    padding: 13px 22px;
-    font-size: 0.98rem;
-    font-weight: 700;
-    line-height: 1;
-    border: 1px solid transparent;
-    transition: transform 0.15s ease, filter 0.15s ease, border-color 0.15s ease;
-  }
-  .btn:hover { text-decoration: none; transform: translateY(-1px); }
-  .btn-primary {
-    background: var(--accent);
-    color: var(--btn-ink);
-    box-shadow: 0 10px 28px -12px color-mix(in srgb, var(--accent) 65%, transparent);
-  }
-  .btn-primary:hover { filter: brightness(1.06); }
-  .btn-ghost {
-    border-color: var(--line-strong);
-    color: var(--ink);
-    background: var(--bg-raised);
-  }
-  .btn-ghost:hover { border-color: var(--accent); }
-  .cta-note {
-    width: 100%;
-    margin-top: 2px;
-    font-size: 0.78rem;
-    color: var(--muted);
-  }
-  .cta-note .sep { margin: 0 8px; opacity: 0.5; }
+  h1 .accent { color: var(--accent); }
+  .sub { font-size: clamp(16px, 2.3vw, 20px); color: var(--fg-soft); margin: 20px auto 0; max-width: 620px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
+  .cta .btn { padding: 12px 22px; font-size: 15px; }
+  .cta-note { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 16px; }
 
-  /* ============ mock ============ */
-  .stage {
-    padding: clamp(28px, 5vw, 56px) 0 clamp(56px, 8vw, 96px);
+  /* screenshot */
+  .shot-frame {
+    margin: 52px auto 0; max-width: 1080px; border-radius: var(--radius);
+    border: 1px solid var(--line-strong); background: var(--panel);
+    box-shadow: var(--shadow); overflow: hidden; position: relative;
   }
-  .mock-frame {
-    position: relative;
+  .shot-bar {
+    display: flex; align-items: center; gap: 7px; padding: 11px 14px;
+    border-bottom: 1px solid var(--line); background: var(--raised);
   }
-  .mock {
-    background: var(--m-bg);
-    border: 1px solid var(--line-strong);
-    border-radius: 14px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 11.5px;
-    line-height: 1.55;
-    color: var(--m-text);
-  }
-  .m-titlebar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    height: 38px;
-    padding: 0 14px;
-    background: var(--m-chrome);
-    border-bottom: 1px solid var(--m-line);
-  }
-  .m-lights { display: flex; gap: 7px; }
-  .m-lights span { width: 11px; height: 11px; border-radius: 50%; }
-  .m-lights span:nth-child(1) { background: #ff5f57; }
-  .m-lights span:nth-child(2) { background: #febc2e; }
-  .m-lights span:nth-child(3) { background: #28c840; }
-  .m-title { flex: 1; text-align: center; color: var(--m-dim); font-size: 11px; }
-  .m-title b { color: var(--m-text); font-weight: 600; }
-  .m-usage { color: var(--m-faint); font-size: 10px; }
-  .m-usage i { font-style: normal; color: var(--m-accent); }
+  .shot-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--line-strong); display: block; }
+  .shot-bar i:nth-child(1) { background: #ff5f57; }
+  .shot-bar i:nth-child(2) { background: #febc2e; }
+  .shot-bar i:nth-child(3) { background: #28c840; }
+  .shot-bar span { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .shot-frame img { display: block; width: 100%; height: auto; }
 
-  .m-grid {
-    display: grid;
-    grid-template-columns: 188px minmax(0, 1fr) 252px;
-    grid-template-rows: minmax(0, 1fr) 168px;
-    gap: 5px;
-    padding: 5px;
-    height: 520px;
-    background: var(--m-bg);
-  }
-  .m-panel {
-    background: var(--m-panel);
-    border: 1px solid var(--m-line);
-    border-radius: 8px;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .m-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--m-line);
-    background: var(--m-panel-2);
-    color: var(--m-dim);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    flex: none;
-  }
-  .m-head .grip { color: var(--m-faint); letter-spacing: 1px; }
-  .m-head .spacer { flex: 1; }
-  .m-head .pop { color: var(--m-faint); }
+  /* sections */
+  section { padding: 72px 0; }
+  .section-head { max-width: 640px; margin-bottom: 44px; }
+  .section-head.center { margin-left: auto; margin-right: auto; text-align: center; }
+  h2 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -0.02em; line-height: 1.15; margin-top: 12px; font-weight: 740; }
+  .section-head p { color: var(--fg-soft); font-size: 17px; margin-top: 14px; }
 
-  .m-explorer { grid-row: 1 / 3; }
-  .m-tree { padding: 8px 6px; overflow: hidden; }
-  .m-tree .row {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 2.5px 8px;
-    border-radius: 5px;
-    color: var(--m-dim);
-    white-space: nowrap;
-  }
-  .m-tree .row.on { background: rgba(255, 120, 71, 0.12); color: var(--m-text); }
-  .m-tree .row .tw { color: var(--m-faint); font-size: 9px; width: 8px; flex: none; }
-  .m-tree .d1 { padding-left: 22px; }
-  .m-tree .d2 { padding-left: 36px; }
-  .fi {
-    width: 9px; height: 9px; border-radius: 2.5px; flex: none;
-  }
-  .fi-dir { background: transparent; border: 1.5px solid var(--m-faint); border-radius: 2px; }
-  .fi-ts { background: var(--m-blue); }
-  .fi-tsx { background: var(--m-cyan); }
-  .fi-json { background: var(--m-yellow); }
-  .fi-html { background: var(--m-accent); }
-  .fi-md { background: var(--m-purple); }
-  .m-mention {
-    margin: auto 8px 10px;
-    padding: 6px 9px;
-    border: 1px dashed var(--m-line);
-    border-radius: 6px;
-    color: var(--m-faint);
-    font-size: 10px;
-    line-height: 1.5;
-  }
-  .m-mention b { color: var(--m-accent); font-weight: 600; }
-
-  .m-editor { grid-column: 2; grid-row: 1; }
-  .m-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--m-line);
-    background: var(--m-panel-2);
-    flex: none;
-    overflow: hidden;
-  }
-  .m-tab {
-    padding: 6px 14px;
-    color: var(--m-faint);
-    border-right: 1px solid var(--m-line);
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    white-space: nowrap;
-    font-size: 10.5px;
-  }
-  .m-tab.on {
-    color: var(--m-text);
-    background: var(--m-panel);
-    box-shadow: inset 0 2px 0 var(--m-accent);
-  }
-  .m-hunkbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    background: rgba(255, 120, 71, 0.07);
-    border-bottom: 1px solid var(--m-line);
-    color: var(--m-dim);
-    font-size: 10px;
-    flex: none;
-  }
-  .m-hunkbar .tag {
-    color: var(--m-accent);
-    border: 1px solid rgba(255, 120, 71, 0.4);
-    border-radius: 4px;
-    padding: 0 6px;
-    font-size: 9.5px;
-  }
-  .m-hunkbar .act { color: var(--m-faint); margin-left: auto; white-space: nowrap; }
-  .m-hunkbar .act u { text-decoration: none; color: var(--m-dim); }
-  .m-code {
-    padding: 10px 0;
-    overflow: hidden;
-    flex: 1;
-  }
-  .m-code .ln {
-    display: flex;
-    gap: 14px;
-    padding: 0 14px 0 0;
-    white-space: pre;
-  }
-  .m-code .ln .no {
-    width: 34px;
-    text-align: right;
-    color: var(--m-faint);
-    flex: none;
-    user-select: none;
-  }
-  .m-code .ln.add { background: var(--m-add); }
-  .m-code .ln.add .no { color: var(--m-green); }
-  .c-kw { color: var(--m-purple); }
-  .c-fn { color: var(--m-blue); }
-  .c-str { color: var(--m-green); }
-  .c-cm { color: var(--m-faint); font-style: italic; }
-  .c-ty { color: var(--m-cyan); }
-  .c-pr { color: var(--m-yellow); }
-  .c-pl { color: var(--m-text); }
-
-  .m-preview { grid-column: 3; grid-row: 1; }
-  .m-pv-url {
-    margin: 10px 10px 0;
-    padding: 4px 10px;
-    background: var(--m-chrome);
-    border: 1px solid var(--m-line);
-    border-radius: 6px;
-    color: var(--m-dim);
-    font-size: 10px;
-    flex: none;
-  }
-  .m-pv-body {
-    flex: 1;
-    margin: 10px;
-    background: #f6f1ea;
-    border-radius: 6px;
-    padding: 14px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    overflow: hidden;
-  }
-  .pv-bar { height: 9px; border-radius: 4px; background: #ddd2c4; }
-  .pv-bar.w60 { width: 60%; }
-  .pv-bar.w80 { width: 80%; }
-  .pv-bar.thin { height: 6px; background: #e8dfd3; }
-  .pv-btn {
-    margin-top: 4px;
-    width: 84px;
-    height: 20px;
-    border-radius: 5px;
-    background: var(--m-accent);
-  }
-  .pv-card {
-    margin-top: 6px;
-    border: 1px solid #e2d8ca;
-    border-radius: 6px;
-    padding: 9px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: #fffdfa;
-  }
-
-  .m-term { grid-column: 2 / 4; grid-row: 2; }
-  .m-term-tabs { display: flex; gap: 0; }
-  .m-ttab {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 6px 13px;
-    border-right: 1px solid var(--m-line);
-    color: var(--m-faint);
-    font-size: 10.5px;
-    white-space: nowrap;
-  }
-  .m-ttab.on { color: var(--m-text); background: var(--m-panel); box-shadow: inset 0 2px 0 var(--m-accent); }
-  .m-term .m-head { text-transform: none; letter-spacing: normal; }
-  .st-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-  .st-run { background: var(--m-accent); animation: pulse 1.6s ease-in-out infinite; }
-  .st-done { background: var(--m-green); }
-  .st-idle { background: var(--m-faint); }
-  @keyframes pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 120, 71, 0.5); }
-    50% { box-shadow: 0 0 0 5px rgba(255, 120, 71, 0); }
-  }
-  .m-term-body { padding: 10px 14px; overflow: hidden; flex: 1; }
-  .m-term-body .tl { white-space: pre-wrap; }
-  .t-prompt { color: var(--m-accent); }
-  .t-dim { color: var(--m-dim); }
-  .t-faint { color: var(--m-faint); }
-  .t-ok { color: var(--m-green); }
-  .t-run { color: var(--m-accent); }
-  .caret {
-    display: inline-block;
-    width: 7px;
-    height: 13px;
-    background: var(--m-text);
-    vertical-align: -2px;
-    animation: blink 1.1s steps(1) infinite;
-  }
-  @keyframes blink { 50% { opacity: 0; } }
-
-  .m-status {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding: 4px 14px;
-    background: var(--m-chrome);
-    border-top: 1px solid var(--m-line);
-    color: var(--m-faint);
-    font-size: 10px;
-  }
-  .m-status .spacer { flex: 1; }
-  .m-status .lsp-ok { color: var(--m-green); }
-
-  /* floating popped-out window */
-  .m-float {
-    position: absolute;
-    right: -14px;
-    bottom: 46px;
-    width: 236px;
-    background: var(--m-panel-2);
-    border: 1px solid var(--m-line);
-    border-radius: 10px;
-    box-shadow: 0 20px 44px -14px rgba(0, 0, 0, 0.65);
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 10.5px;
-    color: var(--m-text);
-    overflow: hidden;
-    animation: floaty 7s ease-in-out infinite;
-  }
-  @keyframes floaty {
-    0%, 100% { transform: translateY(0) rotate(0.4deg); }
-    50% { transform: translateY(-7px) rotate(-0.3deg); }
-  }
-  .m-float .fh {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--m-line);
-    color: var(--m-dim);
-    font-size: 9.5px;
-    letter-spacing: 0.04em;
-  }
-  .m-float .fb { padding: 9px 12px; line-height: 1.6; }
-  .mock-chips {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 10px;
-    margin-top: 26px;
-  }
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    border: 1px solid var(--line-strong);
-    background: var(--bg-raised);
-    border-radius: 999px;
-    padding: 7px 15px;
-    font-size: 0.8rem;
-    color: var(--muted);
-  }
-  .chip svg { flex: none; color: var(--accent-ink); }
-
-  /* ============ sections ============ */
-  section.block { padding: clamp(56px, 9vw, 110px) 0; }
-  section.block.tinted {
-    background: var(--bg-raised);
-    border-top: 1px solid var(--line);
-    border-bottom: 1px solid var(--line);
-  }
-  .sec-eyebrow {
-    font-size: 0.74rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
-    color: var(--accent-ink);
-    font-weight: 600;
-  }
-  .sec-title {
-    margin: 12px 0 0;
-    font-size: clamp(1.7rem, 3.6vw, 2.5rem);
-    line-height: 1.22;
-    letter-spacing: -0.025em;
-    font-weight: 800;
-    color: var(--ink-strong);
-    text-wrap: balance;
-    max-width: 26ch;
-  }
-  .sec-lede {
-    margin: 16px 0 0;
-    color: var(--muted);
-    max-width: 62ch;
-    font-size: 1.02rem;
-  }
-
-  /* agent flow */
-  .flow {
-    margin-top: 48px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-  }
-  .step {
-    position: relative;
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    background: var(--bg);
-    padding: 26px 24px 24px;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-  }
-  .step .num {
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.78rem;
-    color: var(--accent-ink);
-    letter-spacing: 0.1em;
-  }
-  .step h3 {
-    margin: 12px 0 0;
-    font-size: 1.14rem;
-    letter-spacing: -0.015em;
-    color: var(--ink-strong);
-  }
-  .step p {
-    margin: 10px 0 0;
-    font-size: 0.92rem;
-    color: var(--muted);
-  }
-  .step .demo {
-    margin-top: auto;
-    padding-top: 18px;
-  }
-  .mini {
-    background: var(--m-panel);
-    border: 1px solid var(--m-line);
-    border-radius: 9px;
-    padding: 10px 12px;
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 10.5px;
-    line-height: 1.7;
-    color: var(--m-text);
-    overflow-x: auto;
-  }
-  .mini .hl { background: var(--m-add); border-radius: 3px; }
-  .mini .del { color: var(--m-red); }
-  .mini .badge {
-    display: inline-block;
-    border: 1px solid rgba(255, 120, 71, 0.45);
-    color: var(--m-accent);
-    border-radius: 4px;
-    padding: 0 6px;
-    font-size: 9.5px;
-  }
   /* feature grid */
-  .grid {
-    margin-top: 48px;
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
-  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
   .card {
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    background: var(--bg-raised);
-    padding: 22px 20px;
-    transition: border-color 0.2s ease, transform 0.2s ease;
-    display: flex;
-    flex-direction: column;
-    gap: 0;
+    border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius);
+    padding: 26px 24px; transition: border-color 0.18s, transform 0.18s;
   }
-  .card:hover {
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
-    transform: translateY(-2px);
-  }
+  .card:hover { border-color: var(--line-strong); transform: translateY(-2px); }
   .card .ico {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-    display: grid;
-    place-items: center;
+    width: 40px; height: 40px; border-radius: 10px; background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
   }
-  .card h3 {
-    margin: 16px 0 0;
-    font-size: 1rem;
-    letter-spacing: -0.01em;
-    color: var(--ink-strong);
-  }
-  .card p {
-    margin: 8px 0 0;
-    font-size: 0.86rem;
-    line-height: 1.62;
-    color: var(--muted);
-  }
-  .card p code {
-    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 0.78rem;
-    background: var(--accent-soft);
-    color: var(--accent-ink);
-    border-radius: 4px;
-    padding: 1px 5px;
-  }
-  .grid-foot {
-    margin-top: 22px;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 22px;
-    font-size: 0.82rem;
-    color: var(--muted);
-  }
-  .grid-foot span::before {
-    content: "+";
-    color: var(--accent-ink);
-    margin-right: 7px;
-    font-weight: 700;
-  }
+  .card .ico svg { width: 21px; height: 21px; }
+  .card h3 { font-size: 17px; font-weight: 680; letter-spacing: -0.01em; }
+  .card .tag { font-family: var(--mono); font-size: 10.5px; color: var(--accent); border: 1px solid var(--accent); border-radius: 5px; padding: 1px 6px; margin-left: 8px; vertical-align: middle; font-weight: 600; }
+  .card p { color: var(--muted); font-size: 14.5px; margin-top: 8px; line-height: 1.6; }
+
+  /* small strip */
+  .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 32px; margin-top: 8px; }
+  .strip .item { display: flex; gap: 12px; align-items: flex-start; padding: 16px 0; border-top: 1px solid var(--line); }
+  .strip .item svg { width: 18px; height: 18px; color: var(--accent); flex: 0 0 auto; margin-top: 3px; }
+  .strip .item b { font-weight: 640; font-size: 15px; }
+  .strip .item p { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
 
   /* install band */
-  .install {
-    border: 1px solid var(--line-strong);
-    border-radius: 18px;
-    background:
-      radial-gradient(480px 220px at 12% -30%, var(--accent-soft), transparent 70%),
-      var(--bg-raised);
-    padding: clamp(36px, 6vw, 60px) clamp(24px, 5vw, 56px);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 28px;
+  .install { text-align: center; }
+  .install-box {
+    border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel);
+    padding: 48px 32px; box-shadow: var(--shadow);
   }
-  .install .copy { flex: 1 1 340px; }
-  .install h2 {
-    margin: 0;
-    font-size: clamp(1.5rem, 3vw, 2.05rem);
-    letter-spacing: -0.02em;
-    color: var(--ink-strong);
-    line-height: 1.25;
-  }
-  .install p {
-    margin: 12px 0 0;
-    color: var(--muted);
-    font-size: 0.95rem;
-    max-width: 52ch;
-  }
-  .install .actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
-  .dl-meta {
-    font-size: 0.76rem;
-    color: var(--muted);
-    letter-spacing: 0.01em;
-  }
-  .dl-meta .sep { margin: 0 7px; opacity: 0.5; }
+  .install-box h2 { margin-bottom: 8px; }
+  .install-box .cta { margin-top: 26px; }
+  .install-meta { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 18px; }
+  .install-meta code { color: var(--fg-soft); }
 
   /* footer */
-  footer {
-    border-top: 1px solid var(--line);
-    padding: 36px 0 48px;
-  }
-  .foot-inner {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 14px 28px;
-    font-size: 0.84rem;
-    color: var(--muted);
-  }
-  .foot-inner .brand { font-size: 0.95rem; }
-  .foot-spacer { flex: 1; }
-  .foot-inner a { color: var(--muted); }
-  .foot-inner a:hover { color: var(--ink); }
-  .ver {
-    font-size: 0.74rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 999px;
-    padding: 2px 10px;
-  }
+  footer { border-top: 1px solid var(--line); padding: 34px 0; }
+  .foot-in { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 13.5px; }
+  .foot-in .brand { font-size: 15px; color: var(--fg); }
+  .foot-in .nav-spacer { flex: 1; }
+  .foot-in .mono { font-family: var(--mono); font-size: 12.5px; }
 
-  /* ============ motion ============ */
-  .reveal { opacity: 1; transform: none; }
-  .js .reveal {
-    opacity: 0;
-    transform: translateY(18px);
-    transition: opacity 0.7s ease, transform 0.7s ease;
-  }
-  .js .reveal.in { opacity: 1; transform: none; }
-  @media (prefers-reduced-motion: reduce) {
-    .js .reveal { opacity: 1; transform: none; transition: none; }
-    .m-float, .st-run, .caret { animation: none; }
-    .btn, .card { transition: none; }
-  }
+  .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
 
-  /* ============ responsive ============ */
-  @media (max-width: 960px) {
-    .m-grid { grid-template-columns: 168px minmax(0, 1fr); }
-    .m-preview { display: none; }
-    .m-term { grid-column: 2 / 3; }
-    .m-float { display: none; }
+  @media (max-width: 860px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
-    .flow { grid-template-columns: 1fr; }
+    .strip { grid-template-columns: repeat(2, 1fr); }
   }
-  @media (max-width: 640px) {
-    .nav-links a.gh-txt { display: none; }
-    .m-grid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 150px; height: 440px; }
-    .m-explorer { display: none; }
-    .m-editor { grid-column: 1; }
-    .m-term { grid-column: 1; }
-    .grid { grid-template-columns: 1fr; }
-    .install { padding: 32px 22px; }
+  @media (max-width: 620px) {
+    .grid, .strip { grid-template-columns: 1fr; }
+    .nav-link.hide-sm { display: none; }
+    header.hero { padding: 56px 0 24px; }
+    section { padding: 56px 0; }
   }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .reveal { transition: none; opacity: 1; transform: none; }
+    .btn:hover, .card:hover { transform: none; }
+  }
+
+  /* language visibility — JS sets <html lang>; default markup is EN, KO overrides */
+  html[lang="ko"] [data-lang-en] { display: none; }
+  html:not([lang="ko"]) [data-lang-ko] { display: none; }
 </style>
 </head>
 <body>
-<!-- ============ NAV ============ -->
-<header class="nav">
-  <div class="wrap nav-inner">
-    <a class="brand" href="#top" aria-label="riven 홈">
-      <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-        <rect x="1" y="1" width="20" height="20" rx="5" stroke="currentColor" stroke-width="1.6"/>
-        <line x1="8.5" y1="1.8" x2="8.5" y2="20.2" stroke="currentColor" stroke-width="1.6"/>
-        <line x1="8.5" y1="11" x2="20.2" y2="11" stroke="currentColor" stroke-width="1.6"/>
-        <rect x="10.6" y="13.1" width="7.5" height="5" rx="1.4" fill="#ff7847"/>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="var(--accent)"/>
+        <rect x="7" y="7" width="8.2" height="18" rx="2" fill="var(--accent-fg)" opacity="0.95"/>
+        <rect x="17.8" y="7" width="8.2" height="18" rx="2" fill="var(--accent-fg)" opacity="0.55"/>
       </svg>
       riven
     </a>
     <div class="nav-spacer"></div>
-    <nav class="nav-links" aria-label="주요 링크">
-      <a href="#features">기능</a>
-      <a href="#agents">에이전트</a>
-      <a class="gh-txt" href="https://github.com/wassupss/riven">GitHub</a>
-      <a class="nav-cta" href="riven-0.0.2-arm64.dmg" download>
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path d="M7 1v8m0 0L3.5 5.5M7 9l3.5-3.5M2 12.5h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        다운로드
+    <a class="nav-link hide-sm" href="#features"><span data-lang-en>Features</span><span data-lang-ko>기능</span></a>
+    <a class="nav-link hide-sm" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">GitHub</a>
+    <div class="lang-toggle" role="group" aria-label="Language">
+      <button id="lang-ko" type="button" onclick="setLang('ko')">KO</button>
+      <button id="lang-en" type="button" onclick="setLang('en')">EN</button>
+    </div>
+    <a class="btn btn-primary" href="riven-0.0.2-arm64.dmg" download>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 17.4 6.3 11.7l1.4-1.4L11 13.6V3h1zM5 19h14v2H5v-2z"/></svg>
+      <span data-lang-en>Download</span><span data-lang-ko>다운로드</span>
+    </a>
+  </div>
+</nav>
+
+<a id="top"></a>
+<header class="hero">
+  <div class="wrap hero-in">
+    <div class="eyebrow"><span data-lang-en>AI-first desktop IDE</span><span data-lang-ko>AI-first 데스크톱 IDE</span></div>
+    <h1>
+      <span data-lang-en>A code editor where<br><span class="accent">agents are first-class.</span></span>
+      <span data-lang-ko>에이전트가 일급 시민인<br><span class="accent">코드 에디터.</span></span>
+    </h1>
+    <p class="sub">
+      <span data-lang-en>Run AI agents in real terminals and review their edits right in the editor. Every panel — explorer, editor, terminal, preview — docks exactly where you want it.</span>
+      <span data-lang-ko>실제 터미널에서 AI 에이전트를 돌리고, 그 편집을 에디터에서 바로 검토하세요. 탐색기·에디터·터미널·프리뷰 — 모든 패널이 원하는 자리에 도킹됩니다.</span>
+    </p>
+    <div class="cta">
+      <a class="btn btn-primary" href="riven-0.0.2-arm64.dmg" download>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.9c0-2 1.6-3 1.7-3-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7-.6 0-1.6-.7-2.6-.7-1.3 0-2.6.8-3.2 2-1.4 2.4-.4 6 1 8 .7 1 1.4 2 2.4 2 1 0 1.3-.6 2.5-.6s1.5.6 2.5.6 1.7-1 2.3-2c.7-1.1 1-2.2 1-2.3 0 0-2-.8-2.1-3.1zM14.6 6.3c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.4.9.1 1.7-.4 2.3-1.1z"/></svg>
+        <span data-lang-en>Download for macOS</span><span data-lang-ko>macOS용 다운로드</span>
       </a>
-    </nav>
+      <a class="btn btn-ghost" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.7.5.5 5.7.5 12a11.5 11.5 0 0 0 7.9 10.9c.6.1.8-.2.8-.6v-2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.2-1.3-5.2-5.7 0-1.3.4-2.3 1.2-3.1-.1-.3-.5-1.5.1-3 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.7.1 3 .8.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.2c0 .3.2.7.8.6A11.5 11.5 0 0 0 23.5 12C23.5 5.7 18.3.5 12 .5z"/></svg>
+        <span data-lang-en>View on GitHub</span><span data-lang-ko>GitHub에서 보기</span>
+      </a>
+    </div>
+    <div class="cta-note">riven-0.0.2-arm64.dmg · Apple Silicon · <span data-lang-en>Windows / Linux coming soon</span><span data-lang-ko>Windows / Linux 준비 중</span></div>
+  </div>
+
+  <div class="wrap">
+    <div class="shot-frame reveal">
+      <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/playground/riven</span></div>
+      <img src="assets/riven-screenshot.png" width="3024" height="1898"
+           alt="riven IDE: 좌측 워크스페이스와 파일 탐색기, 중앙 터미널, 우측 Monaco 코드 에디터" loading="eager" />
+    </div>
   </div>
 </header>
 
-<!-- ============ HERO ============ -->
-<main id="top">
-  <section class="hero">
-    <div class="wrap">
-      <span class="eyebrow mono"><span class="dot"></span>AI-first Desktop IDE · v0.0.2</span>
-      <h1>AI 에이전트가<br /><em>일급 시민</em>인 IDE</h1>
-      <p class="lede">
-        탐색기, Monaco 에디터, 웹 프리뷰, 그리고 여러 개의 AI 터미널 —
-        <strong>모든 패널을 자유롭게 도킹</strong>하는 데스크톱 IDE.
-        에이전트에게 컨텍스트를 건네고, 실행 상태를 지켜보고,
-        에이전트가 고친 코드를 인라인 diff로 검토하세요.
-      </p>
-      <div class="cta-row">
+<section id="features">
+  <div class="wrap">
+    <div class="section-head center">
+      <div class="eyebrow"><span data-lang-en>Built for agent workflows</span><span data-lang-ko>에이전트 워크플로를 위해 설계</span></div>
+      <h2><span data-lang-en>Everything an AI-first editor needs.</span><span data-lang-ko>AI-first 에디터에 필요한 모든 것.</span></h2>
+    </div>
+
+    <div class="grid">
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Agent orchestration</span><span data-lang-ko>에이전트 오케스트레이션</span></h3>
+        <p><span data-lang-en>Run agents like Claude in real terminals. Running-state, bell and task-done are detected from the actual child processes — never from raw output, so your own typing never trips a false "running".</span><span data-lang-ko>Claude 같은 에이전트를 실제 터미널에서 실행합니다. 실행 상태·벨·완료를 원시 출력이 아니라 실제 자식 프로세스에서 감지하므로, 직접 입력할 때 잘못된 "실행 중" 표시가 뜨지 않습니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></svg></div>
+        <h3><span data-lang-en>Freely dockable panels</span><span data-lang-ko>자유 도킹 패널</span></h3>
+        <p><span data-lang-en>Explorer, editor, terminal and preview are all draggable panels — split them any way you like, or pop any panel out into its own window.</span><span data-lang-ko>탐색기·에디터·터미널·프리뷰가 모두 draggable 패널입니다. 원하는 대로 분할하고, 어떤 패널이든 별도 창으로 팝아웃할 수 있습니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Persistent terminals</span><span data-lang-ko>영속 터미널</span></h3>
+        <p><span data-lang-en>PTYs live in the main process, surviving ⌘R and panel remounts, and reconnect instantly with a serialized screen snapshot.</span><span data-lang-ko>PTY가 메인 프로세스에 살아 있어 ⌘R과 패널 재장착에도 살아남고, 직렬화된 화면 스냅샷으로 즉시 복원됩니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M6 8l-3 4 3 4M18 8l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Inline agent-edit review</span><span data-lang-ko>인라인 에이전트 편집 리뷰</span></h3>
+        <p><span data-lang-en>A file watcher catches edits made by agents, auto-opens the file, and shows a multi-hunk inline diff against a git or cached baseline — with per-hunk revert.</span><span data-lang-ko>파일 워처가 에이전트의 편집을 감지해 파일을 자동으로 열고, git 또는 캐시 기준과의 멀티 헝크 인라인 diff를 헝크 단위 되돌리기와 함께 보여줍니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Monaco + multi-language LSP</span><span data-lang-ko>Monaco + 멀티 언어 LSP</span></h3>
+        <p><span data-lang-en>The Monaco core from VS Code. TypeScript/JS, Python, YAML and Bash work with zero setup; C/C++, Go and Rust light up automatically when on PATH.</span><span data-lang-ko>VS Code의 Monaco 코어. TypeScript/JS·Python·YAML·Bash는 무설정으로, C/C++·Go·Rust는 PATH에 있으면 자동으로 켜집니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18" stroke-linecap="round"/><path d="M12 3c2.5 2.3 4 5.6 4 9s-1.5 6.7-4 9c-2.5-2.3-4-5.6-4-9s1.5-6.7 4-9z" stroke-linecap="round"/></svg></div>
+        <h3><span data-lang-en>Account &amp; sync</span><span data-lang-ko>계정 &amp; 동기화</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>Sign in with GitHub to sync your theme, fonts and keymap across machines. Secrets like API keys stay on your device and are never synced.</span><span data-lang-ko>GitHub로 로그인하면 테마·폰트·키맵이 기기 간에 동기화됩니다. API 키 같은 비밀값은 이 기기에만 저장되고 절대 동기화되지 않습니다.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow"><span data-lang-en>And the essentials</span><span data-lang-ko>그리고 기본기</span></div>
+      <h2><span data-lang-en>The rest of the workbench.</span><span data-lang-ko>워크벤치의 나머지.</span></h2>
+    </div>
+    <div class="strip">
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg><div><b><span data-lang-en>Full-text search</span><span data-lang-ko>전체 텍스트 검색</span></b><p><span data-lang-en>Search across the whole workspace, jump straight to the line.</span><span data-lang-ko>워크스페이스 전체를 검색하고 해당 줄로 바로 이동.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M8.5 6H14a3 3 0 013 3"/></svg><div><b><span data-lang-en>Git built in</span><span data-lang-ko>Git 통합</span></b><p><span data-lang-en>Stage, commit, push/pull, diffs and inline blame.</span><span data-lang-ko>스테이지·커밋·push/pull·diff·인라인 blame.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b><span data-lang-en>Usage tracking</span><span data-lang-ko>사용량 추적</span></b><p><span data-lang-en>See today's tokens, cost and rate-limit windows at a glance.</span><span data-lang-ko>오늘의 토큰·비용·사용 한도를 한눈에.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M8 14h8" stroke-linecap="round"/></svg><div><b><span data-lang-en>Custom keybindings</span><span data-lang-ko>커스텀 키바인딩</span></b><p><span data-lang-en>Rebind anything, chord shortcuts included.</span><span data-lang-ko>무엇이든 재지정, 코드(chord) 단축키까지.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor" stroke="none"/></svg><div><b><span data-lang-en>Themes &amp; fonts</span><span data-lang-ko>테마 &amp; 폰트</span></b><p><span data-lang-en>Curated themes, importable fonts for editor and terminal.</span><span data-lang-ko>엄선된 테마와 에디터·터미널용 임포트 가능한 폰트.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/></svg><div><b><span data-lang-en>Per-workspace sessions</span><span data-lang-ko>워크스페이스별 세션</span></b><p><span data-lang-en>Multiple projects at once — tabs, layout and terminals restored on restart.</span><span data-lang-ko>여러 프로젝트를 동시에 — 탭·레이아웃·터미널이 재시작 시 복원.</span></p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="install">
+  <div class="wrap">
+    <div class="install-box reveal">
+      <div class="eyebrow"><span data-lang-en>Get riven</span><span data-lang-ko>riven 받기</span></div>
+      <h2><span data-lang-en>Start coding with agents.</span><span data-lang-ko>지금 에이전트와 코딩을 시작하세요.</span></h2>
+      <div class="cta">
         <a class="btn btn-primary" href="riven-0.0.2-arm64.dmg" download>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M11.18 8.52c-.02-1.62 1.32-2.4 1.38-2.44-.75-1.1-1.92-1.25-2.34-1.27-1-.1-1.94.59-2.45.59-.5 0-1.28-.58-2.1-.56-1.08.02-2.08.63-2.64 1.6-1.12 1.95-.29 4.84.81 6.42.54.78 1.18 1.65 2.02 1.62.81-.03 1.11-.52 2.09-.52.97 0 1.25.52 2.1.5.87-.01 1.42-.79 1.95-1.57.62-.9.87-1.77.88-1.82-.02-.01-1.69-.65-1.7-2.55zM9.55 3.7c.44-.54.74-1.29.66-2.03-.64.03-1.41.42-1.87.96-.41.48-.77 1.24-.67 1.97.71.05 1.43-.36 1.88-.9z"/>
-          </svg>
-          macOS용 다운로드
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.9c0-2 1.6-3 1.7-3-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7-.6 0-1.6-.7-2.6-.7-1.3 0-2.6.8-3.2 2-1.4 2.4-.4 6 1 8 .7 1 1.4 2 2.4 2 1 0 1.3-.6 2.5-.6s1.5.6 2.5.6 1.7-1 2.3-2c.7-1.1 1-2.2 1-2.3 0 0-2-.8-2.1-3.1zM14.6 6.3c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.4.9.1 1.7-.4 2.3-1.1z"/></svg>
+          <span data-lang-en>Download for macOS</span><span data-lang-ko>macOS용 다운로드</span>
         </a>
-        <a class="btn btn-ghost" href="https://github.com/wassupss/riven">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M8 .6a7.6 7.6 0 0 0-2.4 14.8c.38.07.52-.16.52-.36v-1.26c-2.11.46-2.56-1.02-2.56-1.02-.35-.88-.85-1.11-.85-1.11-.7-.48.05-.47.05-.47.77.05 1.17.79 1.17.79.68 1.17 1.79.83 2.23.64.07-.5.27-.83.48-1.02-1.69-.19-3.46-.85-3.46-3.76 0-.83.3-1.51.78-2.04-.08-.19-.34-.96.07-2.01 0 0 .64-.2 2.09.78a7.2 7.2 0 0 1 3.8 0c1.45-.98 2.09-.78 2.09-.78.41 1.05.15 1.82.07 2.01.49.53.78 1.21.78 2.04 0 2.92-1.78 3.56-3.47 3.75.27.24.51.7.51 1.4v2.06c0 .2.14.44.53.36A7.6 7.6 0 0 0 8 .6z"/>
-          </svg>
-          GitHub에서 보기
+        <a class="btn btn-ghost" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">
+          <span data-lang-en>View source</span><span data-lang-ko>소스 보기</span>
         </a>
-        <span class="cta-note mono">Apple Silicon (arm64) · .dmg<span class="sep">|</span>Windows / Linux 준비 중</span>
+      </div>
+      <div class="install-meta">
+        <code>v0.0.2</code> · Apple Silicon (arm64) · <span data-lang-en>Windows &amp; Linux coming soon</span><span data-lang-ko>Windows &amp; Linux 준비 중</span>
       </div>
     </div>
-  </section>
+  </div>
+</section>
 
-  <!-- ============ PRODUCT SURFACE ============ -->
-  <section class="stage" aria-label="riven 화면 구성">
-    <div class="wrap">
-      <div class="mock-frame reveal">
-        <div class="mock" role="img" aria-label="riven IDE 목업 — 왼쪽 탐색기, 중앙 Monaco 에디터, 오른쪽 프리뷰, 하단 에이전트 터미널, 그리고 팝아웃된 별도 창">
-          <div class="m-titlebar">
-            <div class="m-lights" aria-hidden="true"><span></span><span></span><span></span></div>
-            <div class="m-title"><b>riven</b> — ~/dev/riven</div>
-            <div class="m-usage">AI 사용량 <i>▮▮▮</i>▯▯</div>
-          </div>
-          <div class="m-grid">
-            <!-- explorer -->
-            <div class="m-panel m-explorer">
-              <div class="m-head"><span class="grip">⋮⋮</span>탐색기<span class="spacer"></span><span class="pop">⇱</span></div>
-              <div class="m-tree">
-                <div class="row"><span class="tw">▾</span><span class="fi fi-dir"></span>src</div>
-                <div class="row d1"><span class="tw">▾</span><span class="fi fi-dir"></span>main</div>
-                <div class="row d2 on"><span class="tw"></span><span class="fi fi-ts"></span>pty-host.ts</div>
-                <div class="row d2"><span class="tw"></span><span class="fi fi-ts"></span>agent-watch.ts</div>
-                <div class="row d1"><span class="tw">▾</span><span class="fi fi-dir"></span>renderer</div>
-                <div class="row d2"><span class="tw"></span><span class="fi fi-tsx"></span>App.tsx</div>
-                <div class="row d2"><span class="tw"></span><span class="fi fi-tsx"></span>DockLayout.tsx</div>
-                <div class="row d2"><span class="tw"></span><span class="fi fi-ts"></span>review.ts</div>
-                <div class="row"><span class="tw"></span><span class="fi fi-html"></span>index.html</div>
-                <div class="row"><span class="tw"></span><span class="fi fi-json"></span>package.json</div>
-                <div class="row"><span class="tw"></span><span class="fi fi-md"></span>README.md</div>
-              </div>
-              <div class="m-mention">우클릭 → <b>@pty-host.ts</b><br />터미널로 멘션 보내기</div>
-            </div>
-
-            <!-- editor -->
-            <div class="m-panel m-editor">
-              <div class="m-tabs">
-                <div class="m-tab on"><span class="fi fi-ts"></span>pty-host.ts</div>
-                <div class="m-tab"><span class="fi fi-tsx"></span>DockLayout.tsx</div>
-                <div class="m-tab"><span class="fi fi-ts"></span>review.ts</div>
-              </div>
-              <div class="m-hunkbar">
-                <span class="tag">에이전트 편집</span> claude가 2개 hunk를 수정했습니다
-                <span class="act"><u>hunk 되돌리기</u> · <u>모두 수락</u></span>
-              </div>
-              <div class="m-code" aria-hidden="true">
-                <div class="ln"><span class="no">41</span><span><span class="c-cm">// PTY는 main 프로세스에 상주 — 렌더러가 죽어도 살아있다</span></span></div>
-                <div class="ln"><span class="no">42</span><span><span class="c-kw">const</span> <span class="c-pl">pty</span> = <span class="c-pl">ptyHost</span>.<span class="c-fn">acquire</span>(<span class="c-pl">sessionId</span>)</span></div>
-                <div class="ln add"><span class="no">43</span><span><span class="c-pl">pty</span>.<span class="c-fn">replay</span>(<span class="c-pl">snapshot</span>)  <span class="c-cm">// 직렬화된 화면 스냅숏 복원</span></span></div>
-                <div class="ln"><span class="no">44</span><span></span></div>
-                <div class="ln"><span class="no">45</span><span><span class="c-pl">watcher</span>.<span class="c-fn">on</span>(<span class="c-str">"agent-edit"</span>, <span class="c-kw">async</span> (<span class="c-pl">file</span>: <span class="c-ty">Uri</span>) <span class="c-kw">=&gt;</span> {</span></div>
-                <div class="ln add"><span class="no">46</span><span>  <span class="c-kw">const</span> <span class="c-pl">hunks</span> = <span class="c-fn">diff</span>(<span class="c-kw">await</span> <span class="c-fn">baseline</span>(<span class="c-pl">file</span>), <span class="c-pl">file</span>)</span></div>
-                <div class="ln"><span class="no">47</span><span>  <span class="c-pl">review</span>.<span class="c-fn">open</span>(<span class="c-pl">file</span>, <span class="c-pl">hunks</span>)  <span class="c-cm">// 인라인 diff 리뷰</span></span></div>
-                <div class="ln"><span class="no">48</span><span>})</span></div>
-                <div class="ln"><span class="no">49</span><span></span></div>
-                <div class="ln"><span class="no">50</span><span><span class="c-pl">bridge</span>.<span class="c-fn">send</span>(<span class="c-pl">focusedTerm</span>, { <span class="c-pr">selection</span>, <span class="c-pr">diagnostics</span> })</span></div>
-              </div>
-            </div>
-
-            <!-- preview -->
-            <div class="m-panel m-preview">
-              <div class="m-head"><span class="grip">⋮⋮</span>프리뷰<span class="spacer"></span><span class="pop">⇱</span></div>
-              <div class="m-pv-url">localhost:5173</div>
-              <div class="m-pv-body" aria-hidden="true">
-                <div class="pv-bar w60"></div>
-                <div class="pv-bar thin"></div>
-                <div class="pv-bar thin w80"></div>
-                <div class="pv-btn"></div>
-                <div class="pv-card">
-                  <div class="pv-bar thin w80"></div>
-                  <div class="pv-bar thin w60"></div>
-                </div>
-              </div>
-            </div>
-
-            <!-- terminal -->
-            <div class="m-panel m-term">
-              <div class="m-head" style="padding:0;">
-                <div class="m-term-tabs">
-                  <div class="m-ttab on"><span class="st-dot st-run"></span>claude · 실행 중</div>
-                  <div class="m-ttab"><span class="st-dot st-done"></span>codex · 완료</div>
-                  <div class="m-ttab"><span class="st-dot st-idle"></span>zsh</div>
-                </div>
-                <span class="spacer"></span>
-                <span class="pop" style="padding-right:10px;">⇱</span>
-              </div>
-              <div class="m-term-body" aria-hidden="true">
-                <div class="tl"><span class="t-prompt">❯</span> claude <span class="t-dim">"@pty-host.ts 재접속 로직 리팩터링해줘"</span></div>
-                <div class="tl"><span class="t-run">⏺</span> src/main/pty-host.ts 편집 중<span class="t-faint">…</span></div>
-                <div class="tl"><span class="t-ok">✓</span> 2개 hunk 적용 <span class="t-faint">— 인라인 diff 리뷰가 열렸습니다</span></div>
-                <div class="tl"><span class="t-faint">에디터 선택 영역 12줄 + 진단 1건이 컨텍스트로 전달됨</span></div>
-                <div class="tl"><span class="t-prompt">❯</span> <span class="caret"></span></div>
-              </div>
-              <div class="m-status">
-                <span>main · 클린</span>
-                <span class="lsp-ok">● LSP 6개 활성</span>
-                <span class="spacer"></span>
-                <span>TypeScript 5.6</span>
-                <span>UTF-8</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="m-float" aria-hidden="true">
-          <div class="fh"><span class="st-dot st-done"></span>codex — 팝아웃 창</div>
-          <div class="fb">
-            <span class="t-ok">✓</span> 테스트 42개 통과<br />
-            <span class="t-faint">작업 완료 · 벨 감지됨</span>
-          </div>
-        </div>
-      </div>
-      <div class="mock-chips reveal">
-        <span class="chip">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 1v12M5.5 7H13" stroke="currentColor" stroke-width="1.5"/></svg>
-          모든 영역이 드래그 가능한 패널
-        </span>
-        <span class="chip">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M12 6.5A5 5 0 1 1 7 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 2v4.5H7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          ⌘R에도 터미널은 살아있음
-        </span>
-        <span class="chip">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1" y="4" width="9" height="9" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M8 1h5v5M13 1L7.5 6.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          별도 창으로 팝아웃
-        </span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ AGENT DIFFERENTIATOR ============ -->
-  <section class="block tinted" id="agents">
-    <div class="wrap">
-      <div class="reveal">
-        <div class="sec-eyebrow mono">Agent-native Workflow</div>
-        <h2 class="sec-title">에이전트를 옆에 두는 게 아니라, 워크플로 한가운데에 둡니다</h2>
-        <p class="sec-lede">
-          대부분의 IDE에서 AI는 사이드바에 얹힌 채팅입니다. riven의 터미널은 실제 에이전트
-          자식 프로세스를 지켜봅니다 — 출력 텍스트 추측이 아니라 프로세스 기준으로
-          실행 상태와 attention(벨, 작업 완료)을 판별하고, 편집이 끝나면 리뷰까지 이어집니다.
-        </p>
-      </div>
-      <div class="flow">
-        <div class="step reveal">
-          <span class="num">01 — 보낸다</span>
-          <h3>컨텍스트를 건넨다</h3>
-          <p>에디터 선택 영역, 파일 전체, LSP 진단을 포커스된 터미널로 그대로 전송합니다. 탐색기에서는 파일을 @-멘션으로 붙일 수 있습니다.</p>
-          <div class="demo">
-            <div class="mini"><span class="t-faint">⌥⏎ 선택 영역 보내기</span><br /><span class="t-prompt">❯</span> claude <span class="badge">@review.ts</span> <span class="badge">진단 1건</span></div>
-          </div>
-        </div>
-        <div class="step reveal">
-          <span class="num">02 — 지켜본다</span>
-          <h3>실행을 지켜본다</h3>
-          <p>여러 에이전트를 나란히 도킹해 두고, 어떤 탭이 아직 일하는 중이고 어떤 탭이 응답을 기다리는지 프로세스 수준에서 확인합니다.</p>
-          <div class="demo">
-            <div class="mini"><span class="st-dot st-run" style="display:inline-block;vertical-align:0;"></span> claude · 실행 중<br /><span class="st-dot st-done" style="display:inline-block;vertical-align:0;"></span> codex · 작업 완료 <span class="t-faint">— 벨 감지</span></div>
-          </div>
-        </div>
-        <div class="step reveal">
-          <span class="num">03 — 검토한다</span>
-          <h3>편집을 검토한다</h3>
-          <p>파일 워처가 에이전트의 편집을 감지해 파일을 자동으로 열고, git 또는 캐시 베이스라인 대비 멀티-헝크 인라인 diff를 보여줍니다. 헝크 단위로 되돌릴 수 있습니다.</p>
-          <div class="demo">
-            <div class="mini"><span class="del">- pty.kill()</span><br /><span class="hl"><span class="t-ok">+ pty.detach()  </span></span><span class="t-faint"> hunk 1/2</span><br /><span class="t-faint">[수락] [되돌리기]</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ FEATURES ============ -->
-  <section class="block" id="features">
-    <div class="wrap">
-      <div class="reveal">
-        <div class="sec-eyebrow mono">Everything an IDE should be</div>
-        <h2 class="sec-title">에이전트만 특별한 게 아닙니다. IDE로서도 진짜입니다</h2>
-        <p class="sec-lede">
-          Electron + React + TypeScript로 만든 데스크톱 앱. 에디터 코어부터 터미널,
-          언어 지원까지 — 매일 쓰는 도구가 갖춰야 할 것들을 제대로 갖췄습니다.
-        </p>
-      </div>
-      <div class="grid">
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7 4L3 10l4 6M13 4l4 6-4 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <h3>Monaco 에디터</h3>
-          <p>VS Code와 동일한 에디터 코어. 파일 URI로 키잉된 여러 모델을 하나의 에디터가 다루는 구조라 탭 전환이 즉각적입니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2" y="3.5" width="16" height="13" rx="2.5" stroke="currentColor" stroke-width="1.6"/><path d="M5.5 8l2.5 2-2.5 2M10.5 12.5H14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <h3>죽지 않는 터미널</h3>
-          <p>xterm.js + node-pty. PTY가 main 프로세스에 상주해 <code>⌘R</code>과 패널 재마운트에도 살아남고, 직렬화된 화면 스냅숏으로 그대로 재접속합니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 10h3l2.5-5 3 10 2.5-5h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <h3>에이전트 인식 터미널</h3>
-          <p>출력 문자열 추측이 아니라 실제 에이전트 자식 프로세스에서 실행 상태를 읽습니다. 벨·작업 완료 같은 attention도 프로세스 기준으로 감지합니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.6"/><path d="M2.8 10h14.4M10 2.5c2.2 2 3.2 4.6 3.2 7.5S12.2 15.5 10 17.5c-2.2-2-3.2-4.6-3.2-7.5S7.8 4.5 10 2.5z" stroke="currentColor" stroke-width="1.4"/></svg>
-          </div>
-          <h3>멀티 언어 LSP</h3>
-          <p>완성·hover·정의 이동·진단. TypeScript/JS, Python(Pyright), YAML, Bash는 설정 없이 내장. clangd·gopls·rust-analyzer는 PATH에 있으면 자동으로 켜집니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2" y="2" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 2v16M8.5 10.5H18" stroke="currentColor" stroke-width="1.6"/></svg>
-          </div>
-          <h3>dockview 도킹</h3>
-          <p>VS Code식 유연한 도킹. 탐색기·에디터·프리뷰·터미널 전부가 드래그 가능한 패널이고, 어느 것이든 별도 창으로 팝아웃됩니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2l7 4v8l-7 4-7-4V6l7-4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M3.2 6.3L10 10l6.8-3.7M10 10v7.6" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
-          </div>
-          <h3>워크스페이스 세션</h3>
-          <p>프로젝트를 여러 개 동시에 열고, 각각 고유한 탭·레이아웃·터미널을 유지합니다. 재시작해도 레이아웃과 열린 탭이 그대로 복원됩니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.5l1.8 4.3 4.7.4-3.6 3.1 1.1 4.6L10 12.4l-4 2.5 1.1-4.6-3.6-3.1 4.7-.4L10 2.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-          </div>
-          <h3>Shiki 하이라이팅</h3>
-          <p>TextMate급 정밀 하이라이팅. tsx/jsx를 일급으로 지원해, VS Code에서 보던 그 색 그대로 읽힙니다.</p>
-        </div>
-        <div class="card reveal">
-          <div class="ico">
-            <svg width="19" height="19" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="5" cy="10" r="2.4" stroke="currentColor" stroke-width="1.6"/><circle cx="15" cy="4.5" r="2.4" stroke="currentColor" stroke-width="1.6"/><circle cx="15" cy="15.5" r="2.4" stroke="currentColor" stroke-width="1.6"/><path d="M7.2 8.9l5.5-3.2M7.2 11.1l5.5 3.2" stroke="currentColor" stroke-width="1.5"/></svg>
-          </div>
-          <h3>멀티 프로바이더 AI</h3>
-          <p>원하는 AI 프로바이더를 골라 쓰고, 사용량을 한눈에 추적합니다. 커스텀 키바인딩과 테마도 함께.</p>
-        </div>
-      </div>
-      <div class="grid-foot reveal">
-        <span>전체 텍스트 검색</span>
-        <span>실시간 파일 트리</span>
-        <span>파일 타입별 컬러 아이콘</span>
-        <span>macOS · Windows · Linux 크로스 플랫폼 기반</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ============ INSTALL ============ -->
-  <section class="block" style="padding-top:0;">
-    <div class="wrap">
-      <div class="install reveal">
-        <div class="copy">
-          <h2>지금 에이전트에게<br />자리를 내어주세요</h2>
-          <p>내려받고, 프로젝트를 열고, 터미널에서 쓰던 에이전트를 그대로 실행하면 됩니다. riven이 나머지 — 상태, 컨텍스트, 리뷰 — 를 맡습니다.</p>
-        </div>
-        <div class="actions">
-          <a class="btn btn-primary" href="riven-0.0.2-arm64.dmg" download>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-              <path d="M11.18 8.52c-.02-1.62 1.32-2.4 1.38-2.44-.75-1.1-1.92-1.25-2.34-1.27-1-.1-1.94.59-2.45.59-.5 0-1.28-.58-2.1-.56-1.08.02-2.08.63-2.64 1.6-1.12 1.95-.29 4.84.81 6.42.54.78 1.18 1.65 2.02 1.62.81-.03 1.11-.52 2.09-.52.97 0 1.25.52 2.1.5.87-.01 1.42-.79 1.95-1.57.62-.9.87-1.77.88-1.82-.02-.01-1.69-.65-1.7-2.55zM9.55 3.7c.44-.54.74-1.29.66-2.03-.64.03-1.41.42-1.87.96-.41.48-.77 1.24-.67 1.97.71.05 1.43-.36 1.88-.9z"/>
-            </svg>
-            macOS용 다운로드
-          </a>
-          <span class="dl-meta mono">riven-0.0.2-arm64.dmg<span class="sep">·</span>Apple Silicon<span class="sep">·</span>Windows / Linux 준비 중</span>
-        </div>
-      </div>
-    </div>
-  </section>
-</main>
-
-<!-- ============ FOOTER ============ -->
 <footer>
-  <div class="wrap foot-inner">
+  <div class="wrap foot-in">
     <a class="brand" href="#top">
-      <svg width="18" height="18" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-        <rect x="1" y="1" width="20" height="20" rx="5" stroke="currentColor" stroke-width="1.6"/>
-        <line x1="8.5" y1="1.8" x2="8.5" y2="20.2" stroke="currentColor" stroke-width="1.6"/>
-        <line x1="8.5" y1="11" x2="20.2" y2="11" stroke="currentColor" stroke-width="1.6"/>
-        <rect x="10.6" y="13.1" width="7.5" height="5" rx="1.4" fill="#ff7847"/>
-      </svg>
+      <svg class="mark" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="7" fill="var(--accent)"/><rect x="7" y="7" width="8.2" height="18" rx="2" fill="var(--accent-fg)" opacity="0.95"/><rect x="17.8" y="7" width="8.2" height="18" rx="2" fill="var(--accent-fg)" opacity="0.55"/></svg>
       riven
     </a>
-    <span class="ver mono">v0.0.2</span>
-    <span class="foot-spacer"></span>
-    <a href="https://github.com/wassupss/riven">GitHub</a>
-    <span>Windows / Linux 준비 중</span>
-    <span>© 2026 riven</span>
+    <span class="mono">v0.0.2</span>
+    <div class="nav-spacer"></div>
+    <span class="mono">© 2026 riven</span>
+    <a class="nav-link" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">GitHub</a>
   </div>
 </footer>
 
 <script>
+  function setLang(lang) {
+    document.documentElement.lang = lang;
+    var ko = document.getElementById('lang-ko'), en = document.getElementById('lang-en');
+    if (ko) ko.classList.toggle('on', lang === 'ko');
+    if (en) en.classList.toggle('on', lang === 'en');
+    try { localStorage.setItem('riven-lang', lang); } catch (e) {}
+  }
   (function () {
-    document.body.classList.add("js");
-    var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    var els = document.querySelectorAll(".reveal");
-    if (reduced || !("IntersectionObserver" in window)) {
-      els.forEach(function (el) { el.classList.add("in"); });
-      return;
-    }
+    var saved;
+    try { saved = localStorage.getItem('riven-lang'); } catch (e) {}
+    var initial = saved || ((navigator.language || 'ko').toLowerCase().indexOf('ko') === 0 ? 'ko' : 'en');
+    setLang(initial);
+  })();
+
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var els = document.querySelectorAll('.reveal');
+    if (reduce || !('IntersectionObserver' in window)) { els.forEach(function (e) { e.classList.add('in'); }); return; }
     var io = new IntersectionObserver(function (entries) {
-      entries.forEach(function (e) {
-        if (e.isIntersecting) {
-          e.target.classList.add("in");
-          io.unobserve(e.target);
-        }
-      });
-    }, { rootMargin: "0px 0px -8% 0px", threshold: 0.08 });
-    els.forEach(function (el) { io.observe(el); });
+      entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { threshold: 0.12 });
+    els.forEach(function (e) { io.observe(e); });
   })();
 </script>
+
 </body>
 </html>
