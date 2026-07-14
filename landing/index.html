@@ -266,7 +266,7 @@
   <div class="wrap">
     <div class="shot-frame reveal">
       <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/acme-web</span></div>
-      <video class="shot-media" autoplay muted loop playsinline preload="metadata"
+      <video class="shot-media" autoplay muted loop playsinline preload="auto"
              poster="assets/riven-poster.png"
              aria-label="riven IDE 데모: 코드 스크롤, 테마 전환, 설정·계정 동기화 패널">
         <source src="assets/riven-demo.webm" type="video/webm" />
@@ -394,15 +394,25 @@
     els.forEach(function (e) { io.observe(e); });
   })();
 
-  // Respect reduced-motion: hold the demo on its poster instead of autoplaying.
+  // Nudge the demo video to autoplay (some browsers ignore the attribute on
+  // file:// or first paint). Reduced-motion holds the poster instead.
   (function () {
-    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      document.querySelectorAll('video.shot-media').forEach(function (v) {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.querySelectorAll('video.shot-media').forEach(function (v) {
+      if (reduce) {
         v.removeAttribute('autoplay');
         v.removeAttribute('loop');
         try { v.pause(); } catch (e) {}
-      });
-    }
+        return;
+      }
+      v.muted = true;
+      var tryPlay = function () {
+        var p = v.play();
+        if (p && p.catch) p.catch(function () {});
+      };
+      tryPlay();
+      v.addEventListener('canplay', tryPlay, { once: true });
+    });
   })();
 </script>
 
