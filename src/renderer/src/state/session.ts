@@ -22,6 +22,7 @@ interface PersistShape {
   openWorkspaces: string[]
   activeWorkspace: string | null
   sessions: Record<string, Session>
+  recents?: string[]
 }
 
 interface SessionState {
@@ -29,6 +30,7 @@ interface SessionState {
   openWorkspaces: string[]
   activeWorkspace: string | null
   sessions: Record<string, Session>
+  recents: string[] // most-recently-opened workspace paths (MRU), for reopening
   hydrate: (data: PersistShape) => void
   openWorkspace: (path: string) => void
   closeWorkspace: (path: string) => void
@@ -43,6 +45,7 @@ export const useSession = create<SessionState>((set) => ({
   openWorkspaces: [],
   activeWorkspace: null,
   sessions: {},
+  recents: [],
 
   hydrate: (data) =>
     set(() => {
@@ -59,7 +62,8 @@ export const useSession = create<SessionState>((set) => ({
         ready: true,
         openWorkspaces: data.openWorkspaces ?? [],
         activeWorkspace: data.activeWorkspace ?? null,
-        sessions
+        sessions,
+        recents: data.recents ?? []
       }
     }),
 
@@ -67,7 +71,8 @@ export const useSession = create<SessionState>((set) => ({
     set((st) => ({
       activeWorkspace: path,
       openWorkspaces: st.openWorkspaces.includes(path) ? st.openWorkspaces : [...st.openWorkspaces, path],
-      sessions: st.sessions[path] ? st.sessions : { ...st.sessions, [path]: emptySession() }
+      sessions: st.sessions[path] ? st.sessions : { ...st.sessions, [path]: emptySession() },
+      recents: [path, ...st.recents.filter((r) => r !== path)].slice(0, 8)
     })),
 
   closeWorkspace: (path) =>
@@ -118,7 +123,8 @@ useSession.subscribe((st) => {
       window.api.sessions.save({
         openWorkspaces: st.openWorkspaces,
         activeWorkspace: st.activeWorkspace,
-        sessions: st.sessions
+        sessions: st.sessions,
+        recents: st.recents
       }),
     400
   )

@@ -59,6 +59,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'ws.title': { ko: '워크스페이스', en: 'Workspaces' },
   'ws.openFolder': { ko: '폴더 열기', en: 'Open folder' },
   'ws.empty': { ko: '+ 로 폴더를 열어 시작해요', en: 'Open a folder with + to start' },
+  'ws.recent': { ko: '최근 프로젝트', en: 'Recent' },
   'ws.close': { ko: '워크스페이스 닫기', en: 'Close workspace' },
   'ws.activity.attn': { ko: '입력 대기', en: 'Awaiting input' },
   'ws.activity.busy': { ko: '실행 중', en: 'Running' },

@@ -11,6 +11,8 @@ export default function WorkspaceTabs(): JSX.Element {
   const t = useT()
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
+  const recents = useSession((s) => s.recents)
+  const recentClosed = recents.filter((r) => !openWorkspaces.includes(r))
 
   const pick = useCallback(async () => {
     const picked = await window.api.workspace.pickFolder()
@@ -30,6 +32,22 @@ export default function WorkspaceTabs(): JSX.Element {
           <WorkspaceCard key={ws} ws={ws} index={i} />
         ))}
         {openWorkspaces.length === 0 && <div className="ws-empty">{t('ws.empty')}</div>}
+        {recentClosed.length > 0 && (
+          <div className="ws-recents">
+            <div className="ws-recents-head">{t('ws.recent')}</div>
+            {recentClosed.map((r) => (
+              <div
+                key={r}
+                className="ws-recent"
+                title={r}
+                onClick={() => openWorkspace(r)}
+              >
+                <span className="ws-recent-name">{r.split('/').pop()}</span>
+                <span className="ws-recent-path">{shortenPath(r)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
