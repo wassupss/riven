@@ -18,6 +18,7 @@ import { useAuth } from './state/auth'
 import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
 import { registerInlineComplete } from './editor/inlineComplete'
+import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
 import { useUsage } from './state/usage'
 import UsagePinned from './components/UsagePinned'
@@ -45,6 +46,7 @@ export default function App(): JSX.Element {
   useEffect(() => {
     registerDefaultActions()
     registerInlineComplete()
+    registerSnippets()
     useUsage.getState().start()
     void (async () => {
       await loadEnv()

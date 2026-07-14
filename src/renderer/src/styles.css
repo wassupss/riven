@@ -557,6 +557,18 @@ select {
   color: var(--fg-dim);
 }
 
+/* snippet editor rows in settings */
+.snippet-row {
+  align-items: flex-start;
+}
+.snippet-body {
+  flex: 1;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  min-height: 40px;
+}
+
 /* recently-closed workspaces — click to reopen */
 .ws-recents {
   margin-top: 8px;

@@ -23,6 +23,8 @@ export interface Settings {
   formatOnSave: boolean
   // Named "new terminal" presets: each runs `command` in a fresh terminal.
   terminalProfiles: Array<{ name: string; command: string }>
+  // Editor snippets: typing `prefix` offers `body` (supports ${1} tab stops).
+  snippets: Array<{ prefix: string; body: string }>
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   usagePinned: false,
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
+  snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
   terminalFontFamily:
     '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   terminalFontSize: 12,

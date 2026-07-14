@@ -211,6 +211,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.profileName': { ko: '이름', en: 'Name' },
   'settings.profileCommand': { ko: '실행 명령', en: 'Command' },
   'settings.addProfile': { ko: '+ 프로파일 추가', en: '+ Add profile' },
+  'settings.snippets': { ko: '스니펫', en: 'Snippets' },
+  'settings.snippetsHint': {
+    ko: '접두어를 입력하면 본문이 자동완성으로 제안됩니다. ${1} 로 탭 정지점을 넣을 수 있어요.',
+    en: 'Type the prefix to get the body as a completion. Use ${1} for tab stops.'
+  },
+  'settings.snippetPrefix': { ko: '접두어', en: 'Prefix' },
+  'settings.snippetBody': { ko: '본문', en: 'Body' },
+  'settings.addSnippet': { ko: '+ 스니펫 추가', en: '+ Add snippet' },
   'settings.resetDefaults': { ko: '기본값으로', en: 'Reset to defaults' },
   'settings.customFont': { ko: '커스텀…', en: 'Custom…' },
   'settings.importFontTitle': { ko: '폰트 파일(.ttf/.otf/.woff) 가져오기', en: 'Import a font file (.ttf/.otf/.woff)' },

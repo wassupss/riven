@@ -216,6 +216,51 @@ export default function SettingsModal(): JSX.Element | null {
                 </button>
               </div>
 
+              <div className="section-label">{t('settings.snippets')}</div>
+              <div className="set-note">{t('settings.snippetsHint')}</div>
+              {settings.snippets.map((s, i) => (
+                <div className="set-row snippet-row" key={i}>
+                  <input
+                    className="url-input set-num"
+                    value={s.prefix}
+                    placeholder={t('settings.snippetPrefix')}
+                    onChange={(e) => {
+                      const next = settings.snippets.map((x, j) =>
+                        j === i ? { ...x, prefix: e.target.value } : x
+                      )
+                      upd('snippets', next)
+                    }}
+                  />
+                  <textarea
+                    className="url-input snippet-body"
+                    rows={2}
+                    value={s.body}
+                    placeholder={t('settings.snippetBody')}
+                    onChange={(e) => {
+                      const next = settings.snippets.map((x, j) =>
+                        j === i ? { ...x, body: e.target.value } : x
+                      )
+                      upd('snippets', next)
+                    }}
+                  />
+                  <button
+                    className="btn-small"
+                    title={t('common.close')}
+                    onClick={() => upd('snippets', settings.snippets.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <div className="set-actions">
+                <button
+                  className="btn-small"
+                  onClick={() => upd('snippets', [...settings.snippets, { prefix: '', body: '' }])}
+                >
+                  {t('settings.addSnippet')}
+                </button>
+              </div>
+
               <div className="set-actions">
                 <button className="btn-small" onClick={reset}>
                   {t('settings.resetDefaults')}
