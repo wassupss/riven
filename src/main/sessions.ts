@@ -20,6 +20,11 @@ export function registerSessionsHandlers(): void {
   })
 
   ipcMain.handle('sessions:save', async (_e, data: unknown) => {
-    await fs.writeFile(storeFile(), JSON.stringify(data, null, 2))
+    // Atomic write (temp + rename) so a crash mid-write can't corrupt the
+    // multi-workspace session snapshot and reset every project's layout.
+    const file = storeFile()
+    const tmp = `${file}.tmp`
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2))
+    await fs.rename(tmp, file)
   })
 }

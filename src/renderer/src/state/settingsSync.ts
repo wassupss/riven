@@ -7,9 +7,10 @@ import { useSettings, DEFAULT_SETTINGS, type Settings } from './settings'
 
 const TABLE = 'user_settings'
 
-// Secrets never leave the device. The API key is the only sensitive field in
-// Settings today; keep this list in sync if more are added.
-const SYNC_EXCLUDE: ReadonlyArray<keyof Settings> = ['aiApiKey']
+// Never synced. `aiApiKey` is a secret; `importedFonts` holds multi-MB base64
+// data URLs that would blow past the row/payload limits and get re-uploaded on
+// every unrelated settings change — fonts stay device-local.
+const SYNC_EXCLUDE: ReadonlyArray<keyof Settings> = ['aiApiKey', 'importedFonts']
 
 export function pickSyncable(s: Settings): Partial<Settings> {
   const out: Record<string, unknown> = {}
@@ -19,11 +20,17 @@ export function pickSyncable(s: Settings): Partial<Settings> {
   return out as Partial<Settings>
 }
 
-// While we apply cloud settings locally we must not echo them straight back to
-// the cloud — the push subscription checks this flag.
+// The push subscription must stay quiet in two windows: while we're applying a
+// cloud pull locally (else we'd echo it straight back), and for the whole
+// duration of the initial pull (else a user edit mid-pull would push local data
+// and clobber the cloud copy before the pull lands).
 let suppressPush = false
+let pulling = false
 export function isPushSuppressed(): boolean {
-  return suppressPush
+  return suppressPush || pulling
+}
+export function setPulling(v: boolean): void {
+  pulling = v
 }
 
 export async function pullRemote(userId: string): Promise<Partial<Settings> | null> {
@@ -51,13 +58,13 @@ export async function pushRemote(userId: string, settings: Settings): Promise<vo
 // keeps its local value.
 export function applyRemote(remote: Partial<Settings>): void {
   const clean = pickSyncable({ ...DEFAULT_SETTINGS, ...remote } as Settings)
+  // zustand fires subscribers synchronously inside set(), so a plain flag around
+  // the call is enough — the push subscription sees it true and skips. No timer
+  // (the old setTimeout(…,0) could let a same-tick user edit slip through).
   suppressPush = true
   try {
     useSettings.getState().set(clean)
   } finally {
-    // Release after the store's own debounced subscribers have queued.
-    setTimeout(() => {
-      suppressPush = false
-    }, 0)
+    suppressPush = false
   }
 }

@@ -18,6 +18,12 @@ export function registerConfigHandlers(): void {
   })
 
   ipcMain.handle('config:save', async (_e, name: string, data: unknown) => {
-    await fs.writeFile(fileFor(name), JSON.stringify(data, null, 2))
+    // Atomic write: a crash/power-loss mid-write must not truncate the file and
+    // wipe the user's settings/keybindings. Write a temp file, then rename
+    // (atomic on the same filesystem).
+    const file = fileFor(name)
+    const tmp = `${file}.tmp`
+    await fs.writeFile(tmp, JSON.stringify(data, null, 2))
+    await fs.rename(tmp, file)
   })
 }

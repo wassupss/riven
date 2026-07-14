@@ -1,4 +1,5 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { join } from 'path'
 import * as os from 'os'
 import { existsSync } from 'fs'
@@ -138,6 +139,11 @@ app.whenReady().then(() => {
   }))
 
   createWindow()
+
+  // Check GitHub Releases for updates (packaged builds only; dev has no feed).
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[riven] update check failed', e))
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

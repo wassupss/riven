@@ -60,5 +60,7 @@ jobs:
           files: |
             release/*.dmg
             release/*.zip
+            release/latest-mac.yml
+            release/*.blockmap
           fail_on_unmatched_files: true
           generate_release_notes: true

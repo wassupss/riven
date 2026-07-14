@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured, REDIRECT_TO } from '../lib/supabase'
 import { useSettings, getSettings } from './settings'
-import { applyRemote, pullRemote, pushRemote, isPushSuppressed } from './settingsSync'
+import { applyRemote, pullRemote, pushRemote, isPushSuppressed, setPulling } from './settingsSync'
 
 export type Provider = 'google' | 'github'
 type AuthStatus = 'idle' | 'loading' | 'signed-in' | 'error'
@@ -114,6 +114,10 @@ export const useAuth = create<AuthState>((set, get) => ({
 // the cloud with the current local settings.
 async function pullOnce(userId: string, set: (p: Partial<AuthState>) => void): Promise<void> {
   set({ syncStatus: 'syncing' })
+  // Block the debounced push for the whole pull window so a local edit that
+  // lands while the network request is in flight can't overwrite the cloud copy
+  // before we've adopted it.
+  setPulling(true)
   try {
     const remote = await pullRemote(userId)
     if (remote) {
@@ -124,5 +128,7 @@ async function pullOnce(userId: string, set: (p: Partial<AuthState>) => void): P
     set({ syncStatus: 'synced' })
   } catch (e) {
     set({ syncStatus: 'error', error: e instanceof Error ? e.message : String(e) })
+  } finally {
+    setPulling(false)
   }
 }

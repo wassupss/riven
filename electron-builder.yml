@@ -1,6 +1,12 @@
 appId: dev.riven.app
 productName: riven
 copyright: Copyright © 2026 riven
+# Update feed: electron-builder writes latest-mac.yml pointing at GitHub
+# Releases; electron-updater (main process) reads it to auto-update.
+publish:
+  provider: github
+  owner: wassupss
+  repo: riven
 directories:
   buildResources: build
   output: release
