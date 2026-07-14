@@ -137,7 +137,8 @@
   .shot-bar i:nth-child(2) { background: #febc2e; }
   .shot-bar i:nth-child(3) { background: #28c840; }
   .shot-bar span { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
-  .shot-frame img { display: block; width: 100%; height: auto; }
+  .shot-frame img,
+  .shot-frame .shot-media { display: block; width: 100%; height: auto; }
 
   /* sections */
   section { padding: 72px 0; }
@@ -264,9 +265,13 @@
 
   <div class="wrap">
     <div class="shot-frame reveal">
-      <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/playground/riven</span></div>
-      <img src="assets/riven-screenshot.png" width="3024" height="1898"
-           alt="riven IDE: 좌측 워크스페이스와 파일 탐색기, 중앙 터미널, 우측 Monaco 코드 에디터" loading="eager" />
+      <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/acme-web</span></div>
+      <video class="shot-media" autoplay muted loop playsinline preload="metadata"
+             poster="assets/riven-poster.png"
+             aria-label="riven IDE 데모: 코드 스크롤, 테마 전환, 설정·계정 동기화 패널">
+        <source src="assets/riven-demo.webm" type="video/webm" />
+        <source src="assets/riven-demo.mp4" type="video/mp4" />
+      </video>
     </div>
   </div>
 </header>
@@ -387,6 +392,17 @@
       entries.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
     }, { threshold: 0.12 });
     els.forEach(function (e) { io.observe(e); });
+  })();
+
+  // Respect reduced-motion: hold the demo on its poster instead of autoplaying.
+  (function () {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.querySelectorAll('video.shot-media').forEach(function (v) {
+        v.removeAttribute('autoplay');
+        v.removeAttribute('loop');
+        try { v.pause(); } catch (e) {}
+      });
+    }
   })();
 </script>
 

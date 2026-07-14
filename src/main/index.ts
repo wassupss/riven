@@ -57,6 +57,13 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
 
+  // Dev affordance: RIVEN_DEMO=<frameDir> records a scripted UI tour to frames.
+  if (process.env.RIVEN_DEMO) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      void import('./demo').then(({ runDemo }) => runDemo(mainWindow))
+    })
+  }
+
   // Dev affordance: RIVEN_CAPTURE=<path> [RIVEN_CAPTURE_DELAY=ms] captures the
   // real rendered UI to a PNG once loaded, then quits. Used to grab authentic
   // screenshots (e.g. for the landing page) instead of hand-drawn mockups.
