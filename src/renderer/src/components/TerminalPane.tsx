@@ -94,6 +94,10 @@ export default function TerminalPane({
         fontSize: cfg.terminalFontSize,
         fontWeight: '300',
         fontWeightBold: '500',
+        // D2Coding sits tight in the cell; a little horizontal + vertical breathing
+        // room makes it read cleaner (closer to Ghostty's spacing).
+        letterSpacing: 1,
+        lineHeight: 1.5,
         cursorBlink: true,
         cursorStyle: 'block',
         cursorInactiveStyle: 'outline',
