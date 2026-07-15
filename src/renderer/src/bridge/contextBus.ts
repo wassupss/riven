@@ -55,11 +55,16 @@ class ContextBus {
 
   private flushPending(workspace: string): void {
     const text = this.pending.get(workspace)
-    const sink = this.agentSink(workspace)
-    if (!text || !sink) return
+    if (!text || !this.agentSink(workspace)) return
     this.pending.delete(workspace)
-    // Give the agent a beat to reach its input prompt before pasting.
-    setTimeout(() => window.api.pty.write(sink.ptyId, text), 400)
+    // Give the agent a beat to reach its input prompt, then RE-RESOLVE the sink
+    // at write time — the pane could have closed during the delay, which would
+    // otherwise drop the text into a dead PTY. Requeue if the agent is gone.
+    setTimeout(() => {
+      const sink = this.agentSink(workspace)
+      if (sink) window.api.pty.write(sink.ptyId, text)
+      else this.pending.set(workspace, text)
+    }, 400)
   }
 
   unregisterSink(paneId: number): void {

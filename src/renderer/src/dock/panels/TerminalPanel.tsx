@@ -42,6 +42,9 @@ export default function TerminalPanel({
     () => () => {
       useTabBadge.getState().set(sessionKey, null)
       useWorkspaceStatus.getState().clearPane(workspace, paneId)
+      // Remove this pane's context-bus sink so the bridge never routes code into
+      // its (now dead) PTY, and sinks/agentByPane don't grow for the session.
+      contextBus.unregisterSink(paneId)
     },
     [sessionKey, workspace, paneId]
   )
