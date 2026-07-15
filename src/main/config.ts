@@ -1,6 +1,7 @@
 import { app, ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import { atomicWriteJson } from './atomicWrite'
 
 // Generic JSON config store in userData (used for keybindings.json, etc).
 
@@ -17,13 +18,5 @@ export function registerConfigHandlers(): void {
     }
   })
 
-  ipcMain.handle('config:save', async (_e, name: string, data: unknown) => {
-    // Atomic write: a crash/power-loss mid-write must not truncate the file and
-    // wipe the user's settings/keybindings. Write a temp file, then rename
-    // (atomic on the same filesystem).
-    const file = fileFor(name)
-    const tmp = `${file}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(data, null, 2))
-    await fs.rename(tmp, file)
-  })
+  ipcMain.handle('config:save', (_e, name: string, data: unknown) => atomicWriteJson(fileFor(name), data))
 }
