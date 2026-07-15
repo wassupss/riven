@@ -29,7 +29,12 @@ const IGNORED = new Set([
   '.mypy_cache',
   '.venv',
   'venv',
-  'target'
+  'target',
+  // macOS home noise (also Unity/Xcode caches) — so opening ~ or a huge dir
+  // doesn't slurp/scan the whole tree.
+  'Library',
+  '.Trash',
+  '.Trashes'
 ])
 
 // Currently-open workspace roots, kept in sync by the renderer. File mutations

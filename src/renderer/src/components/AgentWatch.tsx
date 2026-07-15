@@ -6,7 +6,7 @@ import { ensureEditor } from '../dock/registry'
 // Build/cache/vcs dirs are ignored by the watcher already; this is a second
 // guard so a stray event never yanks a transient file into the editor.
 const IGNORED_PATH =
-  /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target)([/\\]|$)/
+  /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target|Library|\.Trash|\.Trashes)([/\\]|$)/
 
 // Watches the active workspace for on-disk changes made by agents/terminals and
 // surfaces them: opens the changed file in the editor and records before/after

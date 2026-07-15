@@ -42,9 +42,10 @@ export function registerBridgeHandlers(): void {
     watcher = chokidar.watch(folder, {
       // Build/cache/vcs dirs churn constantly (esp. Next/turbopack, which
       // rewrites .next/**/*.sst thousands of times/sec) — never watch them, or
-      // AgentWatch drowns opening transient files and pins the CPU.
+      // AgentWatch drowns opening transient files and pins the CPU. Also skip
+      // macOS home noise (Library/Trash) so opening ~ doesn't peg the CPU.
       ignored:
-        /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target)([/\\]|$)/,
+        /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target|Library|\.Trash|\.Trashes)([/\\]|$)/,
       ignoreInitial: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 }
