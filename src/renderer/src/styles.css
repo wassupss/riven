@@ -5,6 +5,24 @@
    (they are runtime-themeable via state/themes.ts) using color-mix().
    ========================================================================== */
 
+/* D2Coding — bundled so the terminal's default font renders crisp Korean even
+   when it isn't installed system-wide (OFL 1.1). Only referenced by the terminal
+   font stack; the editor/UI fonts are unchanged. */
+@font-face {
+  font-family: 'D2Coding';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/D2Coding.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'D2Coding';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/D2Coding-Bold.woff2') format('woff2');
+}
+
 * {
   box-sizing: border-box;
 }

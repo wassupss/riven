@@ -125,6 +125,23 @@ export function ensureEditor(): void {
   })
 }
 
+// Auto-open the changes timeline when an agent edit arrives (idempotent). Opens
+// it on the left WITHOUT stealing focus from the terminal the user is typing in,
+// so agent activity surfaces the summary without hijacking the cursor.
+export function ensureChanges(): void {
+  const api = activeApi
+  if (!api || api.getPanel('changes')) return
+  const prev = api.activePanel
+  api.addPanel({
+    id: 'changes',
+    component: 'changes',
+    title: t('title.changes'),
+    renderer: 'always',
+    position: { direction: 'left' }
+  })
+  prev?.api.setActive()
+}
+
 const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right' | 'below' }> = {
   editor: { titleKey: 'title.editor', direction: 'right' },
   preview: { titleKey: 'title.preview', direction: 'right' },

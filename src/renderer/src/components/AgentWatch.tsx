@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useSession, pathOf } from '../state/session'
 import { useAgentEdits, cacheGet, cacheSet } from '../state/agentEdits'
 import { contextBus } from '../bridge/contextBus'
+import { ensureChanges } from '../dock/registry'
 
 // Build/cache/vcs dirs are ignored by the watcher already; this is a second
 // guard so a stray event never yanks a transient file into the editor.
@@ -53,6 +54,8 @@ export default function AgentWatch(): null {
       if (before === after) return // no real change (or our own save, already cached)
 
       cacheSet(path, after)
+      // Surface the changes timeline automatically (idempotent, no focus steal).
+      ensureChanges()
 
       if (before !== undefined) {
         record(activeWorkspace, path, { before, after, hasBaseline: true }, false)

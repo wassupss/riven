@@ -31,7 +31,7 @@ npm run rebuild
 - **Persistent terminals** — PTYs live in the main process and reconnect with a serialized screen snapshot, surviving `⌘R` and panel remounts.
 - **Agent-aware terminals** — running-state and attention (bell / task-done) are detected from actual agent child processes, not raw output, so your own typing never trips a false "running".
 - **AI ↔ context bridge** — send editor selections, files, or diagnostics to the focused terminal; `@`-mention files from the explorer.
-- **Inline agent-edit review** — a file watcher detects edits made by agents, auto-opens the file, and shows a multi-hunk inline diff (added/removed lines, per-hunk revert) against a cached or git baseline.
+- **Agent-edit review** — a file watcher detects edits made by agents and summarizes them in a Changes panel: a timeline of touched files with +/- line counts and relative time. Clicking a row opens that file with a multi-hunk inline diff (added/removed lines, per-hunk revert) against a cached or git baseline.
 - **Full-text search**, live file tree, colored file-type icons, custom keybindings, and themes.
 
 ## Keybindings (defaults, rebindable via `⌥⌘K`)

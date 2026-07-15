@@ -119,6 +119,17 @@ export default function TerminalPane({
       term.unicode.activeVersion = '11'
       term.open(container)
 
+      // The canvas/webgl renderer measures glyphs at init; if a bundled webfont
+      // (D2Coding) isn't loaded yet it measures the fallback and Korean looks off
+      // until a reflow. Re-render once fonts are ready so it picks up the real
+      // metrics. (No-op when the font is already installed/loaded.)
+      document.fonts?.ready
+        .then(() => {
+          if (!container.isConnected) return
+          term.refresh(0, term.rows - 1)
+        })
+        .catch(() => {})
+
       // ⌘F opens the in-terminal find box (don't forward the key to the shell).
       term.attachCustomKeyEventHandler((e) => {
         if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {

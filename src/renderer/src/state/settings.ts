@@ -44,7 +44,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
   terminalFontFamily:
-    '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
+    '"D2Coding", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -59,10 +59,22 @@ interface SettingsState {
   reset: () => void
 }
 
+// The old default terminal-font stack. Users who never customized it (their saved
+// value matches this) are migrated to the new D2Coding-first default so Korean
+// renders crisply in the terminal without a manual reset. Only the TERMINAL font
+// changes — the editor/UI fonts are left as they were.
+const LEGACY_TERMINAL_FONT =
+  '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace'
+
 export const useSettings = create<SettingsState>((set) => ({
   settings: DEFAULT_SETTINGS,
   ready: false,
-  hydrate: (partial) => set({ settings: { ...DEFAULT_SETTINGS, ...partial }, ready: true }),
+  hydrate: (partial) => {
+    const merged = { ...DEFAULT_SETTINGS, ...partial }
+    if (partial.terminalFontFamily === LEGACY_TERMINAL_FONT)
+      merged.terminalFontFamily = DEFAULT_SETTINGS.terminalFontFamily
+    set({ settings: merged, ready: true })
+  },
   set: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),
   reset: () => set({ settings: DEFAULT_SETTINGS })
 }))
