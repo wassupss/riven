@@ -83,10 +83,13 @@ export default function TerminalPanel({
       if (!api?.isActive) setAttention(true)
       notify(staticT('term.bell'))
     })
-    const offDone = window.api.pty.onDone(({ key }) => {
+    const offDone = window.api.pty.onDone(({ key, summary }) => {
       if (key !== sessionKey) return
+      // Only fire when the user isn't already looking at this terminal (else the
+      // reply is right in front of them). Body previews the agent's reply.
+      const looking = api?.isActive && document.hasFocus()
       if (!api?.isActive) setAttention(true)
-      notify(staticT('term.done'))
+      if (!looking) notify(summary?.trim() || staticT('term.done'))
     })
     const offActive = api?.onDidActiveChange?.(() => {
       if (api?.isActive) setAttention(false)

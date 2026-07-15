@@ -27,6 +27,12 @@ interface Session {
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
+  // "A user submitted a line (Enter) and we're waiting for the agent's reply."
+  // Gates the done-notification to one per user-initiated turn (so idle TUI
+  // redraws don't fire it), and turnBuf accumulates that turn's output so we can
+  // put a snippet of the reply in the notification.
+  awaitingReply: boolean
+  turnBuf: string
 }
 
 const sessions = new Map<string, Session>()
@@ -88,6 +94,30 @@ function send(s: Session, channel: string, ...args: unknown[]): void {
   if (!s.sender.isDestroyed()) s.sender.send(channel, ...args)
 }
 
+// Best-effort plain-text snippet of an agent's reply, pulled from the raw PTY
+// output of the turn. Terminal UIs are full of ANSI/cursor redraws, so this
+// strips escapes + box-drawing and returns the tail few content lines — enough
+// for a notification preview, not a faithful transcript.
+function extractSummary(raw: string): string {
+  if (!raw) return ''
+  const noEsc = raw
+    // OSC (title etc.): ESC ] ... BEL/ST
+    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
+    // CSI + other single escapes
+    .replace(/\x1b[[\]()#;?=][0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-Z\\-_]/g, '')
+    // remaining control chars except tab/newline/CR
+    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
+  const lines = noEsc.split('\n').map((ln) => {
+    // A CR redraws the line; keep only what's after the last CR.
+    const seg = ln.split('\r')
+    return seg[seg.length - 1].replace(/[─-╿▀-▟]/g, '').trimEnd()
+  })
+  const content = lines.filter((l) => l.trim().length > 0)
+  const tail = content.slice(-8).join('\n').replace(/[ \t]+/g, ' ').trim()
+  return tail.length > 240 ? '…' + tail.slice(-240) : tail
+}
+
 // "Working" = an agent is the foreground child AND output is actively flowing.
 // Output activity (onData) drives busy on; a gap of ACTIVE_MS drives it off, so
 // an agent sitting idle at its input prompt does not read as running.
@@ -103,8 +133,17 @@ function markActive(s: Session): void {
     s.busy = false
     const duration = Date.now() - s.busyStart
     send(s, 'pty:status', { key: s.key, busy: false })
-    if (duration > NOTIFY_MIN_BUSY_MS && Date.now() >= s.startupUntil) {
-      send(s, 'pty:done', { key: s.key, duration })
+    // Notify only for a turn the USER kicked off (Enter) — not idle TUI redraws —
+    // and only once per turn. Include a snippet of the agent's reply.
+    if (
+      s.awaitingReply &&
+      duration > NOTIFY_MIN_BUSY_MS &&
+      Date.now() >= s.startupUntil
+    ) {
+      const summary = extractSummary(s.turnBuf)
+      s.awaitingReply = false
+      s.turnBuf = ''
+      send(s, 'pty:done', { key: s.key, duration, summary })
     }
   }, ACTIVE_MS)
 }
@@ -158,6 +197,8 @@ export function registerPtyHandlers(): void {
         snapshot: '',
         busy: false,
         busyStart: 0,
+        awaitingReply: false,
+        turnBuf: '',
         startupUntil: Date.now() + 3000,
         agentPresent: false,
         agentName: null,
@@ -173,6 +214,12 @@ export function registerPtyHandlers(): void {
         s.lastData = Date.now()
         send(s, `pty:data:${key}`, data)
         if (data.includes('\x07')) send(s, 'pty:bell', { key })
+        // While waiting for a reply, accumulate the turn's output (capped) so the
+        // done-notification can preview it.
+        if (s.awaitingReply) {
+          s.turnBuf += data
+          if (s.turnBuf.length > 16000) s.turnBuf = s.turnBuf.slice(-16000)
+        }
         // Ignore output that's just an echo of the user's own keystrokes; only
         // agent-generated output (not right after typing) counts as "working".
         if (Date.now() - s.lastInput > INPUT_ECHO_MS) markActive(s)
@@ -219,6 +266,12 @@ export function registerPtyHandlers(): void {
     const s = sessions.get(key)
     if (!s) return
     s.lastInput = Date.now() // mark keystroke time so its echo isn't seen as work
+    // A carriage return = the user submitted a line. If an agent is running, arm
+    // the one-shot "reply done" notification and start capturing its output.
+    if (s.agentPresent && data.includes('\r')) {
+      s.awaitingReply = true
+      s.turnBuf = ''
+    }
     s.proc.write(data)
   })
 

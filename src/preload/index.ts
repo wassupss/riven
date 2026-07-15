@@ -98,8 +98,13 @@ const api = {
       ipcRenderer.on('pty:bell', listener)
       return () => ipcRenderer.removeListener('pty:bell', listener)
     },
-    onDone: (cb: (e: { key: string; duration: number }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { key: string; duration: number }): void => cb(payload)
+    onDone: (
+      cb: (e: { key: string; duration: number; summary?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _e: unknown,
+        payload: { key: string; duration: number; summary?: string }
+      ): void => cb(payload)
       ipcRenderer.on('pty:done', listener)
       return () => ipcRenderer.removeListener('pty:done', listener)
     }
