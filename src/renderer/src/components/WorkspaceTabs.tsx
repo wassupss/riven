@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSession } from '../state/session'
+import { useSession, workspaceName } from '../state/session'
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
 import { useT } from '../i18n'
 import { Plus, X, GitBranch } from 'lucide-react'
@@ -73,10 +73,23 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
   const closeWorkspace = useSession((s) => s.closeWorkspace)
+  const renameWorkspace = useSession((s) => s.renameWorkspace)
+  const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
   const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
   const [git, setGit] = useState<GitState | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(name)
   const cardRef = useRef<HTMLDivElement>(null)
+
+  const beginRename = (): void => {
+    setDraft(name)
+    setEditing(true)
+  }
+  const commitRename = (): void => {
+    setEditing(false)
+    renameWorkspace(ws, draft)
+  }
 
   // Scroll the active workspace card into view when it becomes active.
   useEffect(() => {
@@ -107,7 +120,33 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
     >
       <div className="ws-card-top">
         <span className={`ws-card-dot ${activity}`} title={t(ACTIVITY_LABEL_KEY[activity])} />
-        <span className="ws-card-title">{ws.split('/').pop()}</span>
+        {editing ? (
+          <input
+            className="ws-card-rename"
+            value={draft}
+            autoFocus
+            spellCheck={false}
+            placeholder={ws.split('/').pop()}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename()
+              else if (e.key === 'Escape') setEditing(false)
+            }}
+          />
+        ) : (
+          <span
+            className="ws-card-title"
+            title={t('ws.renameHint')}
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              beginRename()
+            }}
+          >
+            {name}
+          </span>
+        )}
         <span
           className="ws-card-close"
           title={t('ws.close')}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useSession } from '../state/session'
+import { useSession, workspaceName } from '../state/session'
 import { useUI } from '../state/ui'
 import { useAgentEdits } from '../state/agentEdits'
 import { togglePanel } from '../dock/registry'
@@ -19,6 +19,7 @@ export default function StatusBar(): JSX.Element {
   const folder = useSession((s) => s.activeWorkspace)
   const patch = useSession((s) => s.patch)
   const openSettings = useUI((s) => s.openSettings)
+  const wsName = useSession((s) => (folder ? workspaceName(folder, s.names) : null))
   const changeCount = useAgentEdits((s) => s.timeline.length)
   const unseen = useAgentEdits((s) => s.unseen)
   const [info, setInfo] = useState<Info | null>(null)
@@ -74,7 +75,7 @@ export default function StatusBar(): JSX.Element {
       {folder ? (
         <>
           <span className="status-item repo" title={folder}>
-            <Folder size={13} /> {info?.repoName ?? folder.split('/').pop()}
+            <Folder size={13} /> {wsName ?? info?.repoName ?? folder.split('/').pop()}
           </span>
           {info?.isRepo && (
             <span className="status-item branch" title={t('status.branch')}>

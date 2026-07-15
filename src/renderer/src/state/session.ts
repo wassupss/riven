@@ -24,6 +24,7 @@ interface PersistShape {
   activeWorkspace: string | null
   sessions: Record<string, Session>
   recents?: string[]
+  names?: Record<string, string>
 }
 
 interface SessionState {
@@ -32,13 +33,21 @@ interface SessionState {
   activeWorkspace: string | null
   sessions: Record<string, Session>
   recents: string[] // most-recently-opened workspace paths (MRU), for reopening
+  // Custom display names, keyed by path. Absent ⇒ the folder name is used.
+  names: Record<string, string>
   hydrate: (data: PersistShape) => void
   openWorkspace: (path: string) => void
   closeWorkspace: (path: string) => void
   setActiveWorkspace: (path: string) => void
+  renameWorkspace: (path: string, name: string) => void
   patch: (path: string, p: Partial<Session>) => void
   openFile: (path: string) => void
   closeTab: (path: string) => void
+}
+
+// The display name for a workspace: the custom name if set, else the folder name.
+export function workspaceName(path: string, names: Record<string, string>): string {
+  return names[path]?.trim() || path.split('/').filter(Boolean).pop() || path
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -47,6 +56,7 @@ export const useSession = create<SessionState>((set) => ({
   activeWorkspace: null,
   sessions: {},
   recents: [],
+  names: {},
 
   hydrate: (data) =>
     set(() => {
@@ -64,7 +74,8 @@ export const useSession = create<SessionState>((set) => ({
         openWorkspaces: data.openWorkspaces ?? [],
         activeWorkspace: data.activeWorkspace ?? null,
         sessions,
-        recents: data.recents ?? []
+        recents: data.recents ?? [],
+        names: data.names ?? {}
       }
     }),
 
@@ -91,6 +102,16 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   setActiveWorkspace: (path) => set({ activeWorkspace: path }),
+
+  renameWorkspace: (path, name) =>
+    set((st) => {
+      const names = { ...st.names }
+      const trimmed = name.trim()
+      // Empty ⇒ clear the override so it falls back to the folder name.
+      if (!trimmed) delete names[path]
+      else names[path] = trimmed
+      return { names }
+    }),
 
   patch: (path, p) =>
     set((st) => ({
@@ -129,7 +150,8 @@ useSession.subscribe((st) => {
         openWorkspaces: st.openWorkspaces,
         activeWorkspace: st.activeWorkspace,
         sessions: st.sessions,
-        recents: st.recents
+        recents: st.recents,
+        names: st.names
       }),
     400
   )
