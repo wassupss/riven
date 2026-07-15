@@ -122,6 +122,11 @@ export default function TerminalPane({
       refocusRef.current = () => term.focus()
       term.unicode.activeVersion = '11'
       term.open(container)
+      // Expose the terminal font to CSS so the IME composition overlay (a separate
+      // DOM element xterm doesn't font-style) matches the grid — otherwise Korean
+      // shows a fallback font while composing and only snaps to D2Coding on commit.
+      container.style.setProperty('--term-font', cfg.terminalFontFamily)
+      container.style.setProperty('--term-font-size', `${cfg.terminalFontSize}px`)
 
       // The canvas/webgl renderer measures glyphs at init; if a bundled webfont
       // (D2Coding) isn't loaded yet it measures the fallback and Korean looks off
@@ -248,6 +253,8 @@ export default function TerminalPane({
           const s = getSettings()
           term.options.fontFamily = s.terminalFontFamily
           term.options.fontSize = s.terminalFontSize
+          container.style.setProperty('--term-font', s.terminalFontFamily)
+          container.style.setProperty('--term-font-size', `${s.terminalFontSize}px`)
           requestAnimationFrame(() => {
             term.options.theme = terminalTheme()
           })

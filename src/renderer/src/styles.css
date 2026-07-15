@@ -1384,6 +1384,13 @@ select {
 .terminal-pane {
   letter-spacing: normal;
 }
+/* IME composition is drawn in a separate overlay xterm doesn't font-style; give
+   it the terminal font (via --term-font on the pane) so composing Korean matches
+   the grid instead of flashing a fallback font until it commits. */
+.xterm .composition-view {
+  font-family: var(--term-font, monospace);
+  font-size: var(--term-font-size, 12px);
+}
 .terminal-pane-outer {
   position: relative;
   width: 100%;
