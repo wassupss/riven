@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
 import { useT } from '../i18n'
-import { Plus, X, GitBranch, CopyPlus } from 'lucide-react'
+import { Plus, X, GitBranch } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -74,7 +74,6 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
   const closeWorkspace = useSession((s) => s.closeWorkspace)
-  const openWorkspace = useSession((s) => s.openWorkspace)
   const renameWorkspace = useSession((s) => s.renameWorkspace)
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
@@ -149,16 +148,6 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
             {name}
           </span>
         )}
-        <span
-          className="ws-card-dup"
-          title={t('ws.duplicate')}
-          onClick={(e) => {
-            e.stopPropagation()
-            openWorkspace(pathOf(ws), true)
-          }}
-        >
-          <CopyPlus size={12} />
-        </span>
         <span
           className="ws-card-close"
           title={t('ws.close')}

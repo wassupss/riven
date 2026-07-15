@@ -506,8 +506,7 @@ select {
   padding: 0 4px;
   outline: none;
 }
-.ws-card-close,
-.ws-card-dup {
+.ws-card-close {
   flex: 0 0 auto;
   font-size: 10px;
   opacity: 0;
@@ -515,17 +514,12 @@ select {
   color: var(--fg-dim);
   transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease;
 }
-.ws-card:hover .ws-card-close,
-.ws-card:hover .ws-card-dup {
+.ws-card:hover .ws-card-close {
   opacity: 0.55;
 }
 .ws-card-close:hover {
   opacity: 1;
   color: var(--danger);
-}
-.ws-card-dup:hover {
-  opacity: 1;
-  color: var(--accent-2);
 }
 .ws-card-desc {
   font-size: var(--text-xs);
