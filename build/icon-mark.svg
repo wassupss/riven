@@ -1,83 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="riven app icon">
-  <!--
-    riven app icon — "obsidian workbench, ember filament"
-    A cloven basalt tile split by a glowing ember seam that doubles as a lowercase "r".
-    Self-masked rounded rect (r=180) so it renders correctly on macOS and Windows.
-  -->
-  <defs>
-    <clipPath id="tile">
-      <rect width="1024" height="1024" rx="180"/>
-    </clipPath>
-
-    <!-- near-black basalt, subtle vertical gradient -->
-    <linearGradient id="basalt" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#16181b"/>
-      <stop offset="1" stop-color="#0d0e10"/>
-    </linearGradient>
-
-    <!-- ambient heat bleeding from the seam -->
-    <radialGradient id="ambient" cx="0.48" cy="0.42" r="0.62">
-      <stop offset="0" stop-color="#ff7847" stop-opacity="0.16"/>
-      <stop offset="0.55" stop-color="#ff7847" stop-opacity="0.05"/>
-      <stop offset="1" stop-color="#ff7847" stop-opacity="0"/>
-    </radialGradient>
-
-    <!-- seam gradient: hottest near the branch junction, cooling toward the ends -->
-    <linearGradient id="seam" gradientUnits="userSpaceOnUse" x1="0" y1="-340" x2="0" y2="340">
-      <stop offset="0" stop-color="#f4693b"/>
-      <stop offset="0.24" stop-color="#ff8a5c"/>
-      <stop offset="0.5" stop-color="#ff7847"/>
-      <stop offset="1" stop-color="#d8552c"/>
-    </linearGradient>
-
-    <!-- molten inner filament -->
-    <linearGradient id="core" gradientUnits="userSpaceOnUse" x1="0" y1="-340" x2="0" y2="340">
-      <stop offset="0" stop-color="#ffb890"/>
-      <stop offset="0.26" stop-color="#ffd9c0"/>
-      <stop offset="0.55" stop-color="#ffb088"/>
-      <stop offset="1" stop-color="#ff8a5c"/>
-    </linearGradient>
-
-    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
-      <feGaussianBlur stdDeviation="34"/>
-    </filter>
-    <filter id="soften" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="7"/>
-    </filter>
-  </defs>
-
-  <g clip-path="url(#tile)">
-    <!-- basalt ground -->
-    <rect width="1024" height="1024" fill="url(#basalt)"/>
-
-    <!-- cloven plate: the left face sits a shade deeper, its edge tracing the seam line -->
-    <path d="M0 0 H466 L418 456 L458 540 L405 1024 H0 Z" fill="#0b0c0e" opacity="0.5"/>
-    <!-- faint fissure continuing beyond the glyph, only visible at large sizes -->
-    <path d="M466 0 L448 228 M430 796 L405 1024" stroke="#000000" stroke-opacity="0.35" stroke-width="6" fill="none"/>
-
-    <!-- ambient heat -->
-    <rect width="1024" height="1024" fill="url(#ambient)"/>
-
-    <!-- the seam / "r" glyph -->
-    <g transform="translate(440,512)" fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <!-- outer glow -->
-      <g stroke="url(#seam)" stroke-width="112" filter="url(#glow)" opacity="0.5">
-        <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
-        <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
-      </g>
-      <!-- ember stroke -->
-      <g stroke="url(#seam)" stroke-width="112">
-        <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
-        <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
-      </g>
-      <!-- hot core filament -->
-      <g stroke="url(#core)" stroke-width="36" filter="url(#soften)" opacity="0.9">
-        <path d="M8 -284 L-22 -56 L18 28 L-10 284"/>
-        <path d="M-4 -190 C10 -256 88 -278 166 -246"/>
-      </g>
-    </g>
-
-    <!-- top-light on the tile edge, keeps the surface feeling machined -->
-    <rect x="3" y="3" width="1018" height="1018" rx="177" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="3"/>
-  </g>
-</svg>
+<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024' viewBox='0 0 1024 1024'><defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1d21"/><stop offset="1" stop-color="#0b0c0e"/></linearGradient>
+  <linearGradient id="ember" gradientUnits="userSpaceOnUse" x1="512" y1="300" x2="512" y2="720"><stop offset="0" stop-color="#ffbf72"/><stop offset="0.5" stop-color="#ff7a3c"/><stop offset="1" stop-color="#e14f27"/></linearGradient>
+  <linearGradient id="core" gradientUnits="userSpaceOnUse" x1="512" y1="300" x2="512" y2="720"><stop offset="0" stop-color="#ffe6cf"/><stop offset="1" stop-color="#ffb184"/></linearGradient>
+  <clipPath id="tile"><rect width="1024" height="1024" rx="228"/></clipPath>
+  <filter id="g" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
+  <filter id="gs" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7"/></filter>
+</defs><g clip-path='url(#tile)'><rect width="1024" height="1024" fill="url(#bg)"/><g fill="none" stroke="url(#ember)" stroke-width="130" stroke-linecap="round" stroke-linejoin="round">
+   <g filter="url(#g)" opacity="0.38"><path d="M398 312 L398 486"/><path d="M436 556 L436 712"/><path d="M398 452 C420 372 520 348 634 396"/></g>
+   <path d="M398 312 L398 486"/><path d="M436 556 L436 712"/><path d="M398 452 C420 372 520 348 634 396"/></g>
+   <g stroke="url(#core)" stroke-width="24" stroke-linecap="round" fill="none">
+     <g filter="url(#gs)" opacity="0.9"><path d="M398 470 L436 572"/></g>
+     <path d="M398 470 L436 572"/></g><rect x="4" y="4" width="1016" height="1016" rx="224" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="3"/></g></svg>
