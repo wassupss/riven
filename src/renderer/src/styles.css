@@ -1391,6 +1391,15 @@ select {
    the grid instead of flashing a fallback font until it commits. The fallback is
    the full D2Coding stack (NOT bare `monospace`, which resolves to Menlo) so it's
    correct even on panes where --term-font wasn't set yet. */
+/* The grid is a canvas (its font comes from JS, not CSS), but every IME/overlay
+   DOM element inside .xterm otherwise inherits the app UI font (Inter) → Korean
+   composing text rendered in a thin fallback. Set the terminal font-family on the
+   root so ALL descendants (composition overlay, hidden textarea, any IME element)
+   inherit it. Only font-family on the root — size/spacing stay on the overlays so
+   the grid metrics are untouched. */
+.xterm {
+  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
+}
 .xterm .composition-view,
 .xterm .xterm-helper-textarea {
   font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
