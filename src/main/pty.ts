@@ -1,4 +1,4 @@
-import { ipcMain, WebContents } from 'electron'
+import { app, ipcMain, WebContents } from 'electron'
 import * as os from 'os'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
@@ -149,6 +149,22 @@ function markActive(s: Session): void {
 }
 
 export function registerPtyHandlers(): void {
+  // Kill every PTY on quit. node-pty child processes aren't tied to the renderer
+  // and, left running, make Electron hang ("Not Responding") on quit while it
+  // waits on the open pty handles. Tear down timers + processes so quit is clean.
+  app.on('before-quit', () => {
+    for (const [, s] of sessions) {
+      if (s.poll) clearInterval(s.poll)
+      if (s.activeTimer) clearTimeout(s.activeTimer)
+      try {
+        s.proc.kill()
+      } catch {
+        /* already exited */
+      }
+    }
+    sessions.clear()
+  })
+
   ipcMain.handle(
     'pty:open',
     (
