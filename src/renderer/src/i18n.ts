@@ -148,6 +148,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.done': { ko: '작업 완료 ✓', en: 'Done ✓' },
   'term.attn': { ko: '🔔 알림', en: '🔔 Alert' },
   'term.label': { ko: '터미널', en: 'Terminal' },
+  'term.closeBusyConfirm': {
+    ko: '이 터미널에서 에이전트가 실행 중입니다. 닫고 중지할까요?',
+    en: 'An agent is still running in this terminal. Close and stop it?'
+  },
 
   // ---- MonacoEditorPane ----
   'editor.revertThisChange': { ko: '이 변경 되돌리기', en: 'Revert this change' },

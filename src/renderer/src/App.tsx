@@ -24,7 +24,7 @@ import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { getEditorCloser } from './keybindings/focus'
-import { getActiveApi } from './dock/registry'
+import { getActiveApi, confirmTerminalClose } from './dock/registry'
 import { useT } from './i18n'
 
 export default function App(): JSX.Element {
@@ -69,7 +69,7 @@ export default function App(): JSX.Element {
       if (active.id === 'editor') {
         // Close the focused file tab; if the editor has no tab, close the panel.
         if (!getEditorCloser()?.()) api.removePanel(active)
-      } else {
+      } else if (confirmTerminalClose(active.id)) {
         api.removePanel(active)
       }
     })

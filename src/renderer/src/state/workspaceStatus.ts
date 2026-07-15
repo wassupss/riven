@@ -36,6 +36,16 @@ export const useWorkspaceStatus = create<WorkspaceStatusState>((set) => ({
     })
 }))
 
+// Is a terminal pane busy (an agent is actively running)? paneId is global, so
+// match it across workspaces. Used to confirm before closing a busy terminal.
+export function isPaneBusy(paneId: number): boolean {
+  const panes = useWorkspaceStatus.getState().panes
+  for (const [key, p] of Object.entries(panes)) {
+    if (key.endsWith(`|${paneId}`) && p.busy) return true
+  }
+  return false
+}
+
 // Roll the per-pane state up to one activity level for a workspace.
 export function rollupActivity(
   panes: Record<string, PaneStatus>,

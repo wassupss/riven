@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { IDockviewPanelHeaderProps } from 'dockview-react'
 import { useTabBadge } from '../state/tabBadge'
+import { confirmTerminalClose } from './registry'
 import { X } from 'lucide-react'
 
 // Custom dockview tab: double-click the title to rename the panel. The name is
@@ -47,7 +48,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
         title="닫기"
         onClick={(e) => {
           e.stopPropagation()
-          api.close()
+          if (confirmTerminalClose(api.id)) api.close()
         }}
       >
         <X size={11} />

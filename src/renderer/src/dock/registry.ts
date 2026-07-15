@@ -1,5 +1,15 @@
 import type { DockviewApi } from 'dockview'
 import { t } from '../i18n'
+import { isPaneBusy } from '../state/workspaceStatus'
+
+// Confirm before closing a terminal whose agent is actively running (busy).
+// Returns true when it's OK to proceed with the close.
+export function confirmTerminalClose(panelId: string): boolean {
+  if (!panelId.startsWith('term-')) return true
+  const paneId = Number(panelId.slice('term-'.length))
+  if (!Number.isFinite(paneId) || !isPaneBusy(paneId)) return true
+  return window.confirm(t('term.closeBusyConfirm'))
+}
 
 // Points at the active workspace's dockview instance so global toolbar buttons
 // and keybindings can add terminals / focus singleton panels.
