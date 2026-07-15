@@ -5,9 +5,8 @@
   <clipPath id="tile"><rect width="1024" height="1024" rx="228"/></clipPath>
   <filter id="g" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
   <filter id="gs" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7"/></filter>
-</defs><g clip-path='url(#tile)'><rect width="1024" height="1024" fill="url(#bg)"/><g fill="none" stroke="url(#ember)" stroke-width="130" stroke-linecap="round" stroke-linejoin="round">
-   <g filter="url(#g)" opacity="0.38"><path d="M398 312 L398 486"/><path d="M436 556 L436 712"/><path d="M398 452 C420 372 520 348 634 396"/></g>
-   <path d="M398 312 L398 486"/><path d="M436 556 L436 712"/><path d="M398 452 C420 372 520 348 634 396"/></g>
-   <g stroke="url(#core)" stroke-width="24" stroke-linecap="round" fill="none">
-     <g filter="url(#gs)" opacity="0.9"><path d="M398 470 L436 572"/></g>
-     <path d="M398 470 L436 572"/></g><rect x="4" y="4" width="1016" height="1016" rx="224" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="3"/></g></svg>
+</defs><g clip-path='url(#tile)'><rect width="1024" height="1024" fill="url(#bg)"/><path d="M0 0 L470 0 L406 452 L452 1024 L0 1024 Z" fill="#08090b"/>
+   <g fill="none" stroke="url(#ember)" stroke-width="120" stroke-linecap="round" stroke-linejoin="round">
+     <g filter="url(#g)" opacity="0.4"><path d="M402 316 L402 706"/><path d="M402 452 C424 372 524 348 632 398"/></g>
+     <path d="M402 316 L402 706"/><path d="M402 452 C424 372 524 348 632 398"/></g>
+   <g stroke="url(#core)" stroke-width="26" stroke-linecap="round" fill="none" filter="url(#gs)" opacity="0.85"><path d="M402 340 L402 690"/></g><rect x="4" y="4" width="1016" height="1016" rx="224" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="3"/></g></svg>
