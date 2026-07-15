@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useSession } from '../state/session'
 import { useAgentEdits, cacheGet, cacheSet } from '../state/agentEdits'
 import { ensureEditor } from '../dock/registry'
+import { contextBus } from '../bridge/contextBus'
 
 // Build/cache/vcs dirs are ignored by the watcher already; this is a second
 // guard so a stray event never yanks a transient file into the editor.
@@ -35,6 +36,14 @@ export default function AgentWatch(): null {
       if (type === 'unlink') return
       if (!activeWorkspace || !path.startsWith(activeWorkspace + '/')) return
       if (IGNORED_PATH.test(path.slice(activeWorkspace.length))) return
+
+      // Only surface changes that come from a riven agent SESSION — i.e. a
+      // terminal in this workspace currently has an LLM agent running. Without
+      // this, every on-disk change (an external editor, a background process, a
+      // git checkout, macOS reindexing a huge folder) was treated as an agent
+      // edit and yanked into the editor — the "flood" when a big/root folder is
+      // the workspace. No agent running ⇒ the change isn't ours to show.
+      if (!contextBus.hasAgent(activeWorkspace)) return
 
       const after = await window.api.workspace.readFile(path).catch(() => null)
       if (after == null) return
