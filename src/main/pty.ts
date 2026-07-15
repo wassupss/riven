@@ -149,10 +149,15 @@ function markActive(s: Session): void {
 }
 
 export function registerPtyHandlers(): void {
-  // Kill every PTY on quit. node-pty child processes aren't tied to the renderer
-  // and, left running, make Electron hang ("Not Responding") on quit while it
-  // waits on the open pty handles. Tear down timers + processes so quit is clean.
+  // Clean quit. PTYs live in the main process; left running they make Electron
+  // hang ("Not Responding") on quit. Killing the child isn't enough — node-pty's
+  // master-fd handle keeps the libuv loop alive after the child dies, so the
+  // process still won't exit. Tear everything down, then force-exit as a backstop.
+  let quitting = false
   app.on('before-quit', () => {
+    if (quitting) return
+    quitting = true
+    // Kill terminals so no shell/agent is orphaned.
     for (const [, s] of sessions) {
       if (s.poll) clearInterval(s.poll)
       if (s.activeTimer) clearTimeout(s.activeTimer)
@@ -163,6 +168,12 @@ export function registerPtyHandlers(): void {
       }
     }
     sessions.clear()
+    // Electron's normal quit stalls indefinitely for this app (a renderer/native
+    // handle never releases → macOS "Not Responding"), and app.exit()/process.exit()
+    // are overridden to defer to that quit, so they don't force it. Our on-disk
+    // writes are atomic (temp+rename), so a hard kill is safe — guarantee the app
+    // actually closes on quit.
+    process.kill(process.pid, 'SIGKILL')
   })
 
   ipcMain.handle(
