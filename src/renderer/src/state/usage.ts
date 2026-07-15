@@ -26,17 +26,21 @@ export interface UsageLimits {
 interface UsageState {
   today: UsageToday | null
   limits: UsageLimits | null
-  started: boolean
   refresh: () => void
-  start: () => void
+  // A usage consumer (status widget / pinned view) mounted / unmounted; poll
+  // only while at least one is mounted, and never while the window is hidden.
+  acquire: () => void
+  release: () => void
 }
+
+let interval: ReturnType<typeof setInterval> | null = null
+let consumers = 0
 
 // Shared usage data so the status-bar widget and the pinned sidebar view read
 // one source (single fetch loop).
 export const useUsage = create<UsageState>((set, get) => ({
   today: null,
   limits: null,
-  started: false,
   refresh: () => {
     window.api.usage
       .today()
@@ -47,11 +51,21 @@ export const useUsage = create<UsageState>((set, get) => ({
       .then((l) => set({ limits: l }))
       .catch(() => {})
   },
-  start: () => {
-    if (get().started) return
-    set({ started: true })
+  acquire: () => {
+    consumers++
+    if (interval) return
     get().refresh()
-    setInterval(() => get().refresh(), 60000)
+    interval = setInterval(() => {
+      // Skip while backgrounded — no point walking session logs for a hidden app.
+      if (document.visibilityState === 'visible') get().refresh()
+    }, 60000)
+  },
+  release: () => {
+    consumers = Math.max(0, consumers - 1)
+    if (consumers === 0 && interval) {
+      clearInterval(interval)
+      interval = null
+    }
   }
 }))
 

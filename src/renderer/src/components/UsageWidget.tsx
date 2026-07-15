@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Gauge, Pin } from 'lucide-react'
 import { useUsage, resetIn, remaining, remainingColor, fmtTokens, type PlanLimit } from '../state/usage'
 import { useSettings } from '../state/settings'
@@ -12,6 +12,12 @@ export default function UsageWidget(): JSX.Element | null {
   const limits = useUsage((s) => s.limits)
   const pinned = useSettings((s) => s.settings.usagePinned)
   const setSetting = useSettings((s) => s.set)
+  // Poll usage only while this widget is mounted (see useUsage.acquire).
+  useEffect(() => {
+    const u = useUsage.getState()
+    u.acquire()
+    return () => u.release()
+  }, [])
   const [open, setOpen] = useState(false)
 
   const hasLimits = !!(limits?.session || limits?.weekly)

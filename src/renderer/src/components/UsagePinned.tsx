@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { PinOff } from 'lucide-react'
 import { useUsage, resetIn, remaining, remainingColor, fmtTokens, type PlanLimit } from '../state/usage'
 import { useSettings } from '../state/settings'
@@ -34,6 +35,11 @@ export default function UsagePinned(): JSX.Element | null {
   const today = useUsage((s) => s.today)
   const limits = useUsage((s) => s.limits)
   const setSetting = useSettings((s) => s.set)
+  useEffect(() => {
+    const u = useUsage.getState()
+    u.acquire()
+    return () => u.release()
+  }, [])
   const hasLimits = !!(limits?.session || limits?.weekly)
   const hasToday = !!today && today.totalTokens > 0
   if (!hasLimits && !hasToday) return null

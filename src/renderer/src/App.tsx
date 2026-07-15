@@ -20,7 +20,6 @@ import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
 import { registerInlineComplete } from './editor/inlineComplete'
 import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
-import { useUsage } from './state/usage'
 import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
@@ -47,7 +46,6 @@ export default function App(): JSX.Element {
     registerDefaultActions()
     registerInlineComplete()
     registerSnippets()
-    useUsage.getState().start()
     void (async () => {
       await loadEnv()
       await loadSettings()
