@@ -48,17 +48,20 @@ export function registerGitHandlers(): void {
     'git:blame',
     async (
       _e,
-      folder: string,
-      relPath: string
+      _folder: string,
+      filePath: string
     ): Promise<{
       ok: boolean
       lines?: Record<number, { author: string; time: number; summary: string; hash: string }>
       error?: string
     }> => {
       try {
+        // Resolve the repo from the FILE's own directory (not the workspace
+        // root), so a nested repo — e.g. collection/a under a workspace opened at
+        // collection — still gets inline blame. filePath is absolute.
         const { stdout } = await pexec(
           'git',
-          ['-C', folder, 'blame', '--line-porcelain', '--', relPath],
+          ['-C', path.dirname(filePath), 'blame', '--line-porcelain', '--', path.basename(filePath)],
           { maxBuffer: 50 * 1024 * 1024 }
         )
         const meta: Record<string, { author: string; time: number; summary: string }> = {}
