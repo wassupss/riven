@@ -1391,11 +1391,17 @@ select {
    the grid instead of flashing a fallback font until it commits. The fallback is
    the full D2Coding stack (NOT bare `monospace`, which resolves to Menlo) so it's
    correct even on panes where --term-font wasn't set yet. */
-.xterm .composition-view {
+.xterm .composition-view,
+.xterm .xterm-helper-textarea {
   font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
   font-size: var(--term-font-size, 12px);
   font-weight: 300;
   letter-spacing: 1px;
+}
+/* The composition overlay must sit ABOVE the text canvas (z-index 2) or it's
+   occluded during composition. */
+.xterm .composition-view {
+  z-index: 10;
 }
 .terminal-pane-outer {
   position: relative;
