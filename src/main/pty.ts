@@ -47,6 +47,26 @@ function defaultShell(): string {
   return process.env.SHELL || '/bin/zsh'
 }
 
+// Build the PTY environment, guaranteeing a UTF-8 locale (issue #5). When the app
+// is launched from the macOS GUI (Finder/Dock) the shell's LANG/LC_* are usually
+// absent, so the shell + readline + CLIs fall back to the C/ASCII locale and
+// mangle multibyte input — typing Korean/CJK via an IME comes out corrupted.
+// If no UTF-8 locale is already present we set one (without clobbering a locale
+// the user has deliberately configured, e.g. ko_KR.UTF-8).
+function ptyEnv(): Record<string, string> {
+  const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+  if (process.platform !== 'win32') {
+    const hasUtf8 = [env.LC_ALL, env.LC_CTYPE, env.LANG].some((v) => v && /utf-?8/i.test(v))
+    if (!hasUtf8) {
+      // en_US.UTF-8 exists on macOS and virtually all Linux installs; this fixes
+      // the character encoding while leaving message language to the user's rc.
+      env.LANG = env.LANG || 'en_US.UTF-8'
+      env.LC_CTYPE = 'en_US.UTF-8'
+    }
+  }
+  return env
+}
+
 // Returns the name of the agent running as the shell's foreground child, or null.
 async function agentRunning(shellPid: number): Promise<string | null> {
   try {
@@ -123,7 +143,7 @@ export function registerPtyHandlers(): void {
           cols: opts.cols ?? 80,
           rows: opts.rows ?? 24,
           cwd: opts.cwd || os.homedir(),
-          env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+          env: ptyEnv()
         })
       } catch (e) {
         // A bad shell / cwd shouldn't reject the invoke and break the pane.
