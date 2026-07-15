@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { evictWorkspace } from './agentEdits'
 
 // Per-workspace session. Each workspace keeps its own editor tabs, active file,
 // preview URL and dockview layout (the arrangement of explorer/editor/terminals/
@@ -75,7 +76,10 @@ export const useSession = create<SessionState>((set) => ({
       recents: [path, ...st.recents.filter((r) => r !== path)].slice(0, 8)
     })),
 
-  closeWorkspace: (path) =>
+  closeWorkspace: (path) => {
+    // Free this workspace's agent-edit baselines/diffs (can be ~2000 file
+    // contents) so they don't leak for the app's lifetime.
+    evictWorkspace(path)
     set((st) => {
       const openWorkspaces = st.openWorkspaces.filter((w) => w !== path)
       const sessions = { ...st.sessions }
@@ -83,7 +87,8 @@ export const useSession = create<SessionState>((set) => ({
       const activeWorkspace =
         st.activeWorkspace === path ? (openWorkspaces.at(-1) ?? null) : st.activeWorkspace
       return { openWorkspaces, sessions, activeWorkspace }
-    }),
+    })
+  },
 
   setActiveWorkspace: (path) => set({ activeWorkspace: path }),
 
