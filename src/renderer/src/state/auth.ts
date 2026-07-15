@@ -23,6 +23,16 @@ interface AuthState {
 
 let initialized = false
 let pushTimer: ReturnType<typeof setTimeout> | null = null
+// The INITIAL_SESSION event and the explicit getSession() can both trigger a
+// pull on launch; this dedups so a given user is pulled once (reset on sign-out).
+let lastPulledUser: string | null = null
+
+function cancelPendingPush(): void {
+  if (pushTimer) {
+    clearTimeout(pushTimer)
+    pushTimer = null
+  }
+}
 
 export const useAuth = create<AuthState>((set, get) => ({
   configured: isSupabaseConfigured,
@@ -46,7 +56,12 @@ export const useAuth = create<AuthState>((set, get) => ({
       })
       // Pull the cloud copy once per fresh sign-in.
       if (session?.user && session.user.id !== prevUser?.id) void pullOnce(session.user.id, set)
-      if (!session) set({ syncStatus: 'idle' })
+      if (!session) {
+        // Signed out / session ended: stop any queued push under the old user.
+        cancelPendingPush()
+        lastPulledUser = null
+        set({ syncStatus: 'idle' })
+      }
     })
 
     // Push local settings to the cloud (debounced) whenever they change while
@@ -93,6 +108,8 @@ export const useAuth = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     if (!supabase) return
+    cancelPendingPush()
+    lastPulledUser = null
     await supabase.auth.signOut()
     set({ user: null, session: null, status: 'idle', syncStatus: 'idle', error: null })
   },
@@ -113,6 +130,11 @@ export const useAuth = create<AuthState>((set, get) => ({
 // First pull after sign-in: adopt the cloud copy if it exists, otherwise seed
 // the cloud with the current local settings.
 async function pullOnce(userId: string, set: (p: Partial<AuthState>) => void): Promise<void> {
+  // Dedup: a launch can trigger this from both INITIAL_SESSION and getSession().
+  // Running it once per user keeps the two from interleaving and re-opening the
+  // push window mid-pull (which could clobber the cloud copy).
+  if (lastPulledUser === userId) return
+  lastPulledUser = userId
   set({ syncStatus: 'syncing' })
   // Block the debounced push for the whole pull window so a local edit that
   // lands while the network request is in flight can't overwrite the cloud copy
