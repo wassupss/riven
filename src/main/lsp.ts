@@ -1,4 +1,4 @@
-import { ipcMain, WebContents } from 'electron'
+import { app, ipcMain, WebContents } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { dirname, join } from 'path'
 import {
@@ -29,6 +29,9 @@ interface Spec {
 }
 
 const servers = new Map<string, Server>()
+// In-flight starts, so two concurrent lsp:start for the same key await one spawn
+// instead of racing and leaking a duplicate server process.
+const starting = new Map<string, Promise<Server>>()
 
 // A resolver returns the launch spec, or null when the server binary isn't found
 // on the user's PATH. Add a language server by adding one entry here + a mapping
@@ -122,9 +125,20 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
     new StreamMessageWriter(proc.stdin!)
   )
 
-  // Server -> client notifications get forwarded to the renderer.
+  // Build the record up front with a MUTABLE sender; the forward reads
+  // server.sender so after a ⌘R (which updates it in lsp:start) diagnostics keep
+  // flowing instead of being dropped to the old, destroyed WebContents.
+  const server: Server = { proc, conn, initialized: Promise.resolve(), sender }
+  // OS-level spawn failure (EMFILE/EACCES/…) → clean up so callers don't hang.
+  proc.on('error', (e) => {
+    console.error(`[lsp:${serverKey}] spawn error`, e)
+    servers.delete(serverKey)
+    starting.delete(serverKey)
+  })
+
+  // Server -> client notifications get forwarded to the current renderer.
   conn.onNotification((method, params) => {
-    if (!sender.isDestroyed()) sender.send('lsp:notify', { serverKey, method, params })
+    if (!server.sender.isDestroyed()) server.sender.send('lsp:notify', { serverKey, method, params })
   })
   // Answer the handful of server -> client requests with safe defaults.
   conn.onRequest((method, params) => {
@@ -177,13 +191,35 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
       return caps
     })
 
-  const server: Server = { proc, conn, initialized, sender }
+  server.initialized = initialized
   servers.set(serverKey, server)
-  proc.on('exit', () => servers.delete(serverKey))
+  proc.on('exit', () => {
+    servers.delete(serverKey)
+    starting.delete(serverKey)
+  })
   return server
 }
 
 export function registerLspHandlers(): void {
+  // Don't orphan heavy indexers (clangd/gopls/rust-analyzer) after quit.
+  app.on('before-quit', () => {
+    for (const [, s] of servers) {
+      try {
+        s.conn.sendRequest('shutdown').catch(() => {})
+        s.conn.sendNotification('exit')
+      } catch {
+        /* connection already gone */
+      }
+      try {
+        s.proc.kill()
+      } catch {
+        /* already exited */
+      }
+    }
+    servers.clear()
+    starting.clear()
+  })
+
   // Report which servers are actually available (installed) for this workspace,
   // so the renderer only wires LSP features for languages it can serve.
   ipcMain.handle('lsp:servers', async (_event, rootPath: string) => {
@@ -200,10 +236,23 @@ export function registerLspHandlers(): void {
   })
 
   ipcMain.handle('lsp:start', async (event, serverKey: string, rootPath: string) => {
-    let server = servers.get(serverKey)
-    if (!server) server = await startServer(serverKey, rootPath, event.sender)
-    const caps = await server.initialized
-    return caps
+    const existing = servers.get(serverKey)
+    if (existing) {
+      existing.sender = event.sender // ⌘R: point the forward at the new renderer
+      return existing.initialized
+    }
+    let pending = starting.get(serverKey)
+    if (!pending) {
+      pending = startServer(serverKey, rootPath, event.sender)
+      starting.set(serverKey, pending)
+      pending.then(
+        () => starting.delete(serverKey),
+        () => starting.delete(serverKey)
+      )
+    }
+    const server = await pending
+    server.sender = event.sender
+    return server.initialized
   })
 
   ipcMain.handle('lsp:request', async (_event, serverKey: string, method: string, params: unknown) => {
