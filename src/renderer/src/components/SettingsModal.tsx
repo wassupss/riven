@@ -6,6 +6,7 @@ import { CURATED_FONTS, injectFont } from '../state/fonts'
 import { AI_PROVIDERS, getProvider } from '../state/aiProviders'
 import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
+import AboutTab from './AboutTab'
 import { useT } from '../i18n'
 
 function FontField({ value, onChange }: { value: string; onChange: (v: string) => void }): JSX.Element {
@@ -54,7 +55,8 @@ export default function SettingsModal(): JSX.Element | null {
   const open = useUI((s) => s.settingsOpen)
   const setOpen = useUI((s) => s.setSettingsOpen)
   const tab = useUI((s) => s.settingsTab)
-  const setTab = (t: 'general' | 'ai' | 'keys' | 'account'): void => useUI.setState({ settingsTab: t })
+  const setTab = (t: 'general' | 'ai' | 'keys' | 'account' | 'about'): void =>
+    useUI.setState({ settingsTab: t })
   const settings = useSettings((s) => s.settings)
   const set = useSettings((s) => s.set)
   const reset = useSettings((s) => s.reset)
@@ -86,6 +88,12 @@ export default function SettingsModal(): JSX.Element | null {
             onClick={() => setTab('account')}
           >
             {t('settings.tab.account')}
+          </button>
+          <button
+            className={`kb-tab${tab === 'about' ? ' active' : ''}`}
+            onClick={() => setTab('about')}
+          >
+            {t('settings.tab.about')}
           </button>
         </div>
 
@@ -374,6 +382,8 @@ export default function SettingsModal(): JSX.Element | null {
           {tab === 'account' && <AccountSettings />}
 
           {tab === 'keys' && <KeybindingsSettings />}
+
+          {tab === 'about' && <AboutTab />}
         </div>
       </div>
     </div>,

@@ -236,8 +236,30 @@ const api = {
       ipcRenderer.on('menu:close-tab', listener)
       return () => ipcRenderer.removeListener('menu:close-tab', listener)
     }
+  },
+  app: {
+    version: (): Promise<string> => ipcRenderer.invoke('app:version')
+  },
+  update: {
+    current: (): Promise<UpdateStatus> => ipcRenderer.invoke('update:current'),
+    check: (): Promise<void> => ipcRenderer.invoke('update:check'),
+    install: (): Promise<void> => ipcRenderer.invoke('update:install'),
+    onStatus: (cb: (s: UpdateStatus) => void): (() => void) => {
+      const listener = (_e: unknown, s: UpdateStatus): void => cb(s)
+      ipcRenderer.on('update:status', listener)
+      return () => ipcRenderer.removeListener('update:status', listener)
+    }
   }
 }
+
+export type UpdateStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'available'; version: string }
+  | { state: 'downloading'; percent: number }
+  | { state: 'downloaded'; version: string }
+  | { state: 'upToDate' }
+  | { state: 'error'; message: string }
 
 contextBridge.exposeInMainWorld('api', api)
 

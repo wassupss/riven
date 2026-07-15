@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useAgentEdits } from '../state/agentEdits'
+import { useUpdate } from '../state/update'
 import { togglePanel } from '../dock/registry'
 import { useT } from '../i18n'
 import UsageWidget from './UsageWidget'
 import ScriptRunner from './ScriptRunner'
-import { Folder, FolderOpen, GitBranch, Plug, Settings, FileDiff } from 'lucide-react'
+import { Folder, FolderOpen, GitBranch, Plug, Settings, FileDiff, ArrowDownToLine } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -22,6 +23,7 @@ export default function StatusBar(): JSX.Element {
   const wsName = useSession((s) => (folder ? workspaceName(folder, s.names) : null))
   const changeCount = useAgentEdits((s) => s.timeline.length)
   const unseen = useAgentEdits((s) => s.unseen)
+  const updateReady = useUpdate((s) => s.status.state === 'downloaded')
   const [info, setInfo] = useState<Info | null>(null)
   const [ports, setPorts] = useState<number[]>([])
 
@@ -109,6 +111,15 @@ export default function StatusBar(): JSX.Element {
         >
           <FileDiff size={13} /> {changeCount}
           {unseen > 0 && <span className="changes-pill-dot" />}
+        </span>
+      )}
+      {updateReady && (
+        <span
+          className="status-item click update-pill"
+          title={t('status.updateReady')}
+          onClick={() => openSettings('about')}
+        >
+          <ArrowDownToLine size={13} /> {t('status.updateReady')}
         </span>
       )}
       <UsageWidget />

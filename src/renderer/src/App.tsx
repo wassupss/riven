@@ -23,6 +23,7 @@ import { injectImportedFonts } from './state/fonts'
 import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
+import { useUpdate } from './state/update'
 import { getEditorCloser } from './keybindings/focus'
 import { getActiveApi, confirmTerminalClose } from './dock/registry'
 import { useT } from './i18n'
@@ -46,6 +47,7 @@ export default function App(): JSX.Element {
     registerDefaultActions()
     registerInlineComplete()
     registerSnippets()
+    useUpdate.getState().init()
     void (async () => {
       await loadEnv()
       await loadSettings()

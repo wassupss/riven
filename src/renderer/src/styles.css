@@ -3368,3 +3368,68 @@ select {
   border-radius: 999px;
   background: var(--accent);
 }
+
+/* ── Settings → About + update status ──────────────────────────────────── */
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 4px 2px;
+}
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.about-logo {
+  border-radius: 16px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.4);
+}
+.about-name {
+  font-size: var(--text-lg);
+  font-weight: 650;
+  color: var(--fg);
+}
+.about-ver {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.about-dim {
+  color: var(--fg-dim);
+}
+.about-update {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.about-install {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+.about-install:hover {
+  background: var(--accent-ink);
+}
+.about-status {
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+.about-status.err {
+  color: var(--danger);
+}
+.about-links a {
+  font-size: var(--text-sm);
+  color: var(--accent-2);
+  text-decoration: none;
+}
+.about-links a:hover {
+  text-decoration: underline;
+}
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--accent);
+}

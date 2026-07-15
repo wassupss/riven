@@ -1,5 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { app, shell, BrowserWindow, ipcMain, nativeImage } from 'electron'
 import { join } from 'path'
 import * as os from 'os'
 import { existsSync } from 'fs'
@@ -17,6 +16,7 @@ import { registerPortsHandlers } from './ports'
 import { registerAiHandlers } from './ai'
 import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
+import { registerUpdateHandlers } from './update'
 import { buildMenu } from './menu'
 
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
@@ -159,12 +159,19 @@ app.whenReady().then(() => {
     claudePath
   }))
 
+  // Dock icon: packaged builds use the bundled .icns, but in dev the app would
+  // otherwise show the generic Electron icon — point the dock at the real riven
+  // mark so it matches the landing/app branding.
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    const icon = nativeImage.createFromPath(join(__dirname, '../../build/icon.png'))
+    if (!icon.isEmpty()) app.dock.setIcon(icon)
+  }
+
   createWindow()
 
-  // Check GitHub Releases for updates (packaged builds only; dev has no feed).
-  if (app.isPackaged) {
-    autoUpdater.checkForUpdatesAndNotify().catch((e) => console.error('[riven] update check failed', e))
-  }
+  // Auto-update: check GitHub Releases, surface status to the renderer, and make
+  // the "update ready" notification actually install on click.
+  registerUpdateHandlers()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
