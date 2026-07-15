@@ -8,6 +8,15 @@ import { getProvider } from '../state/aiProviders'
 // model (default: local Ollama) to fill in at the cursor.
 let registered = false
 
+// Notify once per distinct failure reason so a down backend (e.g. Ollama not
+// running) is visible without spamming a notification on every keystroke.
+const notifiedReasons = new Set<string>()
+function surfaceAiError(reason: string): void {
+  if (notifiedReasons.has(reason)) return
+  notifiedReasons.add(reason)
+  window.api.notify.show('AI 자동완성 / autocomplete', reason)
+}
+
 export function registerInlineComplete(): void {
   if (registered) return
   registered = true
@@ -41,9 +50,9 @@ export function registerInlineComplete(): void {
         .slice(0, 2000)
       if (!prefix.trim()) return { items: [] }
 
-      let text: string
+      let res: { text: string } | { error: string }
       try {
-        text = await window.api.ai.complete(prefix, suffix, {
+        res = await window.api.ai.complete(prefix, suffix, {
           mode: getProvider(s.aiProvider).mode,
           endpoint: s.aiCompleteEndpoint,
           model: s.aiCompleteModel,
@@ -52,6 +61,13 @@ export function registerInlineComplete(): void {
       } catch {
         return { items: [] }
       }
+      // Surface a backend failure (once per distinct reason) instead of silently
+      // showing nothing, so the user can tell "no suggestion" from "misconfigured".
+      if ('error' in res) {
+        surfaceAiError(res.error)
+        return { items: [] }
+      }
+      const text = res.text
       if (token.isCancellationRequested || !text) return { items: [] }
 
       return {

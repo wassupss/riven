@@ -32,10 +32,31 @@ function chatUser(prefix: string, suffix: string): string {
   return `Complete the code at the cursor.\n<before>\n${prefix}\n</before>\n<after>\n${suffix}\n</after>`
 }
 
+// Discriminated result so the renderer can tell "no suggestion here" from
+// "the backend failed" and show why (issue #12: silent AI-complete failures).
+export type CompleteResult = { text: string } | { error: string }
+function ok(text: string): CompleteResult {
+  return { text: cleanInsertion(text) }
+}
+function httpReason(status: number): string {
+  if (status === 401 || status === 403) return `auth failed (HTTP ${status}) — check the API key`
+  if (status === 404) return `not found (HTTP ${status}) — check the endpoint/model`
+  return `HTTP ${status}`
+}
+function failReason(e: unknown): string {
+  if (e instanceof Error) {
+    if (e.name === 'AbortError') return 'timed out'
+    const code = (e as { cause?: { code?: string } }).cause?.code
+    if (code === 'ECONNREFUSED') return 'connection refused — is the backend running?'
+    return e.message
+  }
+  return String(e)
+}
+
 export function registerAiHandlers(): void {
   ipcMain.handle(
     'ai:complete',
-    async (_e, prefix: string, suffix: string, opts: CompleteOpts): Promise<string> => {
+    async (_e, prefix: string, suffix: string, opts: CompleteOpts): Promise<CompleteResult> => {
       const endpoint = (opts.endpoint || '').replace(/\/+$/, '')
       const model = opts.model
       const key = opts.apiKey || ''
@@ -57,8 +78,8 @@ export function registerAiHandlers(): void {
                 options: { temperature: 0.1, num_predict: 128, stop: ['\n\n', '```'] }
               })
             })
-            if (!r.ok) return ''
-            return cleanInsertion(((await r.json()) as { response?: string }).response ?? '')
+            if (!r.ok) return { error: httpReason(r.status) }
+            return ok(((await r.json()) as { response?: string }).response ?? '')
           }
           case 'openai-completions': {
             const r = await fetch(`${endpoint}/completions`, {
@@ -74,8 +95,8 @@ export function registerAiHandlers(): void {
                 stop: ['\n\n', '```']
               })
             })
-            if (!r.ok) return ''
-            return cleanInsertion(
+            if (!r.ok) return { error: httpReason(r.status) }
+            return ok(
               ((await r.json()) as { choices?: Array<{ text?: string }> }).choices?.[0]?.text ?? ''
             )
           }
@@ -86,8 +107,8 @@ export function registerAiHandlers(): void {
               signal: ctrl.signal,
               body: JSON.stringify({ model, prompt: prefix, suffix, max_tokens: 128, temperature: 0.1 })
             })
-            if (!r.ok) return ''
-            return cleanInsertion(
+            if (!r.ok) return { error: httpReason(r.status) }
+            return ok(
               ((await r.json()) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]
                 ?.message?.content ?? ''
             )
@@ -104,8 +125,8 @@ export function registerAiHandlers(): void {
                 messages: [{ role: 'user', content: chatUser(prefix, suffix) }]
               })
             })
-            if (!r.ok) return ''
-            return cleanInsertion(
+            if (!r.ok) return { error: httpReason(r.status) }
+            return ok(
               ((await r.json()) as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? ''
             )
           }
@@ -123,11 +144,11 @@ export function registerAiHandlers(): void {
                 })
               }
             )
-            if (!r.ok) return ''
+            if (!r.ok) return { error: httpReason(r.status) }
             const d = (await r.json()) as {
               candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
             }
-            return cleanInsertion(d.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
+            return ok(d.candidates?.[0]?.content?.parts?.[0]?.text ?? '')
           }
           case 'openai-chat':
           default: {
@@ -145,15 +166,15 @@ export function registerAiHandlers(): void {
                 ]
               })
             })
-            if (!r.ok) return ''
-            return cleanInsertion(
+            if (!r.ok) return { error: httpReason(r.status) }
+            return ok(
               ((await r.json()) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]
                 ?.message?.content ?? ''
             )
           }
         }
-      } catch {
-        return ''
+      } catch (e) {
+        return { error: failReason(e) }
       } finally {
         clearTimeout(timer)
       }

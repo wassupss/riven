@@ -145,7 +145,8 @@ const api = {
       prefix: string,
       suffix: string,
       opts: { mode: string; endpoint: string; model: string; apiKey?: string }
-    ): Promise<string> => ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
+    ): Promise<{ text: string } | { error: string }> =>
+      ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
   },
   usage: {
     today: (): Promise<{
