@@ -32,7 +32,27 @@ const IGNORED = new Set([
   'target'
 ])
 
+// Currently-open workspace roots, kept in sync by the renderer. File mutations
+// are confined to these so a bad path (buggy code / agent output) can't write or
+// recursively delete arbitrary files outside an open project (defense-in-depth).
+const roots = new Set<string>()
+
+function assertConfined(target: string): void {
+  if (roots.size === 0) return // nothing open yet — no confinement to enforce
+  const resolved = path.resolve(target)
+  for (const root of roots) {
+    const r = path.resolve(root)
+    if (resolved === r || resolved.startsWith(r + path.sep)) return
+  }
+  throw new Error(`refused: path is outside any open workspace: ${target}`)
+}
+
 export function registerWorkspaceHandlers(): void {
+  ipcMain.handle('workspace:setRoots', (_e, list: string[]) => {
+    roots.clear()
+    for (const r of list) if (typeof r === 'string' && r) roots.add(r)
+  })
+
   ipcMain.handle('workspace:pickFolder', async () => {
     const win = BrowserWindow.getFocusedWindow()
     const result = await dialog.showOpenDialog(win!, {
@@ -62,22 +82,28 @@ export function registerWorkspaceHandlers(): void {
   })
 
   ipcMain.handle('workspace:writeFile', async (_event, file: string, content: string): Promise<void> => {
+    assertConfined(file)
     await fs.writeFile(file, content, 'utf8')
   })
 
   ipcMain.handle('workspace:createFile', async (_e, filePath: string): Promise<void> => {
+    assertConfined(filePath)
     await fs.writeFile(filePath, '', { flag: 'wx' }) // fails if exists
   })
 
   ipcMain.handle('workspace:createFolder', async (_e, dir: string): Promise<void> => {
+    assertConfined(dir)
     await fs.mkdir(dir)
   })
 
   ipcMain.handle('workspace:rename', async (_e, oldPath: string, newPath: string): Promise<void> => {
+    assertConfined(oldPath)
+    assertConfined(newPath)
     await fs.rename(oldPath, newPath)
   })
 
   ipcMain.handle('workspace:delete', async (_e, target: string): Promise<void> => {
+    assertConfined(target)
     await fs.rm(target, { recursive: true, force: true })
   })
 

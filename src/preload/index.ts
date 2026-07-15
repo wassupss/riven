@@ -17,6 +17,7 @@ const api = {
   },
   workspace: {
     pickFolder: (): Promise<string | null> => ipcRenderer.invoke('workspace:pickFolder'),
+    setRoots: (roots: string[]): Promise<void> => ipcRenderer.invoke('workspace:setRoots', roots),
     readDir: (dir: string): Promise<DirEntry[]> => ipcRenderer.invoke('workspace:readDir', dir),
     listFiles: (folder: string): Promise<string[]> => ipcRenderer.invoke('workspace:listFiles', folder),
     scripts: (folder: string): Promise<{ manager: string; scripts: string[] }> =>

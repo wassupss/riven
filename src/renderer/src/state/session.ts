@@ -135,6 +135,16 @@ useSession.subscribe((st) => {
   )
 })
 
+// Keep the main process's file-mutation confinement list (workspace roots) in
+// sync with what's open, so it can reject writes/deletes outside them.
+let lastRoots = ''
+useSession.subscribe((st) => {
+  const key = st.openWorkspaces.join('\n')
+  if (key === lastRoots) return
+  lastRoots = key
+  void window.api.workspace.setRoots(st.openWorkspaces)
+})
+
 export async function loadPersistedSessions(): Promise<void> {
   const data = (await window.api.sessions.load()) as PersistShape | null
   useSession.getState().hydrate(data ?? { openWorkspaces: [], activeWorkspace: null, sessions: {} })
