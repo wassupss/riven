@@ -5,18 +5,20 @@
    (they are runtime-themeable via state/themes.ts) using color-mix().
    ========================================================================== */
 
-/* D2Coding — bundled so the terminal's default font renders crisp Korean even
-   when it isn't installed system-wide (OFL 1.1). Only referenced by the terminal
-   font stack; the editor/UI fonts are unchanged. */
+/* D2Coding — bundled as 'D2Coding Web' so it does NOT shadow a system-installed
+   'D2Coding' (OFL 1.1). The terminal stack lists 'D2Coding' (system, instant)
+   first and this bundled fallback second, so machines with the font get it with
+   zero async load (which otherwise left the transient IME composition overlay on
+   a fallback font), while machines without it still render crisp Korean. */
 @font-face {
-  font-family: 'D2Coding';
+  font-family: 'D2Coding Web';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
   src: url('./assets/fonts/D2Coding.woff2') format('woff2');
 }
 @font-face {
-  font-family: 'D2Coding';
+  font-family: 'D2Coding Web';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
@@ -1390,17 +1392,9 @@ select {
    the full D2Coding stack (NOT bare `monospace`, which resolves to Menlo) so it's
    correct even on panes where --term-font wasn't set yet. */
 .xterm .composition-view {
-  font-family: var(
-    --term-font,
-    'D2Coding',
-    'MesloLGS NF',
-    'FiraCode Nerd Font',
-    'JetBrainsMono Nerd Font',
-    Menlo,
-    Monaco,
-    monospace
-  );
+  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
   font-size: var(--term-font-size, 12px);
+  font-weight: 300;
   letter-spacing: 1px;
 }
 .terminal-pane-outer {
