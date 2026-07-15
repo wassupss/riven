@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useSession } from '../../state/session'
+import { useSession, pathOf } from '../../state/session'
 import { contextBus } from '../../bridge/contextBus'
 import { useT } from '../../i18n'
 import { SendHorizontal } from 'lucide-react'
@@ -19,7 +19,7 @@ export default function PreviewPanel({ workspace }: { workspace: string }): JSX.
     const wv = webviewRef.current
     if (!wv) return
     const img = await wv.capturePage()
-    const saved = await window.api.bridge.saveCapture(workspace, img.toDataURL())
+    const saved = await window.api.bridge.saveCapture(pathOf(workspace), img.toDataURL())
     contextBus.sendScreenshot(workspace, saved)
   }
 

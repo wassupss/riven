@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useSession } from '../state/session'
+import { useSession, pathOf } from '../state/session'
 import { useAgentEdits, cacheGet, cacheSet } from '../state/agentEdits'
 import { contextBus } from '../bridge/contextBus'
 
@@ -23,7 +23,7 @@ export default function AgentWatch(): null {
   useEffect(() => {
     if (!activeWorkspace || snapshotted.current.has(activeWorkspace)) return
     snapshotted.current.add(activeWorkspace)
-    window.api.workspace.snapshotContents(activeWorkspace).then((map) => {
+    window.api.workspace.snapshotContents(pathOf(activeWorkspace)).then((map) => {
       for (const [p, c] of Object.entries(map)) {
         if (cacheGet(p) === undefined) cacheSet(p, c)
       }
@@ -31,10 +31,13 @@ export default function AgentWatch(): null {
   }, [activeWorkspace])
 
   useEffect(() => {
+    // The wid identifies the session (agent routing / timeline); root is the real
+    // folder on disk that the fs events are relative to.
+    const root = activeWorkspace ? pathOf(activeWorkspace) : null
     return window.api.bridge.onFsChanged(async ({ type, path }) => {
       if (type === 'unlink') return
-      if (!activeWorkspace || !path.startsWith(activeWorkspace + '/')) return
-      if (IGNORED_PATH.test(path.slice(activeWorkspace.length))) return
+      if (!activeWorkspace || !root || !path.startsWith(root + '/')) return
+      if (IGNORED_PATH.test(path.slice(root.length))) return
 
       // Only surface changes that come from a riven agent SESSION — i.e. a
       // terminal in this workspace currently has an LLM agent running. Without
@@ -56,8 +59,8 @@ export default function AgentWatch(): null {
       } else {
         // No in-app baseline — use the committed (git HEAD) version so we can
         // still show what changed. Falls back to no-diff (treated as a new file).
-        const rel = path.slice(activeWorkspace.length + 1)
-        const gitBase = await window.api.git.showFile(activeWorkspace, rel)
+        const rel = path.slice(root.length + 1)
+        const gitBase = await window.api.git.showFile(root, rel)
         if (gitBase != null && gitBase !== after) {
           record(activeWorkspace, path, { before: gitBase, after, hasBaseline: true }, false)
         } else {

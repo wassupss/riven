@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSession } from '../../state/session'
+import { useSession, pathOf } from '../../state/session'
 import { useAgentEdits, cacheSet } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
@@ -22,7 +22,9 @@ interface Status {
   files: GitFile[]
 }
 
-export default function GitPanel({ workspace }: { workspace: string }): JSX.Element {
+export default function GitPanel({ workspace: wid }: { workspace: string }): JSX.Element {
+  // Git operates on the real folder; several workspaces can share one path.
+  const workspace = pathOf(wid)
   const t = useT()
   const statusLabel = (ch: string): string => t(`git.status.${ch === '?' ? 'Q' : ch}`, ch)
   const [status, setStatus] = useState<Status>({

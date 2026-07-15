@@ -33,21 +33,51 @@ interface SessionState {
   activeWorkspace: string | null
   sessions: Record<string, Session>
   recents: string[] // most-recently-opened workspace paths (MRU), for reopening
-  // Custom display names, keyed by path. Absent ⇒ the folder name is used.
+  // Custom display names, keyed by wid. Absent ⇒ the folder name is used.
   names: Record<string, string>
   hydrate: (data: PersistShape) => void
-  openWorkspace: (path: string) => void
-  closeWorkspace: (path: string) => void
-  setActiveWorkspace: (path: string) => void
-  renameWorkspace: (path: string, name: string) => void
-  patch: (path: string, p: Partial<Session>) => void
+  // Open (or, with forceNew, always add another instance of) a folder path.
+  openWorkspace: (path: string, forceNew?: boolean) => void
+  closeWorkspace: (wid: string) => void
+  setActiveWorkspace: (wid: string) => void
+  renameWorkspace: (wid: string, name: string) => void
+  patch: (wid: string, p: Partial<Session>) => void
   openFile: (path: string) => void
   closeTab: (path: string) => void
 }
 
-// The display name for a workspace: the custom name if set, else the folder name.
-export function workspaceName(path: string, names: Record<string, string>): string {
-  return names[path]?.trim() || path.split('/').filter(Boolean).pop() || path
+// A workspace is identified by a `wid`, NOT its path, so the same folder can be
+// opened as several independent workspaces (issue #6). The first instance of a
+// path uses the plain path as its wid (backward compatible with older sessions);
+// further instances append `<ordinal>` — an invisible control char that
+// can't appear in a real path. FS operations resolve the real folder via pathOf.
+const WID_SEP = String.fromCharCode(1)
+export function pathOf(wid: string): string {
+  const i = wid.indexOf(WID_SEP)
+  return i < 0 ? wid : wid.slice(0, i)
+}
+function widOrdinal(wid: string): number {
+  const i = wid.indexOf(WID_SEP)
+  return i < 0 ? 1 : parseInt(wid.slice(i + 1), 10) || 1
+}
+// Pick a fresh wid for opening `path`: the plain path if free, else the next
+// ordinal not already open.
+function freshWid(path: string, open: string[]): string {
+  if (!open.includes(path)) return path
+  let n = 2
+  while (open.includes(`${path}${WID_SEP}${n}`)) n++
+  return `${path}${WID_SEP}${n}`
+}
+
+// The display name for a workspace: the custom name if set, else the folder name
+// (with a `(2)`, `(3)`… suffix to disambiguate additional instances of a path).
+export function workspaceName(wid: string, names: Record<string, string>): string {
+  const custom = names[wid]?.trim()
+  if (custom) return custom
+  const dir = pathOf(wid)
+  const base = dir.split('/').filter(Boolean).pop() || dir
+  const ord = widOrdinal(wid)
+  return ord > 1 ? `${base} (${ord})` : base
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -79,24 +109,37 @@ export const useSession = create<SessionState>((set) => ({
       }
     }),
 
-  openWorkspace: (path) =>
-    set((st) => ({
-      activeWorkspace: path,
-      openWorkspaces: st.openWorkspaces.includes(path) ? st.openWorkspaces : [...st.openWorkspaces, path],
-      sessions: st.sessions[path] ? st.sessions : { ...st.sessions, [path]: emptySession() },
-      recents: [path, ...st.recents.filter((r) => r !== path)].slice(0, 8)
-    })),
-
-  closeWorkspace: (path) => {
-    // Free this workspace's agent-edit baselines/diffs (can be ~2000 file
-    // contents) so they don't leak for the app's lifetime.
-    evictWorkspace(path)
+  openWorkspace: (path, forceNew = false) =>
     set((st) => {
-      const openWorkspaces = st.openWorkspaces.filter((w) => w !== path)
+      const recents = [path, ...st.recents.filter((r) => r !== path)].slice(0, 8)
+      // Default: focus an existing instance of this path. forceNew always adds a
+      // fresh, independent instance (its own tabs / terminals / layout).
+      if (!forceNew) {
+        const existing = st.openWorkspaces.find((w) => pathOf(w) === path)
+        if (existing) return { activeWorkspace: existing, recents }
+      }
+      const wid = freshWid(path, st.openWorkspaces)
+      return {
+        activeWorkspace: wid,
+        openWorkspaces: [...st.openWorkspaces, wid],
+        sessions: st.sessions[wid] ? st.sessions : { ...st.sessions, [wid]: emptySession() },
+        recents
+      }
+    }),
+
+  closeWorkspace: (wid) => {
+    set((st) => {
+      const openWorkspaces = st.openWorkspaces.filter((w) => w !== wid)
+      // Only drop the shared (path-keyed) baseline caches when NO other open
+      // instance still points at the same folder, so closing one instance can't
+      // wipe the other's diffs. Timeline entries are wid-keyed and always freed.
+      const path = pathOf(wid)
+      const pathStillOpen = openWorkspaces.some((w) => pathOf(w) === path)
+      evictWorkspace(wid, path, !pathStillOpen)
       const sessions = { ...st.sessions }
-      delete sessions[path]
+      delete sessions[wid]
       const activeWorkspace =
-        st.activeWorkspace === path ? (openWorkspaces.at(-1) ?? null) : st.activeWorkspace
+        st.activeWorkspace === wid ? (openWorkspaces.at(-1) ?? null) : st.activeWorkspace
       return { openWorkspaces, sessions, activeWorkspace }
     })
   },
@@ -161,10 +204,13 @@ useSession.subscribe((st) => {
 // sync with what's open, so it can reject writes/deletes outside them.
 let lastRoots = ''
 useSession.subscribe((st) => {
-  const key = st.openWorkspaces.join('\n')
+  // Resolve wids to real folder paths (deduped) — the main-process confinement
+  // list must contain paths, and several instances can share one folder.
+  const roots = [...new Set(st.openWorkspaces.map(pathOf))]
+  const key = roots.join('\n')
   if (key === lastRoots) return
   lastRoots = key
-  void window.api.workspace.setRoots(st.openWorkspaces)
+  void window.api.workspace.setRoots(roots)
 })
 
 export async function loadPersistedSessions(): Promise<void> {

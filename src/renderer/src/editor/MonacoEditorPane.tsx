@@ -4,7 +4,7 @@ import type { EditorPaneProps } from './EditorPane'
 import { languageForPath } from './EditorPane'
 import { computeHunks, type Hunk } from './diffLines'
 import { ensureLspInitialized } from '../lsp/client'
-import { useSession } from '../state/session'
+import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
@@ -269,7 +269,8 @@ export default function MonacoEditorPane({
     const f = fileRef.current
     if (!ed || !model || !f) return
     const sel = ed.getSelection()
-    const root = useSession.getState().activeWorkspace
+    const rootWs = useSession.getState().activeWorkspace
+    const root = rootWs ? pathOf(rootWs) : null
     const rel = root && f.path.startsWith(root) ? f.path.slice(root.length + 1) : f.path
     const lang = languageForPath(f.path)
     let loc: string
@@ -383,7 +384,8 @@ export default function MonacoEditorPane({
       setDirty(false)
       return
     }
-    const root = useSession.getState().activeWorkspace
+    const rootWs = useSession.getState().activeWorkspace
+    const root = rootWs ? pathOf(rootWs) : null
     if (root) ensureLspInitialized(root)
     const uri = monaco.Uri.parse(`file://${file.path}`)
     const key = uri.toString()

@@ -94,17 +94,20 @@ export const cacheSet = (p: string, content: string): void => {
   cache.set(p, content)
 }
 
-// Drop every baseline + pending edit + timeline entry under a workspace. Called
-// when the workspace is closed so these full-file-content caches (fed by
-// snapshotContents — up to 2000 files) don't accumulate for the whole app life.
-export function evictWorkspace(workspace: string): void {
-  const prefix = workspace.endsWith('/') ? workspace : `${workspace}/`
-  const under = (p: string): boolean => p === workspace || p.startsWith(prefix)
-  for (const p of [...cache.keys()]) if (under(p)) cache.delete(p)
+// Free a closed workspace's state. Timeline entries are wid-keyed and always
+// dropped. The baseline caches (fed by snapshotContents — up to 2000 files) are
+// keyed by absolute file path and thus SHARED between instances of the same
+// folder, so they're only pruned when `evictBaselines` is set (i.e. the last
+// instance of that path is closing) — otherwise a sibling instance keeps them.
+export function evictWorkspace(wid: string, path: string, evictBaselines: boolean): void {
+  const prefix = path.endsWith('/') ? path : `${path}/`
+  const under = (p: string): boolean => p === path || p.startsWith(prefix)
+  if (evictBaselines) for (const p of [...cache.keys()]) if (under(p)) cache.delete(p)
   useAgentEdits.setState((s) => {
-    const edits: Record<string, AgentEdit> = {}
-    for (const [p, e] of Object.entries(s.edits)) if (!under(p)) edits[p] = e
-    const timeline = s.timeline.filter((e) => e.workspace !== workspace && !under(e.path))
+    const edits: Record<string, AgentEdit> = evictBaselines
+      ? Object.fromEntries(Object.entries(s.edits).filter(([p]) => !under(p)))
+      : s.edits
+    const timeline = s.timeline.filter((e) => e.workspace !== wid)
     return { edits, timeline, unseen: Math.min(s.unseen, timeline.length) }
   })
 }

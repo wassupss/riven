@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useSession } from '../../state/session'
+import { useSession, pathOf } from '../../state/session'
 import { useNav } from '../../state/nav'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
@@ -14,7 +14,9 @@ interface Match {
   matchLength: number
 }
 
-export default function SearchPanel({ workspace }: { workspace: string }): JSX.Element {
+export default function SearchPanel({ workspace: wid }: { workspace: string }): JSX.Element {
+  // Search runs against the real folder (instances of a path share it).
+  const workspace = pathOf(wid)
   const t = useT()
   const [query, setQuery] = useState('')
   const [replacement, setReplacement] = useState('')

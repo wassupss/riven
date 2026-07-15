@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useUI } from '../state/ui'
-import { useSession } from '../state/session'
+import { useSession, pathOf } from '../state/session'
 import { ensureEditor } from '../dock/registry'
 import { keymap, chordLabel } from '../keybindings/keys'
 import { FileIcon } from './FileIcon'
@@ -63,7 +63,7 @@ export default function Palette(): JSX.Element | null {
   useEffect(() => {
     if (mode !== 'files' || !activeWorkspace) return
     let alive = true
-    window.api.workspace.listFiles(activeWorkspace).then((f) => alive && setFiles(f))
+    window.api.workspace.listFiles(pathOf(activeWorkspace)).then((f) => alive && setFiles(f))
     return () => {
       alive = false
     }
@@ -89,7 +89,7 @@ export default function Palette(): JSX.Element | null {
           icon: <FileIcon name={name} size={15} />,
           run: () => {
             if (activeWorkspace) {
-              openFile(`${activeWorkspace}/${p}`)
+              openFile(`${pathOf(activeWorkspace)}/${p}`)
               ensureEditor()
             }
           }

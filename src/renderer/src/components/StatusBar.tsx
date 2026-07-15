@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useSession, workspaceName } from '../state/session'
+import { useSession, workspaceName, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useAgentEdits } from '../state/agentEdits'
 import { togglePanel } from '../dock/registry'
@@ -33,7 +33,7 @@ export default function StatusBar(): JSX.Element {
     }
     let cancelled = false
     const poll = (): void => {
-      window.api.ports.list(folder).then((p) => {
+      window.api.ports.list(pathOf(folder)).then((p) => {
         if (!cancelled) setPorts(p)
       })
     }
@@ -57,12 +57,12 @@ export default function StatusBar(): JSX.Element {
     }
     let cancelled = false
     const refresh = (): void => {
-      window.api.git.info(folder).then((i) => {
+      window.api.git.info(pathOf(folder)).then((i) => {
         if (!cancelled) setInfo(i)
       })
     }
     refresh()
-    window.api.git.watch(folder)
+    window.api.git.watch(pathOf(folder))
     const off = window.api.git.onChanged(refresh)
     return () => {
       cancelled = true
@@ -74,8 +74,8 @@ export default function StatusBar(): JSX.Element {
     <div className="status-bar">
       {folder ? (
         <>
-          <span className="status-item repo" title={folder}>
-            <Folder size={13} /> {wsName ?? info?.repoName ?? folder.split('/').pop()}
+          <span className="status-item repo" title={pathOf(folder)}>
+            <Folder size={13} /> {wsName ?? info?.repoName ?? pathOf(folder).split('/').pop()}
           </span>
           {info?.isRepo && (
             <span className="status-item branch" title={t('status.branch')}>

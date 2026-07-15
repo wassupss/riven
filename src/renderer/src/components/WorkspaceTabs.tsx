@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSession, workspaceName } from '../state/session'
+import { useSession, workspaceName, pathOf } from '../state/session'
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
 import { useT } from '../i18n'
-import { Plus, X, GitBranch } from 'lucide-react'
+import { Plus, X, GitBranch, CopyPlus } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -12,7 +12,8 @@ export default function WorkspaceTabs(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
   const recents = useSession((s) => s.recents)
-  const recentClosed = recents.filter((r) => !openWorkspaces.includes(r))
+  // A recent (a path) is "closed" only if no open instance points at it.
+  const recentClosed = recents.filter((r) => !openWorkspaces.some((w) => pathOf(w) === r))
 
   const pick = useCallback(async () => {
     const picked = await window.api.workspace.pickFolder()
@@ -73,6 +74,7 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
   const closeWorkspace = useSession((s) => s.closeWorkspace)
+  const openWorkspace = useSession((s) => s.openWorkspace)
   const renameWorkspace = useSession((s) => s.renameWorkspace)
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
@@ -99,7 +101,7 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   useEffect(() => {
     let alive = true
     window.api.git
-      .status(ws)
+      .status(pathOf(ws))
       .then((st) => {
         if (!alive) return
         setGit(st.isRepo ? { branch: st.branch, dirty: st.files.length } : null)
@@ -115,7 +117,7 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
     <div
       ref={cardRef}
       className={`ws-card${active ? ' active' : ''} ${activity}`}
-      title={`${ws}  (⌘${index + 1})`}
+      title={`${pathOf(ws)}  (⌘${index + 1})`}
       onClick={() => setActiveWorkspace(ws)}
     >
       <div className="ws-card-top">
@@ -148,6 +150,16 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
           </span>
         )}
         <span
+          className="ws-card-dup"
+          title={t('ws.duplicate')}
+          onClick={(e) => {
+            e.stopPropagation()
+            openWorkspace(pathOf(ws), true)
+          }}
+        >
+          <CopyPlus size={12} />
+        </span>
+        <span
           className="ws-card-close"
           title={t('ws.close')}
           onClick={(e) => {
@@ -159,7 +171,7 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
         </span>
       </div>
       <div className="ws-card-meta">
-        <span className="ws-card-path">{shortenPath(ws)}</span>
+        <span className="ws-card-path">{shortenPath(pathOf(ws))}</span>
       </div>
       {git && (
         <div className="ws-card-git">

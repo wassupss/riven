@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Play, ChevronDown } from 'lucide-react'
-import { useSession } from '../state/session'
+import { useSession, pathOf } from '../state/session'
 import { addTerminal } from '../dock/registry'
 import { useT } from '../i18n'
 
@@ -32,7 +32,7 @@ export default function ScriptRunner(): JSX.Element {
     }
     if (!activeWorkspace) return
     setData(null)
-    window.api.workspace.scripts(activeWorkspace).then(setData).catch(() => setData({ manager: 'npm', scripts: [] }))
+    window.api.workspace.scripts(pathOf(activeWorkspace)).then(setData).catch(() => setData({ manager: 'npm', scripts: [] }))
     const r = btnRef.current?.getBoundingClientRect()
     if (r) setPos({ bottom: window.innerHeight - r.top + 4, left: r.left })
   }

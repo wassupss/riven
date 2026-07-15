@@ -11,7 +11,7 @@ import SettingsModal from './components/SettingsModal'
 import Palette from './components/Palette'
 import AgentPicker from './components/AgentPicker'
 import { useUI } from './state/ui'
-import { useSession, loadPersistedSessions } from './state/session'
+import { useSession, loadPersistedSessions, pathOf } from './state/session'
 import { loadEnv } from './state/env'
 import { loadSettings, getSettings, useSettings } from './state/settings'
 import { useAuth } from './state/auth'
@@ -37,7 +37,7 @@ export default function App(): JSX.Element {
   // Always watch the active workspace (independent of whether the editor is open)
   // so agent edits are detected reliably.
   useEffect(() => {
-    if (activeWorkspace) window.api.bridge.watchStart(activeWorkspace)
+    if (activeWorkspace) window.api.bridge.watchStart(pathOf(activeWorkspace))
   }, [activeWorkspace])
 
   const usagePinned = useSettings((s) => s.settings.usagePinned)
@@ -131,7 +131,7 @@ export default function App(): JSX.Element {
                 className="grid-layer"
                 style={{ display: ws === activeWorkspace ? 'block' : 'none' }}
               >
-                <ErrorBoundary label={ws.split('/').pop()}>
+                <ErrorBoundary label={pathOf(ws).split('/').pop()}>
                   <Workbench workspace={ws} />
                 </ErrorBoundary>
               </div>

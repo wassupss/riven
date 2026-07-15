@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import type { DirEntry } from '../../../../preload'
-import { useSession } from '../../state/session'
+import { useSession, pathOf } from '../../state/session'
 import { useTree } from '../../state/tree'
 import { useAgentEdits } from '../../state/agentEdits'
 import { useGitStatus, GIT_BADGE } from '../../state/gitStatus'
@@ -197,7 +197,7 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const scheduleGit = useCallback(() => {
     if (workspace !== activeWorkspace) return
     if (gitTimer.current) clearTimeout(gitTimer.current)
-    gitTimer.current = setTimeout(() => void refreshGit(workspace), 300)
+    gitTimer.current = setTimeout(() => void refreshGit(pathOf(workspace)), 300)
   }, [workspace, activeWorkspace, refreshGit])
 
   // Keep the tree in sync with the open file: reveal it (expand ancestors, scroll).
@@ -208,12 +208,12 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   // Working-tree decorations: refresh on activation, on git HEAD/index changes,
   // and (debounced) whenever files change on disk.
   useEffect(() => {
-    if (workspace === activeWorkspace) void refreshGit(workspace)
+    if (workspace === activeWorkspace) void refreshGit(pathOf(workspace))
   }, [workspace, activeWorkspace, rootVersion, refreshGit])
   useEffect(() => window.api.git.onChanged(() => scheduleGit()), [scheduleGit])
 
   useEffect(() => {
-    window.api.workspace.readDir(workspace).then(setRoots)
+    window.api.workspace.readDir(pathOf(workspace)).then(setRoots)
   }, [workspace, rootVersion])
 
   useEffect(() => {
