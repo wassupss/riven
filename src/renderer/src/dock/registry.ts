@@ -129,7 +129,8 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   editor: { titleKey: 'title.editor', direction: 'right' },
   preview: { titleKey: 'title.preview', direction: 'right' },
   search: { titleKey: 'title.search', direction: 'left' },
-  git: { titleKey: 'title.git', direction: 'left' }
+  git: { titleKey: 'title.git', direction: 'left' },
+  changes: { titleKey: 'title.changes', direction: 'left' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).

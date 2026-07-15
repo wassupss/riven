@@ -7,8 +7,13 @@ import { useUI } from '../state/ui'
 import { addTerminal, togglePanel, popoutActive } from '../dock/registry'
 import { useT } from '../i18n'
 
-const PANELS: Array<{ id: 'search' | 'git' | 'editor' | 'preview'; labelKey: string; key: string }> = [
+const PANELS: Array<{
+  id: 'search' | 'git' | 'editor' | 'preview' | 'changes'
+  labelKey: string
+  key: string
+}> = [
   { id: 'editor', labelKey: 'toolbar.panel.editor', key: '' },
+  { id: 'changes', labelKey: 'toolbar.panel.changes', key: '' },
   { id: 'preview', labelKey: 'toolbar.panel.preview', key: '⌘⇧V' },
   { id: 'search', labelKey: 'toolbar.panel.search', key: '⌘⇧F' },
   { id: 'git', labelKey: 'Git', key: '⌘⇧G' }

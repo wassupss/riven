@@ -35,6 +35,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'toolbar.panels': { ko: '패널', en: 'Panels' },
   'toolbar.openPanel': { ko: '패널 열기', en: 'Open panel' },
   'toolbar.panel.editor': { ko: '코드 편집기', en: 'Code editor' },
+  'toolbar.panel.changes': { ko: '변경 사항', en: 'Changes' },
   'toolbar.panel.preview': { ko: '프리뷰', en: 'Preview' },
   'toolbar.panel.search': { ko: '검색', en: 'Search' },
   'toolbar.openAgent': { ko: '에이전트 열기', en: 'Open agent' },
@@ -255,6 +256,16 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'title.preview': { ko: '프리뷰', en: 'Preview' },
   'title.search': { ko: '검색', en: 'Search' },
   'title.git': { ko: 'Git', en: 'Git' },
+  'title.changes': { ko: '변경 사항', en: 'Changes' },
+  'changes.empty': {
+    ko: '에이전트가 이 세션에서 편집한 파일이 여기 요약됩니다.',
+    en: 'Files an agent edits in this session are summarized here.'
+  },
+  'changes.clear': { ko: '지우기', en: 'Clear' },
+  'changes.pillTitle': {
+    ko: '에이전트 변경 사항 타임라인 열기',
+    en: 'Open the agent changes timeline'
+  },
   'title.terminal': { ko: '터미널', en: 'Terminal' },
   'settings.ai.provider': { ko: '제공자', en: 'Provider' },
   'settings.ai.customModel': { ko: '커스텀…', en: 'Custom…' },

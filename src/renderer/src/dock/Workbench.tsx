@@ -7,6 +7,7 @@ import EditorPanel from './panels/EditorPanel'
 import PreviewPanel from './panels/PreviewPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
+import ChangesPanel from './panels/ChangesPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import { useSession } from '../state/session'
@@ -27,6 +28,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       preview: () => <PreviewPanel workspace={workspace} />,
       search: () => <SearchPanel workspace={workspace} />,
       git: () => <GitPanel workspace={workspace} />,
+      changes: () => <ChangesPanel />,
       terminal: (props: IDockviewPanelProps<TerminalParams>) => (
         <TerminalPanel workspace={workspace} params={props.params} api={props.api} />
       )

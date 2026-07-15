@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useSession } from '../state/session'
 import { useUI } from '../state/ui'
+import { useAgentEdits } from '../state/agentEdits'
 import { togglePanel } from '../dock/registry'
 import { useT } from '../i18n'
 import UsageWidget from './UsageWidget'
 import ScriptRunner from './ScriptRunner'
-import { Folder, FolderOpen, GitBranch, Plug, Settings } from 'lucide-react'
+import { Folder, FolderOpen, GitBranch, Plug, Settings, FileDiff } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -18,6 +19,8 @@ export default function StatusBar(): JSX.Element {
   const folder = useSession((s) => s.activeWorkspace)
   const patch = useSession((s) => s.patch)
   const openSettings = useUI((s) => s.openSettings)
+  const changeCount = useAgentEdits((s) => s.timeline.length)
+  const unseen = useAgentEdits((s) => s.unseen)
   const [info, setInfo] = useState<Info | null>(null)
   const [ports, setPorts] = useState<number[]>([])
 
@@ -97,6 +100,16 @@ export default function StatusBar(): JSX.Element {
       )}
       {folder && <ScriptRunner />}
       <span className="status-spacer" />
+      {changeCount > 0 && (
+        <span
+          className="status-item click changes-pill"
+          title={t('changes.pillTitle')}
+          onClick={() => togglePanel('changes')}
+        >
+          <FileDiff size={13} /> {changeCount}
+          {unseen > 0 && <span className="changes-pill-dot" />}
+        </span>
+      )}
       <UsageWidget />
       <span className="status-item click" title={t('status.settingsTitle')} onClick={() => openSettings('general')}>
         <Settings size={13} /> {t('status.settings')}

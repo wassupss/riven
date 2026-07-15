@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useSession } from '../state/session'
 import { useAgentEdits, cacheGet, cacheSet } from '../state/agentEdits'
-import { ensureEditor } from '../dock/registry'
 import { contextBus } from '../bridge/contextBus'
 
 // Build/cache/vcs dirs are ignored by the watcher already; this is a second
@@ -10,13 +9,13 @@ const IGNORED_PATH =
   /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target|Library|\.Trash|\.Trashes)([/\\]|$)/
 
 // Watches the active workspace for on-disk changes made by agents/terminals and
-// surfaces them: opens the changed file in the editor and records before/after
-// for the inline diff. Also fires a system notification naming the file.
+// summarizes them into the changes timeline (see ChangesPanel) — recording
+// before/after for the inline diff. It deliberately does NOT auto-open each file:
+// an agent touching many files would otherwise flood the editor with tabs, so the
+// user reviews the timeline and clicks in to see any one change.
 export default function AgentWatch(): null {
   const activeWorkspace = useSession((s) => s.activeWorkspace)
-  const openFile = useSession((s) => s.openFile)
-  const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
-  const setEdit = useAgentEdits((s) => s.set)
+  const record = useAgentEdits((s) => s.record)
   const snapshotted = useRef(new Set<string>())
 
   // Cache current file contents as diff baselines (once per workspace) so agent
@@ -51,25 +50,22 @@ export default function AgentWatch(): null {
       if (before === after) return // no real change (or our own save, already cached)
 
       cacheSet(path, after)
-      setActiveWorkspace(activeWorkspace)
-      openFile(path)
-      ensureEditor()
 
       if (before !== undefined) {
-        setEdit(path, { before, after, hasBaseline: true })
+        record(activeWorkspace, path, { before, after, hasBaseline: true }, false)
       } else {
         // No in-app baseline — use the committed (git HEAD) version so we can
-        // still show what changed. Falls back to no-diff if not tracked.
+        // still show what changed. Falls back to no-diff (treated as a new file).
         const rel = path.slice(activeWorkspace.length + 1)
         const gitBase = await window.api.git.showFile(activeWorkspace, rel)
         if (gitBase != null && gitBase !== after) {
-          setEdit(path, { before: gitBase, after, hasBaseline: true })
+          record(activeWorkspace, path, { before: gitBase, after, hasBaseline: true }, false)
         } else {
-          setEdit(path, { before: '', after, hasBaseline: false })
+          record(activeWorkspace, path, { before: '', after, hasBaseline: false }, true)
         }
       }
     })
-  }, [activeWorkspace, openFile, setActiveWorkspace, setEdit])
+  }, [activeWorkspace, record])
 
   return null
 }
