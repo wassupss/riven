@@ -48,7 +48,6 @@ export default function PreviewPanel({ workspace }: { workspace: string }): JSX.
         </button>
       </div>
       {previewUrl ? (
-        // @ts-expect-error webview is an Electron intrinsic element
         <webview ref={webviewRef} src={previewUrl} className="preview-webview" />
       ) : (
         <div className="empty-hint center">{t('preview.empty')}</div>

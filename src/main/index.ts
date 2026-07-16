@@ -175,7 +175,7 @@ app.whenReady().then(() => {
   // mark so it matches the landing/app branding.
   if (process.platform === 'darwin' && !app.isPackaged) {
     const icon = nativeImage.createFromPath(join(__dirname, '../../build/icon.png'))
-    if (!icon.isEmpty()) app.dock.setIcon(icon)
+    if (!icon.isEmpty()) app.dock?.setIcon(icon)
   }
 
   createWindow()

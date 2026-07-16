@@ -9,7 +9,6 @@ export default function Toolbar(): JSX.Element {
   const t = useT()
   const hasWs = useSession((s) => s.activeWorkspace != null)
   const setQuickPanel = useUI((s) => s.setQuickPanel)
-
   return (
     <div className="toolbar">
       <button

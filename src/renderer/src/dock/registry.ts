@@ -218,7 +218,8 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).
 export function closeTerminalById(paneId: number): void {
   const api = activeApi
-  const panel = api?.getPanel(`term-${paneId}`)
+  if (!api) return
+  const panel = api.getPanel(`term-${paneId}`)
   if (panel) api.removePanel(panel)
 }
 

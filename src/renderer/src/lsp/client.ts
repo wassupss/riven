@@ -67,6 +67,15 @@ interface LspRange {
   start: LspPos
   end: LspPos
 }
+// Definition-style requests answer with either a Location (uri/range) or a
+// LocationLink (targetUri/targetRange), bare or in an array, depending on the
+// server — one shape covers every caller.
+interface LspLocationLike {
+  uri?: string
+  targetUri?: string
+  range?: LspRange
+  targetRange?: LspRange
+}
 
 function toLspPos(p: monaco.Position): LspPos {
   return { line: p.lineNumber - 1, character: p.column - 1 }
@@ -278,16 +287,13 @@ function registerProviders(): void {
       const res = (await window.api.lsp.request(serverKey, 'textDocument/definition', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
-      })) as
-        | { uri: string; range: LspRange }
-        | Array<{ uri?: string; targetUri?: string; range?: LspRange; targetRange?: LspRange }>
-        | null
+      })) as LspLocationLike | LspLocationLike[] | null
       if (!res) return null
       const arr = Array.isArray(res) ? res : [res]
       return arr
         .map((loc) => {
-          const uri = (loc.uri ?? loc.targetUri) as string | undefined
-          const range = (loc.range ?? loc.targetRange) as LspRange | undefined
+          const uri = loc.uri ?? loc.targetUri
+          const range = loc.range ?? loc.targetRange
           if (!uri || !range) return null
           return { uri: monaco.Uri.parse(uri), range: toMonacoRange(range) }
         })
@@ -329,10 +335,7 @@ function registerProviders(): void {
       const res = (await window.api.lsp.request(serverKey, 'textDocument/implementation', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
-      })) as
-        | { uri: string; range: LspRange }
-        | Array<{ uri?: string; targetUri?: string; range?: LspRange; targetRange?: LspRange }>
-        | null
+      })) as LspLocationLike | LspLocationLike[] | null
       if (!res) return null
       const arr = Array.isArray(res) ? res : [res]
       return arr
@@ -355,10 +358,7 @@ function registerProviders(): void {
       const res = (await window.api.lsp.request(serverKey, 'textDocument/typeDefinition', {
         textDocument: { uri: model.uri.toString() },
         position: toLspPos(position)
-      })) as
-        | { uri: string; range: LspRange }
-        | Array<{ uri?: string; targetUri?: string; range?: LspRange; targetRange?: LspRange }>
-        | null
+      })) as LspLocationLike | LspLocationLike[] | null
       if (!res) return null
       const arr = Array.isArray(res) ? res : [res]
       return arr

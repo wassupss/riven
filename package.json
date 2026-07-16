@@ -7,6 +7,7 @@
   "author": "riven",
   "scripts": {
     "dev": "electron-vite dev",
+    "typecheck": "tsc -b",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "rebuild": "electron-rebuild -f -w node-pty",
