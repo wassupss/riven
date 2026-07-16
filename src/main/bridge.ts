@@ -44,8 +44,11 @@ export function registerBridgeHandlers(): void {
       // rewrites .next/**/*.sst thousands of times/sec) — never watch them, or
       // AgentWatch drowns opening transient files and pins the CPU. Also skip
       // macOS home noise (Library/Trash) so opening ~ doesn't peg the CPU.
+      // Also ignore our own atomic-write temp files (…​.riven-tmp) so a source
+      // save's transient temp doesn't fire add/unlink churn or a spurious git
+      // refresh mid-rename.
       ignored:
-        /(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target|Library|\.Trash|\.Trashes)([/\\]|$)/,
+        /(\.riven-tmp$)|(^|[/\\])(\.git|node_modules|out|dist|\.riven|\.cache|\.next|\.turbo|\.svelte-kit|\.nuxt|\.output|\.vercel|\.vite|\.parcel-cache|coverage|__pycache__|\.pytest_cache|\.mypy_cache|\.venv|venv|target|Library|\.Trash|\.Trashes)([/\\]|$)/,
       ignoreInitial: true,
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 }

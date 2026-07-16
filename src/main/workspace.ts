@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import { atomicWriteText, TMP_SUFFIX } from './atomicWrite'
 
 export interface DirEntry {
   name: string
@@ -37,6 +38,11 @@ const IGNORED = new Set([
   '.Trashes'
 ])
 
+// Hidden from listings: ignored dirs + the transient atomic-write temp files.
+function isHidden(name: string): boolean {
+  return IGNORED.has(name) || name.endsWith(TMP_SUFFIX)
+}
+
 // Currently-open workspace roots, kept in sync by the renderer. File mutations
 // are confined to these so a bad path (buggy code / agent output) can't write or
 // recursively delete arbitrary files outside an open project (defense-in-depth).
@@ -70,7 +76,7 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:readDir', async (_event, dir: string): Promise<DirEntry[]> => {
     const entries = await fs.readdir(dir, { withFileTypes: true })
     return entries
-      .filter((e) => !IGNORED.has(e.name))
+      .filter((e) => !isHidden(e.name))
       .map((e) => ({
         name: e.name,
         path: path.join(dir, e.name),
@@ -88,7 +94,10 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:writeFile', async (_event, file: string, content: string): Promise<void> => {
     assertConfined(file)
-    await fs.writeFile(file, content, 'utf8')
+    // Atomic temp+rename and per-path serialization: a crash mid-write can't
+    // truncate the source, and two overlapping saves (debounced autosave racing
+    // a manual ⌘S) can't interleave — last-queued wins.
+    await atomicWriteText(file, content)
   })
 
   ipcMain.handle('workspace:createFile', async (_e, filePath: string): Promise<void> => {
@@ -132,7 +141,7 @@ export function registerWorkspaceHandlers(): void {
       }
       for (const e of entries) {
         if (count >= 2000) return
-        if (IGNORED.has(e.name)) continue
+        if (isHidden(e.name)) continue
         const full = path.join(dir, e.name)
         if (e.isDirectory()) await walk(full)
         else if (e.isFile()) {
@@ -210,7 +219,7 @@ export function registerWorkspaceHandlers(): void {
       }
       for (const e of entries) {
         if (out.length >= 20000) return
-        if (IGNORED.has(e.name)) continue
+        if (isHidden(e.name)) continue
         const full = path.join(dir, e.name)
         if (e.isDirectory()) await walk(full)
         else if (e.isFile()) out.push(path.relative(folder, full))
