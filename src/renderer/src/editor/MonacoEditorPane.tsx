@@ -9,7 +9,7 @@ import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
 import { contextBus } from '../bridge/contextBus'
-import { setEditorFocuser, setFocusRegion } from '../keybindings/focus'
+import { setEditorFocuser, setEditorSaver, setFocusRegion } from '../keybindings/focus'
 import { editorTheme } from './highlight'
 import { useSettings, getSettings } from '../state/settings'
 import { useT, t as staticT } from '../i18n'
@@ -312,7 +312,8 @@ export default function MonacoEditorPane({
     const offSettings = useSettings.subscribe((s) =>
       ed.updateOptions({ fontFamily: s.settings.editorFontFamily, fontSize: s.settings.editorFontSize })
     )
-    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSaveRef.current())
+    // ⌘S is an app-level action (see keybindings/actions.ts 'app.save') so it
+    // fires even when focus is on the tab/gutter, not the Monaco textarea.
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => sendRef.current())
 
     // Selection → floating "send to terminal" chip (Copilot/Cursor style).
@@ -369,8 +370,10 @@ export default function MonacoEditorPane({
     ed.onDidFocusEditorText(() => setFocusRegion({ kind: 'editor' }))
     ed.onDidFocusEditorWidget(() => setFocusRegion({ kind: 'editor' }))
     setEditorFocuser(() => ed.focus())
+    setEditorSaver(() => void doSaveRef.current())
     return () => {
       offSettings()
+      setEditorSaver(null)
       ed.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

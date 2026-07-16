@@ -65,6 +65,8 @@ export function chordFromEvent(e: KeyboardEvent): string {
   return parts.join('+')
 }
 
+const ARROW_GLYPH: Record<string, string> = { Left: '←', Right: '→', Up: '↑', Down: '↓' }
+
 export function chordLabel(chord: string): string {
   if (!chord) return '—'
   return chord
@@ -74,6 +76,7 @@ export function chordLabel(chord: string): string {
       if (p === 'Ctrl') return IS_MAC ? '⌃' : 'Ctrl'
       if (p === 'Alt') return IS_MAC ? '⌥' : 'Alt'
       if (p === 'Shift') return '⇧'
+      if (ARROW_GLYPH[p]) return ARROW_GLYPH[p]
       return p.length === 1 ? p.toUpperCase() : p
     })
     .join(IS_MAC ? '' : '+')

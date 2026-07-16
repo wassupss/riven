@@ -82,6 +82,44 @@ export function selectTerminal(n: number): void {
   terms[n - 1]?.api.setActive()
 }
 
+export type FocusDir = 'left' | 'right' | 'up' | 'down'
+
+// Move focus to the split group spatially adjacent to the active one, in the
+// given direction (Ctrl+Cmd+Arrow). Uses the groups' on-screen rects so it's
+// truly directional (unlike cyclePanel's flat next/prev), matching how tiling
+// window managers navigate splits.
+export function focusGroupInDirection(dir: FocusDir): void {
+  const api = activeApi
+  if (!api) return
+  const groups = api.groups
+  if (groups.length < 2) return
+  const active = api.activeGroup ?? groups[0]
+  const from = active.element.getBoundingClientRect()
+  const fx = from.left + from.width / 2
+  const fy = from.top + from.height / 2
+  const horizontal = dir === 'left' || dir === 'right'
+  const sign = dir === 'left' || dir === 'up' ? -1 : 1
+
+  let best: { g: (typeof groups)[number]; score: number } | null = null
+  for (const g of groups) {
+    if (g === active) continue
+    const r = g.element.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    // Primary axis: how far in the requested direction; must be a real step.
+    const primary = (horizontal ? cx - fx : cy - fy) * sign
+    if (primary < 1) continue
+    // Cross axis: penalize groups offset perpendicular to the direction so we
+    // prefer the neighbor most directly in line with the current group.
+    const cross = Math.abs(horizontal ? cy - fy : cx - fx)
+    const score = primary + cross * 2
+    if (!best || score < best.score) best = { g, score }
+  }
+  const target = best?.g
+  if (!target) return
+  target.activePanel?.focus()
+}
+
 // Cycle the active dockview panel (keyboard navigation across the grid).
 export function cyclePanel(delta: number): void {
   const api = activeApi

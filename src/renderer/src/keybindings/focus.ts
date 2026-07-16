@@ -50,6 +50,18 @@ export function focusEditor(): void {
   editorFocuser?.()
 }
 
+// The active editor registers how to save its current file. Exposed as an app
+// keybinding (⌘S) so save works whenever an editor is open — not only while the
+// Monaco textarea itself holds DOM focus (a tab/gutter click would otherwise
+// swallow ⌘S, since Monaco only sees keydowns on its own input).
+let editorSaver: (() => void) | null = null
+export function setEditorSaver(fn: (() => void) | null): void {
+  editorSaver = fn
+}
+export function saveActiveEditor(): void {
+  editorSaver?.()
+}
+
 const paneFocusers = new Map<number, () => void>()
 export function registerPaneFocuser(id: number, fn: () => void): () => void {
   paneFocusers.set(id, fn)
