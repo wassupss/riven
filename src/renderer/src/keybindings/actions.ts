@@ -1,4 +1,4 @@
-import { keymap } from './keys'
+import { keymap, IS_MAC } from './keys'
 import { focusEditor, focusPane, clearFocusedTerminal, saveActiveEditor } from './focus'
 import { useSession } from '../state/session'
 import { useUI } from '../state/ui'
@@ -243,14 +243,18 @@ export function registerDefaultActions(): void {
     def: 'Mod+Shift+[',
     run: () => cycleGroupTab(-1)
   })
-  // Select terminal 1..9 with Ctrl (keeps ⌘1-9 for workspace switching).
+  // Select terminal 1..9. On macOS physical Control is distinct from ⌘, so
+  // Ctrl+N keeps ⌘1-9 free for workspace switching. On Windows/Linux there is no
+  // separate ⌘: Mod IS Ctrl, so a Ctrl+N chord is indistinguishable from
+  // workspace.switch's Mod+N (and would never fire) — use Alt+N there instead.
+  const selectMod = IS_MAC ? 'Ctrl' : 'Alt'
   for (let i = 1; i <= 9; i++) {
     keymap.register({
       id: `terminal.select.${i}`,
       label: `${i}번 터미널로`,
       category: TERMINAL,
       context: 'terminal',
-      def: `Ctrl+${i}`,
+      def: `${selectMod}+${i}`,
       run: () => selectTerminal(i)
     })
   }
