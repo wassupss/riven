@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor'
+import { releaseModel } from '../editor/modelStore'
 
 // A small hand-rolled LSP client: bridges Monaco's provider APIs + document
 // sync to a real language server running in the main process. Kept isolated in
@@ -436,10 +437,12 @@ function wireDiagnostics(): void {
 
 // ---- public entry ----------------------------------------------------------
 
-// Dispose the model for a path (e.g. when a tab is closed) → triggers didClose.
+// A tab was closed → dispose its model (which triggers didClose), but only when
+// no other workspace still has the same file open. Monaco models are global by
+// URI, so the same folder opened as a second workspace shares one model;
+// disposing it on one workspace's tab close would blank the other's editor.
 export function closeDocument(path: string): void {
-  const uri = monaco.Uri.parse(`file://${path}`)
-  monaco.editor.getModel(uri)?.dispose()
+  releaseModel(path)
 }
 
 const changeWired = new WeakSet<monaco.editor.ITextModel>()
