@@ -11,7 +11,14 @@ import ChangesPanel from './panels/ChangesPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import { useSession } from '../state/session'
-import { setActiveApi, nextPaneId, bumpPaneSeq, addTerminal, togglePanel } from './registry'
+import {
+  setActiveApi,
+  getActiveApi,
+  nextPaneId,
+  bumpPaneSeq,
+  addTerminal,
+  togglePanel
+} from './registry'
 import { useT } from '../i18n'
 
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
@@ -112,6 +119,10 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       if (useSession.getState().openWorkspaces.includes(workspace)) return
       const api = apiRef.current
       if (!api) return
+      // This dockview is about to be disposed. If the registry still points at
+      // it, clear it so global actions (⌘T / toolbar "new terminal") can't call
+      // into a disposed api and throw once the last workspace is closed.
+      if (getActiveApi() === api) setActiveApi(null)
       for (const p of api.panels) {
         if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
       }
