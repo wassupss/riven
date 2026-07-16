@@ -9,7 +9,13 @@ import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
 import { contextBus } from '../bridge/contextBus'
-import { setEditorFocuser, setEditorSaver, clearEditorSaver, setFocusRegion } from '../keybindings/focus'
+import {
+  setEditorFocuser,
+  clearEditorFocuser,
+  setEditorSaver,
+  clearEditorSaver,
+  setFocusRegion
+} from '../keybindings/focus'
 import { editorTheme } from './highlight'
 import { useSettings, getSettings } from '../state/settings'
 import { useT, t as staticT } from '../i18n'
@@ -162,8 +168,10 @@ export default function MonacoEditorPane({
   }
   const doSaveRef = useRef(doSave)
   doSaveRef.current = doSave
-  // Stable identity for the app-level ⌘S saver so clearEditorSaver can match it.
+  // Stable identities for the app-level ⌘S saver and ⌘E focuser so the
+  // clear* helpers can match this pane on unmount.
   const saverRef = useRef(() => void doSaveRef.current())
+  const focuserRef = useRef(() => editorRef.current?.focus())
 
   // ---- agent-edit hunk review (computed from before/after, not the model) ----
   const decorateHunks = (hs: Hunk[]): void => {
@@ -376,16 +384,19 @@ export default function MonacoEditorPane({
       setHunkHover({ top: Math.max(0, top), idx })
     })
     ed.onMouseLeave(() => scheduleHideHover())
-    const claimSaver = (): void => {
+    // On focus, this pane claims the app-level ⌘S/⌘E targets. A hidden or
+    // last-mounted pane never gets focused, so it can't clobber the visible one.
+    const claim = (): void => {
       setFocusRegion({ kind: 'editor' })
+      setEditorFocuser(focuserRef.current)
       if (fileRef.current) setEditorSaver(saverRef.current)
     }
-    ed.onDidFocusEditorText(claimSaver)
-    ed.onDidFocusEditorWidget(claimSaver)
-    setEditorFocuser(() => ed.focus())
+    ed.onDidFocusEditorText(claim)
+    ed.onDidFocusEditorWidget(claim)
     return () => {
       offSettings()
       clearEditorSaver(saverRef.current)
+      clearEditorFocuser(focuserRef.current)
       ed.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

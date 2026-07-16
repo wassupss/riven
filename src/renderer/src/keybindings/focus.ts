@@ -42,9 +42,16 @@ export function getEditorCloser(): (() => boolean) | null {
   return editorCloser
 }
 
+// Same multi-pane hazard as editorSaver: every workspace mounts an editor, so
+// registering unconditionally at mount let a hidden/last-mounted pane win (⌘E
+// then focused nothing, and could call focus() on a disposed editor). Claimed on
+// focus, cleared on unmount only if still ours.
 let editorFocuser: (() => void) | null = null
 export function setEditorFocuser(fn: () => void): void {
   editorFocuser = fn
+}
+export function clearEditorFocuser(fn: () => void): void {
+  if (editorFocuser === fn) editorFocuser = null
 }
 export function focusEditor(): void {
   editorFocuser?.()

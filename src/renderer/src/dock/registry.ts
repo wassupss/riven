@@ -1,6 +1,7 @@
 import type { DockviewApi } from 'dockview'
 import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
+import { focusPane, focusEditor } from '../keybindings/focus'
 
 // Confirm before closing a terminal whose agent is actively running (busy).
 // Returns true when it's OK to proceed with the close.
@@ -116,8 +117,20 @@ export function focusGroupInDirection(dir: FocusDir): void {
     if (!best || score < best.score) best = { g, score }
   }
   const target = best?.g
-  if (!target) return
-  target.activePanel?.focus()
+  const panel = target?.activePanel
+  if (!panel) return
+  // Activate the tab, then route to the real focuser so the caret actually
+  // lands there — dockview's panel.focus() only calls setActive(), which shows
+  // the pane but leaves keyboard focus in the group you came from.
+  panel.api.setActive()
+  if (panel.id.startsWith('term-')) {
+    const paneId = Number(panel.id.slice('term-'.length))
+    if (Number.isFinite(paneId)) focusPane(paneId)
+  } else if (panel.id === 'editor') {
+    focusEditor()
+  } else {
+    panel.focus()
+  }
 }
 
 // Cycle the active dockview panel (keyboard navigation across the grid).
