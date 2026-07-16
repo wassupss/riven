@@ -153,6 +153,12 @@ app.whenReady().then(() => {
   registerAiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()
+  // Hard-exit backstop, registered LAST so every subsystem's before-quit
+  // teardown (pty kills shells/agents, lsp kills language servers) runs first.
+  // Electron's normal quit stalls for this app (a native handle never releases →
+  // macOS "Not Responding"); our on-disk writes are atomic, so a hard kill after
+  // teardown is safe and guarantees the app actually closes without orphans.
+  app.on('before-quit', () => process.kill(process.pid, 'SIGKILL'))
   buildMenu()
 
   const claudePath = resolveClaude()

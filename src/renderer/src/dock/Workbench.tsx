@@ -100,6 +100,24 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     if (workspace === activeWorkspace && apiRef.current) setActiveApi(apiRef.current)
   }, [activeWorkspace, workspace])
 
+  // On real workspace close, dockview disposes WITHOUT firing onDidRemovePanel,
+  // so the per-panel PTY kill above never runs and shells/agents orphan. Kill
+  // this workspace's PTYs on unmount — but only when the workspace is genuinely
+  // gone (closeWorkspace removed it from openWorkspaces before this unmount);
+  // skip StrictMode/HMR transient remounts, which keep it open, so ⌘R still
+  // preserves sessions.
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      if (useSession.getState().openWorkspaces.includes(workspace)) return
+      const api = apiRef.current
+      if (!api) return
+      for (const p of api.panels) {
+        if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
+      }
+    }
+  }, [workspace])
+
   return (
     <div className="workbench-wrap">
       <DockviewReact

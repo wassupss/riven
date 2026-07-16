@@ -168,12 +168,9 @@ export function registerPtyHandlers(): void {
       }
     }
     sessions.clear()
-    // Electron's normal quit stalls indefinitely for this app (a renderer/native
-    // handle never releases → macOS "Not Responding"), and app.exit()/process.exit()
-    // are overridden to defer to that quit, so they don't force it. Our on-disk
-    // writes are atomic (temp+rename), so a hard kill is safe — guarantee the app
-    // actually closes on quit.
-    process.kill(process.pid, 'SIGKILL')
+    // NOTE: the hard SIGKILL backstop is registered LAST in index.ts (after the
+    // LSP handlers), not here — killing our own process from this handler would
+    // pre-empt lsp.ts's before-quit and orphan the language servers.
   })
 
   ipcMain.handle(
