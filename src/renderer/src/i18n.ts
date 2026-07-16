@@ -329,6 +329,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'action.focus.pane.up': { ko: '위쪽 창으로 포커스', en: 'Focus pane up' },
   'action.focus.pane.down': { ko: '아래쪽 창으로 포커스', en: 'Focus pane down' },
   'action.app.save': { ko: '파일 저장', en: 'Save file' },
+  'action.app.quickPanel': { ko: '빠른 패널 열기', en: 'Open quick panel' },
   'action.panel.explorer': { ko: '탐색기 사이드바 토글', en: 'Toggle Explorer sidebar' },
   'action.panel.search': { ko: '검색 패널', en: 'Search panel' },
   'action.panel.git': { ko: 'Git 패널', en: 'Git panel' },

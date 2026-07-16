@@ -48,6 +48,8 @@ interface SessionState {
   openWorkspace: (path: string, forceNew?: boolean) => void
   closeWorkspace: (wid: string) => void
   setActiveWorkspace: (wid: string) => void
+  // Move a workspace card up/down in the rail (drag reorder).
+  reorderWorkspace: (from: number, to: number) => void
   renameWorkspace: (wid: string, name: string) => void
   patch: (wid: string, p: Partial<Session>) => void
   openFile: (path: string) => void
@@ -161,6 +163,16 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   setActiveWorkspace: (path) => set({ activeWorkspace: path }),
+
+  reorderWorkspace: (from, to) =>
+    set((st) => {
+      const list = st.openWorkspaces
+      if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return {}
+      const next = [...list]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return { openWorkspaces: next }
+    }),
 
   renameWorkspace: (path, name) =>
     set((st) => {

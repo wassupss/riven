@@ -12,14 +12,27 @@ export default function WorkspaceTabs(): JSX.Element {
   const t = useT()
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
-  const recents = useSession((s) => s.recents)
-  // A recent (a path) is "closed" only if no open instance points at it.
-  const recentClosed = recents.filter((r) => !openWorkspaces.some((w) => pathOf(w) === r))
+  const reorderWorkspace = useSession((s) => s.reorderWorkspace)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [overIndex, setOverIndex] = useState<number | null>(null)
 
   const pick = useCallback(async () => {
     const picked = await window.api.workspace.pickFolder()
-    if (picked) openWorkspace(picked)
+    if (!picked) return
+    // If the folder is already open, add another independent instance instead of
+    // just refocusing — that's the obvious way to make a same-path workspace.
+    const alreadyOpen = useSession.getState().openWorkspaces.some((w) => pathOf(w) === picked)
+    openWorkspace(picked, alreadyOpen)
   }, [openWorkspace])
+
+  const endDrag = (): void => {
+    setDragIndex(null)
+    setOverIndex(null)
+  }
+  const drop = (to: number): void => {
+    if (dragIndex != null && dragIndex !== to) reorderWorkspace(dragIndex, to)
+    endDrag()
+  }
 
   return (
     <div className="ws-rail">
@@ -31,25 +44,19 @@ export default function WorkspaceTabs(): JSX.Element {
       </div>
       <div className="ws-list">
         {openWorkspaces.map((ws, i) => (
-          <WorkspaceCard key={ws} ws={ws} index={i} />
+          <WorkspaceCard
+            key={ws}
+            ws={ws}
+            index={i}
+            dragging={dragIndex === i}
+            dropTarget={overIndex === i && dragIndex != null && dragIndex !== i}
+            onDragStart={() => setDragIndex(i)}
+            onDragEnter={() => setOverIndex(i)}
+            onDrop={() => drop(i)}
+            onDragEnd={endDrag}
+          />
         ))}
         {openWorkspaces.length === 0 && <div className="ws-empty">{t('ws.empty')}</div>}
-        {recentClosed.length > 0 && (
-          <div className="ws-recents">
-            <div className="ws-recents-head">{t('ws.recent')}</div>
-            {recentClosed.map((r) => (
-              <div
-                key={r}
-                className="ws-recent"
-                title={r}
-                onClick={() => openWorkspace(r)}
-              >
-                <span className="ws-recent-name">{r.split('/').pop()}</span>
-                <span className="ws-recent-path">{shortenPath(r)}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   )
@@ -70,7 +77,27 @@ interface GitState {
   dirty: number
 }
 
-function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Element {
+interface CardProps {
+  ws: string
+  index: number
+  dragging: boolean
+  dropTarget: boolean
+  onDragStart: () => void
+  onDragEnter: () => void
+  onDrop: () => void
+  onDragEnd: () => void
+}
+
+function WorkspaceCard({
+  ws,
+  index,
+  dragging,
+  dropTarget,
+  onDragStart,
+  onDragEnter,
+  onDrop,
+  onDragEnd
+}: CardProps): JSX.Element {
   const t = useT()
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
@@ -123,10 +150,22 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   return (
     <div
       ref={cardRef}
-      className={`ws-card${active ? ' active' : ''} ${activity}`}
+      className={`ws-card${active ? ' active' : ''}${dragging ? ' dragging' : ''}${dropTarget ? ' drop-target' : ''} ${activity}`}
       title={`${pathOf(ws)}  (⌘${index + 1})`}
+      draggable={!editing}
       onClick={() => setActiveWorkspace(ws)}
       onContextMenu={openMenu}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move'
+        onDragStart()
+      }}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        onDrop()
+      }}
+      onDragEnd={onDragEnd}
     >
       <div className="ws-card-top">
         <span className={`ws-card-dot ${activity}`} title={t(ACTIVITY_LABEL_KEY[activity])} />

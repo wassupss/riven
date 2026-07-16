@@ -14,6 +14,9 @@ interface UIState {
   toggleExplorer: () => void
   palette: PaletteMode
   setPalette: (v: PaletteMode) => void
+  // Quick-panel dialog (new terminal / panels / view actions), keyboard-driven.
+  quickPanel: boolean
+  setQuickPanel: (v: boolean) => void
   // Workspace awaiting an agent to be launched (send-to-LLM with none running).
   agentPicker: string | null
   setAgentPicker: (v: string | null) => void
@@ -30,6 +33,8 @@ export const useUI = create<UIState>((set) => ({
   toggleExplorer: () => set((s) => ({ showExplorer: !s.showExplorer })),
   palette: null,
   setPalette: (v) => set({ palette: v }),
+  quickPanel: false,
+  setQuickPanel: (v) => set({ quickPanel: v }),
   agentPicker: null,
   setAgentPicker: (v) => set({ agentPicker: v })
 }))
