@@ -6,6 +6,35 @@ export interface DirEntry {
   isDirectory: boolean
 }
 
+// pty:status/agent/bell/done are single shared channels (payloads carry a `key`
+// so each terminal filters its own). Subscribing per-terminal put 1 ipcRenderer
+// listener per terminal per channel, so a handful of terminals tripped Node's
+// default 10-listener warning. Multiplex instead: exactly ONE ipcRenderer
+// listener per channel (attached lazily, kept for the app lifetime) fans out to
+// the set of registered callbacks, so the listener count is O(channels), not
+// O(terminals).
+function multiplexed<T>(channel: string): (cb: (payload: T) => void) => () => void {
+  const callbacks = new Set<(payload: T) => void>()
+  let attached = false
+  return (cb) => {
+    if (!attached) {
+      ipcRenderer.on(channel, (_e, payload: T) => {
+        for (const c of callbacks) c(payload)
+      })
+      attached = true
+    }
+    callbacks.add(cb)
+    return () => {
+      callbacks.delete(cb)
+    }
+  }
+}
+
+const onPtyStatus = multiplexed<{ key: string; busy: boolean }>('pty:status')
+const onPtyAgent = multiplexed<{ key: string; agent: boolean; name?: string | null }>('pty:agent')
+const onPtyBell = multiplexed<{ key: string }>('pty:bell')
+const onPtyDone = multiplexed<{ key: string; duration: number; summary?: string }>('pty:done')
+
 const api = {
   env: {
     defaults: (): Promise<{
@@ -82,32 +111,12 @@ const api = {
       ipcRenderer.on(channel, listener)
       return () => ipcRenderer.removeListener(channel, listener)
     },
-    onStatus: (cb: (e: { key: string; busy: boolean }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { key: string; busy: boolean }): void => cb(payload)
-      ipcRenderer.on('pty:status', listener)
-      return () => ipcRenderer.removeListener('pty:status', listener)
-    },
-    onAgent: (cb: (e: { key: string; agent: boolean; name?: string | null }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { key: string; agent: boolean; name?: string | null }): void =>
-        cb(payload)
-      ipcRenderer.on('pty:agent', listener)
-      return () => ipcRenderer.removeListener('pty:agent', listener)
-    },
-    onBell: (cb: (e: { key: string }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { key: string }): void => cb(payload)
-      ipcRenderer.on('pty:bell', listener)
-      return () => ipcRenderer.removeListener('pty:bell', listener)
-    },
-    onDone: (
-      cb: (e: { key: string; duration: number; summary?: string }) => void
-    ): (() => void) => {
-      const listener = (
-        _e: unknown,
-        payload: { key: string; duration: number; summary?: string }
-      ): void => cb(payload)
-      ipcRenderer.on('pty:done', listener)
-      return () => ipcRenderer.removeListener('pty:done', listener)
-    }
+    onStatus: (cb: (e: { key: string; busy: boolean }) => void): (() => void) => onPtyStatus(cb),
+    onAgent: (cb: (e: { key: string; agent: boolean; name?: string | null }) => void): (() => void) =>
+      onPtyAgent(cb),
+    onBell: (cb: (e: { key: string }) => void): (() => void) => onPtyBell(cb),
+    onDone: (cb: (e: { key: string; duration: number; summary?: string }) => void): (() => void) =>
+      onPtyDone(cb)
   },
   lsp: {
     servers: (rootPath: string): Promise<string[]> =>
