@@ -1,5 +1,5 @@
 import { keymap } from './keys'
-import { focusEditor, focusPane, clearFocusedTerminal } from './focus'
+import { focusEditor, focusPane, clearFocusedTerminal, saveActiveEditor } from './focus'
 import { useSession } from '../state/session'
 import { useUI } from '../state/ui'
 import { contextBus } from '../bridge/contextBus'
@@ -8,6 +8,7 @@ import {
   togglePanel,
   popoutActive,
   cyclePanel,
+  focusGroupInDirection,
   splitTerminal,
   cycleGroupTab,
   selectTerminal
@@ -72,6 +73,40 @@ export function registerDefaultActions(): void {
     def: 'Mod+Alt+Left',
     run: () => cyclePanel(-1)
   })
+  // Directional focus between split panes (tiling-WM style). Ctrl+Cmd+Arrow
+  // avoids clashing with the editor's Cmd+Arrow cursor navigation.
+  keymap.register({
+    id: 'focus.pane.left',
+    label: '왼쪽 창으로 포커스',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Ctrl+Left',
+    run: () => focusGroupInDirection('left')
+  })
+  keymap.register({
+    id: 'focus.pane.right',
+    label: '오른쪽 창으로 포커스',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Ctrl+Right',
+    run: () => focusGroupInDirection('right')
+  })
+  keymap.register({
+    id: 'focus.pane.up',
+    label: '위쪽 창으로 포커스',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Ctrl+Up',
+    run: () => focusGroupInDirection('up')
+  })
+  keymap.register({
+    id: 'focus.pane.down',
+    label: '아래쪽 창으로 포커스',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Ctrl+Down',
+    run: () => focusGroupInDirection('down')
+  })
 
   // Panels
   keymap.register({
@@ -134,6 +169,14 @@ export function registerDefaultActions(): void {
   })
 
   // App
+  keymap.register({
+    id: 'app.save',
+    label: '파일 저장',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+s',
+    run: () => saveActiveEditor()
+  })
   keymap.register({
     id: 'app.settings',
     label: '설정 열기',

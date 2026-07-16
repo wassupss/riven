@@ -9,7 +9,13 @@ import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
 import { contextBus } from '../bridge/contextBus'
-import { setEditorFocuser, setFocusRegion } from '../keybindings/focus'
+import {
+  setEditorFocuser,
+  clearEditorFocuser,
+  setEditorSaver,
+  clearEditorSaver,
+  setFocusRegion
+} from '../keybindings/focus'
 import { editorTheme } from './highlight'
 import { useSettings, getSettings } from '../state/settings'
 import { useT, t as staticT } from '../i18n'
@@ -120,7 +126,14 @@ export default function MonacoEditorPane({
       {
         range: new monaco.Range(pos.lineNumber, col, pos.lineNumber, col),
         options: {
-          after: { content, inlineClassName: 'git-blame-inline' },
+          // cursorStops None keeps the injected blame text out of cursor
+          // navigation, so ⌘→ / End land at the real end of the code line
+          // instead of past the blame annotation.
+          after: {
+            content,
+            inlineClassName: 'git-blame-inline',
+            cursorStops: monaco.editor.InjectedTextCursorStops.None
+          },
           showIfCollapsed: true
         }
       }
@@ -155,6 +168,10 @@ export default function MonacoEditorPane({
   }
   const doSaveRef = useRef(doSave)
   doSaveRef.current = doSave
+  // Stable identities for the app-level ⌘S saver and ⌘E focuser so the
+  // clear* helpers can match this pane on unmount.
+  const saverRef = useRef(() => void doSaveRef.current())
+  const focuserRef = useRef(() => editorRef.current?.focus())
 
   // ---- agent-edit hunk review (computed from before/after, not the model) ----
   const decorateHunks = (hs: Hunk[]): void => {
@@ -312,7 +329,8 @@ export default function MonacoEditorPane({
     const offSettings = useSettings.subscribe((s) =>
       ed.updateOptions({ fontFamily: s.settings.editorFontFamily, fontSize: s.settings.editorFontSize })
     )
-    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => doSaveRef.current())
+    // ⌘S is an app-level action (see keybindings/actions.ts 'app.save') so it
+    // fires even when focus is on the tab/gutter, not the Monaco textarea.
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => sendRef.current())
 
     // Selection → floating "send to terminal" chip (Copilot/Cursor style).
@@ -366,11 +384,19 @@ export default function MonacoEditorPane({
       setHunkHover({ top: Math.max(0, top), idx })
     })
     ed.onMouseLeave(() => scheduleHideHover())
-    ed.onDidFocusEditorText(() => setFocusRegion({ kind: 'editor' }))
-    ed.onDidFocusEditorWidget(() => setFocusRegion({ kind: 'editor' }))
-    setEditorFocuser(() => ed.focus())
+    // On focus, this pane claims the app-level ⌘S/⌘E targets. A hidden or
+    // last-mounted pane never gets focused, so it can't clobber the visible one.
+    const claim = (): void => {
+      setFocusRegion({ kind: 'editor' })
+      setEditorFocuser(focuserRef.current)
+      if (fileRef.current) setEditorSaver(saverRef.current)
+    }
+    ed.onDidFocusEditorText(claim)
+    ed.onDidFocusEditorWidget(claim)
     return () => {
       offSettings()
+      clearEditorSaver(saverRef.current)
+      clearEditorFocuser(focuserRef.current)
       ed.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -401,6 +427,9 @@ export default function MonacoEditorPane({
       savedVersions.current.set(key, model.getAlternativeVersionId())
     }
     ed.setModel(model)
+    // This pane now has a real file bound — make it the ⌘S target even if the
+    // user hasn't clicked into it yet (focus also (re)claims it, see mount).
+    setEditorSaver(saverRef.current)
     recomputeDirty()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file?.path, file?.revision, file?.content])

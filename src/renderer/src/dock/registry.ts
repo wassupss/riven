@@ -1,6 +1,7 @@
 import type { DockviewApi } from 'dockview'
 import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
+import { focusPane, focusEditor } from '../keybindings/focus'
 
 // Confirm before closing a terminal whose agent is actively running (busy).
 // Returns true when it's OK to proceed with the close.
@@ -80,6 +81,56 @@ export function selectTerminal(n: number): void {
   if (!api) return
   const terms = api.panels.filter((p) => p.id.startsWith('term-'))
   terms[n - 1]?.api.setActive()
+}
+
+export type FocusDir = 'left' | 'right' | 'up' | 'down'
+
+// Move focus to the split group spatially adjacent to the active one, in the
+// given direction (Ctrl+Cmd+Arrow). Uses the groups' on-screen rects so it's
+// truly directional (unlike cyclePanel's flat next/prev), matching how tiling
+// window managers navigate splits.
+export function focusGroupInDirection(dir: FocusDir): void {
+  const api = activeApi
+  if (!api) return
+  const groups = api.groups
+  if (groups.length < 2) return
+  const active = api.activeGroup ?? groups[0]
+  const from = active.element.getBoundingClientRect()
+  const fx = from.left + from.width / 2
+  const fy = from.top + from.height / 2
+  const horizontal = dir === 'left' || dir === 'right'
+  const sign = dir === 'left' || dir === 'up' ? -1 : 1
+
+  let best: { g: (typeof groups)[number]; score: number } | null = null
+  for (const g of groups) {
+    if (g === active) continue
+    const r = g.element.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const cy = r.top + r.height / 2
+    // Primary axis: how far in the requested direction; must be a real step.
+    const primary = (horizontal ? cx - fx : cy - fy) * sign
+    if (primary < 1) continue
+    // Cross axis: penalize groups offset perpendicular to the direction so we
+    // prefer the neighbor most directly in line with the current group.
+    const cross = Math.abs(horizontal ? cy - fy : cx - fx)
+    const score = primary + cross * 2
+    if (!best || score < best.score) best = { g, score }
+  }
+  const target = best?.g
+  const panel = target?.activePanel
+  if (!panel) return
+  // Activate the tab, then route to the real focuser so the caret actually
+  // lands there — dockview's panel.focus() only calls setActive(), which shows
+  // the pane but leaves keyboard focus in the group you came from.
+  panel.api.setActive()
+  if (panel.id.startsWith('term-')) {
+    const paneId = Number(panel.id.slice('term-'.length))
+    if (Number.isFinite(paneId)) focusPane(paneId)
+  } else if (panel.id === 'editor') {
+    focusEditor()
+  } else {
+    panel.focus()
+  }
 }
 
 // Cycle the active dockview panel (keyboard navigation across the grid).
