@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { evictWorkspace } from './agentEdits'
 
+// The editor model store registers here (avoids a session ↔ modelStore import
+// cycle) so closeWorkspace can dispose models that were open only in the closed
+// workspace instead of leaking them.
+let orphanModelDisposer: ((paths: string[]) => void) | null = null
+export function setOrphanModelDisposer(fn: (paths: string[]) => void): void {
+  orphanModelDisposer = fn
+}
+
 // Per-workspace session. Each workspace keeps its own editor tabs, active file,
 // preview URL and dockview layout (the arrangement of explorer/editor/terminals/
 // preview panels). Inactive workspaces stay mounted (hidden) so terminals live.
@@ -128,6 +136,7 @@ export const useSession = create<SessionState>((set) => ({
     }),
 
   closeWorkspace: (wid) => {
+    const closedTabs = useSession.getState().sessions[wid]?.openTabs ?? []
     set((st) => {
       const openWorkspaces = st.openWorkspaces.filter((w) => w !== wid)
       // Only drop the shared (path-keyed) baseline caches when NO other open
@@ -142,6 +151,13 @@ export const useSession = create<SessionState>((set) => ({
         st.activeWorkspace === wid ? (openWorkspaces.at(-1) ?? null) : st.activeWorkspace
       return { openWorkspaces, sessions, activeWorkspace }
     })
+    // Dispose models for files that were open only in the just-closed workspace
+    // (a sibling same-folder workspace still open keeps its shared model alive).
+    const remaining = new Set(
+      Object.values(useSession.getState().sessions).flatMap((s) => s.openTabs)
+    )
+    const orphans = closedTabs.filter((p) => !remaining.has(p))
+    if (orphans.length) orphanModelDisposer?.(orphans)
   },
 
   setActiveWorkspace: (path) => set({ activeWorkspace: path }),

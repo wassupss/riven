@@ -8,6 +8,7 @@ import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
+import { modelRev, modelSaved } from './modelStore'
 import { contextBus } from '../bridge/contextBus'
 import {
   setEditorFocuser,
@@ -61,8 +62,6 @@ export default function MonacoEditorPane({
   const updateBlameRef = useRef<() => void>(() => {})
   const viewZoneIds = useRef<string[]>([])
   const lineToHunk = useRef(new Map<number, Hunk>())
-  const savedVersions = useRef(new Map<string, number>())
-  const appliedRev = useRef(new Map<string, number>())
   const [dirty, setDirty] = useState(false)
   const [hunks, setHunks] = useState<Hunk[]>([])
   const [hunkIdx, setHunkIdx] = useState(0)
@@ -144,7 +143,7 @@ export default function MonacoEditorPane({
   const recomputeDirty = (): void => {
     const model = editorRef.current?.getModel()
     if (!model) return setDirty(false)
-    const saved = savedVersions.current.get(model.uri.toString())
+    const saved = modelSaved.get(model.uri.toString())
     setDirty(saved !== undefined && model.getAlternativeVersionId() !== saved)
   }
 
@@ -163,7 +162,7 @@ export default function MonacoEditorPane({
       }
     }
     onSaveRef.current(f.path, model.getValue())
-    savedVersions.current.set(model.uri.toString(), model.getAlternativeVersionId())
+    modelSaved.set(model.uri.toString(), model.getAlternativeVersionId())
     recomputeDirty()
   }
   const doSaveRef = useRef(doSave)
@@ -419,12 +418,12 @@ export default function MonacoEditorPane({
     let model = monaco.editor.getModel(uri)
     if (!model) {
       model = monaco.editor.createModel(file.content, languageForPath(file.path), uri)
-      appliedRev.current.set(key, rev)
-      savedVersions.current.set(key, model.getAlternativeVersionId())
-    } else if (rev > (appliedRev.current.get(key) ?? -1)) {
+      modelRev.set(key, rev)
+      modelSaved.set(key, model.getAlternativeVersionId())
+    } else if (rev > (modelRev.get(key) ?? -1)) {
       model.setValue(file.content)
-      appliedRev.current.set(key, rev)
-      savedVersions.current.set(key, model.getAlternativeVersionId())
+      modelRev.set(key, rev)
+      modelSaved.set(key, model.getAlternativeVersionId())
     }
     ed.setModel(model)
     // This pane now has a real file bound — make it the ⌘S target even if the
