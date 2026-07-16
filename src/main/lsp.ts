@@ -17,6 +17,7 @@ interface Server {
   conn: MessageConnection
   initialized: Promise<unknown>
   sender: WebContents
+  rootPath: string // the workspace root this server was initialized against
   env?: Record<string, string> // extra env for ELECTRON_RUN_AS_NODE etc.
 }
 
@@ -128,7 +129,7 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
   // Build the record up front with a MUTABLE sender; the forward reads
   // server.sender so after a ⌘R (which updates it in lsp:start) diagnostics keep
   // flowing instead of being dropped to the old, destroyed WebContents.
-  const server: Server = { proc, conn, initialized: Promise.resolve(), sender }
+  const server: Server = { proc, conn, initialized: Promise.resolve(), sender, rootPath }
   // OS-level spawn failure (EMFILE/EACCES/…) → clean up so callers don't hang.
   proc.on('error', (e) => {
     console.error(`[lsp:${serverKey}] spawn error`, e)
@@ -238,8 +239,25 @@ export function registerLspHandlers(): void {
   ipcMain.handle('lsp:start', async (event, serverKey: string, rootPath: string) => {
     const existing = servers.get(serverKey)
     if (existing) {
-      existing.sender = event.sender // ⌘R: point the forward at the new renderer
-      return existing.initialized
+      if (existing.rootPath === rootPath) {
+        existing.sender = event.sender // ⌘R: point the forward at the new renderer
+        return existing.initialized
+      }
+      // Root changed (workspace switch): the running server is indexing the old
+      // project, so its diagnostics/completions would be wrong. Shut it down and
+      // fall through to spawn a fresh one rooted at the new path.
+      try {
+        existing.conn.sendNotification('exit')
+      } catch {
+        /* connection already gone */
+      }
+      try {
+        existing.proc.kill()
+      } catch {
+        /* already exited */
+      }
+      servers.delete(serverKey)
+      starting.delete(serverKey)
     }
     let pending = starting.get(serverKey)
     if (!pending) {
