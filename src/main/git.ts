@@ -14,12 +14,29 @@ export interface GitInfo {
 
 let headWatcher: fs.FSWatcher | null = null
 
+// Resolve the current branch name. `symbolic-ref --short HEAD` works on an
+// unborn branch (fresh `git init`, no commits yet) where `rev-parse HEAD` would
+// error; on a detached HEAD it falls back to the short SHA.
+async function currentBranch(folder: string): Promise<string | null> {
+  try {
+    const { stdout } = await pexec('git', ['-C', folder, 'symbolic-ref', '--short', 'HEAD'])
+    return stdout.trim()
+  } catch {
+    try {
+      const { stdout } = await pexec('git', ['-C', folder, 'rev-parse', '--short', 'HEAD'])
+      return stdout.trim()
+    } catch {
+      return null
+    }
+  }
+}
+
 async function gitInfo(folder: string): Promise<GitInfo> {
   try {
+    // --show-toplevel succeeds even on an unborn branch, so a brand-new
+    // `git init` repo is still recognized as a repo.
     const { stdout: top } = await pexec('git', ['-C', folder, 'rev-parse', '--show-toplevel'])
-    const repoRoot = top.trim()
-    const { stdout: br } = await pexec('git', ['-C', folder, 'rev-parse', '--abbrev-ref', 'HEAD'])
-    return { repoName: path.basename(repoRoot), branch: br.trim(), isRepo: true }
+    return { repoName: path.basename(top.trim()), branch: await currentBranch(folder), isRepo: true }
   } catch {
     return { repoName: path.basename(folder), branch: null, isRepo: false }
   }
@@ -96,29 +113,45 @@ export function registerGitHandlers(): void {
 
   ipcMain.handle('git:status', async (_e, folder: string) => {
     try {
-      const { stdout: br } = await pexec('git', ['-C', folder, 'rev-parse', '--abbrev-ref', 'HEAD'])
-      const { stdout } = await pexec('git', ['-C', folder, 'status', '--porcelain=v1'], {
+      // --is-inside-work-tree succeeds on an unborn branch, so a fresh `git init`
+      // repo still reports isRepo:true (and its untracked files show up below).
+      await pexec('git', ['-C', folder, 'rev-parse', '--is-inside-work-tree'])
+      const br = await currentBranch(folder)
+      // -z: NUL-delimited records, and git emits raw (unquoted, un-escaped) paths
+      // — the only reliable way to read non-ASCII / spaced filenames. (Plain
+      // porcelain octal-escapes them, e.g. Korean → "\355\225\234...", which never
+      // matches the renderer's real UTF-8 path.)
+      const { stdout } = await pexec('git', ['-C', folder, 'status', '--porcelain=v1', '-z'], {
         maxBuffer: 10 * 1024 * 1024
       })
-      const files = stdout
-        .split('\n')
-        .filter((l) => l.length > 3)
-        .map((line) => {
-          const x = line[0]
-          const y = line[1]
-          let p = line.slice(3)
-          if (p.includes(' -> ')) p = p.split(' -> ')[1]
-          p = p.replace(/^"|"$/g, '')
-          const untracked = x === '?' && y === '?'
-          return {
-            path: p,
-            x,
-            y,
-            staged: !untracked && x !== ' ',
-            unstaged: untracked || y !== ' ',
-            untracked
-          }
+      const records = stdout.split('\0')
+      const files: Array<{
+        path: string
+        x: string
+        y: string
+        staged: boolean
+        unstaged: boolean
+        untracked: boolean
+      }> = []
+      for (let i = 0; i < records.length; i++) {
+        const entry = records[i]
+        if (entry.length < 4) continue // need at least "XY p"
+        const x = entry[0]
+        const y = entry[1]
+        const p = entry.slice(3) // skip "XY " → destination path (raw, unquoted)
+        // Rename/copy entries carry a second field (the source path) in the next
+        // NUL token; consume it so it isn't parsed as its own entry.
+        if (x === 'R' || x === 'C' || y === 'R' || y === 'C') i++
+        const untracked = x === '?' && y === '?'
+        files.push({
+          path: p,
+          x,
+          y,
+          staged: !untracked && x !== ' ',
+          unstaged: untracked || y !== ' ',
+          untracked
         })
+      }
       let ahead = 0
       let behind = 0
       let hasUpstream = false
@@ -138,7 +171,7 @@ export function registerGitHandlers(): void {
       } catch {
         /* no upstream configured */
       }
-      return { branch: br.trim(), files, isRepo: true, ahead, behind, hasUpstream }
+      return { branch: br, files, isRepo: true, ahead, behind, hasUpstream }
     } catch {
       return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false }
     }
