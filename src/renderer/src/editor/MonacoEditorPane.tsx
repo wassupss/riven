@@ -501,7 +501,10 @@ export default function MonacoEditorPane({
     return () => {
       cancelled = true
     }
-  }, [file?.path, activeWorkspace, dirty])
+    // NB: not keyed on `dirty` — git blame reflects committed history, not the
+    // live buffer, so re-fetching on every dirty toggle (first keystroke / save)
+    // was pure waste.
+  }, [file?.path, activeWorkspace])
 
   return (
     <div className="editor-wrap">

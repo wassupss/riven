@@ -37,7 +37,7 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   { id: 'editor.action.moveLinesDownAction',          label: '줄 아래로 이동',       vscode: 'Alt+Down',          jetbrains: 'Alt+Shift+Down',   sublime: 'Mod+Ctrl+Down' },
   { id: 'editor.action.commentLine',                  label: '한 줄 주석',           vscode: 'Mod+/',             jetbrains: 'Mod+/',            sublime: 'Mod+/' },
   { id: 'editor.action.blockComment',                 label: '블록 주석',            vscode: 'Shift+Alt+a',       jetbrains: 'Mod+Shift+/',      sublime: 'Mod+Alt+/' },
-  { id: 'editor.action.formatDocument',               label: '문서 정렬',            vscode: 'Shift+Alt+f',       jetbrains: 'Mod+Alt+l',        sublime: 'Mod+Alt+f' },
+  { id: 'editor.action.formatDocument',               label: '문서 정렬',            vscode: 'Shift+Alt+f',       jetbrains: 'Mod+Alt+l',        sublime: 'Shift+Alt+f' },
   { id: 'editor.action.rename',                       label: '이름 변경',            vscode: 'F2',                jetbrains: 'Shift+F6',         sublime: 'F2' },
   { id: 'editor.action.quickFix',                     label: '빠른 수정',            vscode: 'Mod+.',             jetbrains: 'Alt+Enter',        sublime: 'Mod+.' },
   { id: 'editor.action.revealDefinition',             label: '정의로 이동',          vscode: 'F12',               jetbrains: 'F12',              sublime: 'F12' },

@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase'
-import { useSettings, DEFAULT_SETTINGS, type Settings } from './settings'
+import { useSettings, type Settings } from './settings'
 
 // Cloud settings sync. A signed-in user's preferences live in one row of the
 // `user_settings` table (user_id PK + a `settings` jsonb blob), protected by
@@ -57,7 +57,11 @@ export async function pushRemote(userId: string, settings: Settings): Promise<vo
 // Unknown/secret keys are ignored; anything the cloud omits (e.g. aiApiKey)
 // keeps its local value.
 export function applyRemote(remote: Partial<Settings>): void {
-  const clean = pickSyncable({ ...DEFAULT_SETTINGS, ...remote } as Settings)
+  // Base the merge on the CURRENT local settings, not DEFAULT_SETTINGS, so a key
+  // the cloud row omits (e.g. a setting added after that row was written) keeps
+  // its local value instead of being reset to the default — matching the comment
+  // above. Cloud still wins for every key it does carry.
+  const clean = pickSyncable({ ...useSettings.getState().settings, ...remote })
   // zustand fires subscribers synchronously inside set(), so a plain flag around
   // the call is enough — the push subscription sees it true and skips. No timer
   // (the old setTimeout(…,0) could let a same-tick user edit slip through).
