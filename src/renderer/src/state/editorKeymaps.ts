@@ -56,6 +56,7 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
 // ---- chord (riven format) → Monaco keybinding number --------------------------
 
 const { KeyMod, KeyCode } = monaco
+const IS_MAC = navigator.platform.toLowerCase().includes('mac')
 
 const KEYCODE: Record<string, number> = {
   Left: KeyCode.LeftArrow, Right: KeyCode.RightArrow, Up: KeyCode.UpArrow, Down: KeyCode.DownArrow,
@@ -79,7 +80,11 @@ export function chordToMonaco(chord: string): number | null {
   let key: number | null = null
   for (const p of parts) {
     if (p === 'Mod') mods |= KeyMod.CtrlCmd
-    else if (p === 'Ctrl') mods |= KeyMod.WinCtrl // physical Control (mac)
+    // 'Ctrl' means the physical Control key. On macOS that's WinCtrl (⌃, distinct
+    // from ⌘=CtrlCmd); on Windows/Linux physical Control IS CtrlCmd — mapping it
+    // to WinCtrl there would bind commands to the Win/Meta key and break e.g.
+    // Ctrl+Space, Ctrl+G, Ctrl+Shift+Arrow.
+    else if (p === 'Ctrl') mods |= IS_MAC ? KeyMod.WinCtrl : KeyMod.CtrlCmd
     else if (p === 'Alt') mods |= KeyMod.Alt
     else if (p === 'Shift') mods |= KeyMod.Shift
     else key = keyToken(p)
