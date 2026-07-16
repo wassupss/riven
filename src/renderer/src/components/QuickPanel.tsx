@@ -147,7 +147,7 @@ export default function QuickPanel(): JSX.Element | null {
   return createPortal(
     <div className="qp-backdrop" onClick={() => setOpen(false)}>
       <div className="qp-dialog" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-        <div className="qp-title">{t('toolbar.panels')}</div>
+        <div className="qp-title">{t('toolbar.addPanel')}</div>
         <div className="qp-list">
           {items.map((it, i) => (
             <button

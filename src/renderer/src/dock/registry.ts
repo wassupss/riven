@@ -179,21 +179,31 @@ export function ensureEditor(): void {
 // Auto-open the changes timeline when an agent edit arrives (idempotent). Opens
 // it on the left WITHOUT stealing focus from the terminal the user is typing in,
 // so agent activity surfaces the summary without hijacking the cursor.
+const CHANGES_WIDTH = 240
+
 export function ensureChanges(): void {
   const api = activeApi
-  if (!api || api.getPanel('changes')) return
+  if (!api) return
+  const existing = api.getPanel('changes')
+  if (existing) {
+    // Already open (e.g. restored from a saved layout at a stale wide size) —
+    // keep it pinned narrow.
+    existing.group.api.setSize({ width: CHANGES_WIDTH })
+    return
+  }
   const prev = api.activePanel
-  api.addPanel({
+  const panel = api.addPanel({
     id: 'changes',
     component: 'changes',
     title: t('title.changes'),
     renderer: 'always',
-    // A directional split with no size defaults to ~50/50; the Changes timeline
-    // is a narrow summary list, so open it at a sidebar width instead of half
-    // the workbench.
-    initialWidth: 280,
-    position: { direction: 'left' }
+    // Open on the far right at a sidebar width — the Changes timeline is a narrow
+    // summary list, not a half-split. (initialWidth alone is sometimes ignored on
+    // a directional split, so also pin the group size explicitly.)
+    initialWidth: CHANGES_WIDTH,
+    position: { direction: 'right' }
   })
+  panel.group.api.setSize({ width: CHANGES_WIDTH })
   prev?.api.setActive()
 }
 
@@ -202,7 +212,7 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   preview: { titleKey: 'title.preview', direction: 'right' },
   search: { titleKey: 'title.search', direction: 'left' },
   git: { titleKey: 'title.git', direction: 'left' },
-  changes: { titleKey: 'title.changes', direction: 'left' }
+  changes: { titleKey: 'title.changes', direction: 'right' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).

@@ -43,8 +43,11 @@ export const DEFAULT_SETTINGS: Settings = {
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
+  // JetBrains Mono is Ghostty's (and thus cmux's) default terminal face; list the
+  // system name first (instant if installed), then the bundled 'JetBrains Mono
+  // Web', then D2Coding for Korean glyphs the Latin face doesn't cover.
   terminalFontFamily:
-    '"D2Coding", "D2Coding Web", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
+    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -66,7 +69,10 @@ interface SettingsState {
 // stack. Only the TERMINAL font changes; editor/UI fonts are left as they were.
 const LEGACY_TERMINAL_FONTS = new Set([
   '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
-  '"D2Coding", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace'
+  '"D2Coding", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
+  // The previous D2Coding-first default — migrate existing users to the new
+  // JetBrains Mono (cmux/Ghostty-style) default.
+  '"D2Coding", "D2Coding Web", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace'
 ])
 
 export const useSettings = create<SettingsState>((set) => ({

@@ -27,12 +27,20 @@ interface AgentEditsState {
   timeline: TimelineEntry[]
   // Count of timeline entries not yet looked at (drives the toolbar/status badge).
   unseen: number
+  // Bumped per path to ask an open editor of that file to reload from disk (used
+  // when the Changes panel reverts a file that's currently open).
+  reloadNonce: Record<string, number>
   set: (path: string, edit: AgentEdit) => void
   clear: (path: string) => void
   // Record an agent edit: store its diff + prepend a timeline summary entry.
   record: (workspace: string, path: string, edit: AgentEdit, isNew: boolean) => void
   markSeen: () => void
   clearTimeline: () => void
+  // Resolve one file (accept, or after a revert): drop its timeline entry + edit.
+  resolve: (path: string) => void
+  // Accept every pending change: keep disk content, clear all reviews + timeline.
+  acceptAll: () => void
+  requestReload: (path: string) => void
 }
 
 // Rough per-line add/remove counts for the timeline summary. Uses an LCS DP for
@@ -65,6 +73,7 @@ export const useAgentEdits = create<AgentEditsState>((set) => ({
   edits: {},
   timeline: [],
   unseen: 0,
+  reloadNonce: {},
   set: (path, edit) => set((s) => ({ edits: { ...s.edits, [path]: edit } })),
   clear: (path) =>
     set((s) => {
@@ -83,7 +92,17 @@ export const useAgentEdits = create<AgentEditsState>((set) => ({
       return { edits: { ...s.edits, [path]: edit }, timeline, unseen: s.unseen + 1 }
     }),
   markSeen: () => set((s) => (s.unseen === 0 ? s : { unseen: 0 })),
-  clearTimeline: () => set({ timeline: [], unseen: 0 })
+  clearTimeline: () => set({ timeline: [], unseen: 0 }),
+  resolve: (path) =>
+    set((s) => {
+      const edits = { ...s.edits }
+      delete edits[path]
+      const timeline = s.timeline.filter((e) => e.path !== path)
+      return { edits, timeline, unseen: Math.min(s.unseen, timeline.length) }
+    }),
+  acceptAll: () => set({ edits: {}, timeline: [], unseen: 0 }),
+  requestReload: (path) =>
+    set((s) => ({ reloadNonce: { ...s.reloadNonce, [path]: (s.reloadNonce[path] ?? 0) + 1 } }))
 }))
 
 // Last-known content per path — the baseline for diffing an agent edit. Updated

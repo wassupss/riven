@@ -171,10 +171,10 @@ export function registerDefaultActions(): void {
   // App
   keymap.register({
     id: 'app.quickPanel',
-    label: '빠른 패널 열기',
+    label: '패널 추가',
     category: RIVEN,
     context: 'riven',
-    def: 'Mod+Shift+k',
+    def: 'Mod+o',
     run: () => useUI.getState().setQuickPanel(true)
   })
   keymap.register({

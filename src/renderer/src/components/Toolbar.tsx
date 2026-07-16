@@ -18,8 +18,7 @@ export default function Toolbar(): JSX.Element {
         title={t('toolbar.openPanel')}
         onClick={() => setQuickPanel(true)}
       >
-        <PanelTop size={14} /> {t('toolbar.panels')}
-        <span className="tb-menu-key">⌘⇧K</span>
+        <PanelTop size={14} /> {t('toolbar.addPanel')}
       </button>
     </div>
   )
