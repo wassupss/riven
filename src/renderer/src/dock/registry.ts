@@ -188,6 +188,10 @@ export function ensureChanges(): void {
     component: 'changes',
     title: t('title.changes'),
     renderer: 'always',
+    // A directional split with no size defaults to ~50/50; the Changes timeline
+    // is a narrow summary list, so open it at a sidebar width instead of half
+    // the workbench.
+    initialWidth: 280,
     position: { direction: 'left' }
   })
   prev?.api.setActive()
