@@ -27,6 +27,23 @@ const ARROWS: Record<string, string> = {
   ArrowDown: 'Down'
 }
 
+// Punctuation/bracket physical keys, named from e.code so Shift (which flips
+// e.key to }, {, :, " …) can't produce a chord that differs from the unshifted
+// default binding. Mirrors the Digit/Key handling; ⌘⇧] must equal 'Mod+Shift+]'.
+const PUNCT_CODES: Record<string, string> = {
+  BracketLeft: '[',
+  BracketRight: ']',
+  Backslash: '\\',
+  Semicolon: ';',
+  Quote: "'",
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Backquote: '`',
+  Minus: '-',
+  Equal: '='
+}
+
 export function chordFromEvent(e: KeyboardEvent): string {
   const k = e.key
   if (k === 'Meta' || k === 'Control' || k === 'Alt' || k === 'Shift') return ''
@@ -35,6 +52,7 @@ export function chordFromEvent(e: KeyboardEvent): string {
   if (e.code.startsWith('Digit')) keyName = e.code.slice(5)
   else if (e.code.startsWith('Key')) keyName = e.code.slice(3).toLowerCase()
   else if (ARROWS[k]) keyName = ARROWS[k]
+  else if (PUNCT_CODES[e.code]) keyName = PUNCT_CODES[e.code]
   else keyName = k.length === 1 ? k.toLowerCase() : k
 
   const mod = IS_MAC ? e.metaKey : e.ctrlKey
@@ -65,6 +83,13 @@ class Keymap {
   private actions = new Map<string, KeyAction>()
   private overrides: Record<string, string> = {}
   private listeners = new Set<() => void>()
+  private recording = false
+
+  // While the Settings recorder is capturing a chord, the global handler must
+  // not also run the matched action (else recording ⌘T spawns a terminal, etc.).
+  setRecording(v: boolean): void {
+    this.recording = v
+  }
 
   register(a: KeyAction): void {
     this.actions.set(a.id, a)
@@ -99,8 +124,20 @@ class Keymap {
   }
 
   handle = (e: KeyboardEvent): void => {
+    // Recorder is capturing this keydown — let it record without side effects.
+    if (this.recording) return
+    // Never act on IME composition keydowns (keyCode 229 is the legacy signal).
+    if (e.isComposing || e.keyCode === 229) return
     const chord = chordFromEvent(e)
     if (!chord) return
+    // Don't fire app/terminal shortcuts while typing in a plain text field
+    // (search box, tab-rename input, modal fields …). The terminal (xterm) and
+    // Monaco both host editable elements but own their region/keybindings, so
+    // they're exempt.
+    const ae = document.activeElement as HTMLElement | null
+    if (ae && !ae.closest?.('.monaco-editor') && !ae.closest?.('.xterm')) {
+      if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) return
+    }
     const focused = getFocusRegion().kind
     for (const a of this.actions.values()) {
       if (this.binding(a.id) !== chord) continue

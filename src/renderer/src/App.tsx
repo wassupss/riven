@@ -24,7 +24,7 @@ import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { useUpdate } from './state/update'
-import { getEditorCloser } from './keybindings/focus'
+import { getEditorCloser, initFocusTracking } from './keybindings/focus'
 import { getActiveApi, confirmTerminalClose } from './dock/registry'
 import { useT } from './i18n'
 
@@ -61,6 +61,7 @@ export default function App(): JSX.Element {
       void useAuth.getState().initAuth()
     })()
     window.addEventListener('keydown', keymap.handle, { capture: true })
+    initFocusTracking()
     // ⌘W closes whatever dockview panel is active: the editor closes its focused
     // file tab, everything else (terminal/explorer/search/preview) closes itself.
     // Read the active panel ONCE so closing can't cascade.

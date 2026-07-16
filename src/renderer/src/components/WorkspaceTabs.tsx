@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
 import { useT } from '../i18n'
@@ -78,9 +79,11 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
   const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
+  const openWorkspace = useSession((s) => s.openWorkspace)
   const [git, setGit] = useState<GitState | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
 
   const beginRename = (): void => {
@@ -90,6 +93,11 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
   const commitRename = (): void => {
     setEditing(false)
     renameWorkspace(ws, draft)
+  }
+
+  const openMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    setMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: Math.min(e.clientY, window.innerHeight - 100) })
   }
 
   // Scroll the active workspace card into view when it becomes active.
@@ -118,6 +126,7 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
       className={`ws-card${active ? ' active' : ''} ${activity}`}
       title={`${pathOf(ws)}  (⌘${index + 1})`}
       onClick={() => setActiveWorkspace(ws)}
+      onContextMenu={openMenu}
     >
       <div className="ws-card-top">
         <span className={`ws-card-dot ${activity}`} title={t(ACTIVITY_LABEL_KEY[activity])} />
@@ -168,6 +177,42 @@ function WorkspaceCard({ ws, index }: { ws: string; index: number }): JSX.Elemen
           {git.dirty > 0 && <span className="ws-card-dirty">±{git.dirty}</span>}
         </div>
       )}
+      {menu &&
+        createPortal(
+          <div className="ctx-backdrop" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }}>
+            <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setMenu(null)
+                  beginRename()
+                }}
+              >
+                {t('ws.rename')}
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setMenu(null)
+                  openWorkspace(pathOf(ws), true)
+                }}
+              >
+                {t('ws.newInstance')}
+              </button>
+              <div className="ctx-sep" />
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setMenu(null)
+                  closeWorkspace(ws)
+                }}
+              >
+                {t('ws.close')}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }

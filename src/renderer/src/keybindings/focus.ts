@@ -13,6 +13,25 @@ export function getFocusRegion(): FocusRegion {
   return focusRegion
 }
 
+// Without this, the region only ever moves to 'terminal'/'editor' and never
+// back — so after touching a terminal, clicking any panel/input leaves the
+// region stale at 'terminal' and terminal-scoped shortcuts (⌘D/⌘K) keep firing.
+// A capture-phase focusin resets to 'none' for every surface that isn't a
+// terminal or the code editor (those set their own region on focus).
+export function initFocusTracking(): void {
+  window.addEventListener(
+    'focusin',
+    (e) => {
+      const el = e.target as HTMLElement | null
+      if (!el || typeof el.closest !== 'function') return
+      if (el.closest('.xterm')) return // TerminalPane's focusin sets 'terminal'
+      if (el.closest('.monaco-editor')) return // Monaco sets 'editor'
+      setFocusRegion({ kind: 'none' })
+    },
+    true
+  )
+}
+
 // The active editor registers how to close its current tab. Returns true if a
 // tab was handled, false if the editor had no open tab (so ⌘W closes the panel).
 let editorCloser: (() => boolean) | null = null

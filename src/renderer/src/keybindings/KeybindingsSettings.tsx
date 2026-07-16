@@ -31,6 +31,9 @@ export default function KeybindingsSettings(): JSX.Element {
 
   useEffect(() => {
     if (!recording) return
+    // Suppress the global keymap so pressing an already-bound chord records it
+    // without also running that action.
+    keymap.setRecording(true)
     const onKey = (e: KeyboardEvent): void => {
       e.preventDefault()
       e.stopPropagation()
@@ -45,7 +48,10 @@ export default function KeybindingsSettings(): JSX.Element {
       setRecording(null)
     }
     window.addEventListener('keydown', onKey, { capture: true })
-    return () => window.removeEventListener('keydown', onKey, { capture: true })
+    return () => {
+      keymap.setRecording(false)
+      window.removeEventListener('keydown', onKey, { capture: true })
+    }
   }, [recording])
 
   const byCategory = new Map<string, KeyAction[]>()
