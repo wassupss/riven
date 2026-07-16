@@ -33,6 +33,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'toolbar.terminal': { ko: '터미널', en: 'Terminal' },
   'toolbar.newTerminal': { ko: '새 터미널 (⌘T)', en: 'New terminal (⌘T)' },
   'toolbar.panels': { ko: '패널', en: 'Panels' },
+  'toolbar.addPanel': { ko: '패널 추가', en: 'Add panel' },
   'toolbar.openPanel': { ko: '패널 열기', en: 'Open panel' },
   'toolbar.panel.editor': { ko: '코드 편집기', en: 'Code editor' },
   'toolbar.panel.changes': { ko: '변경 사항', en: 'Changes' },
@@ -278,6 +279,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Files an agent edits in this session are summarized here.'
   },
   'changes.clear': { ko: '지우기', en: 'Clear' },
+  'changes.acceptAll': { ko: '전체 수락', en: 'Accept all' },
+  'changes.revertAll': { ko: '전체 되돌리기', en: 'Revert all' },
+  'changes.accept': { ko: '수락', en: 'Accept' },
+  'changes.revert': { ko: '되돌리기', en: 'Revert' },
   'changes.pillTitle': {
     ko: '에이전트 변경 사항 타임라인 열기',
     en: 'Open the agent changes timeline'
@@ -329,6 +334,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'action.focus.pane.up': { ko: '위쪽 창으로 포커스', en: 'Focus pane up' },
   'action.focus.pane.down': { ko: '아래쪽 창으로 포커스', en: 'Focus pane down' },
   'action.app.save': { ko: '파일 저장', en: 'Save file' },
+  'action.app.quickPanel': { ko: '빠른 패널 열기', en: 'Open quick panel' },
   'action.panel.explorer': { ko: '탐색기 사이드바 토글', en: 'Toggle Explorer sidebar' },
   'action.panel.search': { ko: '검색 패널', en: 'Search panel' },
   'action.panel.git': { ko: 'Git 패널', en: 'Git panel' },

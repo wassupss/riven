@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
 import { useSession } from '../../state/session'
-import { useAgentEdits, type TimelineEntry } from '../../state/agentEdits'
+import { useAgentEdits, cacheSet, type TimelineEntry } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
-import { FileCode, FilePlus2, Trash2 } from 'lucide-react'
+import { FileCode, FilePlus2, Check, Undo2, CheckCheck } from 'lucide-react'
 
 // Compact, language-neutral relative time (now / 5m / 2h / 3d).
 function ago(at: number): string {
@@ -25,15 +25,17 @@ function fileParts(entry: TimelineEntry): { name: string; dir: string } {
   return i < 0 ? { name: rel, dir: '' } : { name: rel.slice(i + 1), dir: rel.slice(0, i) }
 }
 
-// The changes timeline: a running summary of files an agent edited in this
-// session (see AgentWatch — only edits made while an agent is running are
-// caught). Nothing auto-opens; clicking a row opens that file with its inline
-// diff, so a big multi-file change never floods the editor with tabs.
+// The changes timeline: a running summary of files an agent edited this session.
+// Accept (keep) or revert (restore the pre-edit content) per file or in bulk;
+// clicking a row opens the file with its inline diff.
 export default function ChangesPanel(): JSX.Element {
   const t = useT()
   const timeline = useAgentEdits((s) => s.timeline)
+  const editsMap = useAgentEdits((s) => s.edits)
   const markSeen = useAgentEdits((s) => s.markSeen)
-  const clearTimeline = useAgentEdits((s) => s.clearTimeline)
+  const resolve = useAgentEdits((s) => s.resolve)
+  const acceptAll = useAgentEdits((s) => s.acceptAll)
+  const requestReload = useAgentEdits((s) => s.requestReload)
   const openFile = useSession((s) => s.openFile)
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
 
@@ -48,6 +50,31 @@ export default function ChangesPanel(): JSX.Element {
     ensureEditor()
   }
 
+  // Restore a file's pre-edit content, reload it if open, then drop the entry.
+  const revertOne = async (path: string): Promise<void> => {
+    const edit = useAgentEdits.getState().edits[path]
+    if (edit) {
+      await window.api.workspace.writeFile(path, edit.before)
+      cacheSet(path, edit.before)
+      requestReload(path)
+    }
+    resolve(path)
+  }
+
+  const revertAll = async (): Promise<void> => {
+    const { edits, timeline: tl } = useAgentEdits.getState()
+    await Promise.all(
+      tl.map(async (en) => {
+        const edit = edits[en.path]
+        if (!edit) return
+        await window.api.workspace.writeFile(en.path, edit.before)
+        cacheSet(en.path, edit.before)
+        requestReload(en.path)
+      })
+    )
+    acceptAll()
+  }
+
   return (
     <div className="changes-panel">
       <div className="changes-head">
@@ -56,9 +83,14 @@ export default function ChangesPanel(): JSX.Element {
           {timeline.length > 0 && <span className="changes-count">{timeline.length}</span>}
         </span>
         {timeline.length > 0 && (
-          <button className="changes-clear" onClick={clearTimeline} title={t('changes.clear')}>
-            <Trash2 size={13} /> {t('changes.clear')}
-          </button>
+          <div className="changes-actions">
+            <button className="changes-act accept" onClick={acceptAll} title={t('changes.acceptAll')}>
+              <CheckCheck size={13} /> {t('changes.acceptAll')}
+            </button>
+            <button className="changes-act revert" onClick={revertAll} title={t('changes.revertAll')}>
+              <Undo2 size={13} /> {t('changes.revertAll')}
+            </button>
+          </div>
         )}
       </div>
 
@@ -68,13 +100,9 @@ export default function ChangesPanel(): JSX.Element {
         <div className="changes-list">
           {timeline.map((entry) => {
             const { name, dir } = fileParts(entry)
+            const hasEdit = entry.path in editsMap
             return (
-              <div
-                key={entry.path}
-                className="changes-row"
-                onClick={() => open(entry)}
-                title={entry.path}
-              >
+              <div key={entry.path} className="changes-row" onClick={() => open(entry)} title={entry.path}>
                 <span className={`changes-ico ${entry.isNew ? 'is-new' : ''}`}>
                   {entry.isNew ? <FilePlus2 size={14} /> : <FileCode size={14} />}
                 </span>
@@ -85,6 +113,29 @@ export default function ChangesPanel(): JSX.Element {
                   {entry.removed > 0 && <span className="changes-del">−{entry.removed}</span>}
                 </span>
                 <span className="changes-time">{ago(entry.at)}</span>
+                <span className="changes-row-actions">
+                  <button
+                    className="changes-row-act"
+                    title={t('changes.accept')}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      resolve(entry.path)
+                    }}
+                  >
+                    <Check size={13} />
+                  </button>
+                  <button
+                    className="changes-row-act revert"
+                    title={t('changes.revert')}
+                    disabled={!hasEdit}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      void revertOne(entry.path)
+                    }}
+                  >
+                    <Undo2 size={13} />
+                  </button>
+                </span>
               </div>
             )
           })}

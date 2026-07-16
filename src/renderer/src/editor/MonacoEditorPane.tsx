@@ -69,6 +69,9 @@ export default function MonacoEditorPane({
   // Cursor-style per-hunk review: accepted (dismissed) hunks + hover toolbar.
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const [hunkHover, setHunkHover] = useState<{ top: number; idx: number } | null>(null)
+  // The hunk index the hover toolbar is currently shown for, so mousemove within
+  // one hunk doesn't re-set state every event (which made the toolbar flicker).
+  const hunkHoverIdxRef = useRef<number | null>(null)
   const hunkLineMapRef = useRef(new Map<number, number>())
   const displayedRef = useRef<Hunk[]>([])
   const hoverHideRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -266,14 +269,22 @@ export default function MonacoEditorPane({
   // Accept (dismiss) one hunk — keeps the applied change, clears its highlight.
   const acceptHunk = (h: Hunk): void => {
     setDismissed((s) => new Set(s).add(hunkKey(h)))
+    hunkHoverIdxRef.current = null
     setHunkHover(null)
   }
   const scheduleHideHover = (): void => {
-    if (hoverHideRef.current) clearTimeout(hoverHideRef.current)
-    hoverHideRef.current = setTimeout(() => setHunkHover(null), 220)
+    // Already hidden, or a hide is already pending → don't reset the timer on
+    // every mousemove (that's what let it flicker).
+    if (hunkHoverIdxRef.current == null || hoverHideRef.current) return
+    hoverHideRef.current = setTimeout(() => {
+      hoverHideRef.current = null
+      hunkHoverIdxRef.current = null
+      setHunkHover(null)
+    }, 220)
   }
   const cancelHideHover = (): void => {
     if (hoverHideRef.current) clearTimeout(hoverHideRef.current)
+    hoverHideRef.current = null
   }
 
   // ---- context bridge --------------------------------------------------------
@@ -375,11 +386,15 @@ export default function MonacoEditorPane({
         return
       }
       cancelHideHover()
+      // Same hunk as already shown → nothing to update (avoids per-mousemove
+      // re-renders that made the toolbar flicker).
+      if (hunkHoverIdxRef.current === idx) return
       const h = displayedRef.current[idx]
       if (!h) return
       const pos = ed.getScrolledVisiblePosition({ lineNumber: Math.max(1, h.afterStart + 1), column: 1 })
       if (!pos) return
       const top = (containerRef.current?.offsetTop ?? 0) + pos.top
+      hunkHoverIdxRef.current = idx
       setHunkHover({ top: Math.max(0, top), idx })
     })
     ed.onMouseLeave(() => scheduleHideHover())
@@ -445,6 +460,7 @@ export default function MonacoEditorPane({
   // Fresh review per file — clear accepted set when switching files.
   useEffect(() => {
     setDismissed(new Set())
+    hunkHoverIdxRef.current = null
     setHunkHover(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file?.path])
@@ -554,6 +570,7 @@ export default function MonacoEditorPane({
             className="hunk-hover-btn revert"
             onClick={() => {
               revertHunk(displayed[hunkHover.idx])
+              hunkHoverIdxRef.current = null
               setHunkHover(null)
             }}
           >

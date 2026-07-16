@@ -101,12 +101,15 @@ export default function TerminalPane({
       const term = new Terminal({
         fontFamily: cfg.terminalFontFamily,
         fontSize: cfg.terminalFontSize,
-        fontWeight: '300',
-        fontWeightBold: '500',
-        // D2Coding sits tight in the cell; a little horizontal + vertical breathing
-        // room makes it read cleaner (closer to Ghostty's spacing).
-        letterSpacing: 1,
-        lineHeight: 1.5,
+        // Regular/bold (400/700), NOT the old 300/500: the system Korean fallback
+        // (Apple SD Gothic Neo) has no 300 weight, so forcing 300 made Korean
+        // render at 400 and look much bolder than the light Latin — the mismatch.
+        // Matching both at 400 mirrors Ghostty/cmux.
+        fontWeight: '400',
+        fontWeightBold: '700',
+        // No extra letter spacing (Ghostty adds none); a touch of line height.
+        letterSpacing: 0,
+        lineHeight: 1.4,
         cursorBlink: true,
         cursorStyle: 'block',
         cursorInactiveStyle: 'outline',

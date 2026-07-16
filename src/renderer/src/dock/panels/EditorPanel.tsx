@@ -108,6 +108,17 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
     setFile({ path, content, revision: revisions.current.get(path) ?? 0 })
   }
 
+  // The Changes panel can revert a file that's open here; reload from disk when
+  // it bumps this path's reload nonce (only for the SAME path, not on tab switch).
+  const reloadNonce = useAgentEdits((s) => (activePath ? (s.reloadNonce[activePath] ?? 0) : 0))
+  const lastReload = useRef<{ path: string | null; nonce: number }>({ path: null, nonce: 0 })
+  useEffect(() => {
+    const prev = lastReload.current
+    lastReload.current = { path: activePath, nonce: reloadNonce }
+    if (activePath && prev.path === activePath && reloadNonce > prev.nonce) reloadFromDisk()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadNonce, activePath])
+
   const revertAgentEdit = async (): Promise<void> => {
     if (!activePath || !agentEdit) return
     const before = agentEdit.before

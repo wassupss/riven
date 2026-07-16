@@ -87,6 +87,13 @@ class Keymap {
   private overrides: Record<string, string> = {}
   private listeners = new Set<() => void>()
   private recording = false
+  private modalOpen = false
+
+  // A keyboard-driven modal (e.g. the quick-panel dialog) suspends the global
+  // handler so its own ↑/↓/Enter/chords don't also fire app actions behind it.
+  setModalOpen(v: boolean): void {
+    this.modalOpen = v
+  }
 
   // While the Settings recorder is capturing a chord, the global handler must
   // not also run the matched action (else recording ⌘T spawns a terminal, etc.).
@@ -127,8 +134,9 @@ class Keymap {
   }
 
   handle = (e: KeyboardEvent): void => {
-    // Recorder is capturing this keydown — let it record without side effects.
-    if (this.recording) return
+    // Recorder is capturing this keydown, or a keyboard-driven modal is open —
+    // let it own the keyboard without side effects.
+    if (this.recording || this.modalOpen) return
     // Never act on IME composition keydowns (keyCode 229 is the legacy signal).
     if (e.isComposing || e.keyCode === 229) return
     const chord = chordFromEvent(e)

@@ -24,6 +24,23 @@
   font-display: swap;
   src: url('./assets/fonts/D2Coding-Bold.woff2') format('woff2');
 }
+/* JetBrains Mono — the terminal's default Latin face (matches cmux/Ghostty).
+   Bundled as 'JetBrains Mono Web' so it doesn't shadow a system install; the
+   terminal stack lists the system name first, this second. */
+@font-face {
+  font-family: 'JetBrains Mono Web';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono Web';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/JetBrainsMono-Bold.woff2') format('woff2');
+}
 
 * {
   box-sizing: border-box;
@@ -460,6 +477,14 @@ select {
 }
 .ws-card:hover {
   background: var(--hover);
+}
+/* Drag-to-reorder feedback. */
+.ws-card.dragging {
+  opacity: 0.4;
+}
+.ws-card.drop-target {
+  border-top-color: var(--accent);
+  box-shadow: inset 0 2px 0 -1px var(--accent);
 }
 .ws-card.active {
   background: var(--bg-3);
@@ -3168,6 +3193,85 @@ select {
   pointer-events: none;
 }
 
+/* Quick-panel dialog (new terminal / panels / view), keyboard-driven. */
+.qp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 42%, transparent);
+}
+.qp-dialog {
+  width: 420px;
+  max-width: 92vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--glass);
+  backdrop-filter: blur(28px) saturate(1.5);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-float);
+  animation: pop-in 130ms var(--ease-out-expo);
+}
+.qp-title {
+  padding: 12px 16px 6px;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.qp-list {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.qp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--text-md);
+}
+.qp-item.active {
+  background: var(--accent-muted);
+}
+.qp-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--fg-dim);
+}
+.qp-item.active .qp-icon {
+  color: var(--accent);
+}
+.qp-label {
+  flex: 1 1 auto;
+}
+.qp-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.qp-foot {
+  padding: 8px 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
 /* Editor tab right-click context menu (VSCode-style). */
 .ctx-backdrop {
   position: fixed;
@@ -3305,6 +3409,7 @@ select {
   min-height: 0;
 }
 .changes-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -3312,6 +3417,68 @@ select {
   font-size: var(--text-sm);
   cursor: pointer;
   transition: background var(--dur-fast) ease;
+}
+/* Header bulk actions. */
+.changes-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+.changes-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.changes-act.accept:hover {
+  color: var(--success);
+}
+.changes-act.revert:hover {
+  color: var(--danger);
+}
+/* Per-row hover actions — overlay the right edge so there's no layout shift. */
+.changes-row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 2px;
+  padding-left: 8px;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--hover);
+  transition: opacity var(--dur-fast) ease;
+}
+.changes-row:hover .changes-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.changes-row-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.changes-row-act:hover:not(:disabled) {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.changes-row-act.revert:hover:not(:disabled) {
+  color: var(--danger);
+}
+.changes-row-act:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 .changes-row:hover {
   background: var(--hover);

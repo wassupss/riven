@@ -9,6 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import AgentWatch from './components/AgentWatch'
 import SettingsModal from './components/SettingsModal'
 import Palette from './components/Palette'
+import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions, pathOf } from './state/session'
@@ -148,6 +149,7 @@ export default function App(): JSX.Element {
       </ErrorBoundary>
       <SettingsModal />
       <Palette />
+      <QuickPanel />
       <AgentPicker />
       <AgentWatch />
     </div>
