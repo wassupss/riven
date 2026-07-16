@@ -9,7 +9,7 @@ import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
 import { installCrossFileNavigation } from './gotoDefinition'
 import { contextBus } from '../bridge/contextBus'
-import { setEditorFocuser, setEditorSaver, setFocusRegion } from '../keybindings/focus'
+import { setEditorFocuser, setEditorSaver, clearEditorSaver, setFocusRegion } from '../keybindings/focus'
 import { editorTheme } from './highlight'
 import { useSettings, getSettings } from '../state/settings'
 import { useT, t as staticT } from '../i18n'
@@ -120,7 +120,14 @@ export default function MonacoEditorPane({
       {
         range: new monaco.Range(pos.lineNumber, col, pos.lineNumber, col),
         options: {
-          after: { content, inlineClassName: 'git-blame-inline' },
+          // cursorStops None keeps the injected blame text out of cursor
+          // navigation, so ⌘→ / End land at the real end of the code line
+          // instead of past the blame annotation.
+          after: {
+            content,
+            inlineClassName: 'git-blame-inline',
+            cursorStops: monaco.editor.InjectedTextCursorStops.None
+          },
           showIfCollapsed: true
         }
       }
@@ -155,6 +162,8 @@ export default function MonacoEditorPane({
   }
   const doSaveRef = useRef(doSave)
   doSaveRef.current = doSave
+  // Stable identity for the app-level ⌘S saver so clearEditorSaver can match it.
+  const saverRef = useRef(() => void doSaveRef.current())
 
   // ---- agent-edit hunk review (computed from before/after, not the model) ----
   const decorateHunks = (hs: Hunk[]): void => {
@@ -367,13 +376,16 @@ export default function MonacoEditorPane({
       setHunkHover({ top: Math.max(0, top), idx })
     })
     ed.onMouseLeave(() => scheduleHideHover())
-    ed.onDidFocusEditorText(() => setFocusRegion({ kind: 'editor' }))
-    ed.onDidFocusEditorWidget(() => setFocusRegion({ kind: 'editor' }))
+    const claimSaver = (): void => {
+      setFocusRegion({ kind: 'editor' })
+      if (fileRef.current) setEditorSaver(saverRef.current)
+    }
+    ed.onDidFocusEditorText(claimSaver)
+    ed.onDidFocusEditorWidget(claimSaver)
     setEditorFocuser(() => ed.focus())
-    setEditorSaver(() => void doSaveRef.current())
     return () => {
       offSettings()
-      setEditorSaver(null)
+      clearEditorSaver(saverRef.current)
       ed.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -404,6 +416,9 @@ export default function MonacoEditorPane({
       savedVersions.current.set(key, model.getAlternativeVersionId())
     }
     ed.setModel(model)
+    // This pane now has a real file bound — make it the ⌘S target even if the
+    // user hasn't clicked into it yet (focus also (re)claims it, see mount).
+    setEditorSaver(saverRef.current)
     recomputeDirty()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file?.path, file?.revision, file?.content])

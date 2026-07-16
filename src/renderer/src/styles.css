@@ -1913,6 +1913,14 @@ select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Unsaved-changes indicator on the active tab. */
+.tab-dirty-dot {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: middle;
+  color: var(--fg);
+}
 .file-tab-close {
   color: var(--fg-dim);
   font-size: 10px;

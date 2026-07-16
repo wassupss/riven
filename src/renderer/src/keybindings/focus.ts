@@ -54,9 +54,18 @@ export function focusEditor(): void {
 // keybinding (⌘S) so save works whenever an editor is open — not only while the
 // Monaco textarea itself holds DOM focus (a tab/gutter click would otherwise
 // swallow ⌘S, since Monaco only sees keydowns on its own input).
+// Set by the editor that currently holds (or last held) focus AND has a file
+// bound. Keyed by focus rather than a single mount-time registration, because
+// multiple editor panes (one per workspace) mount at once — a fileless one must
+// not clobber the active editor's saver.
 let editorSaver: (() => void) | null = null
-export function setEditorSaver(fn: (() => void) | null): void {
+export function setEditorSaver(fn: () => void): void {
   editorSaver = fn
+}
+// Only clear if the departing editor is still the registered one, so unmounting
+// a background pane can't wipe the active editor's saver.
+export function clearEditorSaver(fn: () => void): void {
+  if (editorSaver === fn) editorSaver = null
 }
 export function saveActiveEditor(): void {
   editorSaver?.()

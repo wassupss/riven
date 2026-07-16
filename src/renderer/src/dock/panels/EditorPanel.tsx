@@ -190,7 +190,7 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
               <span className="file-tab-name">
                 {p in editsMap && <span className="tab-edit-dot">●</span>}
                 {p.split('/').pop()}
-                {p === activePath && dirty ? ' •' : ''}
+                {p === activePath && dirty && <span className="tab-dirty-dot">●</span>}
               </span>
               <span
                 className="file-tab-close"

@@ -91,9 +91,14 @@ function createWindow(): void {
   }
 
   // Forward renderer console (prefixed) to the main stdout — dev only.
+  // Electron 33+ replaced the (event, level, message, …) args with a single
+  // Event<WebContentsConsoleMessageEventParams>; read from it, falling back to
+  // the legacy positional arg so this survives across versions.
   if (!app.isPackaged) {
-    mainWindow.webContents.on('console-message', (_e, _level, message) => {
-      if (message.startsWith('[riven]')) console.log(message)
+    mainWindow.webContents.on('console-message', (e: unknown, _level?: number, legacy?: string) => {
+      const message =
+        e && typeof e === 'object' && 'message' in e ? (e as { message: string }).message : legacy
+      if (typeof message === 'string' && message.startsWith('[riven]')) console.log(message)
     })
   }
 
