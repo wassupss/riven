@@ -41,6 +41,39 @@
   font-display: swap;
   src: url('./assets/fonts/JetBrainsMono-Bold.woff2') format('woff2');
 }
+/* Nanum Gothic Coding — a single UNIFIED monospace covering both Latin and
+   Korean, so terminal text uses ONE face for both scripts (no weight/shape
+   mismatch between a Latin face and a separate CJK fallback). The Latin and
+   Korean woff2 are disjoint subsets under one family, so the browser resolves
+   each glyph from the file that actually contains it. */
+@font-face {
+  font-family: 'Nanum Gothic Coding Web';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/NanumGothicCoding-Latin.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nanum Gothic Coding Web';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/NanumGothicCoding-KR.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nanum Gothic Coding Web';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/NanumGothicCoding-Latin-Bold.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Nanum Gothic Coding Web';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/NanumGothicCoding-KR-Bold.woff2') format('woff2');
+}
 
 * {
   box-sizing: border-box;

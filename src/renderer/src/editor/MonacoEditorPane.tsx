@@ -441,9 +441,14 @@ export default function MonacoEditorPane({
       modelSaved.set(key, model.getAlternativeVersionId())
     }
     ed.setModel(model)
-    // This pane now has a real file bound — make it the ⌘S target even if the
-    // user hasn't clicked into it yet (focus also (re)claims it, see mount).
+    // This pane now has a real file bound — make it the ⌘S / ⌘E / directional-
+    // focus target even if the user hasn't clicked into it yet. Without the
+    // focuser here, moving focus to the editor via Ctrl+⌘+Arrow (or ⌘E) no-ops
+    // on a never-clicked editor, so the caret never lands and the focus region
+    // stays 'terminal' (letting Ctrl+1 etc. hijack). Focus also (re)claims both
+    // on actual click (see mount).
     setEditorSaver(saverRef.current)
+    setEditorFocuser(focuserRef.current)
     recomputeDirty()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file?.path, file?.revision, file?.content])
