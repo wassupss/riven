@@ -86,6 +86,15 @@ export default function TerminalPane({
     // context + scrollback) is virtualized. Returns a teardown that disposes the
     // renderer but leaves the PTY running.
     let teardown: (() => void) | null = null
+    // Scroll preservation across workspace switches. Hiding a workspace with
+    // display:none zeroes the .xterm-viewport scrollTop, so returning strands the
+    // terminal at the top of its scrollback. Remember the scroll on hide and
+    // restore it on show (only for a still-mounted term; a torn-down/remounted one
+    // restores via the snapshot replay below).
+    let liveTerm: Terminal | null = null
+    let hiddenTerm: Terminal | null = null
+    let savedViewportY: number | null = null
+    let savedAtBottom = false
 
     const mountTerminal = (): (() => void) => {
       const cfg = getSettings()
@@ -110,6 +119,7 @@ export default function TerminalPane({
         fastScrollSensitivity: 5,
         theme: terminalTheme()
       })
+      liveTerm = term
       const fit = new FitAddon()
       const serialize = new SerializeAddon()
       const unicode11 = new Unicode11Addon()
@@ -178,6 +188,17 @@ export default function TerminalPane({
           addon.onContextLoss(() => {
             addon.dispose()
             webgl = null
+            // Disposing the WebGL addon reverts xterm to its DOM renderer, but an
+            // idle full-screen TUI (no new output) won't trigger a redraw and would
+            // stay blank. Force a full repaint so the screen comes back without a
+            // ⌘R. We deliberately do NOT re-attach WebGL (webglTried stays true):
+            // once the GPU context is unstable, the DOM renderer is the reliable
+            // fallback for the rest of the session.
+            try {
+              term.refresh(0, term.rows - 1)
+            } catch {
+              /* term may be mid-dispose */
+            }
           })
           term.loadAddon(addon)
           webgl = addon
@@ -231,7 +252,12 @@ export default function TerminalPane({
         })
         if (torn) return
         ptyId = id
-        if (existed && buffer) term.write(buffer)
+        if (existed && buffer) {
+          term.write(buffer)
+          // The snapshot restores content but not scroll position; pin to the
+          // bottom (the prompt) so a replayed terminal doesn't open at the top.
+          term.write('', () => term.scrollToBottom())
+        }
         onReadyRef.current?.(id)
         disposers.push(
           window.api.pty.onData(id, (data) => {
@@ -301,6 +327,7 @@ export default function TerminalPane({
         disposers.forEach((d) => d())
         searchRef.current = null
         refocusRef.current = null
+        if (liveTerm === term) liveTerm = null
         webgl?.dispose()
         term.dispose()
       }
@@ -337,7 +364,27 @@ export default function TerminalPane({
 
     const io = new IntersectionObserver((entries) => {
       const e = entries[entries.length - 1]
-      visible = e.isIntersecting && e.intersectionRatio > 0
+      const nowVisible = e.isIntersecting && e.intersectionRatio > 0
+      if (nowVisible !== visible) {
+        if (!nowVisible && liveTerm) {
+          // About to be hidden (display:none) → capture scroll before the browser
+          // zeroes the viewport scrollTop.
+          const buf = liveTerm.buffer.active
+          hiddenTerm = liveTerm
+          savedViewportY = buf.viewportY
+          savedAtBottom = buf.viewportY >= buf.baseY
+        } else if (nowVisible && liveTerm && liveTerm === hiddenTerm && savedViewportY != null) {
+          // Shown again without a teardown → restore the pre-hide scroll (a
+          // remounted term instead restores via the snapshot scrollToBottom).
+          const term = liveTerm
+          const y = savedViewportY
+          const bottom = savedAtBottom
+          requestAnimationFrame(() => (bottom ? term.scrollToBottom() : term.scrollToLine(y)))
+          hiddenTerm = null
+          savedViewportY = null
+        }
+      }
+      visible = nowVisible
       reconcile()
     })
     io.observe(container)
