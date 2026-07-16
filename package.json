@@ -1,6 +1,6 @@
 {
   "name": "riven",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "riven — AI-first IDE with fully dockable panels, own Monaco editor, integrated terminals",
   "productName": "riven",
   "main": "./out/main/index.js",
