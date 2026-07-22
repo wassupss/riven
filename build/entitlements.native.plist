@@ -8,5 +8,11 @@
        any dylibs Metal/WebKit pull in, mirroring Ghostty's own release build. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+  <!-- Data-protection keychain access group (Team ID + bundle id) so the app reads its
+       own session token without the legacy per-signature "wants to use…" ACL prompt. -->
+  <key>keychain-access-groups</key>
+  <array>
+    <string>MZWTP7DZ4Q.com.wassupss.riven</string>
+  </array>
 </dict>
 </plist>
