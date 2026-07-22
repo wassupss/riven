@@ -36,6 +36,12 @@ cp "$BIN" "$APP/Contents/MacOS/riven"
 [ -d "$RES_BUNDLE" ] && cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 # App icon (shared ember mark, reused from the Electron build assets).
 [ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/riven.icns"
+# Sparkle auto-update framework → embedded in Contents/Frameworks (binary rpaths to it).
+SPARKLE_FW=".build/release/Sparkle.framework"
+if [ -d "$SPARKLE_FW" ]; then
+  mkdir -p "$APP/Contents/Frameworks"
+  cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"
+fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -57,6 +63,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>SupabaseURL</key><string>$SB_URL</string>
   <key>SupabaseAnonKey</key><string>$SB_KEY</string>
   <key>SupabaseRedirect</key><string>$SB_REDIRECT</string>
+  <key>SUFeedURL</key><string>${RIVEN_SPARKLE_FEED:-https://github.com/wassupss/riven/releases/download/appcast/appcast.xml}</string>
+  <key>SUPublicEDKey</key><string>uXt3SWNuAg7MpkTHj/U4I5V2fah42RB7tezvr2xdTio=</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict>
 </plist>
 PLIST
@@ -67,7 +77,16 @@ if [ "$SIGN_ID" = "-" ]; then
   echo "▸ Built $APP (ad-hoc signed)"
 else
   # Release: hardened runtime + entitlements, signed with the Developer ID so the
-  # app can be notarized. Sign inner Mach-O first, then the app (no deprecated --deep).
+  # app can be notarized. Sign inner-out: Sparkle helpers → framework → binary → app.
+  FW="$APP/Contents/Frameworks/Sparkle.framework"
+  if [ -d "$FW" ]; then
+    for x in "$FW/Versions/B/XPCServices/Downloader.xpc" "$FW/Versions/B/XPCServices/Installer.xpc"; do
+      [ -e "$x" ] && codesign --force --options runtime --timestamp --preserve-metadata=entitlements --sign "$SIGN_ID" "$x"
+    done
+    [ -e "$FW/Versions/B/Autoupdate" ] && codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$FW/Versions/B/Autoupdate"
+    [ -e "$FW/Versions/B/Updater.app" ] && codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$FW/Versions/B/Updater.app"
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$FW"
+  fi
   codesign --force --options runtime --timestamp \
     --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP/Contents/MacOS/riven"
   codesign --force --options runtime --timestamp \
