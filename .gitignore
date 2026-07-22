@@ -7,6 +7,14 @@ release
 *.log
 *.tsbuildinfo
 
+# native (Swift) app build artifacts
+.build/
+DerivedData/
+*.xcodeproj
+riven.app/
+# libghostty framework — provisioned separately (prebuilt asset), not committed
+ghostty-fw
+
 # local landing-page preview asset (ship the dmg via a real host / CDN instead)
 landing/*.dmg
 

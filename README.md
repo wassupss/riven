@@ -2,28 +2,40 @@
 
 An AI-first desktop IDE built around agent orchestration. Left explorer · a center of dockable AI terminals/agents · a Monaco code editor and web preview — all as freely dockable panels.
 
+Native macOS app (Swift/AppKit). The Electron build is preserved on the `0.0.10`
+branch; `main` and version branches are native.
+
 ## Stack
 
-- **Electron** + electron-vite + React + TypeScript
-- **Monaco** editor with direct model management (one editor, many models keyed by file URI)
-- **xterm.js** + **node-pty** — real PTYs, kept alive in the main process so terminals survive renderer reloads
-- **dockview** — VSCode-style fluid docking; every area (explorer / editor / preview / terminal) is a draggable panel, poppable into its own window
-- **Shiki** for TextMate-grade syntax highlighting (tsx/jsx as first-class languages)
-- **Multi-language LSP** over vscode-jsonrpc (completion, hover, go-to-definition, diagnostics). TypeScript/JS, Python (Pyright), YAML, and Bash servers are bundled and work with zero setup; C/C++ (clangd), Go (gopls), and Rust (rust-analyzer) light up automatically when installed on PATH. JSON/CSS/HTML use Monaco's built-in workers.
-- zustand for state
+- **Swift + AppKit** — native app shell, windowing, docking, explorer, git, LSP bridge
+- **libghostty** (GhosttyKit.xcframework) — GPU-accelerated terminals
+- **Monaco** in a WKWebView (`Sources/Riven/Resources/editor.html`) — the editor, with VS Code-style split groups, agent-diff review, and an LSP/AI message bridge to the native side
+- **Shiki** for TextMate-grade syntax highlighting (tsx/jsx first-class), bundled offline
+- **Multi-language LSP** over vscode-jsonrpc (completion, hover, definition, references, diagnostics) — TypeScript/JS today; more servers plug into `LSP/LSPManager.swift`
+- **Supabase** account + settings sync (GitHub OAuth, PKCE)
 
-## Run
+## Build
 
-```bash
-npm install      # postinstall rebuilds node-pty against the Electron ABI
-npm run dev
-```
-
-If the node-pty rebuild fails:
+Requires a Swift 6 toolchain (Xcode 15+) and the libghostty framework at
+`ghostty-fw/GhosttyKit.xcframework` (gitignored — provisioned separately; see below).
 
 ```bash
-npm run rebuild
+./build-app.sh          # → ./riven.app (ad-hoc signed, for local dev)
 ```
+
+### libghostty
+
+The framework is too big to commit. Build it from source and drop it at `ghostty-fw/`:
+
+```bash
+# in a ghostty-org/ghostty checkout (Zig 0.15.2):
+zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dxcframework-target=universal
+# → zig-out/macos/GhosttyKit.xcframework  →  copy to riven/ghostty-fw/
+```
+
+In CI it's downloaded from the `ghostty-fw` GitHub release (built by
+`.github/workflows/ghostty.yml`). A tagged `v*` push triggers the signed, notarized
+dmg release (`.github/workflows/release.yml`).
 
 ## Features
 
@@ -45,9 +57,4 @@ npm run rebuild
 | Explorer / Search / Git / CLI | `⌘B` / `⌘⇧F` / `⌘⇧G` / `⌘⇧L` |
 | Preview / Pop out panel | `⌘⇧V` / `⌘⇧P` |
 | Settings / Keybindings | `⌘,` / `⌥⌘K` |
-
-## LSP smoke test
-
-```bash
-node scripts/test-lsp.mjs
-```
+| Split editor (right / down) | `⌘\` / `⌥⌘\` |
