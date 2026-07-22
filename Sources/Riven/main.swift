@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var dockHost: NSView!                 // holds the active workspace's dock.container
     var activeDock: DockManager?          // current workspace's dock
     var editorDockPanel: DockPanel?       // the shared editor panel (one WKWebView)
+    private var workspaceColors: [URL: String] = [:]   // rail card colors (hex), persisted per session
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var editorVisible = false
     var workspace: URL?
@@ -301,6 +302,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail.onSelect = { [weak self] url in self?.switchWorkspace(url) }
         rail.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         rail.onClose = { [weak self] url in self?.closeWorkspace(url) }
+        // Persist the rail card color so it survives across sessions.
+        rail.onSetColor = { [weak self] url, color in
+            guard let self else { return }
+            self.workspaceColors[url] = color.map { self.hexString($0) }
+            self.persistSession()
+        }
         WorkspaceStatus.shared.onChange = { [weak self] ws in
             guard let self else { return }
             let a = WorkspaceStatus.shared.rollup(ws)
@@ -1023,7 +1030,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 workspace = nil; activeDock = nil
                 editorDockPanel = nil; auxDockPanels.removeAll()
                 editor.showEmpty(); tabBar.closeAll()
-                statusBar.setWorkspaceName(nil); window.title = "riven"
+                explorer.clear()                 // no workspace → empty the file tree too
+                statusBar.setWorkspaceName(nil); statusBar.setBranch(nil); window.title = "riven"
             }
         }
         persistSession()
@@ -1038,13 +1046,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             tabs[url.absoluteString] = st.openTabs   // absoluteString keeps #2/#3 instance identity
             if let a = st.activeTab { actives[url.absoluteString] = a }
         }
+        var colors: [String: String] = [:]
+        for url in workspaces { if let hex = workspaceColors[url] { colors[url.absoluteString] = hex } }
         let session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
             "tabs": tabs,
-            "activeTab": actives
+            "activeTab": actives,
+            "colors": colors
         ]
         Settings.shared.set("session", session)
+    }
+    // sRGB hex for a rail card color (persisted); Theme.hex parses it back.
+    private func hexString(_ c: NSColor) -> String {
+        let s = c.usingColorSpace(.sRGB) ?? c
+        return String(format: "#%02X%02X%02X",
+                      Int(round(s.redComponent * 255)), Int(round(s.greenComponent * 255)), Int(round(s.blueComponent * 255)))
     }
 
     private func restoreSession() {
@@ -1052,6 +1069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               let keys = s["workspaces"] as? [String], !keys.isEmpty else { return }
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
+        let colors = s["colors"] as? [String: String] ?? [:]
         let fm = FileManager.default
         var restored: [URL] = []
         for key in keys {
@@ -1063,6 +1081,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             st.openTabs = (tabs[key] as? [String] ?? []).filter { fm.fileExists(atPath: $0) }
             st.activeTab = (actives[key] as? String).flatMap { st.openTabs.contains($0) ? $0 : st.openTabs.last }
             rail.addWorkspace(url)
+            if let hex = colors[key] { workspaceColors[url] = hex; rail.setColor(url, Theme.hex(hex)) }   // restore card color
             restored.append(url)
         }
         guard !restored.isEmpty else { return }
@@ -1528,7 +1547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             })
         }
         actions.append(contentsOf: [
-            QuickAction(title: "에디터", hint: "", symbol: "doc.text") { [weak self] in self?.editor.focusEditor() },
+            QuickAction(title: "에디터", hint: "", symbol: "doc.text") { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() },
             QuickAction(title: "검색", hint: "⌘⇧F", symbol: "magnifyingglass") { [weak self] in self?.toggleDockPanel("search") },
             QuickAction(title: "소스 컨트롤", hint: "⌘⇧G", symbol: "arrow.triangle.branch") { [weak self] in self?.toggleDockPanel("git") },
             QuickAction(title: "미리보기", hint: "⌘⇧V", symbol: "eye") { [weak self] in self?.toggleDockPanel("preview") },

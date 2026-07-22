@@ -242,6 +242,11 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         root = FileNode(url: url, isDir: true)
         outline.reloadData()
     }
+    // Empty the tree (no workspace open) so it doesn't linger after the last close.
+    func clear() {
+        root = nil
+        outline.reloadData()
+    }
 
     // Reveal a file: expand every ancestor folder and select+scroll to its row so the
     // explorer follows the active editor tab (riven's reveal-in-explorer).
