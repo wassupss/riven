@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       ghostty_ref:
-        description: 'ghostty-org/ghostty git ref to build (tag / branch / commit sha)'
+        description: 'ghostty-org/ghostty git ref to build (tag / branch / FULL commit sha)'
         required: true
-        default: '2511abe3d'
+        default: '2511abe3dd864013ef9a20c14c50e432f901f703'
 
 permissions:
   contents: write # create/update the ghostty-fw release
