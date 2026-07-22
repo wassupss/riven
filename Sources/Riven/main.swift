@@ -1574,6 +1574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Command(title: "사이드바 토글", hint: "⌘B") { [weak self] in self?.toggleSidebar() },
             Command(title: "AI 자동완성", hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
             Command(title: "소스 컨트롤 (그래프)", hint: "⌘⇧G") { [weak self] in self?.toggleDockPanel("git") },
+            Command(title: "패널 크기 균등화", hint: "⌥⌘=") { [weak self] in self?.activeDock?.distributeEvenly() },
             Command(title: "편집기 분할 (오른쪽)", hint: "⌘\\") { [weak self] in self?.editor.splitEditor("right") },
             Command(title: "편집기 분할 (아래)", hint: "⌥⌘\\") { [weak self] in self?.editor.splitEditor("down") },
             Command(title: "탭 닫기", hint: "⌘W") { [weak self] in if let p = self?.tabBar.active { self?.closeTab(p) } }
