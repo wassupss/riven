@@ -137,6 +137,57 @@ enum Git {
         return GitStatus(branch: br, isRepo: true, ahead: ahead, behind: behind, hasUpstream: hasUpstream, files: files)
     }
 
+    // ---- commit history (for the Fork-style graph view) ----
+    struct Commit {
+        let sha: String, short: String
+        let parents: [String]
+        let refs: [String]        // decorations: "HEAD -> main", "origin/main", "tag: v1"
+        let author: String
+        let timestamp: Int
+        let subject: String
+    }
+    static func log(cwd: String, limit: Int = 400) -> [Commit] {
+        // Unit-separated fields (0x1f) + record-separated commits (0x1e) so subjects/refs
+        // parse safely. --topo-order gives a clean graph; --all shows every branch.
+        let fmt = "%x1e%H%x1f%h%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s"
+        guard let out = run(["log", "--all", "--topo-order", "-n", "\(limit)", "--pretty=format:\(fmt)"], cwd: cwd) else { return [] }
+        var commits: [Commit] = []
+        for rec in out.components(separatedBy: "\u{1e}") {
+            let r = rec.trimmingCharacters(in: .newlines)
+            if r.isEmpty { continue }
+            let f = r.components(separatedBy: "\u{1f}")
+            if f.count < 7 { continue }
+            let parents = f[2].split(separator: " ").map(String.init)
+            let refs = f[5].isEmpty ? [] : f[5].components(separatedBy: ", ").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            commits.append(Commit(sha: f[0], short: f[1], parents: parents, refs: refs,
+                                  author: f[3], timestamp: Int(f[4]) ?? 0, subject: f[6]))
+        }
+        return commits
+    }
+
+    struct DiffFile { let path: String; let added: Int; let removed: Int; let binary: Bool }
+    // Files changed by a commit (vs its first parent), with +/- line counts.
+    static func commitFiles(cwd: String, sha: String) -> [DiffFile] {
+        guard let out = run(["show", "--numstat", "--format=", "-M", sha], cwd: cwd) else { return [] }
+        var files: [DiffFile] = []
+        for line in out.components(separatedBy: "\n") where !line.isEmpty {
+            let c = line.components(separatedBy: "\t")
+            if c.count >= 3 {
+                let bin = c[0] == "-" && c[1] == "-"
+                files.append(DiffFile(path: c[2], added: Int(c[0]) ?? 0, removed: Int(c[1]) ?? 0, binary: bin))
+            }
+        }
+        return files
+    }
+    // Full commit message body (subject + body) for the detail pane.
+    static func commitBody(cwd: String, sha: String) -> String {
+        run(["show", "-s", "--format=%B", sha], cwd: cwd)?.trimmingCharacters(in: .newlines) ?? ""
+    }
+    // A file's content at a given ref (for historical diffs); nil if absent (added/deleted side).
+    static func fileAt(cwd: String, ref: String, path: String) -> String? {
+        run(["show", "\(ref):\(path)"], cwd: cwd)
+    }
+
     static func stage(cwd: String, rel: String) -> (ok: Bool, error: String) { runResult(["add", "--", rel], cwd: cwd) }
     static func unstage(cwd: String, rel: String) -> (ok: Bool, error: String) { runResult(["reset", "-q", "HEAD", "--", rel], cwd: cwd) }
     static func stageAll(cwd: String) -> (ok: Bool, error: String) { runResult(["add", "-A"], cwd: cwd) }

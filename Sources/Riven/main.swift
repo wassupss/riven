@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var gitPanel: GitPanel!
     var previewPanel: PreviewPanel!
     var changesPanel: ChangesPanel!
+    var gitGraphPanel: GitGraphView!
     var sidebarLower: NSView!
     var editor: EditorView!
     var tabBar: TabBar!
@@ -196,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 switch ProcessInfo.processInfo.environment["RIVEN_PANEL"] {
                 case "search": self.toggleDockPanel("search")
                 case "git": self.toggleDockPanel("git")
+                case "gitgraph": self.toggleDockPanel("gitgraph")
                 case "preview": self.toggleDockPanel("preview")
                 case "changes": self.toggleDockPanel("changes")
                 default: break
@@ -318,6 +320,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         gitPanel = GitPanel(frame: .zero)
         gitPanel.onOpenDiff = { [weak self] rel in self?.openGitDiff(rel) }
+        gitGraphPanel = GitGraphView(frame: .zero)
+        gitGraphPanel.onOpenFile = { [weak self] rel in
+            guard let self, let ws = self.workspace else { return }
+            self.openFile(URL(fileURLWithPath: ws.path).appendingPathComponent(rel))
+        }
         previewPanel = PreviewPanel(frame: .zero)
         previewPanel.onFocused = { [weak self] in self?.focusGroup(containing: self?.previewPanel) }
         // Preview capture → type the PNG path into the running agent terminal so it can
@@ -1534,6 +1541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Command(title: "새 터미널", hint: "⌘T") { [weak self] in self?.newTerminal() },
             Command(title: "사이드바 토글", hint: "⌘B") { [weak self] in self?.toggleSidebar() },
             Command(title: "AI 자동완성", hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
+            Command(title: "Git 그래프", hint: "") { [weak self] in self?.toggleDockPanel("gitgraph") },
             Command(title: "편집기 분할 (오른쪽)", hint: "⌘\\") { [weak self] in self?.editor.splitEditor("right") },
             Command(title: "편집기 분할 (아래)", hint: "⌥⌘\\") { [weak self] in self?.editor.splitEditor("down") },
             Command(title: "탭 닫기", hint: "⌘W") { [weak self] in if let p = self?.tabBar.active { self?.closeTab(p) } }
@@ -1694,6 +1702,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch id {
         case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; gitPanel.setRoot(ws); content = gitPanel
+        case "gitgraph": title = "Git 그래프"; symbol = "point.topleft.down.curvedto.point.bottomright.up"; gitGraphPanel.setRoot(ws); content = gitGraphPanel
         case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         default: return
@@ -1709,7 +1718,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(panel, reference: ref, direction: side)
         // Aux panels are narrow by default (riven pins Changes/search/git ~280px),
         // not a 50/50 split.
-        setAuxPanelWidth(panel, 300)
+        setAuxPanelWidth(panel, id == "gitgraph" ? 660 : 300)   // the graph needs width
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
