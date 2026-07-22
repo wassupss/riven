@@ -72,6 +72,36 @@ enum GraphLayout {
     }
 }
 
+// Source-control panel = the commit graph (main) + the working-changes/commit view
+// (right). This is what the "git" dock panel shows — the graph lives in source
+// control, not a separate command.
+final class SourceControlView: NSView {
+    let graph = GitGraphView(frame: .zero)
+    let changes: GitPanel
+    init(changes: GitPanel) {
+        self.changes = changes
+        super.init(frame: .zero)
+        graph.translatesAutoresizingMaskIntoConstraints = false
+        changes.translatesAutoresizingMaskIntoConstraints = false
+        let divider = NSBox(); divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(graph); addSubview(divider); addSubview(changes)
+        NSLayoutConstraint.activate([
+            graph.topAnchor.constraint(equalTo: topAnchor), graph.bottomAnchor.constraint(equalTo: bottomAnchor),
+            graph.leadingAnchor.constraint(equalTo: leadingAnchor),
+            graph.trailingAnchor.constraint(equalTo: divider.leadingAnchor),
+            divider.topAnchor.constraint(equalTo: topAnchor), divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+            divider.widthAnchor.constraint(equalToConstant: 1),
+            divider.trailingAnchor.constraint(equalTo: changes.leadingAnchor),
+            changes.topAnchor.constraint(equalTo: topAnchor), changes.bottomAnchor.constraint(equalTo: bottomAnchor),
+            changes.trailingAnchor.constraint(equalTo: trailingAnchor),
+            changes.widthAnchor.constraint(equalToConstant: 320),   // working-changes sidebar
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func setRoot(_ url: URL?) { graph.setRoot(url); if let url { changes.setRoot(url) } }
+}
+
 // ---- the graph panel (dock content) ----
 final class GitGraphView: NSView, Themable {
     private let titleLabel = NSTextField(labelWithString: "Git 그래프")

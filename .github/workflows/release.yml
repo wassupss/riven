@@ -86,11 +86,25 @@ jobs:
       - name: Package DMG
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          STAGE="$RUNNER_TEMP/dmg"
-          mkdir -p "$STAGE"
-          cp -R riven.app "$STAGE/"
-          ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "riven" -srcfolder "$STAGE" -ov -format UDZO "riven-$VERSION.dmg"
+          DMG="riven-$VERSION.dmg"
+          # create-dmg lays out the window with the app on the left and an Applications
+          # drop-link on the right, so the drag-to-install is obvious. Fall back to a
+          # plain hdiutil dmg (still has the Applications symlink) if it flakes headless.
+          brew install create-dmg || true
+          if command -v create-dmg >/dev/null; then
+            create-dmg \
+              --volname "riven" \
+              --window-size 540 380 --icon-size 100 \
+              --icon "riven.app" 140 190 \
+              --app-drop-link 400 190 \
+              --hide-extension "riven.app" \
+              "$DMG" "riven.app" || true
+          fi
+          if [ ! -f "$DMG" ]; then
+            STAGE="$RUNNER_TEMP/dmg"; mkdir -p "$STAGE"
+            cp -R riven.app "$STAGE/"; ln -s /Applications "$STAGE/Applications"
+            hdiutil create -volname "riven" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          fi
 
       - name: Notarize & staple the DMG
         env:
