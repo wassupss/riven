@@ -160,6 +160,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        // DEBUG: trigger the GitHub OAuth sign-in to reproduce the account-link crash.
+        if ProcessInfo.processInfo.environment["RIVEN_AUTHTEST"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                RLog.log("AUTHTEST: configured=\(SupabaseConfig.isConfigured) url=\(SupabaseConfig.url)")
+                SupabaseAuth.shared.signInWithGitHub { result in
+                    RLog.log("AUTHTEST result: \(result)")
+                }
+            }
+        }
         // DEBUG: emit a bell + OSC9 notification from the shell to verify ghostty
         // forwards them to our action_cb (RIVEN_BELLTEST).
         if ProcessInfo.processInfo.environment["RIVEN_BELLTEST"] != nil {
