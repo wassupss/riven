@@ -101,6 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Restore a signed-in riven account session (+ pull cloud settings) on launch.
         SupabaseAuth.shared.restore()
         statusBar.setAccount(SupabaseAuth.shared.displayName)
+        // Start Sparkle auto-update (scheduled background checks; no-op if no feed).
+        Updater.shared.start()
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
             let url = URL(fileURLWithPath: dbg)
@@ -1357,6 +1359,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appItem = NSMenuItem(); mainMenu.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: t("menu.about"), action: nil, keyEquivalent: "")
+        let updateItem = NSMenuItem(title: "업데이트 확인…", action: #selector(Updater.checkForUpdates(_:)), keyEquivalent: "")
+        updateItem.target = Updater.shared
+        appMenu.addItem(updateItem)
         addRemap(appMenu, t("menu.settings"), "app.settings", #selector(settingsMenu))
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: t("menu.quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
