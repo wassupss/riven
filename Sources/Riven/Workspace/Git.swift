@@ -3,12 +3,41 @@ import Foundation
 // Minimal git helper (shell-out), mirroring riven's git.ts logic: current branch
 // + porcelain status parsed with -z (handles non-ASCII / Korean paths).
 enum Git {
+    // A Finder/Dock-launched app inherits a minimal environment: no Homebrew on PATH
+    // and, crucially, no SSH_AUTH_SOCK — so `git pull/push` to a remote can't find the
+    // user's ssh-agent (macOS keychain SSH) and silently fails to authenticate. Build a
+    // proper env once: full PATH, the launchd ssh-agent socket, and GIT_TERMINAL_PROMPT=0
+    // so a missing credential fails fast (surfaced as an error) instead of hanging.
+    static let env: [String: String] = {
+        var e = ProcessInfo.processInfo.environment
+        let extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        let cur = (e["PATH"] ?? "").split(separator: ":").map(String.init)
+        var seen = Set<String>(); var path: [String] = []
+        for p in extra + cur where !p.isEmpty && seen.insert(p).inserted { path.append(p) }
+        e["PATH"] = path.joined(separator: ":")
+        e["GIT_TERMINAL_PROMPT"] = "0"
+        if (e["SSH_AUTH_SOCK"] ?? "").isEmpty, let sock = launchctlEnv("SSH_AUTH_SOCK"), !sock.isEmpty {
+            e["SSH_AUTH_SOCK"] = sock
+        }
+        return e
+    }()
+    private static func launchctlEnv(_ key: String) -> String? {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["getenv", key]
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        let s = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (s?.isEmpty ?? true) ? nil : s
+    }
+
     @discardableResult
     private static func run(_ args: [String], cwd: String) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -59,6 +88,7 @@ enum Git {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
         let err = Pipe(); p.standardOutput = Pipe(); p.standardError = err
         do { try p.run() } catch { return (false, "\(error)") }
         let e = err.fileHandleForReading.readDataToEndOfFile()
@@ -105,6 +135,57 @@ enum Git {
             if nums.count == 2 { behind = nums[0]; ahead = nums[1]; hasUpstream = true }
         }
         return GitStatus(branch: br, isRepo: true, ahead: ahead, behind: behind, hasUpstream: hasUpstream, files: files)
+    }
+
+    // ---- commit history (for the Fork-style graph view) ----
+    struct Commit {
+        let sha: String, short: String
+        let parents: [String]
+        let refs: [String]        // decorations: "HEAD -> main", "origin/main", "tag: v1"
+        let author: String
+        let timestamp: Int
+        let subject: String
+    }
+    static func log(cwd: String, limit: Int = 400) -> [Commit] {
+        // Unit-separated fields (0x1f) + record-separated commits (0x1e) so subjects/refs
+        // parse safely. --topo-order gives a clean graph; --all shows every branch.
+        let fmt = "%x1e%H%x1f%h%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s"
+        guard let out = run(["log", "--all", "--topo-order", "-n", "\(limit)", "--pretty=format:\(fmt)"], cwd: cwd) else { return [] }
+        var commits: [Commit] = []
+        for rec in out.components(separatedBy: "\u{1e}") {
+            let r = rec.trimmingCharacters(in: .newlines)
+            if r.isEmpty { continue }
+            let f = r.components(separatedBy: "\u{1f}")
+            if f.count < 7 { continue }
+            let parents = f[2].split(separator: " ").map(String.init)
+            let refs = f[5].isEmpty ? [] : f[5].components(separatedBy: ", ").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            commits.append(Commit(sha: f[0], short: f[1], parents: parents, refs: refs,
+                                  author: f[3], timestamp: Int(f[4]) ?? 0, subject: f[6]))
+        }
+        return commits
+    }
+
+    struct DiffFile { let path: String; let added: Int; let removed: Int; let binary: Bool }
+    // Files changed by a commit (vs its first parent), with +/- line counts.
+    static func commitFiles(cwd: String, sha: String) -> [DiffFile] {
+        guard let out = run(["show", "--numstat", "--format=", "-M", sha], cwd: cwd) else { return [] }
+        var files: [DiffFile] = []
+        for line in out.components(separatedBy: "\n") where !line.isEmpty {
+            let c = line.components(separatedBy: "\t")
+            if c.count >= 3 {
+                let bin = c[0] == "-" && c[1] == "-"
+                files.append(DiffFile(path: c[2], added: Int(c[0]) ?? 0, removed: Int(c[1]) ?? 0, binary: bin))
+            }
+        }
+        return files
+    }
+    // Full commit message body (subject + body) for the detail pane.
+    static func commitBody(cwd: String, sha: String) -> String {
+        run(["show", "-s", "--format=%B", sha], cwd: cwd)?.trimmingCharacters(in: .newlines) ?? ""
+    }
+    // A file's content at a given ref (for historical diffs); nil if absent (added/deleted side).
+    static func fileAt(cwd: String, ref: String, path: String) -> String? {
+        run(["show", "\(ref):\(path)"], cwd: cwd)
     }
 
     static func stage(cwd: String, rel: String) -> (ok: Bool, error: String) { runResult(["add", "--", rel], cwd: cwd) }

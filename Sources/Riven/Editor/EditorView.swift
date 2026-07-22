@@ -37,8 +37,8 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         web.setValue(false, forKey: "drawsBackground")
         addSubview(web)
 
-        if let url = Bundle.module.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
-            ?? Bundle.module.url(forResource: "editor", withExtension: "html") {
+        if let url = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
+            ?? Bundle.riven.url(forResource: "editor", withExtension: "html") {
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
     }

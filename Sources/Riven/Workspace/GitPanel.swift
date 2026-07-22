@@ -148,8 +148,23 @@ final class GitPanel: NSView, Themable, NSTextViewDelegate {
             DispatchQueue.main.async { self.status = s; self.render() }
         }
     }
-    @objc private func push() { guard let r = root else { return }; async { _ = Git.push(cwd: r.path) } }
-    @objc private func pull() { guard let r = root else { return }; async { _ = Git.pull(cwd: r.path) } }
+    @objc private func push() { remoteOp(t("git.push"), Git.push) }
+    @objc private func pull() { remoteOp(t("git.pull"), Git.pull) }
+    // Remote ops can fail (auth, non-fast-forward, no upstream) — surface the error
+    // instead of silently swallowing it, and always refresh after.
+    private func remoteOp(_ name: String, _ op: @escaping (String) -> (ok: Bool, error: String)) {
+        guard let r = root else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = op(r.path)
+            DispatchQueue.main.async {
+                if !res.ok {
+                    self.alert("\(name) 실패", res.error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "원격 작업에 실패했습니다. 원격/인증 설정을 확인하세요." : res.error)
+                }
+                self.refresh()
+            }
+        }
+    }
     @objc private func commit() {
         guard let r = root else { return }
         let msg = commitMsg.string.trimmingCharacters(in: .whitespacesAndNewlines)
