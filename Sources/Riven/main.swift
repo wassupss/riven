@@ -1012,7 +1012,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the agent writes appear in the Changes panel with before/after diffs.
         AgentEdits.shared.snapshot(workspace: url)
         agentWatch?.stop()
-        agentWatch = AgentWatch(root: url) { [weak self] path in self?.handleFileChange(path) }
+        agentWatch = AgentWatch(root: url) { [weak self] path in
+            self?.handleFileChange(path)
+            self?.scheduleExplorerRefresh()   // reflect external create/delete/rename in the tree
+        }
+    }
+
+    // Debounced explorer reload: the FS watcher bursts on writes, so coalesce (0.4s) and
+    // reload the tree once, preserving expansion.
+    private var explorerRefreshTimer: Timer?
+    private func scheduleExplorerRefresh() {
+        DispatchQueue.main.async {
+            self.explorerRefreshTimer?.invalidate()
+            self.explorerRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+                self?.explorer.refreshTree()
+            }
+        }
     }
 
     private func switchWorkspace(_ url: URL) { activate(url); persistSession() }

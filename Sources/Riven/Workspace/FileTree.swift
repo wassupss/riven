@@ -328,6 +328,35 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         onChanged?()
     }
 
+    // Re-read the whole tree from disk (external create/delete/rename from the terminal,
+    // git, agents…) while PRESERVING which folders are expanded + the selection. Called
+    // debounced by the workspace FS watcher so the explorer reflects changes live.
+    func refreshTree() {
+        guard let root else { return }
+        var expanded: Set<String> = []
+        func collect(_ n: FileNode) {
+            guard outline.isItemExpanded(n) else { return }
+            expanded.insert(n.url.path)
+            for c in (n.children ?? []) where c.isDir { collect(c) }
+        }
+        collect(root)
+        let selPath = (outline.item(atRow: outline.selectedRow) as? FileNode)?.url.path
+        func invalidate(_ n: FileNode) { for c in n.children ?? [] { invalidate(c) }; n.children = nil }
+        invalidate(root)
+        outline.reloadData()
+        func reexpand(_ n: FileNode) {
+            guard expanded.contains(n.url.path) else { return }
+            outline.expandItem(n)
+            for c in n.loadChildren() where c.isDir { reexpand(c) }
+        }
+        reexpand(root)
+        if let sp = selPath {
+            for r in 0..<outline.numberOfRows where (outline.item(atRow: r) as? FileNode)?.url.path == sp {
+                outline.selectRowIndexes([r], byExtendingSelection: false); break
+            }
+        }
+    }
+
     @objc private func ctxNewFile(_ s: NSMenuItem) { selectMenuNode(s); beginCreate(isDir: false) }
     @objc private func ctxNewFolder(_ s: NSMenuItem) { selectMenuNode(s); beginCreate(isDir: true) }
     private func selectMenuNode(_ s: NSMenuItem) {
