@@ -40,8 +40,11 @@ final class PadButton: NSView {
     var onClick: (() -> Void)?
     var identifierString: String?
 
+    private let iconView = NSImageView()
+
     init(title: String, font: NSFont, textColor: NSColor, bg: NSColor, border: NSColor,
-         radius: CGFloat = 6, hPad: CGFloat = 12, height: CGFloat = 28, dotColor: NSColor? = nil) {
+         radius: CGFloat = 6, hPad: CGFloat = 12, height: CGFloat = 28, dotColor: NSColor? = nil,
+         icon: NSImage? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = bg.cgColor
@@ -56,6 +59,17 @@ final class PadButton: NSView {
         addSubview(label)
         var leading = leadingAnchor
         var leadConst = hPad
+        if let icon {
+            iconView.image = icon; icon.isTemplate = true
+            iconView.contentTintColor = textColor    // was invisible before: never rendered at all
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(iconView)
+            NSLayoutConstraint.activate([
+                iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: hPad),
+                iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: 13), iconView.heightAnchor.constraint(equalToConstant: 13)])
+            leading = iconView.trailingAnchor; leadConst = 6
+        }
         if let dotColor {
             dot.wantsLayer = true; dot.layer?.backgroundColor = dotColor.cgColor; dot.layer?.cornerRadius = 5.5
             dot.layer?.borderWidth = 1; dot.layer?.borderColor = Theme.edgeStrong.cgColor

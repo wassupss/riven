@@ -14,6 +14,9 @@ final class StatusBarView: NSView, Themable {
     private let usageIcon = NSImageView()
     private let usageLabel = NSTextField(labelWithString: "")
     private lazy var usageItem = item(usageIcon, usageLabel)
+    private let accountIcon = NSImageView()
+    private let accountLabel = NSTextField(labelWithString: "")
+    private lazy var accountItem = item(accountIcon, accountLabel)
     var onSettings: (() -> Void)?
 
     override init(frame: NSRect) {
@@ -52,8 +55,13 @@ final class StatusBarView: NSView, Themable {
         usageItem.translatesAutoresizingMaskIntoConstraints = false
         usageItem.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(usageClicked)))
 
-        // Right cluster: [lang · usage · settings] laid out right-to-left.
-        let right = NSStackView(views: [langLabel, usageItem, settings])
+        accountIcon.image = symbol("person.crop.circle", 12)
+        accountItem.isHidden = true   // shown when signed in
+        accountItem.translatesAutoresizingMaskIntoConstraints = false
+        accountItem.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(settingsClicked)))
+
+        // Right cluster: [lang · account · usage · settings] laid out right-to-left.
+        let right = NSStackView(views: [langLabel, accountItem, usageItem, settings])
         right.orientation = .horizontal; right.spacing = 14; right.alignment = .centerY
         right.translatesAutoresizingMaskIntoConstraints = false
 
@@ -102,6 +110,11 @@ final class StatusBarView: NSView, Themable {
         }
     }
     func setFileInfo(_ text: String) { langLabel.stringValue = text }
+    // Show the signed-in riven account (GitHub username / name); hide when signed out.
+    func setAccount(_ name: String?) {
+        if let name, !name.isEmpty { accountLabel.stringValue = name; accountItem.isHidden = false }
+        else { accountLabel.stringValue = ""; accountItem.isHidden = true }
+    }
 
     private var usageLimits: Usage.Limits?
     private var usageToday: Usage.Today?

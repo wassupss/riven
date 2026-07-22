@@ -626,8 +626,10 @@ final class SettingsWindow: NSPanel {
     }
     // A dark, theme-aware secondary button (void state is NOT white).
     private func secondaryButton(_ title: String, symbol: String? = nil, _ handler: @escaping () -> Void) -> PadButton {
-        let b = PadButton(title: symbol != nil ? "  \(title)" : title, font: .systemFont(ofSize: 12),
-                          textColor: Theme.fg, bg: Theme.bg3, border: Theme.edge, radius: 7, hPad: 12, height: 28)
+        let img = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        let b = PadButton(title: title, font: .systemFont(ofSize: 12),
+                          textColor: Theme.fg, bg: Theme.bg3, border: Theme.edge, radius: 7, hPad: 12, height: 28,
+                          icon: img)
         b.onClick = handler
         return b
     }

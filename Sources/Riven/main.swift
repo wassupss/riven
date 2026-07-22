@@ -93,8 +93,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NotificationCenter.default.addObserver(forName: .rivenSettingsSynced, object: nil, queue: .main) { [weak self] _ in
             self?.reapplyAllSettings()
         }
+        // Show the signed-in account (GitHub name) in the status bar; keep it in sync.
+        NotificationCenter.default.addObserver(forName: .rivenAuthChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.statusBar.setAccount(SupabaseAuth.shared.displayName)
+        }
         // Restore a signed-in riven account session (+ pull cloud settings) on launch.
         SupabaseAuth.shared.restore()
+        statusBar.setAccount(SupabaseAuth.shared.displayName)
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
             let url = URL(fileURLWithPath: dbg)

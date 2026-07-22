@@ -53,6 +53,7 @@ struct AuthSession: Codable {
     var expiresAt: Date
     var userId: String
     var email: String?
+    var name: String?     // GitHub username / display name (from user_metadata)
 }
 
 extension Notification.Name {
@@ -71,6 +72,7 @@ final class SupabaseAuth {
 
     var isSignedIn: Bool { session != nil }
     var email: String? { session?.email }
+    var displayName: String? { session?.name ?? session?.email }   // GitHub username / name
 
     private init() {}
 
@@ -198,10 +200,13 @@ final class SupabaseAuth {
             if let access = obj["access_token"] as? String, let refresh = obj["refresh_token"] as? String {
                 let expIn = (obj["expires_in"] as? Double) ?? 3600
                 let user = obj["user"] as? [String: Any]
+                let meta = user?["user_metadata"] as? [String: Any]
+                let name = (meta?["user_name"] as? String) ?? (meta?["preferred_username"] as? String)
+                    ?? (meta?["name"] as? String) ?? (user?["email"] as? String)
                 let s = AuthSession(accessToken: access, refreshToken: refresh,
                                     expiresAt: Date().addingTimeInterval(expIn),
                                     userId: (user?["id"] as? String) ?? "",
-                                    email: user?["email"] as? String)
+                                    email: user?["email"] as? String, name: name)
                 completion(.success(s))
             } else {
                 let msg = (obj["error_description"] as? String) ?? (obj["msg"] as? String) ?? "auth failed"
