@@ -1,0 +1,56 @@
+name: Build libghostty
+
+# Build the libghostty xcframework from source and publish it as a release asset
+# that the app-release workflow downloads at build time (the 138 MB framework is
+# too big to commit). Run this manually whenever ghostty should move to a new
+# version — pick the upstream ref, and it refreshes the single "ghostty-fw"
+# release used by release.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      ghostty_ref:
+        description: 'ghostty-org/ghostty git ref to build (tag / branch / commit sha)'
+        required: true
+        default: '2511abe3d'
+
+permissions:
+  contents: write # create/update the ghostty-fw release
+
+jobs:
+  build-xcframework:
+    # arm64 macOS runner with Xcode — xcframework assembly needs xcodebuild/lipo.
+    runs-on: macos-14
+    steps:
+      - name: Checkout ghostty
+        uses: actions/checkout@v4
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ inputs.ghostty_ref }}
+          fetch-depth: 0
+
+      # ghostty pins a minimum Zig (build.zig.zon: minimum_zig_version). Keep this
+      # in sync with that value when bumping ghostty.
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: "Build GhosttyKit.xcframework (universal: arm64 + x86_64)"
+        run: |
+          zig build -Doptimize=ReleaseFast -Demit-xcframework=true -Dxcframework-target=universal
+          test -d zig-out/macos/GhosttyKit.xcframework
+          tar -C zig-out/macos -czf GhosttyKit.xcframework.tar.gz GhosttyKit.xcframework
+          ls -lh GhosttyKit.xcframework.tar.gz
+
+      - name: Publish to the ghostty-fw release (single, rolling asset)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ghostty-fw
+          name: libghostty framework
+          prerelease: true
+          body: |
+            Prebuilt GhosttyKit.xcframework consumed by release.yml.
+            Built from ghostty-org/ghostty @ `${{ inputs.ghostty_ref }}`.
+          files: GhosttyKit.xcframework.tar.gz
+          # overwrite the asset in place so release.yml always gets the latest
+          fail_on_unmatched_files: true

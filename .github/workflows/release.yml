@@ -1,68 +1,94 @@
 name: Release
 
-# Push a version tag (e.g. v0.0.3) → build, sign, notarize, staple on a macOS
-# runner, then attach the dmg/zip to a GitHub Release. The slow notarization
-# wait happens here, not on your laptop.
+# Push a version tag (e.g. v0.1.0) → build the native app, sign with the Developer
+# ID, notarize + staple, package a dmg, and attach it to a GitHub Release. The
+# libghostty framework is pulled from the ghostty-fw release (built by ghostty.yml),
+# since it's too big to commit.
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write # needed to create/update the GitHub Release
+  contents: write # create/update the GitHub Release + read the ghostty-fw asset
 
 jobs:
   release-mac:
-    # macos-14 is an Apple Silicon (arm64) runner — matches our arm64 target,
-    # so node-pty and the app build natively.
-    runs-on: macos-14
+    runs-on: macos-14 # arm64; universal ghostty means the app runs on Intel too
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      # postinstall runs electron-rebuild for node-pty against the Electron ABI.
-      - name: Install dependencies
-        run: npm ci
-
-      # VITE_SUPABASE_* are baked into the renderer at build time (and are public
-      # client values — the anon key is RLS-protected, not a secret). CI has no
-      # .env, so write one from the repo secrets/vars to enable account sync in
-      # released builds. Safe to skip if the vars are unset (feature stays off).
-      - name: Configure Supabase env
+      # The native build needs the prebuilt libghostty xcframework at ghostty-fw/.
+      - name: Fetch libghostty framework
         run: |
-          {
-            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
-            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
-            echo "VITE_SUPABASE_REDIRECT=${{ secrets.VITE_SUPABASE_REDIRECT }}"
-          } > .env
+          gh release download ghostty-fw --pattern 'GhosttyKit.xcframework.tar.gz' --output ghostty.tgz
+          mkdir -p ghostty-fw
+          tar -C ghostty-fw -xzf ghostty.tgz
+          test -d ghostty-fw/GhosttyKit.xcframework
 
-      - name: Build · sign · notarize · staple
+      - name: Version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Import the "Developer ID Application" cert into a temporary keychain.
+      - name: Import signing certificate
         env:
-          # Signing cert: base64 of the exported "Developer ID Application" .p12.
-          # electron-builder imports it into a temp keychain automatically.
-          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
-          # Notarization credentials (read by electron-builder's notarize step).
+          CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          ID=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)".*/\1/')
+          echo "SIGN_ID=$ID" >> "$GITHUB_ENV"
+          echo "Using signing identity: $ID"
+
+      - name: Build · sign the app
+        run: |
+          RIVEN_VERSION="${{ steps.ver.outputs.version }}" \
+          RIVEN_SIGN_ID="$SIGN_ID" \
+          ./build-app.sh
+
+      # Notarize the app itself (submit a zip), then staple the ticket into it so it
+      # passes Gatekeeper offline even when dragged out of the dmg.
+      - name: Notarize & staple the app
+        env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist
+        run: |
+          ditto -c -k --keepParent riven.app riven.zip
+          xcrun notarytool submit riven.zip --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          xcrun stapler staple riven.app
 
-      # electron-builder notarizes the app (inside the zip) but not the dmg
-      # container itself, so the downloaded dmg would trip Gatekeeper on first
-      # open. Notarize + staple the dmg directly.
+      - name: Package DMG
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE"
+          cp -R riven.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "riven" -srcfolder "$STAGE" -ov -format UDZO "riven-$VERSION.dmg"
+
       - name: Notarize & staple the DMG
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          DMG=$(ls release/*.dmg | head -1)
-          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
+          DMG="riven-${{ steps.ver.outputs.version }}.dmg"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait
           xcrun stapler staple "$DMG"
           xcrun stapler validate "$DMG"
 
@@ -70,9 +96,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/*.dmg
-            release/*.zip
-            release/latest-mac.yml
-            release/*.blockmap
+            riven-*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true

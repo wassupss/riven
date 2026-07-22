@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Native Swift app (no Electron/V8, so no allow-jit/unsigned-memory needed).
+       libghostty is linked statically into the main binary. This one entitlement
+       keeps the hardened runtime happy with the embedded GPU/terminal libs and
+       any dylibs Metal/WebKit pull in, mirroring Ghostty's own release build. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
