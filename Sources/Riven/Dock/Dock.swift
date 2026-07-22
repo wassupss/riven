@@ -33,6 +33,7 @@ let dockPBType = NSPasteboard.PasteboardType("com.riven.dockpanel")
 // robust against being added before the container has its real size, and against
 // being reparented between workspaces.
 final class DockContainer: NSView {
+    weak var manager: DockManager?
     override func layout() {
         super.layout()
         // Both the group tree AND the empty overlay fill the container, regardless of
@@ -43,6 +44,17 @@ final class DockContainer: NSView {
     // The dock sits under the transparent titlebar (dock tabs at y=0); without this
     // a drag in the dock would move the WINDOW instead of the panel/divider.
     override var mouseDownCanMoveWindow: Bool { false }
+    // ⌘⌥= — distribute all panes evenly (tmux's prefix+E / iTerm's arrange panes).
+    // Handled here so the shortcut works whenever the dock is in the key window's
+    // view tree; main.swift may ALSO bind a menu item to DockManager.distributeEvenly().
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if mods == [.command, .option], event.charactersIgnoringModifiers == "=" {
+            manager?.distributeEvenly()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 // Owns the group tree and all add/move/split/close operations.
@@ -56,6 +68,7 @@ final class DockManager {
     private let emptyView = DockEmptyView()
 
     init() {
+        container.manager = self
         container.wantsLayer = true
         container.layer?.backgroundColor = Theme.bg.cgColor
         emptyView.onAddTerminal = { [weak self] in self?.onAddTerminal?() }
@@ -171,6 +184,58 @@ final class DockManager {
         else { sv.addArrangedSubview(a); sv.addArrangedSubview(b) }
     }
 
+    // ---- pane sizing helpers ------------------------------------------------
+
+    // A pane's extent along its split's axis.
+    private func extent(_ v: NSView, in sv: NSSplitView) -> CGFloat {
+        sv.isVertical ? v.frame.width : v.frame.height
+    }
+    // Set every pane's extent by walking the dividers left→right / top→bottom.
+    // `extents` must have one entry per arranged subview; positions are cumulative
+    // (divider i sits after panes 0…i plus the i dividers before it).
+    private func setExtents(_ sv: NSSplitView, _ extents: [CGFloat]) {
+        guard extents.count == sv.arrangedSubviews.count, extents.count >= 2 else { return }
+        var pos: CGFloat = 0
+        for i in 0..<(extents.count - 1) {
+            pos += extents[i]
+            sv.setPosition(pos, ofDividerAt: i)
+            pos += sv.dividerThickness
+        }
+    }
+    // Scale `oldExtents` (one per current arranged subview) so they exactly fill the
+    // split — used after a pane is removed so siblings absorb the freed space
+    // proportionally (tmux/iTerm/VS Code close behavior).
+    private func redistribute(_ sv: NSSplitView, oldExtents: [CGFloat]) {
+        let n = sv.arrangedSubviews.count
+        guard n >= 2, oldExtents.count == n else { return }
+        let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+        guard total > 0 else { return }
+        let sum = oldExtents.reduce(0, +)
+        let target = sum > 0 ? oldExtents.map { $0 * total / sum }
+                             : Array(repeating: total / CGFloat(n), count: n)
+        setExtents(sv, target)
+    }
+
+    // Auto-arrange: resize every split in the tree so its sibling panes share the
+    // space equally (recursively). Fixes the "repeated ⌘D keeps carving panes
+    // smaller and smaller" drift. Bind from main.swift or press ⌘⌥= in the dock.
+    func distributeEvenly() {
+        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
+        container.layoutSubtreeIfNeeded()
+        distribute(root)
+    }
+    private func distribute(_ v: NSView) {
+        guard let sv = v as? NSSplitView else { return }
+        let n = sv.arrangedSubviews.count
+        if n >= 2 {
+            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+            if total > 0 { setExtents(sv, Array(repeating: total / CGFloat(n), count: n)) }
+        }
+        // Children got new frames from setPosition; lay them out before recursing so
+        // nested splits compute their halves against the fresh bounds.
+        for child in sv.arrangedSubviews { child.layoutSubtreeIfNeeded(); distribute(child) }
+    }
+
     // Move an existing panel to `group` (center = tab, edge = split).
     func move(_ panel: DockPanel, toGroup group: DockGroup, region: DockDir) {
         let from = panel.group
@@ -219,17 +284,21 @@ final class DockManager {
         cleanupEmpty(from)
         refreshEmpty()
     }
-    // Does `g` sit against the container's outer edge in `dir`? (→ an edge drop there
-    // should split the ROOT, not just that group.)
-    func groupBordersContainerEdge(_ g: DockGroup, _ dir: DockDir) -> Bool {
-        let f = g.convert(g.bounds, to: container)
+    // Should this drop split the ROOT (full-height column / full-width row)?
+    // Only when the POINTER itself sits in a thin gutter along the container's outer
+    // edge (dockview/VS Code's dedicated root drop band). Judging by whether the
+    // target GROUP touches the container edge was wrong: with 3 full-width stacked
+    // rows every group borders the left/right edges, so an ordinary "split this
+    // group" drop escalated to a root split and re-columned the whole dock.
+    func isRootEdgeDrop(from view: NSView, point: NSPoint, direction: DockDir) -> Bool {
+        let p = view.convert(point, to: container)
         let b = container.bounds
-        let tol: CGFloat = 2
-        switch dir {
-        case .left:  return f.minX <= b.minX + tol
-        case .right: return f.maxX >= b.maxX - tol
-        case .up:    return f.maxY >= b.maxY - tol   // non-flipped: top = high y
-        case .down:  return f.minY <= b.minY + tol
+        let band: CGFloat = 16
+        switch direction {
+        case .left:   return p.x <= b.minX + band
+        case .right:  return p.x >= b.maxX - band
+        case .up:     return p.y >= b.maxY - band   // non-flipped: top = high y
+        case .down:   return p.y <= b.minY + band
         case .center: return false
         }
     }
@@ -263,25 +332,42 @@ final class DockManager {
     func beginDrag() { groups.forEach { $0.showDropZone() } }
     func endDrag() { groups.forEach { $0.hideDropZone() } }
 
-    // Collapse an emptied group: remove it, and if its split parent is left with a
-    // single child, hoist that child into the grandparent (keeps the tree tidy).
+    // Collapse an emptied group: remove it, redistribute its freed space to the
+    // sibling panes proportionally (tiling-terminal close: neighbors absorb the
+    // space, no gaps / lopsided leftovers), and if its split parent is left with a
+    // single child, hoist that child into the grandparent (keeps the tree tidy)
+    // while preserving the exact slot the split occupied.
     func cleanupEmpty(_ group: DockGroup?) {
         guard let group, group.panels.isEmpty, let parent = group.superview else { return }
         guard let sv = parent as? NSSplitView else { return }  // never remove the root group
+        // Capture sibling extents BEFORE removal so the freed space can be handed
+        // out proportionally instead of whatever NSSplitView's implicit resize does.
+        let siblingExtents = sv.arrangedSubviews.filter { $0 !== group }.map { extent($0, in: sv) }
         group.removeFromSuperview()
-        guard sv.arrangedSubviews.count == 1, let survivor = sv.arrangedSubviews.first else { return }
+        if sv.arrangedSubviews.count >= 2 {
+            redistribute(sv, oldExtents: siblingExtents)
+            return
+        }
+        guard let survivor = sv.arrangedSubviews.first else { return }
         let grandparent = sv.superview
         let frame = sv.frame
-        survivor.removeFromSuperview()
         if let gsv = grandparent as? NSSplitView {
+            // Record the grandparent's pane extents with sv still in place: the
+            // survivor must take over EXACTLY sv's slot, so the outer siblings
+            // don't shift at all on close.
             let idx = gsv.arrangedSubviews.firstIndex(of: sv) ?? 0
+            let gExtents = gsv.arrangedSubviews.map { extent($0, in: gsv) }
+            survivor.removeFromSuperview()
+            survivor.frame = frame                     // pre-size to sv's slot…
+            survivor.autoresizingMask = [.width, .height]
             sv.removeFromSuperview()
             gsv.insertArrangedSubview(survivor, at: idx)
+            setExtents(gsv, gExtents)                  // …and pin every divider back
         } else if let gp = grandparent {
+            survivor.removeFromSuperview()
             survivor.frame = frame; survivor.autoresizingMask = [.width, .height]
             sv.removeFromSuperview(); gp.addSubview(survivor)
         }
-        DispatchQueue.main.async { (grandparent as? NSSplitView)?.adjustSubviews() }
     }
 }
 
@@ -448,11 +534,13 @@ final class DockDropZone: NSView {
     }
     override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
         guard let panel = DockManager.draggingPanel, let g = group else { return false }
-        let r = regionFor(convert(s.draggingLocation, from: nil))
+        let pt = convert(s.draggingLocation, from: nil)
+        let r = regionFor(pt)
         hide()
-        // An edge drop on a group that borders the container's outer edge splits the
-        // ROOT (full-height column / full-width row) — otherwise a normal group split.
-        if r != .center, let mgr = g.manager, mgr.groupBordersContainerEdge(g, r) {
+        // Root split (full-height column / full-width row) ONLY when the pointer is
+        // in the container's thin outer gutter; every other edge drop splits/nests
+        // WITHIN the target group's local container.
+        if r != .center, let mgr = g.manager, mgr.isRootEdgeDrop(from: self, point: pt, direction: r) {
             mgr.moveToRoot(panel, direction: r)
         } else {
             g.manager?.move(panel, toGroup: g, region: r)

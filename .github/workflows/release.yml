@@ -17,6 +17,8 @@ jobs:
     runs-on: macos-15 # arm64; universal ghostty means the app runs on Intel too
     env:
       GH_TOKEN: ${{ github.token }}
+      # Gate the Sparkle appcast steps on the signing key being configured.
+      HAS_SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -125,3 +127,42 @@ jobs:
             riven-*.dmg
           fail_on_unmatched_files: true
           generate_release_notes: true
+
+      # ---- Sparkle auto-update: sign the dmg + refresh the appcast feed ----
+      - name: Sign update + generate appcast
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          DMG="riven-$VERSION.dmg"
+          SIGN=$(find .build -name sign_update -path '*bin*' | head -1)
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_ed
+          SIG=$("$SIGN" "$DMG" --ed-key-file /tmp/sparkle_ed)   # → sparkle:edSignature="…" length="…"
+          rm -f /tmp/sparkle_ed
+          URL="https://github.com/${{ github.repository }}/releases/download/v$VERSION/$DMG"
+          cat > appcast.xml <<XML
+          <?xml version="1.0" encoding="utf-8"?>
+          <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+            <channel>
+              <title>riven</title>
+              <item>
+                <title>$VERSION</title>
+                <sparkle:version>$VERSION</sparkle:version>
+                <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+                <enclosure url="$URL" $SIG type="application/octet-stream" />
+              </item>
+            </channel>
+          </rss>
+          XML
+          cat appcast.xml
+
+      - name: Publish appcast feed
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: appcast
+          name: Sparkle appcast
+          prerelease: true
+          files: appcast.xml

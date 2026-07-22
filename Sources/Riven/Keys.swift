@@ -71,7 +71,11 @@ enum Keys {
         get { (Settings.shared.object("keybindings") as? [String: String]) ?? [:] }
     }
     static func effective(_ id: String) -> String {
-        overrides[id] ?? actions.first { $0.id == id }?.def ?? ""
+        // Look up the built-in default across BOTH the app (menu) actions AND the editor
+        // (Monaco) actions. Missing `editorActions` here made every editor chord fall back
+        // to "" whenever the user had no override — invisible in dev (the dev machine's
+        // settings.json had accumulated overrides) but blank on a fresh/packaged install.
+        overrides[id] ?? (actions.first { $0.id == id } ?? editorActions.first { $0.id == id })?.def ?? ""
     }
     static func setOverride(_ id: String, _ chord: String) {
         var o = overrides; o[id] = chord; Settings.shared.set("keybindings", o)
