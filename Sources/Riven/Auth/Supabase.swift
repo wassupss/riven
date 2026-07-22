@@ -11,12 +11,16 @@ import CryptoKit
 
 // ---- config (public client values, injected into Info.plist at build time) ----
 enum SupabaseConfig {
+    // Trim whitespace AND newlines: values baked into Info.plist / injected via env
+    // frequently carry a stray trailing newline (heredocs, `$(cat file)`, etc.). A
+    // newline surviving into the URL string makes URLComponents(string:) return nil,
+    // which used to crash the OAuth flow on a force-unwrap.
     static let url = (Bundle.main.infoDictionary?["SupabaseURL"] as? String)?
-        .trimmingCharacters(in: .whitespaces) ?? ""
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     static let anonKey = (Bundle.main.infoDictionary?["SupabaseAnonKey"] as? String)?
-        .trimmingCharacters(in: .whitespaces) ?? ""
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     static let redirect = ((Bundle.main.infoDictionary?["SupabaseRedirect"] as? String)?
-        .trimmingCharacters(in: .whitespaces)).flatMap { $0.isEmpty ? nil : $0 }
+        .trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
         ?? "https://localhost/riven/auth/callback"
     static var isConfigured: Bool { !url.isEmpty && !anonKey.isEmpty }
 }
@@ -96,7 +100,11 @@ final class SupabaseAuth {
         guard SupabaseConfig.isConfigured else { completion(.failure(err("Supabase 미구성"))); return }
         let verifier = Self.pkceVerifier()
         let challenge = Self.pkceChallenge(verifier)
-        var comp = URLComponents(string: "\(SupabaseConfig.url)/auth/v1/authorize")!
+        // No force-unwrap: a malformed base URL (e.g. stray whitespace/newline in the
+        // injected config) must surface as a graceful error, never crash the app.
+        guard var comp = URLComponents(string: "\(SupabaseConfig.url)/auth/v1/authorize") else {
+            completion(.failure(err("Supabase URL이 올바르지 않습니다"))); return
+        }
         comp.queryItems = [
             .init(name: "provider", value: "github"),
             .init(name: "redirect_to", value: SupabaseConfig.redirect),
@@ -118,6 +126,12 @@ final class SupabaseAuth {
     }
 
     private func presentOAuthWindow(url: URL, delegate: OAuthNavDelegate) {
+        // WKWebView / NSWindow may only be created on the main thread — hop there if
+        // the caller isn't already on it (otherwise AppKit traps and crashes).
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.presentOAuthWindow(url: url, delegate: delegate) }
+            return
+        }
         let cfg = WKWebViewConfiguration()
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 480, height: 680), configuration: cfg)
         web.navigationDelegate = delegate
