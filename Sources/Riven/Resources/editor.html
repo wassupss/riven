@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg: #101113; --accent: #ff7847; --accent-2: #a18fff; }  /* set live by native from the theme */
+  html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: var(--bg); }
+  /* Editor GROUPS (VS Code-style split): a flex row of groups, each a column with its
+     own HTML tab strip + a Monaco container. */
+  #egroups { display: flex; height: 100%; width: 100%; }
+  /* nested split containers (row = side-by-side, col = stacked top/bottom) */
+  .esplit { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; }
+  .esplit.row { flex-direction: row; }
+  .esplit.col { flex-direction: column; }
+  .esplit > * { flex: 1 1 0; min-width: 0; min-height: 0; }
+  /* the only seam between panes — a hair of the synced theme tone, no bright line */
+  .esplit.row > * + * { border-left: 1px solid var(--seam, rgba(127,127,127,0.22)); }
+  .esplit.col > * + * { border-top: 1px solid var(--seam, rgba(127,127,127,0.22)); }
+  .egroup { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+  .etabs { height: 30px; min-height: 30px; display: flex; align-items: stretch; overflow-x: auto; overflow-y: hidden;
+    background: var(--bg); }
+  .etabs::-webkit-scrollbar { height: 0; }
+  .etab { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 12px; max-width: 200px; cursor: pointer;
+    font: 12px -apple-system; color: rgba(227,229,234,0.55); white-space: nowrap; border-right: 1px solid rgba(255,255,255,0.05); }
+  .etab { background: rgba(0,0,0,0.22); }                 /* inactive tab: a touch darker than the editor */
+  .etab.active { color: #e3e5ea; background: var(--bg); box-shadow: inset 0 -2px 0 var(--accent); }
+  .egroup.focused .etab.active { box-shadow: inset 0 -2px 0 var(--accent); }
+  .etab[draggable] { -webkit-user-drag: element; }
+  /* per-group drop overlay (only live while a tab is being dragged) + drop indicator */
+  .edrop { position: absolute; left: 0; right: 0; top: 30px; bottom: 0; z-index: 20; display: none; }
+  #dropind { position: fixed; z-index: 50; pointer-events: none; display: none; box-sizing: border-box;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    border: 1.5px solid color-mix(in srgb, var(--accent) 75%, transparent); }
+  .etab .name { overflow: hidden; text-overflow: ellipsis; }
+  .etab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); display: none; }
+  .etab.dirty .dot { display: block; }
+  .etab .x { width: 15px; height: 15px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center;
+    color: rgba(227,229,234,0.55); font-size: 13px; }
+  .etab .x:hover { background: rgba(255,255,255,0.12); color: #ff6b63; }
+  .etab.dirty .x { display: none; }
+  .etab.dirty:hover .x { display: inline-flex; }
+  .etab.dirty:hover .dot { display: none; }
+  .emonaco { flex: 1 1 0; min-height: 0; position: relative; }
+  /* Unify Monaco with the NATIVE chrome: force the editor background + gutter to the
+     app canvas token (--bg, set by native from the theme) so the editor area, the tab
+     strips, and the native dock chrome are all ONE color — no seam/band between them.
+     Syntax token colors still come from Shiki. Mirrors riven's styles.css. */
+  .monaco-editor,
+  .monaco-editor .monaco-editor-background,
+  .monaco-editor .margin,
+  .monaco-editor-background { background-color: var(--bg) !important; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #6a6a6a; font: 13px -apple-system; pointer-events: none; }
+  /* Peek / references widget: the file-match LIST uses a fixed workbench font, not the
+     editor fontSize, so it ignored our font-size setting. Bind it to --riven-font-size.
+     (The embedded preview editor honors fontSize itself — don't force CSS on it.) */
+  .monaco-editor .reference-zone-widget .ref-tree,
+  .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row,
+  .monaco-editor .reference-zone-widget .ref-tree .reference-file,
+  .monaco-editor .reference-zone-widget .ref-tree .reference,
+  .monaco-editor .reference-zone-widget .ref-tree .referenceMatch { font-size: var(--riven-font-size, 12px) !important; }
+  .monaco-editor .peekview-widget .head .peekview-title .filename,
+  .monaco-editor .peekview-widget .head .peekview-title .dirname,
+  .monaco-editor .peekview-widget .head .peekview-title .meta { font-size: var(--riven-font-size, 12px) !important; }
+  /* Unify Monaco's canvas + gutter with the app background (riven does this);
+     syntax token colors still come from Shiki. */
+  .monaco-editor, .monaco-editor .monaco-editor-background,
+  .monaco-editor .margin, .monaco-editor .margin-view-overlays,
+  .monaco-editor-background { background-color: var(--bg) !important; }
+  /* NOTE: don't override .minimap background — it hides the minimap's code overview. */
+  /* agent diff review (matches riven) */
+  .agent-add-line { background: rgba(76, 195, 138, 0.13); }
+  .agent-add-gutter { background: #4cc38a; width: 3px !important; margin-left: 3px; }
+  .agent-revert-glyph { cursor: pointer; }
+  .agent-revert-glyph::before { content: '↺'; color: #e2b053; font-size: 12px; display: block; text-align: center; }
+  .agent-del-zone { background: rgba(229, 83, 75, 0.14); font-family: Menlo, monospace; font-size: 13px; }
+  .agent-del-row { color: #e5836b; white-space: pre; padding-left: 26px; line-height: 19px; }
+  #hunknav { position: absolute; top: 8px; right: 18px; z-index: 20; display: none; align-items: center; gap: 10px;
+    background: rgba(255,120,71,0.14); border: 1px solid rgba(255,120,71,0.5); border-radius: 8px; padding: 6px 14px;
+    font: 12px -apple-system; color: #ffd9c8; box-shadow: 0 6px 16px rgba(0,0,0,0.45); backdrop-filter: blur(8px); }
+  #hunklabel { font-weight: 600; letter-spacing: 0.01em; }
+  #hunknav button { background: none; border: none; color: #ffd9c8; cursor: pointer; font-size: 15px; padding: 0 4px; line-height: 1; }
+  #hunknav button:hover { color: #fff; }
+  /* GitLens-style inline blame (dimmed, on the cursor line) */
+  .git-blame-inline { color: #6a6a72; font-style: italic; opacity: 0.7; }
+  /* riven scrollbars: 10px, floating thumb via 3px transparent padding-box border */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 999px;
+    border: 3px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); background-clip: padding-box; }
+  ::-webkit-scrollbar-corner { background: transparent; }
+</style>
+</head>
+<body>
+<div id="egroups"></div>
+<div id="dropind"></div>
+<div id="empty">파일을 선택하세요</div>
+<div id="hunknav">
+  <span id="hunklabel">변경 1/1</span>
+  <button onclick="gotoHunk(-1)" title="이전 변경">‹</button>
+  <button onclick="gotoHunk(1)" title="다음 변경">›</button>
+  <button onclick="acceptCurrentHunk()" title="수락" style="color:#4cc38a">✓</button>
+  <button onclick="revertCurrentHunk()" title="되돌리기" style="color:#e2b053">↺</button>
+</div>
+<script src="monaco/vs/loader.js"></script>
+<script src="shiki.js"></script>
+<script>
+// Monaco is bundled locally (monaco/vs). Syntax colors come from Shiki (the same
+// TextMate grammars + themes VS Code uses), bundled locally in shiki.js (wasm
+// inlined — no CDN). window.rivenInitShiki(monaco) takes over Monaco's registry.
+let editor = null;
+let shikiReady = false;
+const models = {};        // path -> monaco model
+const savedVersion = {};  // path -> alternativeVersionId at last save
+let currentPath = null;
+let currentTheme = 'dark-plus';          // VSCode Dark+ (set live by native)
+let pendingGhost = null;                 // { line, text } for AI ghost completion
+const agentDecos = {};                   // path -> decoration ids
+const blameData = {};                    // path -> { line: "author, time · summary" }
+let blameDeco = null;
+const post = (msg) => window.webkit.messageHandlers.riven.postMessage(msg);
+
+function updateBlame() {
+  if (blameDeco) blameDeco.clear();
+  const b = blameData[currentPath]; const pos = editor && editor.getPosition();
+  if (!b || !pos || !b[pos.lineNumber]) return;
+  const model = editor.getModel(); if (!model) return;
+  const col = model.getLineMaxColumn(pos.lineNumber);
+  blameDeco = editor.createDecorationsCollection([{
+    range: new monaco.Range(pos.lineNumber, col, pos.lineNumber, col),
+    options: { after: { content: '      ' + b[pos.lineNumber], inlineClassName: 'git-blame-inline', cursorStops: monaco.editor.InjectedTextCursorStops.None }, showIfCollapsed: true }
+  }]);
+}
+
+// ===== Editor GROUPS (VS Code-style split) =====
+// A flex row of groups (#egroups); each group owns an HTML tab strip (.etabs) + a
+// Monaco editor (.emonaco). The globals `editor`/`currentPath` ALWAYS point at the
+// active group, so every existing helper (LSP / agent-diff / hunknav / blame)
+// operates on it unchanged. Native keeps a flat tab list for persistence; the
+// WebView owns which group shows which file and renders the tabs.
+const groups = [];
+let activeIdx = 0;
+function activeGroup() { return groups[activeIdx] || groups[0]; }
+function reindex() { groups.forEach((g, i) => g.idx = i); }
+
+// ---- layout tree: leaf = a group; split = a row/col of child nodes ----
+let layoutRoot = null;
+function renderLayout() {
+  const host = document.getElementById('egroups');
+  while (host.firstChild) host.removeChild(host.firstChild);   // detaches .egroup els (kept alive)
+  if (layoutRoot) host.appendChild(renderNode(layoutRoot));
+  groups.forEach(g => { try { g.ed.layout(); } catch (e) {} });  // remeasure after reparent
+}
+function renderNode(node) {
+  if (node.type === 'leaf') return node.g.el;
+  const box = document.createElement('div'); box.className = 'esplit ' + node.dir;
+  for (const c of node.children) box.appendChild(renderNode(c));
+  return box;
+}
+function findParent(node, target) {
+  if (!node || node.type === 'leaf') return null;
+  for (const c of node.children) { if (c === target) return node; const p = findParent(c, target); if (p) return p; }
+  return null;
+}
+// Insert a new group's leaf beside destLeaf, in the given orientation/side.
+function splitLayout(destLeaf, dir, before) {
+  const newG = createGroup();
+  const parent = findParent(layoutRoot, destLeaf);
+  if (parent && parent.dir === dir) {
+    const i = parent.children.indexOf(destLeaf);
+    parent.children.splice(before ? i : i + 1, 0, newG.node);
+  } else {
+    const split = { type: 'split', dir, children: before ? [newG.node, destLeaf] : [destLeaf, newG.node] };
+    if (!parent) layoutRoot = split;
+    else parent.children[parent.children.indexOf(destLeaf)] = split;
+  }
+  return newG;
+}
+
+// ---- tab drag-to-split state ----
+let dragPath = null, dragSrc = null;
+function zoneOf(el, e) {
+  const r = el.getBoundingClientRect();
+  const rx = (e.clientX - r.left) / r.width, ry = (e.clientY - r.top) / r.height;
+  if (ry > 0.68) return 'bottom';
+  if (ry < 0.32) return 'top';
+  if (rx > 0.60) return 'right';
+  if (rx < 0.40) return 'left';
+  return 'center';
+}
+function showDropIndicator(el, zone) {
+  const ind = document.getElementById('dropind');
+  const r = el.getBoundingClientRect();
+  let top = r.top, left = r.left, w = r.width, h = r.height;
+  if (zone === 'right')       { left = r.left + r.width / 2; w = r.width / 2; }
+  else if (zone === 'left')   { w = r.width / 2; }
+  else if (zone === 'bottom') { top = r.top + r.height / 2; h = r.height / 2; }
+  else if (zone === 'top')    { h = r.height / 2; }
+  ind.style.display = 'block';
+  ind.style.top = top + 'px'; ind.style.left = left + 'px';
+  ind.style.width = w + 'px'; ind.style.height = h + 'px';
+}
+function hideDropIndicator() { document.getElementById('dropind').style.display = 'none'; }
+function setDropOverlays(on) { groups.forEach(g => g.dropEl.style.display = on ? 'block' : 'none'); }
+function detachFromGroup(g, path) {
+  const at = g.tabs.indexOf(path); if (at < 0) return;
+  g.tabs.splice(at, 1);
+  if (g.active === path) {
+    const n = g.tabs[at] || g.tabs[at - 1] || null;
+    g.active = n; g.ed.setModel(n ? models[n] : null);
+  }
+  renderTabs(g);
+}
+// A tab was dropped on a group. center → move into it; an edge → split that
+// direction (top/bottom = stacked, left/right = side-by-side). Native's flat tab
+// list is unchanged (the file stays open once) — only group assignment moves.
+function handleTabDrop(path, src, dest, zone) {
+  const content = models[path] ? models[path].getValue() : '';
+  const soloSelf = (src === dest && dest.tabs.length <= 1);   // splitting a 1-tab group off itself is a no-op
+  if (zone === 'center' || soloSelf) {
+    if (src === dest) { setActiveGroup(dest.idx); if (dest.active !== path) showInGroup(dest, path); dest.ed.focus(); return; }
+    detachFromGroup(src, path);
+    openInGroup(dest, path, content);
+    if (!src.tabs.length && groups.length > 1) removeGroup(src);
+    setActiveGroup(groups.indexOf(dest)); dest.ed.focus();
+    post({ type: 'activeTab', path });
+    return;
+  }
+  if (groups.length >= 4) { setActiveGroup(dest.idx); return; }
+  const dir = (zone === 'bottom' || zone === 'top') ? 'col' : 'row';
+  const before = (zone === 'top' || zone === 'left');
+  const newG = splitLayout(dest.node, dir, before);
+  detachFromGroup(src, path);
+  openInGroup(newG, path, content);
+  if (!src.tabs.length && groups.length > 1) removeGroup(src);
+  renderLayout();
+  setActiveGroup(groups.indexOf(newG)); newG.ed.focus();
+  post({ type: 'activeTab', path });
+}
+
+function createGroup() {
+  const el = document.createElement('div'); el.className = 'egroup';
+  const tabsEl = document.createElement('div'); tabsEl.className = 'etabs';
+  const monEl = document.createElement('div'); monEl.className = 'emonaco';
+  const dropEl = document.createElement('div'); dropEl.className = 'edrop';
+  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(dropEl);
+  const ed = monaco.editor.create(monEl, {
+    value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
+    minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
+    glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
+    inlineSuggest: { enabled: true }, model: null
+  });
+  const g = { idx: groups.length, el, tabsEl, monEl, dropEl, ed, tabs: [], active: null, node: null };
+  g.node = { type: 'leaf', g };
+  groups.push(g);
+  wireEd(g);
+  el.addEventListener('mousedown', () => setActiveGroup(g.idx), true);
+  // Drop overlay (above Monaco, only live during a tab drag so Monaco never eats the drop).
+  dropEl.addEventListener('dragover', (e) => {
+    if (!dragPath) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+    g._dropZone = zoneOf(el, e);
+    showDropIndicator(el, g._dropZone);
+  });
+  dropEl.addEventListener('drop', (e) => {
+    if (!dragPath) return;
+    e.preventDefault();
+    const zone = g._dropZone || 'center', sp = dragPath, ss = dragSrc;
+    dragPath = null; dragSrc = null; setDropOverlays(false); hideDropIndicator();
+    handleTabDrop(sp, ss, g, zone);
+  });
+  return g;
+}
+
+function setActiveGroup(i) {
+  if (i < 0 || i >= groups.length) { i = 0; }
+  activeIdx = i;
+  const g = groups[i]; if (!g) return;
+  editor = g.ed;                       // live pointer used by all helpers below
+  currentPath = g.active;
+  groups.forEach(x => x.el.classList.toggle('focused', x === g));
+  updateHunkNav(currentPath);
+  updateBlame();
+}
+
+// Per-editor wiring (was inline for the single editor; now runs for each group).
+function wireEd(g) {
+  const ed = g.ed;
+  // Cross-file go-to-definition: ask native to open a different file.
+  try {
+    const svc = ed._codeEditorService;
+    const base = svc.openCodeEditor.bind(svc);
+    svc.openCodeEditor = async (input, sourceEditor, sideBySide) => {
+      const res = await base(input, sourceEditor, sideBySide);
+      if (!res) {
+        const sel = input.options && input.options.selection;
+        post({ type: 'openDef', path: input.resource.path,
+               line: sel ? sel.startLineNumber : 1, column: sel ? sel.startColumn : 1 });
+      }
+      return res;
+    };
+  } catch (e) {}
+  ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+    if (!g.active) return;
+    post({ type: 'save', path: g.active, content: models[g.active].getValue() });
+  });
+  ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backslash, () => splitEditor('row'));
+  ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Backslash, () => splitEditor('col'));
+  ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) updateBlame(); });
+  ed.onDidFocusEditorText(() => { setActiveGroup(g.idx); post({ type: 'focus' }); });
+  ed.onDidFocusEditorWidget(() => { setActiveGroup(g.idx); post({ type: 'focus' }); });
+  ed.onMouseDown(e => {
+    if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
+    const st = agentState[g.active]; if (!st) return;
+    const h = st.lineToHunk[e.target.position.lineNumber]; if (h) revertHunk(g.active, h);
+  });
+  ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyL, () => {
+    const sel = ed.getSelection(); const model = ed.getModel();
+    if (!model || !sel) return;
+    const text = model.getValueInRange(sel); if (!text.trim()) return;
+    const name = (g.active || '').split('/').pop() || 'file';
+    post({ type: 'sendToAgent', file: name, startLine: sel.startLineNumber, endLine: sel.endLineNumber, text });
+  });
+}
+
+function tabEl(g, path) {
+  const name = path.split('/').pop() || path;
+  const t = document.createElement('div');
+  t.className = 'etab' + (path === g.active ? ' active' : '') + (isDirty(path) ? ' dirty' : '');
+  t.title = path;
+  t.setAttribute('draggable', 'true');
+  const n = document.createElement('span'); n.className = 'name'; n.textContent = name; t.appendChild(n);
+  const dot = document.createElement('span'); dot.className = 'dot'; t.appendChild(dot);
+  const x = document.createElement('span'); x.className = 'x'; x.textContent = '✕'; t.appendChild(x);
+  t.addEventListener('mousedown', (e) => {
+    if (e.target === x) return;
+    setActiveGroup(g.idx);
+    if (path !== g.active) showInGroup(g, path);
+    post({ type: 'activeTab', path });
+    g.ed.focus();
+  });
+  // Drag the tab (header) onto an editor area to split / move — VS Code style.
+  t.addEventListener('dragstart', (e) => {
+    dragPath = path; dragSrc = g;
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/riven-tab', path); } catch (_) {}
+    setDropOverlays(true);
+  });
+  t.addEventListener('dragend', () => { dragPath = null; dragSrc = null; setDropOverlays(false); hideDropIndicator(); });
+  x.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); closeInGroup(g, path); });
+  return t;
+}
+function renderTabs(g) {
+  g.tabsEl.innerHTML = '';
+  for (const p of g.tabs) g.tabsEl.appendChild(tabEl(g, p));
+}
+function refreshDirty(path) { for (const g of groups) if (g.tabs.includes(path)) renderTabs(g); }
+
+const docVersion = {};   // path -> last LSP document version sent
+function bumpVersion(path) { docVersion[path] = (docVersion[path] || 1) + 1; return docVersion[path]; }
+// Push the model's CURRENT text to the server immediately (before an on-demand
+// request like definition/references) so the server never answers on a stale
+// buffer — this is why references/imports were being missed.
+function flushChange(path) {
+  const m = models[path]; if (!m) return;
+  post({ type: 'lspSync', path, version: bumpVersion(path), text: m.getValue() });
+}
+function ensureModel(path, content) {
+  if (models[path]) return;
+  // Bind the model to a real file:// URI (like VS Code / riven) so the LSP's
+  // file:// locations match our models — required for cross-file definition +
+  // references peek previews.
+  const uri = monaco.Uri.file(path);
+  let model = monaco.editor.getModel(uri);
+  if (!model) model = monaco.editor.createModel(content || '', extLang(path), uri);
+  savedVersion[path] = model.getAlternativeVersionId();
+  let syncTimer = null;
+  model.onDidChangeContent(() => {
+    post({ type: 'dirty', path, dirty: isDirty(path) });
+    refreshDirty(path);
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => post({ type: 'lspSync', path, version: bumpVersion(path), text: model.getValue() }), 300);
+  });
+  models[path] = model;
+}
+// Switch a group to show an already-open path.
+function showInGroup(g, path) {
+  g.active = path;
+  g.ed.setModel(models[path] || null);
+  renderTabs(g);
+  if (g.idx === activeIdx) { currentPath = path; updateHunkNav(path); updateBlame(); }
+}
+// Open a file into a group (create model, add tab, show).
+function openInGroup(g, path, content) {
+  document.getElementById('empty').style.display = 'none';
+  if (models[path]) {
+    // Existing model. Native sends a real buffer only to REPLACE the content
+    // (format-on-save reload / external change); an empty string means "just switch
+    // to the already-open file", so leave the buffer untouched in that case.
+    const m = models[path];
+    if (content && m.getValue() !== content) {
+      m.setValue(content);
+      savedVersion[path] = m.getAlternativeVersionId();  // reloaded == on-disk == clean
+      post({ type: 'dirty', path, dirty: false });
+      refreshDirty(path);
+    }
+  } else {
+    ensureModel(path, content);
+  }
+  if (!g.tabs.includes(path)) g.tabs.push(path);
+  showInGroup(g, path);
+}
+// Close a path from ONE group. If it's still shown in another group, just detach
+// here (model stays). If this is the last instance, let native drive the close
+// (dirty confirm) — native calls rivenClose to actually remove + dispose.
+function closeInGroup(g, path) {
+  const elsewhere = groups.some(x => x !== g && x.tabs.includes(path));
+  if (!elsewhere) { post({ type: 'closeTab', path }); return; }
+  const at = g.tabs.indexOf(path); if (at < 0) return;
+  g.tabs.splice(at, 1);
+  if (g.active === path) {
+    const next = g.tabs[at] || g.tabs[at - 1] || null;
+    g.active = next; g.ed.setModel(next ? models[next] : null);
+  }
+  renderTabs(g);
+  if (!g.tabs.length && groups.length > 1) removeGroup(g);
+  else if (g.idx === activeIdx) { currentPath = g.active; updateHunkNav(currentPath); }
+}
+function removeGroup(g) {
+  const leaf = g.node, parent = findParent(layoutRoot, leaf);
+  if (parent) {
+    parent.children.splice(parent.children.indexOf(leaf), 1);
+    if (parent.children.length === 1) {   // collapse a split that now has one child
+      const only = parent.children[0], gp = findParent(layoutRoot, parent);
+      if (!gp) layoutRoot = only;
+      else gp.children[gp.children.indexOf(parent)] = only;
+    }
+  }
+  g.ed.dispose();
+  const at = groups.indexOf(g); if (at >= 0) groups.splice(at, 1); reindex();
+  renderLayout();
+  setActiveGroup(Math.min(activeIdx, groups.length - 1));
+}
+// Split — open the current file in a NEW group beside the active one (shared model,
+// so it shows in both). dir: 'row' (right, ⌘\) or 'col' (down, ⌥⌘\).
+function splitEditor(dir) {
+  if (groups.length >= 4) return;             // cap at 4 panes
+  dir = dir || 'row';
+  const src = activeGroup(); const path = src.active;
+  const newG = splitLayout(src.node, dir, false);
+  renderLayout();
+  if (path) openInGroup(newG, path, models[path] ? models[path].getValue() : '');
+  else document.getElementById('empty').style.display = 'none';
+  setActiveGroup(groups.indexOf(newG)); newG.ed.focus();
+}
+window.rivenSplitEditor = function (dir) { splitEditor(dir === 'down' || dir === 'col' ? 'col' : 'row'); };
+
+function extLang(path) {
+  const e = (path.split('.').pop() || '').toLowerCase();
+  const base = (path.split('/').pop() || '').toLowerCase();
+  if (base === 'dockerfile' || base.startsWith('dockerfile.')) return 'dockerfile';
+  if (base.startsWith('.env')) return 'ini';
+  const m = { ts:'typescript', tsx:'tsx', js:'javascript', mjs:'javascript', cjs:'javascript',
+    jsx:'jsx', json:'json', css:'css', scss:'scss', less:'less', html:'html', md:'markdown',
+    py:'python', rs:'rust', go:'go', swift:'swift', java:'java', c:'cpp', cpp:'cpp', h:'cpp',
+    cs:'csharp', rb:'ruby', php:'php', kt:'kotlin', yml:'yaml', yaml:'yaml', toml:'ini',
+    ini:'ini', xml:'xml', sh:'shell', bash:'shell', zsh:'shell', sql:'sql' };
+  return m[e] || 'plaintext';
+}
+function isDirty(path) {
+  const m = models[path]; if (!m) return false;
+  return m.getAlternativeVersionId() !== (savedVersion[path] ?? -1);
+}
+
+// Silence Monaco's OWN built-in TS/JS validator — for a standalone file (no
+// tsconfig) it spams false "cannot find name/module" errors. Real diagnostics
+// come from our language server (onDiagnostics → rivenDiagnostics markers).
+function disableMonacoTSValidation() {
+  try {
+    const diagOff = { noSemanticValidation: true, noSyntaxValidation: false, noSuggestionDiagnostics: true };
+    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(diagOff);
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(diagOff);
+  } catch (e) {}
+}
+
+require.config({ paths: { vs: 'monaco/vs' }});
+require(['vs/editor/editor.main'], async function () {
+  disableMonacoTSValidation();
+
+  // Shiki (real VS Code TextMate grammars + themes, bundled in shiki.js) replaces
+  // Monaco's token registry; once ready, apply the requested theme name.
+  if (window.rivenInitShiki) {
+    window.rivenInitShiki(monaco).then(() => {
+      shikiReady = true;
+      try { monaco.editor.setTheme(currentTheme); } catch (e) {}
+    }).catch(function (e) { console.error('shiki init failed', e); });
+  }
+  // Create the first editor group (more are added on split).
+  createGroup();
+  layoutRoot = groups[0].node;
+  renderLayout();
+  setActiveGroup(0);
+
+  // ---- LSP bridge (completion / hover / definition / diagnostics) ----
+  const lspPending = {}; let lspId = 1;
+  window.rivenLSPResponse = function (id, result) {
+    if (lspPending[id]) { lspPending[id](result); delete lspPending[id]; }
+  };
+  function lsp(method, params, path) {
+    return new Promise((resolve) => {
+      const id = lspId++; lspPending[id] = resolve;
+      post({ type: 'lsp', id, method, params, path: path || currentPath });
+      setTimeout(() => { if (lspPending[id]) { resolve(null); delete lspPending[id]; } }, 4000);
+    });
+  }
+  const mpath = (model) => (model && model.uri && model.uri.scheme === 'file') ? model.uri.path : currentPath;
+  const LSP_LANGS = ['typescript','tsx','javascript','jsx'];
+  monaco.languages.registerCompletionItemProvider(LSP_LANGS, {
+    triggerCharacters: ['.', '"', "'", '/', '@', '<'],
+    provideCompletionItems: async (model, position) => {
+      const path = mpath(model); flushChange(path);
+      const r = await lsp('completion', { line: position.lineNumber - 1, char: position.column - 1 }, path);
+      const items = (r && (r.items || r)) || [];
+      const word = model.getWordUntilPosition(position);
+      const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      return { suggestions: items.slice(0, 200).map(it => ({
+        label: it.label,
+        kind: (it.kind || 1),
+        insertText: it.insertText || it.label,
+        detail: it.detail, documentation: it.documentation && (it.documentation.value || it.documentation),
+        range
+      })) };
+    }
+  });
+  monaco.languages.registerHoverProvider(LSP_LANGS, {
+    provideHover: async (model, position) => {
+      const path = mpath(model);
+      const r = await lsp('hover', { line: position.lineNumber - 1, char: position.column - 1 }, path);
+      if (!r || !r.contents) return null;
+      const c = r.contents;
+      const val = Array.isArray(c) ? c.map(x => x.value || x).join('\n') : (c.value || c);
+      return { contents: [{ value: val }] };
+    }
+  });
+  const toLocs = (r) => {
+    const locs = Array.isArray(r) ? r : (r ? [r] : []);
+    return locs.map(l => {
+      const uri = l.uri || l.targetUri; const rg = l.range || l.targetRange;
+      if (!uri || !rg) return null;
+      return { uri: monaco.Uri.parse(uri),
+        range: new monaco.Range(rg.start.line+1, rg.start.character+1, rg.end.line+1, rg.end.character+1) };
+    }).filter(Boolean);
+  };
+  monaco.languages.registerDefinitionProvider(LSP_LANGS, {
+    provideDefinition: async (model, position) => {
+      const path = mpath(model); flushChange(path);
+      return toLocs(await lsp('definition', { line: position.lineNumber - 1, char: position.column - 1 }, path));
+    }
+  });
+  // Find All References (Shift+F12 / peek). Without this provider Monaco always
+  // says "No references" — the LSP is never asked. flushChange first so imports +
+  // fresh usages are included.
+  monaco.languages.registerReferenceProvider(LSP_LANGS, {
+    provideReferences: async (model, position, context) => {
+      const path = mpath(model); flushChange(path);
+      return toLocs(await lsp('references', { line: position.lineNumber - 1, char: position.column - 1 }, path));
+    }
+  });
+  window.rivenDiagnostics = function (path, diags) {
+    const m = models[path]; if (!m) return;
+    const markers = (diags || []).map(d => ({
+      severity: [0, monaco.MarkerSeverity.Error, monaco.MarkerSeverity.Warning,
+                 monaco.MarkerSeverity.Info, monaco.MarkerSeverity.Hint][d.severity] || monaco.MarkerSeverity.Info,
+      startLineNumber: d.range.start.line+1, startColumn: d.range.start.character+1,
+      endLineNumber: d.range.end.line+1, endColumn: d.range.end.character+1,
+      message: d.message, source: d.source
+    }));
+    monaco.editor.setModelMarkers(m, 'lsp', markers);
+  };
+
+  // ---- User snippets (riven's snippets.ts) — prefix expands to body with ${1} stops ----
+  window.rivenSnippets = window.rivenSnippets || [];
+  monaco.languages.registerCompletionItemProvider({ pattern: '**' }, {
+    provideCompletionItems: (model, position) => {
+      const word = model.getWordUntilPosition(position);
+      const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
+      const suggestions = (window.rivenSnippets || []).filter(s => s.prefix).map(s => ({
+        label: s.prefix,
+        kind: monaco.languages.CompletionItemKind.Snippet,
+        insertText: s.body || '',
+        insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        detail: T('editor.snippet','스니펫'),
+        range
+      }));
+      return { suggestions };
+    }
+  });
+  window.rivenSetSnippets = function (list) { window.rivenSnippets = Array.isArray(list) ? list : []; };
+
+  // NOTE: editor SPLIT is handled INSIDE this WebView (see the Editor GROUPS section) —
+  // ⌘\ adds a Monaco editor group with its own HTML tab strip. The native side keeps a
+  // flat tab list for persistence and drives full closes (dirty confirm).
+
+  // ---- i18n: native injects a ko/en dict; T(key, fallback) resolves it ----
+  window.rivenI18n = window.rivenI18n || {};
+  window.T = function (k, fallback) { return (window.rivenI18n && window.rivenI18n[k]) || fallback; };
+  window.rivenSetI18n = function (dict) {
+    window.rivenI18n = dict || {};
+    const set = (id, k, fb) => { const el = document.getElementById(id); if (el) el.textContent = T(k, fb); };
+    set('empty', 'editor.emptyTitle', '파일을 선택하세요');
+    const titles = [['gotoHunk(-1)', 'editor.prevChange', '이전 변경'], ['gotoHunk(1)', 'editor.nextChange', '다음 변경'],
+      ['acceptCurrentHunk()', 'editor.accept', '수락'], ['revertCurrentHunk()', 'editor.revert', '되돌리기']];
+    for (const [fn, k, fb] of titles) {
+      const b = document.querySelector(`#hunknav button[onclick="${fn}"]`); if (b) b.title = T(k, fb);
+    }
+    // Re-render the hunk label for the open file.
+    if (currentPath) updateHunkNav(currentPath);
+  };
+
+  // ---- AI inline completion (ghost text) — riven signature feature ----
+  // Native asks for a suggestion; we stash it and Monaco renders it as ghost
+  // text via the inline-completions provider. Tab accepts (Monaco built-in).
+  monaco.languages.registerInlineCompletionsProvider({ pattern: '**' }, {
+    provideInlineCompletions: (model, position) => {
+      if (!pendingGhost || pendingGhost.line !== position.lineNumber) return { items: [] };
+      return { items: [{ insertText: pendingGhost.text,
+        range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] };
+    },
+    freeInlineCompletions: () => {}
+  });
+  post({ type: 'ready' });
+});
+
+// ---- native → web API ----
+// Live theme switch: set Monaco's editor theme + the page/well background so
+// edges match (Monaco paints its own bg, but html/body would flash otherwise).
+window.rivenSetTheme = function (name, bg, accent, accent2) {
+  currentTheme = name;   // a Shiki theme name (dark-plus / night-owl / kanagawa-wave / …)
+  const root = document.documentElement.style;
+  if (accent) root.setProperty('--accent', accent);     // active-tab underline + drop indicator
+  if (accent2) root.setProperty('--accent-2', accent2); // dirty dot
+  if (bg) {
+    // --bg is the NATIVE canvas token (matches the dock chrome). Monaco's editor
+    // background is forced to it via CSS, so editor + tab strips + native chrome are
+    // one color. The pane-seam is derived from --bg's luminance.
+    document.documentElement.style.setProperty('--bg', bg);
+    const m = bg.replace('#', '');
+    if (m.length >= 6) {
+      const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+      const lum = 0.299*r + 0.587*g + 0.114*b;
+      document.documentElement.style.setProperty('--seam', lum < 128 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.14)');
+    }
+  }
+  try { if (shikiReady && window.monaco) monaco.editor.setTheme(name); } catch (e) {}
+};
+window.rivenSetFontSize = function (size) {
+  groups.forEach(g => g.ed.updateOptions({ fontSize: size }));
+  document.documentElement.style.setProperty('--riven-font-size', size + 'px');  // peek/references list
+};
+window.rivenOpen = function (path, content) {
+  // If already open in some group, reveal there; else open in the active group.
+  const owner = groups.find(g => g.tabs.includes(path));
+  const g = owner || activeGroup();
+  if (owner) setActiveGroup(owner.idx);
+  openInGroup(g, path, content);
+  g.ed.focus();
+};
+// Reveal a line/column (1-based) in the given file — used by search results.
+window.rivenReveal = function (path, line, column) {
+  const g = groups.find(x => x.active === path); if (!g) return;
+  const pos = { lineNumber: line, column: Math.max(1, column) };
+  g.ed.setPosition(pos); g.ed.revealLineInCenter(line); g.ed.focus();
+};
+// Native-driven full close (explorer close / ⌘W / close-all): remove from ALL
+// groups and dispose the model.
+window.rivenClose = function (path) {
+  for (const g of groups.slice()) {
+    const at = g.tabs.indexOf(path); if (at < 0) continue;
+    g.tabs.splice(at, 1);
+    if (g.active === path) {
+      const next = g.tabs[at] || g.tabs[at - 1] || null;
+      g.active = next; g.ed.setModel(next ? models[next] : null);
+    }
+    renderTabs(g);
+    if (!g.tabs.length && groups.length > 1) removeGroup(g);
+  }
+  if (models[path]) { models[path].dispose(); delete models[path]; delete savedVersion[path]; }
+  const ag = activeGroup(); currentPath = ag ? ag.active : null;
+  if (ag) updateHunkNav(currentPath);
+  if (!groups.some(x => x.tabs.length)) document.getElementById('empty').style.display = 'flex';
+};
+window.rivenShowEmpty = function () {
+  for (const g of groups.slice(1)) removeGroup(g);
+  const g = groups[0];
+  if (g) { g.tabs = []; g.active = null; g.ed.setModel(null); renderTabs(g); }
+  currentPath = null;
+  document.getElementById('empty').style.display = 'flex';
+};
+
+// ---- Editor keymap presets (VS Code / JetBrains / Sublime) → Monaco ----
+// Monaco ships the VS Code keymap by default; for the other presets we register the
+// differing chords via addKeybindingRules (Monaco can't REMOVE a default rule, so a
+// preset switch fully "settles" after a reload — new chords work immediately though).
+const EDITOR_PRESETS = {
+  vscode: {},   // Monaco default — nothing to add
+  jetbrains: {
+    'editor.action.startFindReplaceAction': 'Mod+r',
+    'editor.action.addSelectionToNextFindMatch': 'Ctrl+g',
+    'editor.action.copyLinesDownAction': 'Mod+d',
+    'editor.action.deleteLines': 'Mod+Backspace',
+    'editor.action.moveLinesUpAction': 'Alt+Shift+up',
+    'editor.action.moveLinesDownAction': 'Alt+Shift+down',
+    'editor.action.formatDocument': 'Mod+Alt+l',
+    'editor.action.quickFix': 'Alt+Enter',
+    'editor.action.quickCommand': 'Mod+Shift+a',
+    'editor.action.gotoLine': 'Mod+Alt+g',
+  },
+  sublime: {
+    'editor.action.selectHighlights': 'Mod+Ctrl+g',
+    'editor.action.copyLinesDownAction': 'Mod+Shift+d',
+    'editor.action.deleteLines': 'Mod+Ctrl+k',
+    'editor.action.moveLinesUpAction': 'Mod+Ctrl+up',
+    'editor.action.moveLinesDownAction': 'Mod+Ctrl+down',
+    'editor.action.blockComment': 'Mod+Alt+/',
+  },
+};
+function monacoKey(k) {
+  if (!k) return null;
+  const K = monaco.KeyCode;
+  const lk = k.toLowerCase();
+  if (lk.length === 1 && lk >= 'a' && lk <= 'z') return K['Key' + lk.toUpperCase()];
+  if (lk.length === 1 && lk >= '0' && lk <= '9') return K['Digit' + lk];
+  const map = { '/': K.Slash, '.': K.Period, ',': K.Comma, ';': K.Semicolon,
+    '[': K.BracketLeft, ']': K.BracketRight, 'up': K.UpArrow, 'down': K.DownArrow,
+    'left': K.LeftArrow, 'right': K.RightArrow, 'enter': K.Enter, 'space': K.Space,
+    'backspace': K.Backspace, 'f1': K.F1, 'f2': K.F2, 'f12': K.F12 };
+  return map[lk] != null ? map[lk] : null;
+}
+function chordToMonaco(chord) {
+  let mod = 0, key = null;
+  for (const p of chord.split('+')) {
+    const lp = p.toLowerCase();
+    if (lp === 'mod' || lp === 'cmd' || lp === 'ctrlcmd') mod |= monaco.KeyMod.CtrlCmd;
+    else if (lp === 'shift') mod |= monaco.KeyMod.Shift;
+    else if (lp === 'alt' || lp === 'opt') mod |= monaco.KeyMod.Alt;
+    else if (lp === 'ctrl') mod |= monaco.KeyMod.WinCtrl;
+    else key = p;
+  }
+  const kc = monacoKey(key);
+  return kc != null ? (mod | kc) : null;
+}
+window.rivenSetEditorKeymap = function (preset) {
+  if (!window.monaco || !monaco.editor.addKeybindingRules) return;
+  const table = EDITOR_PRESETS[preset] || {};
+  const rules = [];
+  for (const cmd in table) {
+    const kb = chordToMonaco(table[cmd]);
+    if (kb != null) rules.push({ keybinding: kb, command: cmd });
+  }
+  if (rules.length) monaco.editor.addKeybindingRules(rules);
+};
+// Per-command user overrides ({commandId: "cmd+shift+k"}) on top of the preset.
+window.rivenSetEditorKeys = function (overrides) {
+  if (!window.monaco || !monaco.editor.addKeybindingRules || !overrides) return;
+  const rules = [];
+  for (const cmd in overrides) {
+    const kb = chordToMonaco(overrides[cmd]);
+    if (kb != null) rules.push({ keybinding: kb, command: cmd });
+  }
+  if (rules.length) monaco.editor.addKeybindingRules(rules);
+};
+window.rivenSaved = function (path) {
+  if (models[path]) { savedVersion[path] = models[path].getAlternativeVersionId();
+    post({ type: 'dirty', path, dirty: false }); refreshDirty(path); }
+};
+window.rivenSetFormatOnSave = function (on) { window.rivenFormatOnSave = !!on; };
+window.rivenRequestSave = function (path) {
+  if (models[path]) post({ type: 'save', path, content: models[path].getValue() });
+};
+// AI ghost completion: gather the code around the cursor and ask native.
+window.rivenTriggerAI = function () {
+  const model = editor.getModel(); if (!model) return;
+  const pos = editor.getPosition();
+  const before = model.getValueInRange(new monaco.Range(1, 1, pos.lineNumber, pos.column));
+  const last = model.getLineCount();
+  const after = model.getValueInRange(new monaco.Range(pos.lineNumber, pos.column, last, model.getLineMaxColumn(last)));
+  post({ type: 'ai', prefix: before.slice(-2000), suffix: after.slice(0, 1000) });
+};
+// Native returns the completion text → render as ghost (Tab accepts).
+window.rivenSuggest = function (text) {
+  if (!text) return;
+  const pos = editor.getPosition();
+  pendingGhost = { line: pos.lineNumber, text };
+  editor.trigger('ai', 'editor.action.inlineSuggest.trigger', {});
+};
+window.rivenClearSuggest = function () { pendingGhost = null; };
+// ---- Agent diff review (riven's MonacoEditorPane) ----
+// Given before/after text, compute hunks and render: green added lines, RED deleted
+// lines as view-zones above each hunk, a glyph-margin ↩ revert per hunk, and a
+// prev/next hunk navigator.
+const agentState = {};   // path -> { hunks, after, decoCol, glyphCol, zoneIds, lineToHunk, cur }
+
+// LCS-based line hunks (riven diffLines.computeHunks).
+function computeHunks(before, after) {
+  const a = before.length ? before.split('\n') : [];
+  const b = after.length ? after.split('\n') : [];
+  const n = a.length, m = b.length;
+  if (n * m > 4000000) {          // too big → single block from prefix/suffix
+    let lo = 0; while (lo < n && lo < m && a[lo] === b[lo]) lo++;
+    let hiA = n - 1, hiB = m - 1;
+    while (hiA >= lo && hiB >= lo && a[hiA] === b[hiB]) { hiA--; hiB--; }
+    if (hiA < lo && hiB < lo) return [];
+    return [{ beforeStart: lo, beforeCount: hiA - lo + 1, afterStart: lo, afterCount: hiB - lo + 1,
+              beforeLines: a.slice(lo, hiA + 1), afterLines: b.slice(lo, hiB + 1) }];
+  }
+  const dp = []; for (let i = 0; i <= n; i++) dp.push(new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const hunks = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    const bs = i, as = j;
+    const bl = [], al = [];
+    while (i < n && j < m && a[i] !== b[j]) {
+      if (dp[i + 1][j] >= dp[i][j + 1]) { bl.push(a[i]); i++; } else { al.push(b[j]); j++; }
+    }
+    hunks.push({ beforeStart: bs, beforeCount: bl.length, afterStart: as, afterCount: al.length, beforeLines: bl, afterLines: al });
+  }
+  if (i < n || j < m) hunks.push({ beforeStart: i, beforeCount: n - i, afterStart: j, afterCount: m - j,
+                                   beforeLines: a.slice(i), afterLines: b.slice(j) });
+  return hunks.filter(h => h.beforeCount || h.afterCount);
+}
+
+function clearAgent(path) {
+  const st = agentState[path], m = models[path]; if (!st || !m) return;
+  if (st.decoCol) st.decoCol.clear();
+  if (st.glyphCol) st.glyphCol.clear();
+  if (st.zoneIds && st.zoneIds.length && editor) editor.changeViewZones(acc => st.zoneIds.forEach(id => acc.removeZone(id)));
+  delete agentState[path];
+}
+
+window.rivenAgentDiff = function (path, before, after) {
+  const m = models[path]; if (!m) return;
+  // Decorations render on the ACTIVE editor (`editor`), so focus the group showing
+  // this file first.
+  const g = groups.find(x => x.active === path) || groups.find(x => x.tabs.includes(path));
+  if (g) { if (g.active !== path) showInGroup(g, path); setActiveGroup(g.idx); }
+  clearAgent(path);
+  const hunks = computeHunks(before, after);
+  if (!hunks.length) { updateHunkNav(path); return; }
+  const st = { hunks, after, zoneIds: [], lineToHunk: {}, cur: 0 };
+  agentState[path] = st;
+  const decos = [], glyphs = [];
+  for (const h of hunks) {
+    if (h.afterCount > 0) {
+      const s = h.afterStart + 1, e = h.afterStart + h.afterCount;
+      decos.push({ range: new monaco.Range(s, 1, e, 1), options: { isWholeLine: true,
+        className: 'agent-add-line', linesDecorationsClassName: 'agent-add-gutter',
+        overviewRuler: { color: '#4cc38a', position: monaco.editor.OverviewRulerLane.Left } } });
+      st.lineToHunk[s] = h;
+      glyphs.push({ range: new monaco.Range(s, 1, s, 1), options: { glyphMarginClassName: 'agent-revert-glyph',
+        glyphMarginHoverMessage: { value: T('editor.revertThisChange','이 변경 되돌리기') } } });
+    } else {
+      // pure deletion — anchor glyph on the line after the deletion point
+      const s = Math.max(1, h.afterStart);
+      st.lineToHunk[s] = h;
+      glyphs.push({ range: new monaco.Range(s, 1, s, 1), options: { glyphMarginClassName: 'agent-revert-glyph',
+        glyphMarginHoverMessage: { value: T('editor.revertThisChange','이 변경 되돌리기') } } });
+    }
+  }
+  st.decoCol = editor.createDecorationsCollection(decos);
+  st.glyphCol = editor.createDecorationsCollection(glyphs);
+  // Red deleted lines as view-zones.
+  editor.changeViewZones(acc => {
+    for (const h of hunks) {
+      if (!h.beforeCount) continue;
+      const dom = document.createElement('div'); dom.className = 'agent-del-zone';
+      for (const line of h.beforeLines) {
+        const r = document.createElement('div'); r.className = 'agent-del-row'; r.textContent = '− ' + line; dom.appendChild(r);
+      }
+      st.zoneIds.push(acc.addZone({ afterLineNumber: Math.max(0, h.afterStart), heightInLines: h.beforeLines.length, domNode: dom }));
+    }
+  });
+  updateHunkNav(path);
+  // Land the reader on the FIRST change (clicking a file in the Changes panel should
+  // jump straight to its first diff, not the top of the file).
+  const first = hunks[0];
+  const firstLine = first.afterCount > 0 ? first.afterStart + 1 : Math.max(1, first.afterStart);
+  editor.setPosition({ lineNumber: firstLine, column: 1 });
+  editor.revealLineInCenter(firstLine);
+};
+
+function revertHunk(path, h) {
+  const st = agentState[path]; if (!st) return;
+  const lines = st.after.length ? st.after.split('\n') : [];
+  lines.splice(h.afterStart, h.afterCount, ...h.beforeLines);
+  post({ type: 'agentRevert', path, newAfter: lines.join('\n') });
+}
+window.rivenClearAgentDiff = function (path) { clearAgent(path); updateHunkNav(path); };
+
+// glyph-margin click → revert that hunk (wired per-editor in wireEd).
+
+// Prev/next hunk navigator overlay.
+function updateHunkNav(path) {
+  const nav = document.getElementById('hunknav');
+  const st = path === currentPath ? agentState[path] : null;
+  if (!st || !st.hunks.length) { nav.style.display = 'none'; return; }
+  nav.style.display = 'flex';
+  document.getElementById('hunklabel').textContent = `${T('editor.changeWord','변경')} ${st.cur + 1}/${st.hunks.length}`;
+}
+function gotoHunk(delta) {
+  const st = agentState[currentPath]; if (!st || !st.hunks.length) return;
+  st.cur = (st.cur + delta + st.hunks.length) % st.hunks.length;
+  const h = st.hunks[st.cur]; const line = h.afterCount ? h.afterStart + 1 : Math.max(1, h.afterStart);
+  editor.revealLineInCenter(line); editor.setPosition({ lineNumber: line, column: 1 });
+  updateHunkNav(currentPath);
+}
+// Revert the current hunk (restore before-lines to disk).
+function revertCurrentHunk() {
+  const st = agentState[currentPath]; if (!st || !st.hunks.length) return;
+  revertHunk(currentPath, st.hunks[st.cur]);
+}
+// Accept the current hunk: just drop it from the review (disk unchanged).
+function acceptCurrentHunk() {
+  const st = agentState[currentPath]; if (!st || !st.hunks.length) return;
+  st.hunks.splice(st.cur, 1);
+  if (st.cur >= st.hunks.length) st.cur = Math.max(0, st.hunks.length - 1);
+  const before = st.after; // recompute decorations from remaining hunks
+  // rebuild decorations/zones for the remaining hunks
+  const remaining = st.hunks;
+  window.rivenAgentDiff(currentPath, computeBeforeFrom(remaining, st.after), st.after);
+}
+// Reconstruct a "before" text that yields only the remaining hunks (apply reverts of
+// the accepted ones is not needed — simplest: keep after as before for accepted).
+function computeBeforeFrom(hunks, after) {
+  const lines = after.length ? after.split('\n') : [];
+  // Build before by replacing each remaining hunk's after-range with its before-lines.
+  const out = lines.slice();
+  for (let i = hunks.length - 1; i >= 0; i--) {
+    const h = hunks[i];
+    out.splice(h.afterStart, h.afterCount, ...h.beforeLines);
+  }
+  return out.join('\n');
+}
+// Inline git blame: native sends a { line: "author, time · summary" } map.
+window.rivenSetBlame = function (path, map) {
+  blameData[path] = map;
+  if (path === currentPath) updateBlame();
+};
+</script>
+</body>
+</html>
