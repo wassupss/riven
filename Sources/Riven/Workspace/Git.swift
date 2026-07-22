@@ -3,12 +3,41 @@ import Foundation
 // Minimal git helper (shell-out), mirroring riven's git.ts logic: current branch
 // + porcelain status parsed with -z (handles non-ASCII / Korean paths).
 enum Git {
+    // A Finder/Dock-launched app inherits a minimal environment: no Homebrew on PATH
+    // and, crucially, no SSH_AUTH_SOCK — so `git pull/push` to a remote can't find the
+    // user's ssh-agent (macOS keychain SSH) and silently fails to authenticate. Build a
+    // proper env once: full PATH, the launchd ssh-agent socket, and GIT_TERMINAL_PROMPT=0
+    // so a missing credential fails fast (surfaced as an error) instead of hanging.
+    static let env: [String: String] = {
+        var e = ProcessInfo.processInfo.environment
+        let extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+        let cur = (e["PATH"] ?? "").split(separator: ":").map(String.init)
+        var seen = Set<String>(); var path: [String] = []
+        for p in extra + cur where !p.isEmpty && seen.insert(p).inserted { path.append(p) }
+        e["PATH"] = path.joined(separator: ":")
+        e["GIT_TERMINAL_PROMPT"] = "0"
+        if (e["SSH_AUTH_SOCK"] ?? "").isEmpty, let sock = launchctlEnv("SSH_AUTH_SOCK"), !sock.isEmpty {
+            e["SSH_AUTH_SOCK"] = sock
+        }
+        return e
+    }()
+    private static func launchctlEnv(_ key: String) -> String? {
+        let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        p.arguments = ["getenv", key]
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        let s = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (s?.isEmpty ?? true) ? nil : s
+    }
+
     @discardableResult
     private static func run(_ args: [String], cwd: String) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
@@ -59,6 +88,7 @@ enum Git {
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
         let err = Pipe(); p.standardOutput = Pipe(); p.standardError = err
         do { try p.run() } catch { return (false, "\(error)") }
         let e = err.fileHandleForReading.readDataToEndOfFile()
