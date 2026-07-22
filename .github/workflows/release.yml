@@ -53,6 +53,13 @@ jobs:
           echo "Using signing identity: $ID"
 
       - name: Build · sign the app
+        env:
+          # Public Supabase client values (anon key is RLS-protected). Baked into
+          # Info.plist so released builds have working account sync; absent → the
+          # account tab shows "not configured".
+          RIVEN_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          RIVEN_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          RIVEN_SUPABASE_REDIRECT: ${{ secrets.VITE_SUPABASE_REDIRECT }}
         run: |
           RIVEN_VERSION="${{ steps.ver.outputs.version }}" \
           RIVEN_SIGN_ID="$SIGN_ID" \

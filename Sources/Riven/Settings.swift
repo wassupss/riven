@@ -31,5 +31,14 @@ final class Settings {
         if let d = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
             try? d.write(to: url)
         }
+        NotificationCenter.default.post(name: .rivenSettingChanged, object: key)
+    }
+
+    // A JSON-safe copy of all settings minus the given keys (used for cloud sync —
+    // sensitive/local keys like the AI API key + session are excluded by the caller).
+    func syncableSnapshot(excluding: Set<String>) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, v) in dict where !excluding.contains(k) { out[k] = v }
+        return out
     }
 }

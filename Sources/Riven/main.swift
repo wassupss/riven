@@ -88,6 +88,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NotificationCenter.default.addObserver(forName: .rivenSnippetsChanged, object: nil, queue: .main) { [weak self] _ in
             self?.editor.setSnippets(self?.loadSnippets() ?? [])
         }
+        // Cloud settings sync (Supabase): when a pull lands, re-apply everything live.
+        NotificationCenter.default.addObserver(forName: .rivenSettingsSynced, object: nil, queue: .main) { [weak self] _ in
+            self?.reapplyAllSettings()
+        }
+        // Restore a signed-in riven account session (+ pull cloud settings) on launch.
+        SupabaseAuth.shared.restore()
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
             let url = URL(fileURLWithPath: dbg)
@@ -1901,6 +1907,17 @@ extension AppDelegate: Themable {
         Theme.apply(id: id) { [weak self] shiki in
             self?.editor.setEditorTheme(shiki: shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2)
         }
+    }
+    // Re-apply all settings-driven state after a cloud pull overwrote the settings dict.
+    func reapplyAllSettings() {
+        let lang = Lang(rawValue: Settings.shared.string("language", "ko")) ?? .ko
+        if I18n.current != lang { I18n.setLanguage(lang) }   // posts .rivenLanguageChanged → menu/i18n
+        switchTheme(Settings.shared.string("theme", "ember"))
+        editor.setFormatOnSave(Settings.shared.bool("formatOnSave", false))
+        editor.setEditorKeymap(Settings.shared.string("editorKeymap", "vscode"))
+        editor.setEditorKeys(Keys.editorChords())
+        editor.setSnippets(loadSnippets())
+        buildMenu()
     }
 }
 

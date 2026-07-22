@@ -11,6 +11,8 @@ final class SettingsWindow: NSPanel {
     private let scroll = NSScrollView()
     private let content = FlippedStack()
     private var activeTab = 0
+    private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
+    private var accountError: String?       // last sign-in error, shown on the Account tab
 
     // controls (kept as properties so save() can read them)
     private let aiEnable = NSButton(checkboxWithTitle: t("settings.aiEnable"), target: nil, action: nil)
@@ -501,6 +503,12 @@ final class SettingsWindow: NSPanel {
     // ships no Supabase project, so it shows riven's real "not configured" state
     // (the same UI riven renders when the env vars are absent). ----
     private func buildAccount() {
+        // Refresh this tab live when auth state flips (sign-in / sign-out).
+        if authObserver == nil {
+            authObserver = NotificationCenter.default.addObserver(forName: .rivenAuthChanged, object: nil, queue: .main) { [weak self] _ in
+                if self?.activeTab == 3 { self?.showTab(3) }
+            }
+        }
         addSection(t("account.title"))
         let note = NSTextField(labelWithString:
             "riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
@@ -512,43 +520,79 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(note)
         content.addArrangedSubview(spacer(6))
 
-        // Signed-out GitHub button (disabled until Supabase is configured) — an icon +
-        // label laid out in a padded rounded container (NSButton's image/title spacing
-        // overflowed).
-        let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: "person.crop.circle.badge.checkmark", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
-        icon.contentTintColor = Theme.fgDim; icon.translatesAutoresizingMaskIntoConstraints = false
-        let lbl = NSTextField(labelWithString: t("account.continueGithub"))
-        lbl.font = .systemFont(ofSize: 13); lbl.textColor = Theme.fgDim
-        lbl.translatesAutoresizingMaskIntoConstraints = false
-        let ghBox = NSView(); ghBox.wantsLayer = true
-        ghBox.layer?.backgroundColor = Theme.hover.cgColor; ghBox.layer?.cornerRadius = 8
-        ghBox.layer?.borderWidth = 1; ghBox.layer?.borderColor = Theme.edge.cgColor
-        ghBox.alphaValue = 0.55   // disabled look
-        ghBox.translatesAutoresizingMaskIntoConstraints = false
-        ghBox.addSubview(icon); ghBox.addSubview(lbl)
-        NSLayoutConstraint.activate([
-            ghBox.heightAnchor.constraint(equalToConstant: 34),
-            icon.leadingAnchor.constraint(equalTo: ghBox.leadingAnchor, constant: 12),
-            icon.centerYAnchor.constraint(equalTo: ghBox.centerYAnchor),
-            lbl.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            lbl.centerYAnchor.constraint(equalTo: ghBox.centerYAnchor),
-            lbl.trailingAnchor.constraint(equalTo: ghBox.trailingAnchor, constant: -14),
-        ])
-        let ghRow = NSStackView(views: [ghBox]); ghRow.orientation = .horizontal
-        content.addArrangedSubview(ghRow)
+        if !SupabaseConfig.isConfigured {
+            addSection(t("settings.status"))
+            let status = NSTextField(labelWithString:
+                "Supabase 미구성 — 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.")
+            status.font = .systemFont(ofSize: 11); status.textColor = Theme.warning
+            status.lineBreakMode = .byWordWrapping; status.maximumNumberOfLines = 3
+            status.preferredMaxLayoutWidth = 500
+            content.addArrangedSubview(status)
+            let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
+            sync.font = .systemFont(ofSize: 11); sync.textColor = Theme.fgDim
+            content.addArrangedSubview(sync)
+            return
+        }
 
-        addSection(t("settings.status"))
-        let status = NSTextField(labelWithString:
-            "Supabase 미구성 — 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.")
-        status.font = .systemFont(ofSize: 11); status.textColor = Theme.warning
-        status.lineBreakMode = .byWordWrapping; status.maximumNumberOfLines = 3
-        status.preferredMaxLayoutWidth = 500
-        content.addArrangedSubview(status)
+        if SupabaseAuth.shared.isSignedIn {
+            let who = NSTextField(labelWithString: "✓ \(SupabaseAuth.shared.email ?? "로그인됨") — 설정이 이 계정에 동기화됩니다.")
+            who.font = .systemFont(ofSize: 12); who.textColor = Theme.success
+            who.lineBreakMode = .byTruncatingMiddle; who.preferredMaxLayoutWidth = 500
+            content.addArrangedSubview(who)
+            content.addArrangedSubview(spacer(6))
+            let out = accountButton(icon: "rectangle.portrait.and.arrow.right", title: "로그아웃", tint: Theme.fgDim) {
+                SupabaseAuth.shared.signOut()
+            }
+            content.addArrangedSubview(NSStackView(views: [out]))
+        } else {
+            let btn = accountButton(icon: "person.crop.circle.badge.checkmark",
+                                    title: t("account.continueGithub"), tint: Theme.fg) { [weak self] in
+                SupabaseAuth.shared.signInWithGitHub { result in
+                    DispatchQueue.main.async {
+                        if case .failure(let e) = result, self?.activeTab == 3 {
+                            self?.accountError = e.localizedDescription; self?.showTab(3)
+                        }
+                        // success is handled by the .rivenAuthChanged observer
+                    }
+                }
+            }
+            content.addArrangedSubview(NSStackView(views: [btn]))
+            if let msg = accountError {
+                let e = NSTextField(labelWithString: "로그인 실패: \(msg)")
+                e.font = .systemFont(ofSize: 11); e.textColor = Theme.danger
+                e.lineBreakMode = .byWordWrapping; e.maximumNumberOfLines = 3; e.preferredMaxLayoutWidth = 500
+                content.addArrangedSubview(e)
+            }
+        }
         let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
         sync.font = .systemFont(ofSize: 11); sync.textColor = Theme.fgDim
-        content.addArrangedSubview(sync)
+        content.addArrangedSubview(spacer(4)); content.addArrangedSubview(sync)
+    }
+
+    // A rounded icon+label button (NSButton's built-in image/title spacing overflowed).
+    private func accountButton(icon: String, title: String, tint: NSColor, _ action: @escaping () -> Void) -> NSView {
+        let iv = NSImageView()
+        iv.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
+        iv.contentTintColor = tint; iv.translatesAutoresizingMaskIntoConstraints = false
+        let lbl = NSTextField(labelWithString: title)
+        lbl.font = .systemFont(ofSize: 13); lbl.textColor = tint
+        lbl.translatesAutoresizingMaskIntoConstraints = false
+        let box = ClickBox(action)
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.hover.cgColor; box.layer?.cornerRadius = 8
+        box.layer?.borderWidth = 1; box.layer?.borderColor = Theme.edge.cgColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(iv); box.addSubview(lbl)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: 34),
+            iv.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
+            iv.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            lbl.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 8),
+            lbl.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            lbl.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -14),
+        ])
+        return box
     }
 
     // ---- About tab — version + update check (riven's AboutTab/electron-updater) ----
@@ -669,4 +713,14 @@ final class SettingsWindow: NSPanel {
         let wrap = NSStackView(views: [b]); wrap.orientation = .horizontal
         return wrap
     }
+}
+
+// A rounded container that fires an action when clicked (used for the account
+// icon+label buttons, where NSButton's image/title spacing overflowed).
+private final class ClickBox: NSView {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action; super.init(frame: .zero) }
+    required init?(coder: NSCoder) { fatalError() }
+    override func mouseDown(with event: NSEvent) { action() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }

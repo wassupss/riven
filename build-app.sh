@@ -13,6 +13,11 @@ cd "$(dirname "$0")"
 
 VERSION="${RIVEN_VERSION:-0.0.1}"
 SIGN_ID="${RIVEN_SIGN_ID:--}"   # default "-" = ad-hoc
+# Supabase account/sync config (public client values). Baked into Info.plist; when
+# absent the account feature shows its "not configured" state and nothing breaks.
+SB_URL="${RIVEN_SUPABASE_URL:-}"
+SB_KEY="${RIVEN_SUPABASE_ANON_KEY:-}"
+SB_REDIRECT="${RIVEN_SUPABASE_REDIRECT:-}"
 
 echo "▸ Building (release)… version=$VERSION"
 swift build -c release
@@ -49,6 +54,9 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>SupabaseURL</key><string>$SB_URL</string>
+  <key>SupabaseAnonKey</key><string>$SB_KEY</string>
+  <key>SupabaseRedirect</key><string>$SB_REDIRECT</string>
 </dict>
 </plist>
 PLIST
