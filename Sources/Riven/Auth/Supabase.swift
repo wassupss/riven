@@ -25,36 +25,32 @@ enum SupabaseConfig {
     static var isConfigured: Bool { !url.isEmpty && !anonKey.isEmpty }
 }
 
-// ---- tiny Keychain string store (session tokens live here, never in settings) ----
-// Uses the DATA-PROTECTION keychain (kSecUseDataProtectionKeychain): unlike the legacy
-// file-based keychain, an app accesses its OWN items (scoped to its Team+bundle) with no
-// per-signature ACL prompt — so re-signed/updated builds don't pop the "riven wants to
-// use com.wassupss.riven.auth" dialog on every launch.
+// ---- session-token store (owner-only file, NOT the keychain) ----
+// The keychain caused two release-blocking problems: the legacy keychain popped a
+// "riven wants to use com.wassupss.riven.auth" ACL prompt on every launch after re-signing,
+// and the data-protection keychain needs a `keychain-access-groups` entitlement that a
+// Developer-ID app can't ship without a provisioning profile (it made the app get SIGKILL'd
+// at launch). Store the token in a 0600 file under the user's account-protected home dir
+// instead — the same tradeoff gh/npm/git credential stores make.
 enum Keychain {
-    private static let service = "com.wassupss.riven.auth"
-    private static func base(_ key: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service, kSecAttrAccount as String: key,
-         kSecUseDataProtectionKeychain as String: true]
-    }
+    private static let dir: URL = {
+        let d = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/riven-native/secrets")
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return d
+    }()
+    private static func file(_ key: String) -> URL { dir.appendingPathComponent(key + ".txt") }
     static func set(_ key: String, _ value: String) {
-        SecItemDelete(base(key) as CFDictionary)
-        var add = base(key)
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        try? Data(value.utf8).write(to: file(key), options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file(key).path)
     }
     static func get(_ key: String) -> String? {
-        var q = base(key)
-        q[kSecReturnData as String] = true
-        q[kSecMatchLimit as String] = kSecMatchLimitOne
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-              let d = out as? Data else { return nil }
+        guard let d = try? Data(contentsOf: file(key)) else { return nil }
         return String(data: d, encoding: .utf8)
     }
     static func delete(_ key: String) {
-        SecItemDelete(base(key) as CFDictionary)
+        try? FileManager.default.removeItem(at: file(key))
     }
 }
 
