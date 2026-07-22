@@ -14,11 +14,16 @@ permissions:
 
 jobs:
   release-mac:
-    runs-on: macos-14 # arm64; universal ghostty means the app runs on Intel too
+    runs-on: macos-15 # arm64; universal ghostty means the app runs on Intel too
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+
+      # Package.swift requires Swift 6 (Xcode 16+); the default runner Xcode may be older.
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       # The native build needs the prebuilt libghostty xcframework at ghostty-fw/.
       - name: Fetch libghostty framework
