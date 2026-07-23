@@ -39,10 +39,11 @@ final class LSPManager {
             if let bin = which("typescript-language-server") {
                 return Spec(command: bin, args: ["--stdio"], env: [:])
             }
-            guard let node = findNode() else { return nil }   // absolute node path
-            let rivenTls = "/Users/songhwaseob/hs-playground/riven/node_modules/typescript-language-server/lib/cli.mjs"
-            if FileManager.default.fileExists(atPath: rivenTls) {
-                return Spec(command: node, args: [rivenTls, "--stdio"], env: [:])
+            // Fallback: locate a GLOBALLY-installed typescript-language-server (any
+            // machine) and run its cli.mjs via node — NOT a hardcoded dev path.
+            guard let node = findNode() else { return nil }
+            if let cli = findGlobalModuleCLI("typescript-language-server/lib/cli.mjs") {
+                return Spec(command: node, args: [cli, "--stdio"], env: [:])
             }
             return nil
         default: return nil
@@ -67,15 +68,42 @@ final class LSPManager {
         return nil
     }
 
-    private func which(_ cmd: String) -> String? {
+    // Run a command in an interactive login shell (loads the user's real PATH: nvm,
+    // homebrew, volta…) and return trimmed stdout. stdin → /dev/null so the interactive
+    // shell isn't stopped by SIGTTIN.
+    private func login(_ cmd: String) -> String? {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        p.arguments = ["-ilc", "command -v \(cmd)"]   // interactive login: loads nvm
+        p.arguments = ["-ilc", cmd]
+        p.standardInput = FileHandle.nullDevice
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
         do { try p.run() } catch { return nil }
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         p.waitUntilExit()
-        return (out?.isEmpty == false && out?.hasPrefix("/") == true) ? out : nil
+        return (out?.isEmpty == false) ? out : nil
+    }
+    private func which(_ cmd: String) -> String? {
+        let out = login("command -v \(cmd)")
+        return out?.hasPrefix("/") == true ? out : nil
+    }
+
+    // Find a module's entry file across the common GLOBAL node_modules roots (npm -g,
+    // homebrew, nvm, custom prefix) — machine-independent, no hardcoded user path.
+    private func findGlobalModuleCLI(_ rel: String) -> String? {
+        let fm = FileManager.default
+        var roots: [String] = []
+        if let r = login("npm root -g"), r.hasPrefix("/") { roots.append(r) }
+        roots += ["/opt/homebrew/lib/node_modules", "/usr/local/lib/node_modules",
+                  fm.homeDirectoryForCurrentUser.appendingPathComponent(".npm-global/lib/node_modules").path]
+        let nvm = fm.homeDirectoryForCurrentUser.appendingPathComponent(".nvm/versions/node")
+        if let vers = try? fm.contentsOfDirectory(atPath: nvm.path).sorted(by: >) {
+            for v in vers { roots.append(nvm.appendingPathComponent("\(v)/lib/node_modules").path) }
+        }
+        for root in roots {
+            let p = (root as NSString).appendingPathComponent(rel)
+            if fm.fileExists(atPath: p) { return p }
+        }
+        return nil
     }
 }
