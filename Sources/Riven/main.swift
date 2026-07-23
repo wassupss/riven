@@ -1781,11 +1781,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func zoomOutMenu() { applyZoom(UIScale.step(-1), delta: -1) }
     @objc private func zoomResetMenu() { applyZoom(UIScale.reset(), delta: 0) }
     private func applyZoom(_ baseFont: Int, delta: Int) {
-        // Editor → absolute Monaco size. Terminals → rebuild the ghostty config with the
-        // new absolute font-size (the relative increase/decrease bindings drifted out of
-        // sync and sometimes no-op'd; an absolute config update is deterministic).
-        editor.setFontSize(baseFont)
-        GhosttyApp.shared.reloadTheme()   // config now carries font-size = UIScale.baseFontSize
+        // ⌘+/⌘−/⌘0 scales EVERYTHING. The editor and terminal sizes are the user's chosen
+        // Settings sizes multiplied by the zoom factor (UIScale.editorFontSize /
+        // .terminalFontSize) — not a separate 12pt base — so zoom and the font-size setting
+        // compose instead of overwriting each other.
+        editor.setFontSize(UIScale.editorFontSize)
+        // Terminals: rebuild the ghostty config with the new absolute font-size (the
+        // relative increase/decrease bindings drifted and sometimes no-op'd).
+        GhosttyApp.shared.reloadTheme()   // config carries font-size = UIScale.terminalFontSize
+        TerminalView.liveSurfaces().forEach { TerminalView.view(for: $0)?.setFontSize(UIScale.terminalFontSize) }
         // Rebuild AppKit chrome so its fonts + metrics pick up the new factor.
         applyUIScale()
     }

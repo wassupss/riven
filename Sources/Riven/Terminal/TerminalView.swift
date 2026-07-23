@@ -310,7 +310,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         sc.userdata = Unmanaged.passUnretained(self).toOpaque()
         sc.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
         // 새로 만드는 터미널도 설정값으로 시작한다 (예전에는 13 고정이라 설정이 무시됐다).
-        sc.font_size = Float(Settings.shared.int("terminalFontSize", 13))
+        sc.font_size = Float(UIScale.terminalFontSize)
         // Optionally start in a directory and/or run a command directly (agent launch
         // — e.g. `claude` runs immediately instead of being typed into a shell).
         switch (workdir, command) {
@@ -452,11 +452,11 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         let ok = abs.withCString { ghostty_surface_binding_action(s, $0, UInt(strlen($0))) }
         guard !ok else { return }
         fontAction("reset_font_size")
-        let delta = size - UIScale.baseFontSize     // reset은 config의 font-size로 돌아간다
+        let delta = size - UIScale.terminalFontSize   // reset은 config의 font-size로 돌아간다
         if delta > 0 { fontAction("increase_font_size:\(delta)") }
         else if delta < 0 { fontAction("decrease_font_size:\(-delta)") }
     }
-    private func applySettingsFontSize() { setFontSize(Settings.shared.int("terminalFontSize", 13)) }
+    private func applySettingsFontSize() { setFontSize(UIScale.terminalFontSize) }
     // 색은 GhosttyApp이 서피스 단위로 갱신한다 — 여기서는 그때 함께 초기화되는 폰트
     // 크기만 설정값으로 되돌린다.
     func applyTheme() { applySettingsFontSize() }

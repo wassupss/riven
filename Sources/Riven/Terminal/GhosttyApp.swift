@@ -43,7 +43,7 @@ final class GhosttyApp {
         cursor-color = \(hex(t.accent))
         selection-background = #34363b
         selection-foreground = \(hex(t.fg))
-        font-size = \(UIScale.baseFontSize)
+        font-size = \(UIScale.terminalFontSize)
         desktop-notifications = true
         bell-features = system,audio,attention,title
         shell-integration = detect

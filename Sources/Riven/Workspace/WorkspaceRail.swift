@@ -82,6 +82,8 @@ final class WorkspaceRail: NSView, Themable {
         stack.orientation = .vertical
         stack.spacing = 3
         stack.alignment = .leading
+        // 카드 좌우 여백 (스크롤바는 창 끝에, 카드만 들여쓴다)
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: WorkspaceRail.cardInset, bottom: 0, right: WorkspaceRail.cardInset)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         // Cards live in a scroll view so many workspaces scroll instead of overflowing.
@@ -106,11 +108,12 @@ final class WorkspaceRail: NSView, Themable {
             add.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             add.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             add.widthAnchor.constraint(equalToConstant: 22),
-            // 좌우 여백은 스크롤뷰 자체에 준다. documentView(stack)의 leading 제약은
-            // NSScrollView가 문서를 원점에 배치하며 무시해서, 예전엔 width 제약(-inset*2)만
-            // 먹혀 왼쪽은 창에 딱 붙고 오른쪽에만 여백이 생겼다.
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            // 스크롤뷰는 좌우 끝까지 채운다 — 스크롤바가 창 오른쪽 끝에 붙도록.
+            // 카드의 좌우 여백은 stack.edgeInsets로 준다: documentView의 leading 제약은
+            // NSScrollView가 문서를 원점에 배치하며 무시하지만(그래서 예전엔 왼쪽만 붙었다),
+            // edgeInsets는 스택이 직접 적용하므로 확실하게 먹는다.
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
@@ -204,7 +207,7 @@ final class WorkspaceRail: NSView, Themable {
             let card = makeCard(ws)
             stack.addArrangedSubview(card)
             // Constrain width AFTER adding to the stack (common ancestor exists).
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            card.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -WorkspaceRail.cardInset * 2).isActive = true
             if ws == active { activeCard = card }
         }
         // Scroll the active workspace into view (switching to an off-screen one reveals it).
