@@ -190,6 +190,7 @@ final class DockManager {
 
         // Same-axis parent: flatten (sibling insert + local rebalance).
         if let psv = parent as? NSSplitView, psv.isVertical == vertical {
+            psv.layoutSubtreeIfNeeded()   // 프레임이 최신이어야 크기를 옳게 잰다
             let gIdx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
             let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
             let at = before ? gIdx : gIdx + 1
@@ -228,6 +229,7 @@ final class DockManager {
             // every other pane keeps its width. The old code only pinned idx==0 / idx==last
             // via setPosition, so a MIDDLE group's new split collapsed to 0 width — the
             // ⌘⇧D / drag "확 줄어" bug (confirmed by a [519,524,0,527] tree dump).
+            psv.layoutSubtreeIfNeeded()   // 프레임이 최신이어야 크기를 옳게 잰다
             let idx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
             let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
             group.removeFromSuperview()
@@ -344,12 +346,18 @@ final class DockManager {
         } else {
             // Splitting a group against a panel already alone in it is a no-op.
             if from === group && group.panels.count == 1 { return }
-            let g = DockGroup(); g.manager = self
             from?.remove(panel, dispose: false)
+            // Collapse the vacated group and give its space back BEFORE restructuring.
+            // Doing it after split() measured the siblings while the freshly-inserted
+            // split still had a 0 frame, so the proportional redistribute kept those
+            // zeros and one pane swallowed the row (observed: [580,346,350,294] →
+            // [0, 0, 990]). Settle layout so the split measures real frames.
+            cleanupEmpty(from)
+            container.layoutSubtreeIfNeeded()
+            let g = DockGroup(); g.manager = self
             split(group, with: g, direction: region)
             g.add(panel); setActive(g)
         }
-        cleanupEmpty(from)
         // Full sweep, same as a close. cleanupEmpty only collapses the SOURCE group, and
         // split() may already have restructured the tree around it — so a panel that was
         // alone in its group (every aux panel: source control / changes / search / browser)
