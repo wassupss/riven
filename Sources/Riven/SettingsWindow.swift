@@ -619,8 +619,12 @@ final class SettingsWindow: NSPanel {
 
         content.addArrangedSubview(spacer(8))
         addSection(t("about.links"))
-        let landing = secondaryButton(t("about.landing"), symbol: "safari") { NSWorkspace.shared.open(URL(string: "https://github.com/wassupss/riven")!) }
-        let gh = secondaryButton(t("about.github"), symbol: "chevron.left.forwardslash.chevron.right") { NSWorkspace.shared.open(URL(string: "https://github.com/wassupss/riven")!) }
+        let landing = secondaryButton(t("about.landing"), symbol: "safari") {
+            if let u = URL(string: "https://riven-sandy.vercel.app/") { NSWorkspace.shared.open(u) }
+        }
+        let gh = secondaryButton(t("about.github"), symbol: "chevron.left.forwardslash.chevron.right") {
+            if let u = URL(string: "https://github.com/wassupss/riven") { NSWorkspace.shared.open(u) }
+        }
         let row = NSStackView(views: [landing, gh]); row.orientation = .horizontal; row.spacing = 8
         content.addArrangedSubview(row)
     }
@@ -636,7 +640,14 @@ final class SettingsWindow: NSPanel {
     private var updateStatusLabel: NSTextField!
     // Sparkle이 자체 UI(최신 버전/다운로드-설치 흐름)를 보여주므로 결과 텍스트는 여기서 세팅하지 않는다.
     @objc private func checkUpdate() {
-        updateStatusLabel.stringValue = "확인 중…"; updateStatusLabel.textColor = Theme.fgDim
+        updateStatusLabel.stringValue = t("about.checking"); updateStatusLabel.textColor = Theme.fgDim
+        // Sparkle shows its own result window; clear our hint when the check finishes so
+        // "확인 중…" doesn't stay stuck behind it.
+        Updater.shared.onCheckFinished = { [weak self] in
+            guard let self else { return }
+            self.updateStatusLabel.stringValue = t("about.checkHint")
+            self.updateStatusLabel.textColor = Theme.fgDim
+        }
         Updater.shared.checkForUpdates(self)
     }
 

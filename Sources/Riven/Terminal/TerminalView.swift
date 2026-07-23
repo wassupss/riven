@@ -591,10 +591,15 @@ extension TerminalView: NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         let chars = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
         markedText = ""
-        // Only CAPTURE the committed text — keyDown emits it as a single key event.
+        // ACCUMULATE — the IME can call insertText MORE THAN ONCE per keyDown: typing a
+        // punctuation mark right after 한글 commits the composing syllable ("글") and then
+        // inserts the punctuation ("."), as two calls. Overwriting dropped the syllable, so
+        // "한글." came out as "한." — append instead (ghostty's keyTextAccumulator model).
+        // keyDown resets pendingText to nil before interpretKeyEvents, so this starts fresh
+        // for each keystroke.
+        pendingText = (pendingText ?? "") + chars
         // Clear the preedit now (the composing 한글 that just committed); if a new
         // composition follows in this same event, setMarkedText re-sets it after.
-        pendingText = chars
         if let s = surface { ghostty_surface_preedit(s, nil, 0) }
     }
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {

@@ -704,9 +704,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // A file changed on disk (FSEvents). Record it as an agent edit (before/after from
     // the session baseline) and surface the Changes panel without stealing focus.
+    // FSEvents fires repeatedly while an agent streams a file out. Coalesce a burst into
+    // ONE read per path (#60: "avoid re-reading on rapid FSEvents churn") — each read
+    // otherwise allocated the file's full text again.
+    private var pendingFileChanges = Set<String>()
+    private var fileChangeTimer: Timer?
     private func handleFileChange(_ path: String) {
+        pendingFileChanges.insert(path)
+        fileChangeTimer?.invalidate()
+        fileChangeTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            let paths = self.pendingFileChanges
+            self.pendingFileChanges.removeAll()
+            for p in paths { self.processFileChange(p) }
+        }
+    }
+
+    private func processFileChange(_ path: String) {
         guard let ws = workspace, path.hasPrefix(ws.path + "/"), !AgentEdits.isIgnored(path) else { return }
         guard agentSessionWorkspaces.contains(ws.path) else { return }   // only during an agent session
+        // Size cap BEFORE reading (#60): this path used to slurp any-size files and retain
+        // their full before+after text, so an agent churning large/generated files pushed
+        // memory into the GBs. Match the snapshot()'s per-file cap and skip anything bigger.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { return }
         guard let after = try? String(contentsOfFile: path, encoding: .utf8) else {
             // deleted / unreadable — ignore (riven skips unlink)
             return
@@ -1097,6 +1118,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         states[url] = nil
         lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
+        AgentEdits.shared.clearWorkspace(url.path)   // release retained file contents (#60)
+        agentSessionWorkspaces.remove(url.path)
         workspaces.removeAll { $0 == url }
         if workspace == url {
             agentWatch?.stop(); agentWatch = nil
