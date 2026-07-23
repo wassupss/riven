@@ -544,15 +544,27 @@ final class DockManager {
         guard let sv = v as? NSSplitView else { return }
         let n = sv.arrangedSubviews.count
         if n >= 2 {
-            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
-            var exts = sv.arrangedSubviews.map { extent($0, in: sv) }
-            // 0으로 무너진 팬은 비례 계산(0 × 배율 = 0)으로는 절대 되살아나지 않는다 —
-            // 재분배가 돌수록 오히려 고착된다. 비례로 맞추기 전에 최소폭을 바닥으로 깔아
-            // 0을 먼저 없앤 뒤 정확히 채운다.
             let minE: CGFloat = 80
-            if total > minE * CGFloat(n) { exts = exts.map { max($0, minE) } }
-            let sum = exts.reduce(0, +)
-            if total > 0, sum > 0 { setExtents(sv, exts.map { $0 * total / sum }) }
+            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+            if total > minE {
+                func measure() -> [CGFloat] { sv.arrangedSubviews.map { extent($0, in: sv) } }
+                func broken(_ e: [CGFloat]) -> Bool {
+                    e.contains { $0 < minE - 1 } || abs(e.reduce(0, +) - total) > 1
+                }
+                // 1단계: NSSplitView가 스스로 재분배하게 둔다. 구조가 막 바뀐 직후에는
+                // 우리가 계산한 divider 위치가 제약에 걸려 그대로 반영되지 않는데,
+                // adjustSubviews는 뷰가 자기 상태 기준으로 다시 채운다.
+                if broken(measure()) {
+                    sv.adjustSubviews()
+                    sv.layoutSubtreeIfNeeded()
+                }
+                // 2단계: 그래도 0폭이거나 컨테이너를 못 채우면 균등 분배로 확정한다.
+                // 사용자가 맞춰둔 비율은 잃지만, 빈 영역/0폭 열이 남는 것보다 낫다.
+                if broken(measure()) {
+                    setExtents(sv, Array(repeating: total / CGFloat(n), count: n))
+                    sv.layoutSubtreeIfNeeded()
+                }
+            }
         }
         for c in sv.arrangedSubviews { c.layoutSubtreeIfNeeded(); fillGaps(c) }
     }
