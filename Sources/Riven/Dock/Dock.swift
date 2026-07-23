@@ -415,11 +415,37 @@ final class DockManager {
 
     func removePanel(_ panel: DockPanel) {
         let g = panel.group
+        // If closing this empties its group (the group will be removed), focus the
+        // ADJACENT pane — the previous sibling, else the next — not `groups.first`.
+        // e.g. ⌘D ×N then ⌘W should land on the pane opened just before, not pane 1.
+        let focusAfter: DockGroup? = (g?.panels.count == 1) ? adjacentGroup(to: g!) : nil
         g?.remove(panel, dispose: true)
         cleanupEmpty(g)
         normalizeTree()   // 닫기 후 빈 그룹·0폭 팬이 남지 않게 정리 (#3)
         refreshEmpty()
-        focusSurvivor()   // move focus to a remaining panel (don't leave the app focus-less)
+        if let t = focusAfter, t.isDescendant(of: container), !t.panels.isEmpty {
+            setActive(t)
+        } else {
+            focusSurvivor()   // fallback: don't leave the app focus-less
+        }
+    }
+
+    // The group spatially adjacent to `g` in its parent split — previous sibling first,
+    // then next; a sibling that is a nested split resolves to its first leaf group.
+    private func adjacentGroup(to g: DockGroup) -> DockGroup? {
+        guard let sv = g.superview as? NSSplitView,
+              let idx = sv.arrangedSubviews.firstIndex(of: g) else { return nil }
+        for j in [idx - 1, idx + 1] where j >= 0 && j < sv.arrangedSubviews.count {
+            if let grp = firstGroup(in: sv.arrangedSubviews[j]) { return grp }
+        }
+        return nil
+    }
+    private func firstGroup(in v: NSView) -> DockGroup? {
+        if let g = v as? DockGroup { return g }
+        if let sv = v as? NSSplitView {
+            for c in sv.arrangedSubviews { if let g = firstGroup(in: c) { return g } }
+        }
+        return nil
     }
 
     // 닫기/분리 뒤의 안전망 (#3): cleanupEmpty는 방금 비워진 그룹만 국소적으로
