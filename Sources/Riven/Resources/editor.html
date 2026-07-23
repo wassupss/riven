@@ -120,12 +120,27 @@ const agentDecos = {};                   // path -> decoration ids
 const blameData = {};                    // path -> { line: "author, time · summary" }
 let blameDeco = null;
 const post = (msg) => window.webkit.messageHandlers.riven.postMessage(msg);
+// Perf instrumentation → native debug log (owner-only). Logs only when something is
+// slow, so it's free in the common case but pinpoints jank if it recurs.
+const wlog = (m) => { try { window.webkit.messageHandlers.log.postMessage(m); } catch (e) {} };
+function timed(label, fn) {
+  const t0 = performance.now(); const r = fn(); const dt = performance.now() - t0;
+  if (dt > 60) wlog('SLOW ' + label + ' ' + Math.round(dt) + 'ms'); return r;
+}
+// Any main-thread block > 50ms (jank) gets logged with its source, so a recurring
+// cursor/typing hitch tells us exactly which operation is responsible.
+try {
+  new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) if (e.duration > 80) wlog('LONGTASK ' + Math.round(e.duration) + 'ms');
+  }).observe({ entryTypes: ['longtask'] });
+} catch (e) {}
 // Run fn on the next frame (falls back to a macrotask) — used to push non-essential
 // work (decoration mutation, native round-trips) off the current mousedown/focus
 // event so Monaco's own pointer-drag tracking for THIS event finishes first.
 const defer = (fn) => (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(fn);
 
-function updateBlame() {
+function updateBlame() { timed('updateBlame', updateBlameNow); }
+function updateBlameNow() {
   if (blameDeco) blameDeco.clear();
   const b = blameData[currentPath]; const pos = editor && editor.getPosition();
   if (!b || !pos || !b[pos.lineNumber]) return;
@@ -136,6 +151,11 @@ function updateBlame() {
     options: { after: { content: '      ' + b[pos.lineNumber], inlineClassName: 'git-blame-inline', cursorStops: monaco.editor.InjectedTextCursorStops.None }, showIfCollapsed: true }
   }]);
 }
+// Debounced blame: recreating the inline-blame decoration on EVERY cursor tick is
+// wasteful (and forces a re-layout when agent-diff view-zones are present). Coalesce
+// so it only runs ~140ms after the cursor settles.
+let blameTimer = null;
+function scheduleBlame() { clearTimeout(blameTimer); blameTimer = setTimeout(updateBlame, 140); }
 
 // ===== Editor GROUPS (VS Code-style split) =====
 // A flex row of groups (#egroups); each group owns an HTML tab strip (.etabs) + a
@@ -322,7 +342,7 @@ function wireEd(g) {
   });
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backslash, () => splitEditor('row'));
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Backslash, () => splitEditor('col'));
-  ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) updateBlame(); });
+  ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) scheduleBlame(); });
   // setActiveGroup itself is safe to call synchronously (its decoration/blame work
   // is deferred internally, see setActiveGroup) — but the native round-trip below
   // is NOT: focus fires synchronously as part of Monaco's own mousedown handling
@@ -927,7 +947,15 @@ function clearAgent(path) {
   delete agentState[path];
 }
 
-window.rivenAgentDiff = function (path, before, after) {
+// Deleted-line view-zones are DOM nodes Monaco must measure on every layout/render.
+// A large git-diff (heavy refactor, generated file) can produce hundreds/thousands of
+// them, which makes EVERY interaction (cursor move, scroll, typing) re-measure the lot
+// — that was the "editor lags only for files opened from the Changes panel" jank. Cap
+// the total deleted rows rendered as zones; the green added-line decorations + hunk
+// nav + revert glyphs are unaffected, so the review stays fully usable.
+const MAX_DEL_ZONE_ROWS = 400;
+window.rivenAgentDiff = function (path, before, after) { timed('agentDiff', () => rivenAgentDiffNow(path, before, after)); };
+function rivenAgentDiffNow(path, before, after) {
   const m = models[path]; if (!m) return;
   // Decorations render on the ACTIVE editor (`editor`), so focus the group showing
   // this file first.
@@ -958,17 +986,26 @@ window.rivenAgentDiff = function (path, before, after) {
   }
   st.decoCol = editor.createDecorationsCollection(decos);
   st.glyphCol = editor.createDecorationsCollection(glyphs);
-  // Red deleted lines as view-zones.
+  // Red deleted lines as view-zones — budgeted (see MAX_DEL_ZONE_ROWS).
+  let rowBudget = MAX_DEL_ZONE_ROWS, truncated = false;
   editor.changeViewZones(acc => {
     for (const h of hunks) {
       if (!h.beforeCount) continue;
+      if (rowBudget <= 0) { truncated = true; break; }
+      const shown = h.beforeLines.slice(0, rowBudget);
+      rowBudget -= shown.length;
       const dom = document.createElement('div'); dom.className = 'agent-del-zone';
-      for (const line of h.beforeLines) {
+      for (const line of shown) {
         const r = document.createElement('div'); r.className = 'agent-del-row'; r.textContent = '− ' + line; dom.appendChild(r);
       }
-      st.zoneIds.push(acc.addZone({ afterLineNumber: Math.max(0, h.afterStart), heightInLines: h.beforeLines.length, domNode: dom }));
+      if (shown.length < h.beforeLines.length) {
+        const r = document.createElement('div'); r.className = 'agent-del-row';
+        r.textContent = '  … ' + (h.beforeLines.length - shown.length) + ' more'; dom.appendChild(r);
+      }
+      st.zoneIds.push(acc.addZone({ afterLineNumber: Math.max(0, h.afterStart), heightInLines: shown.length + 1, domNode: dom }));
     }
   });
+  if (truncated) wlog('agentDiff: deleted-line zones capped at ' + MAX_DEL_ZONE_ROWS + ' rows for ' + path);
   updateHunkNav(path);
   // Land the reader on the FIRST change (clicking a file in the Changes panel should
   // jump straight to its first diff, not the top of the file).
@@ -976,7 +1013,7 @@ window.rivenAgentDiff = function (path, before, after) {
   const firstLine = first.afterCount > 0 ? first.afterStart + 1 : Math.max(1, first.afterStart);
   editor.setPosition({ lineNumber: firstLine, column: 1 });
   editor.revealLineInCenter(firstLine);
-};
+}
 
 function revertHunk(path, h) {
   const st = agentState[path]; if (!st) return;

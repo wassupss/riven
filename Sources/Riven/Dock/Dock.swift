@@ -454,7 +454,11 @@ final class DockManager {
         let g = panel.group
         g?.remove(panel, dispose: false)
         cleanupEmpty(g)
-        normalizeTree()   // 빈 그룹/0폭 팬이 남지 않게 정리 (#3)
+        // NOTE: intentionally NO normalizeTree() here. detach runs on every workspace
+        // switch (editor + each aux panel move out); a full-tree ensureMinExtents sweep
+        // would resize the OUTGOING dock's surviving panes every time, so a workspace's
+        // pane sizes drifted on each visit (#4). cleanupEmpty already handles the local
+        // empty-group collapse. normalizeTree stays on the genuine-close path (removePanel).
         refreshEmpty()
     }
 
