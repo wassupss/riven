@@ -12,16 +12,40 @@ extension Notification.Name {
     static let rivenFormatOnSaveChanged = Notification.Name("rivenFormatOnSaveChanged")
     static let rivenEditorKeymapChanged = Notification.Name("rivenEditorKeymapChanged")
     static let rivenSnippetsChanged = Notification.Name("rivenSnippetsChanged")
+    // 에디터/터미널 폰트 크기 설정이 바뀜 → 각 뷰가 즉시 반영 (재시작 불필요).
+    static let rivenFontSizeChanged = Notification.Name("rivenFontSizeChanged")
 }
 
 enum I18n {
-    static var current: Lang = Lang(rawValue: Settings.shared.string("language", "ko")) ?? .ko
+    // 첫 접근 시 프로세스 선호 언어까지 맞춘다 — Sparkle 같은 프레임워크는 자기 .lproj를
+    // AppleLanguages 기준으로 고르므로, 이걸 안 맞추면 앱은 한국어인데 업데이트 창만
+    // 영어로 뜬다.
+    static var current: Lang = {
+        let lang = Lang(rawValue: Settings.shared.string("language", "ko")) ?? .ko
+        applyProcessLanguage(lang)
+        return lang
+    }()
 
     static func setLanguage(_ lang: Lang) {
         guard lang != current else { return }
         current = lang
         Settings.shared.set("language", lang.rawValue)
+        applyProcessLanguage(lang)
         NotificationCenter.default.post(name: .rivenLanguageChanged, object: nil)
+    }
+
+    // riven의 언어 선택을 프로세스 선호 언어(AppleLanguages)에 반영한다. 우리 UI는 t()로
+    // 직접 그리지만, 시스템/프레임워크가 스스로 띄우는 창(Sparkle 업데이트 창·표준 알림
+    // 버튼)은 이 값으로 번역본을 고른다. Sparkle.framework에는 ko.lproj가 들어 있으므로
+    // 이것만 맞으면 업데이트 UI도 한국어로 나온다.
+    // 주의: 앱 번들 Info.plist에 CFBundleLocalizations(ko, en)가 선언되어 있어야 시스템이
+    // 한국어를 지원 언어로 인정한다 (build-app.sh에서 생성).
+    // 이미 로컬라이제이션을 캐시한 번들은 다음 실행부터 반영된다.
+    static func applyProcessLanguage(_ lang: Lang) {
+        let d = UserDefaults.standard
+        // 이미 같은 언어가 1순위면(예: 시스템이 ko-KR) 굳이 덮어쓰지 않는다.
+        let first = (d.stringArray(forKey: "AppleLanguages") ?? []).first ?? ""
+        if !first.hasPrefix(lang.rawValue) { d.set([lang.rawValue], forKey: "AppleLanguages") }
     }
 
     // key -> (ko, en). Grouped by UI area; mirrors riven's DICT (subset in active use,
@@ -84,11 +108,14 @@ enum I18n {
         "about.update": ("업데이트", "Update"), "about.check": ("업데이트 확인", "Check for updates"),
         "about.checkHint": ("최신 버전 여부를 확인하세요.", "Check whether you're up to date."),
         "about.checking": ("확인 중…", "Checking…"),
+        "update.unavailable": ("업데이트를 확인할 수 없습니다", "Can't check for updates"),
+        "update.noFeed": ("이 빌드에는 업데이트 피드가 설정되어 있지 않습니다(개발 빌드).",
+                          "This build has no update feed configured (development build)."),
         "about.links": ("링크", "Links"), "about.landing": ("홈페이지 보기", "Homepage"),
         "about.github": ("깃헙 보기", "GitHub"),
         "account.title": ("계정 & 동기화", "Account & Sync"),
         "account.continueGithub": ("GitHub로 계속", "Continue with GitHub"),
-        "settings.saveFonts": ("폰트 크기 저장 (재시작 적용)", "Save font size (applies on restart)"),
+        "settings.saveFonts": ("폰트 크기 적용", "Apply font size"),
         "settings.saveAI": ("AI 설정 저장", "Save AI settings"),
         "settings.snippets": ("스니펫", "Snippets"),
         "settings.snippetsHint": ("접두어를 입력하면 본문이 자동완성으로 제안됩니다. ${1} 로 탭 정지점을 넣을 수 있어요.", "Type the prefix to get the body as a completion. Use ${1} for tab stops."),

@@ -25,6 +25,11 @@ final class SettingsWindow: NSPanel {
     private let notify = NSButton(checkboxWithTitle: "데스크톱 알림 사용 (에이전트 완료 · 터미널 벨)", target: nil, action: nil)
     private let formatOnSave = NSButton(checkboxWithTitle: "저장 시 자동 포맷", target: nil, action: nil)
     private var swatches: [NSView] = []
+    // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
+    private var rootView: NSView!
+    private var titleLabel: NSTextField!
+    private var closeBtn: NSButton!
+    private let hair = NSView()
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
@@ -54,8 +59,10 @@ final class SettingsWindow: NSPanel {
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        self.titleLabel = titleLabel
         header.addSubview(titleLabel)
         let closeBtn = NSButton(title: t("common.close"), target: self, action: #selector(closeSettings))
+        self.closeBtn = closeBtn
         closeBtn.isBordered = false; closeBtn.font = .systemFont(ofSize: 11)
         closeBtn.contentTintColor = Theme.fgDim
         closeBtn.wantsLayer = true; closeBtn.layer?.backgroundColor = Theme.hover.cgColor
@@ -77,7 +84,7 @@ final class SettingsWindow: NSPanel {
             let b = makeTab(label, i)
             tabButtons.append(b); tabStack.addArrangedSubview(b)
         }
-        let hair = NSView(); hair.wantsLayer = true; hair.layer?.backgroundColor = Theme.hairline.cgColor
+        hair.wantsLayer = true; hair.layer?.backgroundColor = Theme.hairline.cgColor
         hair.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(tabStack); header.addSubview(hair)
 
@@ -117,8 +124,10 @@ final class SettingsWindow: NSPanel {
             content.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
         contentView = root
+        rootView = root
         installGlass(on: self, content: root, radius: 14)
         showTab(0)
+        Theme.register(self)
         // Live language switch: relabel the tabs + re-render the active tab.
         NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -202,7 +211,7 @@ final class SettingsWindow: NSPanel {
 
         addSection(t("settings.editor"))
         editorSize.stringValue = String(s.int("editorFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), field(editorSize, width: 72)))
+        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(editorSize)))
         formatOnSave.title = t("settings.formatOnSave")
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
         formatOnSave.target = self; formatOnSave.action = #selector(saveFormatOnSave)
@@ -212,7 +221,7 @@ final class SettingsWindow: NSPanel {
 
         addSection(t("settings.terminal"))
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), field(terminalSize, width: 72)))
+        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(terminalSize)))
 
         addSection(t("settings.notifications"))
         notify.title = t("settings.notifyDesc")
@@ -251,9 +260,28 @@ final class SettingsWindow: NSPanel {
     @objc private func changeLanguage(_ seg: NSSegmentedControl) {
         I18n.setLanguage(seg.selectedSegment == 1 ? .en : .ko)
     }
+    // 폰트 크기 입력칸 — 엔터를 치거나 포커스를 잃는 순간 바로 저장 + 적용된다.
+    // (예전에는 "저장" 버튼을 눌러야 값이 들어갔고, 그마저도 읽는 쪽이 없어 재시작해도
+    //  반영되지 않았다.)
+    private func fontField(_ tf: NSTextField) -> NSTextField {
+        let f = field(tf, width: 72)
+        f.target = self; f.action = #selector(saveFonts)
+        (f.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
+        return f
+    }
+    // 8–48pt로 클램프 (0이나 음수가 들어가면 에디터/터미널이 깨진다).
+    private func clampFont(_ s: String, _ fallback: Int) -> Int {
+        guard let v = Int(s.trimmingCharacters(in: .whitespaces)) else { return fallback }
+        return max(8, min(48, v))
+    }
     @objc private func saveFonts() {
-        Settings.shared.set("editorFontSize", Int(editorSize.stringValue) ?? 13)
-        Settings.shared.set("terminalFontSize", Int(terminalSize.stringValue) ?? 13)
+        let ed = clampFont(editorSize.stringValue, Settings.shared.int("editorFontSize", 13))
+        let tm = clampFont(terminalSize.stringValue, Settings.shared.int("terminalFontSize", 13))
+        editorSize.stringValue = String(ed); terminalSize.stringValue = String(tm)
+        Settings.shared.set("editorFontSize", ed)
+        Settings.shared.set("terminalFontSize", tm)
+        // 에디터(Monaco)와 터미널(ghostty)이 각자 구독해서 즉시 반영한다.
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }
 
     // ---- AI tab ----
@@ -611,7 +639,8 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(spacer(8))
 
         addSection(t("about.update"))
-        updateStatusLabel = NSTextField(labelWithString: t("about.checkHint"))
+        // 탭을 다시 그릴 때도 실제 진행 상태를 따른다 (창을 닫았다 열면 "확인 중…"이 남던 문제).
+        updateStatusLabel = NSTextField(labelWithString: Updater.shared.isChecking ? t("about.checking") : t("about.checkHint"))
         updateStatusLabel.font = .systemFont(ofSize: 12); updateStatusLabel.textColor = Theme.fgDim
         content.addArrangedSubview(updateStatusLabel)
         content.addArrangedSubview(spacer(4))
@@ -639,16 +668,22 @@ final class SettingsWindow: NSPanel {
     }
     private var updateStatusLabel: NSTextField!
     // Sparkle이 자체 UI(최신 버전/다운로드-설치 흐름)를 보여주므로 결과 텍스트는 여기서 세팅하지 않는다.
+    // 대신 확인이 끝나는 모든 경로(최신 · 업데이트 발견 · 실패 · 사용자가 창을 닫음)에서
+    // Updater가 알려주면 라벨을 유휴 문구로 되돌린다 — "확인 중…"이 영영 남지 않도록.
     @objc private func checkUpdate() {
         updateStatusLabel.stringValue = t("about.checking"); updateStatusLabel.textColor = Theme.fgDim
-        // Sparkle shows its own result window; clear our hint when the check finishes so
-        // "확인 중…" doesn't stay stuck behind it.
-        Updater.shared.onCheckFinished = { [weak self] in
-            guard let self else { return }
-            self.updateStatusLabel.stringValue = t("about.checkHint")
-            self.updateStatusLabel.textColor = Theme.fgDim
-        }
+        Updater.shared.onCheckFinished = { [weak self] in self?.syncUpdateStatus() }
         Updater.shared.checkForUpdates(self)
+    }
+    private func syncUpdateStatus() {
+        guard let l = updateStatusLabel else { return }
+        l.stringValue = Updater.shared.isChecking ? t("about.checking") : t("about.checkHint")
+        l.textColor = Theme.fgDim
+    }
+    // 설정 창을 닫았다 다시 열어도(창은 재사용된다) 라벨이 실제 상태를 따르게 한다.
+    override func becomeKey() {
+        super.becomeKey()
+        if activeTab == 4 { syncUpdateStatus() }
     }
 
     // ---- shared builders ----
@@ -708,6 +743,22 @@ final class SettingsWindow: NSPanel {
         // Left-align (a button row is a leading-aligned single control).
         let wrap = NSStackView(views: [b]); wrap.orientation = .horizontal
         return wrap
+    }
+}
+
+// 설정 창도 라이브 테마 전환을 따라간다. 창 자체 크롬(배경 · 헤어라인 · 유리 테두리)은
+// init에서 한 번만 칠해지므로 여기서 다시 넣어주고, 본문은 현재 탭을 다시 그려 갱신한다.
+extension SettingsWindow: Themable {
+    func applyTheme() {
+        appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
+        backgroundColor = .clear                     // installGlass가 투명 배경 + 블러를 쓴다
+        rootView?.layer?.backgroundColor = Theme.bg2.withAlphaComponent(0.72).cgColor
+        rootView?.layer?.borderColor = Theme.edge.cgColor
+        titleLabel?.textColor = Theme.fg
+        closeBtn?.contentTintColor = Theme.fgDim
+        closeBtn?.layer?.backgroundColor = Theme.hover.cgColor
+        hair.layer?.backgroundColor = Theme.hairline.cgColor
+        showTab(activeTab)                           // 탭 라벨/밑줄 + 본문 컨트롤 색 재생성
     }
 }
 
