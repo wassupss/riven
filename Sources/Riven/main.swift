@@ -1233,6 +1233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "layout": layouts
         ]
         Settings.shared.set("session", session)
+        activeDock?.dumpTree("persist")   // 레이아웃 이상 추적용 (디버그 로그에만)
     }
     // sRGB hex for a rail card color (persisted); Theme.hex parses it back.
     private func hexString(_ c: NSColor) -> String {

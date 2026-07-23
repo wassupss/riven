@@ -491,6 +491,14 @@ final class DockManager {
             //    공백이 된다(3열을 전부 다른 그룹으로 옮겼을 때). 제거하고 형제들이
             //    그 공간을 나눠 갖게 한다. 자식이 하나만 남았으면 그 자식을 승격한다.
             for sv in allSplits() {
+                // 그룹도 split도 아닌 뷰가 팬으로 남아 있으면(정리 도중의 잔재) 자리를
+                // 차지한 채 아무것도 그리지 않아 빈 영역이 된다 → 제거.
+                if let stray = sv.arrangedSubviews.first(where: { !($0 is DockGroup) && !($0 is NSSplitView) }) {
+                    let sibs = sv.arrangedSubviews.filter { $0 !== stray }.map { extent($0, in: sv) }
+                    stray.removeFromSuperview()
+                    if sv.arrangedSubviews.count >= 2 { redistribute(sv, oldExtents: sibs) }
+                    again = true; break
+                }
                 if sv.arrangedSubviews.isEmpty {
                     if let psv = sv.superview as? NSSplitView {
                         let sibs = psv.arrangedSubviews.filter { $0 !== sv }.map { extent($0, in: psv) }
@@ -518,8 +526,47 @@ final class DockManager {
         }
         guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
         container.layoutSubtreeIfNeeded()
+        fillGaps(root)
         ensureMinExtents(root)
     }
+
+    // 각 split의 팬 크기 합이 컨테이너를 정확히 채우도록 다시 맞춘다. 구조 정리 뒤에도
+    // divider 위치가 예전 값으로 남아 합이 모자라면 그만큼이 빈 영역으로 보인다.
+    // (구조가 아니라 '크기'가 원인인 공백을 없애는 마지막 단계.)
+    private func fillGaps(_ v: NSView) {
+        guard let sv = v as? NSSplitView else { return }
+        let n = sv.arrangedSubviews.count
+        if n >= 2 {
+            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+            let exts = sv.arrangedSubviews.map { extent($0, in: sv) }
+            let sum = exts.reduce(0, +)
+            // 1pt 이상 어긋나면 현재 비율을 유지한 채 정확히 채우도록 재배분.
+            if total > 0, sum > 0, abs(sum - total) > 1 {
+                setExtents(sv, exts.map { $0 * total / sum })
+            }
+        }
+        for c in sv.arrangedSubviews { c.layoutSubtreeIfNeeded(); fillGaps(c) }
+    }
+    // 현재 트리 상태를 디버그 로그로 남긴다 (레이아웃 이상 재발 시 원인 추적용).
+    func dumpTree(_ label: String) {
+        func walk(_ v: NSView, _ d: Int) -> String {
+            let pad = String(repeating: "  ", count: d)
+            if let sv = v as? NSSplitView {
+                let exts = sv.arrangedSubviews.map { Int(extent($0, in: sv)) }
+                var out = "\(pad)split[\(sv.isVertical ? "H" : "V")] \(exts) frame=\(Int(sv.frame.width))x\(Int(sv.frame.height))\n"
+                for c in sv.arrangedSubviews { out += walk(c, d + 1) }
+                return out
+            }
+            if let g = v as? DockGroup {
+                let ids = g.panels.map { $0.id }.joined(separator: ",")
+                return "\(pad)group[\(ids.isEmpty ? "<EMPTY>" : ids)] \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+            }
+            return "\(pad)STRAY \(type(of: v)) \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+        }
+        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
+        RLog.log("dock[\(label)] container=\(Int(container.bounds.width))x\(Int(container.bounds.height))\n" + walk(root, 0))
+    }
+
     // 트리 안의 모든 NSSplitView (중첩 포함).
     private func allSplits(_ from: NSView? = nil) -> [NSSplitView] {
         var out: [NSSplitView] = []
