@@ -81,9 +81,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 if [ "$SIGN_ID" = "-" ]; then
-  # Local dev: ad-hoc sign so Gatekeeper/Metal are happy on this machine.
-  codesign --force --deep --sign - "$APP" 2>/dev/null || true
-  echo "▸ Built $APP (ad-hoc signed)"
+  # Local dev: ad-hoc sign WITH the hardened runtime (--options runtime), inner-out.
+  # WITHOUT the runtime flag the app's WKWebView WebContent process runs degraded
+  # (no JIT / hardware acceleration for JavaScriptCore), which made Monaco's editor
+  # extremely laggy in local ad-hoc builds even though notarized releases (which DO
+  # have the hardened runtime) were smooth. Matching the runtime here makes local test
+  # builds behave like the shipped app.
+  FW="$APP/Contents/Frameworks/Sparkle.framework"
+  if [ -d "$FW" ]; then
+    for x in "$FW"/Versions/B/XPCServices/*.xpc; do
+      [ -e "$x" ] && codesign --force --options runtime --sign - "$x"
+    done
+    [ -e "$FW/Versions/B/Autoupdate" ] && codesign --force --options runtime --sign - "$FW/Versions/B/Autoupdate"
+    [ -e "$FW/Versions/B/Updater.app" ] && codesign --force --options runtime --sign - "$FW/Versions/B/Updater.app"
+    codesign --force --options runtime --sign - "$FW"
+  fi
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP/Contents/MacOS/riven"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
+  echo "▸ Built $APP (ad-hoc + hardened runtime)"
 else
   # Release: hardened runtime + entitlements, signed with the Developer ID so the
   # app can be notarized. Sign inner-out: Sparkle helpers → framework → binary → app.

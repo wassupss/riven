@@ -179,7 +179,6 @@ final class DockManager {
     //   sizeHint when one is provided (aux side panels).
     private func split(_ group: DockGroup, with newGroup: DockGroup, direction: DockDir,
                        sizeHint: CGFloat? = nil) {
-        defer { DispatchQueue.main.async { [weak self] in self?.dumpTree("after-split-\(direction)") } }
         let vertical = (direction == .left || direction == .right) // vertical divider ⇒ side-by-side
         let before = (direction == .left || direction == .up)      // new group first
         guard let parent = group.superview else { return }
@@ -252,25 +251,6 @@ final class DockManager {
     // A pane's extent along its split's axis.
     private func extent(_ v: NSView, in sv: NSSplitView) -> CGFloat {
         sv.isVertical ? v.frame.width : v.frame.height
-    }
-    // DEBUG: dump the split tree with each split's axis + pane extents, so a resize bug
-    // shows exactly which split ended up with a collapsed pane.
-    func dumpTree(_ label: String) {
-        func walk(_ v: NSView, _ depth: Int) -> String {
-            let pad = String(repeating: "  ", count: depth)
-            if let sv = v as? NSSplitView {
-                let axis = sv.isVertical ? "H" : "V"   // vertical divider = side-by-side (H layout)
-                let exts = sv.arrangedSubviews.map { Int(extent($0, in: sv)) }
-                var s = "\(pad)split[\(axis)] \(exts) frame=\(Int(sv.frame.width))x\(Int(sv.frame.height))\n"
-                for c in sv.arrangedSubviews { s += walk(c, depth + 1) }
-                return s
-            } else if let g = v as? DockGroup {
-                return "\(pad)group(\(g.panels.map { $0.id }.joined(separator: ","))) \(Int(v.frame.width))x\(Int(v.frame.height))\n"
-            }
-            return "\(pad)view \(Int(v.frame.width))x\(Int(v.frame.height))\n"
-        }
-        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
-        RLog.log("dock[\(label)] container=\(Int(container.bounds.width))x\(Int(container.bounds.height))\n" + walk(root, 0))
     }
     // Set every pane's extent by walking the dividers left→right / top→bottom.
     // `extents` must have one entry per arranged subview; positions are cumulative
@@ -532,7 +512,6 @@ final class DockManager {
             }
         }
         savedPlacements[panel.id] = pl
-        RLog.log("dock: record \(panel.id) extent=\(Int(pl.extent)) idx=\(pl.indexInSplit) vertical=\(pl.vertical)")
     }
 
     // 기록된 자리로 패널을 복원한다. 자리가 완전히 사라졌으면 false를 돌려주고
@@ -541,7 +520,6 @@ final class DockManager {
     func restorePlacement(_ panel: DockPanel) -> Bool {
         guard let pl = savedPlacements.removeValue(forKey: panel.id) else { return false }
         container.layoutSubtreeIfNeeded()
-        RLog.log("dock: restore \(panel.id) want-extent=\(Int(pl.extent))")
         // 1) 탭으로 있던 그룹이 아직 살아있으면 그 자리(탭 인덱스)로.
         if let host = resolveGroup(pl.hostGroup, pl.hostPanelIds) {
             host.insert(panel, at: pl.tabIndex)
@@ -607,7 +585,6 @@ final class DockManager {
         var target: [CGFloat] = olds.map { sum > 0 ? $0 * (total - e) / sum : (total - e) / CGFloat(max(1, olds.count)) }
         target.insert(e, at: idx)
         setExtents(sv, target)
-        RLog.log("dock: insertPane want=\(Int(want)) got=\(Int(e)) total=\(Int(total)) n=\(n)")
     }
 
     // 임의의 이웃 뷰(그룹 또는 중첩 split)를 감싸 새 그룹과 나란히 놓는다 —

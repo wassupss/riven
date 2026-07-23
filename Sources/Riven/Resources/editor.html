@@ -127,26 +127,6 @@ function timed(label, fn) {
   const t0 = performance.now(); const r = fn(); const dt = performance.now() - t0;
   if (dt > 60) wlog('SLOW ' + label + ' ' + Math.round(dt) + 'ms'); return r;
 }
-// Frame-gap jank detector. WebKit doesn't implement the `longtask` PerformanceObserver,
-// so we watch the rAF cadence instead: a gap far above one frame means the main thread
-// (or the compositor) stalled. Logged so a recurring hitch is quantified.
-let _lastFrame = performance.now(), _jankCount = 0;
-function _frameWatch() {
-  const now = performance.now(), gap = now - _lastFrame; _lastFrame = now;
-  if (gap > 120) { _jankCount++; wlog('JANK ' + Math.round(gap) + 'ms gap (#' + _jankCount + ')'); }
-  requestAnimationFrame(_frameWatch);
-}
-requestAnimationFrame(_frameWatch);
-// Event Timing (WebKit-supported, unlike longtask): logs slow INPUT events with their
-// type + processing time, so a laggy keystroke/click is attributed directly.
-try {
-  new PerformanceObserver((list) => {
-    for (const e of list.getEntries()) {
-      const proc = Math.round((e.processingEnd || 0) - (e.processingStart || 0));
-      wlog('EVENT ' + e.name + ' dur=' + Math.round(e.duration) + 'ms proc=' + proc + 'ms');
-    }
-  }).observe({ entryTypes: ['event'], durationThreshold: 104 });
-} catch (e) { wlog('no event-timing'); }
 // Run fn on the next frame (falls back to a macrotask) — used to push non-essential
 // work (decoration mutation, native round-trips) off the current mousedown/focus
 // event so Monaco's own pointer-drag tracking for THIS event finishes first.
@@ -285,15 +265,16 @@ function createGroup() {
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
-    minimap: { enabled: false }, automaticLayout: true, scrollBeyondLastLine: false,
+    minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
     glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
     inlineSuggest: { enabled: true }, model: null,
-    // These features dispatch to Monaco's editorWorkerService. In WKWebView the worker
-    // can't spawn (null file:// origin), so Monaco runs them SYNCHRONOUSLY on the main
-    // thread — occurrence highlighting recomputes on every cursor move, word-based
-    // suggestions + link detection scan the whole document — which is what froze the
-    // editor for ~1s per interaction (rAF showed 0.8–1.7s JANK gaps). We don't need any
-    // of them: completion/hover/definition/references all come from the native LSP.
+    // These dispatch to Monaco's editorWorkerService, which can't run in a background
+    // worker here (the file:// page has a null origin, so WKWebView won't spawn the
+    // worker) — Monaco runs them on the main thread instead. occurrencesHighlight /
+    // selectionHighlight rescan on every cursor move, so keeping them off keeps cursor
+    // movement snappy; wordBasedSuggestions is redundant with (and noisier than) the
+    // native LSP completions — VS Code itself disables it when a language server is
+    // present. completion/hover/definition/references all come from the LSP regardless.
     occurrencesHighlight: 'off', selectionHighlight: false,
     wordBasedSuggestions: 'off', links: false, codeLens: false
   });
