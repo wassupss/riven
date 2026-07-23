@@ -112,6 +112,7 @@ let editor = null;
 let shikiReady = false;
 const models = {};        // path -> monaco model
 const savedVersion = {};  // path -> alternativeVersionId at last save
+const lastDirty = {};     // path -> last known dirty state (skip redundant DOM/native work)
 let currentPath = null;
 let currentTheme = 'dark-plus';          // VSCode Dark+ (set live by native)
 let pendingGhost = null;                 // { line, text } for AI ghost completion
@@ -119,8 +120,20 @@ const agentDecos = {};                   // path -> decoration ids
 const blameData = {};                    // path -> { line: "author, time · summary" }
 let blameDeco = null;
 const post = (msg) => window.webkit.messageHandlers.riven.postMessage(msg);
+// Perf instrumentation → native debug log (owner-only). Logs only when something is
+// slow, so it's free in the common case but pinpoints jank if it recurs.
+const wlog = (m) => { try { window.webkit.messageHandlers.log.postMessage(m); } catch (e) {} };
+function timed(label, fn) {
+  const t0 = performance.now(); const r = fn(); const dt = performance.now() - t0;
+  if (dt > 60) wlog('SLOW ' + label + ' ' + Math.round(dt) + 'ms'); return r;
+}
+// Run fn on the next frame (falls back to a macrotask) — used to push non-essential
+// work (decoration mutation, native round-trips) off the current mousedown/focus
+// event so Monaco's own pointer-drag tracking for THIS event finishes first.
+const defer = (fn) => (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(fn);
 
-function updateBlame() {
+function updateBlame() { timed('updateBlame', updateBlameNow); }
+function updateBlameNow() {
   if (blameDeco) blameDeco.clear();
   const b = blameData[currentPath]; const pos = editor && editor.getPosition();
   if (!b || !pos || !b[pos.lineNumber]) return;
@@ -131,6 +144,11 @@ function updateBlame() {
     options: { after: { content: '      ' + b[pos.lineNumber], inlineClassName: 'git-blame-inline', cursorStops: monaco.editor.InjectedTextCursorStops.None }, showIfCollapsed: true }
   }]);
 }
+// Debounced blame: recreating the inline-blame decoration on EVERY cursor tick is
+// wasteful (and forces a re-layout when agent-diff view-zones are present). Coalesce
+// so it only runs ~140ms after the cursor settles.
+let blameTimer = null;
+function scheduleBlame() { clearTimeout(blameTimer); blameTimer = setTimeout(updateBlame, 140); }
 
 // ===== Editor GROUPS (VS Code-style split) =====
 // A flex row of groups (#egroups); each group owns an HTML tab strip (.etabs) + a
@@ -249,13 +267,28 @@ function createGroup() {
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
     minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
     glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
-    inlineSuggest: { enabled: true }, model: null
+    inlineSuggest: { enabled: true }, model: null,
+    // These dispatch to Monaco's editorWorkerService, which can't run in a background
+    // worker here (the file:// page has a null origin, so WKWebView won't spawn the
+    // worker) — Monaco runs them on the main thread instead. occurrencesHighlight /
+    // selectionHighlight rescan on every cursor move, so keeping them off keeps cursor
+    // movement snappy; wordBasedSuggestions is redundant with (and noisier than) the
+    // native LSP completions — VS Code itself disables it when a language server is
+    // present. completion/hover/definition/references all come from the LSP regardless.
+    occurrencesHighlight: 'off', selectionHighlight: false,
+    wordBasedSuggestions: 'off', links: false, codeLens: false
   });
-  const g = { idx: groups.length, el, tabsEl, monEl, dropEl, ed, tabs: [], active: null, node: null };
+  const g = { idx: groups.length, el, tabsEl, monEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
   g.node = { type: 'leaf', g };
   groups.push(g);
   wireEd(g);
-  el.addEventListener('mousedown', () => setActiveGroup(g.idx), true);
+  // Bubble phase (not capture) so this runs AFTER Monaco's own mousedown handling
+  // for the click has already read the initial hit-test/position — a capture-phase
+  // listener here used to fire (and mutate decorations via setActiveGroup) BEFORE
+  // Monaco's handler ran, which could corrupt its drag-anchor and start a phantom
+  // text selection (issue #5). The idx guard also makes this a true no-op for
+  // clicks inside the already-active group.
+  el.addEventListener('mousedown', () => { if (activeIdx !== g.idx) setActiveGroup(g.idx); });
   // Drop overlay (above Monaco, only live during a tab drag so Monaco never eats the drop).
   dropEl.addEventListener('dragover', (e) => {
     if (!dragPath) return;
@@ -280,8 +313,12 @@ function setActiveGroup(i) {
   editor = g.ed;                       // live pointer used by all helpers below
   currentPath = g.active;
   groups.forEach(x => x.el.classList.toggle('focused', x === g));
-  updateHunkNav(currentPath);
-  updateBlame();
+  // Defer the hunk-nav/blame refresh (blame mutates a Monaco decorations collection)
+  // off whatever event triggered this — a mousedown or a focus event fired mid-click.
+  // Mutating decorations synchronously inside that event can race Monaco's own
+  // mousedown->drag-select tracking and start a phantom selection (issue #5). One
+  // rAF tick is imperceptible and runs after Monaco has finished with the event.
+  defer(() => { if (activeGroup() === g) { updateHunkNav(currentPath); updateBlame(); } });
 }
 
 // Per-editor wiring (was inline for the single editor; now runs for each group).
@@ -307,9 +344,17 @@ function wireEd(g) {
   });
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Backslash, () => splitEditor('row'));
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Backslash, () => splitEditor('col'));
-  ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) updateBlame(); });
-  ed.onDidFocusEditorText(() => { setActiveGroup(g.idx); post({ type: 'focus' }); });
-  ed.onDidFocusEditorWidget(() => { setActiveGroup(g.idx); post({ type: 'focus' }); });
+  ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) scheduleBlame(); });
+  // setActiveGroup itself is safe to call synchronously (its decoration/blame work
+  // is deferred internally, see setActiveGroup) — but the native round-trip below
+  // is NOT: focus fires synchronously as part of Monaco's own mousedown handling
+  // (clicking into an unfocused editor focuses it before the click finishes being
+  // processed), and `post({type:'focus'})` can make native call back into the
+  // WebView (e.g. re-layout on group activation) mid-press. Defer just that hop so
+  // Monaco's in-flight drag-select tracking for this mousedown finishes untouched
+  // (issue #5).
+  ed.onDidFocusEditorText(() => { setActiveGroup(g.idx); defer(() => post({ type: 'focus' })); });
+  ed.onDidFocusEditorWidget(() => { setActiveGroup(g.idx); defer(() => post({ type: 'focus' })); });
   ed.onMouseDown(e => {
     if (e.target.type !== monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) return;
     const st = agentState[g.active]; if (!st) return;
@@ -352,9 +397,23 @@ function tabEl(g, path) {
 }
 function renderTabs(g) {
   g.tabsEl.innerHTML = '';
-  for (const p of g.tabs) g.tabsEl.appendChild(tabEl(g, p));
+  g.tabEls = {};
+  for (const p of g.tabs) { const el = tabEl(g, p); g.tabEls[p] = el; g.tabsEl.appendChild(el); }
 }
-function refreshDirty(path) { for (const g of groups) if (g.tabs.includes(path)) renderTabs(g); }
+// Toggle ONLY the .dirty class on the tab element(s) for `path` — no DOM rebuild.
+// This is on the hot path (runs per keystroke via onDidChangeContent), so it must
+// stay O(groups showing path), not O(all tabs) like a renderTabs() call would be.
+function setTabDirty(path, dirty) {
+  for (const g of groups) { const el = g.tabEls && g.tabEls[path]; if (el) el.classList.toggle('dirty', dirty); }
+}
+// Non-hot-path resync (called after save / reload, where a full recompute is cheap
+// and correctness matters more than micro-perf): recompute dirty and sync the class
+// + the last-known-state cache used by the hot path in ensureModel().
+function refreshDirty(path) {
+  const d = isDirty(path);
+  lastDirty[path] = d;
+  setTabDirty(path, d);
+}
 
 const docVersion = {};   // path -> last LSP document version sent
 function bumpVersion(path) { docVersion[path] = (docVersion[path] || 1) + 1; return docVersion[path]; }
@@ -374,10 +433,22 @@ function ensureModel(path, content) {
   let model = monaco.editor.getModel(uri);
   if (!model) model = monaco.editor.createModel(content || '', extLang(path), uri);
   savedVersion[path] = model.getAlternativeVersionId();
+  lastDirty[path] = false;
   let syncTimer = null;
   model.onDidChangeContent(() => {
-    post({ type: 'dirty', path, dirty: isDirty(path) });
-    refreshDirty(path);
+    // Hot path — fires on EVERY keystroke. Only touch the DOM / notify native when
+    // the dirty flag actually FLIPS (previously this unconditionally called
+    // refreshDirty(), which rebuilt the whole tab strip's innerHTML + re-attached
+    // every tab's listeners on every keystroke — the main cause of issue #6's
+    // typing lag). Once a file is dirty this is a no-op for the rest of the edit.
+    const d = isDirty(path);
+    if (lastDirty[path] !== d) {
+      lastDirty[path] = d;
+      post({ type: 'dirty', path, dirty: d });
+      setTabDirty(path, d);
+    }
+    // Full-document sync stays debounced at 300ms — do NOT post the full text here
+    // synchronously per keystroke.
     clearTimeout(syncTimer);
     syncTimer = setTimeout(() => post({ type: 'lspSync', path, version: bumpVersion(path), text: model.getValue() }), 300);
   });
@@ -454,6 +525,22 @@ function splitEditor(dir) {
   setActiveGroup(groups.indexOf(newG)); newG.ed.focus();
 }
 window.rivenSplitEditor = function (dir) { splitEditor(dir === 'down' || dir === 'col' ? 'col' : 'row'); };
+
+// Cycle open tabs WITHIN THE ACTIVE GROUP (native-owned ⌘⇧[ / ⌘⇧], issue #8).
+// Native routes the keys; this just moves `active` to the prev/next path in
+// `activeGroup().tabs` (wrap-around) and reuses the normal tab-switch plumbing.
+function switchTab(delta) {
+  const g = activeGroup(); if (!g || g.tabs.length < 2) return;
+  const at = g.tabs.indexOf(g.active);
+  const n = g.tabs.length;
+  const next = g.tabs[((at < 0 ? 0 : at) + delta + n) % n];
+  if (next === g.active) return;
+  showInGroup(g, next);
+  post({ type: 'activeTab', path: next });
+  g.ed.focus();
+}
+window.rivenPrevTab = function () { switchTab(-1); };
+window.rivenNextTab = function () { switchTab(1); };
 
 function extLang(path) {
   const e = (path.split('.').pop() || '').toLowerCase();
@@ -568,13 +655,18 @@ require(['vs/editor/editor.main'], async function () {
   });
   window.rivenDiagnostics = function (path, diags) {
     const m = models[path]; if (!m) return;
-    const markers = (diags || []).map(d => ({
-      severity: [0, monaco.MarkerSeverity.Error, monaco.MarkerSeverity.Warning,
-                 monaco.MarkerSeverity.Info, monaco.MarkerSeverity.Hint][d.severity] || monaco.MarkerSeverity.Info,
-      startLineNumber: d.range.start.line+1, startColumn: d.range.start.character+1,
-      endLineNumber: d.range.end.line+1, endColumn: d.range.end.character+1,
-      message: d.message, source: d.source
-    }));
+    const markers = (diags || []).map(d => {
+      // A misbehaving server may emit a diagnostic without a well-formed range; skip it
+      // rather than throwing (a thrown .map would drop ALL markers for this file).
+      if (!d || !d.range || !d.range.start || !d.range.end) return null;
+      return {
+        severity: [0, monaco.MarkerSeverity.Error, monaco.MarkerSeverity.Warning,
+                   monaco.MarkerSeverity.Info, monaco.MarkerSeverity.Hint][d.severity] || monaco.MarkerSeverity.Info,
+        startLineNumber: d.range.start.line+1, startColumn: d.range.start.character+1,
+        endLineNumber: d.range.end.line+1, endColumn: d.range.end.character+1,
+        message: d.message, source: d.source
+      };
+    }).filter(Boolean);
     monaco.editor.setModelMarkers(m, 'lsp', markers);
   };
 
@@ -694,7 +786,25 @@ window.rivenShowEmpty = function () {
   const g = groups[0];
   if (g) { g.tabs = []; g.active = null; g.ed.setModel(null); renderTabs(g); }
   currentPath = null;
+  // Dispose EVERY Monaco model, not just the tabs — otherwise files opened across
+  // workspaces stay resident (text + tokenization + undo history) for the whole
+  // session (a per-session memory leak). Editors were detached above (setModel(null)
+  // / removeGroup), so disposing the models now is safe.
+  for (const p of Object.keys(models)) {
+    try { models[p].dispose(); } catch (e) {}
+    delete models[p]; delete savedVersion[p]; delete docVersion[p];
+    delete agentState[p]; delete agentDecos[p]; delete blameData[p];
+  }
   document.getElementById('empty').style.display = 'flex';
+};
+// Restore an INACTIVE tab on workspace switch WITHOUT stealing the visible tab or
+// focus: create its model + add the tab chip, but don't setModel/setActive/focus.
+// (The active tab is opened separately via rivenOpen.)
+window.rivenOpenBackground = function (path, content) {
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  if (!models[path]) ensureModel(path, content);
+  if (!g.tabs.includes(path)) { g.tabs.push(path); renderTabs(g); }
+  document.getElementById('empty').style.display = 'none';
 };
 
 // ---- Editor keymap presets (VS Code / JetBrains / Sublime) → Monaco ----
@@ -839,7 +949,15 @@ function clearAgent(path) {
   delete agentState[path];
 }
 
-window.rivenAgentDiff = function (path, before, after) {
+// Deleted-line view-zones are DOM nodes Monaco must measure on every layout/render.
+// A large git-diff (heavy refactor, generated file) can produce hundreds/thousands of
+// them, which makes EVERY interaction (cursor move, scroll, typing) re-measure the lot
+// — that was the "editor lags only for files opened from the Changes panel" jank. Cap
+// the total deleted rows rendered as zones; the green added-line decorations + hunk
+// nav + revert glyphs are unaffected, so the review stays fully usable.
+const MAX_DEL_ZONE_ROWS = 400;
+window.rivenAgentDiff = function (path, before, after) { timed('agentDiff', () => rivenAgentDiffNow(path, before, after)); };
+function rivenAgentDiffNow(path, before, after) {
   const m = models[path]; if (!m) return;
   // Decorations render on the ACTIVE editor (`editor`), so focus the group showing
   // this file first.
@@ -870,17 +988,26 @@ window.rivenAgentDiff = function (path, before, after) {
   }
   st.decoCol = editor.createDecorationsCollection(decos);
   st.glyphCol = editor.createDecorationsCollection(glyphs);
-  // Red deleted lines as view-zones.
+  // Red deleted lines as view-zones — budgeted (see MAX_DEL_ZONE_ROWS).
+  let rowBudget = MAX_DEL_ZONE_ROWS, truncated = false;
   editor.changeViewZones(acc => {
     for (const h of hunks) {
       if (!h.beforeCount) continue;
+      if (rowBudget <= 0) { truncated = true; break; }
+      const shown = h.beforeLines.slice(0, rowBudget);
+      rowBudget -= shown.length;
       const dom = document.createElement('div'); dom.className = 'agent-del-zone';
-      for (const line of h.beforeLines) {
+      for (const line of shown) {
         const r = document.createElement('div'); r.className = 'agent-del-row'; r.textContent = '− ' + line; dom.appendChild(r);
       }
-      st.zoneIds.push(acc.addZone({ afterLineNumber: Math.max(0, h.afterStart), heightInLines: h.beforeLines.length, domNode: dom }));
+      if (shown.length < h.beforeLines.length) {
+        const r = document.createElement('div'); r.className = 'agent-del-row';
+        r.textContent = '  … ' + (h.beforeLines.length - shown.length) + ' more'; dom.appendChild(r);
+      }
+      st.zoneIds.push(acc.addZone({ afterLineNumber: Math.max(0, h.afterStart), heightInLines: shown.length + 1, domNode: dom }));
     }
   });
+  if (truncated) wlog('agentDiff: deleted-line zones capped at ' + MAX_DEL_ZONE_ROWS + ' rows for ' + path);
   updateHunkNav(path);
   // Land the reader on the FIRST change (clicking a file in the Changes panel should
   // jump straight to its first diff, not the top of the file).
@@ -888,7 +1015,7 @@ window.rivenAgentDiff = function (path, before, after) {
   const firstLine = first.afterCount > 0 ? first.afterStart + 1 : Math.max(1, first.afterStart);
   editor.setPosition({ lineNumber: firstLine, column: 1 });
   editor.revealLineInCenter(firstLine);
-};
+}
 
 function revertHunk(path, h) {
   const st = agentState[path]; if (!st) return;

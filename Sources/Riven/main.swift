@@ -1,5 +1,18 @@
 import AppKit
 
+// Owner-only crash-log path under Application Support (computed once so the C signal
+// handler, which can't allocate/capture, has a ready path).
+let rivenCrashPath: String = {
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/riven-native")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let p = dir.appendingPathComponent("crash.txt").path
+    if !FileManager.default.fileExists(atPath: p) {
+        FileManager.default.createFile(atPath: p, contents: nil, attributes: [.posixPermissions: 0o600])
+    }
+    return p
+}()
+
 // riven native shell — Phase 1 core loop:
 //   explorer (file tree) | Monaco editor (WKWebView) | libghostty terminal
 // Open a folder → browse files → click to open in Monaco → ⌘S saves to disk.
@@ -172,6 +185,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        // DEBUG: split the terminal into N extra panes after launch to inspect sizing.
+        if let n = ProcessInfo.processInfo.environment["RIVEN_ADDTERMS"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                for _ in 0..<n { self.splitTerminal(.right) }
+            }
+        }
         // DEBUG: emit a bell + OSC9 notification from the shell to verify ghostty
         // forwards them to our action_cb (RIVEN_BELLTEST).
         if ProcessInfo.processInfo.environment["RIVEN_BELLTEST"] != nil {
@@ -238,17 +257,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Write crash stacks to /tmp/riven-crash.txt (raw binary won't produce a
-    // normal crash report). Covers Obj-C exceptions + fatal signals.
+    // Write crash stacks to a per-user, owner-only file under Application Support
+    // (not world-readable /tmp — stacks can contain workspace paths). Raw binary
+    // won't produce a normal crash report. Covers Obj-C exceptions + fatal signals.
     private func installCrashHandler() {
         NSSetUncaughtExceptionHandler { ex in
             let s = "EXCEPTION: \(ex.name.rawValue): \(ex.reason ?? "")\n\(ex.callStackSymbols.joined(separator: "\n"))"
-            try? s.write(toFile: "/tmp/riven-crash.txt", atomically: true, encoding: .utf8)
+            try? s.write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
         }
         for sig in [SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGTRAP] {
             signal(sig) { s in
                 let syms = Thread.callStackSymbols.joined(separator: "\n")
-                try? "SIGNAL \(s)\n\(syms)".write(toFile: "/tmp/riven-crash.txt", atomically: true, encoding: .utf8)
+                try? "SIGNAL \(s)\n\(syms)".write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
                 exit(1)
             }
         }
@@ -394,7 +414,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wireEditor(editor, tabBar, secondary: false)
         // LSP diagnostics → Monaco markers (both editor groups).
         lsp.onDiagnostics = { [weak self] uri, diags in
-            let path = uri.replacingOccurrences(of: "file://", with: "")
+            // Servers echo a percent-encoded URI (file:///Users/x/my%20project/a.ts); decode
+            // so it matches the raw Monaco model key, else diagnostics are dropped for any
+            // path with a space / non-ASCII char.
+            let stripped = uri.replacingOccurrences(of: "file://", with: "")
+            let path = stripped.removingPercentEncoding ?? stripped
             self?.editor.setDiagnostics(path: path, diags: diags)
         }
         // The editor fills the whole pane — file tabs are rendered INSIDE the WebView
@@ -836,9 +860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let p = editorDockPanel!
         if p.group == nil || p.group?.manager !== dock {
+            // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4); 기록이 없거나
+            // 그 자리가 사라졌으면 기존 기본 위치로:
             // Append to the rightmost group so the editor sits to the right of the
             // terminals and BEFORE right-side aux panels are restored (stable order).
-            dock.addPanel(p, reference: dock.groups.last, direction: .right)
+            if !dock.restorePlacement(p) {
+                // No saved spot for this workspace → default. The editor is the dominant
+                // content surface: hint it to half the dock regardless of how many
+                // terminal columns exist (a bare 1/N share would make the editor a
+                // sliver next to 2-3 terminals).
+                dock.addPanel(p, reference: dock.groups.last, direction: .right,
+                              sizeHint: dock.container.bounds.width * 0.5)
+            }
         } else {
             p.group?.select(id: "editor")
         }
@@ -850,6 +883,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         st.openTabs = []; st.activeTab = nil
         tabBar.closeAll(); editor.showEmpty()
         editorDockPanel = nil
+        // 사용자가 에디터 패널을 직접 닫았으니 남은 자리 기록은 지운다 — 다음에
+        // 열 때는 기본 위치로 (#4).
+        activeDock?.savedPlacements["editor"] = nil
         persistSession()
     }
 
@@ -861,12 +897,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.deliverToAgent("@\(file):\(start)-\(end)\n```\(lang)\n\(text)\n```\n")
         }
         ed.onAgentRevert = { [weak self, weak ed] path, newAfter in
+            // Only revert a file we're actually tracking an agent edit for — bounds this
+            // web-bridge write to known workspace files (edits are recorded from FSEvents
+            // gated on the workspace root), rejecting any injected arbitrary path.
+            guard let e = AgentEdits.shared.edit(for: path) else { return }
             try? newAfter.write(toFile: path, atomically: true, encoding: .utf8)
             AgentEdits.shared.updateBaseline(path, newAfter)
-            if let e = AgentEdits.shared.edit(for: path) {
-                AgentEdits.shared.record(path: path, workspace: self?.workspace?.path ?? "", before: e.before, after: newAfter, isNew: e.hasBaseline ? false : true)
-                ed?.agentDiff(path: path, before: e.before, after: newAfter)
-            }
+            AgentEdits.shared.record(path: path, workspace: self?.workspace?.path ?? "", before: e.before, after: newAfter, isNew: e.hasBaseline ? false : true)
+            ed?.agentDiff(path: path, before: e.before, after: newAfter)
             self?.reloadIfOpen(path)
         }
         ed.onSave = { [weak self] path, content in self?.save(path: path, content: content) }
@@ -961,11 +999,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // restores them (they don't just vanish).
         if let old = workspace, old != url { state(for: old).openAux = Set(auxDockPanels.keys) }
 
+        // 전환하면 공유 에디터 웹뷰의 모델을 정리하므로(#7, rebuildTabs), 저장 안 된
+        // 탭은 먼저 디스크에 보존한다. 저장이 도착하면 save()가 스테일 디스크 내용으로
+        // 다시 열린 모델을 새 내용으로 갈아 끼운다.
+        if workspace != nil {
+            for p in tabBar.tabs where tabBar.isDirty(p) {
+                pendingSwitchSaves.insert(p)
+                editor.requestSave(path: p)
+            }
+        }
+
         // Detach the shared editor + aux panels from the OUTgoing workspace's dock
         // (their views are singletons; only one dock can hold them at a time).
+        // 분리 전에 각 싱글턴이 있던 자리를 그 독에 기록해 두고, 돌아올 때 기본
+        // 위치가 아니라 그 자리로 복원한다 (#4).
         if let old = activeDock {
-            if let ep = editorDockPanel, ep.group?.manager === old { old.detach(ep) }
-            for (_, ap) in auxDockPanels where ap.group?.manager === old { old.detach(ap) }
+            if let ep = editorDockPanel, ep.group?.manager === old {
+                old.recordPlacement(of: ep); old.detach(ep)
+            }
+            for (_, ap) in auxDockPanels where ap.group?.manager === old {
+                old.recordPlacement(of: ap); old.detach(ap)
+            }
         }
         auxDockPanels.removeAll()
 
@@ -986,12 +1040,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             (term.content as? TerminalView)?.focusTerminal()
         }
 
-        // Restore this workspace's editor tabs (adds the editor panel if needed).
-        rebuildTabs(for: st)
         // Restore the aux panels this workspace had open (search/git/preview/changes).
+        // 에디터보다 먼저 (detach의 역순, LIFO): 에디터의 자리 기록이 aux 그룹을
+        // 이웃으로 참조하는 경우가 많아, aux가 먼저 제자리에 있어야 에디터도
+        // 기록된 자리로 복원된다 (#4).
         for id in ["search", "git", "preview", "changes"] where st.openAux.contains(id) {
             if auxDockPanels[id] == nil { toggleDockPanel(id) }
         }
+        // Restore this workspace's editor tabs (adds the editor panel if needed).
+        rebuildTabs(for: st)
 
         explorer.setRoot(url)
         searchPanel.setRoot(url); gitPanel.setRoot(url); changesPanel.setWorkspace(url)
@@ -1012,7 +1069,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the agent writes appear in the Changes panel with before/after diffs.
         AgentEdits.shared.snapshot(workspace: url)
         agentWatch?.stop()
-        agentWatch = AgentWatch(root: url) { [weak self] path in self?.handleFileChange(path) }
+        agentWatch = AgentWatch(root: url) { [weak self] path in
+            self?.handleFileChange(path)
+            self?.scheduleExplorerRefresh()   // reflect external create/delete/rename in the tree
+        }
+    }
+
+    // Debounced explorer reload: the FS watcher bursts on writes, so coalesce (0.4s) and
+    // reload the tree once, preserving expansion.
+    private var explorerRefreshTimer: Timer?
+    private func scheduleExplorerRefresh() {
+        DispatchQueue.main.async {
+            self.explorerRefreshTimer?.invalidate()
+            self.explorerRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
+                self?.explorer.refreshTree()
+            }
+        }
     }
 
     private func switchWorkspace(_ url: URL) { activate(url); persistSession() }
@@ -1024,6 +1096,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] { (p.content as? TerminalView)?.dispose() }
         }
         states[url] = nil
+        lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
         workspaces.removeAll { $0 == url }
         if workspace == url {
             agentWatch?.stop(); agentWatch = nil
@@ -1093,19 +1166,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         activate(active)
     }
 
-    // Rebuild the tab bar + active editor model for a workspace's open tabs.
+    // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
+    // 워크스페이스가 공유하는 하나의 WKWebView라서, 전환 시 이전 워크스페이스의
+    // 모델/탭이 그대로 남아 있었다(#7) — 먼저 전부 정리하고 이 워크스페이스의
+    // 탭을 전부 다시 연다 (활성 탭을 마지막에 열어 그 탭이 보이게).
     private func rebuildTabs(for st: WorkspaceState) {
         tabBar.closeAll()
+        editor.showEmpty()   // 이전 워크스페이스의 모델을 전부 dispose + 그룹 하나로 리셋
+        // 디스크에서 사라진 파일은 건너뛴다 (restoreSession과 같은 필터).
+        let fm = FileManager.default
+        st.openTabs = st.openTabs.filter { fm.fileExists(atPath: $0) }
+        if let a = st.activeTab, !st.openTabs.contains(a) { st.activeTab = nil }
+        if st.activeTab == nil { st.activeTab = st.openTabs.last }
         for p in st.openTabs { tabBar.open(p) }
-        if let active = st.activeTab {
-            showEditorPane()
-            tabBar.setActive(active)
-            showTabContent(active)
-            statusBar.setFileInfo(fileInfo(active))
-        } else {
+        guard let active = st.activeTab else {
             hideEditorPane()   // workspace has no open tabs → terminal full width
-            editor.showEmpty()
             statusBar.setFileInfo("")
+            return
+        }
+        showEditorPane()
+        showTabContent(active)   // 활성 탭은 동기 로드 → 즉시 보임
+        tabBar.setActive(active)
+        statusBar.setFileInfo(fileInfo(active))
+        // 비활성 탭 복원: 파일 읽기를 메인 스레드에서 하면 탭이 많거나 큰 워크스페이스에서
+        // 전환 때마다 UI가 멈춘다 — 백그라운드에서 읽고, 활성 뷰를 뺏지 않고 탭 칩만 추가한다.
+        let inactive = st.openTabs.filter { $0 != active }
+        guard !inactive.isEmpty, let ws = workspace else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
+            DispatchQueue.main.async {
+                guard self.workspace == ws else { return }   // 그새 다른 워크스페이스로 전환됨 → 취소
+                let cur = self.state(for: ws)
+                for (p, content) in loaded where cur.openTabs.contains(p) {
+                    self.editor.openBackground(path: p, content: content)
+                }
+            }
         }
     }
 
@@ -1287,7 +1382,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         persistSession()
     }
 
+    // 워크스페이스 전환 직전에 자동 저장을 요청한 더티 탭들 (#7). 저장이 도착할
+    // 때쯤이면 rebuildTabs가 스테일 디스크 내용으로 모델을 다시 열었을 수 있으므로,
+    // 쓰기 후 그 모델을 새 내용으로 갈아 끼운다.
+    private var pendingSwitchSaves: Set<String> = []
     private func save(path: String, content: String) {
+        // A dirty tab we queued to flush during a workspace switch. This runs BEFORE the
+        // tab-membership guard below: by the time the save round-trips, rebuildTabs may
+        // have already swapped `tabBar.tabs` to the new workspace, so the guard would
+        // wrongly reject it and drop the edit. These paths are trusted (we queued them
+        // ourselves from the outgoing workspace's open, dirty tabs).
+        if pendingSwitchSaves.remove(path) != nil {
+            writeAndMark(path: path, content: content)
+            reloadIfOpen(path)   // 현재 워크스페이스에 열려 있으면 저장본으로 갱신
+            return
+        }
+        // Defense-in-depth: only write to a file that's actually open as a tab. `path` comes
+        // from the WKWebView bridge; even though the editor content is our own local bundle,
+        // this bounds a save to files the user opened (incl. out-of-workspace ⌘O files) and
+        // rejects any arbitrary path a compromised web context might inject.
+        guard tabBar.tabs.contains(path) else { RLog.log("save: rejected untracked path \(path)"); return }
         // Format-on-save with the PROJECT's prettier + eslint --fix (real config/plugins),
         // off the main thread. Prettier runs over stdin; eslint --fix operates on the
         // written file; the final on-disk text is pushed back to the editor.
@@ -1316,7 +1430,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--fix", path]
         p.currentDirectoryURL = root
-        p.standardOutput = Pipe(); p.standardError = Pipe()
+        // Discard output to /dev/null — a noisy eslint (>64KB) would fill an unread pipe
+        // and wedge waitUntilExit() on the save thread.
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
@@ -1336,10 +1452,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--stdin-filepath", path]
         p.currentDirectoryURL = root
-        let inPipe = Pipe(), outPipe = Pipe(); p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = Pipe()
+        let inPipe = Pipe(), outPipe = Pipe(); p.standardInput = inPipe; p.standardOutput = outPipe
+        p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
-        inPipe.fileHandleForWriting.write(content.data(using: .utf8) ?? Data())
-        inPipe.fileHandleForWriting.closeFile()
+        // Write stdin on a background queue so we read stdout concurrently — otherwise a
+        // large formatted output fills prettier's stdout pipe while we're still blocked
+        // writing stdin → deadlock (save spins forever).
+        let inData = content.data(using: .utf8) ?? Data()
+        DispatchQueue.global(qos: .userInitiated).async {
+            inPipe.fileHandleForWriting.write(inData)
+            try? inPipe.fileHandleForWriting.close()
+        }
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         guard p.terminationStatus == 0, let out = String(data: outData, encoding: .utf8), !out.isEmpty else { return nil }
@@ -1524,7 +1647,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func listeningPorts() -> Set<Int> {
         let p = Process(); p.launchPath = "/usr/sbin/lsof"
         p.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN"]
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return [] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
         let out = String(data: data, encoding: .utf8) ?? ""
@@ -1555,7 +1678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: "에디터", hint: "", symbol: "doc.text") { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() },
             QuickAction(title: "검색", hint: "⌘⇧F", symbol: "magnifyingglass") { [weak self] in self?.toggleDockPanel("search") },
             QuickAction(title: "소스 컨트롤", hint: "⌘⇧G", symbol: "arrow.triangle.branch") { [weak self] in self?.toggleDockPanel("git") },
-            QuickAction(title: "미리보기", hint: "⌘⇧V", symbol: "eye") { [weak self] in self?.toggleDockPanel("preview") },
+            QuickAction(title: "브라우저", hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
             QuickAction(title: "변경사항", hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
             QuickAction(title: "새 워크스페이스", hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
             QuickAction(title: "사이드바 토글", hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
@@ -1610,6 +1733,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {                                       // search / git / preview / changes
                 activeDock?.detach(panel)
                 auxDockPanels[panel.id] = nil
+                activeDock?.savedPlacements[panel.id] = nil   // 직접 닫음 → 자리 기록도 지움 (#4)
             }
             return
         }
@@ -1675,8 +1799,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func focusPaneUpMenu() { focusDock(.up) }
     @objc private func focusPaneDownMenu() { focusDock(.down) }
     @objc private func newTerminalMenu() { newTerminal() }
-    @objc private func nextTerminalMenu() { cycleTerminal(1) }
-    @objc private func prevTerminalMenu() { cycleTerminal(-1) }
+    // ⌘⇧] / ⌘⇧[ : context-sensitive. When the code editor holds focus, cycle its OPEN
+    // TABS (so the same chord that moves between terminals also moves between open files,
+    // and focus stays in the editor); otherwise cycle terminals. Fixes the old behavior
+    // where the chord always jumped to a terminal and never came back to the editor (#8).
+    @objc private func nextTerminalMenu() {
+        if editor.isEditorFocused() { editor.nextTab() } else { cycleTerminal(1) }
+    }
+    @objc private func prevTerminalMenu() {
+        if editor.isEditorFocused() { editor.prevTab() } else { cycleTerminal(-1) }
+    }
 
     // ---- keybindings (matches riven defaults) ----
     private var quickOpen: QuickOpenPanel?
@@ -1731,6 +1863,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let ws = workspace, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
             dock.detach(existing); auxDockPanels[id] = nil
+            dock.savedPlacements[id] = nil   // 직접 닫음 → 다음에는 기본 위치로 (#4)
             return
         }
         if bodySplit.arrangedSubviews.first?.isHidden ?? false { toggleSidebar() }
@@ -1746,16 +1879,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let panel = DockPanel(id: id, title: title,
             icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: content)
-        panel.onClose = { [weak self] in self?.auxDockPanels[id] = nil }
+        panel.onClose = { [weak self] in
+            self?.auxDockPanels[id] = nil
+            self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
+        }
         auxDockPanels[id] = panel
+        // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4). 기록이 없거나 그
+        // 자리가 사라졌으면 기존 기본 위치로:
         // Attach at the appropriate EDGE (leftmost for left panels, rightmost for right)
         // so panels append/prepend in a stable order instead of wedging between the
         // terminal and the editor (which reordered them on every workspace switch).
-        let ref = side == .left ? dock.groups.first : dock.groups.last
-        dock.addPanel(panel, reference: ref, direction: side)
-        // Aux panels are narrow by default (riven pins Changes/search/git ~280px),
-        // not a 50/50 split.
-        setAuxPanelWidth(panel, id == "git" ? 720 : 300)   // source control (graph + changes) needs width
+        if !dock.restorePlacement(panel) {
+            // No saved spot for this workspace → default edge. Aux panels are narrow
+            // (riven pins Changes/search/git ~280px), not a 50/50 split — the sizeHint
+            // carves exactly that width out on add so the main area isn't disturbed
+            // first; setAuxPanelWidth stays as a fallback for the wrap-split path where
+            // layout lands a runloop later.
+            let ref = side == .left ? dock.groups.first : dock.groups.last
+            let width: CGFloat = id == "git" ? 720 : 300       // source control (graph + changes) needs width
+            dock.addPanel(panel, reference: ref, direction: side, sizeHint: width)
+            setAuxPanelWidth(panel, width)
+        }
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
@@ -1925,7 +2069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { persistSession() }
+    func applicationWillTerminate(_ n: Notification) { persistSession(); lsp.stopAll() }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the

@@ -34,6 +34,19 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/riven"
 # Copy the SwiftPM resource bundle (editor.html + monaco/ + shiki.js) into the app.
 [ -d "$RES_BUNDLE" ] && cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
+# Bundle the TypeScript language server (+ its `typescript` peer) so LSP features
+# (go-to-definition / references / diagnostics) work WITHOUT a global or per-project
+# install on the user's machine. cli.mjs is self-contained (imports only node built-ins)
+# and loads `typescript` from a sibling in this node_modules, so both are copied here.
+LSP_NM="$APP/Contents/Resources/Riven_Riven.bundle/Resources/lsp/node_modules"
+if [ -d node_modules/typescript-language-server ] && [ -d node_modules/typescript ]; then
+  mkdir -p "$LSP_NM"
+  cp -R node_modules/typescript-language-server "$LSP_NM/"
+  cp -R node_modules/typescript "$LSP_NM/"
+  echo "▸ Bundled TypeScript language server ($(du -sh "$LSP_NM" | cut -f1))"
+else
+  echo "⚠︎ node_modules/typescript-language-server or typescript missing — LSP won't be bundled (run npm install)"
+fi
 # App icon (shared ember mark, reused from the Electron build assets).
 [ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/riven.icns"
 # Sparkle auto-update framework → embedded in Contents/Frameworks (binary rpaths to it).
@@ -60,6 +73,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <!-- Allow plain-HTTP ONLY for local/dev servers (localhost, 127.0.0.1, ::1, *.local)
+       so the Browser panel can preview e.g. http://localhost:3000. We deliberately do
+       NOT set NSAllowsArbitraryLoadsInWebContent: that would drop ATS TLS enforcement for
+       every remote site the Browser loads, enabling downgrade MITM. NSAllowsLocalNetworking
+       covers the dev-server case while keeping full TLS hardening on remote URLs. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+  </dict>
   <key>SupabaseURL</key><string>$SB_URL</string>
   <key>SupabaseAnonKey</key><string>$SB_KEY</string>
   <key>SupabaseRedirect</key><string>$SB_REDIRECT</string>
@@ -72,9 +94,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 if [ "$SIGN_ID" = "-" ]; then
-  # Local dev: ad-hoc sign so Gatekeeper/Metal are happy on this machine.
-  codesign --force --deep --sign - "$APP" 2>/dev/null || true
-  echo "▸ Built $APP (ad-hoc signed)"
+  # Local dev: ad-hoc sign WITH the hardened runtime (--options runtime), inner-out.
+  # WITHOUT the runtime flag the app's WKWebView WebContent process runs degraded
+  # (no JIT / hardware acceleration for JavaScriptCore), which made Monaco's editor
+  # extremely laggy in local ad-hoc builds even though notarized releases (which DO
+  # have the hardened runtime) were smooth. Matching the runtime here makes local test
+  # builds behave like the shipped app.
+  FW="$APP/Contents/Frameworks/Sparkle.framework"
+  if [ -d "$FW" ]; then
+    for x in "$FW"/Versions/B/XPCServices/*.xpc; do
+      [ -e "$x" ] && codesign --force --options runtime --sign - "$x"
+    done
+    [ -e "$FW/Versions/B/Autoupdate" ] && codesign --force --options runtime --sign - "$FW/Versions/B/Autoupdate"
+    [ -e "$FW/Versions/B/Updater.app" ] && codesign --force --options runtime --sign - "$FW/Versions/B/Updater.app"
+    codesign --force --options runtime --sign - "$FW"
+  fi
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP/Contents/MacOS/riven"
+  codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
+  echo "▸ Built $APP (ad-hoc + hardened runtime)"
 else
   # Release: hardened runtime + entitlements, signed with the Developer ID so the
   # app can be notarized. Sign inner-out: Sparkle helpers → framework → binary → app.

@@ -5,7 +5,7 @@ import WebKit
 // bar over a WKWebView, for previewing a local dev server. (riven's capture-to-
 // Claude button depends on the agent contextBus, which isn't in the native app
 // yet, so it's omitted rather than stubbed.)
-final class PreviewPanel: NSView, Themable, WKScriptMessageHandler {
+final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigationDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     func userContentController(_ u: WKUserContentController, didReceive m: WKScriptMessage) {
         if m.name == "prevfocus" { onFocused?() }
@@ -62,6 +62,7 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler {
         if #available(macOS 13.3, *) { web.isInspectable = true }
         web.translatesAutoresizingMaskIntoConstraints = false
         web.isHidden = true
+        web.navigationDelegate = self
 
         // Reload + open-in-external-browser buttons (WebKit can't switch engines; this
         // opens the URL in the system's real browser — Chrome/Safari — for full dev tools).
@@ -80,6 +81,8 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler {
 
         emptyLabel.font = .systemFont(ofSize: 11); emptyLabel.textColor = Theme.fgDim
         emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 3
+        emptyLabel.lineBreakMode = .byWordWrapping
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(urlField); addSubview(reloadBtn); addSubview(externalBtn)
@@ -103,6 +106,8 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler {
             web.trailingAnchor.constraint(equalTo: trailingAnchor),
             web.topAnchor.constraint(equalTo: urlField.bottomAnchor, constant: 8),
             web.bottomAnchor.constraint(equalTo: bottomAnchor),
+            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 16),
+            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
@@ -120,8 +125,26 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler {
         if !s.contains("://") { s = "http://" + s }
         guard let url = URL(string: s) else { return }
         loadedURL = s
+        emptyLabel.stringValue = "미리볼 URL을 입력하세요"
         web.isHidden = false; emptyLabel.isHidden = true
         web.load(URLRequest(url: url))
+    }
+
+    // Navigation failures (e.g. dev server not running yet, connection refused) would
+    // otherwise leave the web view sitting blank with no indication of what happened —
+    // show the error text instead so the failure is visible.
+    private func showLoadError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 { return } // frame load interrupted, e.g. by a redirect — not a real failure
+        web.isHidden = true
+        emptyLabel.stringValue = "로드 실패: \(nsError.localizedDescription)"
+        emptyLabel.isHidden = false
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
     }
 
     func reload() { if loadedURL != nil { web.reload() } }

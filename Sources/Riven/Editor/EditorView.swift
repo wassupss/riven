@@ -35,11 +35,18 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 13.3, *) { web.isInspectable = true }   // allow Web Inspector profiling
         addSubview(web)
 
-        if let url = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
+        // Load the editor assets from file://. NOTE: this gives the page a null/opaque
+        // origin, so Monaco can't spawn its Web Workers and falls back to the main thread.
+        // Serving over a real origin (custom scheme / loopback http) DOES spawn the workers,
+        // but WKWebView won't let a worker's fetch() load its sub-modules ("URL is not
+        // valid"), so the workers still can't function AND the language workers spawning
+        // over a real origin clobbered Shiki's syntax colors. file:// is the working state.
+        if let htmlURL = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
             ?? Bundle.riven.url(forResource: "editor", withExtension: "html") {
-            web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            web.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -69,6 +76,12 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     func close(path: String) {
         web.evaluateJavaScript("window.rivenClose(\(jsString(path)))", completionHandler: nil)
+    }
+    // Add a tab chip + model without switching the visible tab or focus (used to
+    // restore a workspace's inactive tabs on switch without stealing the active view).
+    func openBackground(path: String, content: String) {
+        let p = jsString(path), c = jsString(content)
+        web.evaluateJavaScript("window.rivenOpenBackground && window.rivenOpenBackground(\(p), \(c))", completionHandler: nil)
     }
     // DEBUG: overwrite the active editor's buffer (used by RIVEN_SAVETEST).
     func debugSetValue(_ text: String) {
@@ -148,6 +161,22 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func focusEditor() {
         window?.makeFirstResponder(web)
         web.evaluateJavaScript("editor && editor.focus()", completionHandler: nil)
+    }
+    // Cycle open tabs within the active Monaco group (issue #8: native-owned
+    // ⌘⇧[ / ⌘⇧]). Native decides WHEN to send these (e.g. only when the editor is
+    // focused, see isEditorFocused()); this just drives the WebView mechanism.
+    func nextTab() {
+        web.evaluateJavaScript("window.rivenNextTab && window.rivenNextTab()", completionHandler: nil)
+    }
+    func prevTab() {
+        web.evaluateJavaScript("window.rivenPrevTab && window.rivenPrevTab()", completionHandler: nil)
+    }
+    // Whether this editor's WKWebView currently holds key focus. WKWebView's actual
+    // first responder is an internal content view, not `web` itself, so check the
+    // whole responder chain via isDescendant(of:) rather than direct equality.
+    func isEditorFocused() -> Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder === web || responder.isDescendant(of: web)
     }
     // Show the empty state (no active file) — used when switching to a workspace
     // that has no open tabs.
@@ -269,3 +298,4 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         return String(json.dropFirst().dropLast()) // strip the [ ]
     }
 }
+

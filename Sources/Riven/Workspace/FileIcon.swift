@@ -21,7 +21,7 @@ enum FileIcon {
     // ---- drawing ----
     private static func draw(_ id: String) -> NSImage {
         NSImage(size: NSSize(width: 16, height: 16), flipped: false) { _ in
-            let ctx = NSGraphicsContext.current!.cgContext
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             render(id, ctx)
             return true
         }

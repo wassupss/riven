@@ -24,7 +24,7 @@ enum Git {
     private static func launchctlEnv(_ key: String) -> String? {
         let p = Process(); p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         p.arguments = ["getenv", key]
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
         let s = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,7 +38,7 @@ enum Git {
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
         p.environment = env
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
@@ -89,7 +89,7 @@ enum Git {
         p.arguments = ["git"] + args
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
         p.environment = env
-        let err = Pipe(); p.standardOutput = Pipe(); p.standardError = err
+        let err = Pipe(); p.standardOutput = FileHandle.nullDevice; p.standardError = err
         do { try p.run() } catch { return (false, "\(error)") }
         let e = err.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()

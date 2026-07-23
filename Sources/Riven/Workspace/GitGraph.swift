@@ -241,7 +241,7 @@ final class GraphListView: NSView {
 
     override func draw(_ dirty: NSRect) {
         guard !rows.isEmpty else { return }
-        let ctx = NSGraphicsContext.current!.cgContext
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
         let first = max(0, Int(dirty.minY / rowH)), last = min(rows.count - 1, Int(dirty.maxY / rowH))
         if first > last { return }
         for i in first...last {

@@ -26,3 +26,6 @@ landing/*.dmg
 *.local
 *.pem
 *.key
+
+# Sub-agent worktrees (transient)
+.claude/worktrees/

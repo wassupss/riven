@@ -24,7 +24,7 @@ final class LSPClient {
         proc.currentDirectoryURL = URL(fileURLWithPath: rootPath)
         proc.standardInput = inPipe
         proc.standardOutput = outPipe
-        proc.standardError = Pipe()
+        proc.standardError = FileHandle.nullDevice   // tsserver logs to stderr; an unread pipe fills → server hangs
         var e = ProcessInfo.processInfo.environment
         for (k, v) in env { e[k] = v }
         proc.environment = e
@@ -39,6 +39,7 @@ final class LSPClient {
 
     func stop() {
         send(notif: "exit", params: [:])
+        outPipe.fileHandleForReading.readabilityHandler = nil   // drop the lingering read source
         proc.terminate()
     }
 

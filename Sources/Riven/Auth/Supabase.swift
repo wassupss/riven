@@ -74,6 +74,10 @@ final class SupabaseAuth {
     private(set) var session: AuthSession?
     private var oauthWindow: NSWindow?
     private var oauthDelegate: OAuthNavDelegate?
+    private var oauthWinDelegate: OAuthWindowDelegate?
+    // Invoked if the login window is dismissed before the flow resolves (e.g. the user
+    // clicks the close button) so the caller's completion isn't leaked forever.
+    private var oauthCancel: (() -> Void)?
     private var pushTimer: Timer?
     private var applyingRemote = false
 
@@ -125,6 +129,8 @@ final class SupabaseAuth {
             }
         }
         oauthDelegate = del
+        let cancelErr = err("로그인이 취소되었습니다")
+        oauthCancel = { completion(.failure(cancelErr)) }
         presentOAuthWindow(url: authorizeURL, delegate: del)
     }
 
@@ -142,13 +148,29 @@ final class SupabaseAuth {
                            backing: .buffered, defer: false)
         win.title = "로그인"
         win.center(); win.contentView = web; win.isReleasedWhenClosed = false
+        // The Settings window is a floating panel; keep the OAuth window ABOVE it so the
+        // GitHub login isn't hidden behind Settings.
+        win.level = .modalPanel
+        let winDel = OAuthWindowDelegate { [weak self] in self?.handleOAuthWindowClosed() }
+        win.delegate = winDel
+        oauthWinDelegate = winDel
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         oauthWindow = win
         web.load(URLRequest(url: url))
     }
+    // The flow resolved (success/failure) — tear down without firing the cancel path.
     private func closeOAuthWindow() {
-        oauthWindow?.close(); oauthWindow = nil; oauthDelegate = nil
+        oauthCancel = nil
+        oauthWindow?.delegate = nil   // suppress windowWillClose re-entry
+        oauthWindow?.close(); oauthWindow = nil; oauthDelegate = nil; oauthWinDelegate = nil
+    }
+    // The window was dismissed by the user before the flow resolved.
+    private func handleOAuthWindowClosed() {
+        guard let cancel = oauthCancel else { return }   // already resolved
+        oauthCancel = nil
+        oauthWindow = nil; oauthDelegate = nil; oauthWinDelegate = nil
+        cancel()
     }
 
     // Exchange the PKCE auth code for a session.
@@ -250,7 +272,9 @@ final class SupabaseAuth {
 
     // ---- settings sync (user_settings table, RLS) ----
     // Everything EXCEPT the local/sensitive keys is synced.
-    private static let noSync: Set<String> = ["aiApiKey", "session"]
+    // aiApiKey/session are secrets; aiCompleteEndpoint/aiProvider are machine-local
+    // (a custom endpoint URL shouldn't leak to other devices via the synced settings row).
+    private static let noSync: Set<String> = ["aiApiKey", "session", "aiCompleteEndpoint", "aiProvider"]
 
     private func observeLocalChanges() {
         NotificationCenter.default.removeObserver(self, name: .rivenSettingChanged, object: nil)
@@ -307,6 +331,14 @@ final class SupabaseAuth {
 
     // cached — ISO8601DateFormatter is expensive to construct (never do it per call).
     private static let iso = ISO8601DateFormatter()
+}
+
+// Fires when the login window closes (user-dismissed or programmatic) so an abandoned
+// flow doesn't leave the caller's completion hanging.
+private final class OAuthWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+    init(_ onClose: @escaping () -> Void) { self.onClose = onClose }
+    func windowWillClose(_ notification: Notification) { onClose() }
 }
 
 // Intercepts the OAuth redirect to lift the PKCE `code` (mirrors main/auth.ts).
