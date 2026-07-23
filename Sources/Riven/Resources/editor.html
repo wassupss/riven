@@ -255,7 +255,11 @@ function createGroup() {
   g.node = { type: 'leaf', g };
   groups.push(g);
   wireEd(g);
-  el.addEventListener('mousedown', () => setActiveGroup(g.idx), true);
+  // Activate on click ONLY when switching groups. Running setActiveGroup (which
+  // rebuilds blame decorations) on every mousedown — in the capture phase, before
+  // Monaco — intermittently disrupted Monaco's mousedown→drag handling (a click could
+  // start a phantom selection drag). onDidFocusEditorText already handles activation.
+  el.addEventListener('mousedown', () => { if (activeIdx !== g.idx) setActiveGroup(g.idx); });
   // Drop overlay (above Monaco, only live during a tab drag so Monaco never eats the drop).
   dropEl.addEventListener('dragover', (e) => {
     if (!dragPath) return;
