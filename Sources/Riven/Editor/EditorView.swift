@@ -149,6 +149,22 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         window?.makeFirstResponder(web)
         web.evaluateJavaScript("editor && editor.focus()", completionHandler: nil)
     }
+    // Cycle open tabs within the active Monaco group (issue #8: native-owned
+    // ⌘⇧[ / ⌘⇧]). Native decides WHEN to send these (e.g. only when the editor is
+    // focused, see isEditorFocused()); this just drives the WebView mechanism.
+    func nextTab() {
+        web.evaluateJavaScript("window.rivenNextTab && window.rivenNextTab()", completionHandler: nil)
+    }
+    func prevTab() {
+        web.evaluateJavaScript("window.rivenPrevTab && window.rivenPrevTab()", completionHandler: nil)
+    }
+    // Whether this editor's WKWebView currently holds key focus. WKWebView's actual
+    // first responder is an internal content view, not `web` itself, so check the
+    // whole responder chain via isDescendant(of:) rather than direct equality.
+    func isEditorFocused() -> Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder === web || responder.isDescendant(of: web)
+    }
     // Show the empty state (no active file) — used when switching to a workspace
     // that has no open tabs.
     func showEmpty() {
