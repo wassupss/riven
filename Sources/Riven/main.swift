@@ -860,13 +860,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let p = editorDockPanel!
         if p.group == nil || p.group?.manager !== dock {
+            // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4); 기록이 없거나
+            // 그 자리가 사라졌으면 기존 기본 위치로:
             // Append to the rightmost group so the editor sits to the right of the
             // terminals and BEFORE right-side aux panels are restored (stable order).
-            // The editor is the dominant content surface: hint it to half the dock
-            // regardless of how many terminal columns exist (a bare 1/N share would
-            // make the editor a sliver next to 2-3 terminals).
-            dock.addPanel(p, reference: dock.groups.last, direction: .right,
-                          sizeHint: dock.container.bounds.width * 0.5)
+            if !dock.restorePlacement(p) {
+                // No saved spot for this workspace → default. The editor is the dominant
+                // content surface: hint it to half the dock regardless of how many
+                // terminal columns exist (a bare 1/N share would make the editor a
+                // sliver next to 2-3 terminals).
+                dock.addPanel(p, reference: dock.groups.last, direction: .right,
+                              sizeHint: dock.container.bounds.width * 0.5)
+            }
         } else {
             p.group?.select(id: "editor")
         }
@@ -878,6 +883,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         st.openTabs = []; st.activeTab = nil
         tabBar.closeAll(); editor.showEmpty()
         editorDockPanel = nil
+        // 사용자가 에디터 패널을 직접 닫았으니 남은 자리 기록은 지운다 — 다음에
+        // 열 때는 기본 위치로 (#4).
+        activeDock?.savedPlacements["editor"] = nil
         persistSession()
     }
 
@@ -991,11 +999,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // restores them (they don't just vanish).
         if let old = workspace, old != url { state(for: old).openAux = Set(auxDockPanels.keys) }
 
+        // 전환하면 공유 에디터 웹뷰의 모델을 정리하므로(#7, rebuildTabs), 저장 안 된
+        // 탭은 먼저 디스크에 보존한다. 저장이 도착하면 save()가 스테일 디스크 내용으로
+        // 다시 열린 모델을 새 내용으로 갈아 끼운다.
+        if workspace != nil {
+            for p in tabBar.tabs where tabBar.isDirty(p) {
+                pendingSwitchSaves.insert(p)
+                editor.requestSave(path: p)
+            }
+        }
+
         // Detach the shared editor + aux panels from the OUTgoing workspace's dock
         // (their views are singletons; only one dock can hold them at a time).
+        // 분리 전에 각 싱글턴이 있던 자리를 그 독에 기록해 두고, 돌아올 때 기본
+        // 위치가 아니라 그 자리로 복원한다 (#4).
         if let old = activeDock {
-            if let ep = editorDockPanel, ep.group?.manager === old { old.detach(ep) }
-            for (_, ap) in auxDockPanels where ap.group?.manager === old { old.detach(ap) }
+            if let ep = editorDockPanel, ep.group?.manager === old {
+                old.recordPlacement(of: ep); old.detach(ep)
+            }
+            for (_, ap) in auxDockPanels where ap.group?.manager === old {
+                old.recordPlacement(of: ap); old.detach(ap)
+            }
         }
         auxDockPanels.removeAll()
 
@@ -1016,12 +1040,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             (term.content as? TerminalView)?.focusTerminal()
         }
 
-        // Restore this workspace's editor tabs (adds the editor panel if needed).
-        rebuildTabs(for: st)
         // Restore the aux panels this workspace had open (search/git/preview/changes).
+        // 에디터보다 먼저 (detach의 역순, LIFO): 에디터의 자리 기록이 aux 그룹을
+        // 이웃으로 참조하는 경우가 많아, aux가 먼저 제자리에 있어야 에디터도
+        // 기록된 자리로 복원된다 (#4).
         for id in ["search", "git", "preview", "changes"] where st.openAux.contains(id) {
             if auxDockPanels[id] == nil { toggleDockPanel(id) }
         }
+        // Restore this workspace's editor tabs (adds the editor panel if needed).
+        rebuildTabs(for: st)
 
         explorer.setRoot(url)
         searchPanel.setRoot(url); gitPanel.setRoot(url); changesPanel.setWorkspace(url)
@@ -1139,18 +1166,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         activate(active)
     }
 
-    // Rebuild the tab bar + active editor model for a workspace's open tabs.
+    // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
+    // 워크스페이스가 공유하는 하나의 WKWebView라서, 전환 시 이전 워크스페이스의
+    // 모델/탭이 그대로 남아 있었다(#7) — 먼저 전부 정리하고 이 워크스페이스의
+    // 탭을 전부 다시 연다 (활성 탭을 마지막에 열어 그 탭이 보이게).
     private func rebuildTabs(for st: WorkspaceState) {
         tabBar.closeAll()
+        editor.showEmpty()   // 이전 워크스페이스의 모델을 한 번에 정리 (그룹 하나로 리셋)
+        // 디스크에서 사라진 파일은 건너뛴다 (restoreSession과 같은 필터).
+        let fm = FileManager.default
+        st.openTabs = st.openTabs.filter { fm.fileExists(atPath: $0) }
+        if let a = st.activeTab, !st.openTabs.contains(a) { st.activeTab = nil }
+        if st.activeTab == nil { st.activeTab = st.openTabs.last }
         for p in st.openTabs { tabBar.open(p) }
         if let active = st.activeTab {
             showEditorPane()
+            // 비활성 탭도 웹뷰에 복원한다 — 내용은 디스크에서 (showTabContent 패턴).
+            for p in st.openTabs where p != active { showTabContent(p) }
             tabBar.setActive(active)
             showTabContent(active)
             statusBar.setFileInfo(fileInfo(active))
         } else {
             hideEditorPane()   // workspace has no open tabs → terminal full width
-            editor.showEmpty()
             statusBar.setFileInfo("")
         }
     }
@@ -1333,7 +1370,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         persistSession()
     }
 
+    // 워크스페이스 전환 직전에 자동 저장을 요청한 더티 탭들 (#7). 저장이 도착할
+    // 때쯤이면 rebuildTabs가 스테일 디스크 내용으로 모델을 다시 열었을 수 있으므로,
+    // 쓰기 후 그 모델을 새 내용으로 갈아 끼운다.
+    private var pendingSwitchSaves: Set<String> = []
     private func save(path: String, content: String) {
+        // A dirty tab we queued to flush during a workspace switch. This runs BEFORE the
+        // tab-membership guard below: by the time the save round-trips, rebuildTabs may
+        // have already swapped `tabBar.tabs` to the new workspace, so the guard would
+        // wrongly reject it and drop the edit. These paths are trusted (we queued them
+        // ourselves from the outgoing workspace's open, dirty tabs).
+        if pendingSwitchSaves.remove(path) != nil {
+            writeAndMark(path: path, content: content)
+            reloadIfOpen(path)   // 현재 워크스페이스에 열려 있으면 저장본으로 갱신
+            return
+        }
         // Defense-in-depth: only write to a file that's actually open as a tab. `path` comes
         // from the WKWebView bridge; even though the editor content is our own local bundle,
         // this bounds a save to files the user opened (incl. out-of-workspace ⌘O files) and
@@ -1670,6 +1721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {                                       // search / git / preview / changes
                 activeDock?.detach(panel)
                 auxDockPanels[panel.id] = nil
+                activeDock?.savedPlacements[panel.id] = nil   // 직접 닫음 → 자리 기록도 지움 (#4)
             }
             return
         }
@@ -1791,6 +1843,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let ws = workspace, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
             dock.detach(existing); auxDockPanels[id] = nil
+            dock.savedPlacements[id] = nil   // 직접 닫음 → 다음에는 기본 위치로 (#4)
             return
         }
         if bodySplit.arrangedSubviews.first?.isHidden ?? false { toggleSidebar() }
@@ -1806,19 +1859,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let panel = DockPanel(id: id, title: title,
             icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: content)
-        panel.onClose = { [weak self] in self?.auxDockPanels[id] = nil }
+        panel.onClose = { [weak self] in
+            self?.auxDockPanels[id] = nil
+            self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
+        }
         auxDockPanels[id] = panel
+        // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4). 기록이 없거나 그
+        // 자리가 사라졌으면 기존 기본 위치로:
         // Attach at the appropriate EDGE (leftmost for left panels, rightmost for right)
         // so panels append/prepend in a stable order instead of wedging between the
         // terminal and the editor (which reordered them on every workspace switch).
-        let ref = side == .left ? dock.groups.first : dock.groups.last
-        // Aux panels are narrow by default (riven pins Changes/search/git ~280px),
-        // not a 50/50 split — the sizeHint carves exactly that width out on add so
-        // the main area isn't disturbed first; setAuxPanelWidth stays as a fallback
-        // for the wrap-split path where layout lands a runloop later.
-        let width: CGFloat = id == "git" ? 720 : 300       // source control (graph + changes) needs width
-        dock.addPanel(panel, reference: ref, direction: side, sizeHint: width)
-        setAuxPanelWidth(panel, width)
+        if !dock.restorePlacement(panel) {
+            // No saved spot for this workspace → default edge. Aux panels are narrow
+            // (riven pins Changes/search/git ~280px), not a 50/50 split — the sizeHint
+            // carves exactly that width out on add so the main area isn't disturbed
+            // first; setAuxPanelWidth stays as a fallback for the wrap-split path where
+            // layout lands a runloop later.
+            let ref = side == .left ? dock.groups.first : dock.groups.last
+            let width: CGFloat = id == "git" ? 720 : 300       // source control (graph + changes) needs width
+            dock.addPanel(panel, reference: ref, direction: side, sizeHint: width)
+            setAuxPanelWidth(panel, width)
+        }
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
