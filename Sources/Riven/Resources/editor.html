@@ -127,13 +127,16 @@ function timed(label, fn) {
   const t0 = performance.now(); const r = fn(); const dt = performance.now() - t0;
   if (dt > 60) wlog('SLOW ' + label + ' ' + Math.round(dt) + 'ms'); return r;
 }
-// Any main-thread block > 50ms (jank) gets logged with its source, so a recurring
-// cursor/typing hitch tells us exactly which operation is responsible.
-try {
-  new PerformanceObserver((list) => {
-    for (const e of list.getEntries()) if (e.duration > 80) wlog('LONGTASK ' + Math.round(e.duration) + 'ms');
-  }).observe({ entryTypes: ['longtask'] });
-} catch (e) {}
+// Frame-gap jank detector. WebKit doesn't implement the `longtask` PerformanceObserver,
+// so we watch the rAF cadence instead: a gap far above one frame means the main thread
+// (or the compositor) stalled. Logged so a recurring hitch is quantified.
+let _lastFrame = performance.now(), _jankCount = 0;
+function _frameWatch() {
+  const now = performance.now(), gap = now - _lastFrame; _lastFrame = now;
+  if (gap > 120) { _jankCount++; wlog('JANK ' + Math.round(gap) + 'ms gap (#' + _jankCount + ')'); }
+  requestAnimationFrame(_frameWatch);
+}
+requestAnimationFrame(_frameWatch);
 // Run fn on the next frame (falls back to a macrotask) — used to push non-essential
 // work (decoration mutation, native round-trips) off the current mousedown/focus
 // event so Monaco's own pointer-drag tracking for THIS event finishes first.

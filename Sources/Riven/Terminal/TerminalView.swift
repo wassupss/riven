@@ -340,12 +340,18 @@ final class TerminalView: NSView, NSMenuItemValidation {
         ghostty_surface_draw(s)
     }
 
+    private var frameTick: UInt64 = 0   // display-link-thread only
     private func setupDisplayLink() {
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
         guard let link else { return }
         CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, ctx) -> CVReturn in
             let view = Unmanaged<TerminalView>.fromOpaque(ctx!).takeUnretainedValue()
-            DispatchQueue.main.async { view.drawIfNeeded() }
+            // Draw at ~30fps, not 60. ghostty draws every frame on the MAIN THREAD, so at
+            // 60fps every visible terminal continuously contends with the editor WKWebView
+            // for the main runloop → the editor feels choppy. 30fps is indistinguishable
+            // for a terminal and halves that contention.
+            view.frameTick &+= 1
+            if view.frameTick & 1 == 0 { DispatchQueue.main.async { view.drawIfNeeded() } }
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
         CVDisplayLinkStart(link)

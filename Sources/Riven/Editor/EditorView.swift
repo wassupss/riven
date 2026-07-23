@@ -37,19 +37,15 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         web.setValue(false, forKey: "drawsBackground")
         addSubview(web)
 
-        // Serve the editor assets over a loopback HTTP origin instead of loadFileURL. A
-        // file:// page has a null/opaque origin, so Monaco can't create its Web Workers
-        // ("Could not create web worker(s)… might cause UI freezes") — tokenization/diff/
-        // language services then run on the MAIN THREAD and freeze the editor (worst on
-        // Changes-panel files, which drive the diff worker hard). A real http://127.0.0.1
-        // origin gives full worker + fetch support so that work runs off-thread. (Loopback
-        // http is permitted by the Info.plist ATS NSAllowsLocalNetworking exception.)
-        let htmlURL = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
-            ?? Bundle.riven.url(forResource: "editor", withExtension: "html")
-        if let htmlURL, let baseURL = LocalAssetServer.start(base: htmlURL.deletingLastPathComponent()) {
-            web.load(URLRequest(url: baseURL.appendingPathComponent("editor.html")))
-        } else if let htmlURL {
-            web.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())   // fallback
+        // Load the editor assets from file://. NOTE: this gives the page a null/opaque
+        // origin, so Monaco can't spawn its Web Workers and falls back to the main thread.
+        // Serving over a real origin (custom scheme / loopback http) DOES spawn the workers,
+        // but WKWebView won't let a worker's fetch() load its sub-modules ("URL is not
+        // valid"), so the workers still can't function AND the language workers spawning
+        // over a real origin clobbered Shiki's syntax colors. file:// is the working state.
+        if let htmlURL = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
+            ?? Bundle.riven.url(forResource: "editor", withExtension: "html") {
+            web.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         }
     }
     required init?(coder: NSCoder) { fatalError() }

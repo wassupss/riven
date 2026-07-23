@@ -45,6 +45,8 @@ struct DockPlacement {
     var prevPanelIds: [String] = []     // 앞쪽 형제가 죽었을 때 추적할 그 안의 패널 id들
     weak var nextView: NSView?          // 뒤쪽(오른/아래) 형제 — 살아있으면 그 앞에 복원
     var nextPanelIds: [String] = []
+    var parentExtents: [CGFloat] = []   // parentSplit의 모든 팬 크기 스냅샷 (이 팬 포함) — 복원 시
+                                        // 형제까지 정확히 되돌려 왕복 시 크기가 누적으로 줄지 않게 (#3)
 }
 
 // A container whose single child (the root group or split) always fills it —
@@ -177,6 +179,7 @@ final class DockManager {
     //   sizeHint when one is provided (aux side panels).
     private func split(_ group: DockGroup, with newGroup: DockGroup, direction: DockDir,
                        sizeHint: CGFloat? = nil) {
+        defer { DispatchQueue.main.async { [weak self] in self?.dumpTree("after-split-\(direction)") } }
         let vertical = (direction == .left || direction == .right) // vertical divider ⇒ side-by-side
         let before = (direction == .left || direction == .up)      // new group first
         guard let parent = group.superview else { return }
@@ -218,18 +221,18 @@ final class DockManager {
         }
 
         if let psv = parent as? NSSplitView {
+            // Capture ALL sibling extents (group included, at `idx`) BEFORE the swap, then
+            // restore them so the new wrapper split inherits EXACTLY group's old slot and
+            // every other pane keeps its width. The old code only pinned idx==0 / idx==last
+            // via setPosition, so a MIDDLE group's new split collapsed to 0 width — the
+            // ⌘⇧D / drag "확 줄어" bug (confirmed by a [519,524,0,527] tree dump).
             let idx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
-            let count = psv.arrangedSubviews.count
+            let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
             group.removeFromSuperview()
             addPair(sv, group, newGroup, before: before)
-            psv.insertArrangedSubview(sv, at: idx)
-            // Lay out synchronously so the new pane appears sized on the first
-            // frame instead of popping a runloop later.
+            psv.insertArrangedSubview(sv, at: idx)   // sv occupies group's former slot index
             psv.adjustSubviews()
-            let psvExt = psv.isVertical ? psv.bounds.width : psv.bounds.height
-            let savedExt = psv.isVertical ? savedFrame.width : savedFrame.height
-            if idx == 0 { psv.setPosition(savedExt, ofDividerAt: 0) }
-            else if idx == count - 1 { psv.setPosition(max(0, psvExt - savedExt), ofDividerAt: idx - 1) }
+            setExtents(psv, oldExtents)               // sv gets group's old extent; siblings unchanged
             sv.adjustSubviews(); sizeNewPane(sv)
         } else {
             group.removeFromSuperview()
@@ -249,6 +252,25 @@ final class DockManager {
     // A pane's extent along its split's axis.
     private func extent(_ v: NSView, in sv: NSSplitView) -> CGFloat {
         sv.isVertical ? v.frame.width : v.frame.height
+    }
+    // DEBUG: dump the split tree with each split's axis + pane extents, so a resize bug
+    // shows exactly which split ended up with a collapsed pane.
+    func dumpTree(_ label: String) {
+        func walk(_ v: NSView, _ depth: Int) -> String {
+            let pad = String(repeating: "  ", count: depth)
+            if let sv = v as? NSSplitView {
+                let axis = sv.isVertical ? "H" : "V"   // vertical divider = side-by-side (H layout)
+                let exts = sv.arrangedSubviews.map { Int(extent($0, in: sv)) }
+                var s = "\(pad)split[\(axis)] \(exts) frame=\(Int(sv.frame.width))x\(Int(sv.frame.height))\n"
+                for c in sv.arrangedSubviews { s += walk(c, depth + 1) }
+                return s
+            } else if let g = v as? DockGroup {
+                return "\(pad)group(\(g.panels.map { $0.id }.joined(separator: ","))) \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+            }
+            return "\(pad)view \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+        }
+        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
+        RLog.log("dock[\(label)] container=\(Int(container.bounds.width))x\(Int(container.bounds.height))\n" + walk(root, 0))
     }
     // Set every pane's extent by walking the dividers left→right / top→bottom.
     // `extents` must have one entry per arranged subview; positions are cumulative
@@ -497,6 +519,7 @@ final class DockManager {
             pl.parentSplit = sv
             pl.vertical = sv.isVertical
             pl.extent = extent(g, in: sv)
+            pl.parentExtents = sv.arrangedSubviews.map { extent($0, in: sv) }   // full snapshot for exact restore (#3)
             let idx = sv.arrangedSubviews.firstIndex(of: g) ?? 0
             pl.indexInSplit = idx
             if idx > 0 {
@@ -528,6 +551,12 @@ final class DockManager {
         if let sv = pl.parentSplit, sv.isDescendant(of: container) {
             let g = DockGroup(); g.manager = self
             insertPane(g, into: sv, at: pl.indexInSplit, extent: pl.extent)
+            // 형제까지 기록된 정확한 크기로 되돌린다 — 팬이 나갔다 들어올 때 비례 재분배가
+            // 미세하게 어긋나 왕복마다 조금씩 줄어들던 문제(#3)를 없앤다. 구조가 그대로면
+            // (개수 일치) 스냅샷을 그대로 적용, 아니면 위의 비례 결과를 유지.
+            if pl.parentExtents.count == sv.arrangedSubviews.count {
+                setExtents(sv, pl.parentExtents)
+            }
             g.add(panel); setActive(g); refreshEmpty(); return true
         }
         // 3) split이 붕괴됐으면 이웃(형제)을 찾아 그 옆에 복원한다. 이웃 뷰가 죽었으면
