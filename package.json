@@ -1,0 +1,10 @@
+{
+  "name": "riven-native-tools",
+  "private": true,
+  "version": "0.1.6",
+  "description": "Tools bundled into the riven native app. The TypeScript language server (+ its typescript peer) is copied into the app bundle by build-app.sh so LSP features work without a global/local install on the user's machine.",
+  "dependencies": {
+    "typescript": "5.9.3",
+    "typescript-language-server": "5.3.0"
+  }
+}

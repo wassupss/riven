@@ -39,6 +39,12 @@ jobs:
         id: ver
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # Install the TypeScript language server (+ typescript) so build-app.sh can bundle
+      # it into the app (LSP works with no per-user install). node is preinstalled on the
+      # macOS runner; node_modules is gitignored, so this must run before the build.
+      - name: Install bundled tools
+        run: npm install --omit=dev --no-audit --no-fund
+
       # Import the "Developer ID Application" cert into a temporary keychain.
       - name: Import signing certificate
         env:
