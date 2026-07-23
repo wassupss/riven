@@ -672,9 +672,21 @@ final class SettingsWindow: NSPanel {
     // Updater가 알려주면 라벨을 유휴 문구로 되돌린다 — "확인 중…"이 영영 남지 않도록.
     @objc private func checkUpdate() {
         updateStatusLabel.stringValue = t("about.checking"); updateStatusLabel.textColor = Theme.fgDim
+        // Sparkle의 업데이트 창은 평범한 창이라, floating 패널인 설정 창에 가려 뒤에 뜬다.
+        // 업데이트 흐름(확인 → 다운로드 → 설치) 동안에는 floating을 내려 두고, 설정 창을
+        // 닫을 때 되돌린다. (확인이 끝나는 시점에 바로 되돌리면 다운로드 창이 다시 가려진다.)
+        setFloating(false)
         Updater.shared.onCheckFinished = { [weak self] in self?.syncUpdateStatus() }
         Updater.shared.checkForUpdates(self)
     }
+
+    // floating(항상 위) 토글 — 업데이트 창이 뒤로 숨지 않게 잠시 내렸다가 되돌린다.
+    private func setFloating(_ on: Bool) {
+        isFloatingPanel = on
+        level = on ? .floating : .normal
+    }
+    override func close() { setFloating(true); super.close() }
+    override func orderOut(_ sender: Any?) { setFloating(true); super.orderOut(sender) }
     private func syncUpdateStatus() {
         guard let l = updateStatusLabel else { return }
         l.stringValue = Updater.shared.isChecking ? t("about.checking") : t("about.checkHint")
