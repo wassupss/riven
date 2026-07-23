@@ -375,9 +375,14 @@ final class DockManager {
         let from = panel.group
         if from === activeGroup && (from?.panels.count ?? 0) <= 1 && groups.count == 1 { return }
         from?.remove(panel, dispose: false)
+        // move()와 같은 순서: 비워진 그룹을 먼저 접어 공간을 돌려주고, 레이아웃을 확정한
+        // 뒤에 트리를 재구성한다. 재구성 후에 정리하면 아직 프레임이 확정되지 않은
+        // 형제들의 크기를 재게 되어 빈 영역이 남는다.
+        cleanupEmpty(from)
+        container.layoutSubtreeIfNeeded()
         let newGroup = DockGroup(); newGroup.manager = self
         guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else {
-            newGroup.add(panel); setRoot(newGroup); setActive(newGroup); cleanupEmpty(from); refreshEmpty(); return
+            newGroup.add(panel); setRoot(newGroup); setActive(newGroup); refreshEmpty(); return
         }
         let vertical = (direction == .left || direction == .right)   // vertical divider ⇒ columns
         let before = (direction == .left || direction == .up)
@@ -386,14 +391,14 @@ final class DockManager {
         // the whole tree in ANOTHER same-axis split that hands the newcomer 50%.
         if let rsv = root as? NSSplitView, rsv.isVertical == vertical {
             newGroup.autoresizingMask = [.width, .height]
+            rsv.layoutSubtreeIfNeeded()   // 프레임 확정 후에 크기를 잰다
             let oldExtents = rsv.arrangedSubviews.map { extent($0, in: rsv) }
             let at = before ? 0 : rsv.arrangedSubviews.count
             rsv.insertArrangedSubview(newGroup, at: at)
             rsv.adjustSubviews()
             rebalanceAfterInsert(rsv, insertedAt: at, oldExtents: oldExtents, sizeHint: nil)
             newGroup.add(panel); setActive(newGroup)
-            cleanupEmpty(from)
-            normalizeTree()   // 옮긴 뒤 빈 그룹이 남지 않게 (move와 동일)
+            normalizeTree()   // 옮긴 뒤 빈 그룹/빈 분할이 남지 않게 (move와 동일)
             refreshEmpty()
             return
         }
@@ -409,8 +414,7 @@ final class DockManager {
         let t = vertical ? sv.bounds.width : sv.bounds.height
         if t > 0 { sv.setPosition(t * 0.5, ofDividerAt: 0) }
         newGroup.add(panel); setActive(newGroup)
-        cleanupEmpty(from)
-        normalizeTree()   // 옮긴 뒤 빈 그룹이 남지 않게 (move와 동일)
+        normalizeTree()   // 옮긴 뒤 빈 그룹/빈 분할이 남지 않게 (move와 동일)
         refreshEmpty()
     }
     // Should this drop split the ROOT (full-height column / full-width row)?
