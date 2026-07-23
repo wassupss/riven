@@ -34,6 +34,19 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/riven"
 # Copy the SwiftPM resource bundle (editor.html + monaco/ + shiki.js) into the app.
 [ -d "$RES_BUNDLE" ] && cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
+# Bundle the TypeScript language server (+ its `typescript` peer) so LSP features
+# (go-to-definition / references / diagnostics) work WITHOUT a global or per-project
+# install on the user's machine. cli.mjs is self-contained (imports only node built-ins)
+# and loads `typescript` from a sibling in this node_modules, so both are copied here.
+LSP_NM="$APP/Contents/Resources/Riven_Riven.bundle/Resources/lsp/node_modules"
+if [ -d node_modules/typescript-language-server ] && [ -d node_modules/typescript ]; then
+  mkdir -p "$LSP_NM"
+  cp -R node_modules/typescript-language-server "$LSP_NM/"
+  cp -R node_modules/typescript "$LSP_NM/"
+  echo "▸ Bundled TypeScript language server ($(du -sh "$LSP_NM" | cut -f1))"
+else
+  echo "⚠︎ node_modules/typescript-language-server or typescript missing — LSP won't be bundled (run npm install)"
+fi
 # App icon (shared ember mark, reused from the Electron build assets).
 [ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/riven.icns"
 # Sparkle auto-update framework → embedded in Contents/Frameworks (binary rpaths to it).
