@@ -71,6 +71,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>riven</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <!-- Declare the languages the app supports. Without these macOS limits the bundle to a
+       single (development) localization, so EMBEDDED frameworks can't resolve their own
+       localized strings — Sparkle ships ko.lproj but its update window came out in the
+       wrong/mixed language. Declaring ko+en lets Sparkle localize per the user's language. -->
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array><string>en</string><string>ko</string></array>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <!-- Allow plain-HTTP ONLY for local/dev servers (localhost, 127.0.0.1, ::1, *.local)

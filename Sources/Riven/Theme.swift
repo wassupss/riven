@@ -139,12 +139,67 @@ enum Theme {
     // onEditorTheme receives the shiki theme name so Monaco can re-highlight.
     static func apply(id: String, onEditorTheme: ((String) -> Void)? = nil) {
         guard let def = all.first(where: { $0.id == id }) else { return }
+        // 팔레트 갈아끼우기용 "예전 색 → 새 색" 표를 바꾸기 전에 만들어 둔다.
+        let remap = colorRemap(from: current, to: def)
         current = def
         Settings.shared.set("theme", id)
         NSApp.appearance = NSAppearance(named: def.mode == "light" ? .aqua : .darkAqua)
         themables.removeAll { $0.v == nil }
         for w in themables { w.v?.applyTheme() }
+        // applyTheme()에서 못 잡은 테두리/구분선을 훑어서 새 색으로 갈아끼운다.
+        for win in NSApp.windows { if let root = win.contentView { repaintEdges(root, remap) } }
         onEditorTheme?(def.shiki)
+    }
+
+    // ---- stale CGColor 청소 ----
+    // CALayer의 borderColor는 CGColor라서 테마(또는 appearance)를 바꿔도 저절로 갱신되지
+    // 않는다. 대부분의 뷰는 init에서 한 번만 칠하고 applyTheme()에서 테두리를 다시 넣지
+    // 않기 때문에, 테마를 바꾸면 가장자리 색만 예전 테마로 남는다(재시작해야 맞춰짐).
+    // 호출부를 하나하나 고치는 대신, 전환 직후 창 전체를 훑어 "예전 팔레트 색"으로 칠해진
+    // 테두리와 1px 구분선을 새 팔레트의 같은 토큰 색으로 바꿔치기한다.
+
+    // 어떤 테마 정의 기준의 팔레트 전체. 접근자를 그대로 재사용하려고 current를 잠깐
+    // 바꿨다 되돌린다(메인 스레드 동기 코드라 관측되지 않는다) — 파생 토큰 공식이
+    // 두 군데로 갈라지는 걸 막는다.
+    private static func palette(_ d: ThemeDef) -> [NSColor] {
+        let saved = current
+        current = d
+        defer { current = saved }
+        return [bg, bg2, bg3, border, fg, fgDim, accent, accent2,
+                edge, edgeStrong, hairline, hover, hoverStrong,
+                accentMuted, accentBorder, accent2Border,
+                accent.withAlphaComponent(0.55),   // Dock 드래그 인디케이터 / rail 활성 카드
+                accent.withAlphaComponent(0.75)]   // Dock 드롭 오버레이
+    }
+
+    // CGColor를 비교 가능한 키로. 색공간까지 넣어 회색(white 9%)과 RGB 토큰이 섞이지 않게 한다.
+    private static func key(_ c: CGColor) -> String {
+        let comps = (c.components ?? []).map { String(format: "%.4f", $0) }.joined(separator: ",")
+        return "\((c.colorSpace?.name as String?) ?? "?")|\(comps)"
+    }
+
+    private static func colorRemap(from old: ThemeDef, to new: ThemeDef) -> [String: CGColor] {
+        guard old.id != new.id else { return [:] }
+        let o = palette(old), n = palette(new)
+        var map: [String: CGColor] = [:]
+        for (i, c) in o.enumerated() where i < n.count {
+            let k = key(c.cgColor)
+            if map[k] == nil { map[k] = n[i].cgColor }   // 같은 값이 겹치면 먼저 나온 토큰 우선
+        }
+        return map
+    }
+
+    // 뷰 트리를 훑어 테두리(항상)와 얇은 구분선의 배경(1~2px 뷰만)을 새 색으로 교체.
+    private static func repaintEdges(_ v: NSView, _ map: [String: CGColor]) {
+        guard !map.isEmpty else { return }
+        if let l = v.layer {
+            if l.borderWidth > 0, let b = l.borderColor, let fresh = map[key(b)] { l.borderColor = fresh }
+            if v.subviews.isEmpty, min(v.bounds.width, v.bounds.height) <= 2,
+               let bgc = l.backgroundColor, let fresh = map[key(bgc)] { l.backgroundColor = fresh }
+        }
+        // 스플릿 구분선은 레이어가 아니라 drawDivider에서 직접 그린다 → 다시 그리게 표시.
+        if v is NSSplitView { v.needsDisplay = true }
+        for sub in v.subviews { repaintEdges(sub, map) }
     }
 }
 

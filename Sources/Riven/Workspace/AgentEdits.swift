@@ -17,16 +17,67 @@ final class AgentEdits {
     private(set) var edits: [String: Edit] = [:]
     func edit(for path: String) -> Edit? { edits[path] }
 
+    // ---- retention limits (issue #60) ----------------------------------------
+    // Every tracked edit holds the file's FULL before+after text in memory. Without
+    // caps a long agent session grew without bound (phys_footprint peaked ~4.5 GB;
+    // RSS hid it because macOS compresses the dirty pages). So: don't track files
+    // above `maxTrackedFileSize`, and hold the baseline cache to a byte budget with
+    // oldest-first eviction (entries under active review are never evicted, since
+    // revert needs their `before`).
+    static let maxTrackedFileSize = 200_000                  // matches snapshot()'s per-file cap
+    private static let baselineBudget = 32 * 1024 * 1024     // 32 MB of retained baselines
+    private var baselineBytes = 0
+    private var baselineOrder: [String] = []                 // insertion order → eviction order
+
     // Baseline "last known content" per absolute path (riven's module `cache`). The
     // before of the next diff. Seeded by snapshot(), updated on our own editor saves.
     private var baseline: [String: String] = [:]
     func baselineContent(_ path: String) -> String? { baseline[path] }
-    func updateBaseline(_ path: String, _ content: String) { baseline[path] = content }
+    func updateBaseline(_ path: String, _ content: String) {
+        if let old = baseline[path] { baselineBytes -= old.utf8.count } else { baselineOrder.append(path) }
+        baseline[path] = content
+        baselineBytes += content.utf8.count
+        evictBaselines()
+    }
+    // Drop the oldest baselines until back under budget. A file with a pending edit is
+    // skipped (its `before` is still needed); an evicted baseline just means the next
+    // diff for that file falls back to the git HEAD version.
+    private func evictBaselines() {
+        guard baselineBytes > Self.baselineBudget else { return }
+        var kept: [String] = []
+        for p in baselineOrder {
+            if baselineBytes > Self.baselineBudget, edits[p] == nil,
+               let c = baseline.removeValue(forKey: p) {
+                baselineBytes -= c.utf8.count
+            } else if baseline[p] != nil {
+                kept.append(p)
+            }
+        }
+        baselineOrder = kept
+    }
+
+    // Release everything retained for a workspace — called when it's closed so a long
+    // session doesn't pin every file it ever touched (#60).
+    func clearWorkspace(_ workspace: String) {
+        let prefix = workspace.hasSuffix("/") ? workspace : workspace + "/"
+        timeline.removeAll { $0.workspace == workspace }
+        for k in edits.keys where k.hasPrefix(prefix) { edits[k] = nil }
+        for k in baseline.keys where k.hasPrefix(prefix) {
+            if let c = baseline.removeValue(forKey: k) { baselineBytes -= c.utf8.count }
+        }
+        baselineOrder.removeAll { baseline[$0] == nil }
+        snapshotted.remove(workspace)
+        notify()
+    }
 
     // Snapshot a workspace's file contents once (riven's snapshotContents): 2000-file
     // cap, skip hidden / >200KB / binary / ignored dirs. Populates the baseline.
     private var snapshotted: Set<String> = []
     private static let ignoredDirs: Set<String> = [
+        // `.claude` is agent scaffolding (settings, memory, worktrees) that the agent
+        // itself rewrites constantly — tracking it filled the Changes panel with noise
+        // AND retained those files' full contents for the session (#60).
+        ".claude",
         ".git", "node_modules", "out", "dist", ".riven", ".cache", ".next", ".turbo",
         ".svelte-kit", ".nuxt", ".output", ".vercel", ".vite", ".parcel-cache", "coverage",
         "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", "venv", "target", ".build",
@@ -42,17 +93,22 @@ final class AgentEdits {
             guard let en = fm.enumerator(at: workspace, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
                                          options: [.skipsHiddenFiles]) else { return }
             var count = 0
+            var bytes = 0
             var snap: [String: String] = [:]
             for case let url as URL in en {
                 if AgentEdits.ignoredDirs.contains(url.lastPathComponent) { en.skipDescendants(); continue }
                 guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
-                if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size > 200_000 { continue }
+                if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize,
+                   size > AgentEdits.maxTrackedFileSize { continue }
                 guard let data = try? Data(contentsOf: url), !data.contains(0),
                       let s = String(data: data, encoding: .utf8) else { continue }
                 snap[url.path] = s
-                count += 1; if count >= 2000 { break }
+                count += 1; bytes += data.count
+                // Stop on EITHER cap — 2000 files at 200KB each would be ~400 MB (#60).
+                if count >= 2000 || bytes >= AgentEdits.baselineBudget { break }
             }
-            DispatchQueue.main.async { for (k, v) in snap where self.baseline[k] == nil { self.baseline[k] = v } }
+            // Route through updateBaseline so the byte budget + eviction apply.
+            DispatchQueue.main.async { for (k, v) in snap where self.baseline[k] == nil { self.updateBaseline(k, v) } }
         }
     }
 

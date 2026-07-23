@@ -324,6 +324,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail.onSelect = { [weak self] url in self?.switchWorkspace(url) }
         rail.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         rail.onClose = { [weak self] url in self?.closeWorkspace(url) }
+        // 카드를 끌어 순서를 바꾸면 workspaces 배열도 같은 순서로 맞추고 저장한다
+        // (⌘1-9 단축키와 다음 실행의 복원 순서가 레일과 항상 일치하도록).
+        rail.onReorder = { [weak self] order in
+            guard let self else { return }
+            let known = self.workspaces
+            self.workspaces = order.filter { known.contains($0) } + known.filter { !order.contains($0) }
+            self.persistSession()
+        }
         // Persist the rail card color so it survives across sessions.
         rail.onSetColor = { [weak self] url, color in
             guard let self else { return }
@@ -704,9 +712,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // A file changed on disk (FSEvents). Record it as an agent edit (before/after from
     // the session baseline) and surface the Changes panel without stealing focus.
+    // FSEvents fires repeatedly while an agent streams a file out. Coalesce a burst into
+    // ONE read per path (#60: "avoid re-reading on rapid FSEvents churn") — each read
+    // otherwise allocated the file's full text again.
+    private var pendingFileChanges = Set<String>()
+    private var fileChangeTimer: Timer?
     private func handleFileChange(_ path: String) {
+        pendingFileChanges.insert(path)
+        fileChangeTimer?.invalidate()
+        fileChangeTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            let paths = self.pendingFileChanges
+            self.pendingFileChanges.removeAll()
+            for p in paths { self.processFileChange(p) }
+        }
+    }
+
+    private func processFileChange(_ path: String) {
         guard let ws = workspace, path.hasPrefix(ws.path + "/"), !AgentEdits.isIgnored(path) else { return }
         guard agentSessionWorkspaces.contains(ws.path) else { return }   // only during an agent session
+        // Size cap BEFORE reading (#60): this path used to slurp any-size files and retain
+        // their full before+after text, so an agent churning large/generated files pushed
+        // memory into the GBs. Match the snapshot()'s per-file cap and skip anything bigger.
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { return }
         guard let after = try? String(contentsOfFile: path, encoding: .utf8) else {
             // deleted / unreadable — ignore (riven skips unlink)
             return
@@ -1097,6 +1126,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         states[url] = nil
         lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
+        AgentEdits.shared.clearWorkspace(url.path)   // release retained file contents (#60)
+        agentSessionWorkspaces.remove(url.path)
         workspaces.removeAll { $0 == url }
         if workspace == url {
             agentWatch?.stop(); agentWatch = nil
@@ -1750,11 +1781,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func zoomOutMenu() { applyZoom(UIScale.step(-1), delta: -1) }
     @objc private func zoomResetMenu() { applyZoom(UIScale.reset(), delta: 0) }
     private func applyZoom(_ baseFont: Int, delta: Int) {
-        // Editor → absolute Monaco size. Terminals → rebuild the ghostty config with the
-        // new absolute font-size (the relative increase/decrease bindings drifted out of
-        // sync and sometimes no-op'd; an absolute config update is deterministic).
-        editor.setFontSize(baseFont)
-        GhosttyApp.shared.reloadTheme()   // config now carries font-size = UIScale.baseFontSize
+        // ⌘+/⌘−/⌘0 scales EVERYTHING. The editor and terminal sizes are the user's chosen
+        // Settings sizes multiplied by the zoom factor (UIScale.editorFontSize /
+        // .terminalFontSize) — not a separate 12pt base — so zoom and the font-size setting
+        // compose instead of overwriting each other.
+        editor.setFontSize(UIScale.editorFontSize)
+        // Terminals: rebuild the ghostty config with the new absolute font-size (the
+        // relative increase/decrease bindings drifted and sometimes no-op'd).
+        GhosttyApp.shared.reloadTheme()   // config carries font-size = UIScale.terminalFontSize
+        TerminalView.liveSurfaces().forEach { TerminalView.view(for: $0)?.setFontSize(UIScale.terminalFontSize) }
         // Rebuild AppKit chrome so its fonts + metrics pick up the new factor.
         applyUIScale()
     }
@@ -2123,7 +2158,9 @@ extension AppDelegate: NSSplitViewDelegate {
     }
     func splitView(_ sv: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
         if sv === bodySplit && i == 0 { return 480 }
-        if sv === sidebarSplit && i == 0 { return 400 }
+        // 레일 높이에는 인위적인 상한을 두지 않는다 — 아래 탐색기가 사라지지 않을
+        // 최소치(120pt)만 남기고 사이드바 거의 전체 높이까지 끌어올릴 수 있다.
+        if sv === sidebarSplit && i == 0 { return max(96, sv.bounds.height - 120) }
         return p
     }
     // Neither the rail nor the sidebar column may collapse to zero (that's what made

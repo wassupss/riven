@@ -48,6 +48,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             ?? Bundle.riven.url(forResource: "editor", withExtension: "html") {
             web.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         }
+        observeFontSize()
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -99,10 +100,17 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     // Live-set the Monaco font size (⌘+/⌘-/⌘0). Stashed so it survives a WKWebView
     // reload (re-applied on "ready") — this also keeps the peek/references list sized.
-    private var fontSize = 12
+    // 초기값은 설정(editorFontSize)에서 읽는다 — 예전에는 12로 고정이라 설정이 무시됐다.
+    private var fontSize = UIScale.editorFontSize
     func setFontSize(_ size: Int) {
         fontSize = size
         web.evaluateJavaScript("window.rivenSetFontSize && window.rivenSetFontSize(\(size))", completionHandler: nil)
+    }
+    // 설정 → 일반 → 에디터 폰트 크기 변경을 즉시 반영 (재시작 불필요).
+    private func observeFontSize() {
+        NotificationCenter.default.addObserver(forName: .rivenFontSizeChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.setFontSize(UIScale.editorFontSize)
+        }
     }
     // Toggle format-on-save (riven's formatOnSave setting). Stashed so it survives a
     // WKWebView reload (re-applied on "ready").

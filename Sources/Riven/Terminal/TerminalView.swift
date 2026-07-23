@@ -4,7 +4,7 @@ import GhosttyKit
 
 // A Metal-backed NSView hosting one libghostty surface (GPU terminal + real
 // shell spawned by libghostty). Working directory can be set per instance.
-final class TerminalView: NSView, NSMenuItemValidation {
+final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var surface: ghostty_surface_t?
     private var link: CVDisplayLink?
     private let workdir: String?
@@ -50,6 +50,11 @@ final class TerminalView: NSView, NSMenuItemValidation {
         attnRing.autoresizingMask = [.width, .height]
         addSubview(attnRing)
         startActivityPolling()
+        observeFontSize()
+        // 테마를 바꾸면 GhosttyApp.reloadTheme()가 config(=UIScale 기준 font-size)를 모든
+        // 서피스에 다시 밀어넣어 설정한 터미널 폰트 크기가 날아간다. 테마 적용 순서상
+        // AppDelegate 다음에 불리므로, 여기서 설정값을 다시 세워 되돌린다.
+        Theme.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -304,7 +309,8 @@ final class TerminalView: NSView, NSMenuItemValidation {
             nsview: Unmanaged.passUnretained(self).toOpaque()))
         sc.userdata = Unmanaged.passUnretained(self).toOpaque()
         sc.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
-        sc.font_size = 13
+        // 새로 만드는 터미널도 설정값으로 시작한다 (예전에는 13 고정이라 설정이 무시됐다).
+        sc.font_size = Float(UIScale.terminalFontSize)
         // Optionally start in a directory and/or run a command directly (agent launch
         // — e.g. `claude` runs immediately instead of being typed into a shell).
         switch (workdir, command) {
@@ -437,6 +443,30 @@ final class TerminalView: NSView, NSMenuItemValidation {
     }
     func adjustFontSize(_ delta: Int) { fontAction(delta >= 0 ? "increase_font_size:1" : "decrease_font_size:1") }
     func resetFontSize() { fontAction("reset_font_size") }
+    // 설정(터미널 폰트 크기)을 절대값으로 적용한다. ghostty의 set_font_size는 상대 조정과
+    // 달리 누적 오차 없이 정확히 그 크기로 맞춰준다. 이 액션이 없는 빌드에서는
+    // reset(=config의 font-size) 후 그만큼 상대 조정하는 경로로 물러선다.
+    func setFontSize(_ size: Int) {
+        guard let s = surface else { return }
+        let abs = "set_font_size:\(size)"
+        let ok = abs.withCString { ghostty_surface_binding_action(s, $0, UInt(strlen($0))) }
+        guard !ok else { return }
+        fontAction("reset_font_size")
+        let delta = size - UIScale.terminalFontSize   // reset은 config의 font-size로 돌아간다
+        if delta > 0 { fontAction("increase_font_size:\(delta)") }
+        else if delta < 0 { fontAction("decrease_font_size:\(-delta)") }
+    }
+    private func applySettingsFontSize() { setFontSize(UIScale.terminalFontSize) }
+    // 색은 GhosttyApp이 서피스 단위로 갱신한다 — 여기서는 그때 함께 초기화되는 폰트
+    // 크기만 설정값으로 되돌린다.
+    func applyTheme() { applySettingsFontSize() }
+    // 설정 → 일반 → 터미널 폰트 크기 변경을 살아있는 모든 터미널에 즉시 반영.
+    private var fontObserver: Any?
+    private func observeFontSize() {
+        fontObserver = NotificationCenter.default.addObserver(forName: .rivenFontSizeChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.applySettingsFontSize()
+        }
+    }
 
     // Give this terminal keyboard focus (⌘J). Making the NSView first responder
     // triggers becomeFirstResponder, which forwards focus to the ghostty surface.
@@ -461,6 +491,7 @@ final class TerminalView: NSView, NSMenuItemValidation {
     // (so its callback can't touch a freed surface), then free the surface.
     func dispose() {
         pollTimer?.invalidate(); pollTimer = nil
+        if let o = fontObserver { NotificationCenter.default.removeObserver(o); fontObserver = nil }
         if let l = link { CVDisplayLinkStop(l) }
         link = nil
         if let s = surface { TerminalView.registry.removeValue(forKey: OpaquePointer(s)); ghostty_surface_free(s) }
@@ -591,10 +622,15 @@ extension TerminalView: NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         let chars = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
         markedText = ""
-        // Only CAPTURE the committed text — keyDown emits it as a single key event.
+        // ACCUMULATE — the IME can call insertText MORE THAN ONCE per keyDown: typing a
+        // punctuation mark right after 한글 commits the composing syllable ("글") and then
+        // inserts the punctuation ("."), as two calls. Overwriting dropped the syllable, so
+        // "한글." came out as "한." — append instead (ghostty's keyTextAccumulator model).
+        // keyDown resets pendingText to nil before interpretKeyEvents, so this starts fresh
+        // for each keystroke.
+        pendingText = (pendingText ?? "") + chars
         // Clear the preedit now (the composing 한글 that just committed); if a new
         // composition follows in this same event, setMarkedText re-sets it after.
-        pendingText = chars
         if let s = surface { ghostty_surface_preedit(s, nil, 0) }
     }
     func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {

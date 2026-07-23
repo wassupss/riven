@@ -31,6 +31,15 @@ enum UIScale {
     // The editor/terminal font size that corresponds to the current zoom (12 base).
     static var baseFontSize: Int { max(8, Int((12 * factor).rounded())) }
 
+    // Zoom applied to a USER-CHOSEN base size. The Settings font sizes (editorFontSize /
+    // terminalFontSize) are the base; ⌘+/⌘−/⌘0 scale them. Keeping one formula here is
+    // what makes zoom move the editor and terminal together with the rest of the chrome —
+    // previously zoom pushed `baseFontSize` while the views re-asserted the raw setting,
+    // so the two fought and the editor/terminal appeared not to zoom at all.
+    static func scaled(_ base: Int) -> Int { max(8, Int((CGFloat(base) * factor).rounded())) }
+    static var editorFontSize: Int { scaled(Settings.shared.int("editorFontSize", 13)) }
+    static var terminalFontSize: Int { scaled(Settings.shared.int("terminalFontSize", 13)) }
+
     // Scale a design-time point metric (height, padding, radius…).
     static func pt(_ v: CGFloat) -> CGFloat { (v * factor).rounded() }
     // A scaled UI font / monospaced font.
