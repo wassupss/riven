@@ -70,7 +70,7 @@ enum AgentDiscovery {
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-ilc", script]
         let pipe = Pipe(); p.standardOutput = pipe
-        p.standardError = Pipe()   // swallow interactive-shell chatter
+        p.standardError = FileHandle.nullDevice   // swallow interactive-shell chatter (unread Pipe would fill+hang)
         p.standardInput = FileHandle.nullDevice   // avoid SIGTTIN when the shell is interactive
         var out = ""
         do {

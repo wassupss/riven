@@ -457,7 +457,7 @@ final class TerminalView: NSView, NSMenuItemValidation {
         pollTimer?.invalidate(); pollTimer = nil
         if let l = link { CVDisplayLinkStop(l) }
         link = nil
-        if let s = surface { ghostty_surface_free(s) }
+        if let s = surface { TerminalView.registry.removeValue(forKey: OpaquePointer(s)); ghostty_surface_free(s) }
         surface = nil
     }
 
@@ -529,7 +529,7 @@ final class TerminalView: NSView, NSMenuItemValidation {
 
     deinit {
         pollTimer?.invalidate()
-        if let s = surface { ghostty_surface_free(s) }
+        if let s = surface { TerminalView.registry.removeValue(forKey: OpaquePointer(s)); ghostty_surface_free(s) }
         if let link { CVDisplayLinkStop(link) }
     }
 }

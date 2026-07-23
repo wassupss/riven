@@ -1,5 +1,18 @@
 import AppKit
 
+// Owner-only crash-log path under Application Support (computed once so the C signal
+// handler, which can't allocate/capture, has a ready path).
+let rivenCrashPath: String = {
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/riven-native")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let p = dir.appendingPathComponent("crash.txt").path
+    if !FileManager.default.fileExists(atPath: p) {
+        FileManager.default.createFile(atPath: p, contents: nil, attributes: [.posixPermissions: 0o600])
+    }
+    return p
+}()
+
 // riven native shell — Phase 1 core loop:
 //   explorer (file tree) | Monaco editor (WKWebView) | libghostty terminal
 // Open a folder → browse files → click to open in Monaco → ⌘S saves to disk.
@@ -244,17 +257,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Write crash stacks to /tmp/riven-crash.txt (raw binary won't produce a
-    // normal crash report). Covers Obj-C exceptions + fatal signals.
+    // Write crash stacks to a per-user, owner-only file under Application Support
+    // (not world-readable /tmp — stacks can contain workspace paths). Raw binary
+    // won't produce a normal crash report. Covers Obj-C exceptions + fatal signals.
     private func installCrashHandler() {
         NSSetUncaughtExceptionHandler { ex in
             let s = "EXCEPTION: \(ex.name.rawValue): \(ex.reason ?? "")\n\(ex.callStackSymbols.joined(separator: "\n"))"
-            try? s.write(toFile: "/tmp/riven-crash.txt", atomically: true, encoding: .utf8)
+            try? s.write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
         }
         for sig in [SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGTRAP] {
             signal(sig) { s in
                 let syms = Thread.callStackSymbols.joined(separator: "\n")
-                try? "SIGNAL \(s)\n\(syms)".write(toFile: "/tmp/riven-crash.txt", atomically: true, encoding: .utf8)
+                try? "SIGNAL \(s)\n\(syms)".write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
                 exit(1)
             }
         }
@@ -400,7 +414,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wireEditor(editor, tabBar, secondary: false)
         // LSP diagnostics → Monaco markers (both editor groups).
         lsp.onDiagnostics = { [weak self] uri, diags in
-            let path = uri.replacingOccurrences(of: "file://", with: "")
+            // Servers echo a percent-encoded URI (file:///Users/x/my%20project/a.ts); decode
+            // so it matches the raw Monaco model key, else diagnostics are dropped for any
+            // path with a space / non-ASCII char.
+            let stripped = uri.replacingOccurrences(of: "file://", with: "")
+            let path = stripped.removingPercentEncoding ?? stripped
             self?.editor.setDiagnostics(path: path, diags: diags)
         }
         // The editor fills the whole pane — file tabs are rendered INSIDE the WebView
@@ -871,12 +889,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.deliverToAgent("@\(file):\(start)-\(end)\n```\(lang)\n\(text)\n```\n")
         }
         ed.onAgentRevert = { [weak self, weak ed] path, newAfter in
+            // Only revert a file we're actually tracking an agent edit for — bounds this
+            // web-bridge write to known workspace files (edits are recorded from FSEvents
+            // gated on the workspace root), rejecting any injected arbitrary path.
+            guard let e = AgentEdits.shared.edit(for: path) else { return }
             try? newAfter.write(toFile: path, atomically: true, encoding: .utf8)
             AgentEdits.shared.updateBaseline(path, newAfter)
-            if let e = AgentEdits.shared.edit(for: path) {
-                AgentEdits.shared.record(path: path, workspace: self?.workspace?.path ?? "", before: e.before, after: newAfter, isNew: e.hasBaseline ? false : true)
-                ed?.agentDiff(path: path, before: e.before, after: newAfter)
-            }
+            AgentEdits.shared.record(path: path, workspace: self?.workspace?.path ?? "", before: e.before, after: newAfter, isNew: e.hasBaseline ? false : true)
+            ed?.agentDiff(path: path, before: e.before, after: newAfter)
             self?.reloadIfOpen(path)
         }
         ed.onSave = { [weak self] path, content in self?.save(path: path, content: content) }
@@ -1049,6 +1069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] { (p.content as? TerminalView)?.dispose() }
         }
         states[url] = nil
+        lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
         workspaces.removeAll { $0 == url }
         if workspace == url {
             agentWatch?.stop(); agentWatch = nil
@@ -1313,6 +1334,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func save(path: String, content: String) {
+        // Defense-in-depth: only write to a file that's actually open as a tab. `path` comes
+        // from the WKWebView bridge; even though the editor content is our own local bundle,
+        // this bounds a save to files the user opened (incl. out-of-workspace ⌘O files) and
+        // rejects any arbitrary path a compromised web context might inject.
+        guard tabBar.tabs.contains(path) else { RLog.log("save: rejected untracked path \(path)"); return }
         // Format-on-save with the PROJECT's prettier + eslint --fix (real config/plugins),
         // off the main thread. Prettier runs over stdin; eslint --fix operates on the
         // written file; the final on-disk text is pushed back to the editor.
@@ -1341,7 +1367,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--fix", path]
         p.currentDirectoryURL = root
-        p.standardOutput = Pipe(); p.standardError = Pipe()
+        // Discard output to /dev/null — a noisy eslint (>64KB) would fill an unread pipe
+        // and wedge waitUntilExit() on the save thread.
+        p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
@@ -1361,10 +1389,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--stdin-filepath", path]
         p.currentDirectoryURL = root
-        let inPipe = Pipe(), outPipe = Pipe(); p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = Pipe()
+        let inPipe = Pipe(), outPipe = Pipe(); p.standardInput = inPipe; p.standardOutput = outPipe
+        p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
-        inPipe.fileHandleForWriting.write(content.data(using: .utf8) ?? Data())
-        inPipe.fileHandleForWriting.closeFile()
+        // Write stdin on a background queue so we read stdout concurrently — otherwise a
+        // large formatted output fills prettier's stdout pipe while we're still blocked
+        // writing stdin → deadlock (save spins forever).
+        let inData = content.data(using: .utf8) ?? Data()
+        DispatchQueue.global(qos: .userInitiated).async {
+            inPipe.fileHandleForWriting.write(inData)
+            try? inPipe.fileHandleForWriting.close()
+        }
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         guard p.terminationStatus == 0, let out = String(data: outData, encoding: .utf8), !out.isEmpty else { return nil }
@@ -1549,7 +1584,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func listeningPorts() -> Set<Int> {
         let p = Process(); p.launchPath = "/usr/sbin/lsof"
         p.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN"]
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return [] }
         let data = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
         let out = String(data: data, encoding: .utf8) ?? ""
@@ -1953,7 +1988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { persistSession() }
+    func applicationWillTerminate(_ n: Notification) { persistSession(); lsp.stopAll() }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the

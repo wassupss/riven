@@ -572,13 +572,18 @@ require(['vs/editor/editor.main'], async function () {
   });
   window.rivenDiagnostics = function (path, diags) {
     const m = models[path]; if (!m) return;
-    const markers = (diags || []).map(d => ({
-      severity: [0, monaco.MarkerSeverity.Error, monaco.MarkerSeverity.Warning,
-                 monaco.MarkerSeverity.Info, monaco.MarkerSeverity.Hint][d.severity] || monaco.MarkerSeverity.Info,
-      startLineNumber: d.range.start.line+1, startColumn: d.range.start.character+1,
-      endLineNumber: d.range.end.line+1, endColumn: d.range.end.character+1,
-      message: d.message, source: d.source
-    }));
+    const markers = (diags || []).map(d => {
+      // A misbehaving server may emit a diagnostic without a well-formed range; skip it
+      // rather than throwing (a thrown .map would drop ALL markers for this file).
+      if (!d || !d.range || !d.range.start || !d.range.end) return null;
+      return {
+        severity: [0, monaco.MarkerSeverity.Error, monaco.MarkerSeverity.Warning,
+                   monaco.MarkerSeverity.Info, monaco.MarkerSeverity.Hint][d.severity] || monaco.MarkerSeverity.Info,
+        startLineNumber: d.range.start.line+1, startColumn: d.range.start.character+1,
+        endLineNumber: d.range.end.line+1, endColumn: d.range.end.character+1,
+        message: d.message, source: d.source
+      };
+    }).filter(Boolean);
     monaco.editor.setModelMarkers(m, 'lsp', markers);
   };
 

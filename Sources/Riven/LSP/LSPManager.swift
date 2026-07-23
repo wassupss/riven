@@ -30,6 +30,13 @@ final class LSPManager {
 
     func stopAll() { clients.values.forEach { $0.stop() }; clients.removeAll() }
 
+    // Stop + drop every language server rooted at a workspace (called on workspace close
+    // so language servers don't pile up as orphaned node processes).
+    func stopClients(rootPath: String) {
+        let suffix = "|\(rootPath)"
+        for (id, c) in clients where id.hasSuffix(suffix) { c.stop(); clients[id] = nil }
+    }
+
     private struct Spec { let command: String; let args: [String]; let env: [String: String] }
 
     private func resolve(_ key: String, rootPath: String) -> Spec? {
@@ -76,7 +83,7 @@ final class LSPManager {
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-ilc", cmd]
         p.standardInput = FileHandle.nullDevice
-        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return nil }
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
