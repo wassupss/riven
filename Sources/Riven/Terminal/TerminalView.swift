@@ -483,12 +483,26 @@ final class TerminalView: NSView, NSMenuItemValidation {
     // Send a ghostty key event. keycode = macOS virtual keycode (libghostty maps
     // it internally); printable text (>= 0x20) is attached so letters/한글 print,
     // while backspace/enter/arrows carry only the keycode.
-    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?) {
+    //
+    // keycodeOverride lets a caller detach the attached TEXT from the triggering
+    // event's keycode. This exists for one reason: Return/Tab/Escape/keypad-Enter
+    // are "commit + action" keys in Korean IME — the final composed syllable is
+    // committed (via insertText) by the SAME keystroke that also has to fire the
+    // key's own action (submit the line / indent / cancel). If we sent one event
+    // with keycode = Return AND that text attached, ghostty treats it as the
+    // Return action and the attached syllable is dropped — see keyDown below.
+    // Overriding to a neutral keycode (0x00, 'a' with no modifiers — a key with
+    // no keybinding of its own) makes ghostty fall back to printing `.text`
+    // instead of running the Return/Tab/Escape action, so the syllable prints.
+    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?, keycodeOverride: UInt32? = nil) {
         guard let s = surface else { return }
         var k = ghostty_input_key_s()
         k.action = action
-        k.keycode = UInt32(event.keyCode)
-        k.mods = ghosttyMods(event.modifierFlags)
+        k.keycode = keycodeOverride ?? UInt32(event.keyCode)
+        // A neutral override keycode must not carry the original event's modifiers
+        // either (e.g. leftover shift) — keep it a plain, unbound keystroke so only
+        // the attached text is observable.
+        k.mods = keycodeOverride != nil ? GHOSTTY_MODS_NONE : ghosttyMods(event.modifierFlags)
         if let text, let first = text.utf8.first, first >= 0x20 {
             text.withCString { k.text = $0; _ = ghostty_surface_key(s, k) }
         } else {
@@ -496,21 +510,43 @@ final class TerminalView: NSView, NSMenuItemValidation {
         }
     }
 
+    // macOS virtual keycodes that both COMMIT IME text and carry their own action:
+    // Return, keypad Enter, Tab, Escape. For these, the committed syllable and the
+    // key's action must be sent as TWO separate ghostty_surface_key events (see
+    // keyDown) — otherwise ghostty prioritizes the action and the text is lost.
+    private static let commitActionKeycodes: Set<UInt16> = [0x24, 0x4C, 0x30, 0x35]
+
     // Key flow — matches ghostty's official macOS app (Surface.keyDown):
     // interpretKeyEvents routes the event to the IME, which calls back into
     // insertText / setMarkedText / doCommand. We do NOT send anything to the
     // shell from those callbacks; instead insertText only *captures* the
-    // committed text into pendingText. Then, back here, we emit exactly ONE
-    // ghostty_surface_key carrying the keycode AND that committed text.
+    // committed text into pendingText. Then, back here, we emit ghostty_surface_key
+    // event(s) carrying that committed text.
     //
     // This is the critical difference from the old code (which called
     // ghostty_surface_text directly): a printable char sent via
     // ghostty_surface_text bypasses ghostty's key pipeline, and its cursor
     // bookkeeping diverged from the shell's echoed cursor — that mismatch was
-    // rendered as TWO cursors on different rows. Routing everything through a
-    // single ghostty_surface_key keeps one authoritative cursor. It also fixes
+    // rendered as TWO cursors on different rows. Routing everything through
+    // ghostty_surface_key keeps one authoritative cursor. It also fixes
     // Enter-first-press: a plain Enter produces no insertText, so pendingText
     // stays nil and we emit a keycode-only Return in the same pass.
+    //
+    // Korean (and other CJK) IMEs keep the LAST composed syllable in the preedit
+    // until a following keystroke commits it. When that following keystroke is
+    // Return/Tab/Escape/keypad-Enter (e.g. pressing Return to submit a line),
+    // interpretKeyEvents commits the syllable via insertText in the SAME keyDown
+    // that must also fire Return's own action. Sending one event with
+    // keycode=Return AND that text attached made ghostty run the Return action
+    // and silently drop the attached text — the reported bug (issue #11): the
+    // final syllable vanished on every Enter-to-submit. The fix: for these
+    // "commit + action" keys, send the committed text FIRST under a neutral
+    // keycode (so ghostty prints it, not interprets it as Return), THEN send the
+    // real key as a keycode-only event so the line still submits / tab still
+    // fires. For an ordinary letter/number key committing the PREVIOUS syllable
+    // mid-composition, the single combined event is correct as before — the
+    // committed text is attached to a plain letter keycode ghostty already just
+    // prints, and resending that key would double-type it.
     override func keyDown(with event: NSEvent) {
         needsDraw = true
         if event.keyCode == 0x24 { turnArmed = true }   // Return → a user turn begins; arm one notification
@@ -521,7 +557,17 @@ final class TerminalView: NSView, NSMenuItemValidation {
         // carrying the keycode + text. Sent even while a NEW composition is in
         // progress, so a syllable that commits as another begins isn't dropped.
         if let t = pendingText, !t.isEmpty {
-            sendKeyEvent(event, action: GHOSTTY_ACTION_PRESS, text: t); return
+            if TerminalView.commitActionKeycodes.contains(event.keyCode) {
+                // Print the committed syllable under a neutral keycode (ghostty
+                // must not treat it as the Return/Tab/Escape action)...
+                sendKeyEvent(event, action: GHOSTTY_ACTION_PRESS, text: t, keycodeOverride: 0x00)
+                // ...then actually perform that key's action (submit the line,
+                // indent, or cancel) as its own keycode-only event.
+                sendKeyEvent(event, action: GHOSTTY_ACTION_PRESS, text: nil)
+            } else {
+                sendKeyEvent(event, action: GHOSTTY_ACTION_PRESS, text: t)
+            }
+            return
         }
         if hasMarkedText() { return }     // still composing, nothing committed → preedit shown, swallow
         sendKeyEvent(event, action: GHOSTTY_ACTION_PRESS, text: nil)   // special key / keycode-only
