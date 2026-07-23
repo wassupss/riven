@@ -78,6 +78,15 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func close(path: String) {
         web.evaluateJavaScript("window.rivenClose(\(jsString(path)))", completionHandler: nil)
     }
+    // 이미지 파일을 에디터 탭 안의 뷰어로 연다 (src는 data: URL — 웹뷰가 임의 경로의
+    // file:// 이미지를 못 읽기 때문).
+    func openImage(path: String, src: String) {
+        web.evaluateJavaScript("window.rivenOpenImage && window.rivenOpenImage(\(jsString(path)), \(jsString(src)))", completionHandler: nil)
+    }
+    // 이미 연 이미지 탭으로 전환.
+    func showImageTab(path: String) {
+        web.evaluateJavaScript("window.rivenShowImage && window.rivenShowImage(\(jsString(path)))", completionHandler: nil)
+    }
     // Add a tab chip + model without switching the visible tab or focus (used to
     // restore a workspace's inactive tabs on switch without stealing the active view).
     func openBackground(path: String, content: String) {

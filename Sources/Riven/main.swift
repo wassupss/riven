@@ -569,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let icon = NSImage(systemSymbolName: agent?.symbol ?? "terminal", accessibilityDescription: nil)
         let p = DockPanel(id: "term-\(abs(st.url.path.hashValue))-\(st.terminalSeq)", title: title,
             icon: icon, content: tv, closable: true)
+        p.agentName = agent?.name          // 세션 복원 때 같은 에이전트로 다시 띄우기 위해
         p.autoTitle = true    // follow OSC titles for BOTH plain terminals AND agents, so
                               // "change the terminal title to X" from an agent works.
         // OSC 0/2 title from the shell/agent → update the tab. A path-like title shows
@@ -661,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var poppedOut: [String: (win: NSWindow, dock: DockManager, panel: DockPanel, delegate: PopoutDelegate)] = [:]
     @objc private func popoutMenu() {
         guard let dock = activeDock, let panel = dock.activeGroup?.activePanel else { NSSound.beep(); return }
-        dock.detach(panel)   // remove from the dock WITHOUT disposing the content
+        dock.detach(panel, normalize: true)   // remove from the dock WITHOUT disposing the content
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
         host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg.cgColor
         panel.content.frame = host.bounds
@@ -838,10 +839,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(p, reference: currentTerminalPanel()?.group ?? dock.activeGroup, direction: dir)
         (p.content as? TerminalView)?.focusTerminal()
     }
-    private func selectTerminal(_ n: Int) {            // ⌃1..9
-        let terms = terminalPanels()
-        guard terms.indices.contains(n - 1) else { return }
-        let p = terms[n - 1]; p.group?.select(id: p.id)
+    // ⌃1..9 — 활성 패널 그룹 안의 N번째 탭으로 이동한다. 예전에는 모든 그룹의 터미널을
+    // 통틀어 N번째를 골라서, 단축키가 그룹 사이를 건너뛰어 버렸다.
+    private func selectTerminal(_ n: Int) {
+        guard let g = activeDock?.activeGroup, g.panels.indices.contains(n - 1) else { return }
+        let p = g.panels[n - 1]
+        g.select(id: p.id)
         (p.content as? TerminalView)?.focusTerminal()
     }
     private func cycleTerminal(_ delta: Int) {         // ⌘⇧] / ⌘⇧[
@@ -880,14 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // terminal the first time a file is opened — riven's ensureEditor).
     private func showEditorPane() {
         guard let dock = activeDock else { return }
-        if editorDockPanel == nil {
-            let p = DockPanel(id: "editor", title: t("title.editor"),
-                icon: NSImage(systemSymbolName: "curlybraces", accessibilityDescription: nil),
-                content: editorPane, closable: true)
-            p.onClose = { [weak self] in self?.closeAllEditorTabs() }
-            editorDockPanel = p
-        }
-        let p = editorDockPanel!
+        let p = ensureEditorPanel()
         if p.group == nil || p.group?.manager !== dock {
             // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4); 기록이 없거나
             // 그 자리가 사라졌으면 기존 기본 위치로:
@@ -904,6 +900,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             p.group?.select(id: "editor")
         }
+    }
+    // 공유 에디터 패널(싱글턴)을 만들거나 돌려준다 — 배치는 호출자 몫 (showEditorPane
+    // 의 기본 배치 또는 레이아웃 복원의 스냅샷 자리).
+    private func ensureEditorPanel() -> DockPanel {
+        if editorDockPanel == nil {
+            let p = DockPanel(id: "editor", title: t("title.editor"),
+                icon: NSImage(systemSymbolName: "curlybraces", accessibilityDescription: nil),
+                content: editorPane, closable: true)
+            p.onClose = { [weak self] in self?.closeAllEditorTabs() }
+            editorDockPanel = p
+        }
+        return editorDockPanel!
     }
     private func closeAllEditorTabs() {
         guard let ws = workspace else { return }
@@ -1061,20 +1069,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dockHost.addSubview(dock.container)
         activeDock = dock
         workspace = url
+        // 이전 세션의 독 레이아웃 전체(스플릿 트리/팬 크기/탭 구성)를 재현한다 — 독을
+        // 처음 만들 때 한 번. 서술자 → 패널: 터미널은 새로 만들고(에이전트는 이름으로
+        // 되찾음), 에디터/aux 싱글턴은 공유 인스턴스를 스냅샷의 자리에 부착한다.
+        // 지워진 에이전트는 nil → 그 패널만 빠지고 나머지 레이아웃은 그대로 선다.
+        var restoredLayout = false
+        if isNew, let snap = st.pendingLayout {
+            st.pendingLayout = nil
+            let agents = AgentDiscovery.available()
+            restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
+                guard let self else { return nil }
+                if desc.hasPrefix("term:") {
+                    let name = String(desc.dropFirst("term:".count))
+                    if name.isEmpty { return self.makeTerminalPanel(for: st) }
+                    guard let agent = agents.first(where: { $0.name == name }) else { return nil }
+                    return self.makeTerminalPanel(for: st, agent: agent)
+                }
+                if desc == "editor" { return self.ensureEditorPanel() }
+                return self.makeAuxPanel(desc)
+            }
+            if restoredLayout {
+                st.pendingTerminals = nil                 // 구버전 폴백 기록은 더 필요 없다
+                st.openAux = Set(auxDockPanels.keys)      // 레이아웃이 배치한 aux가 곧 열린 aux
+                (dock.activeGroup?.activePanel?.content as? TerminalView)?.focusTerminal()
+            }
+        }
         // Add the default terminal now that the dock is in the window (a libghostty
         // surface must be created in-window with a real size to spawn its shell).
-        if isNew, let g = dock.activeGroup, g.panels.isEmpty {
-            let term = makeTerminalPanel(for: st)
-            g.add(term)
-            (term.content as? TerminalView)?.focusTerminal()
+        if !restoredLayout, isNew, let g = dock.activeGroup, g.panels.isEmpty {
+            // (레이아웃 기록이 없거나 복원이 실패한) 폴백: 구버전 세션의 터미널 구성을
+            // 재현한다 (에이전트 패널은 그 에이전트로 다시 실행). 기록이 없으면 기본
+            // 터미널 하나. 프로세스 자체는 되살릴 수 없고 새 셸로 뜬다.
+            let wanted = st.pendingTerminals ?? [""]
+            st.pendingTerminals = nil
+            let agents = AgentDiscovery.available()
+            var first: DockPanel?
+            for (i, name) in wanted.enumerated() {
+                let agent = name.isEmpty ? nil : agents.first { $0.name == name }
+                let term = makeTerminalPanel(for: st, agent: agent)
+                if i == 0 { g.add(term); first = term }
+                else { dock.addPanel(term, reference: dock.groups.last, direction: .right) }
+            }
+            if let g0 = first?.group { dock.setActive(g0) }
+            (first?.content as? TerminalView)?.focusTerminal()
         }
 
         // Restore the aux panels this workspace had open (search/git/preview/changes).
         // 에디터보다 먼저 (detach의 역순, LIFO): 에디터의 자리 기록이 aux 그룹을
         // 이웃으로 참조하는 경우가 많아, aux가 먼저 제자리에 있어야 에디터도
-        // 기록된 자리로 복원된다 (#4).
-        for id in ["search", "git", "preview", "changes"] where st.openAux.contains(id) {
-            if auxDockPanels[id] == nil { toggleDockPanel(id) }
+        // 기록된 자리로 복원된다 (#4). 레이아웃 복원이 이미 배치했다면 건너뛴다
+        // (기본 가장자리에 또 붙이지 않게).
+        if !restoredLayout {
+            for id in ["search", "git", "preview", "changes"] where st.openAux.contains(id) {
+                if auxDockPanels[id] == nil { toggleDockPanel(id) }
+            }
         }
         // Restore this workspace's editor tabs (adds the editor panel if needed).
         rebuildTabs(for: st)
@@ -1154,14 +1202,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         var colors: [String: String] = [:]
         for url in workspaces { if let hex = workspaceColors[url] { colors[url.absoluteString] = hex } }
+        // 독 레이아웃 전체를 저장한다 — 스플릿 트리/각 팬의 크기/탭 묶음/활성 탭까지,
+        // 재시작하면 패널 배치가 그대로 돌아온다. 이번 실행에서 방문하지 않은 워크스
+        // 페이스는 이전 기록(pendingLayout)을 그대로 이월하고, 구버전 "terminals" 기록만
+        // 있으면 그 구성을 레이아웃 형식으로 승격해 저장한다. (실행 중이던 프로세스
+        // 자체는 riven의 자식이라 종료와 함께 죽는다 — 되살리는 건 패널 구성뿐이다.)
+        var layouts: [String: Any] = [:]
+        for url in workspaces {
+            let st = state(for: url)
+            if let snap = st.dock?.snapshot() {
+                layouts[url.absoluteString] = snap
+            } else if let pending = st.pendingLayout {
+                layouts[url.absoluteString] = pending    // 아직 방문 전이면 기존 기록 유지
+            } else if let terms = st.pendingTerminals, !terms.isEmpty {
+                let groups: [[String: Any]] = terms.map {
+                    ["type": "group", "panels": ["term:\($0)"], "active": 0]
+                }
+                layouts[url.absoluteString] = groups.count == 1 ? groups[0]
+                    : ["type": "split", "vertical": true,
+                       "extents": Array(repeating: Double(1), count: groups.count),
+                       "children": groups]
+            }
+        }
         let session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
             "tabs": tabs,
             "activeTab": actives,
-            "colors": colors
+            "colors": colors,
+            "layout": layouts
         ]
         Settings.shared.set("session", session)
+        activeDock?.dumpTree("persist")   // 레이아웃 이상 추적용 (디버그 로그에만)
     }
     // sRGB hex for a rail card color (persisted); Theme.hex parses it back.
     private func hexString(_ c: NSColor) -> String {
@@ -1176,6 +1248,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
         let colors = s["colors"] as? [String: String] ?? [:]
+        let layouts = s["layout"] as? [String: Any] ?? [:]
+        let terms = s["terminals"] as? [String: [String]] ?? [:]   // 구버전 세션 (하위 호환)
         let fm = FileManager.default
         var restored: [URL] = []
         for key in keys {
@@ -1186,6 +1260,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let st = state(for: url)
             st.openTabs = (tabs[key] as? [String] ?? []).filter { fm.fileExists(atPath: $0) }
             st.activeTab = (actives[key] as? String).flatMap { st.openTabs.contains($0) ? $0 : st.openTabs.last }
+            st.pendingLayout = layouts[key] as? [String: Any]   // 독을 만들 때 이 레이아웃으로 재현
+            st.pendingTerminals = terms[key]        // layout이 없는 구버전 세션의 폴백
             rail.addWorkspace(url)
             if let hex = colors[key] { workspaceColors[url] = hex; rail.setColor(url, Theme.hex(hex)) }   // restore card color
             restored.append(url)
@@ -1274,8 +1350,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             st.activeTab = path
             showEditorPane()
             tabBar.open(path)
-            editor.open(path: path, content: "")   // Monaco reuses the existing model
+            if Self.imageMIME(path) != nil { editor.showImageTab(path: path) }
+            else { editor.open(path: path, content: "") }   // Monaco reuses the existing model
             statusBar.setFileInfo(fileInfo(path))
+            return
+        }
+        // 이미지는 Monaco가 못 그리므로 에디터 탭 안의 이미지 뷰어로 연다 (VS Code의
+        // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
+        // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
+        // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
+        if let mime = Self.imageMIME(path) {
+            guard let data = try? Data(contentsOf: url) else {
+                RLog.log("openFile: cannot read image \(path)"); return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openImage(path: path, src: "data:\(mime);base64,\(data.base64EncodedString())")
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
             return
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
@@ -1364,6 +1458,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showTabContent(_ path: String) {
         let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         editor.open(path: path, content: content)
+    }
+
+    // 에디터에서 이미지 뷰어로 열 확장자 → MIME. SVG는 제외(텍스트로 편집하는 게 유용하고
+    // VS Code도 기본은 텍스트다).
+    static func imageMIME(_ path: String) -> String? {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "bmp": return "image/bmp"
+        case "ico": return "image/x-icon"
+        case "avif": return "image/avif"
+        case "heic": return "image/heic"
+        case "tiff", "tif": return "image/tiff"
+        default: return nil
+        }
     }
 
     private func fileInfo(_ path: String) -> String {
@@ -1762,7 +1873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else if panel.content is TerminalView {
                 activeDock?.removePanel(panel)
             } else {                                       // search / git / preview / changes
-                activeDock?.detach(panel)
+                activeDock?.detach(panel, normalize: true)
                 auxDockPanels[panel.id] = nil
                 activeDock?.savedPlacements[panel.id] = nil   // 직접 닫음 → 자리 기록도 지움 (#4)
             }
@@ -1770,7 +1881,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // A stray editor tab with no active dock panel → close it.
         if let p = tabBar.active { closeTab(p); return }
-        // Nothing left to close → the dock is empty → quit (like riven / VS Code).
+        // 여기까지 왔다는 건 "활성 그룹에 닫을 패널이 없다"는 뜻일 뿐, 독이 비었다는
+        // 뜻이 아니다. 그룹이 비워지는 과정에서 활성 그룹이 빈 그룹이 되거나 참조가
+        // 끊기면 다른 열에 패널이 멀쩡히 남아 있어도 여기로 떨어져 앱이 꺼져 버렸다.
+        // 남아 있는 패널이 하나라도 있으면 절대 종료하지 않고 살아있는 패널로 포커스를
+        // 옮긴다 (다음 ⌘W가 그 패널을 닫는다).
+        if let dock = activeDock, dock.totalPanels > 0 {
+            if let g = dock.groups.first(where: { !$0.panels.isEmpty }) { dock.setActive(g) }
+            return
+        }
+        // 정말 아무것도 안 남았을 때만 종료 — 실수로 닫히지 않게 한 번 확인한다.
+        confirmQuit()
+    }
+
+    // ⌘W로 마지막 패널까지 닫아 앱이 종료되는 경로에서 한 번 확인받는다.
+    private func confirmQuit() {
+        let a = NSAlert()
+        a.messageText = t("quit.title")
+        a.informativeText = t("quit.body")
+        a.addButton(withTitle: t("quit.confirm"))   // 첫 버튼 = 기본(Return)
+        a.addButton(withTitle: t("common.cancel"))
+        a.alertStyle = .warning
+        guard a.runModal() == .alertFirstButtonReturn else { return }
         window?.performClose(nil)
     }
     private func terminalHasFocus() -> Bool { window?.firstResponder is TerminalView }
@@ -1895,30 +2027,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // the left, preview/changes to the right of the main area). Once open, the user
     // can drag it anywhere / split / resize like any dock panel.
     private func toggleDockPanel(_ id: String) {
-        guard let ws = workspace, let dock = activeDock else { return }
+        guard workspace != nil, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
-            dock.detach(existing); auxDockPanels[id] = nil
+            dock.detach(existing, normalize: true); auxDockPanels[id] = nil
             dock.savedPlacements[id] = nil   // 직접 닫음 → 다음에는 기본 위치로 (#4)
             return
         }
         if bodySplit.arrangedSubviews.first?.isHidden ?? false { toggleSidebar() }
+        guard let panel = makeAuxPanel(id) else { return }
         let side: DockDir = (id == "search" || id == "git") ? .left : .right
-        let title: String; let symbol: String
-        let content: NSView
-        switch id {
-        case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
-        case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
-        case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
-        case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
-        default: return
-        }
-        let panel = DockPanel(id: id, title: title,
-            icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: content)
-        panel.onClose = { [weak self] in
-            self?.auxDockPanels[id] = nil
-            self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
-        }
-        auxDockPanels[id] = panel
         // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4). 기록이 없거나 그
         // 자리가 사라졌으면 기존 기본 위치로:
         // Attach at the appropriate EDGE (leftmost for left panels, rightmost for right)
@@ -1937,6 +2054,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
+    }
+
+    // aux 패널 생성만 분리 (toggleDockPanel과 레이아웃 복원이 공용): 제목·심볼·콘텐츠
+    // 스위치 + onClose 핸들러 + auxDockPanels 등록까지. 독에 어디에 붙일지는 호출자가
+    // 정한다 (토글은 기본 가장자리, 레이아웃 복원은 스냅샷의 자리).
+    private func makeAuxPanel(_ id: String) -> DockPanel? {
+        guard let ws = workspace else { return nil }
+        let title: String; let symbol: String
+        let content: NSView
+        switch id {
+        case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
+        case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
+        case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
+        case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
+        default: return nil
+        }
+        let panel = DockPanel(id: id, title: title,
+            icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: content)
+        panel.onClose = { [weak self] in
+            self?.auxDockPanels[id] = nil
+            self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
+        }
+        auxDockPanels[id] = panel
+        return panel
     }
 
     // Resize a freshly-added side panel to a fixed width instead of the 50/50 split.

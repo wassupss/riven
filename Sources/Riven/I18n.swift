@@ -53,6 +53,9 @@ enum I18n {
     static let dict: [String: (ko: String, en: String)] = [
         // common
         "common.close": ("닫기", "Close"), "common.cancel": ("취소", "Cancel"),
+        "quit.title": ("riven을 종료할까요?", "Quit riven?"),
+        "quit.body": ("마지막 패널을 닫으면 앱이 종료됩니다.", "Closing the last panel quits the app."),
+        "quit.confirm": ("종료", "Quit"),
         "common.confirm": ("확인", "OK"), "common.open": ("열기", "Open"),
         "common.search": ("검색", "Search"), "common.refresh": ("새로고침", "Refresh"),
         "common.save": ("저장", "Save"), "common.dontSave": ("저장 안 함", "Don't Save"),

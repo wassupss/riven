@@ -5,6 +5,10 @@ import AppKit
 final class DockTabBar: NSView {
     weak var group: DockGroup?
     private let stack = NSStackView()
+    // 탭이 바 너비를 넘으면 예전에는 그냥 잘려서, 뒤쪽 탭은 보이지도 클릭·드래그되지도
+    // 않았다(⌘T로 탭을 늘리면 접근 불가). 에디터 탭 스트립(overflow-x:auto)처럼 가로
+    // 스크롤을 붙인다.
+    private let scroll = NSScrollView()
     override var mouseDownCanMoveWindow: Bool { false }
 
     override init(frame: NSRect) {
@@ -15,11 +19,23 @@ final class DockTabBar: NSView {
         stack.spacing = 0
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        scroll.documentView = stack
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false      // 30px 스트립이라 스크롤러는 숨기고 휠/트랙패드로만
+        scroll.hasVerticalScroller = false
+        scroll.horizontalScrollElasticity = .allowed
+        scroll.verticalScrollElasticity = .none
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            stack.heightAnchor.constraint(equalTo: scroll.heightAnchor)
         ])
         // Bottom hairline.
         let hair = NSView(); hair.wantsLayer = true
@@ -35,6 +51,26 @@ final class DockTabBar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    // 일반 마우스 휠은 세로 델타만 준다 — 가로 스트립이므로 세로 델타를 가로 이동으로
+    // 바꿔 준다 (트랙패드 가로 스와이프는 그대로 동작).
+    override func scrollWheel(with e: NSEvent) {
+        let dx = e.scrollingDeltaX != 0 ? e.scrollingDeltaX : e.scrollingDeltaY
+        guard dx != 0 else { super.scrollWheel(with: e); return }
+        let maxX = max(0, stack.frame.width - scroll.contentView.bounds.width)
+        let x = min(maxX, max(0, scroll.contentView.bounds.origin.x - dx))
+        scroll.contentView.scroll(to: NSPoint(x: x, y: 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    // 활성 탭이 스크롤 밖에 있으면 보이게 끌어온다 (탭 전환/추가 시).
+    private func revealActiveTab() {
+        guard let group, group.panels.indices.contains(group.activeIndex),
+              stack.arrangedSubviews.indices.contains(group.activeIndex) else { return }
+        let tab = stack.arrangedSubviews[group.activeIndex]
+        stack.layoutSubtreeIfNeeded()
+        tab.scrollToVisible(tab.bounds)
+    }
+
     func rebuild() {
         layer?.backgroundColor = Theme.bg2.cgColor
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -45,6 +81,7 @@ final class DockTabBar: NSView {
             tab.onClose = { [weak self] in self?.close(panel) }
             stack.addArrangedSubview(tab)
         }
+        DispatchQueue.main.async { [weak self] in self?.revealActiveTab() }
     }
 
     private func close(_ panel: DockPanel) {

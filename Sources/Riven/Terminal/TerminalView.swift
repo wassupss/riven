@@ -50,6 +50,9 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         attnRing.autoresizingMask = [.width, .height]
         addSubview(attnRing)
         startActivityPolling()
+        // Finder 등에서 파일/이미지를 끌어다 놓으면 그 경로를 터미널에 입력해 준다
+        // (클로드코드 CLI에 이미지를 물릴 때 경로를 직접 치지 않아도 되도록).
+        registerForDraggedTypes([.fileURL])
         observeFontSize()
         // 테마를 바꾸면 GhosttyApp.reloadTheme()가 config(=UIScale 기준 font-size)를 모든
         // 서피스에 다시 밀어넣어 설정한 터미널 폰트 크기가 날아간다. 테마 적용 순서상
@@ -219,6 +222,26 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         if event.hasPreciseScrollingDeltas { mods |= 1 }   // precision (trackpad)
         ghostty_surface_mouse_scroll(s, Double(event.scrollingDeltaX), Double(event.scrollingDeltaY), mods)
     }
+    // ---- 파일 드롭 → 경로를 입력 ----
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation {
+        s.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) ? .copy : []
+    }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { draggingEntered(s) }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let surface,
+              let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self],
+                            options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty else { return false }
+        // 공백·따옴표 등이 있어도 셸에서 한 덩어리로 읽히도록 작은따옴표로 감싼다.
+        let text = urls.map { u -> String in
+            let p = u.path
+            return "'" + p.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        }.joined(separator: " ") + " "
+        text.withCString { ghostty_surface_text(surface, $0, UInt(strlen($0))) }
+        window?.makeFirstResponder(self)
+        needsDraw = true
+        return true
+    }
+
     override func becomeFirstResponder() -> Bool {
         if let s = surface { ghostty_surface_set_focus(s, true) }
         TerminalView.focused = self

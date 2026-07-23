@@ -21,6 +21,9 @@ final class DockPanel {
     var onActivate: (() -> Void)?   // called when this panel becomes visible
     var badge: String?              // nil | "busy" (violet) | "attn" (amber pulse)
     var autoTitle: Bool = false     // follow the shell's OSC title (plain terminals only)
+    // 이 패널이 실행한 에이전트 이름(없으면 일반 터미널). 세션 복원 때 같은 구성을
+    // 다시 만들기 위해 기록해 둔다.
+    var agentName: String?
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable
@@ -187,6 +190,7 @@ final class DockManager {
 
         // Same-axis parent: flatten (sibling insert + local rebalance).
         if let psv = parent as? NSSplitView, psv.isVertical == vertical {
+            psv.layoutSubtreeIfNeeded()   // 프레임이 최신이어야 크기를 옳게 잰다
             let gIdx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
             let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
             let at = before ? gIdx : gIdx + 1
@@ -225,6 +229,7 @@ final class DockManager {
             // every other pane keeps its width. The old code only pinned idx==0 / idx==last
             // via setPosition, so a MIDDLE group's new split collapsed to 0 width — the
             // ⌘⇧D / drag "확 줄어" bug (confirmed by a [519,524,0,527] tree dump).
+            psv.layoutSubtreeIfNeeded()   // 프레임이 최신이어야 크기를 옳게 잰다
             let idx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
             let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
             group.removeFromSuperview()
@@ -272,8 +277,13 @@ final class DockManager {
         guard n >= 2, oldExtents.count == n else { return }
         let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
         guard total > 0 else { return }
-        let sum = oldExtents.reduce(0, +)
-        let target = sum > 0 ? oldExtents.map { $0 * total / sum }
+        // 측정값이 0인 형제(레이아웃 확정 전에 잰 값)를 그대로 비례 배분하면 0이 고착된다.
+        // 최소폭을 바닥으로 깔고 나눈다.
+        let minE: CGFloat = 80
+        var base = oldExtents
+        if total > minE * CGFloat(n) { base = base.map { max($0, minE) } }
+        let sum = base.reduce(0, +)
+        let target = sum > 0 ? base.map { $0 * total / sum }
                              : Array(repeating: total / CGFloat(n), count: n)
         setExtents(sv, target)
     }
@@ -338,15 +348,27 @@ final class DockManager {
             if from === group { return }
             from?.remove(panel, dispose: false)
             group.add(panel); setActive(group)
+            cleanupEmpty(from)     // 탭으로 옮긴 경우에도 비워진 그룹은 즉시 접는다
         } else {
             // Splitting a group against a panel already alone in it is a no-op.
             if from === group && group.panels.count == 1 { return }
-            let g = DockGroup(); g.manager = self
             from?.remove(panel, dispose: false)
+            // Collapse the vacated group and give its space back BEFORE restructuring.
+            // Doing it after split() measured the siblings while the freshly-inserted
+            // split still had a 0 frame, so the proportional redistribute kept those
+            // zeros and one pane swallowed the row (observed: [580,346,350,294] →
+            // [0, 0, 990]). Settle layout so the split measures real frames.
+            cleanupEmpty(from)
+            container.layoutSubtreeIfNeeded()
+            let g = DockGroup(); g.manager = self
             split(group, with: g, direction: region)
             g.add(panel); setActive(g)
         }
-        cleanupEmpty(from)
+        // Full sweep, same as a close. cleanupEmpty only collapses the SOURCE group, and
+        // split() may already have restructured the tree around it — so a panel that was
+        // alone in its group (every aux panel: source control / changes / search / browser)
+        // could leave its emptied group behind, keeping its width as a blank pane.
+        normalizeTree()
         refreshEmpty()
     }
 
@@ -358,9 +380,14 @@ final class DockManager {
         let from = panel.group
         if from === activeGroup && (from?.panels.count ?? 0) <= 1 && groups.count == 1 { return }
         from?.remove(panel, dispose: false)
+        // move()와 같은 순서: 비워진 그룹을 먼저 접어 공간을 돌려주고, 레이아웃을 확정한
+        // 뒤에 트리를 재구성한다. 재구성 후에 정리하면 아직 프레임이 확정되지 않은
+        // 형제들의 크기를 재게 되어 빈 영역이 남는다.
+        cleanupEmpty(from)
+        container.layoutSubtreeIfNeeded()
         let newGroup = DockGroup(); newGroup.manager = self
         guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else {
-            newGroup.add(panel); setRoot(newGroup); setActive(newGroup); cleanupEmpty(from); refreshEmpty(); return
+            newGroup.add(panel); setRoot(newGroup); setActive(newGroup); refreshEmpty(); return
         }
         let vertical = (direction == .left || direction == .right)   // vertical divider ⇒ columns
         let before = (direction == .left || direction == .up)
@@ -369,13 +396,14 @@ final class DockManager {
         // the whole tree in ANOTHER same-axis split that hands the newcomer 50%.
         if let rsv = root as? NSSplitView, rsv.isVertical == vertical {
             newGroup.autoresizingMask = [.width, .height]
+            rsv.layoutSubtreeIfNeeded()   // 프레임 확정 후에 크기를 잰다
             let oldExtents = rsv.arrangedSubviews.map { extent($0, in: rsv) }
             let at = before ? 0 : rsv.arrangedSubviews.count
             rsv.insertArrangedSubview(newGroup, at: at)
             rsv.adjustSubviews()
             rebalanceAfterInsert(rsv, insertedAt: at, oldExtents: oldExtents, sizeHint: nil)
             newGroup.add(panel); setActive(newGroup)
-            cleanupEmpty(from)
+            normalizeTree()   // 옮긴 뒤 빈 그룹/빈 분할이 남지 않게 (move와 동일)
             refreshEmpty()
             return
         }
@@ -391,7 +419,7 @@ final class DockManager {
         let t = vertical ? sv.bounds.width : sv.bounds.height
         if t > 0 { sv.setPosition(t * 0.5, ofDividerAt: 0) }
         newGroup.add(panel); setActive(newGroup)
-        cleanupEmpty(from)
+        normalizeTree()   // 옮긴 뒤 빈 그룹/빈 분할이 남지 않게 (move와 동일)
         refreshEmpty()
     }
     // Should this drop split the ROOT (full-height column / full-width row)?
@@ -420,6 +448,9 @@ final class DockManager {
         // e.g. ⌘D ×N then ⌘W should land on the pane opened just before, not pane 1.
         let focusAfter: DockGroup? = (g?.panels.count == 1) ? adjacentGroup(to: g!) : nil
         g?.remove(panel, dispose: true)
+        // 형제 크기를 재기 전에 프레임을 확정한다 — 확정 전 값(0)으로 비례 재분배하면
+        // 닫은 자리가 공백으로 남는다 (move/moveToRoot에서 고친 것과 같은 원인).
+        container.layoutSubtreeIfNeeded()
         cleanupEmpty(g)
         normalizeTree()   // 닫기 후 빈 그룹·0폭 팬이 남지 않게 정리 (#3)
         refreshEmpty()
@@ -452,18 +483,121 @@ final class DockManager {
     // 정리하므로, 트리 어딘가에 남은 빈 그룹(내용 없는 블록)과 0폭으로 짜부라진
     // 팬(비례 재분배는 0을 0으로 유지한다)을 전체 스윕으로 마저 고친다.
     func normalizeTree() {
-        // 빈 그룹은 어디에 있든 접는다 — cleanupEmpty가 붕괴/승격까지 처리한다.
+        container.layoutSubtreeIfNeeded()   // 크기를 재기 전에 프레임 확정
         var again = true
         while again {
             again = false
+            // 1) 빈 그룹은 어디에 있든 접는다 — cleanupEmpty가 붕괴/승격까지 처리한다.
             for g in groups where g.panels.isEmpty && g.superview is NSSplitView {
+                container.layoutSubtreeIfNeeded()   // 형제 크기를 재기 전에 프레임 확정
                 cleanupEmpty(g); again = true; break
+            }
+            if again { continue }
+            // 2) 자식이 모두 빠져나간 split은 자리를 차지한 채 남아 그 영역이 통째로
+            //    공백이 된다(3열을 전부 다른 그룹으로 옮겼을 때). 제거하고 형제들이
+            //    그 공간을 나눠 갖게 한다. 자식이 하나만 남았으면 그 자식을 승격한다.
+            for sv in allSplits() {
+                // 그룹도 split도 아닌 뷰가 팬으로 남아 있으면(정리 도중의 잔재) 자리를
+                // 차지한 채 아무것도 그리지 않아 빈 영역이 된다 → 제거.
+                if let stray = sv.arrangedSubviews.first(where: { !($0 is DockGroup) && !($0 is NSSplitView) }) {
+                    let sibs = sv.arrangedSubviews.filter { $0 !== stray }.map { extent($0, in: sv) }
+                    stray.removeFromSuperview()
+                    if sv.arrangedSubviews.count >= 2 { redistribute(sv, oldExtents: sibs) }
+                    again = true; break
+                }
+                if sv.arrangedSubviews.isEmpty {
+                    if let psv = sv.superview as? NSSplitView {
+                        let sibs = psv.arrangedSubviews.filter { $0 !== sv }.map { extent($0, in: psv) }
+                        sv.removeFromSuperview()
+                        if psv.arrangedSubviews.count >= 2 { redistribute(psv, oldExtents: sibs) }
+                    } else { sv.removeFromSuperview() }
+                    again = true; break
+                }
+                if sv.arrangedSubviews.count == 1, let only = sv.arrangedSubviews.first {
+                    let frame = sv.frame
+                    only.removeFromSuperview()
+                    only.frame = frame; only.autoresizingMask = [.width, .height]
+                    if let psv = sv.superview as? NSSplitView {
+                        let idx = psv.arrangedSubviews.firstIndex(of: sv) ?? 0
+                        let exts = psv.arrangedSubviews.map { extent($0, in: psv) }
+                        sv.removeFromSuperview()
+                        psv.insertArrangedSubview(only, at: idx)
+                        setExtents(psv, exts)          // 바깥 형제 자리는 그대로
+                    } else if let p = sv.superview {
+                        sv.removeFromSuperview(); p.addSubview(only)
+                    }
+                    again = true; break
+                }
             }
         }
         guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
         container.layoutSubtreeIfNeeded()
+        fillGaps(root)
         ensureMinExtents(root)
+        dumpTree("normalized")   // 레이아웃 이상 재발 시 즉시 원인 확인용 (디버그 로그)
     }
+
+    // 각 split의 팬 크기 합이 컨테이너를 정확히 채우도록 다시 맞춘다. 구조 정리 뒤에도
+    // divider 위치가 예전 값으로 남아 합이 모자라면 그만큼이 빈 영역으로 보인다.
+    // (구조가 아니라 '크기'가 원인인 공백을 없애는 마지막 단계.)
+    private func fillGaps(_ v: NSView) {
+        guard let sv = v as? NSSplitView else { return }
+        let n = sv.arrangedSubviews.count
+        if n >= 2 {
+            let minE: CGFloat = 80
+            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+            if total > minE {
+                func measure() -> [CGFloat] { sv.arrangedSubviews.map { extent($0, in: sv) } }
+                func broken(_ e: [CGFloat]) -> Bool {
+                    e.contains { $0 < minE - 1 } || abs(e.reduce(0, +) - total) > 1
+                }
+                // 1단계: NSSplitView가 스스로 재분배하게 둔다. 구조가 막 바뀐 직후에는
+                // 우리가 계산한 divider 위치가 제약에 걸려 그대로 반영되지 않는데,
+                // adjustSubviews는 뷰가 자기 상태 기준으로 다시 채운다.
+                if broken(measure()) {
+                    sv.adjustSubviews()
+                    sv.layoutSubtreeIfNeeded()
+                }
+                // 2단계: 그래도 0폭이거나 컨테이너를 못 채우면 균등 분배로 확정한다.
+                // 사용자가 맞춰둔 비율은 잃지만, 빈 영역/0폭 열이 남는 것보다 낫다.
+                if broken(measure()) {
+                    setExtents(sv, Array(repeating: total / CGFloat(n), count: n))
+                    sv.layoutSubtreeIfNeeded()
+                }
+            }
+        }
+        for c in sv.arrangedSubviews { c.layoutSubtreeIfNeeded(); fillGaps(c) }
+    }
+    // 현재 트리 상태를 디버그 로그로 남긴다 (레이아웃 이상 재발 시 원인 추적용).
+    func dumpTree(_ label: String) {
+        func walk(_ v: NSView, _ d: Int) -> String {
+            let pad = String(repeating: "  ", count: d)
+            if let sv = v as? NSSplitView {
+                let exts = sv.arrangedSubviews.map { Int(extent($0, in: sv)) }
+                var out = "\(pad)split[\(sv.isVertical ? "H" : "V")] \(exts) frame=\(Int(sv.frame.width))x\(Int(sv.frame.height))\n"
+                for c in sv.arrangedSubviews { out += walk(c, d + 1) }
+                return out
+            }
+            if let g = v as? DockGroup {
+                let ids = g.panels.map { $0.id }.joined(separator: ",")
+                return "\(pad)group[\(ids.isEmpty ? "<EMPTY>" : ids)] \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+            }
+            return "\(pad)STRAY \(type(of: v)) \(Int(v.frame.width))x\(Int(v.frame.height))\n"
+        }
+        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
+        RLog.log("dock[\(label)] container=\(Int(container.bounds.width))x\(Int(container.bounds.height))\n" + walk(root, 0))
+    }
+
+    // 트리 안의 모든 NSSplitView (중첩 포함).
+    private func allSplits(_ from: NSView? = nil) -> [NSSplitView] {
+        var out: [NSSplitView] = []
+        for c in (from ?? container).subviews {
+            if let sv = c as? NSSplitView { out.append(sv); out += allSplits(sv) }
+            else if !(c is DockGroup) { out += allSplits(c) }
+        }
+        return out
+    }
+
     // 어떤 split의 팬이 사실상 0폭이면 최소 폭(80)으로 살리고, 부족분은 큰 팬들이
     // 비율대로 내놓는다 (붙어 있는 divider의 최소 제약과 같은 값).
     private func ensureMinExtents(_ v: NSView) {
@@ -495,10 +629,16 @@ final class DockManager {
 
     // Remove a panel from its group WITHOUT disposing it — used to move a shared
     // singleton panel (the editor) from one workspace's dock to another's.
-    func detach(_ panel: DockPanel) {
+    // `normalize`: 사용자가 패널을 닫거나 빼내는 경우 true — 닫기(removePanel)와 똑같이
+    // 트리 전체를 정리해 빈 슬롯이 남지 않게 한다. 워크스페이스 전환처럼 싱글턴을 잠시
+    // 옮기는 경우에는 false로 두어야 남은 팬 크기가 매 전환마다 흔들리지 않는다(#4).
+    // 이 구분이 없어서 aux 패널(소스 컨트롤 등)을 닫으면 그 자리가 빈 영역으로 남았다.
+    func detach(_ panel: DockPanel, normalize: Bool = false) {
         let g = panel.group
         g?.remove(panel, dispose: false)
+        container.layoutSubtreeIfNeeded()
         cleanupEmpty(g)
+        if normalize { normalizeTree() }
         // NOTE: intentionally NO normalizeTree() here. detach runs on every workspace
         // switch (editor + each aux panel move out); a full-tree ensureMinExtents sweep
         // would resize the OUTGOING dock's surviving panes every time, so a workspace's
@@ -644,6 +784,118 @@ final class DockManager {
         sv.setPosition(before ? e : t - e - sv.dividerThickness, ofDividerAt: 0)
     }
 
+    // ---- 세션 저장/복원: 독 레이아웃 전체 스냅샷 --------------------------------
+    // 스플릿 트리(축/각 팬의 크기)와 그룹(탭 구성/활성 탭)을 JSON-안전한 사전으로
+    // 직렬화한다 (Settings가 JSONSerialization으로 저장하므로 값은 String/Int/Double/
+    // Bool/배열/사전만). 패널 서술자: 터미널(id가 term-)은 "term:<에이전트 이름, 없으면
+    // 빈 문자열>" — id 자체는 실행마다 달라져 의미가 없고 "무엇을 띄웠는지"만 기록한다.
+    // 싱글턴(editor/search/git/preview/changes)은 id 그대로.
+    func snapshot() -> [String: Any]? {
+        guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return nil }
+        container.layoutSubtreeIfNeeded()   // 크기를 재기 전에 프레임 확정 (stale 프레임 금지)
+        return snapshotNode(root)
+    }
+    private func snapshotNode(_ v: NSView) -> [String: Any]? {
+        if let g = v as? DockGroup {
+            guard !g.panels.isEmpty else { return nil }      // 빈 그룹은 저장하지 않는다
+            let descs = g.panels.map { p in
+                p.id.hasPrefix("term-") ? "term:\(p.agentName ?? "")" : p.id
+            }
+            return ["type": "group", "panels": descs, "active": g.activeIndex]
+        }
+        guard let sv = v as? NSSplitView else { return nil }
+        var children: [[String: Any]] = []
+        var extents: [Double] = []
+        for c in sv.arrangedSubviews {
+            guard let node = snapshotNode(c) else { continue }   // 빈 자식은 건너뛴다
+            children.append(node)
+            extents.append(Double(extent(c, in: sv)))            // children과 1:1 정렬 유지
+        }
+        if children.isEmpty { return nil }
+        if children.count == 1 { return children[0] }   // 자식 하나 → 무의미한 스플릿 없이 승격
+        return ["type": "split", "vertical": sv.isVertical, "extents": extents, "children": children]
+    }
+
+    // 스냅샷으로 트리를 재구성한다. makePanel은 서술자 → 실제 패널(터미널 생성 /
+    // 싱글턴 부착, main.swift가 공급); nil을 돌려주면(예: 더 이상 설치돼 있지 않은
+    // 에이전트) 그 패널만 건너뛰고 나머지는 그대로 짓는다. 아무것도 못 지으면 false —
+    // 호출자가 기본 레이아웃으로 폴백한다.
+    @discardableResult
+    func restore(_ snap: [String: Any], makePanel: (String) -> DockPanel?) -> Bool {
+        guard let built = buildNode(snap, makePanel: makePanel) else { return false }
+        container.subviews.filter { !($0 is DockEmptyView) }.forEach { $0.removeFromSuperview() }
+        let root = built.view
+        root.frame = container.bounds
+        root.autoresizingMask = [.width, .height]
+        container.addSubview(root, positioned: .below, relativeTo: emptyView)
+        // 저장된 extents는 비율로 적용한다 — 창 크기가 그때와 다를 수 있다. 반드시
+        // 프레임이 실제 크기를 가진 뒤에 재고/적용해야 한다: 갓 삽입된 트리에 stale
+        // 프레임인 채 setPosition하면 팬이 짜부라진다 (#3에서 배운 순서).
+        container.layoutSubtreeIfNeeded()
+        applyRatios(built)
+        normalizeTree()
+        refreshEmpty()
+        if let g = groups.first(where: { !$0.panels.isEmpty }) { setActive(g) }
+        return true
+    }
+    // 복원 중간 표현: 뷰와 함께 "실제로 지은" 자식·extents를 들고 다닌다 — 스냅샷의
+    // 일부 패널이 빠져도(에이전트 소멸) 크기를 엉뚱한 자식에 적용하지 않기 위해.
+    private enum BuiltNode {
+        case group(DockGroup)
+        case split(DockSplitView, extents: [CGFloat], children: [BuiltNode])
+        var view: NSView { switch self { case .group(let g): return g; case .split(let sv, _, _): return sv } }
+    }
+    private func buildNode(_ snap: [String: Any], makePanel: (String) -> DockPanel?) -> BuiltNode? {
+        switch snap["type"] as? String {
+        case "group":
+            let g = DockGroup(); g.manager = self
+            for desc in snap["panels"] as? [String] ?? [] {
+                guard let p = makePanel(desc) else { continue }   // 못 만든 패널은 건너뛴다
+                g.add(p)
+            }
+            guard !g.panels.isEmpty else { return nil }
+            let active = snap["active"] as? Int ?? 0
+            if g.panels.indices.contains(active) { g.select(id: g.panels[active].id) }
+            return .group(g)
+        case "split":
+            let childSnaps = snap["children"] as? [[String: Any]] ?? []
+            let saved = (snap["extents"] as? [Double])?.map { CGFloat($0) } ?? []
+            var kids: [BuiltNode] = []
+            var kidExtents: [CGFloat] = []
+            for (i, cs) in childSnaps.enumerated() {
+                guard let k = buildNode(cs, makePanel: makePanel) else { continue }
+                kids.append(k)
+                kidExtents.append(i < saved.count ? saved[i] : 0)
+            }
+            if kids.isEmpty { return nil }
+            if kids.count == 1 { return kids[0] }   // 자식 하나만 살아남으면 스플릿 없이 승격
+            let sv = DockSplitView(); sv.isVertical = (snap["vertical"] as? Bool) ?? true
+            sv.dividerStyle = .thin
+            for k in kids {
+                k.view.autoresizingMask = [.width, .height]
+                sv.addArrangedSubview(k.view)
+            }
+            // 자식이 하나라도 빠졌으면 저장된 크기 배열은 더 이상 맞지 않는다 → 기본 분배.
+            let usable = (kids.count == childSnaps.count && saved.count == childSnaps.count) ? kidExtents : []
+            return .split(sv, extents: usable, children: kids)
+        default:
+            return nil
+        }
+    }
+    // 저장된 extents를 현재 크기에 대한 비율로 환산해 적용 (루트부터 재귀). 부모의
+    // setPosition이 자식 프레임을 바꾸므로, 자식으로 내려가기 전에 레이아웃을 확정한다
+    // (distributeEvenly와 같은 순서).
+    private func applyRatios(_ node: BuiltNode) {
+        guard case .split(let sv, let saved, let children) = node else { return }
+        let n = sv.arrangedSubviews.count
+        if saved.count == n, n >= 2 {
+            let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+            let sum = saved.reduce(0, +)
+            if total > 0, sum > 0 { setExtents(sv, saved.map { $0 * total / sum }) }
+        }
+        for c in children { c.view.layoutSubtreeIfNeeded(); applyRatios(c) }
+    }
+
     // While a tab is being dragged, cover every group with a transparent drop zone
     // (above the panel content, which would otherwise swallow the drag — WKWebView
     // and the Metal terminal don't forward dragging to their host group).
@@ -727,7 +979,7 @@ final class DockGroup: NSView {
         return v
     }()
 
-    private let tabBarHeight: CGFloat = 30
+    static let tabBarHeight: CGFloat = 30
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -763,8 +1015,8 @@ final class DockGroup: NSView {
     override func layout() {
         super.layout()
         let b = bounds
-        tabBar.frame = NSRect(x: 0, y: b.height - tabBarHeight, width: b.width, height: tabBarHeight)
-        content.frame = NSRect(x: 0, y: 0, width: b.width, height: max(0, b.height - tabBarHeight))
+        tabBar.frame = NSRect(x: 0, y: b.height - DockGroup.tabBarHeight, width: b.width, height: DockGroup.tabBarHeight)
+        content.frame = NSRect(x: 0, y: 0, width: b.width, height: max(0, b.height - DockGroup.tabBarHeight))
         activePanel?.content.frame = content.bounds
         dropZone?.frame = b
         borderOverlay.frame = b
@@ -881,6 +1133,10 @@ final class DockDropZone: NSView {
     private func regionFor(_ pt: NSPoint) -> DockDir {
         let w = bounds.width, h = bounds.height
         guard w > 0, h > 0 else { return .center }
+        // 탭 바 위에 놓으면 언제나 "이 그룹의 탭으로 추가". 드롭존이 탭 바까지 덮는데
+        // 탭 바는 그룹 최상단 30px라 아래의 위쪽 가장자리 밴드(28%)에 항상 걸려서,
+        // 탭에 떨어뜨려도 탭 추가가 아니라 위로 분할돼 버렸다.
+        if pt.y >= h - DockGroup.tabBarHeight { return .center }
         let fx = pt.x / w, fy = pt.y / h, e: CGFloat = 0.28
         if fx < e { return .left }
         if fx > 1 - e { return .right }
