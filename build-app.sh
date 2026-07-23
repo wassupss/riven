@@ -68,16 +68,6 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>riven</string>
-  <!-- Declare the languages riven speaks. Without this the system doesn't consider the
-       app Korean-capable and collapses the process language to English, so frameworks
-       that draw their OWN UI from bundled .lproj files (Sparkle's update window ships
-       ko.lproj) stayed English even when riven was set to Korean. -->
-  <key>CFBundleDevelopmentRegion</key><string>ko</string>
-  <key>CFBundleLocalizations</key>
-  <array>
-    <string>ko</string>
-    <string>en</string>
-  </array>
   <key>CFBundleIconFile</key><string>riven</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
