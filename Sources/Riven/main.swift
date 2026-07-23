@@ -1172,23 +1172,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 탭을 전부 다시 연다 (활성 탭을 마지막에 열어 그 탭이 보이게).
     private func rebuildTabs(for st: WorkspaceState) {
         tabBar.closeAll()
-        editor.showEmpty()   // 이전 워크스페이스의 모델을 한 번에 정리 (그룹 하나로 리셋)
+        editor.showEmpty()   // 이전 워크스페이스의 모델을 전부 dispose + 그룹 하나로 리셋
         // 디스크에서 사라진 파일은 건너뛴다 (restoreSession과 같은 필터).
         let fm = FileManager.default
         st.openTabs = st.openTabs.filter { fm.fileExists(atPath: $0) }
         if let a = st.activeTab, !st.openTabs.contains(a) { st.activeTab = nil }
         if st.activeTab == nil { st.activeTab = st.openTabs.last }
         for p in st.openTabs { tabBar.open(p) }
-        if let active = st.activeTab {
-            showEditorPane()
-            // 비활성 탭도 웹뷰에 복원한다 — 내용은 디스크에서 (showTabContent 패턴).
-            for p in st.openTabs where p != active { showTabContent(p) }
-            tabBar.setActive(active)
-            showTabContent(active)
-            statusBar.setFileInfo(fileInfo(active))
-        } else {
+        guard let active = st.activeTab else {
             hideEditorPane()   // workspace has no open tabs → terminal full width
             statusBar.setFileInfo("")
+            return
+        }
+        showEditorPane()
+        showTabContent(active)   // 활성 탭은 동기 로드 → 즉시 보임
+        tabBar.setActive(active)
+        statusBar.setFileInfo(fileInfo(active))
+        // 비활성 탭 복원: 파일 읽기를 메인 스레드에서 하면 탭이 많거나 큰 워크스페이스에서
+        // 전환 때마다 UI가 멈춘다 — 백그라운드에서 읽고, 활성 뷰를 뺏지 않고 탭 칩만 추가한다.
+        let inactive = st.openTabs.filter { $0 != active }
+        guard !inactive.isEmpty, let ws = workspace else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
+            DispatchQueue.main.async {
+                guard self.workspace == ws else { return }   // 그새 다른 워크스페이스로 전환됨 → 취소
+                let cur = self.state(for: ws)
+                for (p, content) in loaded where cur.openTabs.contains(p) {
+                    self.editor.openBackground(path: p, content: content)
+                }
+            }
         }
     }
 

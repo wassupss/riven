@@ -764,7 +764,25 @@ window.rivenShowEmpty = function () {
   const g = groups[0];
   if (g) { g.tabs = []; g.active = null; g.ed.setModel(null); renderTabs(g); }
   currentPath = null;
+  // Dispose EVERY Monaco model, not just the tabs — otherwise files opened across
+  // workspaces stay resident (text + tokenization + undo history) for the whole
+  // session (a per-session memory leak). Editors were detached above (setModel(null)
+  // / removeGroup), so disposing the models now is safe.
+  for (const p of Object.keys(models)) {
+    try { models[p].dispose(); } catch (e) {}
+    delete models[p]; delete savedVersion[p]; delete docVersion[p];
+    delete agentState[p]; delete agentDecos[p]; delete blameData[p];
+  }
   document.getElementById('empty').style.display = 'flex';
+};
+// Restore an INACTIVE tab on workspace switch WITHOUT stealing the visible tab or
+// focus: create its model + add the tab chip, but don't setModel/setActive/focus.
+// (The active tab is opened separately via rivenOpen.)
+window.rivenOpenBackground = function (path, content) {
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  if (!models[path]) ensureModel(path, content);
+  if (!g.tabs.includes(path)) { g.tabs.push(path); renderTabs(g); }
+  document.getElementById('empty').style.display = 'none';
 };
 
 // ---- Editor keymap presets (VS Code / JetBrains / Sublime) → Monaco ----

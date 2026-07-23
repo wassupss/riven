@@ -70,6 +70,12 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func close(path: String) {
         web.evaluateJavaScript("window.rivenClose(\(jsString(path)))", completionHandler: nil)
     }
+    // Add a tab chip + model without switching the visible tab or focus (used to
+    // restore a workspace's inactive tabs on switch without stealing the active view).
+    func openBackground(path: String, content: String) {
+        let p = jsString(path), c = jsString(content)
+        web.evaluateJavaScript("window.rivenOpenBackground && window.rivenOpenBackground(\(p), \(c))", completionHandler: nil)
+    }
     // DEBUG: overwrite the active editor's buffer (used by RIVEN_SAVETEST).
     func debugSetValue(_ text: String) {
         web.evaluateJavaScript("editor && editor.getModel() && editor.getModel().setValue(\(jsString(text)))", completionHandler: nil)

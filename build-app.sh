@@ -60,10 +60,14 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <!-- Allow plain-HTTP ONLY for local/dev servers (localhost, 127.0.0.1, ::1, *.local)
+       so the Browser panel can preview e.g. http://localhost:3000. We deliberately do
+       NOT set NSAllowsArbitraryLoadsInWebContent: that would drop ATS TLS enforcement for
+       every remote site the Browser loads, enabling downgrade MITM. NSAllowsLocalNetworking
+       covers the dev-server case while keeping full TLS hardening on remote URLs. -->
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>
-    <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
   </dict>
   <key>SupabaseURL</key><string>$SB_URL</string>
   <key>SupabaseAnonKey</key><string>$SB_KEY</string>
