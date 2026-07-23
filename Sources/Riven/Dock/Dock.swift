@@ -343,6 +343,7 @@ final class DockManager {
             if from === group { return }
             from?.remove(panel, dispose: false)
             group.add(panel); setActive(group)
+            cleanupEmpty(from)     // 탭으로 옮긴 경우에도 비워진 그룹은 즉시 접는다
         } else {
             // Splitting a group against a panel already alone in it is a no-op.
             if from === group && group.panels.count == 1 { return }
@@ -470,18 +471,58 @@ final class DockManager {
     // 정리하므로, 트리 어딘가에 남은 빈 그룹(내용 없는 블록)과 0폭으로 짜부라진
     // 팬(비례 재분배는 0을 0으로 유지한다)을 전체 스윕으로 마저 고친다.
     func normalizeTree() {
-        // 빈 그룹은 어디에 있든 접는다 — cleanupEmpty가 붕괴/승격까지 처리한다.
+        container.layoutSubtreeIfNeeded()   // 크기를 재기 전에 프레임 확정
         var again = true
         while again {
             again = false
+            // 1) 빈 그룹은 어디에 있든 접는다 — cleanupEmpty가 붕괴/승격까지 처리한다.
             for g in groups where g.panels.isEmpty && g.superview is NSSplitView {
                 cleanupEmpty(g); again = true; break
+            }
+            if again { continue }
+            // 2) 자식이 모두 빠져나간 split은 자리를 차지한 채 남아 그 영역이 통째로
+            //    공백이 된다(3열을 전부 다른 그룹으로 옮겼을 때). 제거하고 형제들이
+            //    그 공간을 나눠 갖게 한다. 자식이 하나만 남았으면 그 자식을 승격한다.
+            for sv in allSplits() {
+                if sv.arrangedSubviews.isEmpty {
+                    if let psv = sv.superview as? NSSplitView {
+                        let sibs = psv.arrangedSubviews.filter { $0 !== sv }.map { extent($0, in: psv) }
+                        sv.removeFromSuperview()
+                        if psv.arrangedSubviews.count >= 2 { redistribute(psv, oldExtents: sibs) }
+                    } else { sv.removeFromSuperview() }
+                    again = true; break
+                }
+                if sv.arrangedSubviews.count == 1, let only = sv.arrangedSubviews.first {
+                    let frame = sv.frame
+                    only.removeFromSuperview()
+                    only.frame = frame; only.autoresizingMask = [.width, .height]
+                    if let psv = sv.superview as? NSSplitView {
+                        let idx = psv.arrangedSubviews.firstIndex(of: sv) ?? 0
+                        let exts = psv.arrangedSubviews.map { extent($0, in: psv) }
+                        sv.removeFromSuperview()
+                        psv.insertArrangedSubview(only, at: idx)
+                        setExtents(psv, exts)          // 바깥 형제 자리는 그대로
+                    } else if let p = sv.superview {
+                        sv.removeFromSuperview(); p.addSubview(only)
+                    }
+                    again = true; break
+                }
             }
         }
         guard let root = container.subviews.first(where: { !($0 is DockEmptyView) }) else { return }
         container.layoutSubtreeIfNeeded()
         ensureMinExtents(root)
     }
+    // 트리 안의 모든 NSSplitView (중첩 포함).
+    private func allSplits(_ from: NSView? = nil) -> [NSSplitView] {
+        var out: [NSSplitView] = []
+        for c in (from ?? container).subviews {
+            if let sv = c as? NSSplitView { out.append(sv); out += allSplits(sv) }
+            else if !(c is DockGroup) { out += allSplits(c) }
+        }
+        return out
+    }
+
     // 어떤 split의 팬이 사실상 0폭이면 최소 폭(80)으로 살리고, 부족분은 큰 팬들이
     // 비율대로 내놓는다 (붙어 있는 divider의 최소 제약과 같은 값).
     private func ensureMinExtents(_ v: NSView) {
