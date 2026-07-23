@@ -16,25 +16,65 @@ enum Usage {
         return (3, 15, 3.75, 0.3)   // sonnet / default
     }
 
+    // ---- cost controls (see today()) -----------------------------------------
+    // These session logs are BIG (a single active transcript can exceed 100 MB) and this
+    // ran every 60s, re-reading + JSON-parsing all of them: ~170 MB of text and ~45k
+    // JSON objects per poll, which is what pushed the Swift heap up hundreds of MB at
+    // idle (millions of live CFString/NSDictionary). Two bounds fix it:
+    //  1. Skip the work entirely when no log file changed (size+mtime signature).
+    //  2. Only read the TAIL of each file — the logs are append-only and we only want
+    //     today's entries, which are at the end — with a per-file and total byte budget.
+    private static let tailBytesPerFile = 8 * 1024 * 1024
+    private static let totalTailBudget  = 48 * 1024 * 1024
+    private static var cachedSignature = ""
+    private static var cachedToday = Today(totalCost: 0, totalTokens: 0, perModel: [])
+
+    // Read only the last `maxBytes` of a file, dropping the leading partial line.
+    private static func tail(_ url: URL, maxBytes: Int) -> String? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+        guard let end = try? fh.seekToEnd() else { return nil }
+        let start = end > UInt64(maxBytes) ? end - UInt64(maxBytes) : 0
+        try? fh.seek(toOffset: start)
+        guard let data = try? fh.readToEnd(), var s = String(data: data, encoding: .utf8) else { return nil }
+        if start > 0, let nl = s.firstIndex(of: "\n") { s = String(s[s.index(after: nl)...]) }
+        return s
+    }
+
     static func today() -> Today {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let root = (ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
                     ?? home.appendingPathComponent(".claude")).appendingPathComponent("projects")
-        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey]) else {
+        guard let en = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]) else {
             return Today(totalCost: 0, totalTokens: 0, perModel: [])
         }
         let cal = Calendar.current
         let cutoff = Date().addingTimeInterval(-36 * 3600)   // only recent files
+
+        // Collect the candidate logs first (newest last-modified first, so the budget is
+        // spent on the sessions that actually carry today's activity).
+        var candidates: [(url: URL, mod: Date, size: Int)] = []
+        for case let url as URL in en {
+            guard url.pathExtension == "jsonl", candidates.count < 4000 else { continue }
+            let vals = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+            guard let mod = vals?.contentModificationDate, mod >= cutoff else { continue }
+            candidates.append((url, mod, vals?.fileSize ?? 0))
+        }
+        candidates.sort { $0.mod > $1.mod }
+
+        // Nothing changed since the last poll → reuse the previous result and parse nothing.
+        let signature = candidates.map { "\($0.url.path):\($0.size):\($0.mod.timeIntervalSince1970)" }.joined(separator: "|")
+        if signature == cachedSignature { return cachedToday }
+
         var models: [String: Model] = [:]
         var seen = Set<String>()
-        var fileCount = 0
+        var budget = totalTailBudget
 
-        for case let url as URL in en {
-            guard url.pathExtension == "jsonl", fileCount < 4000 else { continue }
-            let vals = try? url.resourceValues(forKeys: [.contentModificationDateKey])
-            if let mod = vals?.contentModificationDate, mod < cutoff { continue }
-            fileCount += 1
-            guard let data = try? String(contentsOf: url, encoding: .utf8) else { continue }
+        for c in candidates {
+            guard budget > 0 else { break }
+            let want = min(tailBytesPerFile, budget)
+            guard let data = tail(c.url, maxBytes: want) else { continue }
+            budget -= min(c.size, want)
             for line in data.split(separator: "\n") {
                 guard let ld = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: ld) as? [String: Any] else { continue }
@@ -68,7 +108,10 @@ enum Usage {
         let per = models.values.sorted { $0.cost > $1.cost }
         let totalCost = per.reduce(0) { $0 + $1.cost }
         let totalTokens = per.reduce(0) { $0 + $1.input + $1.output + $1.cacheWrite + $1.cacheRead }
-        return Today(totalCost: totalCost, totalTokens: totalTokens, perModel: per)
+        let result = Today(totalCost: totalCost, totalTokens: totalTokens, perModel: per)
+        cachedSignature = signature
+        cachedToday = result
+        return result
     }
 
     // Cached formatters — reused across every log line (see today()).
