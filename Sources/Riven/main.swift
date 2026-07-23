@@ -1666,7 +1666,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: "에디터", hint: "", symbol: "doc.text") { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() },
             QuickAction(title: "검색", hint: "⌘⇧F", symbol: "magnifyingglass") { [weak self] in self?.toggleDockPanel("search") },
             QuickAction(title: "소스 컨트롤", hint: "⌘⇧G", symbol: "arrow.triangle.branch") { [weak self] in self?.toggleDockPanel("git") },
-            QuickAction(title: "미리보기", hint: "⌘⇧V", symbol: "eye") { [weak self] in self?.toggleDockPanel("preview") },
+            QuickAction(title: "브라우저", hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
             QuickAction(title: "변경사항", hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
             QuickAction(title: "새 워크스페이스", hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
             QuickAction(title: "사이드바 토글", hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
@@ -1787,8 +1787,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func focusPaneUpMenu() { focusDock(.up) }
     @objc private func focusPaneDownMenu() { focusDock(.down) }
     @objc private func newTerminalMenu() { newTerminal() }
-    @objc private func nextTerminalMenu() { cycleTerminal(1) }
-    @objc private func prevTerminalMenu() { cycleTerminal(-1) }
+    // ⌘⇧] / ⌘⇧[ : context-sensitive. When the code editor holds focus, cycle its OPEN
+    // TABS (so the same chord that moves between terminals also moves between open files,
+    // and focus stays in the editor); otherwise cycle terminals. Fixes the old behavior
+    // where the chord always jumped to a terminal and never came back to the editor (#8).
+    @objc private func nextTerminalMenu() {
+        if editor.isEditorFocused() { editor.nextTab() } else { cycleTerminal(1) }
+    }
+    @objc private func prevTerminalMenu() {
+        if editor.isEditorFocused() { editor.prevTab() } else { cycleTerminal(-1) }
+    }
 
     // ---- keybindings (matches riven defaults) ----
     private var quickOpen: QuickOpenPanel?
