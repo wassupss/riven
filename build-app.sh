@@ -60,6 +60,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key><true/>
+    <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
+  </dict>
   <key>SupabaseURL</key><string>$SB_URL</string>
   <key>SupabaseAnonKey</key><string>$SB_KEY</string>
   <key>SupabaseRedirect</key><string>$SB_REDIRECT</string>
