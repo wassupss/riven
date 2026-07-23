@@ -857,7 +857,7 @@ final class DockGroup: NSView {
         return v
     }()
 
-    private let tabBarHeight: CGFloat = 30
+    static let tabBarHeight: CGFloat = 30
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -893,8 +893,8 @@ final class DockGroup: NSView {
     override func layout() {
         super.layout()
         let b = bounds
-        tabBar.frame = NSRect(x: 0, y: b.height - tabBarHeight, width: b.width, height: tabBarHeight)
-        content.frame = NSRect(x: 0, y: 0, width: b.width, height: max(0, b.height - tabBarHeight))
+        tabBar.frame = NSRect(x: 0, y: b.height - DockGroup.tabBarHeight, width: b.width, height: DockGroup.tabBarHeight)
+        content.frame = NSRect(x: 0, y: 0, width: b.width, height: max(0, b.height - DockGroup.tabBarHeight))
         activePanel?.content.frame = content.bounds
         dropZone?.frame = b
         borderOverlay.frame = b
@@ -1011,6 +1011,10 @@ final class DockDropZone: NSView {
     private func regionFor(_ pt: NSPoint) -> DockDir {
         let w = bounds.width, h = bounds.height
         guard w > 0, h > 0 else { return .center }
+        // 탭 바 위에 놓으면 언제나 "이 그룹의 탭으로 추가". 드롭존이 탭 바까지 덮는데
+        // 탭 바는 그룹 최상단 30px라 아래의 위쪽 가장자리 밴드(28%)에 항상 걸려서,
+        // 탭에 떨어뜨려도 탭 추가가 아니라 위로 분할돼 버렸다.
+        if pt.y >= h - DockGroup.tabBarHeight { return .center }
         let fx = pt.x / w, fy = pt.y / h, e: CGFloat = 0.28
         if fx < e { return .left }
         if fx > 1 - e { return .right }
