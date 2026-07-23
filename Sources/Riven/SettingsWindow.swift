@@ -634,27 +634,10 @@ final class SettingsWindow: NSPanel {
         return b
     }
     private var updateStatusLabel: NSTextField!
-    private let currentVersion = "0.0.1"
+    // Sparkle이 자체 UI(최신 버전/다운로드-설치 흐름)를 보여주므로 결과 텍스트는 여기서 세팅하지 않는다.
     @objc private func checkUpdate() {
         updateStatusLabel.stringValue = "확인 중…"; updateStatusLabel.textColor = Theme.fgDim
-        var req = URLRequest(url: URL(string: "https://api.github.com/repos/wassupss/riven/releases/latest")!)
-        req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        req.timeoutInterval = 8
-        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let tag = (obj["tag_name"] as? String) else {
-                    self.updateStatusLabel.stringValue = "업데이트 정보를 가져오지 못했습니다."; self.updateStatusLabel.textColor = Theme.fgDim; return
-                }
-                let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
-                if latest == self.currentVersion {
-                    self.updateStatusLabel.stringValue = "최신 버전입니다 (v\(self.currentVersion))."; self.updateStatusLabel.textColor = Theme.success
-                } else {
-                    self.updateStatusLabel.stringValue = "새 버전 v\(latest) 사용 가능 — releases에서 내려받으세요."; self.updateStatusLabel.textColor = Theme.accent
-                }
-            }
-        }.resume()
+        Updater.shared.checkForUpdates(self)
     }
 
     // ---- shared builders ----
