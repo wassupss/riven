@@ -569,6 +569,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let icon = NSImage(systemSymbolName: agent?.symbol ?? "terminal", accessibilityDescription: nil)
         let p = DockPanel(id: "term-\(abs(st.url.path.hashValue))-\(st.terminalSeq)", title: title,
             icon: icon, content: tv, closable: true)
+        p.agentName = agent?.name          // 세션 복원 때 같은 에이전트로 다시 띄우기 위해
         p.autoTitle = true    // follow OSC titles for BOTH plain terminals AND agents, so
                               // "change the terminal title to X" from an agent works.
         // OSC 0/2 title from the shell/agent → update the tab. A path-like title shows
@@ -1064,9 +1065,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Add the default terminal now that the dock is in the window (a libghostty
         // surface must be created in-window with a real size to spawn its shell).
         if isNew, let g = dock.activeGroup, g.panels.isEmpty {
-            let term = makeTerminalPanel(for: st)
-            g.add(term)
-            (term.content as? TerminalView)?.focusTerminal()
+            // 이전 세션의 터미널 구성을 재현한다 (에이전트 패널은 그 에이전트로 다시 실행).
+            // 기록이 없으면 기본 터미널 하나. 프로세스 자체는 되살릴 수 없고 새 셸로 뜬다.
+            let wanted = st.pendingTerminals ?? [""]
+            st.pendingTerminals = nil
+            let agents = AgentDiscovery.available()
+            var first: DockPanel?
+            for (i, name) in wanted.enumerated() {
+                let agent = name.isEmpty ? nil : agents.first { $0.name == name }
+                let term = makeTerminalPanel(for: st, agent: agent)
+                if i == 0 { g.add(term); first = term }
+                else { dock.addPanel(term, reference: dock.groups.last, direction: .right) }
+            }
+            if let g0 = first?.group { dock.setActive(g0) }
+            (first?.content as? TerminalView)?.focusTerminal()
         }
 
         // Restore the aux panels this workspace had open (search/git/preview/changes).
@@ -1154,12 +1166,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         var colors: [String: String] = [:]
         for url in workspaces { if let hex = workspaceColors[url] { colors[url.absoluteString] = hex } }
+        // 터미널 구성도 저장한다 — 예전에는 저장하지 않아서 재시작하면 열어 둔 터미널이
+        // 전부 사라지고 기본 터미널 하나만 새로 생겼다. (실행 중이던 프로세스 자체는
+        // riven의 자식이라 종료와 함께 죽는다 — 되살리는 건 패널 구성뿐이다.)
+        var terms: [String: [String]] = [:]
+        for url in workspaces {
+            let st = state(for: url)
+            if let dock = st.dock {
+                let list = dock.groups.flatMap { $0.panels }
+                    .filter { $0.content is TerminalView }
+                    .map { $0.agentName ?? "" }
+                if !list.isEmpty { terms[url.absoluteString] = list }
+            } else if let pending = st.pendingTerminals, !pending.isEmpty {
+                terms[url.absoluteString] = pending      // 아직 방문 전이면 기존 기록 유지
+            }
+        }
         let session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
             "tabs": tabs,
             "activeTab": actives,
-            "colors": colors
+            "colors": colors,
+            "terminals": terms
         ]
         Settings.shared.set("session", session)
     }
@@ -1176,6 +1204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
         let colors = s["colors"] as? [String: String] ?? [:]
+        let terms = s["terminals"] as? [String: [String]] ?? [:]
         let fm = FileManager.default
         var restored: [URL] = []
         for key in keys {
@@ -1186,6 +1215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let st = state(for: url)
             st.openTabs = (tabs[key] as? [String] ?? []).filter { fm.fileExists(atPath: $0) }
             st.activeTab = (actives[key] as? String).flatMap { st.openTabs.contains($0) ? $0 : st.openTabs.last }
+            st.pendingTerminals = terms[key]        // 이 워크스페이스의 독을 만들 때 그대로 재현
             rail.addWorkspace(url)
             if let hex = colors[key] { workspaceColors[url] = hex; rail.setColor(url, Theme.hex(hex)) }   // restore card color
             restored.append(url)

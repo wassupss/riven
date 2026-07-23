@@ -21,6 +21,9 @@ final class DockPanel {
     var onActivate: (() -> Void)?   // called when this panel becomes visible
     var badge: String?              // nil | "busy" (violet) | "attn" (amber pulse)
     var autoTitle: Bool = false     // follow the shell's OSC title (plain terminals only)
+    // 이 패널이 실행한 에이전트 이름(없으면 일반 터미널). 세션 복원 때 같은 구성을
+    // 다시 만들기 위해 기록해 둔다.
+    var agentName: String?
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable
