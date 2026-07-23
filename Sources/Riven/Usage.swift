@@ -22,23 +22,42 @@ enum Usage {
     // JSON objects per poll, which is what pushed the Swift heap up hundreds of MB at
     // idle (millions of live CFString/NSDictionary). Two bounds fix it:
     //  1. Skip the work entirely when no log file changed (size+mtime signature).
-    //  2. Only read the TAIL of each file — the logs are append-only and we only want
-    //     today's entries, which are at the end — with a per-file and total byte budget.
-    private static let tailBytesPerFile = 8 * 1024 * 1024
-    private static let totalTailBudget  = 48 * 1024 * 1024
+    //  2. Parse each file INCREMENTALLY: these logs are append-only, so after the first
+    //     pass only the newly appended bytes are read+parsed (a poll during an active
+    //     session costs a few KB instead of 169 MB). Per-file running totals are kept and
+    //     summed; they reset when the day rolls over or a file is truncated/replaced.
+    //     The FIRST pass over a file is capped to a tail window so a 100 MB+ transcript
+    //     can't spike the heap at launch.
+    private static let firstPassTailBytes = 16 * 1024 * 1024
     private static var cachedSignature = ""
     private static var cachedToday = Today(totalCost: 0, totalTokens: 0, perModel: [])
 
-    // Read only the last `maxBytes` of a file, dropping the leading partial line.
-    private static func tail(_ url: URL, maxBytes: Int) -> String? {
+    // Per-file running totals for today, plus how far we've parsed.
+    private struct FileState {
+        var parsedTo: Int           // byte offset already accounted for
+        var day: Date               // startOfDay these totals belong to
+        var models: [String: Model] = [:]
+        var seen: Set<String> = []
+    }
+    private static var fileStates: [String: FileState] = [:]
+
+    // Read bytes [from, ∞) of a file. `from == nil` means "the last firstPassTailBytes".
+    // Returns the text plus the offset it actually starts at.
+    private static func read(_ url: URL, from: Int?) -> (text: String, start: Int)? {
         guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? fh.close() }
         guard let end = try? fh.seekToEnd() else { return nil }
-        let start = end > UInt64(maxBytes) ? end - UInt64(maxBytes) : 0
+        var start = UInt64(from ?? 0)
+        var trimPartial = false
+        if from == nil, end > UInt64(firstPassTailBytes) {
+            start = end - UInt64(firstPassTailBytes); trimPartial = true
+        }
+        guard start <= end else { return nil }
         try? fh.seek(toOffset: start)
         guard let data = try? fh.readToEnd(), var s = String(data: data, encoding: .utf8) else { return nil }
-        if start > 0, let nl = s.firstIndex(of: "\n") { s = String(s[s.index(after: nl)...]) }
-        return s
+        // A tail window can begin mid-line; drop that partial first line.
+        if trimPartial, let nl = s.firstIndex(of: "\n") { s = String(s[s.index(after: nl)...]) }
+        return (s, Int(start))
     }
 
     static func today() -> Today {
@@ -66,16 +85,26 @@ enum Usage {
         let signature = candidates.map { "\($0.url.path):\($0.size):\($0.mod.timeIntervalSince1970)" }.joined(separator: "|")
         if signature == cachedSignature { return cachedToday }
 
-        var models: [String: Model] = [:]
-        var seen = Set<String>()
-        var budget = totalTailBudget
+        let today0 = cal.startOfDay(for: Date())
+        var live = Set<String>()
 
         for c in candidates {
-            guard budget > 0 else { break }
-            let want = min(tailBytesPerFile, budget)
-            guard let data = tail(c.url, maxBytes: want) else { continue }
-            budget -= min(c.size, want)
-            for line in data.split(separator: "\n") {
+            let key = c.url.path
+            live.insert(key)
+            var st = fileStates[key]
+            // Restart this file's totals on a new day, or if it shrank (truncated/replaced).
+            if st == nil || st!.day != today0 || c.size < st!.parsedTo {
+                st = FileState(parsedTo: 0, day: today0)
+                st!.parsedTo = -1                 // sentinel: first pass reads a tail window
+            } else if c.size == st!.parsedTo {
+                fileStates[key] = st              // unchanged → keep its running totals
+                continue
+            }
+            let from: Int? = st!.parsedTo < 0 ? nil : st!.parsedTo
+            guard let chunk = read(c.url, from: from) else { fileStates[key] = st; continue }
+            st!.parsedTo = c.size
+
+            for line in chunk.text.split(separator: "\n") {
                 guard let ld = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: ld) as? [String: Any] else { continue }
                 // Today only (local), by top-level timestamp. NOTE: the formatters are
@@ -86,12 +115,12 @@ enum Usage {
                       cal.isDateInToday(date) else { continue }
                 guard let msg = obj["message"] as? [String: Any],
                       let usage = msg["usage"] as? [String: Any] else { continue }
-                // Dedupe by message id / requestId.
+                // Dedupe by message id / requestId (per file — ids are session-scoped).
                 let id = (msg["id"] as? String) ?? (obj["requestId"] as? String) ?? UUID().uuidString
-                if seen.contains(id) { continue }
-                seen.insert(id)
+                if st!.seen.contains(id) { continue }
+                st!.seen.insert(id)
                 let model = (msg["model"] as? String) ?? "claude"
-                var m = models[model] ?? Model(name: model)
+                var m = st!.models[model] ?? Model(name: model)
                 let inTok = usage["input_tokens"] as? Int ?? 0
                 let outTok = usage["output_tokens"] as? Int ?? 0
                 let cw = usage["cache_creation_input_tokens"] as? Int ?? 0
@@ -102,7 +131,21 @@ enum Usage {
                     let r = rates(model)
                     m.cost += Double(inTok)/1e6*r.i + Double(outTok)/1e6*r.o + Double(cw)/1e6*r.cw + Double(cr)/1e6*r.cr
                 }
-                models[model] = m
+                st!.models[model] = m
+            }
+            fileStates[key] = st
+        }
+        // Drop state for logs that aged out of the window (keeps the map bounded).
+        fileStates = fileStates.filter { live.contains($0.key) }
+
+        // Sum the per-file running totals.
+        var models: [String: Model] = [:]
+        for (_, st) in fileStates {
+            for (name, fm) in st.models {
+                var m = models[name] ?? Model(name: name)
+                m.input += fm.input; m.output += fm.output
+                m.cacheWrite += fm.cacheWrite; m.cacheRead += fm.cacheRead; m.cost += fm.cost
+                models[name] = m
             }
         }
         let per = models.values.sorted { $0.cost > $1.cost }
