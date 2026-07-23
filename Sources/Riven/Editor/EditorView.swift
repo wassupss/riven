@@ -35,6 +35,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
+        if #available(macOS 13.3, *) { web.isInspectable = true }   // allow Web Inspector profiling
         addSubview(web)
 
         // Load the editor assets from file://. NOTE: this gives the page a null/opaque

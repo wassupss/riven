@@ -137,6 +137,16 @@ function _frameWatch() {
   requestAnimationFrame(_frameWatch);
 }
 requestAnimationFrame(_frameWatch);
+// Event Timing (WebKit-supported, unlike longtask): logs slow INPUT events with their
+// type + processing time, so a laggy keystroke/click is attributed directly.
+try {
+  new PerformanceObserver((list) => {
+    for (const e of list.getEntries()) {
+      const proc = Math.round((e.processingEnd || 0) - (e.processingStart || 0));
+      wlog('EVENT ' + e.name + ' dur=' + Math.round(e.duration) + 'ms proc=' + proc + 'ms');
+    }
+  }).observe({ entryTypes: ['event'], durationThreshold: 104 });
+} catch (e) { wlog('no event-timing'); }
 // Run fn on the next frame (falls back to a macrotask) — used to push non-essential
 // work (decoration mutation, native round-trips) off the current mousedown/focus
 // event so Monaco's own pointer-drag tracking for THIS event finishes first.
@@ -275,7 +285,7 @@ function createGroup() {
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
-    minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
+    minimap: { enabled: false }, automaticLayout: true, scrollBeyondLastLine: false,
     glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
     inlineSuggest: { enabled: true }, model: null,
     // These features dispatch to Monaco's editorWorkerService. In WKWebView the worker
