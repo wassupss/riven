@@ -172,6 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        // DEBUG: split the terminal into N extra panes after launch to inspect sizing.
+        if let n = ProcessInfo.processInfo.environment["RIVEN_ADDTERMS"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                for _ in 0..<n { self.splitTerminal(.right) }
+            }
+        }
         // DEBUG: emit a bell + OSC9 notification from the shell to verify ghostty
         // forwards them to our action_cb (RIVEN_BELLTEST).
         if ProcessInfo.processInfo.environment["RIVEN_BELLTEST"] != nil {
