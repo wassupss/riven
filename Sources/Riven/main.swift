@@ -324,6 +324,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail.onSelect = { [weak self] url in self?.switchWorkspace(url) }
         rail.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         rail.onClose = { [weak self] url in self?.closeWorkspace(url) }
+        // 카드를 끌어 순서를 바꾸면 workspaces 배열도 같은 순서로 맞추고 저장한다
+        // (⌘1-9 단축키와 다음 실행의 복원 순서가 레일과 항상 일치하도록).
+        rail.onReorder = { [weak self] order in
+            guard let self else { return }
+            let known = self.workspaces
+            self.workspaces = order.filter { known.contains($0) } + known.filter { !order.contains($0) }
+            self.persistSession()
+        }
         // Persist the rail card color so it survives across sessions.
         rail.onSetColor = { [weak self] url, color in
             guard let self else { return }
@@ -2146,7 +2154,9 @@ extension AppDelegate: NSSplitViewDelegate {
     }
     func splitView(_ sv: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
         if sv === bodySplit && i == 0 { return 480 }
-        if sv === sidebarSplit && i == 0 { return 400 }
+        // 레일 높이에는 인위적인 상한을 두지 않는다 — 아래 탐색기가 사라지지 않을
+        // 최소치(120pt)만 남기고 사이드바 거의 전체 높이까지 끌어올릴 수 있다.
+        if sv === sidebarSplit && i == 0 { return max(96, sv.bounds.height - 120) }
         return p
     }
     // Neither the rail nor the sidebar column may collapse to zero (that's what made

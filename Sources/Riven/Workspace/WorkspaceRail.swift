@@ -1,9 +1,14 @@
 import AppKit
 
+// 카드 드래그 재정렬용 pasteboard 타입 (dock의 dockPBType과 같은 방식).
+let wsRailPBType = NSPasteboard.PasteboardType("com.riven.workspacecard")
+
 // Left workspace rail — cmux-style cards (matches riven's WorkspaceTabs). One
 // card per open folder; click to activate, + to open another. Phase 4 will add
 // multi-workspace switching; for now it shows the active workspace.
 final class WorkspaceRail: NSView, Themable {
+    // 카드 좌우 여백 — 섹션 타이틀(12pt)과 같은 인셋이라 창 왼쪽 가장자리에 붙지 않는다.
+    private static let cardInset: CGFloat = 12
     private var workspaces: [URL] = []
     private var active: URL?
     private var customNames: [URL: String] = [:]
@@ -43,6 +48,14 @@ final class WorkspaceRail: NSView, Themable {
     var onSelect: ((URL) -> Void)?
     var onClose: ((URL) -> Void)?
     var onReveal: ((URL) -> Void)?
+    // 카드를 끌어 순서를 바꾸면 새 순서 전체를 넘긴다 (main.swift가 workspaces 배열을
+    // 같은 순서로 맞추고 persistSession()으로 저장 → 재시작해도 순서가 유지된다).
+    var onReorder: (([URL]) -> Void)?
+
+    // 드래그 중인 워크스페이스 (dock의 DockManager.draggingPanel과 같은 패턴).
+    static var draggingWorkspace: URL?
+    // 드롭 위치를 보여 주는 삽입 인디케이터 (accent 2px 라인).
+    private let dropLine = NSView()
 
     private let stack = FlippedStack()
     private let scroll = NSScrollView()
@@ -78,9 +91,17 @@ final class WorkspaceRail: NSView, Themable {
         scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(title); addSubview(add); addSubview(scroll)
+        // 삽입 인디케이터는 스크롤 위에 떠 있는 오버레이 — 프레임으로 직접 배치한다.
+        dropLine.wantsLayer = true
+        dropLine.layer?.backgroundColor = Theme.accent.cgColor
+        dropLine.layer?.cornerRadius = 1
+        dropLine.isHidden = true
+
+        addSubview(title); addSubview(add); addSubview(scroll); addSubview(dropLine)
+        registerForDraggedTypes([wsRailPBType])
+        let inset = WorkspaceRail.cardInset
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             add.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             add.centerYAnchor.constraint(equalTo: title.centerYAnchor),
@@ -90,8 +111,9 @@ final class WorkspaceRail: NSView, Themable {
             scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor, constant: 6),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -12)
+            // 카드는 좌우 inset만큼 들여쓴다 (창 가장자리와의 여백을 좌우 동일하게).
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor, constant: inset),
+            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -inset * 2)
         ])
         Theme.register(self)
         installCommandHint()
@@ -105,7 +127,53 @@ final class WorkspaceRail: NSView, Themable {
         layer?.backgroundColor = Theme.bg2.cgColor
         titleLabel.textColor = Theme.fgDim
         addButton.contentTintColor = Theme.fgDim
+        dropLine.layer?.backgroundColor = Theme.accent.cgColor
         rebuild()   // cards recolor from the current palette
+    }
+
+    // ---- 카드 드래그 재정렬 (dock 패널 드래그와 같은 NSPasteboard 방식) ----
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { updateDrop(s) }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { updateDrop(s) }
+    override func draggingExited(_ s: NSDraggingInfo?) { hideDropLine() }
+    override func draggingEnded(_ s: NSDraggingInfo) { hideDropLine(); WorkspaceRail.draggingWorkspace = nil }
+    private func hideDropLine() { dropLine.isHidden = true }
+
+    // 커서 위치 → 삽입 인덱스(0...count). 각 카드의 중앙선을 넘어가면 그 아래로 친다.
+    private func dropIndex(_ s: NSDraggingInfo) -> Int {
+        let p = stack.convert(s.draggingLocation, from: nil)   // FlippedStack: y가 아래로 증가
+        var idx = 0
+        for v in stack.arrangedSubviews {
+            if p.y > v.frame.midY { idx += 1 } else { break }
+        }
+        return min(idx, workspaces.count)
+    }
+
+    private func updateDrop(_ s: NSDraggingInfo) -> NSDragOperation {
+        guard let url = WorkspaceRail.draggingWorkspace, workspaces.contains(url), workspaces.count > 1 else { return [] }
+        let cards = stack.arrangedSubviews
+        let idx = dropIndex(s)
+        // 인디케이터는 idx번째 카드의 위쪽 경계(마지막이면 마지막 카드 아래)에 놓는다.
+        let y: CGFloat
+        if cards.isEmpty { y = 0 }
+        else if idx < cards.count { y = cards[idx].frame.minY - stack.spacing / 2 }
+        else { y = cards[cards.count - 1].frame.maxY + stack.spacing / 2 }
+        let r = convert(NSRect(x: 0, y: y - 1, width: stack.bounds.width, height: 2), from: stack)
+        dropLine.frame = NSRect(x: r.minX, y: r.minY, width: r.width, height: 2)
+        dropLine.isHidden = false
+        return .move
+    }
+
+    override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
+        defer { hideDropLine() }
+        guard let url = WorkspaceRail.draggingWorkspace,
+              let from = workspaces.firstIndex(of: url) else { return false }
+        var to = dropIndex(s)
+        if to > from { to -= 1 }                       // 자기 자신을 빼고 나면 한 칸 당겨진다
+        guard to != from, to >= 0, to < workspaces.count else { return false }
+        workspaces.insert(workspaces.remove(at: from), at: to)
+        rebuild()                                      // ⌘N 칩 번호까지 새 순서로 다시 그린다
+        onReorder?(workspaces)
+        return true
     }
 
     @objc private func addClicked() { onOpen?() }
@@ -321,12 +389,51 @@ final class WorkspaceRail: NSView, Themable {
     func closeWorkspace(_ url: URL) { workspaces.removeAll { $0 == url }; rebuild() }
 }
 
-final class WSCard: NSView {
+// 워크스페이스 카드: 클릭하면 활성화, 위/아래로 끌면 레일 안에서 순서를 바꾼다
+// (dock 탭 드래그와 같은 NSPasteboard 방식).
+final class WSCard: NSView, NSDraggingSource {
     let url: URL
     var onSelect: (() -> Void)?
     var onContextMenu: (() -> NSMenu?)?
+    override var mouseDownCanMoveWindow: Bool { false }   // 카드 드래그는 창을 옮기지 않는다
     init(url: URL) { self.url = url; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError() }
-    override func mouseDown(with e: NSEvent) { onSelect?() }
+
+    // 이름/경로 라벨 위를 눌러도 카드 자신이 클릭·드래그를 받게 한다.
+    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+
+    private var down: NSPoint = .zero
+    private var dragging = false
+    override func mouseDown(with e: NSEvent) { down = e.locationInWindow; dragging = false }
+    override func mouseDragged(with e: NSEvent) {
+        // 몇 pt 움직인 뒤에야 드래그를 시작한다 (그냥 클릭은 여전히 활성화).
+        guard !dragging else { return }
+        guard hypot(e.locationInWindow.x - down.x, e.locationInWindow.y - down.y) > 4 else { return }
+        dragging = true
+        WorkspaceRail.draggingWorkspace = url
+        let item = NSPasteboardItem()
+        item.setString(url.absoluteString, forType: wsRailPBType)
+        let dragItem = NSDraggingItem(pasteboardWriter: item)
+        dragItem.setDraggingFrame(bounds, contents: snapshot())
+        beginDraggingSession(with: [dragItem], event: e, source: self)
+    }
+    override func mouseUp(with e: NSEvent) {
+        if !dragging { onSelect?() }
+        dragging = false
+    }
+    func draggingSession(_ s: NSDraggingSession, sourceOperationMaskFor c: NSDraggingContext) -> NSDragOperation { .move }
+    func draggingSession(_ s: NSDraggingSession, endedAt p: NSPoint, operation: NSDragOperation) {
+        WorkspaceRail.draggingWorkspace = nil
+        dragging = false
+    }
+    private func snapshot() -> NSImage {
+        let img = NSImage(size: bounds.size)
+        if let rep = bitmapImageRepForCachingDisplay(in: bounds) {
+            cacheDisplay(in: bounds, to: rep)
+            img.addRepresentation(rep)
+        }
+        return img
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? { onContextMenu?() }
 }
