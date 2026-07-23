@@ -839,10 +839,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(p, reference: currentTerminalPanel()?.group ?? dock.activeGroup, direction: dir)
         (p.content as? TerminalView)?.focusTerminal()
     }
-    private func selectTerminal(_ n: Int) {            // ⌃1..9
-        let terms = terminalPanels()
-        guard terms.indices.contains(n - 1) else { return }
-        let p = terms[n - 1]; p.group?.select(id: p.id)
+    // ⌃1..9 — 활성 패널 그룹 안의 N번째 탭으로 이동한다. 예전에는 모든 그룹의 터미널을
+    // 통틀어 N번째를 골라서, 단축키가 그룹 사이를 건너뛰어 버렸다.
+    private func selectTerminal(_ n: Int) {
+        guard let g = activeDock?.activeGroup, g.panels.indices.contains(n - 1) else { return }
+        let p = g.panels[n - 1]
+        g.select(id: p.id)
         (p.content as? TerminalView)?.focusTerminal()
     }
     private func cycleTerminal(_ delta: Int) {         // ⌘⇧] / ⌘⇧[
