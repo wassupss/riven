@@ -49,6 +49,23 @@
   .monaco-editor .monaco-editor-background,
   .monaco-editor .margin,
   .monaco-editor-background { background-color: var(--bg) !important; }
+  /* 이미지 뷰어 (VS Code의 Image Preview 대응): 체커보드 배경 + Fit/100% 토글 */
+  .eimage { position: absolute; inset: 30px 0 0 0; display: none; overflow: auto;
+    align-items: center; justify-content: center;
+    background-color: #1e1e1e;
+    background-image:
+      linear-gradient(45deg, rgba(255,255,255,0.045) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(255,255,255,0.045) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.045) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.045) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
+  .eimage.on { display: flex; }
+  .eimage img { image-rendering: -webkit-optimize-contrast; cursor: zoom-in; }
+  .eimage.actual img { cursor: zoom-out; }
+  .eimage .meta { position: absolute; right: 10px; bottom: 8px; font: 11px -apple-system;
+    color: rgba(227,229,234,0.75); background: rgba(0,0,0,0.55); padding: 3px 8px;
+    border-radius: 5px; pointer-events: none; }
   #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: #6a6a6a; font: 13px -apple-system; pointer-events: none; }
   /* Peek / references widget: the file-match LIST uses a fixed workbench font, not the
@@ -261,7 +278,9 @@ function createGroup() {
   const tabsEl = document.createElement('div'); tabsEl.className = 'etabs';
   const monEl = document.createElement('div'); monEl.className = 'emonaco';
   const dropEl = document.createElement('div'); dropEl.className = 'edrop';
-  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(dropEl);
+  const imgEl = document.createElement('div'); imgEl.className = 'eimage';
+  imgEl.innerHTML = '<img alt=""><div class="meta"></div>';
+  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(dropEl);
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
@@ -278,7 +297,9 @@ function createGroup() {
     occurrencesHighlight: 'off', selectionHighlight: false,
     wordBasedSuggestions: 'off', links: false, codeLens: false
   });
-  const g = { idx: groups.length, el, tabsEl, monEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
+  const g = { idx: groups.length, el, tabsEl, monEl, imgEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
+  // 클릭으로 Fit ↔ 100% 토글 (VS Code와 동일)
+  imgEl.addEventListener('click', () => { imgEl.classList.toggle('actual'); layoutImage(g); });
   g.node = { type: 'leaf', g };
   groups.push(g);
   wireEd(g);
@@ -454,10 +475,63 @@ function ensureModel(path, content) {
   });
   models[path] = model;
 }
+// ---- 이미지 탭 (VS Code의 Image Preview 대응) ----
+// path → data: URL. 이미지 탭은 Monaco 모델을 만들지 않고 뷰어로 그린다.
+const imageSrc = {};
+function isImage(path) { return Object.prototype.hasOwnProperty.call(imageSrc, path); }
+
+// 현재 모드(Fit / 100%)에 맞춰 크기와 하단 정보를 갱신한다.
+function layoutImage(g) {
+  const img = g.imgEl.querySelector('img'), meta = g.imgEl.querySelector('.meta');
+  if (!img || !img.naturalWidth) return;
+  const actual = g.imgEl.classList.contains('actual');
+  const box = g.imgEl.getBoundingClientRect();
+  const fit = Math.min(1, box.width / img.naturalWidth, box.height / img.naturalHeight) || 1;
+  const scale = actual ? 1 : fit;
+  img.style.width = Math.round(img.naturalWidth * scale) + 'px';
+  img.style.height = 'auto';
+  meta.textContent = img.naturalWidth + ' × ' + img.naturalHeight + '  ·  ' + Math.round(scale * 100) + '%';
+}
+
+// 그룹이 이미지 탭을 보여줄지 Monaco를 보여줄지 전환.
+function applyImageMode(g) {
+  const path = g.active;
+  if (path && isImage(path)) {
+    const img = g.imgEl.querySelector('img');
+    if (img.getAttribute('src') !== imageSrc[path]) {
+      img.onload = () => layoutImage(g);
+      img.src = imageSrc[path];
+    } else { layoutImage(g); }
+    g.imgEl.classList.add('on');
+    g.monEl.style.display = 'none';
+  } else {
+    g.imgEl.classList.remove('on');
+    g.monEl.style.display = '';
+  }
+}
+
+window.rivenOpenImage = function (path, src) {
+  imageSrc[path] = src;
+  document.getElementById('empty').style.display = 'none';
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  if (!g.tabs.includes(path)) g.tabs.push(path);
+  g.active = path;
+  g.ed.setModel(null);            // 이미지 탭에서는 Monaco를 비운다
+  renderTabs(g);
+  setActiveGroup(groups.indexOf(g));
+  applyImageMode(g);
+};
+window.rivenShowImage = function (path) {
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  showInGroup(g, path);
+  setActiveGroup(groups.indexOf(g));
+};
+
 // Switch a group to show an already-open path.
 function showInGroup(g, path) {
   g.active = path;
-  g.ed.setModel(models[path] || null);
+  g.ed.setModel(isImage(path) ? null : (models[path] || null));
+  applyImageMode(g);
   renderTabs(g);
   if (g.idx === activeIdx) { currentPath = path; updateHunkNav(path); updateBlame(); }
 }
@@ -745,6 +819,7 @@ window.rivenSetTheme = function (name, bg, accent, accent2) {
   }
   try { if (shikiReady && window.monaco) monaco.editor.setTheme(name); } catch (e) {}
 };
+window.addEventListener('resize', () => groups.forEach(g => { if (g.active && isImage(g.active)) layoutImage(g); }));
 window.rivenSetFontSize = function (size) {
   groups.forEach(g => g.ed.updateOptions({ fontSize: size }));
   document.documentElement.style.setProperty('--riven-font-size', size + 'px');  // peek/references list
@@ -777,6 +852,8 @@ window.rivenClose = function (path) {
     if (!g.tabs.length && groups.length > 1) removeGroup(g);
   }
   if (models[path]) { models[path].dispose(); delete models[path]; delete savedVersion[path]; }
+  delete imageSrc[path];
+  groups.forEach(applyImageMode);
   const ag = activeGroup(); currentPath = ag ? ag.active : null;
   if (ag) updateHunkNav(currentPath);
   if (!groups.some(x => x.tabs.length)) document.getElementById('empty').style.display = 'flex';
@@ -790,6 +867,8 @@ window.rivenShowEmpty = function () {
   // workspaces stay resident (text + tokenization + undo history) for the whole
   // session (a per-session memory leak). Editors were detached above (setModel(null)
   // / removeGroup), so disposing the models now is safe.
+  for (const p of Object.keys(imageSrc)) delete imageSrc[p];
+  groups.forEach(applyImageMode);
   for (const p of Object.keys(models)) {
     try { models[p].dispose(); } catch (e) {}
     delete models[p]; delete savedVersion[p]; delete docVersion[p];

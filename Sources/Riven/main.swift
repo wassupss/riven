@@ -1349,8 +1349,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             st.activeTab = path
             showEditorPane()
             tabBar.open(path)
-            editor.open(path: path, content: "")   // Monaco reuses the existing model
+            if Self.imageMIME(path) != nil { editor.showImageTab(path: path) }
+            else { editor.open(path: path, content: "") }   // Monaco reuses the existing model
             statusBar.setFileInfo(fileInfo(path))
+            return
+        }
+        // 이미지는 Monaco가 못 그리므로 에디터 탭 안의 이미지 뷰어로 연다 (VS Code의
+        // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
+        // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
+        // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
+        if let mime = Self.imageMIME(path) {
+            guard let data = try? Data(contentsOf: url) else {
+                RLog.log("openFile: cannot read image \(path)"); return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openImage(path: path, src: "data:\(mime);base64,\(data.base64EncodedString())")
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
             return
         }
         guard let content = try? String(contentsOf: url, encoding: .utf8) else {
@@ -1439,6 +1457,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showTabContent(_ path: String) {
         let content = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
         editor.open(path: path, content: content)
+    }
+
+    // 에디터에서 이미지 뷰어로 열 확장자 → MIME. SVG는 제외(텍스트로 편집하는 게 유용하고
+    // VS Code도 기본은 텍스트다).
+    static func imageMIME(_ path: String) -> String? {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "bmp": return "image/bmp"
+        case "ico": return "image/x-icon"
+        case "avif": return "image/avif"
+        case "heic": return "image/heic"
+        case "tiff", "tif": return "image/tiff"
+        default: return nil
+        }
     }
 
     private func fileInfo(_ path: String) -> String {
