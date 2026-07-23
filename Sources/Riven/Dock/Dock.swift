@@ -347,6 +347,11 @@ final class DockManager {
             g.add(panel); setActive(g)
         }
         cleanupEmpty(from)
+        // Full sweep, same as a close. cleanupEmpty only collapses the SOURCE group, and
+        // split() may already have restructured the tree around it — so a panel that was
+        // alone in its group (every aux panel: source control / changes / search / browser)
+        // could leave its emptied group behind, keeping its width as a blank pane.
+        normalizeTree()
         refreshEmpty()
     }
 
@@ -376,6 +381,7 @@ final class DockManager {
             rebalanceAfterInsert(rsv, insertedAt: at, oldExtents: oldExtents, sizeHint: nil)
             newGroup.add(panel); setActive(newGroup)
             cleanupEmpty(from)
+            normalizeTree()   // 옮긴 뒤 빈 그룹이 남지 않게 (move와 동일)
             refreshEmpty()
             return
         }
@@ -392,6 +398,7 @@ final class DockManager {
         if t > 0 { sv.setPosition(t * 0.5, ofDividerAt: 0) }
         newGroup.add(panel); setActive(newGroup)
         cleanupEmpty(from)
+        normalizeTree()   // 옮긴 뒤 빈 그룹이 남지 않게 (move와 동일)
         refreshEmpty()
     }
     // Should this drop split the ROOT (full-height column / full-width row)?
