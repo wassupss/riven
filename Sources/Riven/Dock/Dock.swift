@@ -198,14 +198,23 @@ final class DockManager {
         let savedFrame = group.frame
 
         // Fresh 2-pane split: new pane gets its hint (if it sensibly fits), else half.
+        // If the split has no real size yet (inserted before this layout pass resolved
+        // its bounds — common for a `.down` split, whose height isn't known until the
+        // parent re-lays out), setPosition against a 0 axis would collapse a pane to
+        // near-zero ("확 줄어"). Defer to the next runloop so bounds are real.
         func sizeNewPane(_ split: NSSplitView) {
-            let t = split.isVertical ? split.bounds.width : split.bounds.height
-            guard t > 0 else { return }
-            if let hint = sizeHint, hint >= 80, t - hint >= 120 {
-                split.setPosition(before ? hint : t - split.dividerThickness - hint, ofDividerAt: 0)
-            } else {
-                split.setPosition(t * 0.5, ofDividerAt: 0)
+            let apply: () -> Void = {
+                let t = split.isVertical ? split.bounds.width : split.bounds.height
+                guard t > 0 else { return }
+                if let hint = sizeHint, hint >= 80, t - hint >= 120 {
+                    split.setPosition(before ? hint : t - split.dividerThickness - hint, ofDividerAt: 0)
+                } else {
+                    split.setPosition(t * 0.5, ofDividerAt: 0)
+                }
             }
+            let t = split.isVertical ? split.bounds.width : split.bounds.height
+            if t > 0 { apply() }
+            else { RLog.log("dock: split sized at 0 bounds → deferring"); DispatchQueue.main.async(execute: apply) }
         }
 
         if let psv = parent as? NSSplitView {
@@ -278,7 +287,15 @@ final class DockManager {
         let n = sv.arrangedSubviews.count            // includes the new pane
         guard n >= 2, idx < n, oldExtents.count == n - 1 else { return }
         let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
-        guard total > 0 else { return }
+        guard total > 0 else {
+            // Bounds not resolved yet (e.g. a `.down` insert before layout) — retry next
+            // runloop so the newcomer gets a fair share instead of a collapsed sliver.
+            RLog.log("dock: rebalance at 0 bounds → deferring")
+            DispatchQueue.main.async { [weak self] in
+                self?.rebalanceAfterInsert(sv, insertedAt: idx, oldExtents: oldExtents, sizeHint: sizeHint)
+            }
+            return
+        }
         let minPane: CGFloat = 80                    // matches DockSplitView's divider constraints
         let fair = total / CGFloat(n)
         var newExt = sizeHint ?? fair
@@ -492,6 +509,7 @@ final class DockManager {
             }
         }
         savedPlacements[panel.id] = pl
+        RLog.log("dock: record \(panel.id) extent=\(Int(pl.extent)) idx=\(pl.indexInSplit) vertical=\(pl.vertical)")
     }
 
     // 기록된 자리로 패널을 복원한다. 자리가 완전히 사라졌으면 false를 돌려주고
@@ -500,6 +518,7 @@ final class DockManager {
     func restorePlacement(_ panel: DockPanel) -> Bool {
         guard let pl = savedPlacements.removeValue(forKey: panel.id) else { return false }
         container.layoutSubtreeIfNeeded()
+        RLog.log("dock: restore \(panel.id) want-extent=\(Int(pl.extent))")
         // 1) 탭으로 있던 그룹이 아직 살아있으면 그 자리(탭 인덱스)로.
         if let host = resolveGroup(pl.hostGroup, pl.hostPanelIds) {
             host.insert(panel, at: pl.tabIndex)
@@ -559,6 +578,7 @@ final class DockManager {
         var target: [CGFloat] = olds.map { sum > 0 ? $0 * (total - e) / sum : (total - e) / CGFloat(max(1, olds.count)) }
         target.insert(e, at: idx)
         setExtents(sv, target)
+        RLog.log("dock: insertPane want=\(Int(want)) got=\(Int(e)) total=\(Int(total)) n=\(n)")
     }
 
     // 임의의 이웃 뷰(그룹 또는 중첩 split)를 감싸 새 그룹과 나란히 놓는다 —

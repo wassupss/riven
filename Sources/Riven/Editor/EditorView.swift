@@ -6,6 +6,7 @@ import WebKit
 // hybrid — riven's editor assets reused as-is instead of reimplemented natively.
 final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var web: WKWebView!
+    private var schemeHandler: RivenResSchemeHandler?   // retain the asset server
     private var ready = false
     private var pending: (path: String, content: String)?
     var onSave: ((String, String) -> Void)?
@@ -31,14 +32,28 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             console.log=p('log');console.warn=p('warn');console.error=p('err');
             window.onerror=function(m,s,l,c){try{window.webkit.messageHandlers.log.postMessage('ONERROR: '+m+' @'+l+':'+c)}catch(e){}};})();
             """, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        // Serve the editor assets over a custom URL scheme (real origin) instead of
+        // loadFileURL. A file:// page gets a NULL/opaque origin, which stops Monaco from
+        // creating its Web Workers ("Could not create web worker(s)… might cause UI
+        // freezes") — tokenization/diff/language services then run on the MAIN THREAD and
+        // freeze the editor (worst on files opened from the Changes panel, which drive the
+        // diff worker hard). A custom-scheme origin lets the workers load off-thread.
+        let htmlURL = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
+            ?? Bundle.riven.url(forResource: "editor", withExtension: "html")
+        if let htmlURL {
+            let handler = RivenResSchemeHandler(base: htmlURL.deletingLastPathComponent())
+            schemeHandler = handler
+            cfg.setURLSchemeHandler(handler, forURLScheme: RivenResSchemeHandler.scheme)
+        }
         web = WKWebView(frame: bounds, configuration: cfg)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
         addSubview(web)
 
-        if let url = Bundle.riven.url(forResource: "editor", withExtension: "html", subdirectory: "Resources")
-            ?? Bundle.riven.url(forResource: "editor", withExtension: "html") {
+        if htmlURL != nil, let load = URL(string: "\(RivenResSchemeHandler.scheme)://app/editor.html") {
+            web.load(URLRequest(url: load))
+        } else if let url = htmlURL {
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
     }
@@ -289,5 +304,54 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         let data = try! JSONSerialization.data(withJSONObject: [s])
         let json = String(data: data, encoding: .utf8)!
         return String(json.dropFirst().dropLast()) // strip the [ ]
+    }
+}
+
+// Serves the bundled editor assets (editor.html, monaco/, shiki.js, wasm) over a custom
+// URL scheme so the Monaco page has a REAL origin. This is what lets Monaco spawn its
+// Web Workers (editorWorkerService / typescript / html) — under loadFileURL the page's
+// origin is "null" and worker creation fails, forcing all tokenization/diff/language
+// work onto the main thread (the observed UI freeze). Requests are served synchronously
+// from the resource directory; a path-traversal guard keeps serving inside that dir.
+final class RivenResSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let scheme = "rivenres"
+    private let base: URL
+    init(base: URL) { self.base = base.standardizedFileURL }
+
+    func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
+        guard let url = task.request.url else { task.didFailWithError(URLError(.badURL)); return }
+        var rel = url.path                       // rivenres://app/<path> → <base>/<path>
+        if rel.hasPrefix("/") { rel.removeFirst() }
+        if rel.isEmpty { rel = "editor.html" }
+        let fileURL = base.appendingPathComponent(rel).standardizedFileURL
+        guard fileURL.path == base.path || fileURL.path.hasPrefix(base.path + "/"),
+              let data = try? Data(contentsOf: fileURL) else {
+            task.didFailWithError(URLError(.fileDoesNotExist)); return
+        }
+        // Complete synchronously — WKWebView won't call stop(_:) before start(_:) returns,
+        // so the response callbacks can't fire after a stop (which would throw).
+        let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                   headerFields: ["Content-Type": Self.mime(fileURL.pathExtension),
+                                                  "Content-Length": String(data.count)])!
+        task.didReceive(resp)
+        task.didReceive(data)
+        task.didFinish()
+    }
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+
+    private static func mime(_ ext: String) -> String {
+        switch ext.lowercased() {
+        case "html": return "text/html; charset=utf-8"
+        case "js", "mjs", "cjs": return "application/javascript; charset=utf-8"
+        case "css": return "text/css; charset=utf-8"
+        case "json", "map": return "application/json; charset=utf-8"
+        case "wasm": return "application/wasm"
+        case "svg": return "image/svg+xml"
+        case "ttf": return "font/ttf"
+        case "woff": return "font/woff"
+        case "woff2": return "font/woff2"
+        case "png": return "image/png"
+        default: return "application/octet-stream"
+        }
     }
 }
