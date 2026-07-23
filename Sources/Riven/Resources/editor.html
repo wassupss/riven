@@ -277,7 +277,15 @@ function createGroup() {
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
     minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
     glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
-    inlineSuggest: { enabled: true }, model: null
+    inlineSuggest: { enabled: true }, model: null,
+    // These features dispatch to Monaco's editorWorkerService. In WKWebView the worker
+    // can't spawn (null file:// origin), so Monaco runs them SYNCHRONOUSLY on the main
+    // thread — occurrence highlighting recomputes on every cursor move, word-based
+    // suggestions + link detection scan the whole document — which is what froze the
+    // editor for ~1s per interaction (rAF showed 0.8–1.7s JANK gaps). We don't need any
+    // of them: completion/hover/definition/references all come from the native LSP.
+    occurrencesHighlight: 'off', selectionHighlight: false,
+    wordBasedSuggestions: 'off', links: false, codeLens: false
   });
   const g = { idx: groups.length, el, tabsEl, monEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
   g.node = { type: 'leaf', g };
