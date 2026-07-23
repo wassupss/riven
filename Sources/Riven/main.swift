@@ -662,7 +662,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var poppedOut: [String: (win: NSWindow, dock: DockManager, panel: DockPanel, delegate: PopoutDelegate)] = [:]
     @objc private func popoutMenu() {
         guard let dock = activeDock, let panel = dock.activeGroup?.activePanel else { NSSound.beep(); return }
-        dock.detach(panel)   // remove from the dock WITHOUT disposing the content
+        dock.detach(panel, normalize: true)   // remove from the dock WITHOUT disposing the content
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
         host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg.cgColor
         panel.content.frame = host.bounds
@@ -1873,7 +1873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else if panel.content is TerminalView {
                 activeDock?.removePanel(panel)
             } else {                                       // search / git / preview / changes
-                activeDock?.detach(panel)
+                activeDock?.detach(panel, normalize: true)
                 auxDockPanels[panel.id] = nil
                 activeDock?.savedPlacements[panel.id] = nil   // 직접 닫음 → 자리 기록도 지움 (#4)
             }
@@ -2029,7 +2029,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func toggleDockPanel(_ id: String) {
         guard workspace != nil, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
-            dock.detach(existing); auxDockPanels[id] = nil
+            dock.detach(existing, normalize: true); auxDockPanels[id] = nil
             dock.savedPlacements[id] = nil   // 직접 닫음 → 다음에는 기본 위치로 (#4)
             return
         }

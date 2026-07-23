@@ -528,6 +528,7 @@ final class DockManager {
         container.layoutSubtreeIfNeeded()
         fillGaps(root)
         ensureMinExtents(root)
+        dumpTree("normalized")   // 레이아웃 이상 재발 시 즉시 원인 확인용 (디버그 로그)
     }
 
     // 각 split의 팬 크기 합이 컨테이너를 정확히 채우도록 다시 맞춘다. 구조 정리 뒤에도
@@ -608,10 +609,16 @@ final class DockManager {
 
     // Remove a panel from its group WITHOUT disposing it — used to move a shared
     // singleton panel (the editor) from one workspace's dock to another's.
-    func detach(_ panel: DockPanel) {
+    // `normalize`: 사용자가 패널을 닫거나 빼내는 경우 true — 닫기(removePanel)와 똑같이
+    // 트리 전체를 정리해 빈 슬롯이 남지 않게 한다. 워크스페이스 전환처럼 싱글턴을 잠시
+    // 옮기는 경우에는 false로 두어야 남은 팬 크기가 매 전환마다 흔들리지 않는다(#4).
+    // 이 구분이 없어서 aux 패널(소스 컨트롤 등)을 닫으면 그 자리가 빈 영역으로 남았다.
+    func detach(_ panel: DockPanel, normalize: Bool = false) {
         let g = panel.group
         g?.remove(panel, dispose: false)
+        container.layoutSubtreeIfNeeded()
         cleanupEmpty(g)
+        if normalize { normalizeTree() }
         // NOTE: intentionally NO normalizeTree() here. detach runs on every workspace
         // switch (editor + each aux panel move out); a full-tree ensureMinExtents sweep
         // would resize the OUTGOING dock's surviving panes every time, so a workspace's
