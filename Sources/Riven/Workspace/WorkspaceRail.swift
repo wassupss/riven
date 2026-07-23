@@ -106,14 +106,16 @@ final class WorkspaceRail: NSView, Themable {
             add.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             add.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             add.widthAnchor.constraint(equalToConstant: 22),
-            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            // 좌우 여백은 스크롤뷰 자체에 준다. documentView(stack)의 leading 제약은
+            // NSScrollView가 문서를 원점에 배치하며 무시해서, 예전엔 width 제약(-inset*2)만
+            // 먹혀 왼쪽은 창에 딱 붙고 오른쪽에만 여백이 생겼다.
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             scroll.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            // 카드는 좌우 inset만큼 들여쓴다 (창 가장자리와의 여백을 좌우 동일하게).
-            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor, constant: inset),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor, constant: -inset * 2)
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
         Theme.register(self)
         installCommandHint()
