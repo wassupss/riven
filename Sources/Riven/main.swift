@@ -1880,7 +1880,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // A stray editor tab with no active dock panel → close it.
         if let p = tabBar.active { closeTab(p); return }
-        // Nothing left to close → the dock is empty → quit (like riven / VS Code).
+        // 여기까지 왔다는 건 "활성 그룹에 닫을 패널이 없다"는 뜻일 뿐, 독이 비었다는
+        // 뜻이 아니다. 그룹이 비워지는 과정에서 활성 그룹이 빈 그룹이 되거나 참조가
+        // 끊기면 다른 열에 패널이 멀쩡히 남아 있어도 여기로 떨어져 앱이 꺼져 버렸다.
+        // 남아 있는 패널이 하나라도 있으면 절대 종료하지 않고 살아있는 패널로 포커스를
+        // 옮긴다 (다음 ⌘W가 그 패널을 닫는다).
+        if let dock = activeDock, dock.totalPanels > 0 {
+            if let g = dock.groups.first(where: { !$0.panels.isEmpty }) { dock.setActive(g) }
+            return
+        }
+        // 정말 아무것도 안 남았을 때만 종료 — 실수로 닫히지 않게 한 번 확인한다.
+        confirmQuit()
+    }
+
+    // ⌘W로 마지막 패널까지 닫아 앱이 종료되는 경로에서 한 번 확인받는다.
+    private func confirmQuit() {
+        let a = NSAlert()
+        a.messageText = t("quit.title")
+        a.informativeText = t("quit.body")
+        a.addButton(withTitle: t("quit.confirm"))   // 첫 버튼 = 기본(Return)
+        a.addButton(withTitle: t("common.cancel"))
+        a.alertStyle = .warning
+        guard a.runModal() == .alertFirstButtonReturn else { return }
         window?.performClose(nil)
     }
     private func terminalHasFocus() -> Bool { window?.firstResponder is TerminalView }

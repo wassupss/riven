@@ -443,6 +443,9 @@ final class DockManager {
         // e.g. ⌘D ×N then ⌘W should land on the pane opened just before, not pane 1.
         let focusAfter: DockGroup? = (g?.panels.count == 1) ? adjacentGroup(to: g!) : nil
         g?.remove(panel, dispose: true)
+        // 형제 크기를 재기 전에 프레임을 확정한다 — 확정 전 값(0)으로 비례 재분배하면
+        // 닫은 자리가 공백으로 남는다 (move/moveToRoot에서 고친 것과 같은 원인).
+        container.layoutSubtreeIfNeeded()
         cleanupEmpty(g)
         normalizeTree()   // 닫기 후 빈 그룹·0폭 팬이 남지 않게 정리 (#3)
         refreshEmpty()
