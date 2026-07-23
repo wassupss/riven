@@ -120,11 +120,16 @@ final class DockManager {
     }
 
     // Add a panel next to a reference group (split) or into a group as a tab.
+    // `sizeHint` (points, along the split axis) gives the new pane a fixed initial
+    // extent — used for aux side panels (search/git/preview/changes) and the editor,
+    // which shouldn't take a bare 1/N share. Without a hint the new pane gets a fair
+    // 1/N of its container (see rebalanceAfterInsert).
     @discardableResult
-    func addPanel(_ panel: DockPanel, reference: DockGroup? = nil, direction: DockDir? = nil) -> DockGroup {
+    func addPanel(_ panel: DockPanel, reference: DockGroup? = nil, direction: DockDir? = nil,
+                  sizeHint: CGFloat? = nil) -> DockGroup {
         if let ref = reference, let dir = direction, dir != .center {
             let g = DockGroup(); g.manager = self
-            split(ref, with: g, direction: dir)
+            split(ref, with: g, direction: dir, sizeHint: sizeHint)
             g.add(panel); setActive(g); return g
         }
         let g = reference ?? activeGroup ?? {
@@ -139,22 +144,50 @@ final class DockManager {
         onActivePanel?(g.activePanel)
     }
 
-    // Split `group`: wrap it and `newGroup` in an NSSplitView, in `direction`.
-    // Preserves the space `group` occupied in its parent split so a nested split
-    // doesn't collapse (the outer divider is restored to give the new split that
-    // group's former extent), then divides the new split evenly.
-    private func split(_ group: DockGroup, with newGroup: DockGroup, direction: DockDir) {
+    // Split `group` in `direction`, placing `newGroup` next to it.
+    //
+    // Natural sizing model (tmux/iTerm/VS Code-like):
+    // • If the group's parent split already runs along this axis, DON'T nest another
+    //   split — insert the new pane as a direct sibling (flat tree) and rebalance
+    //   THAT container: the newcomer gets a fair 1/N share (or its sizeHint) and the
+    //   existing panes scale proportionally into the remainder. Repeated adds thus
+    //   converge to evenly-sized siblings instead of ever-smaller slivers, while a
+    //   user's manual ratios among the surviving panes are preserved. Only the
+    //   affected container is touched; unrelated splits keep their sizes.
+    // • Otherwise wrap group+newGroup in a fresh 2-pane split (preserving the exact
+    //   slot `group` occupied in its parent) and give the new pane half — or its
+    //   sizeHint when one is provided (aux side panels).
+    private func split(_ group: DockGroup, with newGroup: DockGroup, direction: DockDir,
+                       sizeHint: CGFloat? = nil) {
         let vertical = (direction == .left || direction == .right) // vertical divider ⇒ side-by-side
-        let sv = DockSplitView(); sv.isVertical = vertical; sv.dividerStyle = .thin
         let before = (direction == .left || direction == .up)      // new group first
         guard let parent = group.superview else { return }
-        let savedFrame = group.frame
         group.autoresizingMask = [.width, .height]
         newGroup.autoresizingMask = [.width, .height]
 
-        func even(_ split: NSSplitView) {
+        // Same-axis parent: flatten (sibling insert + local rebalance).
+        if let psv = parent as? NSSplitView, psv.isVertical == vertical {
+            let gIdx = psv.arrangedSubviews.firstIndex(of: group) ?? 0
+            let oldExtents = psv.arrangedSubviews.map { extent($0, in: psv) }
+            let at = before ? gIdx : gIdx + 1
+            psv.insertArrangedSubview(newGroup, at: at)
+            psv.adjustSubviews()   // lay out synchronously so the pane shows this frame
+            rebalanceAfterInsert(psv, insertedAt: at, oldExtents: oldExtents, sizeHint: sizeHint)
+            return
+        }
+
+        let sv = DockSplitView(); sv.isVertical = vertical; sv.dividerStyle = .thin
+        let savedFrame = group.frame
+
+        // Fresh 2-pane split: new pane gets its hint (if it sensibly fits), else half.
+        func sizeNewPane(_ split: NSSplitView) {
             let t = split.isVertical ? split.bounds.width : split.bounds.height
-            if t > 0 { split.setPosition(t * 0.5, ofDividerAt: 0) }
+            guard t > 0 else { return }
+            if let hint = sizeHint, hint >= 80, t - hint >= 120 {
+                split.setPosition(before ? hint : t - split.dividerThickness - hint, ofDividerAt: 0)
+            } else {
+                split.setPosition(t * 0.5, ofDividerAt: 0)
+            }
         }
 
         if let psv = parent as? NSSplitView {
@@ -163,20 +196,20 @@ final class DockManager {
             group.removeFromSuperview()
             addPair(sv, group, newGroup, before: before)
             psv.insertArrangedSubview(sv, at: idx)
-            // Lay out synchronously so the new pane appears at 50/50 on the first
+            // Lay out synchronously so the new pane appears sized on the first
             // frame instead of popping a runloop later.
             psv.adjustSubviews()
             let psvExt = psv.isVertical ? psv.bounds.width : psv.bounds.height
             let savedExt = psv.isVertical ? savedFrame.width : savedFrame.height
             if idx == 0 { psv.setPosition(savedExt, ofDividerAt: 0) }
             else if idx == count - 1 { psv.setPosition(max(0, psvExt - savedExt), ofDividerAt: idx - 1) }
-            sv.adjustSubviews(); even(sv)
+            sv.adjustSubviews(); sizeNewPane(sv)
         } else {
             group.removeFromSuperview()
             sv.frame = savedFrame; sv.autoresizingMask = [.width, .height]
             addPair(sv, group, newGroup, before: before)
             parent.addSubview(sv)
-            sv.adjustSubviews(); even(sv)
+            sv.adjustSubviews(); sizeNewPane(sv)
         }
     }
     private func addPair(_ sv: NSSplitView, _ a: DockGroup, _ b: DockGroup, before: Bool) {
@@ -214,6 +247,31 @@ final class DockManager {
         let target = sum > 0 ? oldExtents.map { $0 * total / sum }
                              : Array(repeating: total / CGFloat(n), count: n)
         setExtents(sv, target)
+    }
+
+    // After inserting a pane into an existing same-axis split: give the newcomer a
+    // fair share of THIS container — its explicit sizeHint (aux panels / editor) or
+    // total/N — and scale the pre-existing panes proportionally into the remainder.
+    // A layout that was even stays exactly even (2nd terminal → 1/2 each, 3rd → 1/3
+    // each), and a user's manual ratios among the old panes survive. `oldExtents`
+    // must be captured BEFORE the insert (one entry per pre-insert arranged subview).
+    private func rebalanceAfterInsert(_ sv: NSSplitView, insertedAt idx: Int,
+                                      oldExtents: [CGFloat], sizeHint: CGFloat?) {
+        let n = sv.arrangedSubviews.count            // includes the new pane
+        guard n >= 2, idx < n, oldExtents.count == n - 1 else { return }
+        let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
+        guard total > 0 else { return }
+        let minPane: CGFloat = 80                    // matches DockSplitView's divider constraints
+        let fair = total / CGFloat(n)
+        var newExt = sizeHint ?? fair
+        newExt = min(newExt, max(fair, total - CGFloat(n - 1) * minPane))  // leave siblings room
+        newExt = max(newExt, min(fair, minPane))                            // never degenerate
+        let remaining = max(0, total - newExt)
+        let sum = oldExtents.reduce(0, +)
+        var extents = sum > 0 ? oldExtents.map { $0 * remaining / sum }
+                              : Array(repeating: remaining / CGFloat(n - 1), count: n - 1)
+        extents.insert(newExt, at: idx)
+        setExtents(sv, extents)
     }
 
     // Auto-arrange: resize every split in the tree so its sibling panes share the
@@ -269,6 +327,21 @@ final class DockManager {
         }
         let vertical = (direction == .left || direction == .right)   // vertical divider ⇒ columns
         let before = (direction == .left || direction == .up)
+        // Root already splits along this axis → prepend/append the new full-height
+        // column (full-width row) to it directly and rebalance, instead of wrapping
+        // the whole tree in ANOTHER same-axis split that hands the newcomer 50%.
+        if let rsv = root as? NSSplitView, rsv.isVertical == vertical {
+            newGroup.autoresizingMask = [.width, .height]
+            let oldExtents = rsv.arrangedSubviews.map { extent($0, in: rsv) }
+            let at = before ? 0 : rsv.arrangedSubviews.count
+            rsv.insertArrangedSubview(newGroup, at: at)
+            rsv.adjustSubviews()
+            rebalanceAfterInsert(rsv, insertedAt: at, oldExtents: oldExtents, sizeHint: nil)
+            newGroup.add(panel); setActive(newGroup)
+            cleanupEmpty(from)
+            refreshEmpty()
+            return
+        }
         let sv = DockSplitView(); sv.isVertical = vertical; sv.dividerStyle = .thin
         let frame = container.bounds
         root.removeFromSuperview(); root.autoresizingMask = [.width, .height]
