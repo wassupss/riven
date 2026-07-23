@@ -34,7 +34,7 @@ enum I18n {
         "common.save": ("저장", "Save"), "common.dontSave": ("저장 안 함", "Don't Save"),
         "common.delete": ("삭제", "Delete"), "common.rename": ("이름 변경", "Rename"),
         // panel titles
-        "title.editor": ("코드", "Code"), "title.preview": ("프리뷰", "Preview"),
+        "title.editor": ("코드", "Code"), "title.preview": ("브라우저", "Browser"),
         "title.search": ("검색", "Search"), "title.git": ("소스 컨트롤", "Source Control"),
         "title.changes": ("변경 사항", "Changes"), "title.terminal": ("터미널", "Terminal"),
         "title.explorer": ("탐색기", "Explorer"),
@@ -132,7 +132,7 @@ enum I18n {
         "menu.selectAll": ("모두 선택", "Select All"),
         "menu.view": ("보기", "View"), "menu.toggleSidebar": ("사이드바 토글", "Toggle Sidebar"),
         "menu.search": ("검색", "Search"), "menu.git": ("소스 컨트롤", "Source Control"),
-        "menu.preview": ("미리보기", "Preview"), "menu.changes": ("변경 사항", "Changes"),
+        "menu.preview": ("브라우저", "Browser"), "menu.changes": ("변경 사항", "Changes"),
         "menu.focusEditor": ("에디터로 포커스", "Focus Editor"), "menu.focusTerminal": ("터미널로 포커스", "Focus Terminal"),
         "menu.popout": ("패널 새 창으로", "Pop Out Panel"),
         "menu.splitEditor": ("에디터 분할", "Split Editor"),

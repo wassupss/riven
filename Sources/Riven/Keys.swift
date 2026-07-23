@@ -24,7 +24,7 @@ enum Keys {
         .init(id: "view.toggleSidebar", label: "사이드바 토글", def: "cmd+b", cat: "riven"),
         .init(id: "view.search", label: "검색", def: "cmd+shift+f", cat: "riven"),
         .init(id: "view.git", label: "소스 컨트롤", def: "cmd+shift+g", cat: "riven"),
-        .init(id: "view.preview", label: "미리보기", def: "cmd+shift+v", cat: "riven"),
+        .init(id: "view.preview", label: "브라우저", def: "cmd+shift+v", cat: "riven"),
         .init(id: "view.changes", label: "변경 사항", def: "cmd+shift+c", cat: "riven"),
         .init(id: "view.focusEditor", label: "에디터로 포커스", def: "cmd+e", cat: "riven"),
         .init(id: "view.focusTerminal", label: "터미널로 포커스", def: "cmd+j", cat: "riven"),
