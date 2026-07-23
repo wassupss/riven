@@ -142,6 +142,9 @@ final class SupabaseAuth {
                            backing: .buffered, defer: false)
         win.title = "로그인"
         win.center(); win.contentView = web; win.isReleasedWhenClosed = false
+        // The Settings window is a floating panel; keep the OAuth window ABOVE it so the
+        // GitHub login isn't hidden behind Settings.
+        win.level = .modalPanel
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         oauthWindow = win

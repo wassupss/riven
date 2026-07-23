@@ -4,7 +4,7 @@ import GhosttyKit
 
 // A Metal-backed NSView hosting one libghostty surface (GPU terminal + real
 // shell spawned by libghostty). Working directory can be set per instance.
-final class TerminalView: NSView {
+final class TerminalView: NSView, NSMenuItemValidation {
     private var surface: ghostty_surface_t?
     private var link: CVDisplayLink?
     private let workdir: String?
@@ -266,6 +266,24 @@ final class TerminalView: NSView {
         _ = "select_all".withCString { ghostty_surface_binding_action(s, $0, UInt(strlen($0))) }
     }
     @objc private func ctxClear() { clearScreen() }
+
+    // Standard Edit-menu shortcuts route to the terminal clipboard when it has focus.
+    // The menu items target the responder chain (copy:/paste:/cut:/selectAll:), which the
+    // ghostty surface view doesn't implement — so ⌘C/⌘V/⌘X/⌘A did nothing. Bridge them.
+    @objc func copy(_ sender: Any?) { ctxCopy() }
+    @objc func paste(_ sender: Any?) { ctxPaste() }
+    @objc func cut(_ sender: Any?) { ctxCopy() }              // a terminal has no cut → copy
+    override func selectAll(_ sender: Any?) { ctxSelectAll() }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)), #selector(cut(_:)):
+            return surface.map { ghostty_surface_has_selection($0) } ?? false
+        case #selector(paste(_:)):
+            return NSPasteboard.general.string(forType: .string) != nil
+        default:
+            return true
+        }
+    }
 
     // DEBUG: directly send a keycode-only key event (e.g. backspace 0x33) to
     // reproduce key-path crashes headlessly.
