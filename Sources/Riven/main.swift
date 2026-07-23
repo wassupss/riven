@@ -838,7 +838,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.group == nil || p.group?.manager !== dock {
             // Append to the rightmost group so the editor sits to the right of the
             // terminals and BEFORE right-side aux panels are restored (stable order).
-            dock.addPanel(p, reference: dock.groups.last, direction: .right)
+            // The editor is the dominant content surface: hint it to half the dock
+            // regardless of how many terminal columns exist (a bare 1/N share would
+            // make the editor a sliver next to 2-3 terminals).
+            dock.addPanel(p, reference: dock.groups.last, direction: .right,
+                          sizeHint: dock.container.bounds.width * 0.5)
         } else {
             p.group?.select(id: "editor")
         }
@@ -1752,10 +1756,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // so panels append/prepend in a stable order instead of wedging between the
         // terminal and the editor (which reordered them on every workspace switch).
         let ref = side == .left ? dock.groups.first : dock.groups.last
-        dock.addPanel(panel, reference: ref, direction: side)
         // Aux panels are narrow by default (riven pins Changes/search/git ~280px),
-        // not a 50/50 split.
-        setAuxPanelWidth(panel, id == "git" ? 720 : 300)   // source control (graph + changes) needs width
+        // not a 50/50 split — the sizeHint carves exactly that width out on add so
+        // the main area isn't disturbed first; setAuxPanelWidth stays as a fallback
+        // for the wrap-split path where layout lands a runloop later.
+        let width: CGFloat = id == "git" ? 720 : 300       // source control (graph + changes) needs width
+        dock.addPanel(panel, reference: ref, direction: side, sizeHint: width)
+        setAuxPanelWidth(panel, width)
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
