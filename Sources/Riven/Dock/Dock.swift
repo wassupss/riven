@@ -277,8 +277,13 @@ final class DockManager {
         guard n >= 2, oldExtents.count == n else { return }
         let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
         guard total > 0 else { return }
-        let sum = oldExtents.reduce(0, +)
-        let target = sum > 0 ? oldExtents.map { $0 * total / sum }
+        // 측정값이 0인 형제(레이아웃 확정 전에 잰 값)를 그대로 비례 배분하면 0이 고착된다.
+        // 최소폭을 바닥으로 깔고 나눈다.
+        let minE: CGFloat = 80
+        var base = oldExtents
+        if total > minE * CGFloat(n) { base = base.map { max($0, minE) } }
+        let sum = base.reduce(0, +)
+        let target = sum > 0 ? base.map { $0 * total / sum }
                              : Array(repeating: total / CGFloat(n), count: n)
         setExtents(sv, target)
     }
@@ -484,6 +489,7 @@ final class DockManager {
             again = false
             // 1) 빈 그룹은 어디에 있든 접는다 — cleanupEmpty가 붕괴/승격까지 처리한다.
             for g in groups where g.panels.isEmpty && g.superview is NSSplitView {
+                container.layoutSubtreeIfNeeded()   // 형제 크기를 재기 전에 프레임 확정
                 cleanupEmpty(g); again = true; break
             }
             if again { continue }
@@ -539,12 +545,14 @@ final class DockManager {
         let n = sv.arrangedSubviews.count
         if n >= 2 {
             let total = (sv.isVertical ? sv.bounds.width : sv.bounds.height) - CGFloat(n - 1) * sv.dividerThickness
-            let exts = sv.arrangedSubviews.map { extent($0, in: sv) }
+            var exts = sv.arrangedSubviews.map { extent($0, in: sv) }
+            // 0으로 무너진 팬은 비례 계산(0 × 배율 = 0)으로는 절대 되살아나지 않는다 —
+            // 재분배가 돌수록 오히려 고착된다. 비례로 맞추기 전에 최소폭을 바닥으로 깔아
+            // 0을 먼저 없앤 뒤 정확히 채운다.
+            let minE: CGFloat = 80
+            if total > minE * CGFloat(n) { exts = exts.map { max($0, minE) } }
             let sum = exts.reduce(0, +)
-            // 1pt 이상 어긋나면 현재 비율을 유지한 채 정확히 채우도록 재배분.
-            if total > 0, sum > 0, abs(sum - total) > 1 {
-                setExtents(sv, exts.map { $0 * total / sum })
-            }
+            if total > 0, sum > 0 { setExtents(sv, exts.map { $0 * total / sum }) }
         }
         for c in sv.arrangedSubviews { c.layoutSubtreeIfNeeded(); fillGaps(c) }
     }
