@@ -26,9 +26,9 @@ enum UsageUI {
         let top = NSStackView()
         top.orientation = .horizontal; top.distribution = .fill
         let lab = NSTextField(labelWithString: label)
-        lab.font = .systemFont(ofSize: 11); lab.textColor = Theme.fgDim
+        lab.font = UIScale.font(11); lab.textColor = Theme.fgDim
         let pct = NSTextField(labelWithString: "\(rem)%")
-        pct.font = .systemFont(ofSize: 11); pct.textColor = color; pct.alignment = .right
+        pct.font = UIScale.font(11); pct.textColor = color; pct.alignment = .right
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         top.addArrangedSubview(lab); top.addArrangedSubview(spacer); top.addArrangedSubview(pct)
 
@@ -54,7 +54,7 @@ enum UsageUI {
         track.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         if let resets {
             let r = NSTextField(labelWithString: resets)
-            r.font = .systemFont(ofSize: 10); r.textColor = Theme.fgDim
+            r.font = UIScale.font(10); r.textColor = Theme.fgDim
             col.addArrangedSubview(r)
         }
         return col
@@ -72,7 +72,7 @@ enum UsageUI {
         if let w = bar("주간 (7일)", limits?.weeklyRemaining, resetIn(limits?.weeklyResetsAt)) { stack.addArrangedSubview(w) }
         if let today, today.totalTokens > 0 {
             let t = NSTextField(labelWithString: "오늘 · $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))")
-            t.font = .systemFont(ofSize: 10); t.textColor = Theme.fgDim
+            t.font = UIScale.font(10); t.textColor = Theme.fgDim
             stack.addArrangedSubview(t)
         }
         // Each bar's inner rows constrain to the stack width.
@@ -85,7 +85,7 @@ enum UsageUI {
 
     private static func head(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text.uppercased())
-        l.font = .systemFont(ofSize: 10, weight: .semibold); l.textColor = Theme.fgDim
+        l.font = UIScale.font(10, .semibold); l.textColor = Theme.fgDim
         return l
     }
 
@@ -102,7 +102,7 @@ enum UsageUI {
         pin.image = NSImage(systemSymbolName: "pin", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
         pin.imagePosition = .imageLeading
-        pin.isBordered = false; pin.font = .systemFont(ofSize: 10); pin.contentTintColor = Theme.fgDim
+        pin.isBordered = false; pin.font = UIScale.font(10); pin.contentTintColor = Theme.fgDim
         let pinHandler = PinTarget(onPin); pin.target = pinHandler; pin.action = #selector(PinTarget.fire)
         objc_setAssociatedObject(pin, &PinTarget.key, pinHandler, .OBJC_ASSOCIATION_RETAIN)
         let headRow = NSStackView(views: [title, NSView(), pin])
@@ -122,12 +122,12 @@ enum UsageUI {
             stack.addArrangedSubview(head("오늘 사용량 — $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))"))
             for m in today.perModel.prefix(6) {
                 let name = NSTextField(labelWithString: m.name)
-                name.font = .monospacedSystemFont(ofSize: 10, weight: .regular); name.textColor = Theme.fgDim
+                name.font = UIScale.mono(10, .regular); name.textColor = Theme.fgDim
                 name.lineBreakMode = .byTruncatingTail
                 let tok = NSTextField(labelWithString: Usage.fmtTokens(m.input + m.output + m.cacheWrite + m.cacheRead))
-                tok.font = .systemFont(ofSize: 11); tok.textColor = Theme.fgDim
+                tok.font = UIScale.font(11); tok.textColor = Theme.fgDim
                 let cost = NSTextField(labelWithString: "$\(String(format: "%.2f", m.cost))")
-                cost.font = .systemFont(ofSize: 11); cost.textColor = Theme.fg; cost.alignment = .right
+                cost.font = UIScale.font(11); cost.textColor = Theme.fg; cost.alignment = .right
                 let sp = NSView(); sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
                 let r = NSStackView(views: [name, sp, tok, cost])
                 r.orientation = .horizontal; r.spacing = 10
@@ -137,7 +137,7 @@ enum UsageUI {
             }
         }
         let note = NSTextField(labelWithString: "Claude Code 로컬 로그 기반 · API 가격 추정")
-        note.font = .systemFont(ofSize: 10); note.textColor = Theme.fgDim
+        note.font = UIScale.font(10); note.textColor = Theme.fgDim
         stack.addArrangedSubview(note)
 
         headRow.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true

@@ -4,7 +4,7 @@ import AppKit
 // Query + replace fields, results grouped by file, click a match to open the
 // file at that line. Lives in the sidebar's lower region (native has no
 // dockview grid, so search swaps in where the explorer sits).
-final class SearchPanel: NSView, Themable {
+final class SearchPanel: NSView, Themable, Scalable {
     private let titleLabel = NSTextField(labelWithString: "")
     private let replaceBtn = NSButton()
     private let queryField = NSTextField()
@@ -24,7 +24,7 @@ final class SearchPanel: NSView, Themable {
 
         let title = titleLabel
         title.stringValue = t("title.search")
-        title.font = .systemFont(ofSize: 11, weight: .medium)
+        title.font = UIScale.font(11, .medium)
         title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -35,10 +35,12 @@ final class SearchPanel: NSView, Themable {
 
         replaceBtn.title = t("search.replaceAll")
         replaceBtn.target = self; replaceBtn.action = #selector(runReplace)
-        replaceBtn.bezelStyle = .roundRect; replaceBtn.font = .systemFont(ofSize: 11)
+        replaceBtn.bezelStyle = .roundRect; replaceBtn.font = UIScale.font(11)
         replaceBtn.controlSize = .small; replaceBtn.translatesAutoresizingMaskIntoConstraints = false
+        // Let the button shrink/truncate when narrow so the replace field keeps room.
+        replaceBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        summary.font = .systemFont(ofSize: 10); summary.textColor = Theme.fgDim
+        summary.font = UIScale.font(10); summary.textColor = Theme.fgDim
         summary.translatesAutoresizingMaskIntoConstraints = false
 
         resultsStack.orientation = .vertical
@@ -74,7 +76,7 @@ final class SearchPanel: NSView, Themable {
             resultsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             resultsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
-        Theme.register(self)
+        Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.titleLabel.stringValue = t("title.search")
             self?.replaceBtn.title = t("search.replaceAll")
@@ -99,10 +101,16 @@ final class SearchPanel: NSView, Themable {
         summary.textColor = Theme.fgDim
         renderResults(lastResult)   // recolor existing rows
     }
+    func applyScale() {
+        titleLabel.font = UIScale.font(11, .medium)
+        queryField.font = UIScale.font(12); replaceField.font = UIScale.font(12)
+        replaceBtn.font = UIScale.font(11); summary.font = UIScale.font(10)
+        renderResults(lastResult)   // rebuild result rows at the new scale
+    }
 
     private func style(_ tf: NSTextField, placeholder: String) {
         tf.placeholderString = placeholder
-        tf.font = .systemFont(ofSize: 12)
+        tf.font = UIScale.font(12)
         tf.textColor = Theme.fg
         tf.backgroundColor = Theme.bg3
         tf.isBordered = false
@@ -125,7 +133,7 @@ final class SearchPanel: NSView, Themable {
                 self.renderResults(res)
                 let fileCount = Set(res.matches.map { $0.file }).count
                 self.summary.stringValue = res.matches.isEmpty ? t("search.noResults")
-                    : "\(res.matches.count)개\(res.truncated ? "+" : "") · \(fileCount)개 파일"
+                    : t("search.summary", ["n": "\(res.matches.count)\(res.truncated ? "+" : "")", "files": fileCount])
             }
         }
     }
@@ -136,16 +144,16 @@ final class SearchPanel: NSView, Themable {
         if q.isEmpty || (lastResult?.matches.isEmpty ?? true) { return }
         let fileCount = Set(lastResult?.matches.map { $0.file } ?? []).count
         let alert = NSAlert()
-        alert.messageText = "\"\(q)\"을(를) \(fileCount)개 파일에서 바꿀까요?"
-        alert.informativeText = "디스크에 즉시 기록되며 되돌리기 어렵습니다."
-        alert.addButton(withTitle: "바꾸기"); alert.addButton(withTitle: "취소")
+        alert.messageText = t("search.replaceConfirm", ["q": q, "files": fileCount])
+        alert.informativeText = t("search.replaceBody")
+        alert.addButton(withTitle: t("search.replace")); alert.addButton(withTitle: t("common.cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let repl = replaceField.stringValue
-        summary.stringValue = "바꾸는 중…"
+        summary.stringValue = t("search.replacing")
         DispatchQueue.global(qos: .userInitiated).async {
             let r = Search.replaceInFiles(root: root, query: q, replacement: repl)
             DispatchQueue.main.async {
-                self.summary.stringValue = "\(r.replacements)곳 · \(r.files)개 파일 변경됨"
+                self.summary.stringValue = t("search.replaceDone", ["n": r.replacements, "files": r.files])
                 self.runSearch()
             }
         }
@@ -170,7 +178,7 @@ final class SearchPanel: NSView, Themable {
     private func fileHeader(_ file: String, root: URL) -> NSView {
         let rel = file.hasPrefix(root.path) ? String(file.dropFirst(root.path.count + 1)) : file
         let l = NSTextField(labelWithString: rel)
-        l.font = .systemFont(ofSize: 11, weight: .medium)
+        l.font = UIScale.font(11, .medium)
         l.textColor = Theme.fgDim
         l.lineBreakMode = .byTruncatingMiddle
         l.toolTip = file
@@ -180,11 +188,11 @@ final class SearchPanel: NSView, Themable {
 
     private func matchRow(_ m: Search.Match) -> NSView {
         let l = NSTextField(labelWithString: "")
-        l.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        l.font = UIScale.mono(11, .regular)
         l.lineBreakMode = .byTruncatingTail
         let attr = NSMutableAttributedString()
         attr.append(NSAttributedString(string: "\(m.line)  ",
-            attributes: [.foregroundColor: Theme.fgDim, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)]))
+            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.mono(10, .regular)]))
         let text = m.text
         let chars = Array(text)
         let start = max(0, min(m.matchStart, chars.count))

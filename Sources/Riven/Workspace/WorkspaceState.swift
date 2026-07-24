@@ -9,7 +9,7 @@ final class WorkspaceState {
     let url: URL
     var openTabs: [String] = []          // editor file paths, in order
     var activeTab: String?
-    var openAux: Set<String> = []        // which aux panels (search/git/preview/changes) were open
+    var openAux: Set<String> = []        // which aux panels (search/git/preview/changes/api) were open
     var dock: DockManager?               // this workspace's panel layout
     var terminalSeq = 0                  // for unique term-N panel ids
     // 이전 세션의 독 레이아웃 스냅샷 (DockManager.snapshot() 형식: 스플릿 트리 +

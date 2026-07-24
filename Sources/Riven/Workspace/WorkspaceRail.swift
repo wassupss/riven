@@ -13,7 +13,7 @@ final class WorkspaceRail: NSView, Themable {
     private var active: URL?
     private var customNames: [URL: String] = [:]
     private var activities: [URL: PaneActivity] = [:]
-    private var dots: [URL: NSView] = [:]
+    private var dots: [URL: StatusIndicator] = [:]
     private var shortcutLabels: [URL: NSTextField] = [:]
     private var flagsMonitor: Any?
 
@@ -26,23 +26,10 @@ final class WorkspaceRail: NSView, Themable {
         }
     }
 
-    // Update a workspace's status dot without rebuilding the whole rail.
+    // Update a workspace's status indicator without rebuilding the whole rail.
     func setActivity(_ url: URL, _ a: PaneActivity) {
         activities[url] = a
-        if let dot = dots[url] { applyActivity(dot, a) }
-    }
-    private func applyActivity(_ dot: NSView, _ a: PaneActivity) {
-        dot.layer?.removeAnimation(forKey: "pulse")
-        switch a {
-        case .idle: dot.layer?.backgroundColor = Theme.fgDim.cgColor; dot.layer?.opacity = 1
-        case .busy: dot.layer?.backgroundColor = Theme.accent2.cgColor; dot.layer?.opacity = 1   // violet
-        case .attn:
-            dot.layer?.backgroundColor = Theme.warning.cgColor                                   // amber, pulsing
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1; pulse.toValue = 0.3; pulse.duration = 0.7
-            pulse.autoreverses = true; pulse.repeatCount = .infinity
-            dot.layer?.add(pulse, forKey: "pulse")
-        }
+        dots[url]?.set(a)
     }
     var onOpen: (() -> Void)?
     var onSelect: ((URL) -> Void)?
@@ -241,13 +228,12 @@ final class WorkspaceRail: NSView, Themable {
         card.onContextMenu = { [weak self] in self?.cardMenu(url) }
         card.translatesAutoresizingMaskIntoConstraints = false
 
-        // Row 1: activity dot (7px, riven .ws-card-dot) + workspace name. Color reflects
-        // this workspace's rollup: idle grey / busy violet / attn amber (pulsing).
-        let dot = NSView(); dot.wantsLayer = true
-        dot.layer?.cornerRadius = 3.5
+        // Row 1: activity indicator (icon + animation) + workspace name. State rollup:
+        // idle = faint dot · busy = spinning loader (violet) · attn = green checkmark (done).
+        let dot = StatusIndicator()
         dot.translatesAutoresizingMaskIntoConstraints = false
         dots[url] = dot
-        applyActivity(dot, activities[url] ?? .idle)
+        dot.set(activities[url] ?? .idle)
         // Same-path instances carry a #2/#3 fragment — show it so duplicate folders are
         // distinguishable in the rail.
         let baseName = customNames[url] ?? url.lastPathComponent
@@ -296,11 +282,11 @@ final class WorkspaceRail: NSView, Themable {
             kbd.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
             kbd.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            dot.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
+            dot.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
             dot.centerYAnchor.constraint(equalTo: name.centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 7),
-            dot.heightAnchor.constraint(equalToConstant: 7),
-            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            dot.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
+            dot.heightAnchor.constraint(equalToConstant: UIScale.pt(12)),
+            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
             name.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -9),
             name.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
             path.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
@@ -444,4 +430,75 @@ final class WSCard: NSView, NSDraggingSource {
     }
 
     override func menu(for event: NSEvent) -> NSMenu? { onContextMenu?() }
+}
+
+// Workspace-card status indicator: a faint dot (idle), a native spinning loader
+// (busy / in-progress), or a green checkmark (attn / done, with a pop on arrival).
+// Replaces the old color-only dot so each state reads at a glance.
+final class StatusIndicator: NSView {
+    private let icon = NSImageView()
+    private let spin = CAShapeLayer()   // custom ¾-arc loader — size-controllable (unlike NSProgressIndicator's 16px floor)
+    private var current: PaneActivity?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor), icon.trailingAnchor.constraint(equalTo: trailingAnchor),
+            icon.topAnchor.constraint(equalTo: topAnchor), icon.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        spin.fillColor = nil; spin.lineWidth = 1.5; spin.lineCap = .round
+        spin.strokeColor = Theme.accent2.cgColor; spin.isHidden = true
+        layer?.addSublayer(spin)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        spin.frame = bounds
+        let r = max(1, min(bounds.width, bounds.height) / 2 - 1.5)
+        let p = CGMutablePath()
+        p.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: r,
+                 startAngle: -.pi / 2, endAngle: .pi, clockwise: false)   // 3/4 turn
+        spin.path = p
+    }
+
+    func set(_ a: PaneActivity) {
+        let changed = current != a; current = a
+        switch a {
+        case .busy:
+            icon.isHidden = true; spin.isHidden = false
+            spin.strokeColor = Theme.accent2.cgColor
+            if spin.animation(forKey: "spin") == nil {
+                let rot = CABasicAnimation(keyPath: "transform.rotation.z")
+                rot.fromValue = 0; rot.toValue = -Double.pi * 2
+                rot.duration = 0.85; rot.repeatCount = .infinity
+                spin.add(rot, forKey: "spin")
+            }
+        case .idle:
+            spin.removeAnimation(forKey: "spin"); spin.isHidden = true
+            icon.isHidden = false
+            icon.image = symbol("circle.fill", 5); icon.contentTintColor = Theme.fgDim
+        case .attn:
+            spin.removeAnimation(forKey: "spin"); spin.isHidden = true
+            icon.isHidden = false
+            icon.image = symbol("checkmark.circle.fill", 11, .semibold); icon.contentTintColor = Theme.success
+            if changed { pop() }
+        }
+    }
+    private func symbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: weight))
+    }
+    private func pop() {
+        icon.wantsLayer = true
+        guard let l = icon.layer else { return }
+        l.removeAnimation(forKey: "pop")
+        let s = CAKeyframeAnimation(keyPath: "transform.scale")
+        s.values = [0.5, 1.25, 1.0]; s.keyTimes = [0, 0.6, 1]; s.duration = 0.3
+        s.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        l.add(s, forKey: "pop")
+    }
 }

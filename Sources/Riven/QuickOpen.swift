@@ -27,7 +27,7 @@ final class QuickOpenPanel: NSPanel, NSTableViewDataSource, NSTableViewDelegate 
 
         // Search input (riven .palette-input: 44px, transparent, hairline bottom).
         field.placeholderString = "파일 검색…"
-        field.font = .systemFont(ofSize: 15)
+        field.font = UIScale.font(15)
         field.textColor = Theme.fg
         field.drawsBackground = false
         field.isBordered = false
@@ -167,9 +167,9 @@ private final class FileResultRow: NSView {
         super.init(frame: frame)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
-        name.font = .systemFont(ofSize: 13); name.textColor = Theme.fg
+        name.font = UIScale.font(13); name.textColor = Theme.fg
         name.translatesAutoresizingMaskIntoConstraints = false
-        dir.font = .monospacedSystemFont(ofSize: 10, weight: .regular); dir.textColor = Theme.fgDim
+        dir.font = UIScale.mono(10, .regular); dir.textColor = Theme.fgDim
         dir.lineBreakMode = .byTruncatingMiddle
         dir.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon); addSubview(name); addSubview(dir)

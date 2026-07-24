@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var searchPanel: SearchPanel!
     var gitPanel: GitPanel!
     var previewPanel: PreviewPanel!
+    var apiPanel: APIClientPanel!
     var changesPanel: ChangesPanel!
     var sourceControl: SourceControlView!   // git panel = commit graph + working changes
     var sidebarLower: NSView!
@@ -234,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case "search": self.toggleDockPanel("search")
                 case "git": self.toggleDockPanel("git")
                 case "preview": self.toggleDockPanel("preview")
+                case "api": self.toggleDockPanel("api")
                 case "changes": self.toggleDockPanel("changes")
                 default: break
                 }
@@ -382,6 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         previewPanel.onCapture = { [weak self] path in
             self?.deliverToAgent(" " + path + " ")   // queues + opens the picker if no agent is running
         }
+        apiPanel = APIClientPanel(frame: .zero)
         changesPanel = ChangesPanel(frame: .zero)
         changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
         changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
@@ -456,7 +459,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hIcon = NSImageView(); hIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         hIcon.contentTintColor = Theme.fgDim; hIcon.translatesAutoresizingMaskIntoConstraints = false
-        let hLabel = NSTextField(labelWithString: ""); hLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        let hLabel = NSTextField(labelWithString: ""); hLabel.font = UIScale.font(12, .medium)
         hLabel.textColor = Theme.fg; hLabel.translatesAutoresizingMaskIntoConstraints = false
         headerLabel = hLabel; headerIcon = hIcon
         dockHeader.addSubview(hIcon); dockHeader.addSubview(hLabel)
@@ -467,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         uIcon.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         uIcon.contentTintColor = Theme.fgDim; uIcon.translatesAutoresizingMaskIntoConstraints = false
-        let uLabel = NSTextField(labelWithString: ""); uLabel.font = .systemFont(ofSize: 11)
+        let uLabel = NSTextField(labelWithString: ""); uLabel.font = UIScale.font(11)
         uLabel.textColor = Theme.fgDim; uLabel.translatesAutoresizingMaskIntoConstraints = false
         headerUsage = uLabel
         let usageItem = NSStackView(views: [uIcon, uLabel])
@@ -533,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addBtn.imagePosition = .imageLeading
         addBtn.isBordered = false
         addBtn.contentTintColor = Theme.fgDim
-        addBtn.font = .systemFont(ofSize: 12, weight: .medium)
+        addBtn.font = UIScale.font(12, .medium)
         addBtn.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(addBtn)
         NSLayoutConstraint.activate([
@@ -695,7 +698,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Re-title open singleton/aux panels for the current language, then repaint tabs.
     private func relocalizeOpenPanels() {
-        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "changes": "title.changes"]
+        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "api": "title.api", "changes": "title.changes"]
         for (id, p) in auxDockPanels { if let k = key[id] { p.title = t(k) } }
         editorDockPanel?.title = t("title.editor")
         for ws in workspaces {
@@ -875,7 +878,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func splitTerminal(_ dir: DockDir) {       // ⌘D right / ⌘⇧D below
         guard let dock = activeDock, let ws = workspace else { return }
         let p = makeTerminalPanel(for: state(for: ws))
-        dock.addPanel(p, reference: currentTerminalPanel()?.group ?? dock.activeGroup, direction: dir)
+        // Split the FOCUSED group (the pane you're looking at), not the first terminal.
+        dock.addPanel(p, reference: dock.activeGroup ?? currentTerminalPanel()?.group, direction: dir)
         (p.content as? TerminalView)?.focusTerminal()
     }
     // ⌃1..9 — 활성 패널 그룹 안의 N번째 탭으로 이동한다. 예전에는 모든 그룹의 터미널을
@@ -1071,9 +1075,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !workspaces.contains(url) { workspaces.append(url) }
         let st = state(for: url)
 
-        // Remember which aux panels the OUTgoing workspace had open, so switching back
-        // restores them (they don't just vanish).
-        if let old = workspace, old != url { state(for: old).openAux = Set(auxDockPanels.keys) }
+        // Snapshot the OUTgoing workspace's FULL dock layout (split tree + pane sizes% +
+        // panel types, incl. editor/aux still in place) so returning restores it EXACTLY —
+        // not just "which aux were open". Must run BEFORE detaching the singletons below.
+        if let old = workspace, old != url {
+            state(for: old).openAux = Set(auxDockPanels.keys)
+            state(for: old).pendingLayout = activeDock?.snapshot()
+        }
 
         // 전환하면 공유 에디터 웹뷰의 모델을 정리하므로(#7, rebuildTabs), 저장 안 된
         // 탭은 먼저 디스크에 보존한다. 저장이 도착하면 save()가 스테일 디스크 내용으로
@@ -1094,7 +1102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 old.recordPlacement(of: ep); old.detach(ep)
             }
             for (_, ap) in auxDockPanels where ap.group?.manager === old {
-                old.recordPlacement(of: ap); old.detach(ap)
+                old.detach(ap)   // singleton view leaves this workspace's dock; re-tabs into focus on return
             }
         }
         auxDockPanels.removeAll()
@@ -1108,18 +1116,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dockHost.addSubview(dock.container)
         activeDock = dock
         workspace = url
+        // Invariant: a non-empty dock must have a LIVE activeGroup. Detaching the outgoing
+        // workspace's aux panels can leave activeGroup (a weak ref) dangling → nil, which
+        // makes the next addPanel fall through to setRoot() and wipe the terminals. Re-point
+        // it at a live pane before anything restores. Also protects the ⌘T/agent add paths.
+        if dock.activeGroup == nil, let g = dock.groups.first(where: { !$0.panels.isEmpty }) { dock.setActive(g) }
         // 이전 세션의 독 레이아웃 전체(스플릿 트리/팬 크기/탭 구성)를 재현한다 — 독을
         // 처음 만들 때 한 번. 서술자 → 패널: 터미널은 새로 만들고(에이전트는 이름으로
         // 되찾음), 에디터/aux 싱글턴은 공유 인스턴스를 스냅샷의 자리에 부착한다.
         // 지워진 에이전트는 nil → 그 패널만 빠지고 나머지 레이아웃은 그대로 선다.
+        // Restore the EXACT saved layout — on first visit (session restore) AND on every
+        // return (the snapshot taken on switch-away). Terminals already alive in this dock
+        // are REUSED (their shells survive); only missing ones are freshly spawned.
         var restoredLayout = false
-        if isNew, let snap = st.pendingLayout {
+        if let snap = st.pendingLayout {
             st.pendingLayout = nil
             let agents = AgentDiscovery.available()
+            var liveTerms = dock.groups.flatMap { $0.panels }.filter { $0.content is TerminalView }
             restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
                 guard let self else { return nil }
                 if desc.hasPrefix("term:") {
                     let name = String(desc.dropFirst("term:".count))
+                    if let i = liveTerms.firstIndex(where: { ($0.agentName ?? "") == name }) {
+                        return liveTerms.remove(at: i)   // reuse the live terminal (keep its shell)
+                    }
                     if name.isEmpty { return self.makeTerminalPanel(for: st) }
                     guard let agent = agents.first(where: { $0.name == name }) else { return nil }
                     return self.makeTerminalPanel(for: st, agent: agent)
@@ -1159,7 +1179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 기록된 자리로 복원된다 (#4). 레이아웃 복원이 이미 배치했다면 건너뛴다
         // (기본 가장자리에 또 붙이지 않게).
         if !restoredLayout {
-            for id in ["search", "git", "preview", "changes"] where st.openAux.contains(id) {
+            for id in ["search", "git", "preview", "changes", "api"] where st.openAux.contains(id) {
                 if auxDockPanels[id] == nil { toggleDockPanel(id) }
             }
         }
@@ -1174,9 +1194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
         let hs = NSMutableAttributedString(string: url.lastPathComponent,
-            attributes: [.foregroundColor: Theme.fg, .font: NSFont.systemFont(ofSize: 12, weight: .medium)])
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12, .medium)])
         hs.append(NSAttributedString(string: "   \(short)",
-            attributes: [.foregroundColor: Theme.fgDim, .font: NSFont.systemFont(ofSize: 11)]))
+            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
         headerLabel?.attributedStringValue = hs
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
         refreshGit()
@@ -1187,7 +1207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         agentWatch?.stop()
         agentWatch = AgentWatch(root: url) { [weak self] path in
             self?.handleFileChange(path)
-            self?.scheduleExplorerRefresh()   // reflect external create/delete/rename in the tree
+            // Skip churn inside ignored dirs (.git/node_modules/.build/…) — those aren't
+            // shown in the tree, so rebuilding on them just wasted work + risked flicker.
+            if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
         }
     }
 
@@ -1713,7 +1735,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let termItem = NSMenuItem(); mainMenu.addItem(termItem)
         let termMenu = NSMenu(title: t("menu.terminal"))
         addRemap(termMenu, t("menu.newTerminal"), "term.new", #selector(newTerminalMenu))
-        add(termMenu, t("run.title"), #selector(runScriptMenu), "r", [.command])
+        addRemap(termMenu, t("run.title"), "run.script", #selector(runScriptMenu))
         addRemap(termMenu, t("menu.clearTerminal"), "term.clear", #selector(clearTerminalMenu))
         addRemap(termMenu, t("menu.splitRight"), "term.splitRight", #selector(splitRightMenu))
         addRemap(termMenu, t("menu.splitDown"), "term.splitDown", #selector(splitDownMenu))
@@ -1721,10 +1743,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addRemap(termMenu, t("menu.prevTerminal"), "term.prev", #selector(prevTerminalMenu))
         termMenu.addItem(.separator())
         // Directional focus between split panes (⌃⌘←→↑↓) — riven focusGroupInDirection.
-        add(termMenu, t("menu.paneLeft"), #selector(focusPaneLeftMenu), "\u{2190}", [.command, .control])
-        add(termMenu, t("menu.paneRight"), #selector(focusPaneRightMenu), "\u{2192}", [.command, .control])
-        add(termMenu, t("menu.paneUp"), #selector(focusPaneUpMenu), "\u{2191}", [.command, .control])
-        add(termMenu, t("menu.paneDown"), #selector(focusPaneDownMenu), "\u{2193}", [.command, .control])
+        addRemap(termMenu, t("menu.paneLeft"), "pane.left", #selector(focusPaneLeftMenu))
+        addRemap(termMenu, t("menu.paneRight"), "pane.right", #selector(focusPaneRightMenu))
+        addRemap(termMenu, t("menu.paneUp"), "pane.up", #selector(focusPaneUpMenu))
+        addRemap(termMenu, t("menu.paneDown"), "pane.down", #selector(focusPaneDownMenu))
         termMenu.addItem(.separator())
         // Select terminal 1..9 (⌃N on macOS, keeping ⌘N for workspaces) — riven terminal.select.
         for i in 1...9 {
@@ -1847,22 +1869,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let window else { return }
         if quickPanel == nil { quickPanel = QuickPanel() }
         var actions: [QuickAction] = [
-            QuickAction(title: "새 터미널", hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
+            QuickAction(title: t("menu.newTerminal"), hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
         ]
         // Installed AI agents (scanned from PATH) — riven's AgentPicker entries.
         for a in AgentDiscovery.available() {
-            actions.append(QuickAction(title: a.name, hint: "에이전트", symbol: a.symbol) { [weak self] in
+            actions.append(QuickAction(title: a.name, hint: t("agent.label"), symbol: a.symbol) { [weak self] in
                 self?.launchAgent(a)
             })
         }
         actions.append(contentsOf: [
-            QuickAction(title: "에디터", hint: "", symbol: "doc.text") { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() },
-            QuickAction(title: "검색", hint: "⌘⇧F", symbol: "magnifyingglass") { [weak self] in self?.toggleDockPanel("search") },
-            QuickAction(title: "소스 컨트롤", hint: "⌘⇧G", symbol: "arrow.triangle.branch") { [weak self] in self?.toggleDockPanel("git") },
-            QuickAction(title: "브라우저", hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
-            QuickAction(title: "변경사항", hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
-            QuickAction(title: "새 워크스페이스", hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
-            QuickAction(title: "사이드바 토글", hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
+            QuickAction(title: t("title.editor"), hint: "", symbol: "doc.text") { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() },
+            QuickAction(title: t("title.search"), hint: "⌘⇧F", symbol: "magnifyingglass") { [weak self] in self?.toggleDockPanel("search") },
+            QuickAction(title: t("title.git"), hint: "⌘⇧G", symbol: "arrow.triangle.branch") { [weak self] in self?.toggleDockPanel("git") },
+            QuickAction(title: t("title.preview"), hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
+            QuickAction(title: t("api.test"), hint: "", symbol: "network") { [weak self] in self?.toggleDockPanel("api") },
+            QuickAction(title: t("title.changes"), hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
+            QuickAction(title: t("menu.newWorkspace"), hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
+            QuickAction(title: t("menu.toggleSidebar"), hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
         ])
         quickPanel?.show(actions: actions, over: window)
     }
@@ -1876,17 +1899,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showCommandPalette() {
         if commandPalette == nil { commandPalette = CommandPalette() }
         let cmds: [Command] = [
-            Command(title: "폴더 열기", hint: "⌘O") { [weak self] in self?.openFolder() },
-            Command(title: "빠른 파일 열기", hint: "⌘P") { [weak self] in self?.showQuickOpen() },
-            Command(title: "저장", hint: "⌘S") { [weak self] in if let p = self?.tabBar.active { self?.editor.requestSave(path: p) } },
-            Command(title: "새 터미널", hint: "⌘T") { [weak self] in self?.newTerminal() },
-            Command(title: "사이드바 토글", hint: "⌘B") { [weak self] in self?.toggleSidebar() },
-            Command(title: "AI 자동완성", hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
-            Command(title: "소스 컨트롤 (그래프)", hint: "⌘⇧G") { [weak self] in self?.toggleDockPanel("git") },
-            Command(title: "패널 크기 균등화", hint: "⌥⌘=") { [weak self] in self?.activeDock?.distributeEvenly() },
-            Command(title: "편집기 분할 (오른쪽)", hint: "⌘\\") { [weak self] in self?.editor.splitEditor("right") },
-            Command(title: "편집기 분할 (아래)", hint: "⌥⌘\\") { [weak self] in self?.editor.splitEditor("down") },
-            Command(title: "탭 닫기", hint: "⌘W") { [weak self] in if let p = self?.tabBar.active { self?.closeTab(p) } }
+            Command(title: t("menu.openFolder"), hint: "⌘O") { [weak self] in self?.openFolder() },
+            Command(title: t("menu.quickOpen"), hint: "⌘P") { [weak self] in self?.showQuickOpen() },
+            Command(title: t("menu.save"), hint: "⌘S") { [weak self] in if let p = self?.tabBar.active { self?.editor.requestSave(path: p) } },
+            Command(title: t("menu.newTerminal"), hint: "⌘T") { [weak self] in self?.newTerminal() },
+            Command(title: t("menu.toggleSidebar"), hint: "⌘B") { [weak self] in self?.toggleSidebar() },
+            Command(title: t("cmd.aiComplete"), hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
+            Command(title: t("cmd.gitGraph"), hint: "⌘⇧G") { [weak self] in self?.toggleDockPanel("git") },
+            Command(title: t("cmd.apiPanel"), hint: "") { [weak self] in self?.toggleDockPanel("api") },
+            Command(title: t("cmd.distributeEvenly"), hint: "⌥⌘=") { [weak self] in self?.activeDock?.distributeEvenly() },
+            Command(title: t("menu.splitRight"), hint: "⌘\\") { [weak self] in self?.editor.splitEditor("right") },
+            Command(title: t("menu.splitDown"), hint: "⌥⌘\\") { [weak self] in self?.editor.splitEditor("down") },
+            Command(title: t("menu.closeTab"), hint: "⌘W") { [weak self] in if let p = self?.tabBar.active { self?.closeTab(p) } }
         ]
         commandPalette?.show(commands: cmds, over: window)
     }
@@ -1971,6 +1995,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusBar.rebuildForScale()
         for ws in workspaces { state(for: ws).dock?.groups.forEach { $0.tabBar.rebuild() } }
         explorer.rebuildForScale()
+        headerLabel?.font = UIScale.font(12, .medium)
+        headerUsage?.font = UIScale.font(11)
+        rebuildPinnedUsage()
+        UIScale.broadcast()   // re-font every registered aux panel (changes/search/git/preview/api/…)
     }
     @objc private func toggleSidebarMenu() { toggleSidebar() }
     @objc private func searchMenu() { toggleDockPanel("search") }
@@ -2069,28 +2097,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard workspace != nil, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
             dock.detach(existing, normalize: true); auxDockPanels[id] = nil
-            dock.savedPlacements[id] = nil   // 직접 닫음 → 다음에는 기본 위치로 (#4)
             return
         }
         if bodySplit.arrangedSubviews.first?.isHidden ?? false { toggleSidebar() }
         guard let panel = makeAuxPanel(id) else { return }
-        let side: DockDir = (id == "search" || id == "git") ? .left : .right
-        // 이 워크스페이스에서 마지막으로 있던 자리로 복원 (#4). 기록이 없거나 그
-        // 자리가 사라졌으면 기존 기본 위치로:
-        // Attach at the appropriate EDGE (leftmost for left panels, rightmost for right)
-        // so panels append/prepend in a stable order instead of wedging between the
-        // terminal and the editor (which reordered them on every workspace switch).
-        if !dock.restorePlacement(panel) {
-            // No saved spot for this workspace → default edge. Aux panels are narrow
-            // (riven pins Changes/search/git ~280px), not a 50/50 split — the sizeHint
-            // carves exactly that width out on add so the main area isn't disturbed
-            // first; setAuxPanelWidth stays as a fallback for the wrap-split path where
-            // layout lands a runloop later.
-            let ref = side == .left ? dock.groups.first : dock.groups.last
-            let width: CGFloat = id == "git" ? 720 : 300       // source control (graph + changes) needs width
-            dock.addPanel(panel, reference: ref, direction: side, sizeHint: width)
-            setAuxPanelWidth(panel, width)
-        }
+        // A panel is just an AREA in the dock tree; only its CONTENT differs by type.
+        // So adding one splits the FOCUSED group to the right — exactly like ⌘D — for
+        // every type (search/git/preview/api/changes). No per-type side/width, no fixed
+        // edge, no tab. If the dock is empty, addPanel falls through to a full-size root.
+        // `?? groups.last`: after a workspace switch `activeGroup` can be nil (its weak ref
+        // died when the outgoing aux group was cleaned up). Without a live anchor, addPanel
+        // would fall through to setRoot() and EJECT THE WHOLE TERMINAL TREE — the reported
+        // "terminals disappear on workspace return" bug. groups.last is a live terminal group.
+        dock.addPanel(panel, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
@@ -2106,6 +2125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
         case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
+        case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         default: return nil
         }
@@ -2117,18 +2137,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         auxDockPanels[id] = panel
         return panel
-    }
-
-    // Resize a freshly-added side panel to a fixed width instead of the 50/50 split.
-    private func setAuxPanelWidth(_ panel: DockPanel, _ width: CGFloat) {
-        DispatchQueue.main.async {
-            guard let g = panel.group, let sv = g.superview as? NSSplitView, sv.isVertical else { return }
-            let total = sv.bounds.width
-            guard total > width + 120 else { return }
-            let idx = sv.arrangedSubviews.firstIndex(of: g) ?? 0
-            if idx == 0 { sv.setPosition(width, ofDividerAt: 0) }                 // panel on the left
-            else { sv.setPosition(max(0, total - width), ofDividerAt: idx - 1) }  // panel on the right
-        }
     }
 
     // Reload a file's editor model from disk (after an agent-edit revert).
@@ -2245,13 +2253,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hair.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(hair)
         // Header row: "남은 한도" + 고정 해제.
         let title = NSTextField(labelWithString: "남은 한도")
-        title.font = .systemFont(ofSize: 10, weight: .semibold); title.textColor = Theme.fgDim
+        title.font = UIScale.font(10, .semibold); title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(title)
         let unpin = NSButton(title: " 고정 해제", target: self, action: #selector(unpinUsageMenu))
         unpin.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
         unpin.imagePosition = .imageLeading; unpin.isBordered = false
-        unpin.font = .systemFont(ofSize: 10); unpin.contentTintColor = Theme.fgDim
+        unpin.font = UIScale.font(10); unpin.contentTintColor = Theme.fgDim
         unpin.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(unpin)
         let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday) { }
         content.translatesAutoresizingMaskIntoConstraints = false

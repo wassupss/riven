@@ -49,4 +49,14 @@ enum UIScale {
     static func mono(_ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSFont {
         .monospacedSystemFont(ofSize: size * factor, weight: weight)
     }
+
+    // Live re-scale broadcast, mirroring Theme.register / applyTheme. Persistent
+    // panels register once; `broadcast()` (called from applyUIScale on ⌘+/⌘−/⌘0)
+    // tells each to re-apply its fonts. Transient overlays don't register — they
+    // read UIScale.font fresh every time they're opened.
+    private static let scalables = NSHashTable<AnyObject>.weakObjects()
+    static func register(_ v: Scalable) { scalables.add(v) }
+    static func broadcast() { for case let s as Scalable in scalables.allObjects { s.applyScale() } }
 }
+
+protocol Scalable: AnyObject { func applyScale() }
