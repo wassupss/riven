@@ -24,6 +24,9 @@ final class DockPanel {
     // 이 패널이 실행한 에이전트 이름(없으면 일반 터미널). 세션 복원 때 같은 구성을
     // 다시 만들기 위해 기록해 둔다.
     var agentName: String?
+    // 에이전트 세션 id (Claude Code `--session-id`). 저장했다가 복원 때 `--resume <id>`로
+    // 그 패널의 정확한 대화를 이어간다. (cwd 기반 --continue의 다중 패널 한계를 넘음)
+    var sessionId: String?
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable
@@ -798,8 +801,11 @@ final class DockManager {
     private func snapshotNode(_ v: NSView) -> [String: Any]? {
         if let g = v as? DockGroup {
             guard !g.panels.isEmpty else { return nil }      // 빈 그룹은 저장하지 않는다
-            let descs = g.panels.map { p in
-                p.id.hasPrefix("term-") ? "term:\(p.agentName ?? "")" : p.id
+            let descs = g.panels.map { p -> String in
+                guard p.id.hasPrefix("term-") else { return p.id }
+                // "term:<agent>" plus, if we own a resumable session id, "\t<sessionId>".
+                let base = "term:\(p.agentName ?? "")"
+                return p.sessionId.map { "\(base)\t\($0)" } ?? base
             }
             return ["type": "group", "panels": descs, "active": g.activeIndex]
         }

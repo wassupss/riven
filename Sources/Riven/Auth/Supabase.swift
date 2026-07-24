@@ -274,7 +274,13 @@ final class SupabaseAuth {
     // Everything EXCEPT the local/sensitive keys is synced.
     // aiApiKey/session are secrets; aiCompleteEndpoint/aiProvider are machine-local
     // (a custom endpoint URL shouldn't leak to other devices via the synced settings row).
-    private static let noSync: Set<String> = ["aiApiKey", "session", "aiCompleteEndpoint", "aiProvider"]
+    // Never sync to the cloud: AI key/endpoint, the local dock session, AND the API panel's
+    // request history / saved collections / environments — those can hold Bearer tokens and
+    // Basic-auth passwords, so they stay on this device only.
+    private static let noSync: Set<String> = [
+        "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
+        "api.history", "api.collections", "api.environments",
+    ]
 
     private func observeLocalChanges() {
         NotificationCenter.default.removeObserver(self, name: .rivenSettingChanged, object: nil)

@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var activeDock: DockManager?          // current workspace's dock
     var editorDockPanel: DockPanel?       // the shared editor panel (one WKWebView)
     private var workspaceColors: [URL: String] = [:]   // rail card colors (hex), persisted per session
+    private var workspaceNames: [URL: String] = [:]    // custom rail names, persisted per session
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var editorVisible = false
     var workspace: URL?
@@ -340,6 +341,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.workspaceColors[url] = color.map { self.hexString($0) }
             self.persistSession()
         }
+        // Persist a custom workspace name (rename) across sessions.
+        rail.onRename = { [weak self] url, name in
+            guard let self else { return }
+            self.workspaceNames[url] = name
+            self.persistSession()
+        }
         WorkspaceStatus.shared.onChange = { [weak self] ws in
             guard let self else { return }
             let a = WorkspaceStatus.shared.rollup(ws)
@@ -562,17 +569,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (riven: each terminal is a `term-N` dockview panel). New/split terminals add
     // more of these; multiple in a group become tabs, exactly like every panel.
     // Created with a real frame + only while its host dock is in the window.
-    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil) -> DockPanel {
+    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil,
+                                   resume: Bool = false, sessionId: String? = nil) -> DockPanel {
         st.terminalSeq += 1
-        // An agent panel runs the CLI directly (claude launches immediately, no typing)
-        // and is titled/iconed as that agent (e.g. "Claude Code" + sparkles).
-        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: agent?.cmd)
+        // An agent panel runs the CLI directly (claude launches immediately, no typing) and
+        // is titled/iconed as that agent. Per-pane session persistence (Claude Code): mint a
+        // UUID and launch `<cmd> --session-id <uuid>` on a fresh start, or `<cmd> --resume
+        // <uuid>` when restoring — so each pane resumes its OWN conversation (not just the
+        // most recent in the folder). The uuid is stored on the panel + in the snapshot.
+        var cmd = agent?.cmd
+        var paneSession: String?
+        if let a = agent, let sflag = a.sessionFlag {
+            // Force transcript persistence so `--resume` works even if riven itself was
+            // launched from inside another Claude session (which otherwise marks children
+            // CLAUDE_CODE_CHILD_SESSION and disables saving). Harmless when already on.
+            let force = "env CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 "
+            // The session id goes into a shell-parsed command string. On restore it comes
+            // from persisted (tamperable) settings.json, so ONLY accept a well-formed UUID —
+            // otherwise mint a fresh one. This closes any command-injection via a crafted id.
+            if resume, let sid = sessionId, UUID(uuidString: sid) != nil, let rflag = a.resumeFlag {
+                cmd = "\(force)\(a.cmd) \(rflag) \(sid)"; paneSession = sid
+            } else {
+                let sid = UUID().uuidString.lowercased()
+                cmd = "\(force)\(a.cmd) \(sflag) \(sid)"; paneSession = sid
+            }
+        }
+        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd)
         tv.autoresizingMask = [.width, .height]
         let title = agent.map { "\($0.name)" } ?? t("title.terminal")
         let icon = NSImage(systemSymbolName: agent?.symbol ?? "terminal", accessibilityDescription: nil)
         let p = DockPanel(id: "term-\(abs(st.url.path.hashValue))-\(st.terminalSeq)", title: title,
             icon: icon, content: tv, closable: true)
         p.agentName = agent?.name          // 세션 복원 때 같은 에이전트로 다시 띄우기 위해
+        p.sessionId = paneSession          // 이 패널의 세션 id (복원 때 --resume 대상)
         p.autoTitle = true    // follow OSC titles for BOTH plain terminals AND agents, so
                               // "change the terminal title to X" from an agent works.
         // OSC 0/2 title from the shell/agent → update the tab. A path-like title shows
@@ -596,18 +625,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // otherwise stay stuck. Always clear busy; then raise the attention ember
         // ring UNLESS you're already watching this exact pane (then it's just seen).
         tv.onActivity = { [weak self, weak tv, weak p] in
-            guard let self, let p else { return }
+            guard let self, let p, let tv else { return }
             self.markAgentSession()   // agent activity (bell/notification) → track its edits
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
             let watching = self.window?.firstResponder === tv && self.window?.isKeyWindow == true
             if watching {
-                p.badge = nil; tv?.setRingState(nil)
+                p.badge = nil; tv.setRingState(nil)
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
             } else {
-                p.badge = "attn"; tv?.setRingState("attn")
+                p.badge = "attn"; tv.setRingState("attn")
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: true)
             }
             self.refreshDockTabs()
+            // The bell / agent notification is the AUTHORITATIVE "done / needs input" signal.
+            // Post one completion banner per user turn (armed by Enter), only when unwatched.
+            if !watching, tv.turnArmed {
+                tv.turnArmed = false
+                let wsName = (wsPath as NSString).lastPathComponent
+                Notifications.post(title: wsName, body: "\(p.title) · \(t("term.done"))")
+            }
         }
         tv.onFocused = { [weak self, weak tv, weak p] in
             self?.focusGroup(containing: tv)
@@ -632,28 +668,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let p, p.badge == "busy" else { return }
             p.badge = nil; tv?.setRingState(nil); self?.refreshDockTabs()
         }
-        // A substantial turn ended (activity poller). If you weren't watching this pane,
-        // raise the attention ember + post a completion notification (deduped against the
-        // agent's own desktop notification, which fires only when unfocused).
-        tv.onTurnDone = { [weak self, weak tv, weak p] in
-            guard let self, let p, let tv else { return }
-            let watching = self.window?.firstResponder === tv && self.window?.isKeyWindow == true
-            if !watching {
-                p.badge = "attn"; tv.setRingState("attn")
-                WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: true)
-                self.refreshDockTabs()
-            }
-            // ONE notification per user turn (armed by Enter). An agent turn has several
-            // output bursts — without this gate each burst notified (the 3× spam).
-            guard tv.turnArmed else { return }
-            tv.turnArmed = false
-            if watching { return }   // you're looking at it → no banner, just the ring
-            // Scraping the agent's actual reply from a TUI redraw is unreliable (it isn't
-            // real selectable terminal text), so use a fixed message titled by WHICH
-            // workspace finished — that's the useful signal.
-            let wsName = (wsPath as NSString).lastPathComponent
-            Notifications.post(title: wsName, body: "\(p.title) · \(t("term.done"))")
-        }
+        // NOTE: the old onTurnDone (screen-stable-for-0.9s heuristic) is intentionally NOT
+        // wired. It raised a false "완료/attn" whenever the agent merely PAUSED (a quiet tool
+        // call, waiting for approval, a thinking gap) — the reported "shows completed while
+        // still working" bug. Completion/attention now comes solely from the bell/agent
+        // notification (onActivity above), which is the authoritative done signal.
         return p
     }
 
@@ -1136,13 +1155,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
                 guard let self else { return nil }
                 if desc.hasPrefix("term:") {
-                    let name = String(desc.dropFirst("term:".count))
+                    // "term:<agent>" optionally "\t<sessionId>"
+                    let rest = desc.dropFirst("term:".count).split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                    let name = rest.first.map(String.init) ?? ""
+                    let sid = rest.count > 1 ? String(rest[1]) : nil
                     if let i = liveTerms.firstIndex(where: { ($0.agentName ?? "") == name }) {
                         return liveTerms.remove(at: i)   // reuse the live terminal (keep its shell)
                     }
                     if name.isEmpty { return self.makeTerminalPanel(for: st) }
                     guard let agent = agents.first(where: { $0.name == name }) else { return nil }
-                    return self.makeTerminalPanel(for: st, agent: agent)
+                    return self.makeTerminalPanel(for: st, agent: agent, resume: true, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
                 return self.makeAuxPanel(desc)
@@ -1165,7 +1187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var first: DockPanel?
             for (i, name) in wanted.enumerated() {
                 let agent = name.isEmpty ? nil : agents.first { $0.name == name }
-                let term = makeTerminalPanel(for: st, agent: agent)
+                let term = makeTerminalPanel(for: st, agent: agent, resume: true)   // continue the agent's last session on restore
                 if i == 0 { g.add(term); first = term }
                 else { dock.addPanel(term, reference: dock.groups.last, direction: .right) }
             }
@@ -1285,14 +1307,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                        "children": groups]
             }
         }
-        let session: [String: Any] = [
+        var names: [String: String] = [:]
+        for url in workspaces { if let n = workspaceNames[url] { names[url.absoluteString] = n } }
+        // Left fixed sidebar (workspace rail over explorer): remember the divider as a
+        // fraction of the sidebar height so the split restores at the same proportion.
+        var sidebarRail = 0.0
+        if let sv = sidebarSplit, sv.bounds.height > 1, sv.arrangedSubviews.count >= 2 {
+            sidebarRail = Double(sv.arrangedSubviews[0].frame.height / sv.bounds.height)
+        }
+        var session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
             "tabs": tabs,
             "activeTab": actives,
             "colors": colors,
+            "names": names,
             "layout": layouts
         ]
+        if sidebarRail > 0.05 { session["sidebarRail"] = sidebarRail }
         Settings.shared.set("session", session)
         activeDock?.dumpTree("persist")   // 레이아웃 이상 추적용 (디버그 로그에만)
     }
@@ -1309,6 +1341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
         let colors = s["colors"] as? [String: String] ?? [:]
+        let names = s["names"] as? [String: String] ?? [:]
         let layouts = s["layout"] as? [String: Any] ?? [:]
         let terms = s["terminals"] as? [String: [String]] ?? [:]   // 구버전 세션 (하위 호환)
         let fm = FileManager.default
@@ -1325,6 +1358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             st.pendingTerminals = terms[key]        // layout이 없는 구버전 세션의 폴백
             rail.addWorkspace(url)
             if let hex = colors[key] { workspaceColors[url] = hex; rail.setColor(url, Theme.hex(hex)) }   // restore card color
+            if let n = names[key] { workspaceNames[url] = n; rail.setName(url, n) }                        // restore custom name
             restored.append(url)
         }
         guard !restored.isEmpty else { return }
@@ -1332,6 +1366,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let activeKey = s["active"] as? String
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
         activate(active)
+        // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
+        if let frac = s["sidebarRail"] as? Double, frac > 0.05, frac < 0.95 {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let sv = self.sidebarSplit, sv.bounds.height > 1 else { return }
+                sv.setPosition(CGFloat(frac) * sv.bounds.height, ofDividerAt: 0)
+            }
+        }
     }
 
     // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
