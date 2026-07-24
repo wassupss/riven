@@ -122,11 +122,14 @@ final class WorkspaceRail: NSView, Themable {
         ])
         Theme.register(self)
         installCommandHint()
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.titleLabel.stringValue = t("ws.title"); self?.rebuild()
         }
     }
     required init?(coder: NSCoder) { fatalError() }
+    // Store + remove the observer token so it doesn't leak per recreation (#64).
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
 
     func applyTheme() {
         layer?.backgroundColor = Theme.bg2.cgColor

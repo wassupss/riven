@@ -75,7 +75,7 @@ final class SearchPanel: NSView, Themable {
             resultsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
         Theme.register(self)
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.titleLabel.stringValue = t("title.search")
             self?.replaceBtn.title = t("search.replaceAll")
             self?.queryField.placeholderString = t("search.placeholder")
@@ -83,6 +83,9 @@ final class SearchPanel: NSView, Themable {
         }
     }
     required init?(coder: NSCoder) { fatalError() }
+    // Store + remove the observer token so it doesn't leak per recreation (#64).
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
 
     func setRoot(_ url: URL) { root = url }
     func focusQuery() { window?.makeFirstResponder(queryField) }

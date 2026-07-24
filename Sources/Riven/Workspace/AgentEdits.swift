@@ -112,11 +112,21 @@ final class AgentEdits {
         }
     }
 
-    // Observers (the Changes panel) refresh when the timeline changes.
-    private var observers: [() -> Void] = []
-    func observe(_ fn: @escaping () -> Void) { observers.append(fn) }
+    // Observers (the Changes panel) refresh when the timeline changes. observe() used
+    // to only append, so every ChangesPanel ever created left its closure in the array
+    // forever (a slow leak over panel recreations — #64). Now it returns a token the
+    // caller removes on teardown.
+    private var observers: [Int: () -> Void] = [:]
+    private var nextObserverToken = 0
+    @discardableResult
+    func observe(_ fn: @escaping () -> Void) -> Int {
+        let token = nextObserverToken; nextObserverToken += 1
+        observers[token] = fn
+        return token
+    }
+    func removeObserver(_ token: Int) { observers[token] = nil }
     private var batchDepth = 0
-    private func notify() { if batchDepth > 0 { return }; observers.forEach { $0() } }
+    private func notify() { if batchDepth > 0 { return }; observers.values.forEach { $0() } }
 
     // Coalesce a burst of record()/resolve() calls into a single observer notify, so a
     // large batch of file changes rebuilds the Changes panel ONCE instead of once per

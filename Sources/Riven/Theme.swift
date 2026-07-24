@@ -131,9 +131,11 @@ enum Theme {
     // ---- live theme switching ----
     // Views that render themed chrome register here; apply() re-invokes their
     // color setup in place (no view recreation — recreating terminals crashes).
-    private static var themables: [Weak] = []
-    private final class Weak { weak var v: Themable?; init(_ v: Themable) { self.v = v } }
-    static func register(_ v: Themable) { themables.append(Weak(v)) }
+    // A weak hash table auto-drops deallocated views. The old `[Weak]` box array only
+    // pruned dead boxes on a theme change, so between switches it grew one dead entry
+    // per view ever created (#64).
+    private static let themables = NSHashTable<AnyObject>.weakObjects()
+    static func register(_ v: Themable) { themables.add(v) }
 
     // Switch the active theme by id, persist it, and re-theme all live chrome.
     // onEditorTheme receives the shiki theme name so Monaco can re-highlight.
@@ -144,8 +146,7 @@ enum Theme {
         current = def
         Settings.shared.set("theme", id)
         NSApp.appearance = NSAppearance(named: def.mode == "light" ? .aqua : .darkAqua)
-        themables.removeAll { $0.v == nil }
-        for w in themables { w.v?.applyTheme() }
+        for case let t as Themable in themables.allObjects { t.applyTheme() }
         // applyTheme()에서 못 잡은 테두리/구분선을 훑어서 새 색으로 갈아끼운다.
         for win in NSApp.windows { if let root = win.contentView { repaintEdges(root, remap) } }
         onEditorTheme?(def.shiki)

@@ -1186,11 +1186,14 @@ final class DockEmptyView: NSView, Themable {
     private let tagline = NSTextField(labelWithString: t("empty.tagline"))
     private var addBtn: PadButton!
     private var editorBtn: PadButton!
+    // Store + remove the observer token so it doesn't leak per recreation (#64).
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.tagline.stringValue = t("empty.tagline")
             self?.addBtn.setTitle("  " + t("empty.addTerminal"))
             self?.editorBtn.setTitle("  " + t("empty.addEditor"))
