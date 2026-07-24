@@ -115,7 +115,18 @@ final class AgentEdits {
     // Observers (the Changes panel) refresh when the timeline changes.
     private var observers: [() -> Void] = []
     func observe(_ fn: @escaping () -> Void) { observers.append(fn) }
-    private func notify() { observers.forEach { $0() } }
+    private var batchDepth = 0
+    private func notify() { if batchDepth > 0 { return }; observers.forEach { $0() } }
+
+    // Coalesce a burst of record()/resolve() calls into a single observer notify, so a
+    // large batch of file changes rebuilds the Changes panel ONCE instead of once per
+    // file (the O(N²) panel churn in #65). Re-entrant via a depth counter.
+    func batch(_ body: () -> Void) {
+        batchDepth += 1
+        body()
+        batchDepth -= 1
+        if batchDepth == 0 { notify() }
+    }
 
     // Record (or update) an agent edit. `added`/`removed` are line counts computed
     // from a simple longest-common-prefix/suffix line diff.
