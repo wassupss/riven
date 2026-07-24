@@ -15,6 +15,12 @@ final class FileNode {
         "dist", "out", ".next", ".venv", "venv", "target", ".cache"
     ]
 
+    // True if any path segment is an ignored entry — used to skip explorer refreshes
+    // on churn inside .git/node_modules/.build/… which the tree doesn't show anyway.
+    static func isIgnoredPath(_ path: String) -> Bool {
+        path.split(separator: "/").contains { ignored.contains(String($0)) }
+    }
+
     func loadChildren() -> [FileNode] {
         if let c = children { return c }
         let fm = FileManager.default
@@ -110,6 +116,8 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
 
         headerTitle.font = UIScale.font(11, .semibold)
         headerTitle.textColor = Theme.fgDim
+        headerTitle.lineBreakMode = .byTruncatingTail
+        headerTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // yield to the toolbar buttons
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(headerTitle)
 
@@ -336,11 +344,15 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     // debounced by the workspace FS watcher so the explorer reflects changes live.
     func refreshTree() {
         guard let root else { return }
+        // Capture expanded folders by walking each node's CHILDREN. The root is the
+        // invisible sentinel (never an outline item, so isItemExpanded(root) is always
+        // false) — gating the walk on the root's own expansion collected nothing and
+        // re-expanded nothing, so every FS-driven refresh collapsed the whole tree (#).
         var expanded: Set<String> = []
         func collect(_ n: FileNode) {
-            guard outline.isItemExpanded(n) else { return }
-            expanded.insert(n.url.path)
-            for c in (n.children ?? []) where c.isDir { collect(c) }
+            for c in (n.children ?? []) where c.isDir && outline.isItemExpanded(c) {
+                expanded.insert(c.url.path); collect(c)
+            }
         }
         collect(root)
         let selPath = (outline.item(atRow: outline.selectedRow) as? FileNode)?.url.path
@@ -348,9 +360,9 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         invalidate(root)
         outline.reloadData()
         func reexpand(_ n: FileNode) {
-            guard expanded.contains(n.url.path) else { return }
-            outline.expandItem(n)
-            for c in n.loadChildren() where c.isDir { reexpand(c) }
+            for c in n.loadChildren() where c.isDir && expanded.contains(c.url.path) {
+                outline.expandItem(c); reexpand(c)
+            }
         }
         reexpand(root)
         if let sp = selPath {

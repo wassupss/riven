@@ -91,14 +91,14 @@ final class TabBar: NSView, Themable {
         tab.onContextMenu = { [weak self] event in self?.showMenu(for: path, event: event, in: tab) }
 
         let label = NSTextField(labelWithString: name)
-        label.font = .systemFont(ofSize: 12)
+        label.font = UIScale.font(12)
         label.textColor = isActive ? Theme.fg : Theme.fgDim
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
 
         // Trailing dirty dot (riven .tab-dirty-dot: 11px, --fg, only when unsaved).
         let dot = NSTextField(labelWithString: isDirty ? "●" : "")
-        dot.font = .systemFont(ofSize: 9); dot.textColor = Theme.fg
+        dot.font = UIScale.font(9); dot.textColor = Theme.fg
         dot.translatesAutoresizingMaskIntoConstraints = false
 
         let close = HoverCloseX(); close.onClick = { [weak tab] in tab?.closeClicked() }
@@ -153,7 +153,7 @@ final class HoverCloseX: NSView {
     private var tracking: NSTrackingArea?
     override init(frame: NSRect) {
         super.init(frame: frame)
-        x.font = .systemFont(ofSize: 10); x.textColor = Theme.fgDim
+        x.font = UIScale.font(10); x.textColor = Theme.fgDim
         x.alphaValue = 0.55
         x.translatesAutoresizingMaskIntoConstraints = false
         addSubview(x)

@@ -37,6 +37,11 @@ enum Keys {
         .init(id: "term.splitDown", label: "아래로 분할", def: "cmd+shift+d", cat: "terminal"),
         .init(id: "term.next", label: "다음 터미널", def: "cmd+shift+]", cat: "terminal"),
         .init(id: "term.prev", label: "이전 터미널", def: "cmd+shift+[", cat: "terminal"),
+        .init(id: "run.script", label: "스크립트 실행", def: "cmd+r", cat: "terminal"),
+        .init(id: "pane.left", label: "왼쪽 패널로 포커스", def: "cmd+ctrl+left", cat: "terminal"),
+        .init(id: "pane.right", label: "오른쪽 패널로 포커스", def: "cmd+ctrl+right", cat: "terminal"),
+        .init(id: "pane.up", label: "위쪽 패널로 포커스", def: "cmd+ctrl+up", cat: "terminal"),
+        .init(id: "pane.down", label: "아래쪽 패널로 포커스", def: "cmd+ctrl+down", cat: "terminal"),
     ]
     // Editor (Monaco) commands — remappable per-command; overrides are applied on top
     // of the chosen preset via addKeybindingRules in editor.html.

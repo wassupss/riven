@@ -95,7 +95,17 @@ final class SourceControlView: NSView {
             divider.trailingAnchor.constraint(equalTo: changes.leadingAnchor),
             changes.topAnchor.constraint(equalTo: topAnchor), changes.bottomAnchor.constraint(equalTo: bottomAnchor),
             changes.trailingAnchor.constraint(equalTo: trailingAnchor),
-            changes.widthAnchor.constraint(equalToConstant: 320),   // working-changes sidebar
+        ])
+        // Changes sidebar: prefers 320 but yields down to 200 as the panel narrows, so a
+        // narrow Source Control panel shrinks the sidebar instead of starving the graph to
+        // a negative width (the old required 320 broke the layout below ~321px). The graph
+        // keeps a small required minimum so it never fully collapses.
+        let prefWidth = changes.widthAnchor.constraint(equalToConstant: 320); prefWidth.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            changes.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
+            changes.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            prefWidth,
+            graph.widthAnchor.constraint(greaterThanOrEqualToConstant: 90),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -103,7 +113,7 @@ final class SourceControlView: NSView {
 }
 
 // ---- the graph panel (dock content) ----
-final class GitGraphView: NSView, Themable {
+final class GitGraphView: NSView, Themable, Scalable {
     private let titleLabel = NSTextField(labelWithString: "Git 그래프")
     private let countLabel = NSTextField(labelWithString: "")
     private let refreshBtn = NSButton(title: "", target: nil, action: nil)
@@ -120,8 +130,8 @@ final class GitGraphView: NSView, Themable {
         super.init(frame: frame)
         wantsLayer = true; layer?.backgroundColor = Theme.bg.cgColor
 
-        titleLabel.font = .systemFont(ofSize: 12, weight: .semibold); titleLabel.textColor = Theme.fg
-        countLabel.font = .systemFont(ofSize: 11); countLabel.textColor = Theme.fgDim
+        titleLabel.font = UIScale.font(12, .semibold); titleLabel.textColor = Theme.fg
+        countLabel.font = UIScale.font(11); countLabel.textColor = Theme.fgDim
         refreshBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         refreshBtn.image?.isTemplate = true; refreshBtn.imagePosition = .imageOnly
         refreshBtn.isBordered = false; refreshBtn.contentTintColor = Theme.fgDim
@@ -164,11 +174,26 @@ final class GitGraphView: NSView, Themable {
             detail.leadingAnchor.constraint(equalTo: leadingAnchor),
             detail.trailingAnchor.constraint(equalTo: trailingAnchor),
             detail.bottomAnchor.constraint(equalTo: bottomAnchor),
-            detail.heightAnchor.constraint(equalToConstant: 210),
         ])
-        Theme.register(self)
+        // Commit-detail pane: prefer 210 but YIELD (its message/files scroll internally)
+        // when the panel is short, so the bottom never gets clipped off. A required min
+        // keeps it usable; the graph list takes whatever height is left.
+        let detailH = detail.heightAnchor.constraint(equalToConstant: 210); detailH.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            detailH,
+            detail.heightAnchor.constraint(lessThanOrEqualToConstant: 210),
+            detail.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
+        ])
+        listScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        listScroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        Theme.register(self); UIScale.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    func applyScale() {
+        titleLabel.font = UIScale.font(12, .semibold); countLabel.font = UIScale.font(11)
+        list.needsDisplay = true   // graph text reads UIScale.font fresh on redraw
+    }
 
     func setRoot(_ url: URL?) { root = url; reload() }
 
@@ -285,21 +310,24 @@ final class GraphListView: NSView {
 
     private func drawText(_ row: GraphRow, x: CGFloat, mid: CGFloat) {
         var cx = x + 4
-        // ref badges (HEAD/branch/tag)
+        // ref badges (HEAD/branch/tag) — stop once we run out of horizontal room
         for ref in row.commit.refs.prefix(4) {
+            if cx > bounds.width - 24 { break }
             cx = drawBadge(ref, x: cx, mid: mid) + 5
         }
-        let sha = attr(row.commit.short, .monospacedSystemFont(ofSize: 11, weight: .regular), Theme.fgDim)
+        let sha = attr(row.commit.short, UIScale.mono(11, .regular), Theme.fgDim)
         sha.draw(at: NSPoint(x: cx, y: mid - sha.size().height / 2)); cx += sha.size().width + 8
-        // author + relative time (right-aligned)
+        // author + relative time (right-aligned) — only when there's comfortable room. On a
+        // narrow panel it's dropped entirely so it can never overlap the sha/subject cluster.
         let meta = "\(row.commit.author) · \(relTime(row.commit.timestamp))"
-        let ma = attr(meta, .systemFont(ofSize: 10), Theme.fgDim)
-        let mw = ma.size().width
-        let metaX = bounds.width - mw - 10
-        ma.draw(at: NSPoint(x: metaX, y: mid - ma.size().height / 2))
-        // subject (fills the middle)
-        let subj = attr(row.commit.subject, .systemFont(ofSize: 12), Theme.fg)
-        let avail = max(20, metaX - cx - 8)
+        let ma = attr(meta, UIScale.font(10), Theme.fgDim)
+        let metaX = bounds.width - ma.size().width - 10
+        let showMeta = metaX - cx >= 60
+        if showMeta { ma.draw(at: NSPoint(x: metaX, y: mid - ma.size().height / 2)) }
+        // subject fills the remaining width (up to meta when shown, else the panel edge)
+        let subjRight = showMeta ? metaX - 8 : bounds.width - 8
+        let subj = attr(row.commit.subject, UIScale.font(12), Theme.fg)
+        let avail = max(20, subjRight - cx)
         subj.draw(with: NSRect(x: cx, y: mid - subj.size().height / 2, width: avail, height: subj.size().height),
                   options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin])
     }
@@ -309,7 +337,7 @@ final class GraphListView: NSView {
         let isTag = text.hasPrefix("tag:")
         let label = text.replacingOccurrences(of: "HEAD -> ", with: "").replacingOccurrences(of: "tag: ", with: "")
         let color = isHead ? Theme.accent : (isTag ? Theme.warning : Theme.info)
-        let a = attr(label, .systemFont(ofSize: 10, weight: .medium), color)
+        let a = attr(label, UIScale.font(10, .medium), color)
         let w = a.size().width + 10
         let r = NSRect(x: x, y: mid - 8, width: w, height: 16)
         let bg = NSBezierPath(roundedRect: r, xRadius: 4, yRadius: 4)
@@ -337,9 +365,9 @@ final class CommitDetailView: NSView, Themable {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true; layer?.backgroundColor = Theme.bg2.cgColor
-        header.font = .monospacedSystemFont(ofSize: 11, weight: .medium); header.textColor = Theme.fgDim
+        header.font = UIScale.mono(11, .medium); header.textColor = Theme.fgDim
         header.lineBreakMode = .byTruncatingTail; header.translatesAutoresizingMaskIntoConstraints = false
-        message.isEditable = false; message.drawsBackground = false; message.font = .systemFont(ofSize: 12)
+        message.isEditable = false; message.drawsBackground = false; message.font = UIScale.font(12)
         message.textColor = Theme.fg; message.textContainerInset = NSSize(width: 8, height: 6)
         msgScroll.documentView = message; msgScroll.hasVerticalScroller = true; msgScroll.drawsBackground = false
         msgScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -373,12 +401,12 @@ final class CommitDetailView: NSView, Themable {
 
     private func fileRow(_ f: Git.DiffFile) -> NSView {
         let name = NSTextField(labelWithString: (f.path as NSString).lastPathComponent)
-        name.font = .systemFont(ofSize: 12); name.textColor = Theme.fg; name.lineBreakMode = .byTruncatingMiddle
+        name.font = UIScale.font(12); name.textColor = Theme.fg; name.lineBreakMode = .byTruncatingMiddle
         let dir = (f.path as NSString).deletingLastPathComponent
         let path = NSTextField(labelWithString: dir.isEmpty ? "" : dir)
-        path.font = .systemFont(ofSize: 10); path.textColor = Theme.fgDim; path.lineBreakMode = .byTruncatingHead
+        path.font = UIScale.font(10); path.textColor = Theme.fgDim; path.lineBreakMode = .byTruncatingHead
         let stat = NSTextField(labelWithString: f.binary ? "bin" : "+\(f.added) −\(f.removed)")
-        stat.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+        stat.font = UIScale.mono(10, .regular)
         stat.textColor = f.added >= f.removed ? Theme.gitAdded : Theme.gitDeleted
         let row = ClickRow { [weak self] in self?.onOpenFile?(f.path) }
         let s = NSStackView(views: [name, path, NSView(), stat]); s.orientation = .horizontal; s.spacing = 8

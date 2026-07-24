@@ -4,7 +4,7 @@ import AppKit
 // an agent edited this session with +added/−removed counts; accept (keep) or
 // revert (restore pre-edit content) per file or in bulk. Click a row to open the
 // file with its changed lines highlighted. Driven by [[AgentEdits]].
-final class ChangesPanel: NSView, Themable {
+final class ChangesPanel: NSView, Themable, Scalable {
     private let titleLabel = NSTextField(labelWithString: t("title.changes"))
     private let acceptAllBtn = NSButton(title: t("changes.acceptAll"), target: nil, action: nil)
     private let revertAllBtn = NSButton(title: t("changes.revertAll"), target: nil, action: nil)
@@ -22,13 +22,13 @@ final class ChangesPanel: NSView, Themable {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg2.cgColor
 
-        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        titleLabel.font = UIScale.font(11, .medium)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         for (b, sel) in [(acceptAllBtn, #selector(acceptAll)), (revertAllBtn, #selector(revertAll))] {
             b.target = self; b.action = sel
-            b.isBordered = false; b.font = .systemFont(ofSize: 10)
+            b.isBordered = false; b.font = UIScale.font(10)
             b.translatesAutoresizingMaskIntoConstraints = false
         }
         acceptAllBtn.contentTintColor = Theme.success
@@ -59,7 +59,7 @@ final class ChangesPanel: NSView, Themable {
             rowsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
         editsToken = AgentEdits.shared.observe { [weak self] in DispatchQueue.main.async { self?.refresh() } }
-        Theme.register(self)
+        Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.acceptAllBtn.title = t("changes.acceptAll")
             self?.revertAllBtn.title = t("changes.revertAll")
@@ -97,15 +97,20 @@ final class ChangesPanel: NSView, Themable {
         revertAllBtn.contentTintColor = Theme.fgDim
         render()
     }
+    func applyScale() {
+        titleLabel.font = UIScale.font(11, .medium)
+        acceptAllBtn.font = UIScale.font(10); revertAllBtn.font = UIScale.font(10)
+        render()   // rebuilds rows with the new scaled fonts
+    }
 
     // 모두 수락: keep the agent's files, clear the list. 모두 되돌리기: restore every
     // file's pre-edit content.
     @objc private func acceptAll() { AgentEdits.shared.acceptAll(); refresh() }
     @objc private func revertAll() {
         let a = NSAlert()
-        a.messageText = "에이전트 변경을 모두 되돌리시겠습니까?"
-        a.informativeText = "이 세션에서 에이전트가 편집한 내용이 편집 전 상태로 복원됩니다."
-        a.addButton(withTitle: "되돌리기"); a.addButton(withTitle: "취소"); a.alertStyle = .warning
+        a.messageText = t("changes.revertAll.confirm")
+        a.informativeText = t("changes.revertAll.body")
+        a.addButton(withTitle: t("changes.revertConfirm")); a.addButton(withTitle: t("common.cancel")); a.alertStyle = .warning
         guard a.runModal() == .alertFirstButtonReturn else { return }
         let reverted = AgentEdits.shared.revertAll()
         reverted.forEach { onReverted?($0) }
@@ -119,7 +124,7 @@ final class ChangesPanel: NSView, Themable {
         rowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if entries.isEmpty {
             let hint = NSTextField(labelWithString: t("changes.empty2"))
-            hint.font = .systemFont(ofSize: 11); hint.textColor = Theme.fgDim
+            hint.font = UIScale.font(11); hint.textColor = Theme.fgDim
             let c = NSView(); hint.translatesAutoresizingMaskIntoConstraints = false; c.addSubview(hint)
             NSLayoutConstraint.activate([
                 hint.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 12),
@@ -133,11 +138,11 @@ final class ChangesPanel: NSView, Themable {
 
     private func ago(_ date: Date) -> String {
         let s = Int(-date.timeIntervalSinceNow)
-        if s < 5 { return "now" }
-        if s < 60 { return "\(s)초" }
-        if s < 3600 { return "\(s/60)분" }
-        if s < 86400 { return "\(s/3600)시간" }
-        return "\(s/86400)일"
+        if s < 5 { return t("time.now") }
+        if s < 60 { return t("time.sec", ["n": s]) }
+        if s < 3600 { return t("time.min", ["n": s / 60]) }
+        if s < 86400 { return t("time.hour", ["n": s / 3600]) }
+        return t("time.day", ["n": s / 86400])
     }
 
     private func editRow(_ e: AgentEdits.Entry) -> NSView {
@@ -146,25 +151,29 @@ final class ChangesPanel: NSView, Themable {
         let dir = (rel as NSString).deletingLastPathComponent
 
         let ico = NSTextField(labelWithString: e.isNew ? "✚" : "✎")
-        ico.font = .systemFont(ofSize: 11); ico.textColor = e.isNew ? Theme.gitAdded : Theme.gitModified
+        ico.font = UIScale.font(11); ico.textColor = e.isNew ? Theme.gitAdded : Theme.gitModified
         ico.translatesAutoresizingMaskIntoConstraints = false
 
         let nameL = NSTextField(labelWithString: name)
-        nameL.font = .systemFont(ofSize: 11); nameL.textColor = Theme.fg
+        nameL.font = UIScale.font(11); nameL.textColor = Theme.fg
         nameL.lineBreakMode = .byTruncatingMiddle; nameL.toolTip = e.path
         nameL.translatesAutoresizingMaskIntoConstraints = false
         let dirL = NSTextField(labelWithString: dir)
-        dirL.font = .systemFont(ofSize: 10); dirL.textColor = Theme.fgDim
+        dirL.font = UIScale.font(10); dirL.textColor = Theme.fgDim
         dirL.lineBreakMode = .byTruncatingMiddle
         dirL.translatesAutoresizingMaskIntoConstraints = false
+        // Let name/dir TRUNCATE when the panel is narrow instead of overrunning the
+        // stats/time/buttons cluster on the right (they had default-high resistance).
+        nameL.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        dirL.setContentCompressionResistancePriority(.init(249), for: .horizontal)
 
         let statsStr = NSMutableAttributedString()
-        if e.added > 0 { statsStr.append(NSAttributedString(string: "+\(e.added) ", attributes: [.foregroundColor: Theme.gitAdded, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)])) }
-        if e.removed > 0 { statsStr.append(NSAttributedString(string: "−\(e.removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)])) }
+        if e.added > 0 { statsStr.append(NSAttributedString(string: "+\(e.added) ", attributes: [.foregroundColor: Theme.gitAdded, .font: UIScale.mono(10, .regular)])) }
+        if e.removed > 0 { statsStr.append(NSAttributedString(string: "−\(e.removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: UIScale.mono(10, .regular)])) }
         let stats = NSTextField(labelWithString: ""); stats.attributedStringValue = statsStr
         stats.translatesAutoresizingMaskIntoConstraints = false
         let time = NSTextField(labelWithString: ago(e.at))
-        time.font = .systemFont(ofSize: 10); time.textColor = Theme.fgDim
+        time.font = UIScale.font(10); time.textColor = Theme.fgDim
         time.translatesAutoresizingMaskIntoConstraints = false
 
         let row = ChangesRowView()
@@ -175,10 +184,10 @@ final class ChangesPanel: NSView, Themable {
             if AgentEdits.shared.revert(path: e.path) { self?.onReverted?(e.path) }
             self?.refresh()
         }
-        revert.font = .systemFont(ofSize: 12); revert.contentTintColor = Theme.warning
+        revert.font = UIScale.font(12); revert.contentTintColor = Theme.warning
         revert.isBordered = false; revert.translatesAutoresizingMaskIntoConstraints = false
         let accept = ChangesButton(title: "✓") { [weak self] in AgentEdits.shared.resolve(path: e.path); self?.refresh() }
-        accept.font = .systemFont(ofSize: 12); accept.contentTintColor = Theme.success
+        accept.font = UIScale.font(12); accept.contentTintColor = Theme.success
         accept.isBordered = false; accept.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(revert); row.addSubview(accept)
 

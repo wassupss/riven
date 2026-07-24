@@ -1170,16 +1170,19 @@ final class DockSplitView: NSSplitView, NSSplitViewDelegate {
             : NSRect(x: rect.minX, y: rect.midY - 0.5, width: rect.width, height: 1)
         line.fill()
     }
-    func splitView(_ v: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { 80 }
+    // Side-by-side (vertical divider) panes get a wider floor so content panels stay
+    // usable when narrowed; stacked (horizontal divider) panes keep the smaller floor.
+    private func minPane(_ v: NSSplitView) -> CGFloat { v.isVertical ? 140 : 80 }
+    func splitView(_ v: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { minPane(v) }
     func splitView(_ v: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        (v.isVertical ? v.bounds.width : v.bounds.height) - 80
+        (v.isVertical ? v.bounds.width : v.bounds.height) - minPane(v)
     }
 }
 
 // riven's empty workbench (Workbench.tsx .dock-empty): shown when the dock holds no
 // panels. A faint "riven" wordmark, a tagline, and two actions — add a terminal
 // (accent-filled primary) or open the editor. Overlays the whole dock container.
-final class DockEmptyView: NSView, Themable {
+final class DockEmptyView: NSView, Themable, Scalable {
     var onAddTerminal: (() -> Void)?
     var onOpenEditor: (() -> Void)?
     private let mark = NSTextField(labelWithString: "riven")
@@ -1200,16 +1203,16 @@ final class DockEmptyView: NSView, Themable {
         }
 
         // Faint oversized wordmark (riven: fg 22% blended into bg).
-        mark.font = .systemFont(ofSize: 44, weight: .bold)
+        mark.font = UIScale.font(44, .bold)
         mark.alignment = .center
-        tagline.font = .systemFont(ofSize: 13)
+        tagline.font = UIScale.font(13)
         tagline.alignment = .center
 
-        addBtn = PadButton(title: "  " + t("empty.addTerminal"), font: .systemFont(ofSize: 13),
+        addBtn = PadButton(title: "  " + t("empty.addTerminal"), font: UIScale.font(13),
                            textColor: Theme.accent, bg: Theme.accentMuted, border: Theme.accentBorder,
                            radius: 7, hPad: 14, height: 34)
         addBtn.onClick = { [weak self] in self?.onAddTerminal?() }
-        editorBtn = PadButton(title: "  " + t("empty.addEditor"), font: .systemFont(ofSize: 13),
+        editorBtn = PadButton(title: "  " + t("empty.addEditor"), font: UIScale.font(13),
                               textColor: Theme.fg, bg: Theme.bg3, border: Theme.edge,
                               radius: 7, hPad: 14, height: 34)
         editorBtn.onClick = { [weak self] in self?.onOpenEditor?() }
@@ -1230,7 +1233,7 @@ final class DockEmptyView: NSView, Themable {
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
         applyTheme()
-        Theme.register(self)
+        Theme.register(self); UIScale.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -1240,4 +1243,5 @@ final class DockEmptyView: NSView, Themable {
         mark.textColor = Theme.fg.blended(withFraction: 0.78, of: Theme.bg) ?? Theme.fgDim
         tagline.textColor = Theme.fgDim
     }
+    func applyScale() { mark.font = UIScale.font(44, .bold); tagline.font = UIScale.font(13) }
 }

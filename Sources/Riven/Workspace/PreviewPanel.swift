@@ -5,18 +5,18 @@ import WebKit
 // bar over a WKWebView, for previewing a local dev server. (riven's capture-to-
 // Claude button depends on the agent contextBus, which isn't in the native app
 // yet, so it's omitted rather than stubbed.)
-final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigationDelegate {
+final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler, WKNavigationDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     func userContentController(_ u: WKUserContentController, didReceive m: WKScriptMessage) {
         if m.name == "prevfocus" { onFocused?() }
     }
     private let urlField = NSTextField()
-    private let openBtn = NSButton(title: "열기", target: nil, action: nil)
+    private let openBtn = NSButton(title: t("common.open"), target: nil, action: nil)
     private let captureBtn = NSButton()
     private let reloadBtn = NSButton()
     private let externalBtn = NSButton()
     private var web: WKWebView!
-    private let emptyLabel = NSTextField(labelWithString: "미리볼 URL을 입력하세요")
+    private let emptyLabel = NSTextField(labelWithString: t("preview.empty"))
     private var loadedURL: String?
     var onCapture: ((String) -> Void)?   // saved PNG path → send to the running agent
 
@@ -27,15 +27,16 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigation
 
         urlField.stringValue = "http://localhost:3000"
         urlField.placeholderString = "http://localhost:3000"
-        urlField.font = .systemFont(ofSize: 12)
+        urlField.font = UIScale.font(12)
         urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(openURL)
         urlField.translatesAutoresizingMaskIntoConstraints = false
 
         openBtn.target = self; openBtn.action = #selector(openURL)
         openBtn.bezelStyle = .roundRect; openBtn.controlSize = .small
-        openBtn.font = .systemFont(ofSize: 11)
+        openBtn.font = UIScale.font(11)
         openBtn.translatesAutoresizingMaskIntoConstraints = false
+        openBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // shrink before the URL field
 
         // Capture the current view → PNG → send its path to the running agent (riven's
         // capture-to-Claude / contextBus.sendScreenshot).
@@ -69,17 +70,17 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigation
         reloadBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "새로고침")
         reloadBtn.image?.isTemplate = true; reloadBtn.imagePosition = .imageOnly
         reloadBtn.isBordered = false; reloadBtn.contentTintColor = Theme.fgDim
-        reloadBtn.toolTip = "새로고침 (⌘R)"
+        reloadBtn.toolTip = t("preview.reload")
         reloadBtn.target = self; reloadBtn.action = #selector(reloadNow)
         reloadBtn.translatesAutoresizingMaskIntoConstraints = false
         externalBtn.image = NSImage(systemSymbolName: "arrow.up.forward.app", accessibilityDescription: "브라우저에서 열기")
         externalBtn.image?.isTemplate = true; externalBtn.imagePosition = .imageOnly
         externalBtn.isBordered = false; externalBtn.contentTintColor = Theme.fgDim
-        externalBtn.toolTip = "기본 브라우저에서 열기"
+        externalBtn.toolTip = t("preview.openExternal")
         externalBtn.target = self; externalBtn.action = #selector(openExternal)
         externalBtn.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel.font = .systemFont(ofSize: 11); emptyLabel.textColor = Theme.fgDim
+        emptyLabel.font = UIScale.font(11); emptyLabel.textColor = Theme.fgDim
         emptyLabel.alignment = .center
         emptyLabel.maximumNumberOfLines = 3
         emptyLabel.lineBreakMode = .byWordWrapping
@@ -111,9 +112,21 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigation
             emptyLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
-        Theme.register(self)
+        Theme.register(self); UIScale.register(self)
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.openBtn.title = t("common.open")
+            self.reloadBtn.toolTip = t("preview.reload"); self.externalBtn.toolTip = t("preview.openExternal")
+            if self.loadedURL == nil { self.emptyLabel.stringValue = t("preview.empty") }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
+
+    func applyScale() {
+        urlField.font = UIScale.font(12); openBtn.font = UIScale.font(11); emptyLabel.font = UIScale.font(11)
+    }
 
     func focusURL() { window?.makeFirstResponder(urlField) }
     // Open a URL programmatically (e.g. a dev server the script runner detected).
@@ -125,7 +138,7 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigation
         if !s.contains("://") { s = "http://" + s }
         guard let url = URL(string: s) else { return }
         loadedURL = s
-        emptyLabel.stringValue = "미리볼 URL을 입력하세요"
+        emptyLabel.stringValue = t("preview.empty")
         web.isHidden = false; emptyLabel.isHidden = true
         web.load(URLRequest(url: url))
     }
@@ -137,7 +150,7 @@ final class PreviewPanel: NSView, Themable, WKScriptMessageHandler, WKNavigation
         let nsError = error as NSError
         if nsError.domain == "WebKitErrorDomain" && nsError.code == 102 { return } // frame load interrupted, e.g. by a redirect — not a real failure
         web.isHidden = true
-        emptyLabel.stringValue = "로드 실패: \(nsError.localizedDescription)"
+        emptyLabel.stringValue = t("preview.loadFailed", ["msg": nsError.localizedDescription])
         emptyLabel.isHidden = false
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

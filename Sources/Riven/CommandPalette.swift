@@ -17,8 +17,8 @@ final class CommandPalette: NSPanel, NSTableViewDataSource, NSTableViewDelegate,
         isMovableByWindowBackground = true; backgroundColor = Theme.bg2; hasShadow = true
 
         let content = NSView(frame: contentView!.bounds); content.autoresizingMask = [.width, .height]
-        field.placeholderString = "명령 실행…"
-        field.font = .systemFont(ofSize: 15); field.textColor = Theme.fg
+        field.placeholderString = t("palette.placeholder")
+        field.font = UIScale.font(15); field.textColor = Theme.fg
         field.backgroundColor = Theme.bg2; field.isBordered = false; field.focusRingType = .none
         field.delegate = self
         field.frame = NSRect(x: 14, y: 316, width: 532, height: 34); field.autoresizingMask = [.width, .minYMargin]
@@ -75,9 +75,9 @@ final class CommandPalette: NSPanel, NSTableViewDataSource, NSTableViewDelegate,
             return c
         }()
         let cmd = filtered[row]
-        let s = NSMutableAttributedString(string: cmd.title, attributes: [.foregroundColor: Theme.fg, .font: NSFont.systemFont(ofSize: 13)])
+        let s = NSMutableAttributedString(string: cmd.title, attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(13)])
         if !cmd.hint.isEmpty {
-            s.append(NSAttributedString(string: "   \(cmd.hint)", attributes: [.foregroundColor: Theme.fgDim, .font: NSFont.systemFont(ofSize: 11)]))
+            s.append(NSAttributedString(string: "   \(cmd.hint)", attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
         }
         cell.textField?.attributedStringValue = s
         return cell
