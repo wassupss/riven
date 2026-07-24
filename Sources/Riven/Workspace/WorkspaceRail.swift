@@ -38,6 +38,7 @@ final class WorkspaceRail: NSView, Themable {
     // 카드를 끌어 순서를 바꾸면 새 순서 전체를 넘긴다 (main.swift가 workspaces 배열을
     // 같은 순서로 맞추고 persistSession()으로 저장 → 재시작해도 순서가 유지된다).
     var onReorder: (([URL]) -> Void)?
+    var onRename: ((URL, String?) -> Void)?   // (url, newName|nil) — persist custom workspace name
 
     // 드래그 중인 워크스페이스 (dock의 DockManager.draggingPanel과 같은 패턴).
     static var draggingWorkspace: URL?
@@ -368,9 +369,12 @@ final class WorkspaceRail: NSView, Themable {
         if a.runModal() == .alertFirstButtonReturn {
             let v = f.stringValue.trimmingCharacters(in: .whitespaces)
             if v.isEmpty { customNames[url] = nil } else { customNames[url] = v }
+            onRename?(url, customNames[url])   // persist the rename (main.swift → session)
             rebuild()
         }
     }
+    // Apply a restored custom name (session restore) without firing onRename.
+    func setName(_ url: URL, _ name: String?) { customNames[url] = name; rebuild() }
     @objc private func revealCard(_ s: NSMenuItem) { if let u = s.representedObject as? URL { onReveal?(u) } }
     @objc private func copyPathCard(_ s: NSMenuItem) {
         guard let u = s.representedObject as? URL else { return }

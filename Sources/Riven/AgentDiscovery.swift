@@ -16,17 +16,24 @@ import Foundation
 // ABSOLUTE path, so the agent also *launches* correctly under the app's minimal PATH
 // (ghostty inherits our environment, so a bare `codex` would otherwise not be found).
 enum AgentDiscovery {
-    struct Agent { let name: String; let cmd: String; let symbol: String }
+    // Session persistence per pane: if `sessionFlag`/`resumeFlag` are set, riven mints a
+    // UUID per pane, launches with `<cmd> <sessionFlag> <uuid>`, stores the uuid, and on
+    // restore runs `<cmd> <resumeFlag> <uuid>` (from the same workspace dir) — resuming that
+    // pane's EXACT conversation. Only Claude Code is confirmed; others launch fresh.
+    struct Agent {
+        let name: String; let cmd: String; let symbol: String
+        var sessionFlag: String? = nil   // e.g. "--session-id" — mint & attach a session id
+        var resumeFlag: String? = nil    // e.g. "--resume" — resume that id on restore
+    }
 
-    // riven's CANDIDATES (group: 'AI').
-    private static let candidates: [(name: String, cmd: String, symbol: String)] = [
-        ("Claude Code", "claude", "sparkles"),
-        ("Codex", "codex", "chevron.left.forwardslash.chevron.right"),
-        ("Aider", "aider", "pencil.and.outline"),
-        ("Gemini", "gemini", "diamond"),
-        ("opencode", "opencode", "curlybraces"),
-        ("Cursor Agent", "cursor-agent", "cursorarrow.rays"),
-        ("Ollama", "ollama", "cube")
+    private static let candidates: [(name: String, cmd: String, symbol: String, session: String?, resume: String?)] = [
+        ("Claude Code", "claude", "sparkles", "--session-id", "--resume"),
+        ("Codex", "codex", "chevron.left.forwardslash.chevron.right", nil, nil),
+        ("Aider", "aider", "pencil.and.outline", nil, nil),
+        ("Gemini", "gemini", "diamond", nil, nil),
+        ("opencode", "opencode", "curlybraces", nil, nil),
+        ("Cursor Agent", "cursor-agent", "cursorarrow.rays", nil, nil),
+        ("Ollama", "ollama", "cube", nil, nil)
     ]
 
     // Available agents, resolved to absolute paths. Cached after the first scan.
@@ -37,7 +44,7 @@ enum AgentDiscovery {
         let shellResolved = resolveViaLoginShell(candidates.map { $0.cmd })
         let found = candidates.compactMap { c -> Agent? in
             if let path = resolve(cmd: c.cmd, dirs: dirs, shellResolved: shellResolved) {
-                return Agent(name: c.name, cmd: path, symbol: c.symbol)
+                return Agent(name: c.name, cmd: path, symbol: c.symbol, sessionFlag: c.session, resumeFlag: c.resume)
             }
             return nil
         }
