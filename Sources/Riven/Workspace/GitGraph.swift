@@ -218,6 +218,17 @@ final class GraphListView: NSView {
 
     override var isFlipped: Bool { true }
 
+    // draw(_:) positions right-aligned metadata / hover fill / subject width from
+    // bounds.width, and the view is pinned to the clip view's leading/trailing — so a
+    // panel resize changes the frame width. A plain NSView doesn't repaint on a size
+    // change, so without this the graph keeps stale geometry until an unrelated
+    // redraw (scroll/selection/reload) happens (#62).
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if widthChanged { needsDisplay = true }
+    }
+
     func setRows(_ r: [GraphRow]) {
         rows = r
         maxCols = max(1, r.map { row in
