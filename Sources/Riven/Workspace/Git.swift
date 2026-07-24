@@ -205,6 +205,47 @@ enum Git {
         run(["show", "HEAD:./\(rel)"], cwd: cwd)
     }
 
+    // Resolve the HEAD content of many files in a SINGLE `git cat-file --batch` process
+    // instead of one `git show` per file (#65). Returns rel → content for files that
+    // exist at HEAD; a missing file (new / untracked) is simply absent from the result.
+    // Output framing per input rev: `<oid> <type> <size>\n<size bytes of content>\n`,
+    // or `<rev> missing\n`. Parsed by exact byte count so binary/newline-containing
+    // content is handled correctly. Input and output order match, so we walk `rels`.
+    static func showFilesBatch(cwd: String, rels: [String]) -> [String: String] {
+        guard !rels.isEmpty else { return [:] }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["git", "cat-file", "--batch"]
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
+        let inPipe = Pipe(), outPipe = Pipe()
+        p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return [:] }
+        let query = rels.map { "HEAD:./\($0)\n" }.joined()
+        inPipe.fileHandleForWriting.write(Data(query.utf8))
+        inPipe.fileHandleForWriting.closeFile()
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+
+        var result: [String: String] = [:]
+        let nl = UInt8(ascii: "\n")
+        var idx = data.startIndex
+        for rel in rels {
+            guard idx < data.endIndex, let lineEnd = data[idx...].firstIndex(of: nl) else { break }
+            let header = String(data: data[idx..<lineEnd], encoding: .utf8) ?? ""
+            idx = data.index(after: lineEnd)
+            // For a found object the header is `<oid> <type> <size>` (no path, so paths
+            // with spaces are safe); a missing object echoes the rev + " missing".
+            let parts = header.split(separator: " ")
+            guard parts.count >= 3, let size = Int(parts[2]) else { continue }  // missing → skip
+            guard let contentEnd = data.index(idx, offsetBy: size, limitedBy: data.endIndex) else { break }
+            result[rel] = String(data: data[idx..<contentEnd], encoding: .utf8) ?? ""
+            // Skip the content plus its trailing newline.
+            idx = data.index(contentEnd, offsetBy: 1, limitedBy: data.endIndex) ?? data.endIndex
+        }
+        return result
+    }
+
     // Changed line ranges vs HEAD (for highlighting on open): [[startLine, endLine], …]
     // Parsed from `diff -U0` @@ hunk headers (new-file line spans).
     // Added / removed line counts vs HEAD (for the Changes panel stats).

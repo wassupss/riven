@@ -718,6 +718,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // otherwise allocated the file's full text again.
     private var pendingFileChanges = Set<String>()
     private var fileChangeTimer: Timer?
+    // File I/O (stat + full read) and the git-baseline lookup for a change batch run
+    // here, off the main thread, so a large batch never blocks the UI (#65).
+    private let fileChangeQueue = DispatchQueue(label: "com.riven.filechange", qos: .utility)
     private func handleFileChange(_ path: String) {
         pendingFileChanges.insert(path)
         fileChangeTimer?.invalidate()
@@ -725,31 +728,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             let paths = self.pendingFileChanges
             self.pendingFileChanges.removeAll()
-            for p in paths { self.processFileChange(p) }
+            self.processFileChanges(Array(paths))
         }
     }
 
-    private func processFileChange(_ path: String) {
-        guard let ws = workspace, path.hasPrefix(ws.path + "/"), !AgentEdits.isIgnored(path) else { return }
-        guard agentSessionWorkspaces.contains(ws.path) else { return }   // only during an agent session
-        // Size cap BEFORE reading (#60): this path used to slurp any-size files and retain
-        // their full before+after text, so an agent churning large/generated files pushed
-        // memory into the GBs. Match the snapshot()'s per-file cap and skip anything bigger.
-        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { return }
-        guard let after = try? String(contentsOfFile: path, encoding: .utf8) else {
-            // deleted / unreadable — ignore (riven skips unlink)
-            return
+    // Process a whole change batch off the main thread, then apply the results on main
+    // in one coalesced update (#65). Previously this ran per file ON the main thread —
+    // stat + full read + a `git show` subprocess per new file + an O(N²) panel rebuild
+    // (a notify() per file) — so a branch switch / bulk agent edit froze the UI for
+    // seconds. Now: cheap filtering + baseline snapshot on main → all I/O and a single
+    // batched `git cat-file` off main → one coalesced store mutation + panel refresh.
+    private func processFileChanges(_ paths: [String]) {
+        guard let ws = workspace else { return }
+        let wsPath = ws.path
+        guard agentSessionWorkspaces.contains(wsPath) else { return }   // only during an agent session
+        // Cheap main-thread pass: filter to in-workspace, non-ignored paths and snapshot
+        // the in-memory session baselines (AgentEdits is main-only; these are dict reads).
+        let candidates = paths.filter { $0.hasPrefix(wsPath + "/") && !AgentEdits.isIgnored($0) }
+        guard !candidates.isEmpty else { return }
+        var memBaseline: [String: String] = [:]
+        for p in candidates { if let b = AgentEdits.shared.baselineContent(p) { memBaseline[p] = b } }
+
+        fileChangeQueue.async { [weak self] in
+            // (path, rel, after, memBaseline?) — memBaseline nil means we must resolve the
+            // git HEAD version for this file below.
+            var items: [(path: String, rel: String, after: String, mem: String?)] = []
+            var needGit: [String] = []
+            for p in candidates {
+                // Size cap BEFORE reading (#60): skip files bigger than the tracked cap so
+                // an agent churning large/generated files can't push memory into the GBs.
+                let attrs = try? FileManager.default.attributesOfItem(atPath: p)
+                if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { continue }
+                guard let after = try? String(contentsOfFile: p, encoding: .utf8) else { continue }  // deleted/unreadable
+                let rel = String(p.dropFirst(wsPath.count + 1))
+                let mem = memBaseline[p]
+                if mem == nil { needGit.append(rel) }
+                items.append((p, rel, after, mem))
+            }
+            // One process for every new-file baseline instead of one `git show` each.
+            let gitBaseline = Git.showFilesBatch(cwd: wsPath, rels: needGit)
+
+            DispatchQueue.main.async {
+                guard let self, self.workspace?.path == wsPath else { return }  // workspace switched mid-flight
+                var touched = false
+                AgentEdits.shared.batch {
+                    for it in items {
+                        // `before` is the SESSION baseline and stays fixed, so the diff is
+                        // cumulative (first add + later edit both show).
+                        let before = it.mem ?? gitBaseline[it.rel]
+                        if before == it.after { AgentEdits.shared.resolve(path: it.path); touched = true; continue }
+                        // Seed the baseline once (first time we see the file) so it's fixed.
+                        if AgentEdits.shared.baselineContent(it.path) == nil {
+                            AgentEdits.shared.updateBaseline(it.path, before ?? "")
+                        }
+                        AgentEdits.shared.record(path: it.path, workspace: wsPath,
+                                                 before: before ?? "", after: it.after, isNew: before == nil)
+                        touched = true
+                    }
+                }
+                if touched { self.ensureChangesPanel() }
+            }
         }
-        // `before` is the SESSION baseline and stays fixed, so the diff is cumulative
-        // (first add + later edit both show) — do NOT advance the baseline here.
-        let before = AgentEdits.shared.baselineContent(path)
-            ?? Git.showFile(cwd: ws.path, rel: String(path.dropFirst(ws.path.count + 1)))
-        if before == after { AgentEdits.shared.resolve(path: path); return }   // reverted to baseline
-        // Seed the baseline once (first time we see the file) so it's fixed thereafter.
-        if AgentEdits.shared.baselineContent(path) == nil { AgentEdits.shared.updateBaseline(path, before ?? "") }
-        AgentEdits.shared.record(path: path, workspace: ws.path, before: before ?? "", after: after, isNew: before == nil)
-        ensureChangesPanel()
     }
     // Open the Changes panel (240px, right) WITHOUT stealing keyboard focus from the
     // terminal (riven's ensureChanges → restore prev active panel).
