@@ -58,9 +58,9 @@ final class ChangesPanel: NSView, Themable {
             rowsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             rowsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
-        AgentEdits.shared.observe { [weak self] in DispatchQueue.main.async { self?.refresh() } }
+        editsToken = AgentEdits.shared.observe { [weak self] in DispatchQueue.main.async { self?.refresh() } }
         Theme.register(self)
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.acceptAllBtn.title = t("changes.acceptAll")
             self?.revertAllBtn.title = t("changes.revertAll")
             self?.refresh()
@@ -68,6 +68,15 @@ final class ChangesPanel: NSView, Themable {
         render()
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // Without teardown these observers leaked one token per panel creation, and the
+    // NotificationCenter token kept firing (self nil) after the panel went away (#64).
+    private var langObserver: NSObjectProtocol?
+    private var editsToken: Int?
+    deinit {
+        if let o = langObserver { NotificationCenter.default.removeObserver(o) }
+        if let t = editsToken { AgentEdits.shared.removeObserver(t) }
+    }
 
     private var entries: [AgentEdits.Entry] = []
 
@@ -168,7 +177,7 @@ final class ChangesPanel: NSView, Themable {
         }
         revert.font = .systemFont(ofSize: 12); revert.contentTintColor = Theme.warning
         revert.isBordered = false; revert.translatesAutoresizingMaskIntoConstraints = false
-        let accept = ChangesButton(title: "✓") { AgentEdits.shared.resolve(path: e.path); self.refresh() }
+        let accept = ChangesButton(title: "✓") { [weak self] in AgentEdits.shared.resolve(path: e.path); self?.refresh() }
         accept.font = .systemFont(ofSize: 12); accept.contentTintColor = Theme.success
         accept.isBordered = false; accept.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(revert); row.addSubview(accept)

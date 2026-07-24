@@ -12,6 +12,12 @@ final class SettingsWindow: NSPanel {
     private let content = FlippedStack()
     private var activeTab = 0
     private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
+    private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
+    // Remove both observer tokens on teardown so they don't leak per window open (#64).
+    deinit {
+        if let o = authObserver as? NSObjectProtocol { NotificationCenter.default.removeObserver(o) }
+        if let o = langObserver { NotificationCenter.default.removeObserver(o) }
+    }
     private var accountError: String?       // last sign-in error, shown on the Account tab
 
     // controls (kept as properties so save() can read them)
@@ -129,7 +135,7 @@ final class SettingsWindow: NSPanel {
         showTab(0)
         Theme.register(self)
         // Live language switch: relabel the tabs + re-render the active tab.
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
             let labels = self.tabs
             for (i, b) in self.tabButtons.enumerated() where i < labels.count { b.title = labels[i] }

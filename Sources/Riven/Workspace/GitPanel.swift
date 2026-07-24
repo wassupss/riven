@@ -114,11 +114,14 @@ final class GitPanel: NSView, Themable, NSTextViewDelegate {
         ])
         applyTheme()
         Theme.register(self)
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.commitPlaceholder.stringValue = t("git.commitMessage"); self?.render()
         }
     }
     required init?(coder: NSCoder) { fatalError() }
+    // Store + remove the observer token so it doesn't leak per recreation (#64).
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
 
     func setRoot(_ url: URL) { root = url; refresh() }
 

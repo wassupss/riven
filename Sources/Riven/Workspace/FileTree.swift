@@ -82,11 +82,14 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
 
         buildHeader()
         Theme.register(self)
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.headerTitle.stringValue = t("title.explorer")
             self?.relocalizeToolbar()
         }
     }
+    // Store + remove the observer token so it doesn't leak per recreation (#64).
+    private var langObserver: NSObjectProtocol?
+    deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
     private func relocalizeToolbar() {
         let tips = [t("explorer.newFile"), t("explorer.newFolder"), t("common.refresh"), t("explorer.collapseAll")]
         for (b, tip) in zip(toolButtons, tips) { b.toolTip = tip }
