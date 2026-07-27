@@ -614,15 +614,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             [ -r "$HOME/.zshrc" ] && source "$HOME/.zshrc"
             # riven: typing `claude` resumes THIS pane's session across app restarts.
             if [ -n "$RIVEN_PANE_SESSION" ]; then
-              # --settings carries riven's agent hooks; it deep-merges, so the user's own
-              # hooks still fire. Two branches, NOT ${VAR:+--settings "$VAR"}: zsh does not
-              # field-split parameter expansions, so that form passes "--settings /path" as a
-              # SINGLE argv word and claude rejects it as an unknown option.
-              if [ -n "$RIVEN_HOOKS_SETTINGS" ]; then
-                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" --settings "$RIVEN_HOOKS_SETTINGS" "$@"; }
-              else
-                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" "$@"; }
-              fi
+              claude() {
+                # Build flags in a zsh array — NOT via ${VAR:+--flag "$VAR"}, because zsh
+                # does not field-split parameter expansions, so that form would pass
+                # "--flag value" to claude as a single argv word (it rejects it).
+                local -a rv
+                # Only inject our per-pane --session-id when the user hasn't chosen a session
+                # themselves; otherwise claude sees a duplicate/ conflicting session flag.
+                case " $* " in
+                  (*" --session-id "*|*" --resume "*|*" -r "*|*" --continue "*|*" -c "*|*" --from-pr "*) ;;
+                  (*) rv+=(--session-id "$RIVEN_PANE_SESSION") ;;
+                esac
+                # riven's agent hooks (deep-merged, so the user's own hooks still fire).
+                [ -n "$RIVEN_HOOKS_SETTINGS" ] && rv+=(--settings "$RIVEN_HOOKS_SETTINGS")
+                command "${RIVEN_REAL_CLAUDE:-claude}" "${rv[@]}" "$@"
+              }
             fi
             export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
             """,
