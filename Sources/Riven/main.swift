@@ -668,8 +668,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Notifications.post(title: title, body: "\(name) · \(body)")
             }
         )
-        AgentHookServer.shared.onEvent = { AgentActivity.shared.handle($0) }
+        AgentHookServer.shared.onEvent = { [weak self] event in
+            self?.routeAgentEvent(event)
+            AgentActivity.shared.handle(event)
+        }
         AgentHookServer.shared.start()
+    }
+
+    // Workspaces with an agent turn currently in flight (UserPromptSubmit → Stop), keyed
+    // by workspace path. This is what gates the FSEvents backstop for hook-backed panes:
+    // record shell-driven edits (sed / redirects the agent runs via Bash) ONLY while a
+    // turn is active, so a `git checkout` or build run OUTSIDE a turn no longer pollutes
+    // the Changes panel — the coarse "ever had an agent session" gate did.
+    private var turnActiveWorkspaces: Set<String> = []
+
+    // Change-tracking half of the hook stream. Edit/Write/MultiEdit give a precise,
+    // per-pane "the agent changed THIS file" signal — far better than guessing from
+    // FSEvents. Turn boundaries drive the FSEvents backstop gate above.
+    private func routeAgentEvent(_ event: AgentEvent) {
+        guard let pane = PaneSessionRegistry.shared.pane(for: event.pane) else { return }
+        switch event.kind {
+        case .userPromptSubmit:
+            turnActiveWorkspaces.insert(pane.workspace)
+        case .stop, .stopFailure:
+            // Clear only when no other pane in this workspace is still mid-turn.
+            let stillBusy = PaneSessionRegistry.shared.sessions(inWorkspace: pane.workspace)
+                .contains { $0 != event.pane && AgentActivity.shared.hasActiveTurn($0) }
+            if !stillBusy { turnActiveWorkspaces.remove(pane.workspace) }
+        case .postToolUse:
+            if let path = event.filePath { recordAgentFileEdit(workspace: pane.workspace, path: path) }
+        default: break
+        }
+    }
+
+    // Record one agent file edit against its pane's workspace (not necessarily the active
+    // one). Mirrors processFileChanges for a single file: before = session baseline / git
+    // HEAD, after = disk, size-capped. This is the precise path; FSEvents is the backstop.
+    private func recordAgentFileEdit(workspace: String, path: String) {
+        guard path.hasPrefix(workspace + "/"), !AgentEdits.isIgnored(path) else { return }
+        let memBefore = AgentEdits.shared.baselineContent(path)
+        fileChangeQueue.async { [weak self] in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+            if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { return }
+            guard let after = try? String(contentsOfFile: path, encoding: .utf8) else { return }  // deleted/binary
+            let rel = String(path.dropFirst(workspace.count + 1))
+            let before = memBefore ?? Git.showFilesBatch(cwd: workspace, rels: [rel])[rel]
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if before == after { AgentEdits.shared.resolve(path: path); return }
+                if AgentEdits.shared.baselineContent(path) == nil {
+                    AgentEdits.shared.updateBaseline(path, before ?? "")
+                }
+                AgentEdits.shared.record(path: path, workspace: workspace,
+                                         before: before ?? "", after: after, isNew: before == nil)
+                RLog.log("changes: hook-recorded agent edit \(rel)")
+                if self.workspace?.path == workspace { self.ensureChangesPanel() }
+            }
+        }
     }
 
     /// Single-quote a path for the launch command line — the app-support path contains
@@ -901,7 +956,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func processFileChanges(_ paths: [String]) {
         guard let ws = workspace else { return }
         let wsPath = ws.path
-        guard agentSessionWorkspaces.contains(wsPath) else { return }   // only during an agent session
+        // Hybrid gate. If this workspace has a hook-backed pane, Edit/Write edits are
+        // already recorded precisely via routeAgentEvent, so FSEvents is only a BACKSTOP
+        // for shell-driven edits — record just while a turn is in flight, which keeps
+        // out-of-turn noise (git checkout, builds) off the panel. Without any hook-backed
+        // pane (plain terminals, Codex before its hooks are verified) fall back to the
+        // original coarse "agent session" gate.
+        let hookBacked = PaneSessionRegistry.shared.sessions(inWorkspace: wsPath)
+            .contains { PaneSessionRegistry.shared.isHookBacked($0) }
+        if hookBacked {
+            guard turnActiveWorkspaces.contains(wsPath) else { return }
+        } else {
+            guard agentSessionWorkspaces.contains(wsPath) else { return }
+        }
         // Cheap main-thread pass: filter to in-workspace, non-ignored paths and snapshot
         // the in-memory session baselines (AgentEdits is main-only; these are dict reads).
         let candidates = paths.filter { $0.hasPrefix(wsPath + "/") && !AgentEdits.isIgnored($0) }

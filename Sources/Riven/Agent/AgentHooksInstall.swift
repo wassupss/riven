@@ -17,17 +17,31 @@ enum AgentHooksInstall {
     //    agents like Codex that can't be launched with a caller-chosen session id).
     //  • the payload arrives on stdin as JSON with session_id / cwd / hook_event_name.
 
-    /// Events worth waking riven for. Deliberately excludes the per-tool-call firehose
-    /// (PreToolUse / PostToolUse): those fire many times per turn and none of them
-    /// change the pane's user-visible state.
-    private static let claudeEvents = [
-        "SessionStart", "UserPromptSubmit", "PermissionRequest",
-        "Notification", "Stop", "StopFailure", "SubagentStart", "SubagentStop",
+    // (event, matcher) — matcher filters PostToolUse to just the file-editing tools so we
+    // get a precise per-file change signal, not the whole tool firehose. nil = every call.
+    struct Hook { let event: String; let matcher: String? }
+
+    /// Status events + the file-edit signal that drives the Changes panel. PreToolUse and
+    /// unmatched PostToolUse are still excluded — only Edit/Write/MultiEdit are recorded.
+    private static let claudeHooks: [Hook] = [
+        Hook(event: "SessionStart", matcher: nil),
+        Hook(event: "UserPromptSubmit", matcher: nil),
+        Hook(event: "PermissionRequest", matcher: nil),
+        Hook(event: "Notification", matcher: nil),
+        Hook(event: "Stop", matcher: nil),
+        Hook(event: "StopFailure", matcher: nil),
+        Hook(event: "SubagentStart", matcher: nil),
+        Hook(event: "SubagentStop", matcher: nil),
+        Hook(event: "PostToolUse", matcher: "Edit|Write|MultiEdit"),
     ]
     /// Codex documents a smaller set — no Notification / StopFailure.
-    private static let codexEvents = [
-        "SessionStart", "UserPromptSubmit", "PermissionRequest",
-        "Stop", "SubagentStart", "SubagentStop",
+    private static let codexHookSpecs: [Hook] = [
+        Hook(event: "SessionStart", matcher: nil),
+        Hook(event: "UserPromptSubmit", matcher: nil),
+        Hook(event: "PermissionRequest", matcher: nil),
+        Hook(event: "Stop", matcher: nil),
+        Hook(event: "SubagentStart", matcher: nil),
+        Hook(event: "SubagentStop", matcher: nil),
     ]
 
     /// Absolute path to the bridge helper, which ships beside the app binary. It must
@@ -49,17 +63,17 @@ enum AgentHooksInstall {
     /// One matcher group per event, each running the bridge.
     ///   async  — never make the agent wait on us; delivery is fire-and-forget.
     ///   timeout— a floor under a wedged socket; the helper already self-limits to ~1s.
-    private static func hooksBlock(agent: String, events: [String], helper: String) -> [String: Any] {
+    private static func hooksBlock(agent: String, hooks: [Hook], helper: String) -> [String: Any] {
         var out: [String: Any] = [:]
-        for event in events {
-            out[event] = [[
-                "hooks": [[
-                    "type": "command",
-                    "command": command(helper, agent, event),
-                    "async": true,
-                    "timeout": 5,
-                ]]
-            ]]
+        for h in hooks {
+            var group: [String: Any] = ["hooks": [[
+                "type": "command",
+                "command": command(helper, agent, h.event),
+                "async": true,
+                "timeout": 5,
+            ]]]
+            if let m = h.matcher { group["matcher"] = m }
+            out[h.event] = [group]
         }
         return out
     }
@@ -73,7 +87,7 @@ enum AgentHooksInstall {
             return nil
         }
         let url = AgentHookServer.ensureSupportDir().appendingPathComponent("claude-hooks.json")
-        let doc: [String: Any] = ["hooks": hooksBlock(agent: "claude", events: claudeEvents, helper: helper)]
+        let doc: [String: Any] = ["hooks": hooksBlock(agent: "claude", hooks: claudeHooks, helper: helper)]
         guard let data = try? JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys]),
               (try? data.write(to: url, options: .atomic)) != nil else { return nil }
         return url.path
@@ -97,11 +111,12 @@ enum AgentHooksInstall {
     static func codexLaunchOverrides() -> [String] {
         guard codexEnabled, let helper = helperPath else { return [] }
         var argv = ["-c", "features.hooks=true"]
-        for event in codexEvents {
+        for h in codexHookSpecs {
             // Inline TOML value; the command string is single-quoted for the shell that
             // ultimately runs the launch line, and TOML-quoted inside it.
-            let cmd = command(helper, "codex", event).replacingOccurrences(of: "\"", with: "\\\"")
-            argv += ["-c", "hooks.\(event)=[{hooks=[{type=\"command\",command=\"\(cmd)\"}]}]"]
+            let cmd = command(helper, "codex", h.event).replacingOccurrences(of: "\"", with: "\\\"")
+            let matcher = h.matcher.map { "matcher=\"\($0)\"," } ?? ""
+            argv += ["-c", "hooks.\(h.event)=[{\(matcher)hooks=[{type=\"command\",command=\"\(cmd)\"}]}]"]
         }
         return argv
     }

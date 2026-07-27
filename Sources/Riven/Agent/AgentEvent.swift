@@ -16,6 +16,7 @@ struct AgentEvent {
         case stopFailure       = "StopFailure"        // turn ended on an API error
         case subagentStart     = "SubagentStart"
         case subagentStop      = "SubagentStop"
+        case postToolUse       = "PostToolUse"        // a file-editing tool ran → drives the Changes panel
     }
 
     let kind: Kind
@@ -32,8 +33,11 @@ struct AgentEvent {
     /// Human-readable text for the banner: `last_assistant_message` (Stop),
     /// `message` (Notification), or `error_message` (StopFailure).
     let message: String?
-    /// Tool awaiting approval, on permissionRequest.
+    /// Tool awaiting approval (permissionRequest) or the tool that ran (postToolUse).
     let toolName: String?
+    /// Absolute path the tool edited (postToolUse for Edit/Write/MultiEdit) — the
+    /// precise, per-pane signal that drives the Changes panel. nil for other events.
+    let filePath: String?
 
     // ---- decoding ----------------------------------------------------------
     // Envelope shape (see Sources/RivenHook):
@@ -61,6 +65,12 @@ struct AgentEvent {
             return t.isEmpty ? nil : String(t.prefix(400))
         }
 
+        // Edit / Write / MultiEdit all put the target under tool_input.file_path. Accept
+        // only an absolute path (a well-formed edit target); anything else is dropped so a
+        // malformed payload can't inject a bogus Changes entry.
+        let toolInput = payload["tool_input"] as? [String: Any]
+        let editedPath = (toolInput?["file_path"] as? String).flatMap { $0.hasPrefix("/") ? $0 : nil }
+
         return AgentEvent(
             kind: kind,
             pane: pane,
@@ -68,7 +78,8 @@ struct AgentEvent {
             sessionId: payload["session_id"] as? String,
             promptId: payload["prompt_id"] as? String,
             message: text("last_assistant_message") ?? text("message") ?? text("error_message"),
-            toolName: (payload["tool_name"] as? String).map { String($0.prefix(64)) }
+            toolName: (payload["tool_name"] as? String).map { String($0.prefix(64)) },
+            filePath: editedPath
         )
     }
 }

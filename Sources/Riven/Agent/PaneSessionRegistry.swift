@@ -32,6 +32,11 @@ final class PaneSessionRegistry {
 
     func pane(for session: String) -> Pane? { panes[session] }
 
+    /// Session UUIDs of every registered pane in a workspace.
+    func sessions(inWorkspace workspace: String) -> [String] {
+        panes.filter { $0.value.workspace == workspace }.map { $0.key }
+    }
+
     /// True once this pane has delivered at least one hook event.
     func isHookBacked(_ session: String) -> Bool { hookBacked.contains(session) }
 
