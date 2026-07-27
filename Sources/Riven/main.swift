@@ -3,8 +3,7 @@ import AppKit
 // Owner-only crash-log path under Application Support (computed once so the C signal
 // handler, which can't allocate/capture, has a ready path).
 let rivenCrashPath: String = {
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/riven-native")
+    let dir = AppPaths.supportDir
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let p = dir.appendingPathComponent("crash.txt").path
     if !FileManager.default.fileExists(atPath: p) {
@@ -596,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // `claude` resumes that pane's exact conversation on relaunch. Interactive shells only
     // (.zshrc isn't sourced for scripts), so scripts that call `claude` are unaffected.
     private var rivenZdotdir: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/riven-native/zdotdir")
+        AppPaths.support("zdotdir").path
     }
     private func setupShellShim() {
         let dir = rivenZdotdir
@@ -1189,6 +1188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let st = state(for: ws)
         let inactive = st.openTabs.filter { $0 != st.activeTab }
         guard !inactive.isEmpty else { return }
+        RLog.log("editor onReady: re-syncing \(inactive.count) inactive tab(s) after WebView (re)load")
         DispatchQueue.global(qos: .userInitiated).async {
             let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
             DispatchQueue.main.async {

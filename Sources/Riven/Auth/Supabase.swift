@@ -34,8 +34,7 @@ enum SupabaseConfig {
 // instead — the same tradeoff gh/npm/git credential stores make.
 enum Keychain {
     private static let dir: URL = {
-        let d = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/riven-native/secrets")
+        let d = AppPaths.support("secrets")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         return d

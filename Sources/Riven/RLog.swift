@@ -6,8 +6,7 @@ import Foundation
 // is how we trace real-run behavior.
 enum RLog {
     private static let path: String = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/riven-native")
+        let dir = AppPaths.supportDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let p = dir.appendingPathComponent("debug.log").path
         if !FileManager.default.fileExists(atPath: p) {
