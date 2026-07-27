@@ -631,7 +631,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     # RESUME if a transcript already exists (id globbed across project dirs,
                     # so it's encoding/CLAUDE_CONFIG_DIR independent); CREATE otherwise.
                     # --session-id refuses an id that already has state ("already in use").
-                    if ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/"*/"$RIVEN_PANE_SESSION.jsonl" >/dev/null 2>&1; then
+                    if [ -n "$(find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -name "$RIVEN_PANE_SESSION.jsonl" 2>/dev/null | head -1)" ]; then
                       rv+=(--resume "$RIVEN_PANE_SESSION")
                     else
                       rv+=(--session-id "$RIVEN_PANE_SESSION")
@@ -800,8 +800,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // fails on an existing transcript; --resume accepts it.
         var cmd = agent?.cmd
         if let a = agent, let sessionFlag = a.sessionFlag {
-            let flag = (a.resumeFlag != nil && claudeSessionExists(sessionId: paneSession)) ? a.resumeFlag! : sessionFlag
+            let exists = a.resumeFlag != nil && claudeSessionExists(sessionId: paneSession)
+            let flag = exists ? a.resumeFlag! : sessionFlag
             cmd = "\(a.cmd) \(flag) \(paneSession)"
+            RLog.log("agent launch: \(a.name) \(flag) \(paneSession) (transcript=\(exists ? "yes" : "no"))")
         }
         // Hand the agent riven's hook config on the command line rather than writing to
         // the user's own settings. Verified: --settings DEEP-MERGES `hooks`, so a user's
