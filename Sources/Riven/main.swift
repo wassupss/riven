@@ -615,8 +615,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             # riven: typing `claude` resumes THIS pane's session across app restarts.
             if [ -n "$RIVEN_PANE_SESSION" ]; then
               # --settings carries riven's agent hooks; it deep-merges, so the user's own
-              # hooks still fire. ${VAR:+...} keeps the flag out entirely when unset.
-              claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" ${RIVEN_HOOKS_SETTINGS:+--settings "$RIVEN_HOOKS_SETTINGS"} "$@"; }
+              # hooks still fire. Two branches, NOT ${VAR:+--settings "$VAR"}: zsh does not
+              # field-split parameter expansions, so that form passes "--settings /path" as a
+              # SINGLE argv word and claude rejects it as an unknown option.
+              if [ -n "$RIVEN_HOOKS_SETTINGS" ]; then
+                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" --settings "$RIVEN_HOOKS_SETTINGS" "$@"; }
+              else
+                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" "$@"; }
+              fi
             fi
             export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
             """,
