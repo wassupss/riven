@@ -34,10 +34,7 @@ final class AgentHookServer {
     static var socketPath: String {
         supportDir.appendingPathComponent("hooks.sock").path
     }
-    static var supportDir: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/riven-native")
-    }
+    static var supportDir: URL { AppPaths.supportDir }
     /// Create the support dir if needed AND force it to 0700.
     ///
     /// The chmod is not redundant: createDirectory's `attributes` only apply when it

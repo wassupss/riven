@@ -12,8 +12,7 @@ final class Settings {
     private let lock = NSLock()
 
     private init() {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/riven-native")
+        let dir = AppPaths.supportDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent("settings.json")
         if let d = try? Data(contentsOf: url),

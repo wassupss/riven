@@ -35,7 +35,14 @@ final class AgentActivity {
     private var notifiedTurn: [String: String] = [:]
     private var synthetic: [String: Int] = [:]
 
+    /// Whether a turn is currently in flight for this pane session (UserPromptSubmit seen,
+    /// Stop not yet). Used to gate the FSEvents change-tracking backstop.
+    func hasActiveTurn(_ session: String) -> Bool { currentTurn[session] != nil }
+
     func handle(_ event: AgentEvent) {
+        // postToolUse is change-tracking only (handled in routeAgentEvent) — it must not
+        // touch busy/attn state or the per-turn notification bookkeeping here.
+        if event.kind == .postToolUse { return }
         guard let pane = PaneSessionRegistry.shared.pane(for: event.pane), let sink else { return }
         let key = event.pane
 
@@ -89,6 +96,8 @@ final class AgentActivity {
         case .subagentStart, .subagentStop:
             // Tracked for a future subagent count on the tab badge; no state change yet.
             break
+        case .postToolUse:
+            break   // unreachable (early-returned above); here only for exhaustiveness
         }
     }
 

@@ -3,8 +3,7 @@ import AppKit
 // Owner-only crash-log path under Application Support (computed once so the C signal
 // handler, which can't allocate/capture, has a ready path).
 let rivenCrashPath: String = {
-    let dir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/riven-native")
+    let dir = AppPaths.supportDir
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let p = dir.appendingPathComponent("crash.txt").path
     if !FileManager.default.fileExists(atPath: p) {
@@ -596,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // `claude` resumes that pane's exact conversation on relaunch. Interactive shells only
     // (.zshrc isn't sourced for scripts), so scripts that call `claude` are unaffected.
     private var rivenZdotdir: String {
-        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/riven-native/zdotdir")
+        AppPaths.support("zdotdir").path
     }
     private func setupShellShim() {
         let dir = rivenZdotdir
@@ -623,7 +622,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 # themselves; otherwise claude sees a duplicate/ conflicting session flag.
                 case " $* " in
                   (*" --session-id "*|*" --resume "*|*" -r "*|*" --continue "*|*" -c "*|*" --from-pr "*) ;;
-                  (*) rv+=(--session-id "$RIVEN_PANE_SESSION") ;;
+                  (*)
+                    rv+=(--session-id "$RIVEN_PANE_SESSION")
+                    # Reap a claude from a previous riven still holding THIS pane's session.
+                    # claude ignores SIGHUP, so quitting riven orphans it instead of closing
+                    # it; on relaunch `--session-id` then fails with "Session ID already in
+                    # use" and the conversation never comes back. The transcript is on disk,
+                    # so killing the orphan and resuming is lossless.
+                    pkill -f -- "--session-id $RIVEN_PANE_SESSION" 2>/dev/null
+                    ;;
                 esac
                 # riven's agent hooks (deep-merged, so the user's own hooks still fire).
                 [ -n "$RIVEN_HOOKS_SETTINGS" ] && rv+=(--settings "$RIVEN_HOOKS_SETTINGS")
@@ -669,8 +676,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Notifications.post(title: title, body: "\(name) · \(body)")
             }
         )
-        AgentHookServer.shared.onEvent = { AgentActivity.shared.handle($0) }
+        AgentHookServer.shared.onEvent = { [weak self] event in
+            self?.routeAgentEvent(event)
+            AgentActivity.shared.handle(event)
+        }
         AgentHookServer.shared.start()
+    }
+
+    // Workspaces with an agent turn currently in flight (UserPromptSubmit → Stop), keyed
+    // by workspace path. This is what gates the FSEvents backstop for hook-backed panes:
+    // record shell-driven edits (sed / redirects the agent runs via Bash) ONLY while a
+    // turn is active, so a `git checkout` or build run OUTSIDE a turn no longer pollutes
+    // the Changes panel — the coarse "ever had an agent session" gate did.
+    private var turnActiveWorkspaces: Set<String> = []
+
+    // Change-tracking half of the hook stream. Edit/Write/MultiEdit give a precise,
+    // per-pane "the agent changed THIS file" signal — far better than guessing from
+    // FSEvents. Turn boundaries drive the FSEvents backstop gate above.
+    private func routeAgentEvent(_ event: AgentEvent) {
+        guard let pane = PaneSessionRegistry.shared.pane(for: event.pane) else { return }
+        switch event.kind {
+        case .userPromptSubmit:
+            turnActiveWorkspaces.insert(pane.workspace)
+        case .stop, .stopFailure:
+            // Clear only when no other pane in this workspace is still mid-turn.
+            let stillBusy = PaneSessionRegistry.shared.sessions(inWorkspace: pane.workspace)
+                .contains { $0 != event.pane && AgentActivity.shared.hasActiveTurn($0) }
+            if !stillBusy { turnActiveWorkspaces.remove(pane.workspace) }
+        case .postToolUse:
+            if let path = event.filePath { recordAgentFileEdit(workspace: pane.workspace, path: path) }
+        default: break
+        }
+    }
+
+    // Record one agent file edit against its pane's workspace (not necessarily the active
+    // one). Mirrors processFileChanges for a single file: before = session baseline / git
+    // HEAD, after = disk, size-capped. This is the precise path; FSEvents is the backstop.
+    private func recordAgentFileEdit(workspace: String, path: String) {
+        guard path.hasPrefix(workspace + "/"), !AgentEdits.isIgnored(path) else { return }
+        let memBefore = AgentEdits.shared.baselineContent(path)
+        fileChangeQueue.async { [weak self] in
+            let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+            if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { return }
+            guard let after = try? String(contentsOfFile: path, encoding: .utf8) else { return }  // deleted/binary
+            let rel = String(path.dropFirst(workspace.count + 1))
+            let before = memBefore ?? Git.showFilesBatch(cwd: workspace, rels: [rel])[rel]
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if before == after { AgentEdits.shared.resolve(path: path); return }
+                if AgentEdits.shared.baselineContent(path) == nil {
+                    AgentEdits.shared.updateBaseline(path, before ?? "")
+                }
+                AgentEdits.shared.record(path: path, workspace: workspace,
+                                         before: before ?? "", after: after, isNew: before == nil)
+                RLog.log("changes: hook-recorded agent edit \(rel)")
+                if self.workspace?.path == workspace { self.ensureChangesPanel() }
+            }
+        }
     }
 
     /// Single-quote a path for the launch command line — the app-support path contains
@@ -720,6 +782,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if agent?.name == "Codex" {
             let overrides = AgentHooksInstall.codexLaunchOverrides()
             if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
+        }
+        // Reap an orphaned agent from a previous riven still holding this session id before
+        // relaunching. claude ignores SIGHUP, so quitting riven leaves it running instead of
+        // closing it; on restore `--session-id` then fails with "Session ID already in use"
+        // and the conversation never comes back. Lossless: the transcript is on disk, so the
+        // relaunch resumes it. `exec` avoids leaving a wrapper shell in the pane's tree.
+        if let a = agent, a.sessionFlag != nil, let c = cmd {
+            cmd = "pkill -f -- '--session-id \(paneSession)' 2>/dev/null; exec \(c)"
         }
         // The shim needs the same file for a hand-typed `claude` in a plain terminal.
         if let settings = AgentHooksInstall.claudeSettingsPath() { env["RIVEN_HOOKS_SETTINGS"] = settings }
@@ -902,7 +972,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func processFileChanges(_ paths: [String]) {
         guard let ws = workspace else { return }
         let wsPath = ws.path
-        guard agentSessionWorkspaces.contains(wsPath) else { return }   // only during an agent session
+        // Hybrid gate. If this workspace has a hook-backed pane, Edit/Write edits are
+        // already recorded precisely via routeAgentEvent, so FSEvents is only a BACKSTOP
+        // for shell-driven edits — record just while a turn is in flight, which keeps
+        // out-of-turn noise (git checkout, builds) off the panel. Without any hook-backed
+        // pane (plain terminals, Codex before its hooks are verified) fall back to the
+        // original coarse "agent session" gate.
+        let hookBacked = PaneSessionRegistry.shared.sessions(inWorkspace: wsPath)
+            .contains { PaneSessionRegistry.shared.isHookBacked($0) }
+        if hookBacked {
+            guard turnActiveWorkspaces.contains(wsPath) else { return }
+        } else {
+            guard agentSessionWorkspaces.contains(wsPath) else { return }
+        }
         // Cheap main-thread pass: filter to in-workspace, non-ignored paths and snapshot
         // the in-memory session baselines (AgentEdits is main-only; these are dict reads).
         let candidates = paths.filter { $0.hasPrefix(wsPath + "/") && !AgentEdits.isIgnored($0) }
@@ -1156,6 +1238,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let ws = self.workspace { self.state(for: ws).activeTab = path }
             self.tabBar.setActive(path)
         }
+        // A WKWebView reload (dock reparent / WebKit recycle) wipes every Monaco model,
+        // but native still lists all open tabs. The ready handler re-pushes only the
+        // active file, so the others became native-open / web-missing — reopening one hit
+        // the "already open → send empty content" path and Monaco showed a blank buffer.
+        // Re-push the whole set here. Primary editor only (it owns the workspace tabs).
+        if !secondary { ed.onReady = { [weak self, weak ed] in self?.resyncOpenTabs(to: ed) } }
         ed.onLSP = { [weak self] id, method, path, params in self?.handleLSP(id, method, path, params) }
         ed.onLSPSync = { [weak self] path, version, text in
             guard let self, let ws = self.workspace else { return }
@@ -1171,6 +1259,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ed.setEditorKeymap(Settings.shared.string("editorKeymap", "vscode"))
         ed.setEditorKeys(Keys.editorChords())
         ed.setSnippets(loadSnippets())
+    }
+
+    // Re-push every open tab to the editor after a WKWebView reload wiped its models.
+    // Active tab is already restored by EditorView's own re-push; this fills in the rest
+    // (inactive tabs) so reopening any of them doesn't land on a blank buffer. Files are
+    // read off-main (a big workspace can have many tabs); openBackground is idempotent,
+    // so a redundant call on the initial load is harmless.
+    private func resyncOpenTabs(to ed: EditorView?) {
+        guard let ed, let ws = workspace else { return }
+        let st = state(for: ws)
+        let inactive = st.openTabs.filter { $0 != st.activeTab }
+        guard !inactive.isEmpty else { return }
+        RLog.log("editor onReady: re-syncing \(inactive.count) inactive tab(s) after WebView (re)load")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
+            DispatchQueue.main.async {
+                guard self.workspace == ws else { return }   // workspace switched meanwhile
+                let cur = self.state(for: ws)
+                for (p, content) in loaded where cur.openTabs.contains(p) {
+                    ed.openBackground(path: p, content: content)
+                }
+            }
+        }
     }
     private func dockActivePanelChanged(_ p: DockPanel?) { p?.onActivate?() }
 
@@ -1618,6 +1729,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // Monaco here runs on the MAIN THREAD (the editor WebView loads from file://, which
+    // blocks its Web Workers — see EditorView), so a very large file tokenizes on the UI
+    // thread and freezes the app: opening it looks like "nothing happens". Refuse past a
+    // cap, matching how VSCode guards large files. Applies to both text and image opens
+    // (an image is base64'd into a data: URL, ~1.33× its bytes in memory).
+    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB
+
     private func openFile(_ url: URL) {
         RLog.log("openFile \(url.lastPathComponent) ws=\(workspace?.lastPathComponent ?? "nil")")
         guard let ws = workspace else { RLog.log("openFile: no workspace!"); return }
@@ -1631,6 +1749,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if Self.imageMIME(path) != nil { editor.showImageTab(path: path) }
             else { editor.open(path: path, content: "") }   // Monaco reuses the existing model
             statusBar.setFileInfo(fileInfo(path))
+            return
+        }
+        // Size guard (before any read): a huge file would freeze Monaco on the main
+        // thread or balloon memory as a data: URL. Refuse with a clear message.
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? Int, size > Self.maxEditorFileSize {
+            let a = NSAlert()
+            a.messageText = t("editor.tooLarge")
+            a.informativeText = t("editor.tooLargeBody", [
+                "name": url.lastPathComponent,
+                "size": ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file),
+                "limit": ByteCountFormatter.string(fromByteCount: Int64(Self.maxEditorFileSize), countStyle: .file)])
+            a.alertStyle = .warning
+            a.runModal()
+            RLog.log("openFile: refused \(path) — \(size) bytes > cap")
             return
         }
         // 이미지는 Monaco가 못 그리므로 에디터 탭 안의 이미지 뷰어로 연다 (VS Code의

@@ -212,6 +212,10 @@ enum I18n {
         "agent.needsApproval": ("승인이 필요합니다", "Approval needed"),
         "agent.needsApprovalTool": ("{tool} 실행 승인이 필요합니다", "Approval needed to run {tool}"),
         "agent.failed": ("턴이 오류로 끝났습니다", "The turn ended with an error"),
+        // editor guards
+        "editor.tooLarge": ("파일이 너무 큽니다", "File is too large"),
+        "editor.tooLargeBody": ("{name} ({size})은(는) 에디터에서 열기에 너무 큽니다. {limit}보다 작은 파일만 열 수 있습니다.",
+            "{name} ({size}) is too large to open in the editor. Only files smaller than {limit} can be opened."),
         // toolbar / menu-ish
         "toolbar.addPanel": ("패널 추가", "Add panel"),
         "toolbar.newTerminal": ("새 터미널", "New terminal"),
