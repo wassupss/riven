@@ -9,6 +9,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var link: CVDisplayLink?
     private let workdir: String?
     private let command: String?          // initial command (agent launch) — runs directly
+    private let env: [String: String]     // extra environment for the surface (session shim)
     var onTitle: ((String) -> Void)?      // OSC 0/2 title from the shell/agent
 
     // surface pointer → view, so ghostty's per-surface actions (bell / desktop
@@ -38,9 +39,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     static weak var focused: TerminalView?
     var surfaceHandle: ghostty_surface_t? { surface }
 
-    init(frame: NSRect, workdir: String? = nil, command: String? = nil) {
+    init(frame: NSRect, workdir: String? = nil, command: String? = nil, env: [String: String] = [:]) {
         self.workdir = workdir
         self.command = command
+        self.env = env
         super.init(frame: frame)
         wantsLayer = true
         layer = CAMetalLayer()
@@ -49,7 +51,6 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         attnRing.frame = bounds
         attnRing.autoresizingMask = [.width, .height]
         addSubview(attnRing)
-        startActivityPolling()
         // Finder 등에서 파일/이미지를 끌어다 놓으면 그 경로를 터미널에 입력해 준다
         // (클로드코드 CLI에 이미지를 물릴 때 경로를 직접 치지 않아도 되도록).
         registerForDraggedTypes([.fileURL])
@@ -61,122 +62,23 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // ---- Activity-based busy/idle detection (riven's pty.ts model) ----
-    // ghostty actions (PROGRESS_REPORT / COMMAND_FINISHED / notifications) are an
-    // unreliable "done" signal: long-running agents never emit COMMAND_FINISHED, and
-    // Claude Code suppresses its desktop notification while its terminal is focused.
-    // So — exactly like riven — we watch the terminal's OWN OUTPUT: poll the visible
-    // viewport text, and treat "content is changing" as busy and "content has been
-    // stable for a gap" as done. This needs no cooperation from the agent.
-    private var pollTimer: Timer?
-    private var lastViewport = ""
-    private var lastScreenHash: Int = 0
-    private var lastChange = Date()
-    private var busyState = false
-    private var busyStart = Date()
-    private let idleGap: TimeInterval = 0.9    // riven ACTIVE_MS — stable this long ⇒ done
-    private let minTurn: TimeInterval = 2.5    // only a turn this long pings (skips quick commands / typing)
+    // ---- busy / idle signals ------------------------------------------------
+    // These used to be derived by polling the visible viewport (ghostty_surface_read_text
+    // every 0.3s, per pane, forever). That call is documented as expensive and not to be
+    // polled, and it leaked ~10KB each time — ~9.3MB/min across a normal set of panes,
+    // which is where the multi-GB sessions came from.
+    //
+    // Nothing polls now. The callbacks below are driven by push signals only:
+    //   • agent panes  → lifecycle hooks (see [[AgentActivity]]), the authoritative source
+    //   • plain shells → Return pressed = busy, ghostty's OSC 133 COMMAND_FINISHED = idle
+    //   • anything else→ OSC 9/777 desktop notification, bell, child-exited
+    //
+    // The old comment here claimed COMMAND_FINISHED was unreliable. That was true of the
+    // agent TUIs it was being tested against (they never emit it) but not of plain shells,
+    // where OSC 133 is exact — so it is used for shells and hooks cover the agents.
 
-    private func startActivityPolling() {
-        let t = Timer(timeInterval: 0.3, repeats: true) { [weak self] _ in self?.pollActivity() }
-        RunLoop.main.add(t, forMode: .common)
-        pollTimer = t
-    }
-
-    // Hash the visible viewport; drive busy on change, done on a stable gap.
-    private func pollActivity() {
-        guard let s = surface else { return }
-        var sel = ghostty_selection_s()
-        sel.top_left = ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0)
-        sel.bottom_right = ghostty_point_s(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0)
-        sel.rectangle = false
-        var out = ghostty_text_s()
-        guard ghostty_surface_read_text(s, sel, &out) else { return }
-        var hash = 0
-        if let cstr = out.text {
-            // FNV-1a over the raw bytes — cheap and stable within a run.
-            hash = 1469598103934665603 &* 1
-            var p = cstr
-            while p.pointee != 0 { hash = (hash ^ Int(bitPattern: UInt(bitPattern: Int(p.pointee)))) &* 1099511628211; p = p.advanced(by: 1) }
-            lastViewport = String(cString: cstr)
-        }
-        ghostty_surface_free_text(s, &out)
-
-        let now = Date()
-        if hash != lastScreenHash {
-            lastScreenHash = hash
-            lastChange = now
-            if !busyState {
-                busyState = true
-                busyStart = now
-                onBusy?()
-            }
-        } else if busyState, now.timeIntervalSince(lastChange) >= idleGap {
-            // Output has been stable → the turn ended.
-            busyState = false
-            let duration = lastChange.timeIntervalSince(busyStart)
-            onIdle?()
-            // A substantial turn (not a quick command / typing echo) → raise attention.
-            if duration >= minTurn { onTurnDone?() }
-        }
-    }
-
-    // The agent's last meaningful reply line(s), scraped from the visible viewport for
-    // the completion notification body. Filters out TUI chrome / status / timing lines
-    // ("esc to interrupt", spinners, "baked for 5m 43s", token counters, box borders,
-    // the input prompt) so the banner shows what the agent actually SAID.
-    func lastAgentMessage() -> String? {
-        let junk = [
-            "esc to interrupt", "esc to ", "ctrl+", "tokens", "token", "context left",
-            "auto-accept", "accept edits", "to interrupt", "⏵", "⏸", "▐", "press up",
-            "for \u{2026}", "…)",
-        ]
-        // A line that's only a timer / spinner / box-drawing / prompt / Claude Code's
-        // "✻ Churned for 12m 44s · … · esc to interrupt" status line is NOT content.
-        func isChrome(_ l: String) -> Bool {
-            let t = l.trimmingCharacters(in: .whitespaces)
-            if t.isEmpty { return true }
-            let low = t.lowercased()
-            if junk.contains(where: { low.contains($0) }) { return true }
-            // Claude Code's gerund status line: "<Word>ed/ing for 12m 44s" (Churned,
-            // Baked, Herding, Cerebrating, Noodling…). Any "… for <time>" is chrome.
-            if low.range(of: #"\bfor\s+\d+m\b|\bfor\s+\d+s\b|\bfor\s+\d+m\s*\d+s\b"#, options: .regularExpression) != nil { return true }
-            // Pure timing like "5m 43s" / "· 12s" / "(43s)".
-            if t.range(of: #"^[·•∙✻✽✳*●\-\s\(]*\d+m?\s*\d*s\)?$"#, options: .regularExpression) != nil { return true }
-            // Braille spinner frames / box borders / prompt carets only.
-            let strip = t.trimmingCharacters(in: CharacterSet(charactersIn: "⠀⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿╭╮╯╰│─┌┐└┘├┤┬┴┼>❯✳✻✽*● "))
-            if strip.isEmpty { return true }
-            return false
-        }
-        let lines = lastViewport.components(separatedBy: "\n")
-        // Claude Code prints each assistant reply prefixed with a filled bullet "⏺"
-        // (U+23FA) or "●" (U+25CF). Take the LAST such line (the newest answer) + its
-        // wrapped continuation. Only these two markers — NOT "•"/"◦", which appear in
-        // Claude's status/config UI ("high effort", permission hints) and produced the
-        // "high /effort" garbage. If there's no bullet line, return nil (generic banner).
-        func isBullet(_ scalar: Unicode.Scalar?) -> Bool { scalar == "\u{23FA}" || scalar == "\u{25CF}" }
-        guard let bulletIdx = lines.lastIndex(where: { line in
-            let tr = line.trimmingCharacters(in: .whitespaces)
-            guard isBullet(tr.unicodeScalars.first) else { return false }
-            let rest = tr.dropFirst().trimmingCharacters(in: .whitespaces)
-            return rest.count >= 2 && !isChrome(rest)   // bullet must precede real text
-        }) else { return nil }
-
-        var parts = [lines[bulletIdx].trimmingCharacters(in: CharacterSet(charactersIn: "\u{23FA}\u{25CF} \t"))]
-        var i = bulletIdx + 1
-        while i < lines.count {
-            let l = lines[i]
-            let tr = l.trimmingCharacters(in: .whitespaces)
-            if tr.isEmpty { break }
-            if isBullet(tr.unicodeScalars.first) { break }   // next assistant turn
-            if isChrome(l) { break }
-            parts.append(tr)
-            if parts.count >= 5 { break }
-            i += 1
-        }
-        let msg = parts.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        return msg.count >= 2 ? String(msg.prefix(200)) : nil
-    }
+    /// A shell command finished (OSC 133). Routed from [[GhosttyApp]]'s action handler.
+    func commandFinished() { onIdle?() }
 
     // riven's state ring (busy = static, attn = travelling ember) overlaid on the
     // terminal. Driven from the panel's badge via setRingState.
@@ -334,18 +236,24 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         sc.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
         // 새로 만드는 터미널도 설정값으로 시작한다 (예전에는 13 고정이라 설정이 무시됐다).
         sc.font_size = Float(UIScale.terminalFontSize)
-        // Optionally start in a directory and/or run a command directly (agent launch
-        // — e.g. `claude` runs immediately instead of being typed into a shell).
-        switch (workdir, command) {
-        case let (wd?, cmd?):
-            wd.withCString { w in cmd.withCString { c in sc.working_directory = w; sc.command = c; surface = ghostty_surface_new(app, &sc) } }
-        case let (wd?, nil):
-            wd.withCString { w in sc.working_directory = w; surface = ghostty_surface_new(app, &sc) }
-        case let (nil, cmd?):
-            cmd.withCString { c in sc.command = c; surface = ghostty_surface_new(app, &sc) }
-        default:
+        // Optionally start in a directory, run a command directly (agent launch — e.g.
+        // `claude` runs immediately), and inject per-surface env (session shim). ghostty
+        // copies the config strings during surface_new, so strdup here + free after is safe.
+        var owned: [UnsafeMutablePointer<CChar>] = []
+        func dup(_ s: String) -> UnsafePointer<CChar> { let p = strdup(s)!; owned.append(p); return UnsafePointer(p) }
+        if let wd = workdir { sc.working_directory = dup(wd) }
+        if let cmd = command { sc.command = dup(cmd) }
+        var envArr = env.map { ghostty_env_var_s(key: dup($0.key), value: dup($0.value)) }
+        if envArr.isEmpty {
             surface = ghostty_surface_new(app, &sc)
+        } else {
+            envArr.withUnsafeMutableBufferPointer { buf in
+                sc.env_vars = buf.baseAddress
+                sc.env_var_count = buf.count
+                surface = ghostty_surface_new(app, &sc)
+            }
         }
+        owned.forEach { free($0) }
         if let s = surface {
             TerminalView.registry[OpaquePointer(s)] = Weak(self)
             let scale = Double(window?.backingScaleFactor ?? 2.0)
@@ -513,7 +421,6 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // Tear down when the terminal panel is closed: stop the display link first
     // (so its callback can't touch a freed surface), then free the surface.
     func dispose() {
-        pollTimer?.invalidate(); pollTimer = nil
         if let o = fontObserver { NotificationCenter.default.removeObserver(o); fontObserver = nil }
         if let l = link { CVDisplayLinkStop(l) }
         link = nil
@@ -609,7 +516,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // prints, and resending that key would double-type it.
     override func keyDown(with event: NSEvent) {
         needsDraw = true
-        if event.keyCode == 0x24 { turnArmed = true }   // Return → a user turn begins; arm one notification
+        // Return submits a line → the pane is working until the shell reports the command
+        // finished (OSC 133). For an agent pane this is a no-op: its hook events are
+        // authoritative and main.swift ignores these once the pane is hook-backed.
+        if event.keyCode == 0x24 { turnArmed = true; onBusy?() }
         if event.modifierFlags.contains(.command) { super.keyDown(with: event); return }
         pendingText = nil
         interpretKeyEvents([event])
@@ -634,7 +544,6 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     }
 
     deinit {
-        pollTimer?.invalidate()
         if let s = surface { TerminalView.registry.removeValue(forKey: OpaquePointer(s)); ghostty_surface_free(s) }
         if let link { CVDisplayLinkStop(link) }
     }

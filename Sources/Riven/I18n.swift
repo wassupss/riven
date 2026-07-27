@@ -208,6 +208,10 @@ enum I18n {
         "preview.captureTitle": ("현재 화면을 캡처해 에이전트에 전달", "Capture the current view and send to the agent"),
         // notifications
         "term.done": ("작업이 완료되었습니다", "Done"),
+        // agent lifecycle (hook-driven — see docs/agent-hooks-design.md)
+        "agent.needsApproval": ("승인이 필요합니다", "Approval needed"),
+        "agent.needsApprovalTool": ("{tool} 실행 승인이 필요합니다", "Approval needed to run {tool}"),
+        "agent.failed": ("턴이 오류로 끝났습니다", "The turn ended with an error"),
         // toolbar / menu-ish
         "toolbar.addPanel": ("패널 추가", "Add panel"),
         "toolbar.newTerminal": ("새 터미널", "New terminal"),

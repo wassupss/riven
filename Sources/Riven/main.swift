@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var editorDockPanel: DockPanel?       // the shared editor panel (one WKWebView)
     private var workspaceColors: [URL: String] = [:]   // rail card colors (hex), persisted per session
     private var workspaceNames: [URL: String] = [:]    // custom rail names, persisted per session
+    private var sigtermSource: DispatchSourceSignal?   // persist on SIGTERM (kill/restart/logout)
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var editorVisible = false
     var workspace: URL?
@@ -61,6 +62,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         installCrashHandler()
+        setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
+        startAgentHooks()  // agent lifecycle events → pane busy/attn (replaces viewport polling)
+        // Persist the session on SIGTERM too (kill / restart / logout), not just ⌘Q —
+        // Cocoa doesn't call applicationWillTerminate for SIGTERM, so a killed app would
+        // otherwise lose panes created since the last save (incl. their claude session ids).
+        // A dispatch source runs on the main queue, so touching AppKit here is safe.
+        signal(SIGTERM, SIG_IGN)
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler { [weak self] in
+            self?.persistSession()
+            // NSApp.terminate can be DEFERRED — a modal sheet is up, or a delegate returns
+            // .terminateLater. The default SIGTERM disposition is now SIG_IGN, so in that
+            // case the process would survive and `kill <pid>` would stop working entirely.
+            // Arm a watchdog so the signal still means "exit", after giving the normal path
+            // a moment to shut the language servers down (#27).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { exit(0) }
+            NSApp.terminate(nil)
+        }
+        sigterm.resume()
+        sigtermSource = sigterm
         // Match the system material appearance to the theme's mode so scrollers /
         // materials don't render the wrong polarity over our palette.
         NSApp.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
@@ -569,32 +590,134 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (riven: each terminal is a `term-N` dockview panel). New/split terminals add
     // more of these; multiple in a group become tabs, exactly like every panel.
     // Created with a real frame + only while its host dock is in the window.
-    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil,
-                                   resume: Bool = false, sessionId: String? = nil) -> DockPanel {
-        st.terminalSeq += 1
-        // An agent panel runs the CLI directly (claude launches immediately, no typing) and
-        // is titled/iconed as that agent. Per-pane session persistence (Claude Code): mint a
-        // UUID and launch `<cmd> --session-id <uuid>` on a fresh start, or `<cmd> --resume
-        // <uuid>` when restoring — so each pane resumes its OWN conversation (not just the
-        // most recent in the folder). The uuid is stored on the panel + in the snapshot.
-        var cmd = agent?.cmd
-        var paneSession: String?
-        if let a = agent, let sflag = a.sessionFlag {
-            // Force transcript persistence so `--resume` works even if riven itself was
-            // launched from inside another Claude session (which otherwise marks children
-            // CLAUDE_CODE_CHILD_SESSION and disables saving). Harmless when already on.
-            let force = "env CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 "
-            // The session id goes into a shell-parsed command string. On restore it comes
-            // from persisted (tamperable) settings.json, so ONLY accept a well-formed UUID —
-            // otherwise mint a fresh one. This closes any command-injection via a crafted id.
-            if resume, let sid = sessionId, UUID(uuidString: sid) != nil, let rflag = a.resumeFlag {
-                cmd = "\(force)\(a.cmd) \(rflag) \(sid)"; paneSession = sid
-            } else {
-                let sid = UUID().uuidString.lowercased()
-                cmd = "\(force)\(a.cmd) \(sflag) \(sid)"; paneSession = sid
-            }
+    // Per-pane Claude session shim. riven exports ZDOTDIR to this dir + RIVEN_PANE_SESSION
+    // per terminal; the .zshrc here sources the user's real config, then defines a `claude`
+    // function that injects `--session-id $RIVEN_PANE_SESSION` — so even a hand-typed
+    // `claude` resumes that pane's exact conversation on relaunch. Interactive shells only
+    // (.zshrc isn't sourced for scripts), so scripts that call `claude` are unaffected.
+    private var rivenZdotdir: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/riven-native/zdotdir")
+    }
+    private func setupShellShim() {
+        let dir = rivenZdotdir
+        // 0700: everything in here is SOURCED BY THE SHELL, so write access for another
+        // local user would be code execution in the user's terminal. The explicit chmod
+        // matters — createDirectory's attributes are ignored when the directory already
+        // exists, which it does on every launch after the first.
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        chmod(dir, 0o700)
+        let files: [String: String] = [
+            ".zshenv": #"[ -r "$HOME/.zshenv" ] && source "$HOME/.zshenv""#,
+            ".zprofile": #"[ -r "$HOME/.zprofile" ] && source "$HOME/.zprofile""#,
+            ".zshrc": """
+            [ -r "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+            # riven: typing `claude` resumes THIS pane's session across app restarts.
+            if [ -n "$RIVEN_PANE_SESSION" ]; then
+              # --settings carries riven's agent hooks; it deep-merges, so the user's own
+              # hooks still fire. Two branches, NOT ${VAR:+--settings "$VAR"}: zsh does not
+              # field-split parameter expansions, so that form passes "--settings /path" as a
+              # SINGLE argv word and claude rejects it as an unknown option.
+              if [ -n "$RIVEN_HOOKS_SETTINGS" ]; then
+                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" --settings "$RIVEN_HOOKS_SETTINGS" "$@"; }
+              else
+                claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" "$@"; }
+              fi
+            fi
+            export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
+            """,
+        ]
+        for (name, body) in files {
+            try? (body + "\n").write(toFile: (dir as NSString).appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
-        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd)
+    }
+
+    // ---- agent lifecycle hooks (docs/agent-hooks-design.md) -----------------
+    // Start the hook socket and give [[AgentActivity]] the UI verbs it needs. The
+    // policy (what raises attention, when a banner fires) lives in AgentActivity; this
+    // only supplies "how" — which panel, which badge, is the user looking at it.
+    private func startAgentHooks() {
+        AgentActivity.shared.sink = AgentActivity.Sink(
+            setBusy: { [weak self] pane, busy in
+                WorkspaceStatus.shared.setPane(ws: pane.workspace, pane: pane.paneId, busy: busy)
+                guard let p = self?.panel(pane) else { return }
+                // attn (needs input) outranks busy, exactly as the old poller decided.
+                if busy { if p.badge != "attn" { p.badge = "busy" } }
+                else if p.badge == "busy" { p.badge = nil; (p.content as? TerminalView)?.setRingState(nil) }
+                self?.refreshDockTabs()
+            },
+            setAttention: { [weak self] pane, attn in
+                WorkspaceStatus.shared.setPane(ws: pane.workspace, pane: pane.paneId, attn: attn)
+                guard let p = self?.panel(pane) else { return }
+                p.badge = attn ? "attn" : nil
+                (p.content as? TerminalView)?.setRingState(attn ? "attn" : nil)
+                self?.refreshDockTabs()
+            },
+            isWatched: { [weak self] pane in
+                guard let self, let p = self.panel(pane), let tv = p.content as? TerminalView else { return false }
+                return self.window?.firstResponder === tv && self.window?.isKeyWindow == true
+            },
+            notify: { [weak self] pane, body in
+                let title = (pane.workspace as NSString).lastPathComponent
+                let name = self?.panel(pane)?.title ?? t("title.terminal")
+                Notifications.post(title: title, body: "\(name) · \(body)")
+            }
+        )
+        AgentHookServer.shared.onEvent = { AgentActivity.shared.handle($0) }
+        AgentHookServer.shared.start()
+    }
+
+    /// Single-quote a path for the launch command line — the app-support path contains
+    /// a space ("Application Support") and could contain more if the home dir is renamed.
+    private func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Resolve a registry pane back to its live DockPanel (nil once it's been closed).
+    private func panel(_ pane: PaneSessionRegistry.Pane) -> DockPanel? {
+        guard let url = states.keys.first(where: { $0.path == pane.workspace }),
+              let dock = states[url]?.dock else { return nil }
+        for g in dock.groups { for p in g.panels where p.id == pane.paneId { return p } }
+        return nil
+    }
+
+    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil,
+                                   sessionId: String? = nil) -> DockPanel {
+        st.terminalSeq += 1
+        // EVERY terminal gets a stable per-pane session UUID (reused on restore) and env
+        // that (a) makes a hand-typed `claude` resume THIS pane's session via the ZDOTDIR
+        // shim, and (b) forces transcript persistence. Only a well-formed UUID is accepted
+        // from the persisted (tamperable) snapshot — else mint a fresh one — so nothing
+        // untrusted reaches the shell/command.
+        let paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
+        var env: [String: String] = [
+            "RIVEN_PANE_SESSION": paneSession,
+            "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
+            "ZDOTDIR": rivenZdotdir,
+            // Where `riven-hook` posts lifecycle events. Hook processes are descendants
+            // of this surface, so they inherit both this and RIVEN_PANE_SESSION — that
+            // pair is the whole routing mechanism (docs/agent-hooks-design.md).
+            "RIVEN_HOOK_SOCKET": AgentHookServer.socketPath,
+        ]
+        if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
+        // An agent panel runs the CLI directly (no shell). For a session-capable agent
+        // (Claude Code) attach `--session-id <paneSession>` — idempotent: creates the
+        // session on first launch, resumes it on restore. Plain terminals run the shell,
+        // where the shim's `claude` function applies the same id to typed invocations.
+        var cmd = agent?.cmd
+        if let a = agent, a.sessionFlag != nil { cmd = "\(a.cmd) --session-id \(paneSession)" }
+        // Hand the agent riven's hook config on the command line rather than writing to
+        // the user's own settings. Verified: --settings DEEP-MERGES `hooks`, so a user's
+        // own hooks keep firing alongside ours.
+        if agent?.name == "Claude Code", let settings = AgentHooksInstall.claudeSettingsPath() {
+            cmd = "\(cmd ?? "claude") --settings \(shellQuote(settings))"
+        } else if agent?.name == "Codex" {
+            let overrides = AgentHooksInstall.codexLaunchOverrides()
+            if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
+        }
+        // The shim needs the same file for a hand-typed `claude` in a plain terminal.
+        if let settings = AgentHooksInstall.claudeSettingsPath() { env["RIVEN_HOOKS_SETTINGS"] = settings }
+        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd, env: env)
         tv.autoresizingMask = [.width, .height]
         let title = agent.map { "\($0.name)" } ?? t("title.terminal")
         let icon = NSImage(systemSymbolName: agent?.symbol ?? "terminal", accessibilityDescription: nil)
@@ -602,6 +725,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             icon: icon, content: tv, closable: true)
         p.agentName = agent?.name          // 세션 복원 때 같은 에이전트로 다시 띄우기 위해
         p.sessionId = paneSession          // 이 패널의 세션 id (복원 때 --resume 대상)
+        // Reverse index so an incoming hook event can find this pane.
+        PaneSessionRegistry.shared.register(session: paneSession, workspace: st.url.path, paneId: p.id)
         p.autoTitle = true    // follow OSC titles for BOTH plain terminals AND agents, so
                               // "change the terminal title to X" from an agent works.
         // OSC 0/2 title from the shell/agent → update the tab. A path-like title shows
@@ -618,14 +743,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
             if p?.badge != nil { p?.badge = nil; tv?.setRingState(nil); self?.refreshDockTabs() }
         }
-        p.onClose = { [weak tv] in tv?.dispose(); WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId) }
+        p.onClose = { [weak tv] in
+            tv?.dispose()
+            WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
+            PaneSessionRegistry.shared.unregister(session: paneSession)
+            AgentActivity.shared.forget(pane: paneSession)
+        }
         // A bell or desktop-notification means the agent FINISHED a turn / needs input
         // (riven's pty:bell + pty:done). This is the authoritative "done" signal —
         // long-running agents never emit a shell COMMAND_FINISHED, so busy would
         // otherwise stay stuck. Always clear busy; then raise the attention ember
         // ring UNLESS you're already watching this exact pane (then it's just seen).
+        // Passive fallbacks (bell / OSC notification / OSC 133) for panes that have NOT
+        // proven they deliver lifecycle hooks. Once a pane is hook-backed these are
+        // ignored: hooks know the difference between "paused mid-turn" and "done", and
+        // letting a stray bell also drive state would fight the authoritative source.
+        let hookBacked = { PaneSessionRegistry.shared.isHookBacked(paneSession) }
         tv.onActivity = { [weak self, weak tv, weak p] in
-            guard let self, let p, let tv else { return }
+            guard let self, let p, let tv, !hookBacked() else { return }
             self.markAgentSession()   // agent activity (bell/notification) → track its edits
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
             let watching = self.window?.firstResponder === tv && self.window?.isKeyWindow == true
@@ -654,25 +789,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Busy while an agent/command actively works. Shown ONLY on the left workspace
         // rail (WorkspaceStatus) — no tab dot, no panel border ring (user asked to keep
         // the running indicator to the rail; the ring is reserved for completion/attn).
+        // Return pressed in a plain shell → working until OSC 133 says otherwise.
         tv.onBusy = { [weak self, weak p] in
+            guard !hookBacked() else { return }
             self?.markAgentSession()   // something is working in the terminal → track its edits
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true)
             guard let p, p.badge != "attn" else { return }   // attn (needs-attention) outranks busy
             if p.badge != "busy" { p.badge = "busy" }
         }
-        // Output stopped (activity poller / progress done) → clear busy. Attention is
-        // raised separately (onTurnDone / bell / notification), so this alone doesn't ping.
+        // Shell command finished (OSC 133) or the child exited → clear busy. Attention is
+        // raised separately (bell / OSC notification), so this alone doesn't ping.
         tv.onIdle = { [weak self, weak tv, weak p] in
+            guard !hookBacked() else { return }
             self?.refreshChangesAndGit()   // a command finished → an agent may have edited files
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
             guard let p, p.badge == "busy" else { return }
             p.badge = nil; tv?.setRingState(nil); self?.refreshDockTabs()
         }
-        // NOTE: the old onTurnDone (screen-stable-for-0.9s heuristic) is intentionally NOT
-        // wired. It raised a false "완료/attn" whenever the agent merely PAUSED (a quiet tool
-        // call, waiting for approval, a thinking gap) — the reported "shows completed while
-        // still working" bug. Completion/attention now comes solely from the bell/agent
-        // notification (onActivity above), which is the authoritative done signal.
         return p
     }
 
@@ -1162,9 +1295,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if let i = liveTerms.firstIndex(where: { ($0.agentName ?? "") == name }) {
                         return liveTerms.remove(at: i)   // reuse the live terminal (keep its shell)
                     }
-                    if name.isEmpty { return self.makeTerminalPanel(for: st) }
+                    if name.isEmpty { return self.makeTerminalPanel(for: st, sessionId: sid) }
                     guard let agent = agents.first(where: { $0.name == name }) else { return nil }
-                    return self.makeTerminalPanel(for: st, agent: agent, resume: true, sessionId: sid)   // resume this pane's session
+                    return self.makeTerminalPanel(for: st, agent: agent, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
                 return self.makeAuxPanel(desc)
@@ -1187,7 +1320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var first: DockPanel?
             for (i, name) in wanted.enumerated() {
                 let agent = name.isEmpty ? nil : agents.first { $0.name == name }
-                let term = makeTerminalPanel(for: st, agent: agent, resume: true)   // continue the agent's last session on restore
+                let term = makeTerminalPanel(for: st, agent: agent)
                 if i == 0 { g.add(term); first = term }
                 else { dock.addPanel(term, reference: dock.groups.last, direction: .right) }
             }
@@ -1258,6 +1391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         states[url] = nil
         lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
         AgentEdits.shared.clearWorkspace(url.path)   // release retained file contents (#60)
+        PaneSessionRegistry.shared.clearWorkspace(url.path)   // stop routing hooks to dead panes
         agentSessionWorkspaces.remove(url.path)
         workspaces.removeAll { $0 == url }
         if workspace == url {
@@ -1272,6 +1406,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         persistSession()
+    }
+
+    // A plain terminal pane (`term:\t<uuid>`) whose Claude session file for <uuid> exists
+    // in this workspace's dir was running `claude` (typed, via the shim) at save time →
+    // rewrite it to a "Claude Code" agent pane so restore RE-LAUNCHES `claude --session-id
+    // <uuid>` and the conversation comes back automatically (not just resumable on re-type).
+    private func markClaudePanes(_ node: [String: Any], cwd: String) -> [String: Any] {
+        var n = node
+        if n["type"] as? String == "group", let panels = n["panels"] as? [String] {
+            n["panels"] = panels.map { desc -> String in
+                guard desc.hasPrefix("term:") else { return desc }
+                let rest = desc.dropFirst("term:".count).split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                let name = rest.first.map(String.init) ?? ""
+                guard name.isEmpty, rest.count > 1 else { return desc }   // only plain panes carrying a uuid
+                let uuid = String(rest[1])
+                return claudeSessionExists(cwd: cwd, sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
+            }
+        } else if n["type"] as? String == "split", let kids = n["children"] as? [[String: Any]] {
+            n["children"] = kids.map { markClaudePanes($0, cwd: cwd) }
+        }
+        return n
+    }
+    // Claude stores transcripts at ~/.claude/projects/<encoded cwd>/<id>.jsonl, where the
+    // encoding replaces every character outside [A-Za-z0-9] with '-'.
+    //
+    // The ASCII guard matters: Swift's isLetter/isNumber are true for 한글 and other
+    // non-ASCII scripts, so without it a workspace at "…/한글폴더/proj" encoded to
+    // "-…-한글폴더-proj" while Claude wrote "-…------proj" (one dash per character).
+    // The paths never matched, so panes under any non-ASCII path silently failed to be
+    // promoted back to Claude Code panes on restore. Verified against a real transcript
+    // path on 2026-07-27.
+    private func claudeSessionExists(cwd: String, sessionId: String) -> Bool {
+        let enc = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        let path = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
+        return FileManager.default.fileExists(atPath: path)
     }
 
     // ---- session persistence (open folders + tabs, restored on next launch) ----
@@ -1294,7 +1464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for url in workspaces {
             let st = state(for: url)
             if let snap = st.dock?.snapshot() {
-                layouts[url.absoluteString] = snap
+                layouts[url.absoluteString] = markClaudePanes(snap, cwd: url.path)   // auto-resume typed claude
             } else if let pending = st.pendingLayout {
                 layouts[url.absoluteString] = pending    // 아직 방문 전이면 기존 기록 유지
             } else if let terms = st.pendingTerminals, !terms.isEmpty {

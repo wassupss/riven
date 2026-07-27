@@ -105,9 +105,12 @@ final class GhosttyApp {
                     // Bell = turn done / needs input → attention (onActivity clears busy).
                     TerminalView.view(for: surface)?.onActivity?()
                 }
-            // NOTE: busy/idle is driven by TerminalView's activity poller (reliable for
-            // long-running agents), NOT by PROGRESS_REPORT / COMMAND_FINISHED — those are
-            // absent or misleading for agent TUIs, so they are intentionally ignored.
+            // Shell command finished (OSC 133) → the pane is idle. This is exact for plain
+            // shells. It is absent for agent TUIs, which is why it was previously ignored
+            // altogether — but those are now covered by lifecycle hooks, so each signal is
+            // used where it is actually correct (docs/agent-hooks-design.md).
+            case GHOSTTY_ACTION_COMMAND_FINISHED:
+                DispatchQueue.main.async { TerminalView.view(for: surface)?.commandFinished() }
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
                 DispatchQueue.main.async { TerminalView.view(for: surface)?.onIdle?() }
             case GHOSTTY_ACTION_RENDER:
