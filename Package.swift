@@ -33,6 +33,14 @@ let package = Package(
                 .linkedFramework("WebKit"),
                 .linkedLibrary("c++")
             ]
+        ),
+        // The agent hook bridge. Foundation-only and deliberately dependency-free: it
+        // is exec'd on every prompt/stop of every agent pane, so startup cost matters
+        // and it must not drag in GhosttyKit/Sparkle/AppKit.
+        .executableTarget(
+            name: "RivenHook",
+            path: "Sources/RivenHook",
+            swiftSettings: [.swiftLanguageMode(.v5)]
         )
     ]
 )

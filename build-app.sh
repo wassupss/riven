@@ -32,6 +32,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/riven"
+# Agent hook bridge — agents exec this to report lifecycle events. It must sit beside
+# the main binary: a GUI-launched app has a minimal PATH, so hook commands are written
+# as absolute paths derived from the bundle location.
+cp ".build/release/RivenHook" "$APP/Contents/MacOS/riven-hook"
 # Copy the SwiftPM resource bundle (editor.html + monaco/ + shiki.js) into the app.
 [ -d "$RES_BUNDLE" ] && cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
 # Bundle the TypeScript language server (+ its `typescript` peer) so LSP features
@@ -116,6 +120,8 @@ if [ "$SIGN_ID" = "-" ]; then
     [ -e "$FW/Versions/B/Updater.app" ] && codesign --force --options runtime --sign - "$FW/Versions/B/Updater.app"
     codesign --force --options runtime --sign - "$FW"
   fi
+  # Nested helper signs first (inner-out) and gets no app entitlements of its own.
+  codesign --force --options runtime --sign - "$APP/Contents/MacOS/riven-hook"
   codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP/Contents/MacOS/riven"
   codesign --force --options runtime --entitlements "$ENTITLEMENTS" --sign - "$APP"
   echo "▸ Built $APP (ad-hoc + hardened runtime)"
@@ -131,6 +137,7 @@ else
     [ -e "$FW/Versions/B/Updater.app" ] && codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$FW/Versions/B/Updater.app"
     codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$FW"
   fi
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/riven-hook"
   codesign --force --options runtime --timestamp \
     --entitlements "$ENTITLEMENTS" --sign "$SIGN_ID" "$APP/Contents/MacOS/riven"
   codesign --force --options runtime --timestamp \
