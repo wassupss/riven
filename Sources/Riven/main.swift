@@ -622,7 +622,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 # themselves; otherwise claude sees a duplicate/ conflicting session flag.
                 case " $* " in
                   (*" --session-id "*|*" --resume "*|*" -r "*|*" --continue "*|*" -c "*|*" --from-pr "*) ;;
-                  (*) rv+=(--session-id "$RIVEN_PANE_SESSION") ;;
+                  (*)
+                    rv+=(--session-id "$RIVEN_PANE_SESSION")
+                    # Reap a claude from a previous riven still holding THIS pane's session.
+                    # claude ignores SIGHUP, so quitting riven orphans it instead of closing
+                    # it; on relaunch `--session-id` then fails with "Session ID already in
+                    # use" and the conversation never comes back. The transcript is on disk,
+                    # so killing the orphan and resuming is lossless.
+                    pkill -f -- "--session-id $RIVEN_PANE_SESSION" 2>/dev/null
+                    ;;
                 esac
                 # riven's agent hooks (deep-merged, so the user's own hooks still fire).
                 [ -n "$RIVEN_HOOKS_SETTINGS" ] && rv+=(--settings "$RIVEN_HOOKS_SETTINGS")
@@ -774,6 +782,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if agent?.name == "Codex" {
             let overrides = AgentHooksInstall.codexLaunchOverrides()
             if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
+        }
+        // Reap an orphaned agent from a previous riven still holding this session id before
+        // relaunching. claude ignores SIGHUP, so quitting riven leaves it running instead of
+        // closing it; on restore `--session-id` then fails with "Session ID already in use"
+        // and the conversation never comes back. Lossless: the transcript is on disk, so the
+        // relaunch resumes it. `exec` avoids leaving a wrapper shell in the pane's tree.
+        if let a = agent, a.sessionFlag != nil, let c = cmd {
+            cmd = "pkill -f -- '--session-id \(paneSession)' 2>/dev/null; exec \(c)"
         }
         // The shim needs the same file for a hand-typed `claude` in a plain terminal.
         if let settings = AgentHooksInstall.claudeSettingsPath() { env["RIVEN_HOOKS_SETTINGS"] = settings }
