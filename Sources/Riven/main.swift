@@ -781,7 +781,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // shim, and (b) forces transcript persistence. Only a well-formed UUID is accepted
         // from the persisted (tamperable) snapshot — else mint a fresh one — so nothing
         // untrusted reaches the shell/command.
-        let paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
+        var paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
+        // Reconnect a restored Claude Code pane to the folder's actual conversation when the
+        // saved pane id has no transcript of its own but the folder does — the id drifted
+        // (older versions saved a session id claude never used). Adopting the real id here
+        // makes `--resume` below load the conversation, and p.sessionId (set later) persists
+        // the corrected id so the pane stays connected from now on. Only on RESTORE
+        // (sessionId != nil) of a session-capable agent; brand-new panes create fresh.
+        if agent?.resumeFlag != nil, sessionId != nil, !claudeSessionExists(sessionId: paneSession),
+           let latest = latestClaudeSession(cwd: st.url.path) {
+            RLog.log("restore reconnect: pane \(paneSession.prefix(8)) → folder latest \(latest.prefix(8))")
+            paneSession = latest
+        }
         var env: [String: String] = [
             "RIVEN_PANE_SESSION": paneSession,
             "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
@@ -1433,8 +1444,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // return (the snapshot taken on switch-away). Terminals already alive in this dock
         // are REUSED (their shells survive); only missing ones are freshly spawned.
         var restoredLayout = false
-        if let snap = st.pendingLayout {
+        if let rawSnap = st.pendingLayout {
             st.pendingLayout = nil
+            // Promote plain panes whose workspace has a claude conversation to Claude Code
+            // panes (so restore resumes them) — markClaudePanes runs at save too, but old
+            // snapshots were saved before folder-based promotion existed, so re-apply here.
+            let snap = markClaudePanes(rawSnap, cwd: st.url.path)
             let agents = AgentDiscovery.available()
             var liveTerms = dock.groups.flatMap { $0.panels }.filter { $0.content is TerminalView }
             restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
@@ -1448,7 +1463,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         return liveTerms.remove(at: i)   // reuse the live terminal (keep its shell)
                     }
                     if name.isEmpty { return self.makeTerminalPanel(for: st, sessionId: sid) }
-                    guard let agent = agents.first(where: { $0.name == name }) else { return nil }
+                    // Agent not discovered (e.g. claude not on the GUI PATH) → fall back to a
+                    // plain terminal rather than dropping the pane entirely.
+                    guard let agent = agents.first(where: { $0.name == name }) else {
+                        return self.makeTerminalPanel(for: st, sessionId: sid)
+                    }
                     return self.makeTerminalPanel(for: st, agent: agent, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
@@ -1573,7 +1592,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let name = rest.first.map(String.init) ?? ""
                 guard name.isEmpty, rest.count > 1 else { return desc }   // only plain panes carrying a uuid
                 let uuid = String(rest[1])
-                return claudeSessionExists(sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
+                // Promote to a Claude Code pane (so restore relaunches claude) when this
+                // pane's own session has a transcript OR the workspace folder has any claude
+                // conversation. The folder case reconnects panes whose saved id drifted from
+                // the real conversation (typed `claude` under a broken shim). makeTerminalPanel
+                // then resumes the folder's latest.
+                let promote = claudeSessionExists(sessionId: uuid) || latestClaudeSession(cwd: cwd) != nil
+                return promote ? "term:Claude Code\t\(uuid)" : desc
             }
         } else if n["type"] as? String == "split", let kids = n["children"] as? [[String: Any]] {
             n["children"] = kids.map { markClaudePanes($0, cwd: cwd) }
@@ -1600,6 +1625,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let projects = base.appendingPathComponent("projects")
         guard let dirs = try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil) else { return false }
         return dirs.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(sessionId).jsonl").path) }
+    }
+
+    // The id of the most-recently-touched Claude Code conversation for a workspace folder.
+    // Restore uses this to RECONNECT a pane to the folder's actual conversation when the
+    // pane's saved session id has drifted from it — which happened whenever `claude` was
+    // typed in a plain terminal while the shim was broken (v0.1.13–16): claude made its own
+    // session id, so the conversation lives on disk but under an id riven never recorded.
+    // Claude encodes the cwd into the dir name (every non-[A-Za-z0-9] char → '-').
+    private func latestClaudeSession(cwd: String) -> String? {
+        // Resolve symlinks first: claude encodes the REAL cwd (e.g. /tmp → /private/tmp),
+        // so encode the resolved path or the dir name won't match.
+        let real = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
+        let enc = String(real.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        let base = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        let dir = base.appendingPathComponent("projects/\(enc)")
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
+        let latest = files.filter { $0.pathExtension == "jsonl" }.max { a, b in
+            let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            return da < db
+        }
+        return latest?.deletingPathExtension().lastPathComponent
     }
 
     // ---- session persistence (open folders + tabs, restored on next launch) ----
