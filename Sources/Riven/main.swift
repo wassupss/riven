@@ -709,6 +709,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // Kill a claude left over from a previous riven that still holds this pane's session id
+    // (claude ignores SIGHUP, so it survives quit and otherwise blocks restore with "Session
+    // ID already in use"). Run from riven's OWN process — never from the pane's shell, whose
+    // cmdline carries "--session-id <id>" and would be matched and killed by an in-shell
+    // pkill before claude could exec. UUIDs contain only [0-9a-f-], so the argument is safe.
+    private func reapOrphanSession(_ session: String) {
+        guard UUID(uuidString: session) != nil else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        p.arguments = ["-f", "--", "--session-id \(session)"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { RLog.log("reapOrphanSession: pkill failed \(error)") }
+    }
+
     // Record one agent file edit against its pane's workspace (not necessarily the active
     // one). Mirrors processFileChanges for a single file: before = session baseline / git
     // HEAD, after = disk, size-capped. This is the precise path; FSEvents is the backstop.
@@ -786,11 +801,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Reap an orphaned agent from a previous riven still holding this session id before
         // relaunching. claude ignores SIGHUP, so quitting riven leaves it running instead of
         // closing it; on restore `--session-id` then fails with "Session ID already in use"
-        // and the conversation never comes back. Lossless: the transcript is on disk, so the
-        // relaunch resumes it. `exec` avoids leaving a wrapper shell in the pane's tree.
-        if let a = agent, a.sessionFlag != nil, let c = cmd {
-            cmd = "pkill -f -- '--session-id \(paneSession)' 2>/dev/null; exec \(c)"
-        }
+        // and the conversation never comes back. Lossless: the transcript is on disk.
+        //
+        // This MUST run from the app, NOT wrapped into the pane's shell command: the launch
+        // string contains "--session-id <id>", so the login/shell that runs it carries that
+        // in its own cmdline — an in-shell `pkill -f -- '--session-id <id>'` matches and kills
+        // that very shell before `exec claude` runs (v0.1.14 regression: agent panes showed
+        // only the login line). Reaping from riven's own process avoids the self-match; no
+        // pane shell exists for this session yet, so only the real orphan matches.
+        if let a = agent, a.sessionFlag != nil { reapOrphanSession(paneSession) }
         // The shim needs the same file for a hand-typed `claude` in a plain terminal.
         if let settings = AgentHooksInstall.claudeSettingsPath() { env["RIVEN_HOOKS_SETTINGS"] = settings }
         let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd, env: env)
