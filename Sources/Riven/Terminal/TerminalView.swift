@@ -9,6 +9,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var link: CVDisplayLink?
     private let workdir: String?
     private let command: String?          // initial command (agent launch) — runs directly
+    private let env: [String: String]     // extra environment for the surface (session shim)
     var onTitle: ((String) -> Void)?      // OSC 0/2 title from the shell/agent
 
     // surface pointer → view, so ghostty's per-surface actions (bell / desktop
@@ -38,9 +39,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     static weak var focused: TerminalView?
     var surfaceHandle: ghostty_surface_t? { surface }
 
-    init(frame: NSRect, workdir: String? = nil, command: String? = nil) {
+    init(frame: NSRect, workdir: String? = nil, command: String? = nil, env: [String: String] = [:]) {
         self.workdir = workdir
         self.command = command
+        self.env = env
         super.init(frame: frame)
         wantsLayer = true
         layer = CAMetalLayer()
@@ -334,18 +336,24 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         sc.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
         // 새로 만드는 터미널도 설정값으로 시작한다 (예전에는 13 고정이라 설정이 무시됐다).
         sc.font_size = Float(UIScale.terminalFontSize)
-        // Optionally start in a directory and/or run a command directly (agent launch
-        // — e.g. `claude` runs immediately instead of being typed into a shell).
-        switch (workdir, command) {
-        case let (wd?, cmd?):
-            wd.withCString { w in cmd.withCString { c in sc.working_directory = w; sc.command = c; surface = ghostty_surface_new(app, &sc) } }
-        case let (wd?, nil):
-            wd.withCString { w in sc.working_directory = w; surface = ghostty_surface_new(app, &sc) }
-        case let (nil, cmd?):
-            cmd.withCString { c in sc.command = c; surface = ghostty_surface_new(app, &sc) }
-        default:
+        // Optionally start in a directory, run a command directly (agent launch — e.g.
+        // `claude` runs immediately), and inject per-surface env (session shim). ghostty
+        // copies the config strings during surface_new, so strdup here + free after is safe.
+        var owned: [UnsafeMutablePointer<CChar>] = []
+        func dup(_ s: String) -> UnsafePointer<CChar> { let p = strdup(s)!; owned.append(p); return UnsafePointer(p) }
+        if let wd = workdir { sc.working_directory = dup(wd) }
+        if let cmd = command { sc.command = dup(cmd) }
+        var envArr = env.map { ghostty_env_var_s(key: dup($0.key), value: dup($0.value)) }
+        if envArr.isEmpty {
             surface = ghostty_surface_new(app, &sc)
+        } else {
+            envArr.withUnsafeMutableBufferPointer { buf in
+                sc.env_vars = buf.baseAddress
+                sc.env_var_count = buf.count
+                surface = ghostty_surface_new(app, &sc)
+            }
         }
+        owned.forEach { free($0) }
         if let s = surface {
             TerminalView.registry[OpaquePointer(s)] = Weak(self)
             let scale = Double(window?.backingScaleFactor ?? 2.0)

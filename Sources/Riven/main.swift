@@ -54,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var editorDockPanel: DockPanel?       // the shared editor panel (one WKWebView)
     private var workspaceColors: [URL: String] = [:]   // rail card colors (hex), persisted per session
     private var workspaceNames: [URL: String] = [:]    // custom rail names, persisted per session
+    private var sigtermSource: DispatchSourceSignal?   // persist on SIGTERM (kill/restart/logout)
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var editorVisible = false
     var workspace: URL?
@@ -61,6 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         installCrashHandler()
+        setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
+        // Persist the session on SIGTERM too (kill / restart / logout), not just ⌘Q —
+        // Cocoa doesn't call applicationWillTerminate for SIGTERM, so a killed app would
+        // otherwise lose panes created since the last save (incl. their claude session ids).
+        // A dispatch source runs on the main queue, so touching AppKit here is safe.
+        signal(SIGTERM, SIG_IGN)
+        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        sigterm.setEventHandler { [weak self] in self?.persistSession(); NSApp.terminate(nil) }
+        sigterm.resume()
+        sigtermSource = sigterm
         // Match the system material appearance to the theme's mode so scrollers /
         // materials don't render the wrong polarity over our palette.
         NSApp.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
@@ -569,32 +580,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (riven: each terminal is a `term-N` dockview panel). New/split terminals add
     // more of these; multiple in a group become tabs, exactly like every panel.
     // Created with a real frame + only while its host dock is in the window.
-    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil,
-                                   resume: Bool = false, sessionId: String? = nil) -> DockPanel {
-        st.terminalSeq += 1
-        // An agent panel runs the CLI directly (claude launches immediately, no typing) and
-        // is titled/iconed as that agent. Per-pane session persistence (Claude Code): mint a
-        // UUID and launch `<cmd> --session-id <uuid>` on a fresh start, or `<cmd> --resume
-        // <uuid>` when restoring — so each pane resumes its OWN conversation (not just the
-        // most recent in the folder). The uuid is stored on the panel + in the snapshot.
-        var cmd = agent?.cmd
-        var paneSession: String?
-        if let a = agent, let sflag = a.sessionFlag {
-            // Force transcript persistence so `--resume` works even if riven itself was
-            // launched from inside another Claude session (which otherwise marks children
-            // CLAUDE_CODE_CHILD_SESSION and disables saving). Harmless when already on.
-            let force = "env CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 "
-            // The session id goes into a shell-parsed command string. On restore it comes
-            // from persisted (tamperable) settings.json, so ONLY accept a well-formed UUID —
-            // otherwise mint a fresh one. This closes any command-injection via a crafted id.
-            if resume, let sid = sessionId, UUID(uuidString: sid) != nil, let rflag = a.resumeFlag {
-                cmd = "\(force)\(a.cmd) \(rflag) \(sid)"; paneSession = sid
-            } else {
-                let sid = UUID().uuidString.lowercased()
-                cmd = "\(force)\(a.cmd) \(sflag) \(sid)"; paneSession = sid
-            }
+    // Per-pane Claude session shim. riven exports ZDOTDIR to this dir + RIVEN_PANE_SESSION
+    // per terminal; the .zshrc here sources the user's real config, then defines a `claude`
+    // function that injects `--session-id $RIVEN_PANE_SESSION` — so even a hand-typed
+    // `claude` resumes that pane's exact conversation on relaunch. Interactive shells only
+    // (.zshrc isn't sourced for scripts), so scripts that call `claude` are unaffected.
+    private var rivenZdotdir: String {
+        (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/riven-native/zdotdir")
+    }
+    private func setupShellShim() {
+        let dir = rivenZdotdir
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let files: [String: String] = [
+            ".zshenv": #"[ -r "$HOME/.zshenv" ] && source "$HOME/.zshenv""#,
+            ".zprofile": #"[ -r "$HOME/.zprofile" ] && source "$HOME/.zprofile""#,
+            ".zshrc": """
+            [ -r "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+            # riven: typing `claude` resumes THIS pane's session across app restarts.
+            if [ -n "$RIVEN_PANE_SESSION" ]; then
+              claude() { command "${RIVEN_REAL_CLAUDE:-claude}" --session-id "$RIVEN_PANE_SESSION" "$@"; }
+            fi
+            export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
+            """,
+        ]
+        for (name, body) in files {
+            try? (body + "\n").write(toFile: (dir as NSString).appendingPathComponent(name), atomically: true, encoding: .utf8)
         }
-        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd)
+    }
+
+    private func makeTerminalPanel(for st: WorkspaceState, agent: AgentDiscovery.Agent? = nil,
+                                   sessionId: String? = nil) -> DockPanel {
+        st.terminalSeq += 1
+        // EVERY terminal gets a stable per-pane session UUID (reused on restore) and env
+        // that (a) makes a hand-typed `claude` resume THIS pane's session via the ZDOTDIR
+        // shim, and (b) forces transcript persistence. Only a well-formed UUID is accepted
+        // from the persisted (tamperable) snapshot — else mint a fresh one — so nothing
+        // untrusted reaches the shell/command.
+        let paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
+        var env: [String: String] = [
+            "RIVEN_PANE_SESSION": paneSession,
+            "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
+            "ZDOTDIR": rivenZdotdir,
+        ]
+        if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
+        // An agent panel runs the CLI directly (no shell). For a session-capable agent
+        // (Claude Code) attach `--session-id <paneSession>` — idempotent: creates the
+        // session on first launch, resumes it on restore. Plain terminals run the shell,
+        // where the shim's `claude` function applies the same id to typed invocations.
+        var cmd = agent?.cmd
+        if let a = agent, a.sessionFlag != nil { cmd = "\(a.cmd) --session-id \(paneSession)" }
+        let tv = TerminalView(frame: dockHost.bounds, workdir: st.url.path, command: cmd, env: env)
         tv.autoresizingMask = [.width, .height]
         let title = agent.map { "\($0.name)" } ?? t("title.terminal")
         let icon = NSImage(systemSymbolName: agent?.symbol ?? "terminal", accessibilityDescription: nil)
@@ -1162,9 +1197,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     if let i = liveTerms.firstIndex(where: { ($0.agentName ?? "") == name }) {
                         return liveTerms.remove(at: i)   // reuse the live terminal (keep its shell)
                     }
-                    if name.isEmpty { return self.makeTerminalPanel(for: st) }
+                    if name.isEmpty { return self.makeTerminalPanel(for: st, sessionId: sid) }
                     guard let agent = agents.first(where: { $0.name == name }) else { return nil }
-                    return self.makeTerminalPanel(for: st, agent: agent, resume: true, sessionId: sid)   // resume this pane's session
+                    return self.makeTerminalPanel(for: st, agent: agent, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
                 return self.makeAuxPanel(desc)
@@ -1187,7 +1222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var first: DockPanel?
             for (i, name) in wanted.enumerated() {
                 let agent = name.isEmpty ? nil : agents.first { $0.name == name }
-                let term = makeTerminalPanel(for: st, agent: agent, resume: true)   // continue the agent's last session on restore
+                let term = makeTerminalPanel(for: st, agent: agent)
                 if i == 0 { g.add(term); first = term }
                 else { dock.addPanel(term, reference: dock.groups.last, direction: .right) }
             }
@@ -1274,6 +1309,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         persistSession()
     }
 
+    // A plain terminal pane (`term:\t<uuid>`) whose Claude session file for <uuid> exists
+    // in this workspace's dir was running `claude` (typed, via the shim) at save time →
+    // rewrite it to a "Claude Code" agent pane so restore RE-LAUNCHES `claude --session-id
+    // <uuid>` and the conversation comes back automatically (not just resumable on re-type).
+    private func markClaudePanes(_ node: [String: Any], cwd: String) -> [String: Any] {
+        var n = node
+        if n["type"] as? String == "group", let panels = n["panels"] as? [String] {
+            n["panels"] = panels.map { desc -> String in
+                guard desc.hasPrefix("term:") else { return desc }
+                let rest = desc.dropFirst("term:".count).split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                let name = rest.first.map(String.init) ?? ""
+                guard name.isEmpty, rest.count > 1 else { return desc }   // only plain panes carrying a uuid
+                let uuid = String(rest[1])
+                return claudeSessionExists(cwd: cwd, sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
+            }
+        } else if n["type"] as? String == "split", let kids = n["children"] as? [[String: Any]] {
+            n["children"] = kids.map { markClaudePanes($0, cwd: cwd) }
+        }
+        return n
+    }
+    // Claude stores transcripts at ~/.claude/projects/<cwd with non-alphanumerics → '-'>/<id>.jsonl.
+    private func claudeSessionExists(cwd: String, sessionId: String) -> Bool {
+        let enc = String(cwd.map { $0.isLetter || $0.isNumber ? $0 : "-" })
+        let path = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
+        return FileManager.default.fileExists(atPath: path)
+    }
+
     // ---- session persistence (open folders + tabs, restored on next launch) ----
     private func persistSession() {
         var tabs: [String: Any] = [:]
@@ -1294,7 +1357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for url in workspaces {
             let st = state(for: url)
             if let snap = st.dock?.snapshot() {
-                layouts[url.absoluteString] = snap
+                layouts[url.absoluteString] = markClaudePanes(snap, cwd: url.path)   // auto-resume typed claude
             } else if let pending = st.pendingLayout {
                 layouts[url.absoluteString] = pending    // 아직 방문 전이면 기존 기록 유지
             } else if let terms = st.pendingTerminals, !terms.isEmpty {

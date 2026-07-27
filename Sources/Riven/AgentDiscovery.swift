@@ -36,6 +36,9 @@ enum AgentDiscovery {
         ("Ollama", "ollama", "cube", nil, nil)
     ]
 
+    // Resolved absolute path to the Claude Code CLI, if installed (for the session shim).
+    static func claudeCmd() -> String? { available().first { $0.name == "Claude Code" }?.cmd }
+
     // Available agents, resolved to absolute paths. Cached after the first scan.
     private static var cached: [Agent]?
     static func available() -> [Agent] {
