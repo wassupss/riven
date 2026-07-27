@@ -623,13 +623,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case " $* " in
                   (*" --session-id "*|*" --resume "*|*" -r "*|*" --continue "*|*" -c "*|*" --from-pr "*) ;;
                   (*)
-                    rv+=(--session-id "$RIVEN_PANE_SESSION")
-                    # Reap a claude from a previous riven still holding THIS pane's session.
-                    # claude ignores SIGHUP, so quitting riven orphans it instead of closing
-                    # it; on relaunch `--session-id` then fails with "Session ID already in
-                    # use" and the conversation never comes back. The transcript is on disk,
-                    # so killing the orphan and resuming is lossless.
-                    pkill -f -- "--session-id $RIVEN_PANE_SESSION" 2>/dev/null
+                    # Reap a claude from a previous riven still holding this session (it
+                    # ignores SIGHUP, so quitting riven orphans it). Match by id so it hits
+                    # a --session-id OR --resume launch. The interactive shell's own cmdline
+                    # never contains the id, so this can't kill the shell running it.
+                    pkill -f -- "$RIVEN_PANE_SESSION" 2>/dev/null
+                    # RESUME if a transcript already exists (id globbed across project dirs,
+                    # so it's encoding/CLAUDE_CONFIG_DIR independent); CREATE otherwise.
+                    # --session-id refuses an id that already has state ("already in use").
+                    if ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/"*/"$RIVEN_PANE_SESSION.jsonl" >/dev/null 2>&1; then
+                      rv+=(--resume "$RIVEN_PANE_SESSION")
+                    else
+                      rv+=(--session-id "$RIVEN_PANE_SESSION")
+                    fi
                     ;;
                 esac
                 # riven's agent hooks (deep-merged, so the user's own hooks still fire).
@@ -716,9 +722,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // pkill before claude could exec. UUIDs contain only [0-9a-f-], so the argument is safe.
     private func reapOrphanSession(_ session: String) {
         guard UUID(uuidString: session) != nil else { return }
+        // Match by the session UUID alone, so it catches the orphan whether the previous
+        // launch used `--session-id <id>` or `--resume <id>`. The id is globally unique and
+        // only appears in that session's claude args, so this can't hit anything else.
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        p.arguments = ["-f", "--", "--session-id \(session)"]
+        p.arguments = ["-f", "--", session]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run(); p.waitUntilExit() } catch { RLog.log("reapOrphanSession: pkill failed \(error)") }
@@ -784,11 +793,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ]
         if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
         // An agent panel runs the CLI directly (no shell). For a session-capable agent
-        // (Claude Code) attach `--session-id <paneSession>` — idempotent: creates the
-        // session on first launch, resumes it on restore. Plain terminals run the shell,
-        // where the shim's `claude` function applies the same id to typed invocations.
+        // (Claude Code): CREATE with `--session-id <id>` the first time, but RESUME with
+        // `--resume <id>` once a transcript exists. `--session-id` REFUSES an id that
+        // already has state on disk ("Session ID already in use"), so using it on restore
+        // was why the conversation never came back after a quit. Verified: --session-id
+        // fails on an existing transcript; --resume accepts it.
         var cmd = agent?.cmd
-        if let a = agent, a.sessionFlag != nil { cmd = "\(a.cmd) --session-id \(paneSession)" }
+        if let a = agent, let sessionFlag = a.sessionFlag {
+            let flag = (a.resumeFlag != nil && claudeSessionExists(sessionId: paneSession)) ? a.resumeFlag! : sessionFlag
+            cmd = "\(a.cmd) \(flag) \(paneSession)"
+        }
         // Hand the agent riven's hook config on the command line rather than writing to
         // the user's own settings. Verified: --settings DEEP-MERGES `hooks`, so a user's
         // own hooks keep firing alongside ours.
@@ -1557,7 +1571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let name = rest.first.map(String.init) ?? ""
                 guard name.isEmpty, rest.count > 1 else { return desc }   // only plain panes carrying a uuid
                 let uuid = String(rest[1])
-                return claudeSessionExists(cwd: cwd, sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
+                return claudeSessionExists(sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
             }
         } else if n["type"] as? String == "split", let kids = n["children"] as? [[String: Any]] {
             n["children"] = kids.map { markClaudePanes($0, cwd: cwd) }
@@ -1573,11 +1587,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // The paths never matched, so panes under any non-ASCII path silently failed to be
     // promoted back to Claude Code panes on restore. Verified against a real transcript
     // path on 2026-07-27.
-    private func claudeSessionExists(cwd: String, sessionId: String) -> Bool {
-        let enc = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
-        let path = (NSHomeDirectory() as NSString)
-            .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
-        return FileManager.default.fileExists(atPath: path)
+    // True if a Claude Code transcript for this session id exists. Globs by id across all
+    // project dirs — session ids are globally unique, so this is independent of how the
+    // workspace path is encoded into a dir name AND of CLAUDE_CONFIG_DIR. (The old version
+    // reconstructed the encoded path and silently missed non-ASCII workspaces.)
+    private func claudeSessionExists(sessionId: String) -> Bool {
+        guard UUID(uuidString: sessionId) != nil else { return false }
+        let base = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        let projects = base.appendingPathComponent("projects")
+        guard let dirs = try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil) else { return false }
+        return dirs.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(sessionId).jsonl").path) }
     }
 
     // ---- session persistence (open folders + tabs, restored on next launch) ----
