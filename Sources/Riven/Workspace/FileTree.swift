@@ -24,8 +24,12 @@ final class FileNode {
     func loadChildren() -> [FileNode] {
         if let c = children { return c }
         let fm = FileManager.default
+        // Show dotfiles (.claude, .env, .gitignore, …) — VSCode's default. We deliberately
+        // do NOT pass .skipsHiddenFiles; the noise dirs that shouldn't appear (.git,
+        // node_modules, .venv, .next, .cache, .DS_Store, …) are filtered by `ignored` below,
+        // so removing the flag surfaces useful dotfiles without also showing that churn.
         let items = (try? fm.contentsOfDirectory(at: url,
-            includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])) ?? []
+            includingPropertiesForKeys: [.isDirectoryKey], options: [])) ?? []
         let nodes = items
             .filter { !FileNode.ignored.contains($0.lastPathComponent) }
             .map { FileNode(url: $0, isDir: (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
