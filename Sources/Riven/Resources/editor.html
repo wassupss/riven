@@ -281,6 +281,11 @@ function createGroup() {
   const imgEl = document.createElement('div'); imgEl.className = 'eimage';
   imgEl.innerHTML = '<img alt=""><div class="meta"></div>';
   el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(dropEl);
+  // A plain mouse wheel only produces a vertical delta; map it to horizontal scroll so
+  // the tab strip's overflow is reachable without a trackpad (native dock tabs do this too).
+  tabsEl.addEventListener('wheel', (e) => {
+    if (e.deltaX === 0 && e.deltaY !== 0) { tabsEl.scrollLeft += e.deltaY; e.preventDefault(); }
+  }, { passive: false });
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
@@ -533,6 +538,11 @@ function showInGroup(g, path) {
   g.ed.setModel(isImage(path) ? null : (models[path] || null));
   applyImageMode(g);
   renderTabs(g);
+  // The tab strip (.etabs) scrolls horizontally with its scrollbar hidden; without
+  // this, opening a file whose tab lands past the right edge left the active tab
+  // off-screen and unreachable by mouse. Bring it into view.
+  const el = g.tabEls && g.tabEls[path];
+  if (el) el.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   if (g.idx === activeIdx) { currentPath = path; updateHunkNav(path); updateBlame(); }
 }
 // Open a file into a group (create model, add tab, show).

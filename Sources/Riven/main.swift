@@ -1156,6 +1156,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let ws = self.workspace { self.state(for: ws).activeTab = path }
             self.tabBar.setActive(path)
         }
+        // A WKWebView reload (dock reparent / WebKit recycle) wipes every Monaco model,
+        // but native still lists all open tabs. The ready handler re-pushes only the
+        // active file, so the others became native-open / web-missing — reopening one hit
+        // the "already open → send empty content" path and Monaco showed a blank buffer.
+        // Re-push the whole set here. Primary editor only (it owns the workspace tabs).
+        if !secondary { ed.onReady = { [weak self, weak ed] in self?.resyncOpenTabs(to: ed) } }
         ed.onLSP = { [weak self] id, method, path, params in self?.handleLSP(id, method, path, params) }
         ed.onLSPSync = { [weak self] path, version, text in
             guard let self, let ws = self.workspace else { return }
@@ -1171,6 +1177,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ed.setEditorKeymap(Settings.shared.string("editorKeymap", "vscode"))
         ed.setEditorKeys(Keys.editorChords())
         ed.setSnippets(loadSnippets())
+    }
+
+    // Re-push every open tab to the editor after a WKWebView reload wiped its models.
+    // Active tab is already restored by EditorView's own re-push; this fills in the rest
+    // (inactive tabs) so reopening any of them doesn't land on a blank buffer. Files are
+    // read off-main (a big workspace can have many tabs); openBackground is idempotent,
+    // so a redundant call on the initial load is harmless.
+    private func resyncOpenTabs(to ed: EditorView?) {
+        guard let ed, let ws = workspace else { return }
+        let st = state(for: ws)
+        let inactive = st.openTabs.filter { $0 != st.activeTab }
+        guard !inactive.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
+            DispatchQueue.main.async {
+                guard self.workspace == ws else { return }   // workspace switched meanwhile
+                let cur = self.state(for: ws)
+                for (p, content) in loaded where cur.openTabs.contains(p) {
+                    ed.openBackground(path: p, content: content)
+                }
+            }
+        }
     }
     private func dockActivePanelChanged(_ p: DockPanel?) { p?.onActivate?() }
 
@@ -1618,6 +1646,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // Monaco here runs on the MAIN THREAD (the editor WebView loads from file://, which
+    // blocks its Web Workers — see EditorView), so a very large file tokenizes on the UI
+    // thread and freezes the app: opening it looks like "nothing happens". Refuse past a
+    // cap, matching how VSCode guards large files. Applies to both text and image opens
+    // (an image is base64'd into a data: URL, ~1.33× its bytes in memory).
+    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB
+
     private func openFile(_ url: URL) {
         RLog.log("openFile \(url.lastPathComponent) ws=\(workspace?.lastPathComponent ?? "nil")")
         guard let ws = workspace else { RLog.log("openFile: no workspace!"); return }
@@ -1631,6 +1666,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if Self.imageMIME(path) != nil { editor.showImageTab(path: path) }
             else { editor.open(path: path, content: "") }   // Monaco reuses the existing model
             statusBar.setFileInfo(fileInfo(path))
+            return
+        }
+        // Size guard (before any read): a huge file would freeze Monaco on the main
+        // thread or balloon memory as a data: URL. Refuse with a clear message.
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? Int, size > Self.maxEditorFileSize {
+            let a = NSAlert()
+            a.messageText = t("editor.tooLarge")
+            a.informativeText = t("editor.tooLargeBody", [
+                "name": url.lastPathComponent,
+                "size": ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file),
+                "limit": ByteCountFormatter.string(fromByteCount: Int64(Self.maxEditorFileSize), countStyle: .file)])
+            a.alertStyle = .warning
+            a.runModal()
+            RLog.log("openFile: refused \(path) — \(size) bytes > cap")
             return
         }
         // 이미지는 Monaco가 못 그리므로 에디터 탭 안의 이미지 뷰어로 연다 (VS Code의

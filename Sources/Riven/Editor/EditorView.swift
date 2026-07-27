@@ -19,6 +19,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     var onOpenDef: ((_ path: String, _ line: Int, _ column: Int) -> Void)?  // cross-file go-to-definition
     var onCloseTab: ((String) -> Void)?   // tab ✕ clicked in a WebView split group (last instance)
     var onActiveTab: ((String) -> Void)?  // tab clicked in a WebView split group → sync native active tab
+    var onReady: (() -> Void)?            // Monaco (re)loaded → re-sync ALL open tabs (see the ready handler)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -250,6 +251,11 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             if let c = currentOpen { push(path: c.path, content: c.content) }
             else if let p = pending { push(path: p.path, content: p.content) }
             pending = nil
+            // A reload wipes ALL web-side models, but native still lists every open tab.
+            // Re-pushing only currentOpen above left the OTHER tabs as native-open /
+            // web-missing: reopening one then hit the "already open → send empty content"
+            // path and Monaco showed a blank buffer. Ask the owner to restore the rest.
+            onReady?()
         case "save":
             if let path = body["path"] as? String, let content = body["content"] as? String {
                 onSave?(path, content)
