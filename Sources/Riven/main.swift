@@ -601,10 +601,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setupShellShim() {
         let dir = rivenZdotdir
         // 0700: everything in here is SOURCED BY THE SHELL, so write access for another
-        // local user would be code execution in the user's terminal. Same rigor as
-        // [[RLog]]'s owner-only log file.
+        // local user would be code execution in the user's terminal. The explicit chmod
+        // matters — createDirectory's attributes are ignored when the directory already
+        // exists, which it does on every launch after the first.
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
+        chmod(dir, 0o700)
         let files: [String: String] = [
             ".zshenv": #"[ -r "$HOME/.zshenv" ] && source "$HOME/.zshenv""#,
             ".zprofile": #"[ -r "$HOME/.zprofile" ] && source "$HOME/.zprofile""#,

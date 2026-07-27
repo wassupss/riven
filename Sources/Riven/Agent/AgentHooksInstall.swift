@@ -72,10 +72,7 @@ enum AgentHooksInstall {
             RLog.log("HOOKS riven-hook helper missing — agent hooks disabled")
             return nil
         }
-        let dir = AgentHookServer.supportDir
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
-        let url = dir.appendingPathComponent("claude-hooks.json")
+        let url = AgentHookServer.ensureSupportDir().appendingPathComponent("claude-hooks.json")
         let doc: [String: Any] = ["hooks": hooksBlock(agent: "claude", events: claudeEvents, helper: helper)]
         guard let data = try? JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys]),
               (try? data.write(to: url, options: .atomic)) != nil else { return nil }

@@ -38,15 +38,28 @@ final class AgentHookServer {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/riven-native")
     }
+    /// Create the support dir if needed AND force it to 0700.
+    ///
+    /// The chmod is not redundant: createDirectory's `attributes` only apply when it
+    /// actually creates the directory. This one is shared with [[RLog]], which gets there
+    /// first on almost every launch, so passing 0700 to createDirectory alone left it at
+    /// the umask default (observed 0755 in testing).
+    @discardableResult
+    static func ensureSupportDir() -> URL {
+        let dir = supportDir
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        chmod(dir.path, 0o700)
+        return dir
+    }
 
     // ---- lifecycle ---------------------------------------------------------
     func start() {
         guard listenFD < 0 else { return }
         let path = Self.socketPath
-        // 0700: the directory traversal bit is what keeps other local users out of the
-        // socket, so it must be set before the socket exists.
-        try? FileManager.default.createDirectory(at: Self.supportDir, withIntermediateDirectories: true,
-                                                 attributes: [.posixPermissions: 0o700])
+        // Defence in depth: the socket itself is chmod'd 0600 below, and the directory is
+        // forced to 0700 so another local user can't even reach it.
+        Self.ensureSupportDir()
         guard reclaim(path) else {
             RLog.log("HOOKS another riven owns \(path) — not starting a second listener")
             return
