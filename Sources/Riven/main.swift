@@ -17,11 +17,12 @@ let rivenCrashPath: String = {
 // Open a folder → browse files → click to open in Monaco → ⌘S saves to disk.
 // The terminal is a real GPU shell rooted at the workspace.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    // Re-assert terminal focus when the app returns to front — the surface can lose
-    // ghostty focus while the window is inactive, leaving a "focused but no input" pane.
+    // Re-assert focus on the ACTIVE panel when the app returns to front. The surface can
+    // lose ghostty focus while the window is inactive; and the old version only handled
+    // TerminalView, so returning while the editor/an aux panel was focused jumped focus to a
+    // terminal instead (#2). Route through the active panel so focus returns where it was.
     func windowDidBecomeKey(_ notification: Notification) {
-        if let tv = window?.firstResponder as? TerminalView { tv.focusTerminal() }
-        else if let tv = currentTerminal(), activeDock?.activeGroup?.activePanel?.content === tv { tv.focusTerminal() }
+        focusActivePanel()
     }
     var window: NSWindow!
     var rail: WorkspaceRail!
@@ -1284,7 +1285,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
-    private func dockActivePanelChanged(_ p: DockPanel?) { p?.onActivate?() }
+    private func dockActivePanelChanged(_ p: DockPanel?) {
+        guard let p else { return }
+        // Terminals carry an onActivate (makeFirstResponder + clear attn). Editor/aux panels
+        // don't, so without this fallback setActive would move the ring but leave the window
+        // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared" (#3). Route
+        // every panel type through a real focus so activation always lands somewhere.
+        if p.onActivate != nil { p.onActivate?() } else { focusPanelContent(p) }
+    }
+
+    // Give keyboard focus to a panel's content, by type: terminal → ghostty focus, editor →
+    // Monaco focus (JS), anything else → make it first responder. Used on activation, on
+    // close-survivor, on workspace return, and on app re-activation so focus is never lost.
+    private func focusPanelContent(_ p: DockPanel) {
+        if p === editorDockPanel { editor.focusEditor() }
+        else if let tv = p.content as? TerminalView { tv.focusTerminal() }
+        else { p.content.window?.makeFirstResponder(p.content) }
+    }
+    // Focus the active dock's active panel (the one the ring is on).
+    private func focusActivePanel() {
+        if let p = activeDock?.activeGroup?.activePanel { focusPanelContent(p) }
+    }
 
     // A pane's content (terminal / editor) took keyboard focus → move the active
     // group ring to the group that owns it (riven's focus-follows-click).
@@ -1351,6 +1372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let old = workspace, old != url {
             state(for: old).openAux = Set(auxDockPanels.keys)
             state(for: old).pendingLayout = activeDock?.snapshot()
+            state(for: old).activePanelId = activeDock?.activeGroup?.activePanel?.id  // restore focus on return
         }
 
         // 전환하면 공유 에디터 웹뷰의 모델을 정리하므로(#7, rebuildTabs), 저장 안 된
@@ -1431,7 +1453,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if restoredLayout {
                 st.pendingTerminals = nil                 // 구버전 폴백 기록은 더 필요 없다
                 st.openAux = Set(auxDockPanels.keys)      // 레이아웃이 배치한 aux가 곧 열린 aux
-                (dock.activeGroup?.activePanel?.content as? TerminalView)?.focusTerminal()
+                // restore rebuilt the group tree, so re-select the group that owned the panel
+                // the user last had focused (by id) and focus it — not the first pane (#1).
+                if let sid = st.activePanelId,
+                   let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == sid }),
+                   let g = panel.group {
+                    dock.setActive(g)
+                    focusPanelContent(panel)
+                } else {
+                    focusActivePanel()
+                }
             }
         }
         // Add the default terminal now that the dock is in the window (a libghostty
