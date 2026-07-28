@@ -28,6 +28,9 @@ final class Settings {
     func string(_ key: String, _ def: String) -> String { read { dict[key] as? String ?? def } }
     func bool(_ key: String, _ def: Bool) -> Bool { read { dict[key] as? Bool ?? def } }
     func int(_ key: String, _ def: Int) -> Int { read { dict[key] as? Int ?? def } }
+    func double(_ key: String, _ def: Double) -> Double {
+        read { (dict[key] as? Double) ?? (dict[key] as? Int).map(Double.init) ?? def }
+    }
     func object(_ key: String) -> [String: Any]? { read { dict[key] as? [String: Any] } }
 
     func set(_ key: String, _ value: Any) {

@@ -569,10 +569,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.contentView = root
 
         DispatchQueue.main.async {
-            body.setPosition(220, ofDividerAt: 0)
-            sidebarSplitV.setPosition(190, ofDividerAt: 0)   // rail shows ~2 cards + a bit
+            // Restore the user's saved sidebar width + rail height (default 220 / 190).
+            // Guard persistence until AFTER this restore so the transient initial layout
+            // (default 220) can't clobber the saved value before we apply it.
+            let w = CGFloat(Settings.shared.double("sidebarWidth", 220))
+            let rh = CGFloat(Settings.shared.double("railHeight", 190))
+            self.sidebarWidth = w
+            body.setPosition(w, ofDividerAt: 0)
+            sidebarSplitV.setPosition(rh, ofDividerAt: 0)   // rail shows ~2 cards + a bit
+            RLog.log("sidebar: restored width=\(Int(w)) railHeight=\(Int(rh))")
+            self.sidebarLayoutRestored = true
         }
     }
+    // Set once the saved sidebar geometry has been applied; before that we don't persist
+    // divider drags (initial-layout resize events would otherwise overwrite saved values).
+    private var sidebarLayoutRestored = false
 
     // The sidebar head (riven's .sidebar-head): draggable like a native titlebar
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
@@ -2712,6 +2723,21 @@ extension AppDelegate: NSSplitViewDelegate {
         if sv === bodySplit { return view !== sidebarView }   // keep the sidebar's width fixed
         if sv === sidebarSplit { return view !== rail }       // keep the rail height, flex explorer
         return true
+    }
+    // Persist the divider positions the user drags so they survive across launches. The
+    // sidebar width (bodySplit) and rail height (sidebarSplit) are kept fixed on window
+    // resize by shouldAdjustSizeOfSubview above, so this only fires with a real user drag
+    // for those dimensions. Skip while collapsed (width would be 0) and until the saved
+    // geometry has been restored (so initial-layout events don't overwrite it).
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard sidebarLayoutRestored, let sv = notification.object as? NSSplitView else { return }
+        if sv === bodySplit, !sidebarCollapsed, let sb = sv.arrangedSubviews.first {
+            let w = sb.frame.width
+            if w >= 120 { sidebarWidth = w; Settings.shared.set("sidebarWidth", Double(w)) }
+        } else if sv === sidebarSplit, let railView = sv.arrangedSubviews.first {
+            let h = railView.frame.height
+            if h >= 48 { Settings.shared.set("railHeight", Double(h)) }
+        }
     }
 }
 
