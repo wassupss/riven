@@ -2547,6 +2547,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Refresh today's agent usage (local Claude logs) now + every 60s, like riven.
     private var usageTimer: Timer?
     private func startUsagePolling() {
+        // Restore the pinned-usage state the user left it in (was saved but never re-applied,
+        // so the pin was lost every launch). Deferred so the sidebar layout has settled.
+        if Settings.shared.bool("usagePinned", false) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pinnedUsage == nil else { return }
+                RLog.log("usage: restoring pinned state")
+                self.pinUsage()
+            }
+        }
         refreshUsage()
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
     }
@@ -2585,11 +2594,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Pin the usage view to the bottom of the sidebar (riven's UsagePinned). Reserves
     // a strip at the bottom of the sidebar container and hides the status-bar widget.
-    private let pinnedUsageH: CGFloat = 118
+    // Height of the pinned usage strip. It is MEASURED from the content (header + session
+    // bar + weekly bar + optional today line, each including its reset-time line) rather
+    // than a fixed constant — a fixed 118pt clipped the bottom rows, which is why the
+    // session/weekly reset times went missing when pinned. Recomputed on every rebuild so
+    // it stays correct as the content changes.
+    private var pinnedUsageH: CGFloat = 118
+    private func measuredPinnedHeight(_ v: NSView, width: CGFloat) -> CGFloat {
+        v.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+        v.layoutSubtreeIfNeeded()
+        return max(96, ceil(v.fittingSize.height))
+    }
     private func pinUsage() {
         guard pinnedUsage == nil, let sc = sidebarContainer else { return }
         Settings.shared.set("usagePinned", true)
         let v = makePinnedUsage()
+        pinnedUsageH = measuredPinnedHeight(v, width: sc.bounds.width)
         v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: pinnedUsageH)
         v.autoresizingMask = [.width, .maxYMargin]
         sc.addSubview(v)
@@ -2637,7 +2657,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             unpin.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             content.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
             content.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: box.trailingAnchor)
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            // Drives the box's height from its content so the strip fits without clipping.
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -8)
         ])
         return box
     }
@@ -2649,9 +2671,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard pinnedUsage != nil, let sc = sidebarContainer else { return }
         pinnedUsage?.removeFromSuperview()
         let v = makePinnedUsage()
-        v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: pinnedUsageH)
+        let newH = measuredPinnedHeight(v, width: sc.bounds.width)
+        v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: newH)
         v.autoresizingMask = [.width, .maxYMargin]
         sc.addSubview(v); pinnedUsage = v
+        // If the content's height changed (e.g. a reset line appeared), re-offset the split
+        // above the strip by the delta so nothing overlaps or leaves a gap.
+        if newH != pinnedUsageH, let sv = sidebarSplit {
+            let delta = newH - pinnedUsageH
+            var f = sv.frame; f.origin.y += delta; f.size.height -= delta; sv.frame = f
+            pinnedUsageH = newH
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
