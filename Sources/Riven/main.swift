@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installKeybindings()
         startUsagePolling()
         Notifications.requestAuthorization()
+        Notifications.onOpen = { [weak self] ws, panelId in self?.revealPane(wsPath: ws, panelId: panelId) }
         // Live language switch: rebuild the menu bar + refresh open panel titles so the
         // whole chrome follows the setting (panels observe .rivenLanguageChanged themselves).
         NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
@@ -140,7 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         SupabaseAuth.shared.restore()
         statusBar.setAccount(SupabaseAuth.shared.displayName)
         // Start Sparkle auto-update (scheduled background checks; no-op if no feed).
+        // Surface a found update as a clickable status-bar pill; clicking runs the check so
+        // Sparkle presents its install flow. Restore the pill if one was already found.
+        Updater.shared.onUpdateFound = { [weak self] version in self?.statusBar.setUpdateAvailable(version) }
+        statusBar.onUpdate = { Updater.shared.checkForUpdates(nil) }
         Updater.shared.start()
+        if let v = Updater.shared.availableVersion { statusBar.setUpdateAvailable(v) }
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
             let url = URL(fileURLWithPath: dbg)
@@ -391,6 +397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail.onRename = { [weak self] url, name in
             guard let self else { return }
             self.workspaceNames[url] = name
+            if url == self.workspace { self.updateWorkspaceHeader(url) }   // reflect in header/title now
             self.persistSession()
         }
         WorkspaceStatus.shared.onChange = { [weak self] ws in
@@ -716,7 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             notify: { [weak self] pane, body in
                 let title = (pane.workspace as NSString).lastPathComponent
                 let name = self?.panel(pane)?.title ?? t("title.terminal")
-                Notifications.post(title: title, body: "\(name) · \(body)")
+                Notifications.post(title: title, body: "\(name) · \(body)", wsPath: pane.workspace, panelId: pane.paneId)
             }
         )
         AgentHookServer.shared.onEvent = { [weak self] event in
@@ -932,7 +939,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if !watching, tv.turnArmed {
                 tv.turnArmed = false
                 let wsName = (wsPath as NSString).lastPathComponent
-                Notifications.post(title: wsName, body: "\(p.title) · \(t("term.done"))")
+                Notifications.post(title: wsName, body: "\(p.title) · \(t("term.done"))", wsPath: wsPath, panelId: paneId)
             }
         }
         tv.onFocused = { [weak self, weak tv, weak p] in
@@ -1362,6 +1369,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Make a workspace active: swap in this workspace's dock (its own terminals +
     // layout), move the shared editor into it, restore tabs, re-root explorer/git.
+    // Clicking a notification banner lands here: switch to the pane's workspace, focus the
+    // pane, and clear its attention. Previously clicks did nothing (no userInfo / no handler).
+    private func revealPane(wsPath: String, panelId: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        guard let url = states.keys.first(where: { $0.path == wsPath }) ?? workspaces.first(where: { $0.path == wsPath }) else { return }
+        if workspace != url { activate(url) }
+        guard let dock = activeDock,
+              let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }),
+              let g = panel.group else { return }
+        dock.setActive(g)
+        focusPanelContent(panel)
+        // Looking at it clears the attention badge + ring + rail dot.
+        panel.badge = nil
+        (panel.content as? TerminalView)?.setRingState(nil)
+        WorkspaceStatus.shared.setPane(ws: wsPath, pane: panelId, attn: false)
+        refreshDockTabs()
+    }
+
+    // The name to show for a workspace: the user's custom rail name if set, else the folder.
+    private func displayName(for url: URL) -> String {
+        let custom = workspaceNames[url]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (custom?.isEmpty == false ? custom! : url.lastPathComponent)
+    }
+    // Window title + status bar + dock header for a workspace, honoring a custom name.
+    private func updateWorkspaceHeader(_ url: URL) {
+        let name = displayName(for: url)
+        window.title = "riven — \(name)"
+        statusBar.setWorkspaceName(name)
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let short = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
+        let hs = NSMutableAttributedString(string: name,
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12, .medium)])
+        hs.append(NSAttributedString(string: "   \(short)",
+            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
+        headerLabel?.attributedStringValue = hs
+    }
     private func activate(_ url: URL) {
         if !workspaces.contains(url) { workspaces.append(url) }
         let st = state(for: url)
@@ -1500,16 +1544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         explorer.setRoot(url)
         searchPanel.setRoot(url); gitPanel.setRoot(url); changesPanel.setWorkspace(url)
-        window.title = "riven — \(url.lastPathComponent)"
-        statusBar.setWorkspaceName(url.lastPathComponent)
-        // Header: folder name + dimmed path.
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let short = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
-        let hs = NSMutableAttributedString(string: url.lastPathComponent,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12, .medium)])
-        hs.append(NSAttributedString(string: "   \(short)",
-            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
-        headerLabel?.attributedStringValue = hs
+        updateWorkspaceHeader(url)
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
         refreshGit()
 

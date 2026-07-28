@@ -178,6 +178,7 @@ enum I18n {
         "about.update": ("업데이트", "Update"), "about.check": ("업데이트 확인", "Check for updates"),
         "about.checkHint": ("최신 버전 여부를 확인하세요.", "Check whether you're up to date."),
         "about.checking": ("확인 중…", "Checking…"),
+        "update.available": ("업데이트", "update"),
         "update.unavailable": ("업데이트를 확인할 수 없습니다", "Can't check for updates"),
         "update.noFeed": ("이 빌드에는 업데이트 피드가 설정되어 있지 않습니다(개발 빌드).",
                           "This build has no update feed configured (development build)."),

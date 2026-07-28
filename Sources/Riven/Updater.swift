@@ -17,6 +17,10 @@ final class Updater: NSObject {
     // 확인이 끝났을 때(최신 · 업데이트 발견 · 실패 · 사용자가 창을 닫음) 호출된다.
     // Sparkle이 자기 UI를 닫아도 우리 쪽 "확인 중…" 라벨이 남지 않도록 하는 훅.
     var onCheckFinished: (() -> Void)?
+    // A newer version was found on the feed → show the in-app "update available" banner.
+    // Carries the display version (e.g. "0.1.22"). Set by the app.
+    var onUpdateFound: ((String) -> Void)?
+    private(set) var availableVersion: String?
 
     private var configured: Bool {
         let feed = (Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String) ?? ""
@@ -65,5 +69,12 @@ extension Updater: SPUUpdaterDelegate {
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) { finishCheck() }
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) { finishCheck() }
     // 업데이트를 찾은 경우에도 확인 단계는 끝난 것 — 이후는 Sparkle 자체 UI가 맡는다.
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) { finishCheck() }
+    // Also surface the version to the app so it can show a persistent in-app banner (a
+    // background check's own alert is easy to miss / dismiss).
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        availableVersion = item.displayVersionString
+        let v = item.displayVersionString
+        DispatchQueue.main.async { [weak self] in self?.onUpdateFound?(v) }
+        finishCheck()
+    }
 }

@@ -16,6 +16,8 @@ final class StatusBarView: NSView, Themable {
     private lazy var usageItem = item(usageIcon, usageLabel)
     private let accountIcon = NSImageView()
     private let accountLabel = NSTextField(labelWithString: "")
+    private let updateButton = NSButton()   // "vX 업데이트" — shown only when an update is available
+    var onUpdate: (() -> Void)?
     private lazy var accountItem = item(accountIcon, accountLabel)
     var onSettings: (() -> Void)?
 
@@ -60,8 +62,18 @@ final class StatusBarView: NSView, Themable {
         accountItem.translatesAutoresizingMaskIntoConstraints = false
         accountItem.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(settingsClicked)))
 
-        // Right cluster: [lang · account · usage · settings] laid out right-to-left.
-        let right = NSStackView(views: [langLabel, accountItem, usageItem, settings])
+        updateButton.isBordered = false
+        updateButton.imagePosition = .imageLeading
+        updateButton.image = symbol("arrow.down.circle.fill", 12)
+        updateButton.contentTintColor = Theme.accent
+        updateButton.font = UIScale.font(11, .medium)
+        updateButton.target = self; updateButton.action = #selector(updateClicked)
+        updateButton.translatesAutoresizingMaskIntoConstraints = false
+        updateButton.isHidden = true
+        (updateButton.cell as? NSButtonCell)?.highlightsBy = []
+
+        // Right cluster: [update · lang · account · usage · settings] laid out right-to-left.
+        let right = NSStackView(views: [updateButton, langLabel, accountItem, usageItem, settings])
         right.orientation = .horizontal; right.spacing = 14; right.alignment = .centerY
         right.translatesAutoresizingMaskIntoConstraints = false
 
@@ -99,6 +111,19 @@ final class StatusBarView: NSView, Themable {
     }
 
     @objc private func settingsClicked() { onSettings?() }
+    @objc private func updateClicked() { onUpdate?() }
+
+    // Show/hide the "update available" pill. Pass the new version (e.g. "0.1.22") or nil.
+    func setUpdateAvailable(_ version: String?) {
+        if let version, !version.isEmpty {
+            let v = version.hasPrefix("v") ? version : "v\(version)"
+            updateButton.title = " \(v) " + t("update.available")
+            updateButton.contentTintColor = Theme.accent
+            updateButton.isHidden = false
+        } else {
+            updateButton.isHidden = true
+        }
+    }
 
     func setWorkspaceName(_ name: String?) { folderLabel.stringValue = name ?? "" }
     func setBranch(_ branch: String?) {
