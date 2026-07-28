@@ -136,7 +136,14 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
             r.box.heightAnchor.constraint(equalToConstant: 24),
         ])
         stack.addArrangedSubview(r.box)
-        r.box.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true   // after add → common ancestor
+        // Full-width rows. Guard the cross-view constraint: addArrangedSubview normally makes
+        // r.box a subview of `stack` (shared ancestor), but a crash was recorded here
+        // ("no common ancestor") — activating with no shared ancestor throws an NSException
+        // that takes down the app. Only activate once the relationship is actually in place;
+        // worst case a row is slightly misaligned instead of the whole app crashing.
+        if r.box.superview === stack {
+            r.box.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         rows.append(r)
         return r
     }

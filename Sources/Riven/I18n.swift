@@ -53,6 +53,13 @@ enum I18n {
     static let dict: [String: (ko: String, en: String)] = [
         // common
         "common.close": ("닫기", "Close"), "common.cancel": ("취소", "Cancel"),
+        "common.ok": ("확인", "OK"),
+        // crash reporting (opt-out disclosure + settings toggle)
+        "crash.noticeTitle": ("익명 크래시 리포트", "Anonymous crash reports"),
+        "crash.noticeBody": ("riven은 안정성 개선을 위해 익명 크래시 리포트를 보냅니다 (계정·토큰 없이, 홈 경로는 가려서). 설정에서 언제든 끌 수 있습니다.",
+            "riven sends anonymous crash reports to improve stability (no account or tokens; your home path is masked). You can turn this off anytime in Settings."),
+        "crash.turnOff": ("끄기", "Turn off"),
+        "settings.crashReports": ("크래시 리포트 전송 (익명)", "Send crash reports (anonymous)"),
         "quit.title": ("riven을 종료할까요?", "Quit riven?"),
         "quit.body": ("마지막 패널을 닫으면 앱이 종료됩니다.", "Closing the last panel quits the app."),
         "quit.confirm": ("종료", "Quit"),
