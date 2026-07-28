@@ -213,15 +213,48 @@ enum Usage {
         cachedToken = t
         return t
     }
+    // Read Claude Code's stored credential from the login keychain by shelling out to
+    // /usr/bin/security — NOT an in-process SecItemCopyMatching. This is why the "allow
+    // access" dialog stopped nagging on every update:
+    //
+    //   • In-process access identifies the REQUESTING APP as riven. When the user clicks
+    //     "Always Allow", the grant is pinned to riven.app's code signature — and riven
+    //     auto-updates constantly, so every new binary invalidates the grant and the dialog
+    //     comes back. (This was the reported "왜 계속 물어봐".)
+    //   • Via /usr/bin/security the requesting app is a STABLE, Apple-signed system binary,
+    //     so a one-time "Always Allow" persists across riven updates. This is exactly how
+    //     openusage (robinebers/openusage) reads it without the recurring prompt.
+    //
+    // Try the current-user account first (Claude Code stores it under `-a <user>`), then a
+    // service-only lookup as a fallback. Exit 44 = errSecItemNotFound (no credential) — the
+    // normal "not logged in" case, distinct from a real failure.
     private static func keychainCredentials() -> Data? {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var out: CFTypeRef?
-        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+        let service = "Claude Code-credentials"
+        let user = ProcessInfo.processInfo.environment["USER"]?.trimmingCharacters(in: .whitespaces)
+        var attempts: [[String]] = []
+        if let user, !user.isEmpty {
+            attempts.append(["find-generic-password", "-a", user, "-s", service, "-w"])
+        }
+        attempts.append(["find-generic-password", "-s", service, "-w"])
+        for args in attempts {
+            if let out = runSecurity(args) { return out }
+        }
+        return nil
+    }
+    private static func runSecurity(_ args: [String]) -> Data? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = args
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard p.terminationStatus == 0 else { return nil }   // 44 = not found; anything else = failure
+        // `-w` prints the password (the credential JSON) followed by a single trailing
+        // newline; strip only trailing whitespace/newlines, not any newline inside the JSON.
+        guard let s = String(data: data, encoding: .utf8) else { return nil }
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : Data(trimmed.utf8)
     }
     private static func tokenFromJSON(_ data: Data?) -> String? {
         guard let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
