@@ -147,6 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusBar.onUpdate = { Updater.shared.checkForUpdates(nil) }
         Updater.shared.start()
         if let v = Updater.shared.availableVersion { statusBar.setUpdateAvailable(v) }
+        // Debug/demo: force-show the update pill (real builds surface it only when Sparkle
+        // finds a newer version on the feed — a dev/test build has no feed, so it never shows).
+        if let fake = ProcessInfo.processInfo.environment["RIVEN_FAKE_UPDATE"] { statusBar.setUpdateAvailable(fake) }
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
             let url = URL(fileURLWithPath: dbg)
@@ -346,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusBar.autoresizingMask = [.width, .maxYMargin]
         statusBar.onSettings = { [weak self] in self?.settingsMenu() }
         statusBar.onPin = { [weak self] in self?.pinUsage() }
+        statusBar.onAccount = { [weak self] in self?.showAccountPopover() }
         statusBar.moveControlsToHeader()   // usage + settings now live in the app header (top-right)
 
         // Body split: [sidebar | right area], full height above the status bar. The
@@ -377,6 +381,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail = WorkspaceRail(frame: NSRect(x: 0, y: 0, width: 220, height: 150))
         rail.onOpen = { [weak self] in self?.openFolder() }
         rail.onSelect = { [weak self] url in self?.switchWorkspace(url) }
+        rail.onSelectAgent = { [weak self] url, paneId in self?.revealPane(wsPath: url.path, panelId: paneId) }
         rail.onReveal = { url in NSWorkspace.shared.activateFileViewerSelecting([url]) }
         rail.onClose = { [weak self] url in self?.closeWorkspace(url) }
         // 카드를 끌어 순서를 바꾸면 workspaces 배열도 같은 순서로 맞추고 저장한다
@@ -404,6 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             let a = WorkspaceStatus.shared.rollup(ws)
             self.rail.setActivity(URL(fileURLWithPath: ws), a)
+            self.rail.setAgents(URL(fileURLWithPath: ws), self.railAgents(for: URL(fileURLWithPath: ws)))  // refresh per-agent rows
             if self.workspace?.path == ws {   // reflect the active workspace's status in the header icon
                 self.headerIcon?.contentTintColor = a == .attn ? Theme.warning : a == .busy ? Theme.accent2 : Theme.fgDim
             }
@@ -757,6 +763,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let path = event.filePath { recordAgentFileEdit(workspace: pane.workspace, path: path) }
         default: break
         }
+        // A hand-typed `claude` becomes hook-backed on its first event (SessionStart) — refresh
+        // so it shows up as an agent row in the rail immediately, not only on the next status change.
+        rail.setAgents(URL(fileURLWithPath: pane.workspace), railAgents(for: URL(fileURLWithPath: pane.workspace)))
     }
 
     // Kill a claude left over from a previous riven that still holds this pane's session id
@@ -1299,6 +1308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared" (#3). Route
         // every panel type through a real focus so activation always lands somewhere.
         if p.onActivate != nil { p.onActivate?() } else { focusPanelContent(p) }
+        refreshRailAgents()   // pane added/closed/switched → keep the rail's agent rows in sync
     }
 
     // Give keyboard focus to a panel's content, by type: terminal → ghostty focus, editor →
@@ -1369,6 +1379,123 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Make a workspace active: swap in this workspace's dock (its own terminals +
     // layout), move the shared editor into it, restore tabs, re-root explorer/git.
+    // Build the agent-pane rows shown under a workspace in the rail (Orca-style). Only agent
+    // panes (Claude Code / Codex) are listed; their status comes from the pane's badge, which
+    // the hook/activity layer keeps current even for non-visible workspaces.
+    private func railAgents(for url: URL) -> [WorkspaceRail.RailAgent] {
+        guard let dock = states[url]?.dock else { return [] }
+        var out: [WorkspaceRail.RailAgent] = []
+        for g in dock.groups {
+            for p in g.panels {
+                guard p.content is TerminalView else { continue }
+                // An "agent" here is EITHER a pane launched as one (Claude Code / Codex button)
+                // OR a plain terminal where the user typed `claude`/`codex` and it proved itself
+                // by delivering a hook (hook-backed). The latter had agentName == nil and so was
+                // missing from the rail — this is the fix.
+                let hookAgent = p.sessionId.map { PaneSessionRegistry.shared.isHookBacked($0) } ?? false
+                guard p.agentName != nil || hookAgent else { continue }
+                let act: PaneActivity = p.badge == "attn" ? .attn : (p.badge == "busy" ? .busy : .idle)
+                let title = p.title.isEmpty ? (p.agentName ?? "claude") : p.title
+                let sub = (p.agentName != nil && p.title != p.agentName) ? p.agentName : nil
+                // Agent-type glyph for panes launched via the agent button (Claude/Codex).
+                // Hand-typed `claude` panes (agentName nil) get no type glyph — just the status.
+                // Claude Code's mark is the ✳ asterisk (not sparkles); Codex → code glyph.
+                let sym: String? = p.agentName == "Claude Code" ? "asterisk"
+                    : (p.agentName == "Codex" ? "chevron.left.forwardslash.chevron.right" : nil)
+                out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: act, iconSymbol: sym))
+            }
+        }
+        return out
+    }
+    // Push every workspace's agent rows + the focused-agent highlight to the rail. Cheap: the
+    // rail no-ops when a workspace's list is unchanged.
+    private func refreshRailAgents() {
+        for ws in workspaces { rail.setAgents(ws, railAgents(for: ws)) }
+        if let ws = workspace, let p = activeDock?.activeGroup?.activePanel, p.agentName != nil {
+            rail.setActiveAgent(ws, p.id)
+        } else {
+            rail.setActiveAgent(workspace, nil)
+        }
+    }
+
+    // Account popover from the status-bar account chip: identity + sync + sign-out, instead
+    // of opening the whole Settings window.
+    private var accountPopover: NSPopover?
+    private func showAccountPopover() {
+        let auth = SupabaseAuth.shared
+        guard auth.isSignedIn else { settingsMenu(); return }   // signed out → Settings (sign-in lives there)
+        let pop = NSPopover(); accountPopover = pop
+        pop.behavior = .transient
+
+        let box = NSView()
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 24, weight: .regular))
+        icon.contentTintColor = Theme.accent
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let name = NSTextField(labelWithString: auth.displayName ?? "riven")
+        name.font = UIScale.font(13, .semibold); name.textColor = Theme.fg
+        name.lineBreakMode = .byTruncatingTail; name.translatesAutoresizingMaskIntoConstraints = false
+        let email = NSTextField(labelWithString: auth.email ?? "")
+        email.font = UIScale.font(11); email.textColor = Theme.fgDim
+        email.lineBreakMode = .byTruncatingTail; email.isHidden = (auth.email == nil)
+        email.translatesAutoresizingMaskIntoConstraints = false
+
+        let hair = NSView(); hair.wantsLayer = true; hair.layer?.backgroundColor = Theme.hairline.cgColor
+        hair.translatesAutoresizingMaskIntoConstraints = false
+
+        let sync = NSTextField(labelWithString: "설정 자동 동기화")
+        sync.font = UIScale.font(11); sync.textColor = Theme.fgDim
+        sync.translatesAutoresizingMaskIntoConstraints = false
+        let syncBtn = NSButton(title: "지금 동기화", target: self, action: #selector(accountSyncNow))
+        syncBtn.isBordered = false; syncBtn.font = UIScale.font(11, .medium)
+        syncBtn.contentTintColor = Theme.accent
+        syncBtn.translatesAutoresizingMaskIntoConstraints = false
+        (syncBtn.cell as? NSButtonCell)?.highlightsBy = []
+
+        let logout = NSButton(title: " 로그아웃", target: self, action: #selector(accountLogout))
+        logout.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+        logout.imagePosition = .imageLeading; logout.isBordered = false
+        logout.font = UIScale.font(12); logout.contentTintColor = Theme.danger
+        logout.alignment = .left; logout.translatesAutoresizingMaskIntoConstraints = false
+        (logout.cell as? NSButtonCell)?.highlightsBy = []
+
+        [icon, name, email, hair, sync, syncBtn, logout].forEach { box.addSubview($0) }
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            icon.topAnchor.constraint(equalTo: box.topAnchor, constant: 14),
+            name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            name.topAnchor.constraint(equalTo: icon.topAnchor, constant: 0),
+            name.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -14),
+            email.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            email.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 2),
+            email.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -14),
+            hair.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
+            hair.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
+            hair.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 12),
+            hair.heightAnchor.constraint(equalToConstant: 1),
+            sync.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 14),
+            sync.centerYAnchor.constraint(equalTo: syncBtn.centerYAnchor),
+            syncBtn.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12),
+            syncBtn.topAnchor.constraint(equalTo: hair.bottomAnchor, constant: 10),
+            logout.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
+            logout.topAnchor.constraint(equalTo: syncBtn.bottomAnchor, constant: 8),
+            logout.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12)
+        ])
+        let vc = NSViewController(); vc.view = box
+        pop.contentViewController = vc
+        pop.contentSize = NSSize(width: 250, height: 130)
+        let anchor = statusBar.accountAnchor
+        pop.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+    }
+    @objc private func accountSyncNow() { SupabaseAuth.shared.pull(); SupabaseAuth.shared.push() }
+    @objc private func accountLogout() {
+        SupabaseAuth.shared.signOut()
+        statusBar.setAccount(nil)
+        accountPopover?.close(); accountPopover = nil
+    }
+
     // Clicking a notification banner lands here: switch to the pane's workspace, focus the
     // pane, and clear its attention. Previously clicks did nothing (no userInfo / no handler).
     private func revealPane(wsPath: String, panelId: String) {
@@ -1546,6 +1673,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         searchPanel.setRoot(url); gitPanel.setRoot(url); changesPanel.setWorkspace(url)
         updateWorkspaceHeader(url)
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
+        refreshRailAgents()   // populate this workspace's agent rows now its dock is live
         refreshGit()
 
         // Agent-edit tracking: snapshot the session baseline + watch the tree so files

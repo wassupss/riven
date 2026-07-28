@@ -11,30 +11,64 @@ final class WorkspaceRail: NSView, Themable {
     private static let cardInset: CGFloat = 12
     private var workspaces: [URL] = []
     private var active: URL?
+    private var activeAgentId: String?            // focused agent pane (highlighted row)
     private var customNames: [URL: String] = [:]
     private var activities: [URL: PaneActivity] = [:]
-    private var dots: [URL: StatusIndicator] = [:]
-    private var bars: [URL: CardBar] = [:]        // left-edge active/activity bar per card
+    private var agents: [URL: [RailAgent]] = [:]   // agent panes per workspace (Orca-style children)
     private var shortcutLabels: [URL: NSTextField] = [:]
+    private var countLabels: [URL: NSTextField] = [:]   // agent-count badges (hidden while ⌘ held)
     private var flagsMonitor: Any?
+
+    // One agent pane shown as a child row under its workspace.
+    struct RailAgent: Equatable {
+        let paneId: String
+        let title: String
+        let subtitle: String?     // agent kind / branch, dimmed
+        let activity: PaneActivity
+        let iconSymbol: String?   // agent-type glyph (Claude=sparkles, Codex=…); nil = none
+    }
+
+    // Workspaces whose agent list is collapsed (hidden). Persisted so it survives restart.
+    private var collapsed: Set<String> = Set(Settings.shared.object("railCollapsed").flatMap { $0["paths"] as? [String] } ?? [])
+    private func toggleCollapsed(_ url: URL) {
+        if collapsed.contains(url.path) { collapsed.remove(url.path) } else { collapsed.insert(url.path) }
+        Settings.shared.set("railCollapsed", ["paths": Array(collapsed)])
+        rebuild()
+    }
+    private static var chevronURLKey = 0
+    @objc private func chevronClicked(_ sender: RailChevron) {
+        if let url = objc_getAssociatedObject(sender, &Self.chevronURLKey) as? URL { toggleCollapsed(url) }
+    }
+    // Set/replace the agent rows under a workspace (called by the app as panes/activity change).
+    func setAgents(_ url: URL, _ list: [RailAgent]) {
+        guard agents[url] != list else { return }   // no-op if unchanged (avoids rebuild churn)
+        agents[url] = list
+        rebuild()
+    }
+    // Highlight the focused agent row (the active pane in the active workspace).
+    func setActiveAgent(_ url: URL?, _ paneId: String?) {
+        guard active == url, activeAgentId != paneId else { return }
+        activeAgentId = paneId
+        rebuild()
+    }
+    var onSelectAgent: ((URL, String) -> Void)?
 
     // Show the ⌘N chips while Command is held (a hover-like hint).
     private func installCommandHint() {
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            guard let self else { return e }
             let cmd = e.modifierFlags.contains(.command)
-            self?.shortcutLabels.values.forEach { $0.isHidden = !cmd }
+            // ⌘N chip and the agent-count badge share the trailing corner, so swap them:
+            // holding ⌘ shows the chips and hides the counts; releasing restores the counts.
+            self.shortcutLabels.values.forEach { $0.isHidden = !cmd }
+            self.countLabels.forEach { url, lbl in lbl.isHidden = cmd || (self.agents[url]?.isEmpty ?? true) }
             return e
         }
     }
 
-    // Update a workspace's status indicator without rebuilding the whole rail.
+    // Workspace-level rollup (kept for callers); the per-agent rows carry the real state now.
     func setActivity(_ url: URL, _ a: PaneActivity) {
-        let prev = activities[url]
         activities[url] = a
-        dots[url]?.set(a)
-        // Drive the left bar in place too; flash green only on the actual idle/busy→done
-        // transition, never on unrelated rebuilds.
-        bars[url]?.apply(a, active: url == active, flash: a == .attn && prev != .attn)
     }
     var onOpen: (() -> Void)?
     var onSelect: ((URL) -> Void)?
@@ -197,59 +231,85 @@ final class WorkspaceRail: NSView, Themable {
 
     private func rebuild() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        dots.removeAll(); bars.removeAll(); shortcutLabels.removeAll()
-        var activeCard: NSView?
+        shortcutLabels.removeAll(); countLabels.removeAll()
+        var activeGroup: NSView?
         for ws in workspaces {
-            let card = makeCard(ws)
-            stack.addArrangedSubview(card)
-            // Constrain width AFTER adding to the stack (common ancestor exists).
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -WorkspaceRail.cardInset * 2).isActive = true
-            if ws == active { activeCard = card }
+            // ONE container per workspace = the whole group (header + its agent rows). The
+            // active workspace's highlight wraps the entire group. Keeping one arranged
+            // subview per workspace also keeps drag-reorder's index math correct.
+            let group = makeWorkspaceGroup(ws)
+            stack.addArrangedSubview(group)
+            group.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -WorkspaceRail.cardInset * 2).isActive = true
+            if ws == active { activeGroup = group }
         }
-        // Scroll the active workspace into view (switching to an off-screen one reveals it).
-        if let activeCard {
+        if let activeGroup {
             DispatchQueue.main.async { [weak self] in
                 self?.layoutSubtreeIfNeeded()
-                activeCard.scrollToVisible(activeCard.bounds)
+                activeGroup.scrollToVisible(activeGroup.bounds)
             }
         }
     }
 
-    private func makeCard(_ url: URL) -> NSView {
+    private func makeWorkspaceGroup(_ url: URL) -> NSView {
+        let isActive = url == active
+        let container = NSView()
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 8
+        container.layer?.backgroundColor = (isActive ? Theme.bg3 : NSColor.clear).cgColor
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let col = FlippedStack()
+        col.orientation = .vertical; col.spacing = 1; col.alignment = .leading
+        col.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 5, right: 0)
+        col.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(col)
+        NSLayoutConstraint.activate([
+            col.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            col.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            col.topAnchor.constraint(equalTo: container.topAnchor),
+            col.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        let header = makeWorkspaceRow(url)
+        col.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
+        if !collapsed.contains(url.path) {   // hidden when the user collapses the list
+            for agent in agents[url] ?? [] {
+                let arow = makeAgentRow(url, agent)
+                col.addArrangedSubview(arow)
+                arow.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
+            }
+        }
+        return container
+    }
+
+    // Workspace header: colour dot + name + agent-count badge, with the folder PATH and git
+    // BRANCH beneath (Orca-like). Transparent — the enclosing group container carries the
+    // active highlight. Draggable for reorder + right-click menu.
+    private func makeWorkspaceRow(_ url: URL) -> NSView {
         let isActive = url == active
         let card = WSCard(url: url)
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 8    // --radius-md
-        // riven active card: bg-3 fill + --edge border + inset top catch-light (--lift).
-        // A per-workspace colour tints the card SUBTLY (blended into the base so the name
-        // stays legible), a touch stronger when active.
-        var base = isActive ? Theme.bg3 : NSColor.clear
-        if let c = cardColors[url] {
-            base = (isActive ? Theme.bg3 : Theme.bg2).blended(withFraction: isActive ? 0.28 : 0.18, of: c) ?? base
-        }
-        card.layer?.backgroundColor = base.cgColor
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = (cardColors[url].map { $0.withAlphaComponent(0.55) } ?? (isActive ? Theme.edge : NSColor.clear)).cgColor
         card.onSelect = { [weak self] in self?.onSelect?(url) }
         card.onContextMenu = { [weak self] in self?.cardMenu(url) }
         card.translatesAutoresizingMaskIntoConstraints = false
 
-        // Left-edge bar: the color-INDEPENDENT active marker (so the viewed workspace is
-        // obvious even when a card colour is applied) that doubles as the activity animation
-        // (busy = violet pulse, done = green flash). See CardBar.
-        let bar = CardBar()
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        bars[url] = bar
-        bar.apply(activities[url] ?? .idle, active: isActive, flash: false)
+        let n0 = (agents[url] ?? []).count
+        // Collapse chevron (only when there are agent rows to hide/show).
+        let chevron = RailChevron()
+        chevron.isBordered = false; chevron.imagePosition = .imageOnly
+        chevron.image = NSImage(systemSymbolName: collapsed.contains(url.path) ? "chevron.right" : "chevron.down",
+            accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+        chevron.contentTintColor = Theme.fg   // clearly visible (was too dim to find)
+        chevron.target = self; chevron.action = #selector(chevronClicked(_:))
+        objc_setAssociatedObject(chevron, &Self.chevronURLKey, url, .OBJC_ASSOCIATION_RETAIN)
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.isHidden = (n0 == 0)
+        (chevron.cell as? NSButtonCell)?.highlightsBy = []
 
-        // Row 1: activity indicator (icon + animation) + workspace name. State rollup:
-        // idle = faint dot · busy = spinning loader (violet) · attn = green checkmark (done).
-        let dot = StatusIndicator()
+        let dot = NSView(); dot.wantsLayer = true
+        dot.layer?.cornerRadius = UIScale.pt(4)
+        dot.layer?.backgroundColor = (cardColors[url] ?? Theme.fgDim).cgColor
         dot.translatesAutoresizingMaskIntoConstraints = false
-        dots[url] = dot
-        dot.set(activities[url] ?? .idle)
-        // Same-path instances carry a #2/#3 fragment — show it so duplicate folders are
-        // distinguishable in the rail.
+
         let baseName = customNames[url] ?? url.lastPathComponent
         let name = NSTextField(labelWithString: url.fragment.map { "\(baseName) #\($0)" } ?? baseName)
         name.font = UIScale.font(12, isActive ? .semibold : .medium)
@@ -257,29 +317,13 @@ final class WorkspaceRail: NSView, Themable {
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
 
-        // Row 2: shortened path.
-        let path = NSTextField(labelWithString: shorten(url.path))
-        path.font = UIScale.font(10)
-        path.textColor = Theme.fgDim
-        path.lineBreakMode = .byTruncatingMiddle
-        path.translatesAutoresizingMaskIntoConstraints = false
+        let n = (agents[url] ?? []).count
+        let count = NSTextField(labelWithString: n > 0 ? "\(n)" : "")
+        count.font = UIScale.font(10, .medium); count.textColor = Theme.fgDim
+        count.alignment = .center; count.translatesAutoresizingMaskIntoConstraints = false
+        count.isHidden = (n == 0)
+        countLabels[url] = count
 
-        // Row 3: git branch (⑂ branch).
-        let branchIcon = NSImageView()
-        branchIcon.image = NSImage(systemSymbolName: "arrow.triangle.branch",
-            accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
-        branchIcon.contentTintColor = Theme.fgDim
-        branchIcon.translatesAutoresizingMaskIntoConstraints = false
-        let branch = NSTextField(labelWithString: branches[url] ?? "")
-        branch.font = UIScale.mono(10)  // riven .ws-card-git mono
-        branch.textColor = Theme.fgDim
-        branch.translatesAutoresizingMaskIntoConstraints = false
-        let branchRow = NSStackView(views: [branchIcon, branch])
-        branchRow.orientation = .horizontal; branchRow.spacing = 4; branchRow.alignment = .centerY
-        branchRow.translatesAutoresizingMaskIntoConstraints = false
-        branchRow.isHidden = (branches[url] ?? "").isEmpty
-
-        // ⌘N hint chip (top-right) — shown only while Command is held (like a hover).
         let idx = (workspaces.firstIndex(of: url) ?? 0) + 1
         let kbd = NSTextField(labelWithString: idx <= 9 ? "⌘\(idx)" : "")
         kbd.font = UIScale.mono(10, .medium); kbd.textColor = Theme.accent
@@ -289,31 +333,138 @@ final class WorkspaceRail: NSView, Themable {
         kbd.translatesAutoresizingMaskIntoConstraints = false
         shortcutLabels[url] = kbd
 
-        card.addSubview(bar); card.addSubview(dot); card.addSubview(name); card.addSubview(path); card.addSubview(branchRow); card.addSubview(kbd)
-        NSLayoutConstraint.activate([
-            card.heightAnchor.constraint(equalToConstant: UIScale.pt(60)),
-            bar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
-            bar.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
-            bar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
-            bar.widthAnchor.constraint(equalToConstant: 3.5),
+        // Path line.
+        let path = NSTextField(labelWithString: shorten(url.path))
+        path.font = UIScale.font(10); path.textColor = Theme.fgDim
+        path.lineBreakMode = .byTruncatingMiddle
+        path.translatesAutoresizingMaskIntoConstraints = false
+
+        // Branch line (⑂ branch), hidden when the workspace isn't a git repo.
+        let branchIcon = NSImageView()
+        branchIcon.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .regular))
+        branchIcon.contentTintColor = Theme.fgDim
+        branchIcon.translatesAutoresizingMaskIntoConstraints = false
+        let branch = NSTextField(labelWithString: branches[url] ?? "")
+        branch.font = UIScale.mono(10); branch.textColor = Theme.fgDim
+        branch.lineBreakMode = .byTruncatingTail
+        branch.translatesAutoresizingMaskIntoConstraints = false
+        let branchRow = NSStackView(views: [branchIcon, branch])
+        branchRow.orientation = .horizontal; branchRow.spacing = 4; branchRow.alignment = .centerY
+        branchRow.translatesAutoresizingMaskIntoConstraints = false
+        let hasBranch = !(branches[url] ?? "").isEmpty
+        branchRow.isHidden = !hasBranch
+
+        card.addSubview(chevron); card.addSubview(dot); card.addSubview(name); card.addSubview(count); card.addSubview(kbd)
+        card.addSubview(path); card.addSubview(branchRow)
+        // The bottom-right corner (level with the path/branch line) hosts the count badge,
+        // and the ⌘N chip swaps in there while ⌘ is held.
+        let bottomLine = hasBranch ? branchRow : path
+        var cons: [NSLayoutConstraint] = [
+            // Colour dot + name on the top line (dot back at the left).
+            dot.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
+            dot.centerYAnchor.constraint(equalTo: name.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: UIScale.pt(8)),
+            dot.heightAnchor.constraint(equalToConstant: UIScale.pt(8)),
+            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            name.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
+            name.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -6),
+            // Collapse chevron: TOP-RIGHT.
+            chevron.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
+            chevron.centerYAnchor.constraint(equalTo: name.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 16),
+            chevron.heightAnchor.constraint(equalToConstant: 16),
+            // Path + branch lines on the left.
+            path.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
+            path.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
+            branchRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
+            branchRow.topAnchor.constraint(equalTo: path.bottomAnchor, constant: 3),
+            // Count badge + ⌘N chip: BOTTOM-RIGHT, level with the last text line.
+            count.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            count.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
             kbd.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            kbd.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+            kbd.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
             kbd.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            dot.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 8),
+            // Keep the text lines clear of the bottom-right badges.
+            path.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -8),
+            branchRow.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -8)
+        ]
+        // Card height is driven by the last visible line.
+        cons.append(bottomLine.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6))
+        NSLayoutConstraint.activate(cons)
+        return card
+    }
+
+    // Agent child row: status indicator (busy spinner / idle dot / green done) + name.
+    // The focused pane is marked with an UNDERLINE (the group container already carries the
+    // active background, so a per-row fill would be redundant). Clicking jumps to that pane.
+    private func makeAgentRow(_ url: URL, _ agent: RailAgent) -> NSView {
+        let isFocused = (url == active && agent.paneId == activeAgentId)
+        let row = RailRow()
+        row.wantsLayer = true
+        row.layer?.cornerRadius = 5
+        row.onSelect = { [weak self] in self?.onSelectAgent?(url, agent.paneId) }
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let dot = StatusIndicator()
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.set(agent.activity)
+
+        let name = NSTextField(labelWithString: agent.title)
+        name.font = UIScale.font(11, isFocused ? .semibold : .regular)
+        name.textColor = isFocused ? Theme.fg : Theme.hex("#c9c9d0")
+        name.lineBreakMode = .byTruncatingTail
+        name.translatesAutoresizingMaskIntoConstraints = false
+
+        // Agent-type glyph (Claude = sparkles, Codex = code) between the status and the name,
+        // for panes launched via the agent button. Hand-typed panes have no glyph.
+        let icon = agent.iconSymbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular)) }
+        let iconView = NSImageView(); iconView.image = icon
+        iconView.contentTintColor = isFocused ? Theme.accent : Theme.fgDim
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        row.addSubview(dot); row.addSubview(name)
+        var cons: [NSLayoutConstraint] = [
+            row.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 26),   // indent under the workspace dot/name
             dot.centerYAnchor.constraint(equalTo: name.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
             dot.heightAnchor.constraint(equalToConstant: UIScale.pt(12)),
-            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -9),
-            name.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
-            path.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
-            path.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -9),
-            path.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
-            branchRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
-            branchRow.topAnchor.constraint(equalTo: path.bottomAnchor, constant: 3)
-        ])
-        return card
+            name.centerYAnchor.constraint(equalTo: row.centerYAnchor, constant: UIScale.pt(-1)),
+            name.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -9)
+        ]
+        if icon != nil {
+            row.addSubview(iconView)
+            cons += [
+                iconView.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
+                iconView.centerYAnchor.constraint(equalTo: name.centerYAnchor),
+                iconView.widthAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                iconView.heightAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                name.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5)
+            ]
+        } else {
+            cons.append(name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7))
+        }
+        if isFocused {
+            // Focus marker: a short accent underline set a couple of points BELOW the text
+            // (a separate view, not an attributed underline glued to the glyphs).
+            let underline = NSView(); underline.wantsLayer = true
+            underline.layer?.backgroundColor = Theme.accent.cgColor
+            underline.layer?.cornerRadius = 1
+            underline.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(underline)
+            // Underline spans from the icon (when present) through the name — not just the text.
+            cons += [
+                underline.leadingAnchor.constraint(equalTo: icon != nil ? iconView.leadingAnchor : name.leadingAnchor),
+                underline.trailingAnchor.constraint(equalTo: name.trailingAnchor),
+                underline.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 2),
+                underline.heightAnchor.constraint(equalToConstant: 1.5)
+            ]
+        }
+        NSLayoutConstraint.activate(cons)
+        return row
     }
 
     private final class ColorChoice { let url: URL; let color: NSColor?; init(url: URL, color: NSColor?) { self.url = url; self.color = color } }
@@ -414,8 +565,13 @@ final class WSCard: NSView, NSDraggingSource {
     init(url: URL) { self.url = url; super.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError() }
 
-    // 이름/경로 라벨 위를 눌러도 카드 자신이 클릭·드래그를 받게 한다.
-    override func hitTest(_ point: NSPoint) -> NSView? { super.hitTest(point) == nil ? nil : self }
+    // 이름/경로 라벨 위를 눌러도 카드 자신이 클릭·드래그를 받게 한다. 단, 접기 chevron
+    // 버튼만은 예외로 통과시켜 자체 클릭(목록 접기/펼치기)을 받게 한다.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if hit is RailChevron { return hit }
+        return hit == nil ? nil : self
+    }
 
     private var down: NSPoint = .zero
     private var dragging = false
@@ -524,55 +680,14 @@ final class StatusIndicator: NSView {
     }
 }
 
-// The left-edge bar on a workspace card. Serves two roles at once (chosen design):
-//   • which workspace is ACTIVE — a solid accent bar, independent of the card colour, so
-//     the viewed workspace stays obvious even when a colour tint is applied;
-//   • the workspace's ACTIVITY — a violet breathing pulse while busy, a quick green flash
-//     when a turn finishes (done/attn). Inactive + idle → hidden (a clean, unmarked card).
-// Activity wins over the plain active-accent colour so a running/finished workspace reads
-// even when it's the one you're on (the brighter row + bold name still mark active).
-final class CardBar: NSView {
-    private let bar = CALayer()
-    private var state: PaneActivity = .idle
-    private var active = false
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        bar.cornerRadius = 1.75
-        layer?.addSublayer(bar)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() { super.layout(); bar.frame = bounds }
-
-    func apply(_ a: PaneActivity, active: Bool, flash: Bool) {
-        state = a; self.active = active
-        bar.removeAllAnimations()
-        switch a {
-        case .busy:
-            bar.isHidden = false
-            bar.backgroundColor = Theme.accent2.cgColor
-            bar.opacity = 1
-            let pulse = CABasicAnimation(keyPath: "opacity")
-            pulse.fromValue = 1.0; pulse.toValue = 0.3
-            pulse.duration = 0.9; pulse.autoreverses = true; pulse.repeatCount = .infinity
-            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            bar.add(pulse, forKey: "pulse")
-        case .attn:
-            bar.isHidden = false
-            bar.backgroundColor = Theme.success.cgColor
-            bar.opacity = 1
-            if flash {
-                let f = CAKeyframeAnimation(keyPath: "opacity")
-                f.values = [0.2, 1.0, 0.55, 1.0]; f.keyTimes = [0, 0.3, 0.65, 1]
-                f.duration = 0.5
-                bar.add(f, forKey: "flash")
-            }
-        case .idle:
-            bar.isHidden = !active
-            bar.backgroundColor = Theme.accent.cgColor
-            bar.opacity = 1
-        }
-    }
+// A lightweight clickable row for agent children (no drag, unlike WSCard). Click jumps to
+// that agent's pane. No hover highlight — the tracking-area approach left a stuck residual
+// across the rail's frequent rebuilds, so it's removed entirely per user request.
+final class RailRow: NSView {
+    var onSelect: (() -> Void)?
+    override func mouseDown(with event: NSEvent) { onSelect?() }
 }
+
+// Marker subclass so WSCard.hitTest can let the collapse chevron receive its own clicks
+// (everything else on the card routes to the card for select/drag).
+final class RailChevron: NSButton {}

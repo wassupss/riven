@@ -60,7 +60,7 @@ final class StatusBarView: NSView, Themable {
         accountIcon.image = symbol("person.crop.circle", 12)
         accountItem.isHidden = true   // shown when signed in
         accountItem.translatesAutoresizingMaskIntoConstraints = false
-        accountItem.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(settingsClicked)))
+        accountItem.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(accountClicked)))
 
         updateButton.isBordered = false
         updateButton.imagePosition = .imageLeading
@@ -111,6 +111,9 @@ final class StatusBarView: NSView, Themable {
     }
 
     @objc private func settingsClicked() { onSettings?() }
+    @objc private func accountClicked() { onAccount?() }
+    var onAccount: (() -> Void)?
+    var accountAnchor: NSView { accountItem }   // for anchoring the account popover
     @objc private func updateClicked() { onUpdate?() }
 
     // Show/hide the "update available" pill. Pass the new version (e.g. "0.1.22") or nil.
