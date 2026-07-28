@@ -1013,97 +1013,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // the launch/busy signal instead).
     private func markAgentSession() { if let ws = workspace { agentSessionWorkspaces.insert(ws.path) } }
 
-    // A file changed on disk (FSEvents). Record it as an agent edit (before/after from
-    // the session baseline) and surface the Changes panel without stealing focus.
-    // FSEvents fires repeatedly while an agent streams a file out. Coalesce a burst into
-    // ONE read per path (#60: "avoid re-reading on rapid FSEvents churn") — each read
-    // otherwise allocated the file's full text again.
-    private var pendingFileChanges = Set<String>()
-    private var fileChangeTimer: Timer?
-    // File I/O (stat + full read) and the git-baseline lookup for a change batch run
-    // here, off the main thread, so a large batch never blocks the UI (#65).
+    // Off-main queue for the hook-driven change recorder (recordAgentFileEdit): file read +
+    // git-baseline lookup run here so a large edit never blocks the UI. FSEvents no longer
+    // feeds the Changes panel — only agent hooks do — so there's no batch path anymore.
     private let fileChangeQueue = DispatchQueue(label: "com.riven.filechange", qos: .utility)
-    private func handleFileChange(_ path: String) {
-        pendingFileChanges.insert(path)
-        fileChangeTimer?.invalidate()
-        fileChangeTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            let paths = self.pendingFileChanges
-            self.pendingFileChanges.removeAll()
-            self.processFileChanges(Array(paths))
-        }
-    }
 
-    // Process a whole change batch off the main thread, then apply the results on main
-    // in one coalesced update (#65). Previously this ran per file ON the main thread —
-    // stat + full read + a `git show` subprocess per new file + an O(N²) panel rebuild
-    // (a notify() per file) — so a branch switch / bulk agent edit froze the UI for
-    // seconds. Now: cheap filtering + baseline snapshot on main → all I/O and a single
-    // batched `git cat-file` off main → one coalesced store mutation + panel refresh.
-    private func processFileChanges(_ paths: [String]) {
-        guard let ws = workspace else { return }
-        let wsPath = ws.path
-        // Hybrid gate. If this workspace has a hook-backed pane, Edit/Write edits are
-        // already recorded precisely via routeAgentEvent, so FSEvents is only a BACKSTOP
-        // for shell-driven edits — record just while a turn is in flight, which keeps
-        // out-of-turn noise (git checkout, builds) off the panel. Without any hook-backed
-        // pane (plain terminals, Codex before its hooks are verified) fall back to the
-        // original coarse "agent session" gate.
-        let hookBacked = PaneSessionRegistry.shared.sessions(inWorkspace: wsPath)
-            .contains { PaneSessionRegistry.shared.isHookBacked($0) }
-        if hookBacked {
-            guard turnActiveWorkspaces.contains(wsPath) else { return }
-        } else {
-            guard agentSessionWorkspaces.contains(wsPath) else { return }
-        }
-        // Cheap main-thread pass: filter to in-workspace, non-ignored paths and snapshot
-        // the in-memory session baselines (AgentEdits is main-only; these are dict reads).
-        let candidates = paths.filter { $0.hasPrefix(wsPath + "/") && !AgentEdits.isIgnored($0) }
-        guard !candidates.isEmpty else { return }
-        var memBaseline: [String: String] = [:]
-        for p in candidates { if let b = AgentEdits.shared.baselineContent(p) { memBaseline[p] = b } }
-
-        fileChangeQueue.async { [weak self] in
-            // (path, rel, after, memBaseline?) — memBaseline nil means we must resolve the
-            // git HEAD version for this file below.
-            var items: [(path: String, rel: String, after: String, mem: String?)] = []
-            var needGit: [String] = []
-            for p in candidates {
-                // Size cap BEFORE reading (#60): skip files bigger than the tracked cap so
-                // an agent churning large/generated files can't push memory into the GBs.
-                let attrs = try? FileManager.default.attributesOfItem(atPath: p)
-                if let size = attrs?[.size] as? Int, size > AgentEdits.maxTrackedFileSize { continue }
-                guard let after = try? String(contentsOfFile: p, encoding: .utf8) else { continue }  // deleted/unreadable
-                let rel = String(p.dropFirst(wsPath.count + 1))
-                let mem = memBaseline[p]
-                if mem == nil { needGit.append(rel) }
-                items.append((p, rel, after, mem))
-            }
-            // One process for every new-file baseline instead of one `git show` each.
-            let gitBaseline = Git.showFilesBatch(cwd: wsPath, rels: needGit)
-
-            DispatchQueue.main.async {
-                guard let self, self.workspace?.path == wsPath else { return }  // workspace switched mid-flight
-                var touched = false
-                AgentEdits.shared.batch {
-                    for it in items {
-                        // `before` is the SESSION baseline and stays fixed, so the diff is
-                        // cumulative (first add + later edit both show).
-                        let before = it.mem ?? gitBaseline[it.rel]
-                        if before == it.after { AgentEdits.shared.resolve(path: it.path); touched = true; continue }
-                        // Seed the baseline once (first time we see the file) so it's fixed.
-                        if AgentEdits.shared.baselineContent(it.path) == nil {
-                            AgentEdits.shared.updateBaseline(it.path, before ?? "")
-                        }
-                        AgentEdits.shared.record(path: it.path, workspace: wsPath,
-                                                 before: before ?? "", after: it.after, isNew: before == nil)
-                        touched = true
-                    }
-                }
-                if touched { self.ensureChangesPanel() }
-            }
-        }
-    }
     // Open the Changes panel (240px, right) WITHOUT stealing keyboard focus from the
     // terminal (riven's ensureChanges → restore prev active panel).
     private func ensureChangesPanel() {
@@ -1557,9 +1471,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         AgentEdits.shared.snapshot(workspace: url)
         agentWatch?.stop()
         agentWatch = AgentWatch(root: url) { [weak self] path in
-            self?.handleFileChange(path)
-            // Skip churn inside ignored dirs (.git/node_modules/.build/…) — those aren't
-            // shown in the tree, so rebuilding on them just wasted work + risked flicker.
+            // The Changes panel is fed ONLY by agent hooks (recordAgentFileEdit) so it shows
+            // exactly what riven's own agents edited — NOT git pull, the user's own edits, or
+            // another tool (cmux etc.) touching the folder. FSEvents can't tell who wrote a
+            // file, so it no longer records changes here; it only refreshes the file tree.
             if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
         }
     }

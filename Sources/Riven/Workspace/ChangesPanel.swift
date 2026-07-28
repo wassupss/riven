@@ -58,7 +58,14 @@ final class ChangesPanel: NSView, Themable, Scalable {
             rowsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             rowsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
         ])
-        editsToken = AgentEdits.shared.observe { [weak self] in DispatchQueue.main.async { self?.refresh() } }
+        // Coalesce refreshes: a burst of agent edits (one notify per file) would otherwise
+        // rebuild the whole row list once per file — O(N²) over a turn. Collapse all notifies
+        // in a runloop turn into a single rebuild.
+        editsToken = AgentEdits.shared.observe { [weak self] in
+            guard let self, !self.refreshScheduled else { return }
+            self.refreshScheduled = true
+            DispatchQueue.main.async { self.refreshScheduled = false; self.refresh() }
+        }
         Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.acceptAllBtn.title = t("changes.acceptAll")
@@ -73,6 +80,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
     // NotificationCenter token kept firing (self nil) after the panel went away (#64).
     private var langObserver: NSObjectProtocol?
     private var editsToken: Int?
+    private var refreshScheduled = false   // coalesce burst refreshes into one
     deinit {
         if let o = langObserver { NotificationCenter.default.removeObserver(o) }
         if let t = editsToken { AgentEdits.shared.removeObserver(t) }
