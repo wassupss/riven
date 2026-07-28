@@ -569,10 +569,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.contentView = root
 
         DispatchQueue.main.async {
-            body.setPosition(220, ofDividerAt: 0)
-            sidebarSplitV.setPosition(190, ofDividerAt: 0)   // rail shows ~2 cards + a bit
+            // Restore the user's saved sidebar width + rail height (default 220 / 190).
+            // Guard persistence until AFTER this restore so the transient initial layout
+            // (default 220) can't clobber the saved value before we apply it.
+            let w = CGFloat(Settings.shared.double("sidebarWidth", 220))
+            let rh = CGFloat(Settings.shared.double("railHeight", 190))
+            self.sidebarWidth = w
+            body.setPosition(w, ofDividerAt: 0)
+            sidebarSplitV.setPosition(rh, ofDividerAt: 0)   // rail shows ~2 cards + a bit
+            RLog.log("sidebar: restored width=\(Int(w)) railHeight=\(Int(rh))")
+            self.sidebarLayoutRestored = true
         }
     }
+    // Set once the saved sidebar geometry has been applied; before that we don't persist
+    // divider drags (initial-layout resize events would otherwise overwrite saved values).
+    private var sidebarLayoutRestored = false
 
     // The sidebar head (riven's .sidebar-head): draggable like a native titlebar
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
@@ -806,18 +817,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // shim, and (b) forces transcript persistence. Only a well-formed UUID is accepted
         // from the persisted (tamperable) snapshot — else mint a fresh one — so nothing
         // untrusted reaches the shell/command.
-        var paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
-        // Reconnect a restored Claude Code pane to the folder's actual conversation when the
-        // saved pane id has no transcript of its own but the folder does — the id drifted
-        // (older versions saved a session id claude never used). Adopting the real id here
-        // makes `--resume` below load the conversation, and p.sessionId (set later) persists
-        // the corrected id so the pane stays connected from now on. Only on RESTORE
-        // (sessionId != nil) of a session-capable agent; brand-new panes create fresh.
-        if agent?.resumeFlag != nil, sessionId != nil, !claudeSessionExists(sessionId: paneSession),
-           let latest = latestClaudeSession(cwd: st.url.path) {
-            RLog.log("restore reconnect: pane \(paneSession.prefix(8)) → folder latest \(latest.prefix(8))")
-            paneSession = latest
-        }
+        let paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
+        // NOTE: this pane resumes ONLY its OWN session (paneSession). We deliberately do NOT
+        // adopt "the folder's latest conversation" when this pane's id has no transcript:
+        // that made any plain terminal in a claude-touched folder — including a brand-new one
+        // opened after the user closed a claude pane — resurrect an unrelated old conversation
+        // (observed: "restore reconnect: pane X → folder latest Y"). A closed pane's session
+        // must stay closed; a new pane must start fresh. The fixed shim (v0.1.16+) keeps the
+        // pane id and the conversation id in sync, so precise per-pane matching is correct.
         var env: [String: String] = [
             "RIVEN_PANE_SESSION": paneSession,
             "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
@@ -964,7 +971,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var poppedOut: [String: (win: NSWindow, dock: DockManager, panel: DockPanel, delegate: PopoutDelegate)] = [:]
     @objc private func popoutMenu() {
         guard let dock = activeDock, let panel = dock.activeGroup?.activePanel else { NSSound.beep(); return }
-        dock.detach(panel, normalize: true)   // remove from the dock WITHOUT disposing the content
+        // Record the panel's exact spot (host group / split index / sibling extents) BEFORE
+        // detaching so re-docking on window-close returns it to the SAME area+size instead of
+        // dumping it as a tab on the active group. Mirrors the workspace-switch flow; no
+        // normalize on detach so sibling pane sizes are preserved for the restore.
+        dock.recordPlacement(of: panel)
+        dock.detach(panel)                    // remove from the dock WITHOUT disposing the content
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
         host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg.cgColor
         panel.content.frame = host.bounds
@@ -986,7 +998,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let entry = poppedOut[id] else { return }
         poppedOut[id] = nil
         entry.panel.content.removeFromSuperview()
-        entry.dock.addPanel(entry.panel, reference: entry.dock.activeGroup, direction: nil)
+        // Return to the recorded spot+size; fall back to the active group only if that spot
+        // is gone (e.g. its whole split was closed while popped out).
+        if !entry.dock.restorePlacement(entry.panel) {
+            entry.dock.addPanel(entry.panel, reference: entry.dock.activeGroup, direction: nil)
+        }
     }
 
     // User snippets stored as prefix→body in Settings["snippets"].
@@ -1532,13 +1548,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let name = rest.first.map(String.init) ?? ""
                 guard name.isEmpty, rest.count > 1 else { return desc }   // only plain panes carrying a uuid
                 let uuid = String(rest[1])
-                // Promote to a Claude Code pane (so restore relaunches claude) when this
-                // pane's own session has a transcript OR the workspace folder has any claude
-                // conversation. The folder case reconnects panes whose saved id drifted from
-                // the real conversation (typed `claude` under a broken shim). makeTerminalPanel
-                // then resumes the folder's latest.
-                let promote = claudeSessionExists(sessionId: uuid) || latestClaudeSession(cwd: cwd) != nil
-                return promote ? "term:Claude Code\t\(uuid)" : desc
+                // Promote to a Claude Code pane (so restore relaunches claude) ONLY when THIS
+                // pane's own session has a transcript. We must NOT promote just because the
+                // folder has some claude conversation: that turned every plain terminal in a
+                // claude-touched folder into a claude pane that resurrected an unrelated old
+                // conversation on restart. Precise per-pane matching keeps closed sessions
+                // closed and new panes fresh.
+                return claudeSessionExists(sessionId: uuid) ? "term:Claude Code\t\(uuid)" : desc
             }
         } else if n["type"] as? String == "split", let kids = n["children"] as? [[String: Any]] {
             n["children"] = kids.map { markClaudePanes($0, cwd: cwd) }
@@ -1565,30 +1581,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let projects = base.appendingPathComponent("projects")
         guard let dirs = try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil) else { return false }
         return dirs.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(sessionId).jsonl").path) }
-    }
-
-    // The id of the most-recently-touched Claude Code conversation for a workspace folder.
-    // Restore uses this to RECONNECT a pane to the folder's actual conversation when the
-    // pane's saved session id has drifted from it — which happened whenever `claude` was
-    // typed in a plain terminal while the shim was broken (v0.1.13–16): claude made its own
-    // session id, so the conversation lives on disk but under an id riven never recorded.
-    // Claude encodes the cwd into the dir name (every non-[A-Za-z0-9] char → '-').
-    private func latestClaudeSession(cwd: String) -> String? {
-        // Resolve symlinks first: claude encodes the REAL cwd (e.g. /tmp → /private/tmp),
-        // so encode the resolved path or the dir name won't match.
-        let real = URL(fileURLWithPath: cwd).resolvingSymlinksInPath().path
-        let enc = String(real.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
-        let base = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
-        let dir = base.appendingPathComponent("projects/\(enc)")
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return nil }
-        let latest = files.filter { $0.pathExtension == "jsonl" }.max { a, b in
-            let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-            return da < db
-        }
-        return latest?.deletingPathExtension().lastPathComponent
     }
 
     // ---- session persistence (open folders + tabs, restored on next launch) ----
@@ -2564,6 +2556,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Refresh today's agent usage (local Claude logs) now + every 60s, like riven.
     private var usageTimer: Timer?
     private func startUsagePolling() {
+        // Restore the pinned-usage state the user left it in (was saved but never re-applied,
+        // so the pin was lost every launch). Deferred so the sidebar layout has settled.
+        if Settings.shared.bool("usagePinned", false) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.pinnedUsage == nil else { return }
+                RLog.log("usage: restoring pinned state")
+                self.pinUsage()
+            }
+        }
         refreshUsage()
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
     }
@@ -2602,11 +2603,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Pin the usage view to the bottom of the sidebar (riven's UsagePinned). Reserves
     // a strip at the bottom of the sidebar container and hides the status-bar widget.
-    private let pinnedUsageH: CGFloat = 118
+    // Height of the pinned usage strip. It is MEASURED from the content (header + session
+    // bar + weekly bar + optional today line, each including its reset-time line) rather
+    // than a fixed constant — a fixed 118pt clipped the bottom rows, which is why the
+    // session/weekly reset times went missing when pinned. Recomputed on every rebuild so
+    // it stays correct as the content changes.
+    private var pinnedUsageH: CGFloat = 118
+    private func measuredPinnedHeight(_ v: NSView, width: CGFloat) -> CGFloat {
+        v.frame = NSRect(x: 0, y: 0, width: width, height: 400)
+        v.layoutSubtreeIfNeeded()
+        return max(96, ceil(v.fittingSize.height))
+    }
     private func pinUsage() {
         guard pinnedUsage == nil, let sc = sidebarContainer else { return }
         Settings.shared.set("usagePinned", true)
         let v = makePinnedUsage()
+        pinnedUsageH = measuredPinnedHeight(v, width: sc.bounds.width)
         v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: pinnedUsageH)
         v.autoresizingMask = [.width, .maxYMargin]
         sc.addSubview(v)
@@ -2654,7 +2666,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             unpin.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             content.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
             content.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: box.trailingAnchor)
+            content.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            // Drives the box's height from its content so the strip fits without clipping.
+            content.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -8)
         ])
         return box
     }
@@ -2666,9 +2680,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard pinnedUsage != nil, let sc = sidebarContainer else { return }
         pinnedUsage?.removeFromSuperview()
         let v = makePinnedUsage()
-        v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: pinnedUsageH)
+        let newH = measuredPinnedHeight(v, width: sc.bounds.width)
+        v.frame = NSRect(x: 0, y: 0, width: sc.bounds.width, height: newH)
         v.autoresizingMask = [.width, .maxYMargin]
         sc.addSubview(v); pinnedUsage = v
+        // If the content's height changed (e.g. a reset line appeared), re-offset the split
+        // above the strip by the delta so nothing overlaps or leaves a gap.
+        if newH != pinnedUsageH, let sv = sidebarSplit {
+            let delta = newH - pinnedUsageH
+            var f = sv.frame; f.origin.y += delta; f.size.height -= delta; sv.frame = f
+            pinnedUsageH = newH
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
@@ -2740,6 +2762,21 @@ extension AppDelegate: NSSplitViewDelegate {
         if sv === bodySplit { return view !== sidebarView }   // keep the sidebar's width fixed
         if sv === sidebarSplit { return view !== rail }       // keep the rail height, flex explorer
         return true
+    }
+    // Persist the divider positions the user drags so they survive across launches. The
+    // sidebar width (bodySplit) and rail height (sidebarSplit) are kept fixed on window
+    // resize by shouldAdjustSizeOfSubview above, so this only fires with a real user drag
+    // for those dimensions. Skip while collapsed (width would be 0) and until the saved
+    // geometry has been restored (so initial-layout events don't overwrite it).
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard sidebarLayoutRestored, let sv = notification.object as? NSSplitView else { return }
+        if sv === bodySplit, !sidebarCollapsed, let sb = sv.arrangedSubviews.first {
+            let w = sb.frame.width
+            if w >= 120 { sidebarWidth = w; Settings.shared.set("sidebarWidth", Double(w)) }
+        } else if sv === sidebarSplit, let railView = sv.arrangedSubviews.first {
+            let h = railView.frame.height
+            if h >= 48 { Settings.shared.set("railHeight", Double(h)) }
+        }
     }
 }
 

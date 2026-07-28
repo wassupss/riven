@@ -112,7 +112,7 @@ final class GhosttyApp {
             case GHOSTTY_ACTION_COMMAND_FINISHED:
                 DispatchQueue.main.async { TerminalView.view(for: surface)?.commandFinished() }
             case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-                DispatchQueue.main.async { TerminalView.view(for: surface)?.onIdle?() }
+                DispatchQueue.main.async { TerminalView.view(for: surface)?.childExited() }
             case GHOSTTY_ACTION_RENDER:
                 DispatchQueue.main.async { TerminalView.view(for: surface)?.setNeedsDraw() }
             case GHOSTTY_ACTION_SET_TITLE:

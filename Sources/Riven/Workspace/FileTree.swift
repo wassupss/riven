@@ -255,7 +255,56 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
 
     func setRoot(_ url: URL) {
         root = FileNode(url: url, isDir: true)
+        workspaceKey = url.path
         outline.reloadData()
+        restoreExpansion()
+    }
+
+    // ---- expanded-folder state persistence (survives app restart) ----------------
+    // The explorer used to come back fully collapsed every launch. We now persist which
+    // folders are open, keyed by workspace path, and re-open them after setRoot.
+    private var workspaceKey: String?
+    private var restoringExpansion = false
+    private static let expandedKey = "explorerExpanded"
+
+    func outlineViewItemDidExpand(_ notification: Notification) { saveExpansion() }
+    func outlineViewItemDidCollapse(_ notification: Notification) { saveExpansion() }
+
+    private func saveExpansion() {
+        guard !restoringExpansion, let key = workspaceKey else { return }
+        var paths: [String] = []
+        for row in 0..<outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? FileNode, node.isDir, outline.isItemExpanded(node) {
+                paths.append(node.url.path)
+            }
+        }
+        var all = Settings.shared.object(Self.expandedKey) ?? [:]
+        all[key] = paths
+        Settings.shared.set(Self.expandedKey, all)
+    }
+
+    private func restoreExpansion() {
+        guard let key = workspaceKey, let root,
+              let saved = Settings.shared.object(Self.expandedKey)?[key] as? [String],
+              !saved.isEmpty else { return }
+        restoringExpansion = true
+        defer { restoringExpansion = false }
+        RLog.log("explorer: restoring \(saved.count) expanded folders for \(key)")
+        // Shortest paths first so ancestors are expanded before their descendants.
+        for path in saved.sorted(by: { $0.count < $1.count }) {
+            let rootPath = root.url.path
+            guard path == rootPath || path.hasPrefix(rootPath + "/") else { continue }
+            var node = root
+            if path != rootPath {
+                let comps = path.dropFirst(rootPath.count + 1).split(separator: "/").map(String.init)
+                for comp in comps {
+                    outline.expandItem(node)
+                    guard let next = node.loadChildren().first(where: { $0.name == comp }) else { break }
+                    node = next
+                }
+            }
+            outline.expandItem(node)
+        }
     }
     // Empty the tree (no workspace open) so it doesn't linger after the last close.
     func clear() {

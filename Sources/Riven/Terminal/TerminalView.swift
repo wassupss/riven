@@ -8,7 +8,9 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var surface: ghostty_surface_t?
     private var link: CVDisplayLink?
     private let workdir: String?
-    private let command: String?          // initial command (agent launch) — runs directly
+    private var command: String?          // initial command (agent launch) — runs directly;
+                                          // cleared after the first child-exit respawn so the
+                                          // pane falls back to a plain shell (see childExited).
     private let env: [String: String]     // extra environment for the surface (session shim)
     var onTitle: ((String) -> Void)?      // OSC 0/2 title from the shell/agent
 
@@ -79,6 +81,27 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
 
     /// A shell command finished (OSC 133). Routed from [[GhosttyApp]]'s action handler.
     func commandFinished() { onIdle?() }
+
+    /// The surface's process exited (GHOSTTY_ACTION_SHOW_CHILD_EXITED). For an agent pane we
+    /// launched the CLI DIRECTLY as the surface command (no shell), so when the user types
+    /// `exit` in claude the pty has no shell to fall back to — the terminal goes dead (a
+    /// blinking cursor that accepts nothing). Respawn a plain shell in the same workdir/env
+    /// so the pane stays usable; the env still carries RIVEN_PANE_SESSION + the ZDOTDIR shim,
+    /// so typing `claude` again resumes THIS pane's own conversation. We clear `command` first
+    /// so a subsequent `exit` (of the shell) just leaves an ordinary finished terminal rather
+    /// than respawning forever.
+    func childExited() {
+        onIdle?()
+        guard command != nil, window != nil else { return }
+        RLog.log("childExited: agent command ended → respawning plain shell in pane")
+        command = nil
+        if let s = surface { TerminalView.registry.removeValue(forKey: OpaquePointer(s)); ghostty_surface_free(s) }
+        surface = nil
+        setupSurface()
+        syncSize()
+        if let s = surface, window?.firstResponder === self { ghostty_surface_set_focus(s, true) }
+        needsDraw = true
+    }
 
     // riven's state ring (busy = static, attn = travelling ember) overlaid on the
     // terminal. Driven from the panel's badge via setRingState.
