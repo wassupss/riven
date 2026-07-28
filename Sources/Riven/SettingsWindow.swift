@@ -29,6 +29,7 @@ final class SettingsWindow: NSPanel {
     private let editorSize = NSTextField()
     private let terminalSize = NSTextField()
     private let notify = NSButton(checkboxWithTitle: "데스크톱 알림 사용 (에이전트 완료 · 터미널 벨)", target: nil, action: nil)
+    private let crashReports = NSButton(checkboxWithTitle: "크래시 리포트 전송 (익명)", target: nil, action: nil)
     private let formatOnSave = NSButton(checkboxWithTitle: "저장 시 자동 포맷", target: nil, action: nil)
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
@@ -237,6 +238,12 @@ final class SettingsWindow: NSPanel {
         notify.font = UIScale.font(13)
         content.addArrangedSubview(notify)
 
+        crashReports.title = t("settings.crashReports")
+        crashReports.state = s.bool("crashReporting", true) ? .on : .off
+        crashReports.target = self; crashReports.action = #selector(saveCrashReports)
+        crashReports.contentTintColor = Theme.fg; crashReports.font = UIScale.font(13)
+        content.addArrangedSubview(crashReports)
+
         content.addArrangedSubview(spacer(10))
         let saveBtn = primaryButton(t("settings.saveFonts"), #selector(saveFonts))
         content.addArrangedSubview(saveBtn)
@@ -259,6 +266,7 @@ final class SettingsWindow: NSPanel {
         return b
     }
     @objc private func saveNotify() { Settings.shared.set("notifications", notify.state == .on) }
+    @objc private func saveCrashReports() { Settings.shared.set("crashReporting", crashReports.state == .on) }
     @objc private func saveFormatOnSave() {
         Settings.shared.set("formatOnSave", formatOnSave.state == .on)
         NotificationCenter.default.post(name: .rivenFormatOnSaveChanged, object: nil)

@@ -61,6 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         installCrashHandler()
+        CrashReporter.reportPending()   // upload the previous run's crash (if any), then clear it
+        maybeShowCrashReportingNotice()   // one-time opt-out disclosure
         setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
         startAgentHooks()  // agent lifecycle events → pane busy/attn (replaces viewport polling)
         // Persist the session on SIGTERM too (kill / restart / logout), not just ⌘Q —
@@ -280,12 +282,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // One-time disclosure for opt-out crash reporting (shown once ever). Deferred so it
+    // doesn't block launch; a plain sheet with a link to the Settings toggle.
+    private func maybeShowCrashReportingNotice() {
+        guard SupabaseConfig.isConfigured, !Settings.shared.bool("crashNoticeShown", false) else { return }
+        Settings.shared.set("crashNoticeShown", true)
+        DispatchQueue.main.async { [weak self] in
+            let a = NSAlert()
+            a.messageText = t("crash.noticeTitle")
+            a.informativeText = t("crash.noticeBody")
+            a.addButton(withTitle: t("common.ok"))
+            a.addButton(withTitle: t("crash.turnOff"))
+            if let win = self?.window { a.beginSheetModal(for: win) { resp in
+                if resp == .alertSecondButtonReturn { Settings.shared.set("crashReporting", false) }
+            } } else if a.runModal() == .alertSecondButtonReturn {
+                Settings.shared.set("crashReporting", false)
+            }
+        }
+    }
+
     // Write crash stacks to a per-user, owner-only file under Application Support
     // (not world-readable /tmp — stacks can contain workspace paths). Raw binary
     // won't produce a normal crash report. Covers Obj-C exceptions + fatal signals.
     private func installCrashHandler() {
+        // NSSetUncaughtExceptionHandler needs a context-free C function pointer, so the
+        // version/time are looked up INSIDE the closure (no captures allowed).
         NSSetUncaughtExceptionHandler { ex in
-            let s = "EXCEPTION: \(ex.name.rawValue): \(ex.reason ?? "")\n\(ex.callStackSymbols.joined(separator: "\n"))"
+            let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+            let hdr = "v\(ver) \(Date())\n"   // version + time so a report has context
+            let s = hdr + "EXCEPTION: \(ex.name.rawValue): \(ex.reason ?? "")\n\(ex.callStackSymbols.joined(separator: "\n"))"
             try? s.write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
         }
         for sig in [SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGTRAP] {
