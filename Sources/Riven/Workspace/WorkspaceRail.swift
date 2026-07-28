@@ -14,6 +14,7 @@ final class WorkspaceRail: NSView, Themable {
     private var customNames: [URL: String] = [:]
     private var activities: [URL: PaneActivity] = [:]
     private var dots: [URL: StatusIndicator] = [:]
+    private var bars: [URL: CardBar] = [:]        // left-edge active/activity bar per card
     private var shortcutLabels: [URL: NSTextField] = [:]
     private var flagsMonitor: Any?
 
@@ -28,8 +29,12 @@ final class WorkspaceRail: NSView, Themable {
 
     // Update a workspace's status indicator without rebuilding the whole rail.
     func setActivity(_ url: URL, _ a: PaneActivity) {
+        let prev = activities[url]
         activities[url] = a
         dots[url]?.set(a)
+        // Drive the left bar in place too; flash green only on the actual idle/busy→done
+        // transition, never on unrelated rebuilds.
+        bars[url]?.apply(a, active: url == active, flash: a == .attn && prev != .attn)
     }
     var onOpen: (() -> Void)?
     var onSelect: ((URL) -> Void)?
@@ -192,7 +197,7 @@ final class WorkspaceRail: NSView, Themable {
 
     private func rebuild() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        dots.removeAll(); shortcutLabels.removeAll()
+        dots.removeAll(); bars.removeAll(); shortcutLabels.removeAll()
         var activeCard: NSView?
         for ws in workspaces {
             let card = makeCard(ws)
@@ -228,6 +233,14 @@ final class WorkspaceRail: NSView, Themable {
         card.onSelect = { [weak self] in self?.onSelect?(url) }
         card.onContextMenu = { [weak self] in self?.cardMenu(url) }
         card.translatesAutoresizingMaskIntoConstraints = false
+
+        // Left-edge bar: the color-INDEPENDENT active marker (so the viewed workspace is
+        // obvious even when a card colour is applied) that doubles as the activity animation
+        // (busy = violet pulse, done = green flash). See CardBar.
+        let bar = CardBar()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bars[url] = bar
+        bar.apply(activities[url] ?? .idle, active: isActive, flash: false)
 
         // Row 1: activity indicator (icon + animation) + workspace name. State rollup:
         // idle = faint dot · busy = spinning loader (violet) · attn = green checkmark (done).
@@ -276,9 +289,13 @@ final class WorkspaceRail: NSView, Themable {
         kbd.translatesAutoresizingMaskIntoConstraints = false
         shortcutLabels[url] = kbd
 
-        card.addSubview(dot); card.addSubview(name); card.addSubview(path); card.addSubview(branchRow); card.addSubview(kbd)
+        card.addSubview(bar); card.addSubview(dot); card.addSubview(name); card.addSubview(path); card.addSubview(branchRow); card.addSubview(kbd)
         NSLayoutConstraint.activate([
             card.heightAnchor.constraint(equalToConstant: UIScale.pt(60)),
+            bar.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 2),
+            bar.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+            bar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+            bar.widthAnchor.constraint(equalToConstant: 3.5),
             kbd.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
             kbd.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
@@ -504,5 +521,58 @@ final class StatusIndicator: NSView {
         s.values = [0.5, 1.25, 1.0]; s.keyTimes = [0, 0.6, 1]; s.duration = 0.3
         s.timingFunction = CAMediaTimingFunction(name: .easeOut)
         l.add(s, forKey: "pop")
+    }
+}
+
+// The left-edge bar on a workspace card. Serves two roles at once (chosen design):
+//   • which workspace is ACTIVE — a solid accent bar, independent of the card colour, so
+//     the viewed workspace stays obvious even when a colour tint is applied;
+//   • the workspace's ACTIVITY — a violet breathing pulse while busy, a quick green flash
+//     when a turn finishes (done/attn). Inactive + idle → hidden (a clean, unmarked card).
+// Activity wins over the plain active-accent colour so a running/finished workspace reads
+// even when it's the one you're on (the brighter row + bold name still mark active).
+final class CardBar: NSView {
+    private let bar = CALayer()
+    private var state: PaneActivity = .idle
+    private var active = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        bar.cornerRadius = 1.75
+        layer?.addSublayer(bar)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() { super.layout(); bar.frame = bounds }
+
+    func apply(_ a: PaneActivity, active: Bool, flash: Bool) {
+        state = a; self.active = active
+        bar.removeAllAnimations()
+        switch a {
+        case .busy:
+            bar.isHidden = false
+            bar.backgroundColor = Theme.accent2.cgColor
+            bar.opacity = 1
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 1.0; pulse.toValue = 0.3
+            pulse.duration = 0.9; pulse.autoreverses = true; pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            bar.add(pulse, forKey: "pulse")
+        case .attn:
+            bar.isHidden = false
+            bar.backgroundColor = Theme.success.cgColor
+            bar.opacity = 1
+            if flash {
+                let f = CAKeyframeAnimation(keyPath: "opacity")
+                f.values = [0.2, 1.0, 0.55, 1.0]; f.keyTimes = [0, 0.3, 0.65, 1]
+                f.duration = 0.5
+                bar.add(f, forKey: "flash")
+            }
+        case .idle:
+            bar.isHidden = !active
+            bar.backgroundColor = Theme.accent.cgColor
+            bar.opacity = 1
+        }
     }
 }
