@@ -170,6 +170,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     override func becomeFirstResponder() -> Bool {
         if let s = surface { ghostty_surface_set_focus(s, true) }
         TerminalView.focused = self
+        fullRate = true            // paint streamed agent output promptly while focused
         needsDraw = true
         onFocused?()
         return true
@@ -181,6 +182,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     override func resignFirstResponder() -> Bool {
         if let s = surface { ghostty_surface_set_focus(s, false) }
         if TerminalView.focused === self { TerminalView.focused = nil }
+        fullRate = false
         needsDraw = true
         return super.resignFirstResponder()
     }
@@ -301,17 +303,21 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     }
 
     private var frameTick: UInt64 = 0   // display-link-thread only
+    // The FOCUSED terminal draws every frame (60fps); others every other frame (30fps).
+    // Why: ghostty doesn't emit a render event here, so painting relies on this poll. An
+    // agent (claude) STREAMS output with no user interaction, and at 30fps under main-thread
+    // contention that output could sit unpainted until you scrolled/clicked (a plain shell
+    // never showed it because you'd just typed, forcing a draw). Full-rate for the one pane
+    // you're actually using fixes that; background terminals stay at 30fps so they don't
+    // contend with the editor WKWebView.
+    private var fullRate = false
     private func setupDisplayLink() {
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
         guard let link else { return }
         CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, ctx) -> CVReturn in
             let view = Unmanaged<TerminalView>.fromOpaque(ctx!).takeUnretainedValue()
-            // Draw at ~30fps, not 60. ghostty draws every frame on the MAIN THREAD, so at
-            // 60fps every visible terminal continuously contends with the editor WKWebView
-            // for the main runloop → the editor feels choppy. 30fps is indistinguishable
-            // for a terminal and halves that contention.
             view.frameTick &+= 1
-            if view.frameTick & 1 == 0 { DispatchQueue.main.async { view.drawIfNeeded() } }
+            if view.fullRate || view.frameTick & 1 == 0 { DispatchQueue.main.async { view.drawIfNeeded() } }
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
         CVDisplayLinkStart(link)
@@ -431,6 +437,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         // focus, so keystrokes went nowhere until you clicked again.
         if let s = surface { ghostty_surface_set_focus(s, true) }
         TerminalView.focused = self
+        fullRate = true
         needsDraw = true
     }
 

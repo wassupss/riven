@@ -12,6 +12,10 @@ final class WorkspaceState {
     var openAux: Set<String> = []        // which aux panels (search/git/preview/changes/api) were open
     var dock: DockManager?               // this workspace's panel layout
     var terminalSeq = 0                  // for unique term-N panel ids
+    // Id of the panel that was focused when we last switched away. dock.restore rebuilds
+    // the group tree (dropping the live activeGroup), so we re-select this panel's group and
+    // focus it on return — otherwise focus lands on the first pane every time.
+    var activePanelId: String?
     // 이전 세션의 독 레이아웃 스냅샷 (DockManager.snapshot() 형식: 스플릿 트리 +
     // 팬 크기 + 탭 구성). 이 워크스페이스의 독을 처음 만들 때 restore()로 그대로
     // 재현하고 비운다. nil이면 복원할 레이아웃이 없다.
