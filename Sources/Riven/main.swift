@@ -971,7 +971,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var poppedOut: [String: (win: NSWindow, dock: DockManager, panel: DockPanel, delegate: PopoutDelegate)] = [:]
     @objc private func popoutMenu() {
         guard let dock = activeDock, let panel = dock.activeGroup?.activePanel else { NSSound.beep(); return }
-        dock.detach(panel, normalize: true)   // remove from the dock WITHOUT disposing the content
+        // Record the panel's exact spot (host group / split index / sibling extents) BEFORE
+        // detaching so re-docking on window-close returns it to the SAME area+size instead of
+        // dumping it as a tab on the active group. Mirrors the workspace-switch flow; no
+        // normalize on detach so sibling pane sizes are preserved for the restore.
+        dock.recordPlacement(of: panel)
+        dock.detach(panel)                    // remove from the dock WITHOUT disposing the content
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 720, height: 480))
         host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg.cgColor
         panel.content.frame = host.bounds
@@ -993,7 +998,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let entry = poppedOut[id] else { return }
         poppedOut[id] = nil
         entry.panel.content.removeFromSuperview()
-        entry.dock.addPanel(entry.panel, reference: entry.dock.activeGroup, direction: nil)
+        // Return to the recorded spot+size; fall back to the active group only if that spot
+        // is gone (e.g. its whole split was closed while popped out).
+        if !entry.dock.restorePlacement(entry.panel) {
+            entry.dock.addPanel(entry.panel, reference: entry.dock.activeGroup, direction: nil)
+        }
     }
 
     // User snippets stored as prefix→body in Settings["snippets"].
