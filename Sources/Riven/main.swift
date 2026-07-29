@@ -1143,17 +1143,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
         let wsPath = st.url.path, paneId = p.id
-        p.onActivate = { [weak chat] in chat?.focusInput() }     // cursor lands in the message field
+        p.onActivate = { [weak self, weak chat, weak p] in       // looking at it clears the "done" ember
+            chat?.focusInput()
+            if p?.badge == "attn" { p?.badge = nil; WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false); self?.refreshDockTabs(); self?.refreshRailAgents() }
+        }
         p.onClose = { [weak self, weak chat] in
             chat?.teardown()
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
             self?.refreshRailAgents()
         }
-        // Busy / attention / title → rail + tab (mirrors agent terminal panes).
-        chat.onBusyChange = { [weak self, weak p] busy in
+        // Busy / done → rail + tab + completion notification (mirrors agent terminal panes).
+        chat.onBusyChange = { [weak self, weak p, weak chat] busy in
             guard let self, let p else { return }
-            if busy { if p.badge != "attn" { p.badge = "busy" } } else if p.badge == "busy" { p.badge = nil }
-            WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: busy)
+            if busy {
+                if p.badge != "attn" { p.badge = "busy" }
+                WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true)
+            } else {
+                WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
+                // Done: if you're not watching THIS pane, raise the ember + post a banner.
+                var watching = false
+                if let chat, chat.window?.isKeyWindow == true,
+                   let fr = chat.window?.firstResponder as? NSView { watching = fr.isDescendant(of: chat) }
+                if watching {
+                    p.badge = nil
+                    WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
+                } else {
+                    p.badge = "attn"
+                    WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: true)
+                    Notifications.post(title: (wsPath as NSString).lastPathComponent,
+                                       body: "\(p.title) · \(t("term.done"))", wsPath: wsPath, panelId: paneId)
+                }
+            }
             self.refreshDockTabs(); self.refreshRailAgents()
         }
         chat.onAttention = { [weak self, weak p] attn in
