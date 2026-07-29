@@ -13,7 +13,7 @@ enum DockDir { case left, right, up, down, center }
 final class DockPanel {
     let id: String
     var title: String
-    let icon: NSImage?
+    var icon: NSImage?              // var: updated when a hand-typed pane turns out to run an agent
     let content: NSView
     let closable: Bool
     weak var group: DockGroup?
@@ -24,6 +24,13 @@ final class DockPanel {
     // 이 패널이 실행한 에이전트 이름(없으면 일반 터미널). 세션 복원 때 같은 구성을
     // 다시 만들기 위해 기록해 둔다.
     var agentName: String?
+    // 훅으로 판명된 에이전트 종류(손타이핑 claude/codex 등, agentName이 nil인 경우). 레일
+    // 아이콘·탭 아이콘을 정하는 데 쓴다.
+    var hookAgentKind: String?
+    // True once this pane's agent process EXITED and it fell back to a plain shell (childExited
+    // respawn). Such a pane is no longer an agent, so it drops out of the rail's agent list
+    // until a new agent starts in it (cleared on the next hook).
+    var agentExited: Bool = false
     // 에이전트 세션 id (Claude Code `--session-id`). 저장했다가 복원 때 `--resume <id>`로
     // 그 패널의 정확한 대화를 이어간다. (cwd 기반 --continue의 다중 패널 한계를 넘음)
     var sessionId: String?

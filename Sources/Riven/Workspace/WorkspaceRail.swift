@@ -297,8 +297,8 @@ final class WorkspaceRail: NSView, Themable {
         let chevron = RailChevron()
         chevron.isBordered = false; chevron.imagePosition = .imageOnly
         chevron.image = NSImage(systemSymbolName: collapsed.contains(url.path) ? "chevron.right" : "chevron.down",
-            accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
-        chevron.contentTintColor = Theme.fg   // clearly visible (was too dim to find)
+            accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        chevron.contentTintColor = Theme.fg.withAlphaComponent(0.45)   // visible but not heavy
         chevron.target = self; chevron.action = #selector(chevronClicked(_:))
         objc_setAssociatedObject(chevron, &Self.chevronURLKey, url, .OBJC_ASSOCIATION_RETAIN)
         chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -319,8 +319,11 @@ final class WorkspaceRail: NSView, Themable {
 
         let n = (agents[url] ?? []).count
         let count = NSTextField(labelWithString: n > 0 ? "\(n)" : "")
-        count.font = UIScale.font(10, .medium); count.textColor = Theme.fgDim
+        count.font = UIScale.font(9, .semibold); count.textColor = Theme.fgDim
         count.alignment = .center; count.translatesAutoresizingMaskIntoConstraints = false
+        count.drawsBackground = false; count.wantsLayer = true
+        count.layer?.backgroundColor = Theme.hoverStrong.cgColor   // filled circle badge
+        count.layer?.cornerRadius = UIScale.pt(7.5)
         count.isHidden = (n == 0)
         countLabels[url] = count
 
@@ -382,6 +385,8 @@ final class WorkspaceRail: NSView, Themable {
             // Count badge + ⌘N chip: BOTTOM-RIGHT, level with the last text line.
             count.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
             count.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
+            count.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(15)),
+            count.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
             kbd.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
             kbd.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
@@ -427,11 +432,11 @@ final class WorkspaceRail: NSView, Themable {
 
         row.addSubview(dot); row.addSubview(name)
         var cons: [NSLayoutConstraint] = [
-            row.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
-            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 26),   // indent under the workspace dot/name
+            row.heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),   // no indent — aligns with the workspace dot column
             dot.centerYAnchor.constraint(equalTo: name.centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
-            dot.heightAnchor.constraint(equalToConstant: UIScale.pt(12)),
+            dot.widthAnchor.constraint(equalToConstant: UIScale.pt(11)),             // gear/check need a little size to read
+            dot.heightAnchor.constraint(equalToConstant: UIScale.pt(11)),
             name.centerYAnchor.constraint(equalTo: row.centerYAnchor, constant: UIScale.pt(-1)),
             name.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -9)
         ]
@@ -609,74 +614,84 @@ final class WSCard: NSView, NSDraggingSource {
     override func menu(for event: NSEvent) -> NSMenu? { onContextMenu?() }
 }
 
-// Workspace-card status indicator: a faint dot (idle), a native spinning loader
-// (busy / in-progress), or a green checkmark (attn / done, with a pop on arrival).
-// Replaces the old color-only dot so each state reads at a glance.
+// Workspace agent status indicator (radar-pulse):
+//   • idle  → a small stationary dot
+//   • busy  → an accent dot with rings that expand outward and fade, forever (a live/radar
+//             ping — clearly reads as "running")
+//   • done  → only a green checkmark that DRAWS ITSELF (strokeEnd 0→1), no dot/rings
 final class StatusIndicator: NSView {
-    private let icon = NSImageView()
-    private let spin = CAShapeLayer()   // custom ¾-arc loader — size-controllable (unlike NSProgressIndicator's 16px floor)
+    private let core = CAShapeLayer()    // centre dot
+    private let ring1 = CAShapeLayer()   // expanding rings (busy only)
+    private let ring2 = CAShapeLayer()
+    private let check = CAShapeLayer()    // done
     private var current: PaneActivity?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        addSubview(icon)
-        NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor), icon.trailingAnchor.constraint(equalTo: trailingAnchor),
-            icon.topAnchor.constraint(equalTo: topAnchor), icon.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        spin.fillColor = nil; spin.lineWidth = 1.5; spin.lineCap = .round
-        spin.strokeColor = Theme.accent2.cgColor; spin.isHidden = true
-        layer?.addSublayer(spin)
+        for r in [ring1, ring2] { r.fillColor = nil; r.lineWidth = 1; r.isHidden = true; layer?.addSublayer(r) }
+        core.isHidden = true; layer?.addSublayer(core)
+        check.fillColor = nil; check.lineWidth = 1.6; check.lineCap = .round; check.lineJoin = .round
+        check.strokeColor = Theme.success.cgColor; check.strokeEnd = 0; check.isHidden = true
+        layer?.addSublayer(check)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func layout() {
         super.layout()
-        spin.frame = bounds
-        let r = max(1, min(bounds.width, bounds.height) / 2 - 1.5)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let cx = bounds.midX, cy = bounds.midY
+        let coreR = max(1.6, bounds.width * 0.22)
+        for l in [core, ring1, ring2] { l.frame = bounds }   // anchor 0.5,0.5 → scale from centre
+        core.path = CGPath(ellipseIn: CGRect(x: cx - coreR, y: cy - coreR, width: coreR * 2, height: coreR * 2), transform: nil)
+        let ringR = coreR + 0.5
+        let rp = CGPath(ellipseIn: CGRect(x: cx - ringR, y: cy - ringR, width: ringR * 2, height: ringR * 2), transform: nil)
+        ring1.path = rp; ring2.path = rp
+        // checkmark (NSView is not flipped → y grows upward)
+        let w = bounds.width, h = bounds.height
         let p = CGMutablePath()
-        p.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: r,
-                 startAngle: -.pi / 2, endAngle: .pi, clockwise: false)   // 3/4 turn
-        spin.path = p
+        p.move(to: CGPoint(x: 0.20 * w, y: 0.54 * h))
+        p.addLine(to: CGPoint(x: 0.42 * w, y: 0.30 * h))
+        p.addLine(to: CGPoint(x: 0.82 * w, y: 0.76 * h))
+        check.path = p
+        CATransaction.commit()
+    }
+
+    private func ping(_ ring: CAShapeLayer, begin: CFTimeInterval) {
+        ring.removeAnimation(forKey: "ping")
+        let scale = CABasicAnimation(keyPath: "transform.scale"); scale.fromValue = 0.7; scale.toValue = 3.0
+        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 0.7; fade.toValue = 0
+        let g = CAAnimationGroup(); g.animations = [scale, fade]; g.duration = 1.5
+        g.repeatCount = .infinity; g.beginTime = begin
+        g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        ring.add(g, forKey: "ping")
     }
 
     func set(_ a: PaneActivity) {
         let changed = current != a; current = a
+        func stopRings() { [ring1, ring2].forEach { $0.removeAnimation(forKey: "ping"); $0.isHidden = true } }
         switch a {
-        case .busy:
-            icon.isHidden = true; spin.isHidden = false
-            spin.strokeColor = Theme.accent2.cgColor
-            if spin.animation(forKey: "spin") == nil {
-                let rot = CABasicAnimation(keyPath: "transform.rotation.z")
-                rot.fromValue = 0; rot.toValue = -Double.pi * 2
-                rot.duration = 0.85; rot.repeatCount = .infinity
-                spin.add(rot, forKey: "spin")
-            }
         case .idle:
-            spin.removeAnimation(forKey: "spin"); spin.isHidden = true
-            icon.isHidden = false
-            icon.image = symbol("circle.fill", 5); icon.contentTintColor = Theme.fgDim
+            check.isHidden = true; check.removeAnimation(forKey: "draw"); check.strokeEnd = 0
+            stopRings()
+            core.isHidden = false; core.fillColor = Theme.fgDim.cgColor
+        case .busy:
+            check.isHidden = true; check.removeAnimation(forKey: "draw"); check.strokeEnd = 0
+            core.isHidden = false; core.fillColor = Theme.accent.cgColor
+            ring1.strokeColor = Theme.accent.cgColor; ring2.strokeColor = Theme.accent.cgColor
+            ring1.isHidden = false; ring2.isHidden = false
+            let now = CACurrentMediaTime()
+            ping(ring1, begin: now); ping(ring2, begin: now + 0.75)   // staggered radar
         case .attn:
-            spin.removeAnimation(forKey: "spin"); spin.isHidden = true
-            icon.isHidden = false
-            icon.image = symbol("checkmark.circle.fill", 11, .semibold); icon.contentTintColor = Theme.success
-            if changed { pop() }
+            stopRings(); core.isHidden = true
+            check.isHidden = false; check.strokeColor = Theme.success.cgColor; check.strokeEnd = 1
+            if changed {
+                let draw = CABasicAnimation(keyPath: "strokeEnd")
+                draw.fromValue = 0; draw.toValue = 1; draw.duration = 0.32
+                draw.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                check.add(draw, forKey: "draw")
+            }
         }
-    }
-    private func symbol(_ name: String, _ size: CGFloat, _ weight: NSFont.Weight = .regular) -> NSImage? {
-        NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: size, weight: weight))
-    }
-    private func pop() {
-        icon.wantsLayer = true
-        guard let l = icon.layer else { return }
-        l.removeAnimation(forKey: "pop")
-        let s = CAKeyframeAnimation(keyPath: "transform.scale")
-        s.values = [0.5, 1.25, 1.0]; s.keyTimes = [0, 0.6, 1]; s.duration = 0.3
-        s.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        l.add(s, forKey: "pop")
     }
 }
 

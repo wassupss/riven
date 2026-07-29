@@ -763,9 +763,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let path = event.filePath { recordAgentFileEdit(workspace: pane.workspace, path: path) }
         default: break
         }
-        // A hand-typed `claude` becomes hook-backed on its first event (SessionStart) — refresh
-        // so it shows up as an agent row in the rail immediately, not only on the next status change.
+        // Learn the agent KIND for a hand-typed pane (agentName nil) and give its tab the
+        // matching glyph — so a plain terminal running `claude` shows the Claude icon, not the
+        // generic terminal icon (#9). Refresh the rail so the row appears with the right icon.
+        if let p = panel(pane) {
+            p.agentExited = false   // a hook means an agent is running in this pane again
+            if p.hookAgentKind != event.agent { p.hookAgentKind = event.agent }
+            if p.agentName == nil, let sym = agentGlyph(kind: event.agent) {
+                let img = NSImage(systemSymbolName: sym, accessibilityDescription: nil)
+                if p.icon?.name() != img?.name() { p.icon = img; refreshDockTabs() }
+            }
+        }
         rail.setAgents(URL(fileURLWithPath: pane.workspace), railAgents(for: URL(fileURLWithPath: pane.workspace)))
+    }
+    // SF-symbol glyph for an agent kind string (hook `agent` field or DockPanel.agentName).
+    private func agentGlyph(kind: String?) -> String? {
+        switch kind?.lowercased() {
+        case "claude", "claude code": return "asterisk"
+        case "codex": return "chevron.left.forwardslash.chevron.right"
+        default: return nil
+        }
     }
 
     // Kill a claude left over from a previous riven that still holds this pane's session id
@@ -898,6 +915,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.sessionId = paneSession          // 이 패널의 세션 id (복원 때 --resume 대상)
         // Reverse index so an incoming hook event can find this pane.
         PaneSessionRegistry.shared.register(session: paneSession, workspace: st.url.path, paneId: p.id)
+        // When the agent process exits and the pane falls back to a shell, it's no longer an
+        // agent → drop it from the rail's agent list (and revert its tab icon to a terminal).
+        tv.onCommandExited = { [weak self, weak p] in
+            guard let self, let p else { return }
+            p.agentExited = true
+            if p.agentName == nil { p.icon = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil) }
+            self.refreshDockTabs()
+            self.refreshRailAgents()
+        }
         p.autoTitle = true    // follow OSC titles for BOTH plain terminals AND agents, so
                               // "change the terminal title to X" from an agent works.
         // OSC 0/2 title from the shell/agent → update the tab. A path-like title shows
@@ -1385,23 +1411,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func railAgents(for url: URL) -> [WorkspaceRail.RailAgent] {
         guard let dock = states[url]?.dock else { return [] }
         var out: [WorkspaceRail.RailAgent] = []
+        var seen = Set<String>()   // dedup by pane id (a pane must never yield two rows)
         for g in dock.groups {
             for p in g.panels {
-                guard p.content is TerminalView else { continue }
-                // An "agent" here is EITHER a pane launched as one (Claude Code / Codex button)
-                // OR a plain terminal where the user typed `claude`/`codex` and it proved itself
-                // by delivering a hook (hook-backed). The latter had agentName == nil and so was
-                // missing from the rail — this is the fix.
+                guard p.content is TerminalView, !seen.contains(p.id) else { continue }
+                // Skip panes whose agent has EXITED (now a plain shell) — a terminal must not
+                // stay listed as an agent just because it once ran one.
+                if p.agentExited { continue }
+                // An "agent" is EITHER a pane launched as one (Claude Code / Codex button) OR a
+                // plain terminal where the user typed `claude`/`codex` and it proved itself by
+                // delivering a hook (hook-backed).
                 let hookAgent = p.sessionId.map { PaneSessionRegistry.shared.isHookBacked($0) } ?? false
                 guard p.agentName != nil || hookAgent else { continue }
+                seen.insert(p.id)
                 let act: PaneActivity = p.badge == "attn" ? .attn : (p.badge == "busy" ? .busy : .idle)
                 let title = p.title.isEmpty ? (p.agentName ?? "claude") : p.title
                 let sub = (p.agentName != nil && p.title != p.agentName) ? p.agentName : nil
-                // Agent-type glyph for panes launched via the agent button (Claude/Codex).
-                // Hand-typed `claude` panes (agentName nil) get no type glyph — just the status.
-                // Claude Code's mark is the ✳ asterisk (not sparkles); Codex → code glyph.
-                let sym: String? = p.agentName == "Claude Code" ? "asterisk"
-                    : (p.agentName == "Codex" ? "chevron.left.forwardslash.chevron.right" : nil)
+                // Glyph from the button agent name, else the hook-learned kind (hand-typed).
+                let sym = agentGlyph(kind: p.agentName) ?? agentGlyph(kind: p.hookAgentKind)
                 out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: act, iconSymbol: sym))
             }
         }
