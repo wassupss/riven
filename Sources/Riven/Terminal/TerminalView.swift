@@ -101,7 +101,9 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         syncSize()
         if let s = surface, window?.firstResponder === self { ghostty_surface_set_focus(s, true) }
         needsDraw = true
+        onCommandExited?()   // the agent/command ended → the pane is a plain shell now
     }
+    var onCommandExited: (() -> Void)?
 
     // riven's state ring (busy = static, attn = travelling ember) overlaid on the
     // terminal. Driven from the panel's badge via setRingState.
@@ -300,6 +302,14 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private func drawIfNeeded() {
         guard let s = surface else { return }
         ghostty_surface_draw(s)
+    }
+    // After a keystroke the echo returns from the PTY a moment later; force a few draws so
+    // the typed characters appear immediately even if the display-link poll is momentarily
+    // starved by the editor WebView on the main thread (the "my input doesn't show" bug).
+    private func kickEchoDraws() {
+        for delay in [0.0, 0.02, 0.05, 0.1] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.drawIfNeeded() }
+        }
     }
 
     private var frameTick: UInt64 = 0   // display-link-thread only
@@ -546,6 +556,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // prints, and resending that key would double-type it.
     override func keyDown(with event: NSEvent) {
         needsDraw = true
+        kickEchoDraws()   // ensure typed characters paint promptly
         // Return submits a line → the pane is working until the shell reports the command
         // finished (OSC 133). For an agent pane this is a no-op: its hook events are
         // authoritative and main.swift ignores these once the pane is hook-backed.
