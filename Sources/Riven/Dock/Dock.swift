@@ -809,6 +809,8 @@ final class DockManager {
         if let g = v as? DockGroup {
             guard !g.panels.isEmpty else { return nil }      // 빈 그룹은 저장하지 않는다
             let descs = g.panels.map { p -> String in
+                // Native chat panes persist their session id so they resume on relaunch.
+                if p.id.hasPrefix("chat-") { return p.sessionId.map { "chat:\($0)" } ?? "chat" }
                 guard p.id.hasPrefix("term-") else { return p.id }
                 // "term:<agent>" plus, if we own a resumable session id, "\t<sessionId>".
                 let base = "term:\(p.agentName ?? "")"

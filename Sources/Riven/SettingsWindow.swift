@@ -31,6 +31,7 @@ final class SettingsWindow: NSPanel {
     private let notify = NSButton(checkboxWithTitle: "데스크톱 알림 사용 (에이전트 완료 · 터미널 벨)", target: nil, action: nil)
     private let crashReports = NSButton(checkboxWithTitle: "크래시 리포트 전송 (익명)", target: nil, action: nil)
     private let formatOnSave = NSButton(checkboxWithTitle: "저장 시 자동 포맷", target: nil, action: nil)
+    private let agentNative = NSButton(checkboxWithTitle: "AI 에이전트를 네이티브 UI로 열기 (⌘O — 끄면 CLI 터미널)", target: nil, action: nil)
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
     private var rootView: NSView!
@@ -271,6 +272,7 @@ final class SettingsWindow: NSPanel {
         Settings.shared.set("formatOnSave", formatOnSave.state == .on)
         NotificationCenter.default.post(name: .rivenFormatOnSaveChanged, object: nil)
     }
+    @objc private func saveAgentUI() { Settings.shared.set("agentUI", agentNative.state == .on ? "native" : "cli") }
     @objc private func changeLanguage(_ seg: NSSegmentedControl) {
         I18n.setLanguage(seg.selectedSegment == 1 ? .en : .ko)
     }
@@ -307,6 +309,12 @@ final class SettingsWindow: NSPanel {
         aiEnable.contentTintColor = Theme.fg
         aiEnable.font = UIScale.font(13)
         content.addArrangedSubview(aiEnable)
+
+        agentNative.state = s.string("agentUI", "cli") == "native" ? .on : .off
+        agentNative.target = self; agentNative.action = #selector(saveAgentUI)
+        agentNative.contentTintColor = Theme.fg
+        agentNative.font = UIScale.font(13)
+        content.addArrangedSubview(agentNative)
 
         provider.removeAllItems()
         let providers = ["ollama", "openai", "anthropic", "gemini", "deepseek", "mistral", "groq", "openrouter", "custom"]

@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var previewPanel: PreviewPanel!
     var apiPanel: APIClientPanel!
     var changesPanel: ChangesPanel!
+    private var chatSeq = 0                  // multi-instance chat panes: one session per pane
     var sourceControl: SourceControlView!   // git panel = commit graph + working changes
     var sidebarLower: NSView!
     var editor: EditorView!
@@ -1122,6 +1123,127 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(p, reference: currentTerminalPanel()?.group ?? dock.activeGroup, direction: nil)
         (p.content as? TerminalView)?.focusTerminal()
     }
+
+    // ---- native chat panes (PoC): ONE ClaudeChatSession per pane, like terminals ----
+    // A new pane = a new independent agent session (the model the user asked for). Resume
+    // reopens a past session id in a fresh pane.
+    private func makeChatPanel(for st: WorkspaceState, resume: String? = nil) -> DockPanel {
+        chatSeq += 1
+        let chat = ChatPanel(frame: dockHost.bounds)
+        chat.autoresizingMask = [.width, .height]
+        chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
+        chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
+        chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
+        chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
+        chat.bind(workspace: st.url, resume: resume)
+        let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
+        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: "Claude",
+                          icon: icon, content: chat, closable: true)
+        p.agentName = "Claude Code"                              // → appears in the workspace rail
+        p.sessionId = resume                                     // persisted for resume-on-relaunch
+        chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
+        let wsPath = st.url.path, paneId = p.id
+        p.onActivate = { [weak chat] in chat?.focusInput() }     // cursor lands in the message field
+        p.onClose = { [weak self, weak chat] in
+            chat?.teardown()
+            WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
+            self?.refreshRailAgents()
+        }
+        // Busy / attention / title → rail + tab (mirrors agent terminal panes).
+        chat.onBusyChange = { [weak self, weak p] busy in
+            guard let self, let p else { return }
+            if busy { if p.badge != "attn" { p.badge = "busy" } } else if p.badge == "busy" { p.badge = nil }
+            WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: busy)
+            self.refreshDockTabs(); self.refreshRailAgents()
+        }
+        chat.onAttention = { [weak self, weak p] attn in
+            guard let self, let p else { return }
+            p.badge = attn ? "attn" : "busy"                     // still working after the prompt
+            WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: attn)
+            self.refreshDockTabs(); self.refreshRailAgents()
+        }
+        chat.onTitle = { [weak self, weak p] title in
+            guard let self, let p else { return }
+            p.title = title; self.refreshDockTabs(); self.refreshRailAgents()
+        }
+        return p
+    }
+    // Open a chat-originated edit as an inline before/after diff in the editor.
+    private func showChatEdit(_ url: URL, oldString: String, newString: String) {
+        openFile(url)
+        guard let after = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let before = after.range(of: newString).map { after.replacingCharacters(in: $0, with: oldString) } ?? after
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.editor.agentDiff(path: url.path, before: before, after: after)
+        }
+    }
+    private func newChat() {                            // opens a new agent session pane
+        guard let dock = activeDock, let ws = workspace else { return }
+        let p = makeChatPanel(for: state(for: ws))
+        dock.addPanel(p, reference: dock.activeGroup, direction: .right)
+        dock.setActive(p.group ?? dock.activeGroup!)
+        p.content.window?.makeFirstResponder(p.content)
+    }
+    // Open a past session (from ~/.claude/projects/<cwd>/*.jsonl) in a NEW pane via a popup menu.
+    private func resumeChatSession() {
+        guard let dock = activeDock, let ws = workspace else { return }
+        let sessions = claudeSessions(for: ws.path)
+        guard !sessions.isEmpty else {
+            let a = NSAlert(); a.messageText = "이어서 열 세션이 없습니다."; a.runModal(); return
+        }
+        let menu = NSMenu()
+        let fmt = DateFormatter(); fmt.dateFormat = "MM/dd HH:mm"
+        for s in sessions.prefix(20) {
+            let title = s.title.isEmpty ? String(s.id.prefix(8)) : s.title
+            let item = NSMenuItem(title: "\(title)   —   \(fmt.string(from: s.modified))",
+                                  action: #selector(pickResume(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = s.id
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)   // in:nil → screen coords
+        _ = dock
+    }
+    @objc private func pickResume(_ item: NSMenuItem) {
+        guard let sid = item.representedObject as? String, let dock = activeDock, let ws = workspace else { return }
+        let p = makeChatPanel(for: state(for: ws), resume: sid)
+        dock.addPanel(p, reference: dock.activeGroup, direction: .right)
+        dock.setActive(p.group ?? dock.activeGroup!)
+    }
+    // This workspace's Claude session transcripts, newest first — with a title from the first
+    // user message so the user knows which conversation to resume.
+    private struct ChatSessionInfo { let id: String; let modified: Date; let title: String }
+    private func claudeSessions(for cwd: String) -> [ChatSessionInfo] {
+        // Claude encodes the cwd as the project dir name: every non-alphanumeric → "-".
+        let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects/\(enc)")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        return files.filter { $0.pathExtension == "jsonl" }.compactMap { url in
+            let m = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            return ChatSessionInfo(id: url.deletingPathExtension().lastPathComponent, modified: m,
+                                   title: Self.transcriptTitle(url))
+        }.sorted { $0.modified > $1.modified }
+    }
+    // First user message text from a transcript jsonl (scans the first lines only).
+    private static func transcriptTitle(_ url: URL) -> String {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        for line in text.split(separator: "\n").prefix(60) {
+            guard let d = line.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  o["type"] as? String == "user",
+                  let msg = o["message"] as? [String: Any] else { continue }
+            var s = ""
+            if let str = msg["content"] as? String { s = str }
+            else if let arr = msg["content"] as? [[String: Any]] {
+                s = arr.compactMap { $0["text"] as? String }.joined(separator: " ")
+            }
+            s = s.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+            if s.hasPrefix("/") || s.hasPrefix("<") { continue }   // skip slash commands / injected context
+            if !s.isEmpty { return String(s.prefix(48)) }
+        }
+        return ""
+    }
     // Launch an agent in its own panel (titled "Claude Code" + icon), running the CLI
     // directly — not typed into a shell.
     private func launchAgent(_ agent: AgentDiscovery.Agent) {
@@ -1213,8 +1335,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         guard let b = best else { return }
         dock.setActive(b)
-        if let tv = b.activePanel?.content as? TerminalView { tv.focusTerminal() }
-        else { window?.makeFirstResponder(b.activePanel?.content) }
+        if let p = b.activePanel { focusPanelContent(p) }   // handles editor/terminal/chat uniformly
     }
 
     // Ensure the editor panel is in the active dock (opens to the right of the
@@ -1360,6 +1481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func focusPanelContent(_ p: DockPanel) {
         if p === editorDockPanel { editor.focusEditor() }
         else if let tv = p.content as? TerminalView { tv.focusTerminal() }
+        else if let chat = p.content as? ChatPanel { chat.focusInput() }   // cursor → message field
         else { p.content.window?.makeFirstResponder(p.content) }
     }
     // Focus the active dock's active panel (the one the ring is on).
@@ -1431,7 +1553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var seen = Set<String>()   // dedup by pane id (a pane must never yield two rows)
         for g in dock.groups {
             for p in g.panels {
-                guard p.content is TerminalView, !seen.contains(p.id) else { continue }
+                guard p.content is TerminalView || p.content is ChatPanel, !seen.contains(p.id) else { continue }
                 // Skip panes whose agent has EXITED (now a plain shell) — a terminal must not
                 // stay listed as an agent just because it once ran one.
                 if p.agentExited { continue }
@@ -1672,6 +1794,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return self.makeTerminalPanel(for: st, agent: agent, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
+                // chat panes: resume the persisted session id if present, else fresh.
+                if desc.hasPrefix("chat:") {
+                    let sid = String(desc.dropFirst(5))
+                    return self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid)
+                }
+                if desc == "chat" || desc.hasPrefix("chat-") { return self.makeChatPanel(for: st) }
                 return self.makeAuxPanel(desc)
             }
             if restoredLayout {
@@ -2347,6 +2475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addRemap(viewMenu, t("menu.git"), "view.git", #selector(gitMenu))
         addRemap(viewMenu, t("menu.preview"), "view.preview", #selector(previewMenu))
         addRemap(viewMenu, t("menu.changes"), "view.changes", #selector(changesMenu))
+        addRemap(viewMenu, "Chat", "view.chat", #selector(chatMenu))
         addRemap(viewMenu, t("menu.focusEditor"), "view.focusEditor", #selector(focusEditorMenu))
         addRemap(viewMenu, t("menu.focusTerminal"), "view.focusTerminal", #selector(focusTerminalMenu))
         addRemap(viewMenu, t("menu.popout"), "view.popout", #selector(popoutMenu))
@@ -2495,10 +2624,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var actions: [QuickAction] = [
             QuickAction(title: t("menu.newTerminal"), hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
         ]
-        // Installed AI agents (scanned from PATH) — riven's AgentPicker entries.
+        // Installed AI agents (scanned from PATH) — riven's AgentPicker entries. A setting
+        // ("agentUI": "native" | "cli") decides whether Claude opens as the native chat panel
+        // or the raw CLI in a terminal. Claude Code supports native; others (Codex) → CLI.
+        let nativeUI = Settings.shared.string("agentUI", "cli") == "native"
         for a in AgentDiscovery.available() {
-            actions.append(QuickAction(title: a.name, hint: t("agent.label"), symbol: a.symbol) { [weak self] in
-                self?.launchAgent(a)
+            let native = nativeUI && a.name == "Claude Code"
+            actions.append(QuickAction(title: a.name,
+                                       hint: native ? "네이티브 UI" : t("agent.label"),
+                                       symbol: a.symbol) { [weak self] in
+                if native { self?.newChat() } else { self?.launchAgent(a) }
             })
         }
         actions.append(contentsOf: [
@@ -2508,6 +2643,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: t("title.preview"), hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
             QuickAction(title: t("api.test"), hint: "", symbol: "network") { [weak self] in self?.toggleDockPanel("api") },
             QuickAction(title: t("title.changes"), hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
+            QuickAction(title: "새 채팅", hint: "네이티브 에이전트", symbol: "bubble.left.and.text.bubble.right") { [weak self] in self?.newChat() },
+            QuickAction(title: "채팅: 이전 세션 열기", hint: "resume", symbol: "clock.arrow.circlepath") { [weak self] in self?.resumeChatSession() },
             QuickAction(title: t("menu.newWorkspace"), hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
             QuickAction(title: t("menu.toggleSidebar"), hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
         ])
@@ -2629,6 +2766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func gitMenu() { toggleDockPanel("git") }
     @objc private func previewMenu() { toggleDockPanel("preview") }
     @objc private func changesMenu() { toggleDockPanel("changes") }
+    @objc private func chatMenu() { newChat() }
     @objc private func focusEditorMenu() { editor.focusEditor() }
     @objc private func focusTerminalMenu() { currentTerminal()?.focusTerminal() }
     // ⌘K clears the terminal only while it holds focus (riven's context:'terminal').

@@ -16,7 +16,7 @@ final class WorkspaceRail: NSView, Themable {
     private var activities: [URL: PaneActivity] = [:]
     private var agents: [URL: [RailAgent]] = [:]   // agent panes per workspace (Orca-style children)
     private var shortcutLabels: [URL: NSTextField] = [:]
-    private var countLabels: [URL: NSTextField] = [:]   // agent-count badges (hidden while ⌘ held)
+    private var countLabels: [URL: NSView] = [:]        // agent-count badges (hidden while ⌘ held)
     private var flagsMonitor: Any?
 
     // One agent pane shown as a child row under its workspace.
@@ -317,15 +317,31 @@ final class WorkspaceRail: NSView, Themable {
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
 
+        // Count badge: a capsule CONTAINER with a CENTERED label. The label no longer drives
+        // the badge frame, so a single digit is a true circle and multi-digit is a padded
+        // capsule — never a squished ellipse (the old label-with-fixed-height distorted).
         let n = (agents[url] ?? []).count
+        let countBadge = NSView()
+        countBadge.wantsLayer = true
+        countBadge.layer?.backgroundColor = Theme.hoverStrong.cgColor
+        countBadge.layer?.cornerRadius = UIScale.pt(8)             // = height/2 (height 16) → circle/capsule
+        countBadge.translatesAutoresizingMaskIntoConstraints = false
+        countBadge.isHidden = (n == 0)
         let count = NSTextField(labelWithString: n > 0 ? "\(n)" : "")
         count.font = UIScale.font(9, .semibold); count.textColor = Theme.fgDim
         count.alignment = .center; count.translatesAutoresizingMaskIntoConstraints = false
-        count.drawsBackground = false; count.wantsLayer = true
-        count.layer?.backgroundColor = Theme.hoverStrong.cgColor   // filled circle badge
-        count.layer?.cornerRadius = UIScale.pt(7.5)
-        count.isHidden = (n == 0)
-        countLabels[url] = count
+        count.drawsBackground = false
+        countBadge.addSubview(count)
+        // The LABEL drives the badge width (a plain NSView has no intrinsic size to hug, which is
+        // why the badge stretched before): pin the label's sides to the badge with padding, and
+        // enforce width ≥ height so it's a perfect circle for 1 digit, a small capsule for 2.
+        NSLayoutConstraint.activate([
+            count.centerYAnchor.constraint(equalTo: countBadge.centerYAnchor),
+            count.leadingAnchor.constraint(equalTo: countBadge.leadingAnchor, constant: 5),
+            count.trailingAnchor.constraint(equalTo: countBadge.trailingAnchor, constant: -5),
+            countBadge.widthAnchor.constraint(greaterThanOrEqualTo: countBadge.heightAnchor)
+        ])
+        countLabels[url] = countBadge
 
         let idx = (workspaces.firstIndex(of: url) ?? 0) + 1
         let kbd = NSTextField(labelWithString: idx <= 9 ? "⌘\(idx)" : "")
@@ -358,7 +374,7 @@ final class WorkspaceRail: NSView, Themable {
         let hasBranch = !(branches[url] ?? "").isEmpty
         branchRow.isHidden = !hasBranch
 
-        card.addSubview(chevron); card.addSubview(dot); card.addSubview(name); card.addSubview(count); card.addSubview(kbd)
+        card.addSubview(chevron); card.addSubview(dot); card.addSubview(name); card.addSubview(countBadge); card.addSubview(kbd)
         card.addSubview(path); card.addSubview(branchRow)
         // The bottom-right corner (level with the path/branch line) hosts the count badge,
         // and the ⌘N chip swaps in there while ⌘ is held.
@@ -383,17 +399,17 @@ final class WorkspaceRail: NSView, Themable {
             branchRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
             branchRow.topAnchor.constraint(equalTo: path.bottomAnchor, constant: 3),
             // Count badge + ⌘N chip: BOTTOM-RIGHT, level with the last text line.
-            count.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
-            count.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
-            count.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(15)),
-            count.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
+            countBadge.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            countBadge.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
+            countBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(16)),
+            countBadge.heightAnchor.constraint(equalToConstant: UIScale.pt(16)),
             kbd.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
             kbd.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
             kbd.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
             // Keep the text lines clear of the bottom-right badges.
-            path.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -8),
-            branchRow.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -8)
+            path.trailingAnchor.constraint(lessThanOrEqualTo: countBadge.leadingAnchor, constant: -8),
+            branchRow.trailingAnchor.constraint(lessThanOrEqualTo: countBadge.leadingAnchor, constant: -8)
         ]
         // Card height is driven by the last visible line.
         cons.append(bottomLine.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6))
