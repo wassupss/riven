@@ -36,6 +36,16 @@ final class Updater: NSObject {
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
     }
 
+    // Silent probe: checks the feed with NO UI and fires updater(_:didFindValidUpdate:) if a
+    // newer version exists → the status-bar pill appears on its own (no manual "Check for
+    // Updates" needed). Sparkle also runs scheduled background checks (every 24h), but this
+    // makes the pill show shortly after launch too.
+    func probeForUpdate() {
+        guard configured else { return }
+        if controller == nil { start() }
+        controller?.updater.checkForUpdateInformation()
+    }
+
     // User-initiated "Check for Updates…" — Sparkle drives its own progress/UI.
     @objc func checkForUpdates(_ sender: Any?) {
         guard configured else {
