@@ -147,6 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusBar.onUpdate = { Updater.shared.checkForUpdates(nil) }
         Updater.shared.start()
         if let v = Updater.shared.availableVersion { statusBar.setUpdateAvailable(v) }
+        // Probe the feed silently ~4s after launch so the update pill appears on its own,
+        // without waiting for Sparkle's 24h scheduled check or a manual "Check for Updates".
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Updater.shared.probeForUpdate() }
         // Debug/demo: force-show the update pill (real builds surface it only when Sparkle
         // finds a newer version on the feed — a dev/test build has no feed, so it never shows).
         if let fake = ProcessInfo.processInfo.environment["RIVEN_FAKE_UPDATE"] { statusBar.setUpdateAvailable(fake) }
@@ -356,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // header lives ONLY inside the right area (see rightContainer below); the left
         // sidebar just reserves a matching top inset for the macOS traffic lights.
         let bodyH = H - statusH - titleH   // dock/editor content height, below the header
-        let body = NSSplitView(frame: NSRect(x: 0, y: statusH, width: W, height: H - statusH))
+        let body = PersistingSplitView(frame: NSRect(x: 0, y: statusH, width: W, height: H - statusH))
         body.isVertical = true
         body.dividerStyle = .thin
         body.autoresizingMask = [.width, .height]
@@ -371,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.sidebarContainer = sidebarContainer
         sidebarContainer.wantsLayer = true
         sidebarContainer.layer?.backgroundColor = Theme.bg2.cgColor
-        let sidebarSplitV = NSSplitView(frame: NSRect(x: 0, y: 0, width: 220, height: bodyH))
+        let sidebarSplitV = PersistingSplitView(frame: NSRect(x: 0, y: 0, width: 220, height: bodyH))
         sidebarSplitV.isVertical = false
         sidebarSplitV.dividerStyle = .thin
         sidebarSplitV.delegate = self          // enforce a min rail height (see extension)
@@ -585,9 +588,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             // Restore the user's saved sidebar width + rail height (default 220 / 190).
             // Guard persistence until AFTER this restore so the transient initial layout
-            // (default 220) can't clobber the saved value before we apply it.
-            let w = CGFloat(Settings.shared.double("sidebarWidth", 220))
-            let rh = CGFloat(Settings.shared.double("railHeight", 190))
+            // can't clobber the saved value before we apply it. CLAMP to sane ranges — an
+            // earlier bug saved the MAX (480 / 693), which then reopened the sidebar full-wide.
+            let sw = CGFloat(Settings.shared.double("sidebarWidth", 220))
+            let sr = CGFloat(Settings.shared.double("railHeight", 190))
+            let w = (sw >= 160 && sw <= 400) ? sw : 220     // out of range = corrupt (480 artifact) → default
+            let rh = (sr >= 96 && sr <= 500) ? sr : 190     // (693 artifact) → default
             self.sidebarWidth = w
             body.setPosition(w, ofDividerAt: 0)
             sidebarSplitV.setPosition(rh, ofDividerAt: 0)   // rail shows ~2 cards + a bit
@@ -708,18 +714,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func startAgentHooks() {
         AgentActivity.shared.sink = AgentActivity.Sink(
             setBusy: { [weak self] pane, busy in
+                // Set the pane badge BEFORE WorkspaceStatus.setPane — setPane fires onChange,
+                // which rebuilds the rail from p.badge; if the badge weren't set yet the rail
+                // would read the STALE value and busy never showed (esp. other workspaces).
+                if let p = self?.panel(pane) {
+                    // attn (needs input) outranks busy, exactly as the old poller decided.
+                    if busy { if p.badge != "attn" { p.badge = "busy" } }
+                    else if p.badge == "busy" { p.badge = nil; (p.content as? TerminalView)?.setRingState(nil) }
+                }
                 WorkspaceStatus.shared.setPane(ws: pane.workspace, pane: pane.paneId, busy: busy)
-                guard let p = self?.panel(pane) else { return }
-                // attn (needs input) outranks busy, exactly as the old poller decided.
-                if busy { if p.badge != "attn" { p.badge = "busy" } }
-                else if p.badge == "busy" { p.badge = nil; (p.content as? TerminalView)?.setRingState(nil) }
                 self?.refreshDockTabs()
             },
             setAttention: { [weak self] pane, attn in
+                if let p = self?.panel(pane) {
+                    p.badge = attn ? "attn" : nil
+                    (p.content as? TerminalView)?.setRingState(attn ? "attn" : nil)
+                }
                 WorkspaceStatus.shared.setPane(ws: pane.workspace, pane: pane.paneId, attn: attn)
-                guard let p = self?.panel(pane) else { return }
-                p.badge = attn ? "attn" : nil
-                (p.content as? TerminalView)?.setRingState(attn ? "attn" : nil)
                 self?.refreshDockTabs()
             },
             isWatched: { [weak self] pane in
@@ -1327,14 +1338,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
+    // Set while a workspace is being restored/activated: the layout code calls setActive on
+    // several panels (editor tabs, aux) which would each steal keyboard focus — so the LAST
+    // panel restored (usually the editor) ended up focused instead of the pane the user was
+    // on. Suppress focus during activation; activate() applies the intended focus at the end.
+    private var suppressAutoFocus = false
     private func dockActivePanelChanged(_ p: DockPanel?) {
         guard let p else { return }
+        refreshRailAgents()   // pane added/closed/switched → keep the rail's agent rows in sync
+        guard !suppressAutoFocus else { return }
         // Terminals carry an onActivate (makeFirstResponder + clear attn). Editor/aux panels
         // don't, so without this fallback setActive would move the ring but leave the window
-        // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared" (#3). Route
-        // every panel type through a real focus so activation always lands somewhere.
+        // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared". Route every
+        // panel type through a real focus so activation always lands somewhere.
         if p.onActivate != nil { p.onActivate?() } else { focusPanelContent(p) }
-        refreshRailAgents()   // pane added/closed/switched → keep the rail's agent rows in sync
     }
 
     // Give keyboard focus to a panel's content, by type: terminal → ghostty focus, editor →
@@ -1529,15 +1546,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         guard let url = states.keys.first(where: { $0.path == wsPath }) ?? workspaces.first(where: { $0.path == wsPath }) else { return }
-        if workspace != url { activate(url) }
-        guard let dock = activeDock,
-              let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }),
-              let g = panel.group else { return }
-        dock.setActive(g)
-        focusPanelContent(panel)
+        if workspace != url {
+            // Switching: let activate() focus the target pane AT THE END (after rebuildTabs),
+            // otherwise the editor restore would steal focus back (the "reveal from another
+            // workspace doesn't focus the pane" bug).
+            activate(url, focusPaneId: panelId)
+        } else {
+            guard let dock = activeDock,
+                  let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }),
+                  let g = panel.group else { return }
+            dock.setActive(g)
+            focusPanelContent(panel)
+        }
         // Looking at it clears the attention badge + ring + rail dot.
-        panel.badge = nil
-        (panel.content as? TerminalView)?.setRingState(nil)
+        if let panel = activeDock?.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }) {
+            panel.badge = nil
+            (panel.content as? TerminalView)?.setRingState(nil)
+        }
         WorkspaceStatus.shared.setPane(ws: wsPath, pane: panelId, attn: false)
         refreshDockTabs()
     }
@@ -1560,7 +1585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
         headerLabel?.attributedStringValue = hs
     }
-    private func activate(_ url: URL) {
+    private func activate(_ url: URL, focusPaneId: String? = nil) {
+        suppressAutoFocus = true   // don't let restored panels (editor/aux) steal focus; applied at the end
         if !workspaces.contains(url) { workspaces.append(url) }
         let st = state(for: url)
 
@@ -1651,16 +1677,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if restoredLayout {
                 st.pendingTerminals = nil                 // 구버전 폴백 기록은 더 필요 없다
                 st.openAux = Set(auxDockPanels.keys)      // 레이아웃이 배치한 aux가 곧 열린 aux
-                // restore rebuilt the group tree, so re-select the group that owned the panel
-                // the user last had focused (by id) and focus it — not the first pane (#1).
-                if let sid = st.activePanelId,
-                   let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == sid }),
-                   let g = panel.group {
-                    dock.setActive(g)
-                    focusPanelContent(panel)
-                } else {
-                    focusActivePanel()
-                }
+                // Focus is applied at the END of activate (after rebuildTabs, which would
+                // otherwise re-focus the editor) — see the restoreFocus call below.
             }
         }
         // Add the default terminal now that the dock is in the window (a libghostty
@@ -1702,6 +1720,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
         refreshRailAgents()   // populate this workspace's agent rows now its dock is live
         refreshGit()
+
+        // NOW apply focus — after rebuildTabs (which re-adds the editor) so it can't steal it.
+        // Target: an explicit reveal pane, else the pane the user last had focused here.
+        suppressAutoFocus = false
+        let target = focusPaneId ?? st.activePanelId
+        if let tid = target,
+           let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == tid }),
+           let g = panel.group {
+            dock.setActive(g)
+            focusPanelContent(panel)
+        } else {
+            focusActivePanel()
+        }
 
         // Agent-edit tracking: snapshot the session baseline + watch the tree so files
         // the agent writes appear in the Changes panel with before/after diffs.
@@ -2991,13 +3022,31 @@ extension AppDelegate: NSSplitViewDelegate {
     // geometry has been restored (so initial-layout events don't overwrite it).
     func splitViewDidResizeSubviews(_ notification: Notification) {
         guard sidebarLayoutRestored, let sv = notification.object as? NSSplitView else { return }
+        // ONLY persist while the user is actively dragging this split's divider. Window
+        // resizes, collapse/expand, pinned-usage shifts and restore all fire this too, and
+        // used to save transient MAX values (sidebarWidth=480, railHeight=693 artifacts).
+        guard (sv as? PersistingSplitView)?.isUserDragging == true else { return }
         if sv === bodySplit, !sidebarCollapsed, let sb = sv.arrangedSubviews.first {
             let w = sb.frame.width
-            if w >= 120 { sidebarWidth = w; Settings.shared.set("sidebarWidth", Double(w)) }
+            if w >= 120 && w <= 400 { sidebarWidth = w; Settings.shared.set("sidebarWidth", Double(w)) }
         } else if sv === sidebarSplit, let railView = sv.arrangedSubviews.first {
             let h = railView.frame.height
-            if h >= 48 { Settings.shared.set("railHeight", Double(h)) }
+            if h >= 48 && h <= 500 { Settings.shared.set("railHeight", Double(h)) }
         }
+    }
+}
+
+// NSSplitView that knows when the USER is dragging a divider (vs a window-resize / layout /
+// collapse pass). Divider dragging is driven by the split view's own mouseDown, which runs a
+// modal tracking loop until mouseUp — so isUserDragging is true for exactly that span, and
+// persistence can ignore the transient extreme values layout passes produce (which is how
+// sidebarWidth/railHeight kept getting saved as their MAX).
+final class PersistingSplitView: NSSplitView {
+    private(set) var isUserDragging = false
+    override func mouseDown(with event: NSEvent) {
+        isUserDragging = true
+        super.mouseDown(with: event)
+        isUserDragging = false
     }
 }
 
