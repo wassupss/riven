@@ -319,12 +319,9 @@ enum ChatText {
         for (i, part) in parts.enumerated() {
             if i % 2 == 0 {
                 let t = part.trimmingCharacters(in: .whitespacesAndNewlines)
-                if t.isEmpty { continue }
-                // One bulleted block PER PARAGRAPH (blank-line separated), CLI-style.
-                for para in t.components(separatedBy: "\n\n") {
-                    let p = para.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !p.isEmpty { out.append(proseParagraph(p)) }
-                }
+                // ONE bullet per prose segment (like the CLI's ⏺), with the whole block indented
+                // under it; internal paragraphs are spaced apart by the paragraph style.
+                if !t.isEmpty { out.append(proseParagraph(t)) }
             } else {
                 var code = part
                 var lang: String?
