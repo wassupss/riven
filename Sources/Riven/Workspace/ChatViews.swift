@@ -89,6 +89,34 @@ final class ToolLine: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // Sweeping highlight while THIS tool is in progress (same shadcn-style shimmer as the
+    // thinking label), stopped when the tool finishes. Masks the whole row's layer.
+    private let shimmer = CAGradientLayer()
+    private var shimmerOn = false
+    func startShimmer() {
+        guard !shimmerOn else { return }
+        shimmerOn = true
+        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
+        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
+        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
+        layer?.mask = shimmer
+        needsLayout = true
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+        sweep.duration = 1.4; sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shimmer.add(sweep, forKey: "shimmer")
+    }
+    func stopShimmer() {
+        guard shimmerOn else { return }
+        shimmerOn = false; shimmer.removeAllAnimations(); layer?.mask = nil
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn, let host = layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+    }
     static func symbol(_ name: String) -> String {
         switch name {
         case "Read": return "doc.text"
@@ -649,9 +677,13 @@ final class TurnBlock: NSView {
         CATransaction.commit()
     }
 
+    private weak var activeTool: ToolLine?   // the tool line currently in progress (shimmering)
+    private func stopActiveTool() { activeTool?.stopShimmer(); activeTool = nil }
+
     func bufferText(_ t: String) {
         if !hasText { hasText = true; thinkingSecs = lastSecs }
         phase = "작성 중"
+        stopActiveTool()                     // text arriving ⇒ the previous tool finished
         if openText == nil { openText = newText() }
         openText?.receive(t)
     }
@@ -676,8 +708,10 @@ final class TurnBlock: NSView {
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         closeText()
         setPhase("\(name.replacingOccurrences(of: "mcp__riven__", with: "")) 실행 중")   // shimmer shows the current tool
+        stopActiveTool()                     // previous tool finished
         let line = ToolLine(name: name, detail: detail)
         add(line)
+        line.startShimmer(); activeTool = line   // shimmer THIS tool while it runs
         if let code, !code.isEmpty {
             add(ChatText.codeBlock(code, diff: name == "Edit" || name == "MultiEdit", path: path))
             content.setCustomSpacing(5, after: line)   // the block belongs to its tool line
@@ -694,7 +728,7 @@ final class TurnBlock: NSView {
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }
         closeText(); finished = true
-        stopShimmer()
+        stopShimmer(); stopActiveTool()
         spinner.stopAnimation(nil); spinnerW.constant = 0   // reclaim the hidden spinner's gap
         // left: thinking/writing times
         var times: [String] = []

@@ -1965,6 +1965,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // another tool (cmux etc.) touching the folder. FSEvents can't tell who wrote a
             // file, so it no longer records changes here; it only refreshes the file tree.
             if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
+            self?.scheduleEditorReload(path)   // agent edited a file → refresh it if it's open
+        }
+    }
+    // Debounced editor reload for files changed on disk (agent edits) while open — otherwise
+    // the editor showed a stale copy until you closed & reopened the tab.
+    private var pendingReload = Set<String>()
+    private var reloadTimer: Timer?
+    private func scheduleEditorReload(_ path: String) {
+        DispatchQueue.main.async {
+            guard let ws = self.workspace, self.state(for: ws).openTabs.contains(path) else { return }
+            self.pendingReload.insert(path)
+            self.reloadTimer?.invalidate()
+            self.reloadTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+                guard let self else { return }
+                for p in self.pendingReload { self.reloadIfOpen(p) }
+                self.pendingReload.removeAll()
+            }
         }
     }
 
