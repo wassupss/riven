@@ -234,12 +234,19 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
 
     // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the
     // ratio of the new factor to the last one — no need to know each view's base size.
+    private var scaleDebounce: Timer?
     func applyScale() {
-        let factor = UIScale.pt(100) / 100
-        let ratio = factor / max(lastScaleFactor, 0.01)
-        lastScaleFactor = factor
-        guard abs(ratio - 1) > 0.001 else { return }
-        ChatPanel.rescale(self, ratio)
+        // ⌘+/⌘− auto-repeats; each rescale walks the whole transcript (rebuilds every label's
+        // attributed text). Coalesce rapid presses into ONE rescale so CPU doesn't peg.
+        scaleDebounce?.invalidate()
+        scaleDebounce = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            let factor = UIScale.pt(100) / 100
+            let ratio = factor / max(self.lastScaleFactor, 0.01)
+            self.lastScaleFactor = factor
+            guard abs(ratio - 1) > 0.001 else { return }
+            ChatPanel.rescale(self, ratio)
+        }
     }
     private static func rescale(_ v: NSView, _ ratio: CGFloat) {
         if let tf = v as? NSTextField {
@@ -365,17 +372,24 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        // Parse first, then render only the LAST N messages — rendering a whole long transcript
+        // synchronously (views + syntax highlight) is what made resume lag.
+        var msgs: [(user: Bool, text: String)] = []
         for line in text.split(separator: "\n") {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = o["type"] as? String, let msg = o["message"] as? [String: Any] else { continue }
             let s = ChatPanel.contentText(msg["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
             if s.isEmpty { continue }
-            if type == "user" {
-                if s.hasPrefix("/") || s.hasPrefix("<") { continue }   // slash cmd / injected context
-                addUser(s)
-            } else if type == "assistant" {
-                for v in ChatText.render(s) {
+            if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
+            else if type == "assistant" { msgs.append((false, s)) }
+        }
+        let cap = 40
+        if msgs.count > cap { addSystem("— 이전 대화 \(msgs.count - cap)개 생략 —"); msgs = Array(msgs.suffix(cap)) }
+        for m in msgs {
+            if m.user { addUser(m.text) }
+            else {
+                for v in ChatText.render(m.text) {
                     v.translatesAutoresizingMaskIntoConstraints = false
                     stack.addArrangedSubview(v)
                     v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
@@ -726,11 +740,21 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         scrollSoon()
     }
     private func newBlock() -> TurnBlock {
+        trimTranscript()               // bound the rendered view count before adding a new turn
         let block = TurnBlock()
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         return block
+    }
+    // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
+    // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
+    // stay in the CLI session/context — only their VIEWS are dropped.
+    private func trimTranscript() {
+        let cap = 120
+        let subs = stack.arrangedSubviews
+        guard subs.count > cap else { return }
+        for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
     }
 
     // ---- sub-agent panes (right split, one column each — a nested riven-style pane layout) ----
