@@ -459,6 +459,8 @@ enum ChatText {
 // MARK: - user message (LEFT-aligned) — an accent bar + quiet tint, like the CLI's "> "
 // prompt line: instantly reads as "you said this" without a loud bordered box.
 final class UserBubble: NSView {
+    private let bar = NSView()
+    private let queuedTag = NSTextField(labelWithString: "⋯ 대기 중")
     init(text: String) {
         super.init(frame: .zero)
         wantsLayer = true
@@ -468,7 +470,6 @@ final class UserBubble: NSView {
         card.layer?.cornerRadius = 8
         card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
         card.translatesAutoresizingMaskIntoConstraints = false
-        let bar = NSView()
         bar.wantsLayer = true
         bar.layer?.backgroundColor = Theme.accent.withAlphaComponent(0.8).cgColor
         bar.layer?.cornerRadius = 1.5
@@ -479,7 +480,10 @@ final class UserBubble: NSView {
         l.attributedStringValue = NSAttributedString(string: text,
             attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12.5), .paragraphStyle: p])
         l.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(bar); card.addSubview(l); addSubview(card)
+        queuedTag.font = UIScale.font(9, .medium); queuedTag.textColor = Theme.warning
+        queuedTag.isHidden = true
+        queuedTag.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             bar.topAnchor.constraint(equalTo: card.topAnchor),
@@ -489,6 +493,8 @@ final class UserBubble: NSView {
             l.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
             l.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 11),
             l.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            queuedTag.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            queuedTag.topAnchor.constraint(equalTo: card.topAnchor, constant: 5),
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -496,6 +502,12 @@ final class UserBubble: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    // Mid-turn messages wait their turn: dim + a "대기 중" tag until they start (CLI-style ack).
+    func setQueued(_ q: Bool) {
+        queuedTag.isHidden = !q
+        alphaValue = q ? 0.55 : 1
+        bar.layer?.backgroundColor = (q ? Theme.warning : Theme.accent.withAlphaComponent(0.8)).cgColor
+    }
 }
 
 // MARK: - inline choice card (permission / plan-proceed / any agent choice)

@@ -639,6 +639,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func interruptTurn() {
         guard turnStart != nil else { return }
         session?.interrupt()
+        queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
         queuedMessages.removeAll()            // stop = cancel everything pending
         addSystem("⏹ 중단됨")
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
@@ -651,14 +652,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         input.stringValue = ""; hideSlash()
         if text.hasPrefix("/"), handleSlash(text) { return }   // riven-handled slash commands
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }   // rail/tab title
-        addUser(text)
-        // A turn is still running (or awaiting approval): QUEUE this message instead of
-        // clobbering the live turn's state — sending mid-turn wiped sub-agents and wedged the
-        // session. It's sent when the current turn finishes.
-        if turnStart != nil { queuedMessages.append(text); return }
+        let bubble = addUser(text)
+        // A turn is still running (or awaiting approval): QUEUE this message (shown dimmed +
+        // "대기 중", like the CLI acknowledging it) and send it when the current turn finishes.
+        if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)); return }
         beginTurn(text)
     }
-    private var queuedMessages: [String] = []
+    private var queuedMessages: [(text: String, bubble: UserBubble)] = []
     var onResumeRequest: (() -> Void)?
     private var lastUsage: ChatUsage?
 
@@ -725,8 +725,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Send an expanded prompt as if the user typed it (for /init, /review).
     private func sendPrompt(_ text: String) {
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
-        addUser(text)
-        if turnStart != nil { queuedMessages.append(text) } else { beginTurn(text) }
+        let b = addUser(text)
+        if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
     private func pickModel() {
@@ -824,7 +824,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
         // Send the next queued user message (typed while this turn was running).
-        if !queuedMessages.isEmpty { beginTurn(queuedMessages.removeFirst()) }
+        if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text) }
         else { setRunning(false); onBusyChange?(false) }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
@@ -832,12 +832,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     // ---- stack helpers ----
-    private func addUser(_ text: String) {
+    @discardableResult private func addUser(_ text: String) -> UserBubble {
         let v = UserBubble(text: text)
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         scrollSoon()
+        return v
     }
     private func addSystem(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
