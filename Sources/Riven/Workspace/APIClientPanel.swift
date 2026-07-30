@@ -637,6 +637,12 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
                                      token: tokenField.stringValue, user: userField.stringValue, pass: passField.stringValue),
                        at: Date().timeIntervalSince1970)
     }
+    // Programmatic entry for the native chat's riven_api_request tool: fill the fields and fire.
+    func run(method m: String, url: String, headers: String = "", body: String = "") {
+        var r = APIRequestData(); r.method = m.uppercased(); r.url = url; r.headers = headers; r.body = body
+        load(r)
+        send()
+    }
     private func load(_ r: APIRequestData) {
         method.selectItem(withTitle: r.method)
         urlField.stringValue = r.url

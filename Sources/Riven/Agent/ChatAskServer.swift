@@ -50,7 +50,8 @@ final class ChatAskServer {
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
         - 웹페이지를 사용자에게 보여줄 땐 `riven_open_browser`(url) 로 riven 미리보기 패널에 엽니다.
         - 웹페이지 화면이 필요하면 `riven_screenshot`(url?) 로 캡처합니다. 반환된 PNG 경로를 Read 로 읽어 확인하세요.
-        - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) 로 요청하고 반환된 상태/본문을 확인하세요.
+        - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
+        - riven의 패널/워크스페이스를 파악·조작할 수 있습니다: `riven_panels`(현재 패널 목록), `riven_open_panel`(kind), `riven_close_panel`(id), `riven_workspaces`, `riven_open_workspace`(path).
         """
     }
 
@@ -158,8 +159,23 @@ final class ChatAskServer {
              "description": "Open an optional URL in riven's preview and capture a screenshot. Returns a PNG file path — read it with the Read tool to see the page.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
             {"name": "riven_api_request",
-             "description": "Perform an HTTP request (API test) and return status, headers and body.",
+             "description": "Run an HTTP request in riven's API-client panel (opens it, shows the response) and also return status/headers/body.",
              "inputSchema": {"type": "object", "properties": {"method": {"type": "string"}, "url": {"type": "string"}, "headers": {"type": "object"}, "body": {"type": "string"}}, "required": ["method", "url"]}},
+            {"name": "riven_panels",
+             "description": "List riven's current panels (dock panes) — id, kind, title — so you understand the workspace layout.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "riven_open_panel",
+             "description": "Open a riven panel. kind: editor | terminal | chat | search | git | preview | api | changes.",
+             "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
+            {"name": "riven_close_panel",
+             "description": "Close a panel by its id (from riven_panels).",
+             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+            {"name": "riven_workspaces",
+             "description": "List open workspaces (folders) and which one is active.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "riven_open_workspace",
+             "description": "Open/switch to a workspace folder by path.",
+             "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
         ]
         for line in sys.stdin:
             line = line.strip()

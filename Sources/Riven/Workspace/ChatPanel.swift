@@ -431,16 +431,22 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     // ---- riven tools (MCP) ----
     var onOpenBrowser: ((String) -> Void)?
     var onScreenshot: ((String?, @escaping (String?) -> Void) -> Void)?
+    var onApiRequest: ((_ method: String, _ url: String, _ headers: String, _ body: String) -> Void)?
+    var onPanels: (() -> String)?
+    var onOpenPanel: ((String) -> String)?
+    var onClosePanel: ((String) -> String)?
+    var onWorkspaces: (() -> String)?
+    var onOpenWorkspace: ((String) -> String)?
 
     private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
+        func s(_ k: String) -> String { args[k] as? String ?? "" }
         switch tool {
         case "ask_user":
-            presentAsk(id, args["question"] as? String ?? "", args["options"] as? [String] ?? [])
+            presentAsk(id, s("question"), args["options"] as? [String] ?? [])
         case "riven_open_browser":
-            let url = args["url"] as? String ?? ""
-            onOpenBrowser?(url)
-            addSystem("🌐 미리보기 패널에 열었습니다: \(url)")
-            session?.respondTool(id, "opened \(url) in riven preview panel")
+            onOpenBrowser?(s("url"))
+            addSystem("🌐 미리보기 패널에 열었습니다: \(s("url"))")
+            session?.respondTool(id, "opened \(s("url")) in riven preview panel")
         case "riven_screenshot":
             let url = args["url"] as? String
             addSystem("📸 스크린샷 캡처 중…")
@@ -450,7 +456,21 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
                 }
             } else { session?.respondTool(id, "screenshot unavailable") }
         case "riven_api_request":
+            // Show it in the API panel AND return the body to the agent.
+            let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
+            onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
+            addSystem("↗ API 패널: \(s("method")) \(s("url"))")
             apiRequest(args) { [weak self] result in self?.session?.respondTool(id, result) }
+        case "riven_panels":
+            session?.respondTool(id, onPanels?() ?? "(no panels)")
+        case "riven_open_panel":
+            session?.respondTool(id, onOpenPanel?(s("kind")) ?? "unavailable")
+        case "riven_close_panel":
+            session?.respondTool(id, onClosePanel?(s("id")) ?? "unavailable")
+        case "riven_workspaces":
+            session?.respondTool(id, onWorkspaces?() ?? "(none)")
+        case "riven_open_workspace":
+            session?.respondTool(id, onOpenWorkspace?(s("path")) ?? "unavailable")
         default:
             session?.respondTool(id, "unknown tool: \(tool)")
         }

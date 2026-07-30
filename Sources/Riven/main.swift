@@ -1151,6 +1151,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.previewPanel.capture(done)
             }
         }
+        chat.onApiRequest = { [weak self] method, url, headers, body in
+            guard let self else { return }
+            if self.auxDockPanels["api"] == nil { self.toggleDockPanel("api") }
+            self.apiPanel.run(method: method, url: url, headers: headers, body: body)
+        }
+        // riven layout introspection + control for the agent.
+        chat.onPanels = { [weak self] in
+            guard let self, let dock = self.activeDock else { return "(no dock)" }
+            var out: [String] = []
+            for g in dock.groups { for p in g.panels { out.append("- id=\(p.id) kind=\(self.panelKind(p)) title=\(p.title)") } }
+            return "workspace: \(self.workspace?.path ?? "?")\npanels:\n" + out.joined(separator: "\n")
+        }
+        chat.onOpenPanel = { [weak self] kind in
+            guard let self else { return "unavailable" }
+            switch kind {
+            case "editor": self.showEditorPane()
+            case "terminal": self.newTerminal()
+            case "chat": self.newChat()
+            case "search", "git", "preview", "api", "changes": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
+            default: return "unknown kind: \(kind)"
+            }
+            return "opened \(kind)"
+        }
+        chat.onClosePanel = { [weak self] pid in
+            guard let self, let dock = self.activeDock else { return "unavailable" }
+            for g in dock.groups { for p in g.panels where p.id == pid { dock.removePanel(p); self.refreshRailAgents(); return "closed \(pid)" } }
+            return "no panel with id \(pid)"
+        }
+        chat.onWorkspaces = { [weak self] in
+            guard let self else { return "(none)" }
+            return self.workspaces.map { ($0 == self.workspace ? "* " : "- ") + $0.path }.joined(separator: "\n")
+        }
+        chat.onOpenWorkspace = { [weak self] path in
+            guard let self else { return "unavailable" }
+            let url = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+            if let existing = self.workspaces.first(where: { $0.path == url.path }) { self.activate(existing); return "switched to \(url.path)" }
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                let ws = self.uniqueWorkspaceURL(for: url); self.rail.addWorkspace(ws); self.activate(ws); return "opened \(url.path)"
+            }
+            return "not a folder: \(path)"
+        }
         chat.bind(workspace: st.url, resume: resume)
         let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
         let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: "Claude",
@@ -1212,6 +1254,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.editor.agentDiff(path: url.path, before: before, after: after)
         }
+    }
+    // Human-readable kind of a dock panel (for the chat's riven_panels tool).
+    private func panelKind(_ p: DockPanel) -> String {
+        if p === editorDockPanel { return "editor" }
+        if p.content is TerminalView { return p.agentName != nil ? "agent" : "terminal" }
+        if p.content is ChatPanel { return "chat" }
+        if p.content === sourceControl { return "git" }
+        if p.content === searchPanel { return "search" }
+        if p.content === previewPanel { return "preview" }
+        if p.content === apiPanel { return "api" }
+        if p.content === changesPanel { return "changes" }
+        return "panel"
     }
     private func newChat() {                            // opens a new agent session pane
         guard let dock = activeDock, let ws = workspace else { return }
