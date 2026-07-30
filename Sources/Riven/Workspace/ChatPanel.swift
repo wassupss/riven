@@ -7,14 +7,14 @@ import AppKit
 // get their own lane. A permission-mode selector — cyclable with Shift+Tab like the CLI —
 // includes an interactive "승인 요청" mode that pops an approval card per tool call. A
 // scrollable slash-command popup autocompletes `/` commands.
-final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
+final class ChatPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()                   // conversation
     private let stack = FlippedStack()
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
     private let subStack = FlippedStack()
-    private let input = NSTextField()
+    private let input = ChatInput.make()
     private let sendButton = NSButton()
     private let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let composer = NSVisualEffectView()          // glass composer row (mode | input | send)
@@ -126,13 +126,10 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         modePopup.target = self; modePopup.action = #selector(modeChanged)
         modePopup.translatesAutoresizingMaskIntoConstraints = false
 
-        input.placeholderString = "Claude에게 메시지…  ( / 명령 · Shift+Tab 모드 )"
-        input.font = UIScale.font(12); input.textColor = Theme.fg
-        input.focusRingType = .none
-        input.isBezeled = false; input.drawsBackground = false   // naked field on the glass
-        input.delegate = self
-        input.target = self; input.action = #selector(sendFromInput)
-        input.translatesAutoresizingMaskIntoConstraints = false
+        input.placeholder = "Claude에게 메시지…  ( / 명령 · Shift+Enter 줄바꿈 )"
+        input.onSubmit = { [weak self] in self?.sendFromInput() }
+        input.onTextChange = { [weak self] in self?.inputChanged() }
+        input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
 
         sendButton.title = "보내기"
         sendButton.isBordered = false
@@ -176,19 +173,21 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             composer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            composer.heightAnchor.constraint(equalToConstant: UIScale.pt(44)),
-            // one aligned row: chip | input | send, all vertically centered
+            composer.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(44)),
+            // chip + send anchored to the BOTTOM row; the input grows upward (1→6 lines) and
+            // drives the composer height via its intrinsic size.
             modeChip.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 8),
-            modeChip.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
+            modeChip.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
             modeChip.heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
             modePopup.leadingAnchor.constraint(equalTo: modeChip.leadingAnchor, constant: 8),
             modePopup.trailingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: -4),
             modePopup.centerYAnchor.constraint(equalTo: modeChip.centerYAnchor),
-            input.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 10),
-            input.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
-            input.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -10),
+            input.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 8),
+            input.topAnchor.constraint(equalTo: composer.topAnchor, constant: 6),
+            input.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -6),
+            input.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8),
             sendButton.trailingAnchor.constraint(equalTo: composer.trailingAnchor, constant: -8),
-            sendButton.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
+            sendButton.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
             sendButton.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
             sendButton.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(64)),
             // slash popup floats just above the composer card
@@ -305,7 +304,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         guard !insert.isEmpty else { return false }
         input.stringValue = input.stringValue.isEmpty ? insert : input.stringValue + " " + insert
         window?.makeFirstResponder(input)
-        input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
+        input.setSelectedRange(NSRange(location: input.string.count, length: 0))
         return true
     }
 
@@ -839,16 +838,17 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         scroll.reflectScrolledClipView(clip)
     }
 
-    // ---- slash-command autocomplete ----
-    func controlTextDidChange(_ obj: Notification) {
+    // ---- slash-command autocomplete (driven by ChatInput's onTextChange/onKey) ----
+    private func inputChanged() {
         let s = input.stringValue
-        guard s.hasPrefix("/"), !s.contains(" ") else { hideSlash(); return }
+        guard s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") else { hideSlash(); return }
         let q = String(s.dropFirst()).lowercased()
         let matches = commands.filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) }
         if matches.isEmpty { hideSlash() } else { showSlash(matches) }
     }
-    // Route Shift+Tab (mode cycle) and, when the popup is up, arrows / Enter / Esc.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+    // Shift+Tab (mode cycle) any time; when the popup is up: arrows / Enter / Esc. Return true
+    // if consumed (so ChatInput doesn't also act on the key).
+    private func inputKey(_ sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertBacktab(_:)) { cycleMode(); return true }
         guard !slash.isHidden else { return false }
         switch sel {
@@ -869,7 +869,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         if let cmd = slash.current() { input.stringValue = "/" + cmd.name }   // no trailing space
         hideSlash()
         window?.makeFirstResponder(input)
-        input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
+        input.setSelectedRange(NSRange(location: input.string.count, length: 0))
     }
 
     // Claude Code's standard slash commands (for CLI-parity autocomplete) + custom commands

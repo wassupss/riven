@@ -16,6 +16,61 @@ final class ClosureButton: NSButton {
     @objc private func fire() { onClick() }
 }
 
+// Multiline chat input: Enter sends, Shift+Enter inserts a newline; grows 1→6 lines. Replaces
+// the single-line NSTextField so multi-line messages work like the CLI.
+final class ChatInput: NSTextView {
+    var onSubmit: (() -> Void)?
+    var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle — return true if consumed
+    var onTextChange: (() -> Void)?
+    var placeholder = "" { didSet { needsDisplay = true } }
+    // Compatibility shim so call sites can keep using stringValue.
+    var stringValue: String {
+        get { string }
+        set { string = newValue; invalidateIntrinsicContentSize(); needsDisplay = true }
+    }
+
+    static func make() -> ChatInput {
+        let tv = ChatInput(frame: .zero)
+        tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
+        tv.font = UIScale.font(13); tv.textColor = Theme.fg
+        tv.textContainerInset = NSSize(width: 2, height: 6)
+        tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        return tv
+    }
+    override var intrinsicContentSize: NSSize {
+        guard let lm = layoutManager, let tc = textContainer else { return NSSize(width: NSView.noIntrinsicMetric, height: 24) }
+        lm.ensureLayout(for: tc)
+        let line = (font?.boundingRectForFont.height ?? 16)
+        let content = lm.usedRect(for: tc).height
+        let pad = textContainerInset.height * 2
+        let minH = line + pad, maxH = line * 6 + pad
+        return NSSize(width: NSView.noIntrinsicMetric, height: min(max(content + pad, minH), maxH))
+    }
+    override func didChangeText() {
+        super.didChangeText()
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+        onTextChange?()
+    }
+    override func doCommand(by selector: Selector) {
+        if let onKey, onKey(selector) { return }           // popup / mode-cycle first
+        if selector == #selector(insertNewline(_:)) {
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { super.insertNewline(nil) }  // Shift+Enter = newline
+            else { onSubmit?() }                            // Enter = send
+            return
+        }
+        super.doCommand(by: selector)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
+            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(13)])
+    }
+}
+
 // Rich building blocks for the native chat panel (ChatPanel.swift): a working indicator,
 // per-turn blocks with a thinking/writing/elapsed header + token usage, interleaved tool
 // lines (edits render a diff), streaming assistant text with a smooth typewriter reveal and
