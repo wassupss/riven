@@ -16,6 +16,61 @@ final class ClosureButton: NSButton {
     @objc private func fire() { onClick() }
 }
 
+// Multiline chat input: Enter sends, Shift+Enter inserts a newline; grows 1→6 lines. Replaces
+// the single-line NSTextField so multi-line messages work like the CLI.
+final class ChatInput: NSTextView {
+    var onSubmit: (() -> Void)?
+    var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle — return true if consumed
+    var onTextChange: (() -> Void)?
+    var placeholder = "" { didSet { needsDisplay = true } }
+    // Compatibility shim so call sites can keep using stringValue.
+    var stringValue: String {
+        get { string }
+        set { string = newValue; invalidateIntrinsicContentSize(); needsDisplay = true }
+    }
+
+    static func make() -> ChatInput {
+        let tv = ChatInput(frame: .zero)
+        tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
+        tv.font = UIScale.font(13); tv.textColor = Theme.fg
+        tv.textContainerInset = NSSize(width: 2, height: 6)
+        tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.translatesAutoresizingMaskIntoConstraints = false
+        return tv
+    }
+    override var intrinsicContentSize: NSSize {
+        guard let lm = layoutManager, let tc = textContainer else { return NSSize(width: NSView.noIntrinsicMetric, height: 24) }
+        lm.ensureLayout(for: tc)
+        let line = (font?.boundingRectForFont.height ?? 16)
+        let content = lm.usedRect(for: tc).height
+        let pad = textContainerInset.height * 2
+        let minH = line + pad, maxH = line * 6 + pad
+        return NSSize(width: NSView.noIntrinsicMetric, height: min(max(content + pad, minH), maxH))
+    }
+    override func didChangeText() {
+        super.didChangeText()
+        invalidateIntrinsicContentSize()
+        needsDisplay = true
+        onTextChange?()
+    }
+    override func doCommand(by selector: Selector) {
+        if let onKey, onKey(selector) { return }           // popup / mode-cycle first
+        if selector == #selector(insertNewline(_:)) {
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { super.insertNewline(nil) }  // Shift+Enter = newline
+            else { onSubmit?() }                            // Enter = send
+            return
+        }
+        super.doCommand(by: selector)
+    }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
+            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(13)])
+    }
+}
+
 // Rich building blocks for the native chat panel (ChatPanel.swift): a working indicator,
 // per-turn blocks with a thinking/writing/elapsed header + token usage, interleaved tool
 // lines (edits render a diff), streaming assistant text with a smooth typewriter reveal and
@@ -58,7 +113,9 @@ final class WorkingDots: NSView {
 // MARK: - tool line ("◇ Read  math.js") — a quiet, muted step row (like the CLI's dim
 // tool lines): the whole row recedes so surrounding prose stays the visual focus.
 final class ToolLine: NSView {
+    private let nameLabel: NSTextField
     init(name: String, detail: String) {
+        nameLabel = NSTextField(labelWithString: name)
         super.init(frame: .zero)
         wantsLayer = true
         let icon = NSImageView()
@@ -66,32 +123,34 @@ final class ToolLine: NSView {
         icon.contentTintColor = Theme.fgDim
         icon.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
-        let nameLabel = NSTextField(labelWithString: name)
         nameLabel.font = UIScale.font(11, .medium); nameLabel.textColor = Theme.fg
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.wantsLayer = true
         nameLabel.setContentHuggingPriority(.required, for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         let detailLabel = NSTextField(labelWithString: detail)
         detailLabel.font = UIScale.mono(10.5); detailLabel.textColor = Theme.fgDim
         detailLabel.lineBreakMode = .byTruncatingMiddle
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        [icon, nameLabel, detailLabel].forEach { addSubview($0) }
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // A single horizontal stack pinned to the row's edges — the row height always wraps its
+        // tallest child, so rows can never under-report height and overlap the next item.
+        let row = NSStackView(views: [icon, nameLabel, detailLabel])
+        row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 7
+        row.setCustomSpacing(8, after: nameLabel)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: UIScale.pt(14)),
-            nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            detailLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            topAnchor.constraint(equalTo: nameLabel.topAnchor, constant: -3),
-            bottomAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3)
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // Sweeping highlight while THIS tool is in progress (same shadcn-style shimmer as the
-    // thinking label), stopped when the tool finishes. Masks the whole row's layer.
+    // A bright band glides left→right over the tool NAME while it runs (same shadcn-style flow
+    // as "생각 중"), stopped when it finishes. Masking the single text label — not the whole
+    // row — makes it read as a directional sweep instead of the whole row blinking.
     private let shimmer = CAGradientLayer()
     private var shimmerOn = false
     func startShimmer() {
@@ -100,7 +159,7 @@ final class ToolLine: NSView {
         shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
         let dim = NSColor.white.withAlphaComponent(0.35).cgColor
         shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        layer?.mask = shimmer
+        nameLabel.layer?.mask = shimmer
         needsLayout = true
         let sweep = CABasicAnimation(keyPath: "locations")
         sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
@@ -110,11 +169,11 @@ final class ToolLine: NSView {
     }
     func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); layer?.mask = nil
+        shimmerOn = false; shimmer.removeAllAnimations(); nameLabel.layer?.mask = nil
     }
     override func layout() {
         super.layout()
-        guard shimmerOn, let host = layer else { return }
+        guard shimmerOn, let host = nameLabel.layer else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
     }
     static func symbol(_ name: String) -> String {
@@ -135,7 +194,10 @@ final class ToolLine: NSView {
 // MARK: - assistant text (typewriter reveal, then re-render markdown + code blocks)
 final class AssistantText: NSView {
     private let content = NSStackView()
-    private var full = ""
+    // Backing store is [Character], not String: String.count / Array(full) are BOTH O(n) and were
+    // being run every typewriter tick → O(n²) CPU over a long streamed answer. With an array,
+    // count is O(1) and the prefix slice is O(shown).
+    private var chars: [Character] = []
     private var shownCount = 0
     private var streaming: NSTextField?
     private var finalized = false
@@ -154,16 +216,16 @@ final class AssistantText: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    var isEmpty: Bool { full.isEmpty }
-    func receive(_ chunk: String) { full += chunk }
+    var isEmpty: Bool { chars.isEmpty }
+    func receive(_ chunk: String) { chars.append(contentsOf: chunk) }
 
-    // Reveal a slice toward `full` — steady enough to look typed, fast enough to catch bursts.
+    // Reveal a slice toward the full text — steady enough to look typed, fast enough to catch bursts.
     @discardableResult func advance() -> Bool {
-        guard !finalized, shownCount < full.count else { return false }
-        let remaining = full.count - shownCount
+        guard !finalized, shownCount < chars.count else { return false }
+        let remaining = chars.count - shownCount
         let step = max(3, remaining / 5)                 // ease-out: bigger jumps when behind
-        shownCount = min(full.count, shownCount + step)
-        ensureLabel().attributedStringValue = ChatText.attributedProse(String(Array(full)[0..<shownCount]))
+        shownCount = min(chars.count, shownCount + step)
+        ensureLabel().attributedStringValue = ChatText.attributedProse(String(chars[0..<shownCount]))
         return true
     }
     private func ensureLabel() -> NSTextField {
@@ -178,7 +240,7 @@ final class AssistantText: NSView {
         finalized = true
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         streaming = nil
-        for v in ChatText.render(full) {
+        for v in ChatText.render(String(chars)) {
             content.addArrangedSubview(v)
             v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
@@ -314,8 +376,12 @@ enum ChatText {
     private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
     static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        let m = NSMutableAttributedString(string: code,
-            attributes: [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p])
+        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p]
+        let m = NSMutableAttributedString(string: code, attributes: base)
+        // Skip regex highlighting for large blocks: the string/comment patterns can catastrophically
+        // backtrack, and the per-match `protected` intersection is O(n²) — together they pegged the
+        // CPU and froze the app (e.g. a big SQL dump rendered on workspace switch). Plain mono instead.
+        guard code.utf16.count <= 2500 else { return m }
         let full = NSRange(location: 0, length: (code as NSString).length)
         var protected = IndexSet()
         func paint(_ pattern: String, _ color: NSColor, options: NSRegularExpression.Options = [], protect: Bool) {
@@ -401,6 +467,8 @@ enum ChatText {
 // MARK: - user message (LEFT-aligned) — an accent bar + quiet tint, like the CLI's "> "
 // prompt line: instantly reads as "you said this" without a loud bordered box.
 final class UserBubble: NSView {
+    private let bar = NSView()
+    private let queuedTag = NSTextField(labelWithString: "⋯ 대기 중")
     init(text: String) {
         super.init(frame: .zero)
         wantsLayer = true
@@ -410,7 +478,6 @@ final class UserBubble: NSView {
         card.layer?.cornerRadius = 8
         card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
         card.translatesAutoresizingMaskIntoConstraints = false
-        let bar = NSView()
         bar.wantsLayer = true
         bar.layer?.backgroundColor = Theme.accent.withAlphaComponent(0.8).cgColor
         bar.layer?.cornerRadius = 1.5
@@ -421,7 +488,10 @@ final class UserBubble: NSView {
         l.attributedStringValue = NSAttributedString(string: text,
             attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12.5), .paragraphStyle: p])
         l.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(bar); card.addSubview(l); addSubview(card)
+        queuedTag.font = UIScale.font(9, .medium); queuedTag.textColor = Theme.warning
+        queuedTag.isHidden = true
+        queuedTag.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             bar.topAnchor.constraint(equalTo: card.topAnchor),
@@ -431,6 +501,8 @@ final class UserBubble: NSView {
             l.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
             l.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 11),
             l.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            queuedTag.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+            queuedTag.topAnchor.constraint(equalTo: card.topAnchor, constant: 5),
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -438,6 +510,12 @@ final class UserBubble: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    // Mid-turn messages wait their turn: dim + a "대기 중" tag until they start (CLI-style ack).
+    func setQueued(_ q: Bool) {
+        queuedTag.isHidden = !q
+        alphaValue = q ? 0.55 : 1
+        bar.layer?.backgroundColor = (q ? Theme.warning : Theme.accent.withAlphaComponent(0.8)).cgColor
+    }
 }
 
 // MARK: - inline choice card (permission / plan-proceed / any agent choice)
@@ -625,9 +703,16 @@ final class TurnBlock: NSView {
     func startWorking() { phase = "생각 중"; spinner.startAnimation(nil); workLabel.stringValue = "생각 중…"; startShimmer() }
     // Set the current activity (a tool name etc.) — shown shimmering, like "생각 중".
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
+    private var lastRenderedSecs = -1
+    private var lastRenderedPhase = ""
     func tick(_ secs: Int) {
         lastSecs = secs
         guard !finished, !waiting else { return }
+        // The flush timer calls tick() ~20×/s, but the label only ever shows whole seconds. Skip the
+        // relayout unless the second OR the phase actually changed — otherwise we forced a full
+        // needsLayout pass (shimmer mask re-fit) 20×/s for identical text.
+        guard secs != lastRenderedSecs || phase != lastRenderedPhase else { return }
+        lastRenderedSecs = secs; lastRenderedPhase = phase
         workLabel.stringValue = phase + "… " + ChatText.duration(secs)
         needsLayout = true              // text width changed → re-fit the shimmer mask
     }

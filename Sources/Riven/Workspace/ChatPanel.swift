@@ -7,14 +7,14 @@ import AppKit
 // get their own lane. A permission-mode selector — cyclable with Shift+Tab like the CLI —
 // includes an interactive "승인 요청" mode that pops an approval card per tool call. A
 // scrollable slash-command popup autocompletes `/` commands.
-final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
+final class ChatPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()                   // conversation
     private let stack = FlippedStack()
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
     private let subStack = FlippedStack()
-    private let input = NSTextField()
+    private let input = ChatInput.make()
     private let sendButton = NSButton()
     private let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let composer = NSVisualEffectView()          // glass composer row (mode | input | send)
@@ -33,6 +33,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     private var commands: [SlashCommand] = []
     private var lastScaleFactor: CGFloat = 1
     private var pendingResume: String?                   // resume this session id on next bind
+    var agentPersona: String?                            // run this pane as `claude --agent <name>`
     // Approvals/choices are shown ONE AT A TIME (others queue); the elapsed timer is paused
     // while any is pending, since the agent is idle waiting on the user.
     private var approvalQueue: [() -> Void] = []
@@ -126,20 +127,17 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         modePopup.target = self; modePopup.action = #selector(modeChanged)
         modePopup.translatesAutoresizingMaskIntoConstraints = false
 
-        input.placeholderString = "Claude에게 메시지…  ( / 명령 · Shift+Tab 모드 )"
-        input.font = UIScale.font(12); input.textColor = Theme.fg
-        input.focusRingType = .none
-        input.isBezeled = false; input.drawsBackground = false   // naked field on the glass
-        input.delegate = self
-        input.target = self; input.action = #selector(sendFromInput)
-        input.translatesAutoresizingMaskIntoConstraints = false
+        input.placeholder = "Claude에게 메시지…  ( / 명령 · Shift+Enter 줄바꿈 )"
+        input.onSubmit = { [weak self] in self?.sendFromInput() }
+        input.onTextChange = { [weak self] in self?.inputChanged() }
+        input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
 
         sendButton.title = "보내기"
         sendButton.isBordered = false
         sendButton.wantsLayer = true
         sendButton.layer?.cornerRadius = UIScale.pt(26) / 2
         sendButton.font = UIScale.font(11, .semibold)
-        sendButton.target = self; sendButton.action = #selector(sendFromInput)
+        sendButton.target = self; sendButton.action = #selector(sendOrStop)
         sendButton.translatesAutoresizingMaskIntoConstraints = false
 
         slash.translatesAutoresizingMaskIntoConstraints = false
@@ -176,19 +174,21 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             composer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            composer.heightAnchor.constraint(equalToConstant: UIScale.pt(44)),
-            // one aligned row: chip | input | send, all vertically centered
+            composer.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(44)),
+            // chip + send anchored to the BOTTOM row; the input grows upward (1→6 lines) and
+            // drives the composer height via its intrinsic size.
             modeChip.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 8),
-            modeChip.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
+            modeChip.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
             modeChip.heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
             modePopup.leadingAnchor.constraint(equalTo: modeChip.leadingAnchor, constant: 8),
             modePopup.trailingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: -4),
             modePopup.centerYAnchor.constraint(equalTo: modeChip.centerYAnchor),
-            input.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 10),
-            input.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
-            input.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -10),
+            input.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 8),
+            input.topAnchor.constraint(equalTo: composer.topAnchor, constant: 6),
+            input.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -6),
+            input.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8),
             sendButton.trailingAnchor.constraint(equalTo: composer.trailingAnchor, constant: -8),
-            sendButton.centerYAnchor.constraint(equalTo: composer.centerYAnchor),
+            sendButton.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
             sendButton.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
             sendButton.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(64)),
             // slash popup floats just above the composer card
@@ -216,18 +216,25 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
     // Glass + chip + send-pill colors, all Theme tokens (re-applied on theme switch). The
     // effect view's appearance follows the riven theme, not the system, so the blur matches.
+    private var running = false
     private func applyComposerTheme() {
         composer.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
         composer.layer?.borderColor = Theme.edge.cgColor
         modeChip.layer?.backgroundColor = Theme.hover.cgColor
         input.textColor = Theme.fg
-        sendButton.layer?.backgroundColor = Theme.accentMuted.cgColor
         sendButton.layer?.borderWidth = 1
-        sendButton.layer?.borderColor = Theme.accentBorder.cgColor
+        styleSendButton()
+    }
+    // Send pill ⇄ stop pill: while a turn runs the button interrupts (danger tint, "중단").
+    private func setRunning(_ r: Bool) { running = r; styleSendButton() }
+    private func styleSendButton() {
+        let stop = running
+        sendButton.layer?.backgroundColor = (stop ? Theme.danger.withAlphaComponent(0.14) : Theme.accentMuted).cgColor
+        sendButton.layer?.borderColor = (stop ? Theme.danger.withAlphaComponent(0.5) : Theme.accentBorder).cgColor
         let ps = NSMutableParagraphStyle(); ps.alignment = .center
         sendButton.attributedTitle = NSAttributedString(
-            string: "보내기",
-            attributes: [.foregroundColor: Theme.accent,
+            string: stop ? "중단" : "보내기",
+            attributes: [.foregroundColor: stop ? Theme.danger : Theme.accent,
                          .font: sendButton.font ?? UIScale.font(11, .semibold),
                          .paragraphStyle: ps])
     }
@@ -305,7 +312,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         guard !insert.isEmpty else { return false }
         input.stringValue = input.stringValue.isEmpty ? insert : input.stringValue + " " + insert
         window?.makeFirstResponder(input)
-        input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
+        input.setSelectedRange(NSRange(location: input.string.count, length: 0))
         return true
     }
 
@@ -371,11 +378,22 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        // Parse first, then render only the LAST N messages — rendering a whole long transcript
-        // synchronously (views + syntax highlight) is what made resume lag.
+        // Read only the TAIL of the transcript. A long session's .jsonl can be many MB / thousands
+        // of lines; reading + JSON-parsing every line just to render the last 40 messages is what
+        // spiked CPU on resume / workspace-switch. Seek to the last 512KB and drop the partial line.
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let window: UInt64 = 512 * 1024
+        let startOff = size > window ? size - window : 0
+        try? fh.seek(toOffset: startOff)
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return }
+        var rawLines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        if startOff > 0 && !rawLines.isEmpty { rawLines.removeFirst() }   // partial first line
+        // Only the last ~200 lines can contain the 40 messages we render.
+        let tailLines = rawLines.suffix(200)
         var msgs: [(user: Bool, text: String)] = []
-        for line in text.split(separator: "\n") {
+        for line in tailLines {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = o["type"] as? String, let msg = o["message"] as? [String: Any] else { continue }
@@ -455,7 +473,8 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
         let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
-            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true)
+            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
+            agentName: agentPersona)
         s?.onInit = { [weak self] sid, model in self?.model = model; self?.onSessionId?(sid) }
         s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t) }
         s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.scrollSoon() }
@@ -627,6 +646,16 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
 
     // ---- send / turn lifecycle ----
+    // Interrupt the running turn (Esc / the stop button) — like the CLI's Esc.
+    private func interruptTurn() {
+        guard turnStart != nil else { return }
+        session?.interrupt()
+        queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
+        queuedMessages.removeAll()            // stop = cancel everything pending
+        addSystem("⏹ 중단됨")
+        // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
+    }
+    @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
     @objc private func sendFromInput() {
         if !slash.isHidden { acceptSlash(); return }
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -634,14 +663,13 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         input.stringValue = ""; hideSlash()
         if text.hasPrefix("/"), handleSlash(text) { return }   // riven-handled slash commands
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }   // rail/tab title
-        addUser(text)
-        // A turn is still running (or awaiting approval): QUEUE this message instead of
-        // clobbering the live turn's state — sending mid-turn wiped sub-agents and wedged the
-        // session. It's sent when the current turn finishes.
-        if turnStart != nil { queuedMessages.append(text); return }
+        let bubble = addUser(text)
+        // A turn is still running (or awaiting approval): QUEUE this message (shown dimmed +
+        // "대기 중", like the CLI acknowledging it) and send it when the current turn finishes.
+        if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)); return }
         beginTurn(text)
     }
-    private var queuedMessages: [String] = []
+    private var queuedMessages: [(text: String, bubble: UserBubble)] = []
     var onResumeRequest: (() -> Void)?
     private var lastUsage: ChatUsage?
 
@@ -708,8 +736,8 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     // Send an expanded prompt as if the user typed it (for /init, /review).
     private func sendPrompt(_ text: String) {
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
-        addUser(text)
-        if turnStart != nil { queuedMessages.append(text) } else { beginTurn(text) }
+        let b = addUser(text)
+        if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
     private func pickModel() {
@@ -735,6 +763,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         current = newBlock()
         current?.startWorking()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; startFlush()
+        setRunning(true)
         onBusyChange?(true)
         session?.send(text)
         scrollSoon()
@@ -806,20 +835,21 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             }
         }
         // Send the next queued user message (typed while this turn was running).
-        if !queuedMessages.isEmpty { beginTurn(queuedMessages.removeFirst()) }
-        else { onBusyChange?(false) }
+        if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text) }
+        else { setRunning(false); onBusyChange?(false) }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
         // to a 5k-token turn. Per-turn quota % isn't derivable (no absolute budget from the API).
     }
 
     // ---- stack helpers ----
-    private func addUser(_ text: String) {
+    @discardableResult private func addUser(_ text: String) -> UserBubble {
         let v = UserBubble(text: text)
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         scrollSoon()
+        return v
     }
     private func addSystem(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
@@ -839,25 +869,30 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         scroll.reflectScrolledClipView(clip)
     }
 
-    // ---- slash-command autocomplete ----
-    func controlTextDidChange(_ obj: Notification) {
+    // ---- slash-command autocomplete (driven by ChatInput's onTextChange/onKey) ----
+    private func inputChanged() {
         let s = input.stringValue
-        guard s.hasPrefix("/"), !s.contains(" ") else { hideSlash(); return }
+        guard s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") else { hideSlash(); return }
         let q = String(s.dropFirst()).lowercased()
         let matches = commands.filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) }
         if matches.isEmpty { hideSlash() } else { showSlash(matches) }
     }
-    // Route Shift+Tab (mode cycle) and, when the popup is up, arrows / Enter / Esc.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+    // Shift+Tab (mode cycle) any time; when the popup is up: arrows / Enter / Esc. Return true
+    // if consumed (so ChatInput doesn't also act on the key).
+    private func inputKey(_ sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertBacktab(_:)) { cycleMode(); return true }
-        guard !slash.isHidden else { return false }
-        switch sel {
-        case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true
-        case #selector(NSResponder.moveDown(_:)):        slash.move(1);  return true
-        case #selector(NSResponder.insertNewline(_:)):   acceptSlash();  return true
-        case #selector(NSResponder.cancelOperation(_:)): hideSlash();    return true
-        default: return false
+        if !slash.isHidden {
+            switch sel {
+            case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true
+            case #selector(NSResponder.moveDown(_:)):        slash.move(1);  return true
+            case #selector(NSResponder.insertNewline(_:)):   acceptSlash();  return true
+            case #selector(NSResponder.cancelOperation(_:)): hideSlash();    return true
+            default: return false
+            }
         }
+        // Esc with no popup → interrupt the running turn (like the CLI).
+        if sel == #selector(NSResponder.cancelOperation(_:)), turnStart != nil { interruptTurn(); return true }
+        return false
     }
     private func showSlash(_ list: [SlashCommand]) {
         slash.set(list)
@@ -869,7 +904,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         if let cmd = slash.current() { input.stringValue = "/" + cmd.name }   // no trailing space
         hideSlash()
         window?.makeFirstResponder(input)
-        input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
+        input.setSelectedRange(NSRange(location: input.string.count, length: 0))
     }
 
     // Claude Code's standard slash commands (for CLI-parity autocomplete) + custom commands
