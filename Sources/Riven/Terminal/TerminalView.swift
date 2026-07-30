@@ -196,7 +196,9 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         let copy = NSMenuItem(title: "복사", action: #selector(ctxCopy), keyEquivalent: "")
         copy.isEnabled = hasSel; copy.target = self
         let paste = NSMenuItem(title: "붙여넣기", action: #selector(ctxPaste), keyEquivalent: "")
-        paste.isEnabled = NSPasteboard.general.string(forType: .string) != nil; paste.target = self
+        paste.isEnabled = NSPasteboard.general.string(forType: .string) != nil
+            || ChatInput.clipboardImagePaths(NSPasteboard.general, quoted: true) != nil
+        paste.target = self
         m.addItem(copy); m.addItem(paste)
         m.addItem(.separator())
         let all = NSMenuItem(title: "전체 선택", action: #selector(ctxSelectAll), keyEquivalent: ""); all.target = self
@@ -215,7 +217,16 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         }
     }
     @objc private func ctxPaste() {
-        guard let s = surface, let str = NSPasteboard.general.string(forType: .string) else { return }
+        guard let s = surface else { return }
+        let pb = NSPasteboard.general
+        // Image on the clipboard (a Cmd-Shift-4 screenshot, or copied image files) and no text →
+        // save/resolve a path and "type" it, so the CLI running here can Read it. A bare terminal
+        // paste only handles text, which is why pasting a screenshot did nothing.
+        if pb.string(forType: .string) == nil, let paths = ChatInput.clipboardImagePaths(pb, quoted: true) {
+            (paths + " ").withCString { ghostty_surface_text(s, $0, UInt(strlen($0))) }
+            return
+        }
+        guard let str = pb.string(forType: .string) else { return }
         str.withCString { ghostty_surface_text(s, $0, UInt(strlen($0))) }
     }
     @objc private func ctxSelectAll() {
@@ -237,6 +248,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
             return surface.map { ghostty_surface_has_selection($0) } ?? false
         case #selector(paste(_:)):
             return NSPasteboard.general.string(forType: .string) != nil
+                || ChatInput.clipboardImagePaths(NSPasteboard.general, quoted: true) != nil
         default:
             return true
         }

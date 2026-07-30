@@ -595,6 +595,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let sr = CGFloat(Settings.shared.double("railHeight", 190))
             let w = (sw >= 160 && sw <= 400) ? sw : 220     // out of range = corrupt (480 artifact) → default
             let rh = (sr >= 96 && sr <= 500) ? sr : 190     // (693 artifact) → default
+            // Clean a corrupt stored value in place so it stops reverting every launch — otherwise
+            // a stuck 480 keeps failing the range check and restoring 220 forever.
+            if w != sw { Settings.shared.set("sidebarWidth", Double(w)) }
+            if rh != sr { Settings.shared.set("railHeight", Double(rh)) }
             self.sidebarWidth = w
             body.setPosition(w, ofDividerAt: 0)
             sidebarSplitV.setPosition(rh, ofDividerAt: 0)   // rail shows ~2 cards + a bit
@@ -1221,9 +1225,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
                 // Done: if you're not watching THIS pane, raise the ember + post a banner.
+                // "Watching" = the app is frontmost AND this pane is the visible/selected one in the
+                // CURRENT workspace's dock (so clicking anywhere in it counts) — OR it holds focus.
+                // Before, this hung on isKeyWindow + firstResponder only, so the notification kept
+                // firing even while the user was looking right at the pane.
                 var watching = false
-                if let chat, chat.window?.isKeyWindow == true,
-                   let fr = chat.window?.firstResponder as? NSView { watching = fr.isDescendant(of: chat) }
+                if NSApp.isActive, p.group?.manager === self.activeDock, p.group?.activePanel === p {
+                    watching = true
+                } else if let chat, chat.window?.isKeyWindow == true,
+                          let fr = chat.window?.firstResponder as? NSView, fr.isDescendant(of: chat) {
+                    watching = true
+                }
                 if watching {
                     p.badge = nil
                     WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
@@ -3300,7 +3312,10 @@ extension AppDelegate: NSSplitViewDelegate {
         return p
     }
     func splitView(_ sv: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        if sv === bodySplit && i == 0 { return 480 }
+        // 400 == the save/restore cap. Previously this allowed 480 while save/restore capped at 400,
+        // so dragging into (400,480] was silently NOT persisted (dead zone) and any old 480 artifact
+        // restored as the 220 default — the sidebar kept "reverting" to a width the user never set.
+        if sv === bodySplit && i == 0 { return 400 }
         // 레일 높이에는 인위적인 상한을 두지 않는다 — 아래 탐색기가 사라지지 않을
         // 최소치(120pt)만 남기고 사이드바 거의 전체 높이까지 끌어올릴 수 있다.
         if sv === sidebarSplit && i == 0 { return max(96, sv.bounds.height - 120) }

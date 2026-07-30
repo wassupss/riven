@@ -45,7 +45,7 @@ final class ClaudeChatSession {
     var onSubagentText: ((_ parentId: String, _ text: String) -> Void)?
     var onSubagentTool: ((_ parentId: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentDone: ((_ id: String, _ result: String) -> Void)?
-    var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?) -> Void)?
+    var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?, _ error: String?) -> Void)?
     var onExit: ((_ code: Int32) -> Void)?
     // Interactive approval: fired when a gated tool wants to run; answer via respond(id:allow:).
     var onPermissionRequest: ((_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
@@ -222,7 +222,16 @@ final class ClaudeChatSession {
             let cost = o["total_cost_usd"] as? Double
             let sid = o["session_id"] as? String
             let u = usage(o["usage"] as? [String: Any])
-            main { self.onTurnDone?(cost, sid, u) }
+            // Surface failures: on is_error the turn produced no (or partial) answer — e.g. a 529
+            // Overloaded, max-turns, or interrupt. Previously this was dropped, so the turn just
+            // ended with a "완료" notification and nothing shown (the "결과가 날아간" report).
+            var err: String? = nil
+            if (o["is_error"] as? Bool ?? false) || (o["subtype"] as? String ?? "success") != "success" {
+                let sub = o["subtype"] as? String ?? "error"
+                let msg = (o["result"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? sub
+                err = msg
+            }
+            main { self.onTurnDone?(cost, sid, u, err) }
         default: break
         }
     }

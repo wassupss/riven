@@ -15,9 +15,11 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
     private let subStack = FlippedStack()
     private let input = ChatInput.make()
-    private let sendButton = NSButton()
+    private lazy var inputScroll = InputScroll(input)     // grows 1→6 lines, then scrolls
+    private let sendButton = CircleButton()               // circular ↑ / ■ (send / stop), accent
+    private let plusButton = CircleButton()               // circular + (attach a file path)
     private let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let composer = NSVisualEffectView()          // glass composer row (mode | input | send)
+    private let composer = NSVisualEffectView()          // glass composer card (input on top, action row below)
     private let modeChip = NSView()                      // pill behind the compact mode popup
     private let hairline = NSView()
     private let slash = SlashPopup()
@@ -63,6 +65,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
     var onOpenSettings: (() -> Void)?       // /config
     private let attnRing = AttnRingView(frame: .zero)
+    // Live-edge scrolling (shadcn MessageScroller behavior): only auto-follow the bottom while the
+    // reader is AT the bottom; if they scroll up to read, stop yanking and show a jump-to-latest pill.
+    private let jumpButton = CircleButton()
+    private var stickToBottom = true
     // busy = static ring, attn = travelling ember, nil = none (mirrors TerminalView).
     func setRingState(_ badge: String?) {
         switch badge { case "attn": attnRing.state = .attn; case "busy": attnRing.state = .busy; default: attnRing.state = .none }
@@ -112,14 +118,16 @@ final class ChatPanel: NSView, Themable, Scalable {
         composer.translatesAutoresizingMaskIntoConstraints = false
 
         modeChip.wantsLayer = true
-        modeChip.layer?.cornerRadius = UIScale.pt(24) / 2
+        modeChip.layer?.cornerRadius = UIScale.pt(28) / 2   // same height as the +/send circles
         modeChip.translatesAutoresizingMaskIntoConstraints = false
 
         // modePopup stays the single source of truth for the mode (index read via modeIndex,
         // set by cycleMode/approval cards) — just restyled compact & borderless inside the chip,
         // so its title updates itself on every selectItem(at:).
         modePopup.addItems(withTitles: modes.map { $0.0 })
-        modePopup.selectItem(at: 1)                    // 승인 요청 default
+        // Restore the last-used permission mode (persisted globally) — before it always reset to
+        // "승인 요청" on every new/reopened pane. Read BEFORE bind() so startSession picks it up.
+        modePopup.selectItem(at: min(max(Settings.shared.int("chatPermMode", 1), 0), modes.count - 1))
         modePopup.font = UIScale.font(10, .medium)
         modePopup.controlSize = .small
         modePopup.isBordered = false
@@ -132,19 +140,40 @@ final class ChatPanel: NSView, Themable, Scalable {
         input.onTextChange = { [weak self] in self?.inputChanged() }
         input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
 
-        sendButton.title = "보내기"
-        sendButton.isBordered = false
-        sendButton.wantsLayer = true
-        sendButton.layer?.cornerRadius = UIScale.pt(26) / 2
-        sendButton.font = UIScale.font(11, .semibold)
+        // Circular ↑ send button (shadcn message-scroller style) — no "보내기" text pill.
+        // CircleButton keeps it a perfect circle; sizes match the mode chip via `rowH`.
+        sendButton.isBordered = false; sendButton.bezelStyle = .regularSquare
+        sendButton.imagePosition = .imageOnly
+        sendButton.wantsLayer = true                        // layer must exist before styleSendButton sets bg
         sendButton.target = self; sendButton.action = #selector(sendOrStop)
         sendButton.translatesAutoresizingMaskIntoConstraints = false
+        // Circular + button on the left of the action row — attaches a file path to the message.
+        plusButton.isBordered = false; plusButton.bezelStyle = .regularSquare
+        plusButton.imagePosition = .imageOnly
+        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "첨부")?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        plusButton.wantsLayer = true
+        plusButton.toolTip = "파일 첨부"
+        plusButton.target = self; plusButton.action = #selector(attachFile)
+        plusButton.translatesAutoresizingMaskIntoConstraints = false
 
         slash.translatesAutoresizingMaskIntoConstraints = false
 
+        // Jump-to-latest pill: a small circular ↓ that floats above the composer, shown only when
+        // the reader has scrolled up off the live edge. Click → snap to bottom + resume following.
+        jumpButton.bezelStyle = .regularSquare; jumpButton.isBordered = false
+        jumpButton.wantsLayer = true
+        jumpButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "맨 아래로")?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
+        jumpButton.imagePosition = .imageOnly
+        jumpButton.toolTip = "맨 아래로"
+        jumpButton.target = self; jumpButton.action = #selector(jumpToLatest)
+        jumpButton.isHidden = true
+        jumpButton.translatesAutoresizingMaskIntoConstraints = false
+
         modeChip.addSubview(modePopup)
-        [modeChip, input, sendButton].forEach { composer.addSubview($0) }
-        [scroll, subSide, hairline, composer, slash].forEach { addSubview($0) }
+        [modeChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
+        [scroll, subSide, hairline, composer, slash, jumpButton].forEach { addSubview($0) }
         applyComposerTheme()
         slashHeight = slash.heightAnchor.constraint(equalToConstant: 0)
         subWidthShown = subSide.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.45)
@@ -174,29 +203,47 @@ final class ChatPanel: NSView, Themable, Scalable {
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             composer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            composer.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(44)),
-            // chip + send anchored to the BOTTOM row; the input grows upward (1→6 lines) and
-            // drives the composer height via its intrinsic size.
+            // shadcn message-scroller composer: TWO rows in a rounded card — the multiline input on
+            // top, an action row below (mode chip + "+" on the left, circular ↑ send on the right).
+            // Floor only; the composer HUGS the input via the equality top/bottom pins + the input's
+            // high vertical content hugging (kept at its intrinsic 1–6 line size).
+            composer.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(72)),
+            // row 1: input, full width, top of the card
+            inputScroll.topAnchor.constraint(equalTo: composer.topAnchor, constant: 10),
+            inputScroll.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 12),
+            inputScroll.trailingAnchor.constraint(equalTo: composer.trailingAnchor, constant: -12),
+            inputScroll.bottomAnchor.constraint(equalTo: sendButton.topAnchor, constant: -8),
+            // row 2 (bottom): mode chip + "+" left, send right — ALL the same height (rowH=28) and
+            // vertically centered on one line, so the circles and the chip line up.
             modeChip.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 8),
-            modeChip.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
-            modeChip.heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
+            modeChip.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
+            modeChip.heightAnchor.constraint(equalToConstant: UIScale.pt(28)),
             modePopup.leadingAnchor.constraint(equalTo: modeChip.leadingAnchor, constant: 8),
             modePopup.trailingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: -4),
             modePopup.centerYAnchor.constraint(equalTo: modeChip.centerYAnchor),
-            input.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 8),
-            input.topAnchor.constraint(equalTo: composer.topAnchor, constant: 6),
-            input.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -6),
-            input.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -8),
+            plusButton.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 6),
+            plusButton.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
+            plusButton.widthAnchor.constraint(equalToConstant: UIScale.pt(28)),
+            plusButton.heightAnchor.constraint(equalToConstant: UIScale.pt(28)),
             sendButton.trailingAnchor.constraint(equalTo: composer.trailingAnchor, constant: -8),
-            sendButton.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -9),
-            sendButton.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
-            sendButton.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(64)),
+            sendButton.bottomAnchor.constraint(equalTo: composer.bottomAnchor, constant: -8),
+            sendButton.heightAnchor.constraint(equalToConstant: UIScale.pt(28)),
+            sendButton.widthAnchor.constraint(equalToConstant: UIScale.pt(28)),
             // slash popup floats just above the composer card
             slash.leadingAnchor.constraint(equalTo: composer.leadingAnchor),
             slash.trailingAnchor.constraint(equalTo: composer.trailingAnchor),
             slash.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -6),
-            slashHeight
+            slashHeight,
+            // jump pill floats centered just above the composer
+            jumpButton.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            jumpButton.bottomAnchor.constraint(equalTo: hairline.topAnchor, constant: -10),
+            jumpButton.widthAnchor.constraint(equalToConstant: UIScale.pt(30)),
+            jumpButton.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         ])
+        // Follow user scrolling: update stick + pill visibility whenever the clip moves.
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipMoved),
+            name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         ChatText.openInEditor = { [weak self] url in self?.onOpenFile?(url) }
         ChatText.showEdit = { [weak self] url, o, n in self?.onShowEdit?(url, o, n) }
         // Same travelling-ember state ring as agent terminal panes, driven by setRingState.
@@ -208,6 +255,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         UIScale.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     func applyTheme() {
         layer?.backgroundColor = Theme.bg.cgColor
@@ -222,21 +270,26 @@ final class ChatPanel: NSView, Themable, Scalable {
         composer.layer?.borderColor = Theme.edge.cgColor
         modeChip.layer?.backgroundColor = Theme.hover.cgColor
         input.textColor = Theme.fg
-        sendButton.layer?.borderWidth = 1
+        jumpButton.fillColor = Theme.hover
+        jumpButton.strokeColor = Theme.edge
+        jumpButton.strokeWidth = 1
+        jumpButton.contentTintColor = Theme.fg
+        plusButton.fillColor = Theme.hover
+        plusButton.strokeColor = Theme.edge
+        plusButton.strokeWidth = 1
+        plusButton.contentTintColor = Theme.fg
         styleSendButton()
     }
     // Send pill ⇄ stop pill: while a turn runs the button interrupts (danger tint, "중단").
     private func setRunning(_ r: Bool) { running = r; styleSendButton() }
     private func styleSendButton() {
         let stop = running
-        sendButton.layer?.backgroundColor = (stop ? Theme.danger.withAlphaComponent(0.14) : Theme.accentMuted).cgColor
-        sendButton.layer?.borderColor = (stop ? Theme.danger.withAlphaComponent(0.5) : Theme.accentBorder).cgColor
-        let ps = NSMutableParagraphStyle(); ps.alignment = .center
-        sendButton.attributedTitle = NSAttributedString(
-            string: stop ? "중단" : "보내기",
-            attributes: [.foregroundColor: stop ? Theme.danger : Theme.accent,
-                         .font: sendButton.font ?? UIScale.font(11, .semibold),
-                         .paragraphStyle: ps])
+        // Circular accent button: ↑ to send, ■ to stop while a turn runs.
+        sendButton.fillColor = stop ? Theme.danger : Theme.accent
+        sendButton.image = NSImage(systemSymbolName: stop ? "stop.fill" : "arrow.up",
+                                   accessibilityDescription: stop ? "중단" : "보내기")?
+            .withSymbolConfiguration(.init(pointSize: stop ? 10 : 13, weight: .semibold))
+        sendButton.contentTintColor = .white
     }
 
     // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the
@@ -253,10 +306,17 @@ final class ChatPanel: NSView, Themable, Scalable {
             self.lastScaleFactor = factor
             guard abs(ratio - 1) > 0.001 else { return }
             ChatPanel.rescale(self, ratio)
+            self.styleSendButton()   // its attributedTitle pins the font — rebuild it at the new size
         }
     }
     private static func rescale(_ v: NSView, _ ratio: CGFloat) {
-        if let tf = v as? NSTextField {
+        if let tv = v as? NSTextView {
+            // NSTextView (the multiline composer) isn't an NSControl, so it was silently skipped —
+            // that's why ⌘+/− didn't grow the input. Scale its font and re-measure its height.
+            if let f = tv.font { tv.font = f.withSize(f.pointSize * ratio) }
+            tv.invalidateIntrinsicContentSize()
+            tv.needsDisplay = true
+        } else if let tf = v as? NSTextField {
             // Snapshot BEFORE touching .font, else a plain label's attributedStringValue would
             // already reflect the new font and get scaled a second time.
             let snap = tf.attributedStringValue
@@ -477,12 +537,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             agentName: agentPersona)
         s?.onInit = { [weak self] sid, model in self?.model = model; self?.onSessionId?(sid) }
         s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t) }
-        s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.scrollSoon() }
+        s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon() }
         s?.onSubagentStart = { [weak self] id, type, desc in self?.addSubagentPane(id, type: type, desc: desc) }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in self?.subToPane[pid]?.addTool(name, detail, code, path) }
         s?.onSubagentText = { [weak self] pid, text in self?.subToPane[pid]?.addText(text) }
         s?.onSubagentDone = { [weak self] id, result in self?.subToPane[id]?.finish(result) }
-        s?.onTurnDone = { [weak self] cost, _, usage in self?.endTurn(cost: cost, usage: usage) }
+        s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
         s?.onExit = { [weak self] code in if code != 0 { self?.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") } }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
         s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
@@ -638,6 +698,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Live mode switch: no restart, so an in-flight turn keeps running.
     @objc private func modeChanged() {
         session?.setPermissionMode(cliMode)
+        Settings.shared.set("chatPermMode", modeIndex)   // persist so it survives reopen/relaunch
         addSystem("권한 모드: \(modes[modeIndex].0)")
     }
     private func cycleMode() {
@@ -647,15 +708,45 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // ---- send / turn lifecycle ----
     // Interrupt the running turn (Esc / the stop button) — like the CLI's Esc.
+    private var interrupted = false
     private func interruptTurn() {
         guard turnStart != nil else { return }
+        interrupted = true                 // suppress the error line for the result WE cancelled
         session?.interrupt()
+        // Like the CLI: the interrupted message returns to the input for editing/resending. Remove
+        // its bubble from the transcript and put the text back (don't clobber anything typed since).
+        if let text = currentTurnText {
+            currentTurnBubble?.removeFromSuperview()
+            let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
+            input.window?.makeFirstResponder(input)
+        }
+        currentTurnText = nil; currentTurnBubble = nil
         queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
         queuedMessages.removeAll()            // stop = cancel everything pending
         addSystem("⏹ 중단됨")
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
+    // "+" — attach file path(s) to the message (the agent reads them). Same intent as a drag-drop.
+    @objc private func attachFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true; panel.canChooseDirectories = true; panel.allowsMultipleSelection = true
+        panel.begin { [weak self] resp in
+            guard let self, resp == .OK, !panel.urls.isEmpty else { return }
+            // One path per line so each wraps and the input GROWS (up to 6 lines, then scrolls) —
+            // before, paths were joined on one line and, without a relayout, the composer stayed a
+            // single line so the text was clipped / looked like it collided with the mode select.
+            let paths = panel.urls.map { $0.path }.joined(separator: "\n")
+            let cur = self.input.stringValue
+            self.input.stringValue = cur.isEmpty ? paths : (cur + "\n" + paths)
+            self.inputScroll.invalidateIntrinsicContentSize()
+            self.composer.layoutSubtreeIfNeeded()               // grow the composer now
+            self.window?.makeFirstResponder(self.input)
+            self.input.setSelectedRange(NSRange(location: self.input.string.count, length: 0))
+            self.input.scrollRangeToVisible(self.input.selectedRange())   // keep the end visible
+        }
+    }
     @objc private func sendFromInput() {
         if !slash.isHidden { acceptSlash(); return }
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -667,7 +758,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // A turn is still running (or awaiting approval): QUEUE this message (shown dimmed +
         // "대기 중", like the CLI acknowledging it) and send it when the current turn finishes.
         if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)); return }
-        beginTurn(text)
+        beginTurn(text, bubble: bubble)
     }
     private var queuedMessages: [(text: String, bubble: UserBubble)] = []
     var onResumeRequest: (() -> Void)?
@@ -737,7 +828,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func sendPrompt(_ text: String) {
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
         let b = addUser(text)
-        if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text) }
+        if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text, bubble: b) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
     private func pickModel() {
@@ -749,7 +840,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             menu.addItem(item)
         }
         // Pop up near the composer, in this view's coordinate space.
-        let anchor = convert(input.frame.origin, from: input.superview)
+        let anchor = convert(inputScroll.frame.origin, from: inputScroll.superview)
         menu.popUp(positioning: nil, at: anchor, in: self)
     }
     @objc private func pickModelItem(_ item: NSMenuItem) {
@@ -758,8 +849,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         addSystem("모델: \(item.title)")
         focusInput(force: true)
     }
-    private func beginTurn(_ text: String) {
+    private func beginTurn(_ text: String, bubble: UserBubble? = nil) {
         clearSubagents()               // fresh turn → clear the previous turn's sub-agent panes
+        currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
         current = newBlock()
         current?.startWorking()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; startFlush()
@@ -768,6 +860,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.send(text)
         scrollSoon()
     }
+    private var currentTurnText: String?
+    private var currentTurnBubble: UserBubble?
     private func newBlock() -> TurnBlock {
         trimTranscript()               // bound the rendered view count before adding a new turn
         let block = TurnBlock()
@@ -813,19 +907,23 @@ final class ChatPanel: NSView, Themable, Scalable {
             guard let self, let block = self.current, let start = self.turnStart else { return }
             let grew = block.flush()
             block.tick(Int(Date().timeIntervalSince(start) - self.pausedTotal))   // exclude approval wait
-            if grew { self.scrollToBottom() }
+            if grew { self.autoScroll() }
         }
     }
     private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil }
 
-    private func endTurn(cost: Double?, usage: ChatUsage?) {
+    private func endTurn(cost: Double?, usage: ChatUsage?, error: String? = nil) {
         let secs = turnStart.map { Int(Date().timeIntervalSince($0) - pausedTotal) } ?? 0
         stopFlush()
         lastUsage = usage
         let block = current
         block?.finish(secs: secs, cost: cost, usage: usage, model: model)
         turnStart = nil
-        scrollToBottom()
+        // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" —
+        // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).
+        if let error, !interrupted { addError("⚠ 오류: \(error)") }
+        interrupted = false
+        autoScroll()
         // Show how much of the plan quota is used (account 5-hour / weekly window, from the
         // OAuth usage API) — updates after each turn so you can watch it climb.
         Usage.limits { lim in
@@ -835,7 +933,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
         // Send the next queued user message (typed while this turn was running).
-        if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text) }
+        if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text, bubble: q.bubble) }
         else { setRunning(false); onBusyChange?(false) }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
@@ -859,15 +957,43 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         scrollSoon()
     }
+    // A visible, danger-tinted line for turn failures (529, etc.) — not the dim system gray.
+    private func addError(_ text: String) {
+        let l = NSTextField(wrappingLabelWithString: text)
+        l.font = UIScale.font(11, .medium); l.textColor = Theme.danger; l.isSelectable = true
+        l.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(l)
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        scrollSoon()
+    }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }
-    // Pin the clip view to the very bottom of the (flipped) document so streaming stays in view.
+    // FORCED pin to the live edge (user sent / resumed / tapped the pill): also resumes following.
     private func scrollToBottom() {
         layoutSubtreeIfNeeded()
         let clip = scroll.contentView
         let y = max(0, stack.frame.height - clip.bounds.height)
         clip.setBoundsOrigin(NSPoint(x: 0, y: y))
         scroll.reflectScrolledClipView(clip)
+        stickToBottom = true
+        jumpButton.isHidden = true
     }
+    // AUTO scroll (streaming / turn end / tool lines): follow the bottom ONLY while the reader is at
+    // the live edge. If they scrolled up to read, don't yank — just surface the jump pill.
+    private func autoScroll() {
+        if stickToBottom { scrollToBottom() }
+        else { jumpButton.isHidden = isAtBottom() }
+    }
+    private func autoScrollSoon() { DispatchQueue.main.async { [weak self] in self?.autoScroll() } }
+    private func isAtBottom() -> Bool {
+        let clip = scroll.contentView
+        let maxY = max(0, stack.frame.height - clip.bounds.height)
+        return clip.bounds.origin.y >= maxY - UIScale.pt(24)   // within a hair of the edge counts
+    }
+    @objc private func clipMoved() {
+        stickToBottom = isAtBottom()
+        jumpButton.isHidden = stickToBottom
+    }
+    @objc private func jumpToLatest() { scrollToBottom() }
 
     // ---- slash-command autocomplete (driven by ChatInput's onTextChange/onKey) ----
     private func inputChanged() {

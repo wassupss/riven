@@ -23,34 +23,27 @@ final class ChatInput: NSTextView {
     var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle — return true if consumed
     var onTextChange: (() -> Void)?
     var placeholder = "" { didSet { needsDisplay = true } }
-    // Compatibility shim so call sites can keep using stringValue.
+    // Compatibility shim so call sites can keep using stringValue. Setting it programmatically must
+    // also re-measure the enclosing InputScroll (that owns the 1–6 line capped height).
     var stringValue: String {
         get { string }
-        set { string = newValue; invalidateIntrinsicContentSize(); needsDisplay = true }
+        set { string = newValue; enclosingScrollView?.invalidateIntrinsicContentSize(); needsDisplay = true }
     }
 
+    // Bare text view; wrapped by InputScroll which handles sizing/scrolling. Configured as a growing
+    // document there (isVerticallyResizable + widthTracksTextView), so it grows past 6 lines and the
+    // scroll view scrolls to keep the cursor visible instead of hiding it.
     static func make() -> ChatInput {
         let tv = ChatInput(frame: .zero)
         tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
         tv.font = UIScale.font(13); tv.textColor = Theme.fg
         tv.textContainerInset = NSSize(width: 2, height: 6)
-        tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
-        tv.textContainer?.widthTracksTextView = true
-        tv.translatesAutoresizingMaskIntoConstraints = false
         return tv
-    }
-    override var intrinsicContentSize: NSSize {
-        guard let lm = layoutManager, let tc = textContainer else { return NSSize(width: NSView.noIntrinsicMetric, height: 24) }
-        lm.ensureLayout(for: tc)
-        let line = (font?.boundingRectForFont.height ?? 16)
-        let content = lm.usedRect(for: tc).height
-        let pad = textContainerInset.height * 2
-        let minH = line + pad, maxH = line * 6 + pad
-        return NSSize(width: NSView.noIntrinsicMetric, height: min(max(content + pad, minH), maxH))
     }
     override func didChangeText() {
         super.didChangeText()
-        invalidateIntrinsicContentSize()
+        enclosingScrollView?.invalidateIntrinsicContentSize()   // regrow up to the 6-line cap
+        scrollRangeToVisible(selectedRange())                   // keep the cursor on screen past the cap
         needsDisplay = true
         onTextChange?()
     }
@@ -68,6 +61,82 @@ final class ChatInput: NSTextView {
         guard string.isEmpty, !placeholder.isEmpty else { return }
         (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
             withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(13)])
+    }
+
+    // Paste an IMAGE (a Cmd-Shift-4 screenshot on the clipboard, or copied image files) like the
+    // CLI does: save it to a temp PNG and insert the path so the agent can Read it.
+    // A plain-text NSTextView refuses image pastes — worse, when the clipboard holds ONLY an image
+    // (no text), Paste is disabled and paste(_:) never even fires. So we (1) advertise image/file
+    // types as readable to keep Paste enabled, and (2) intercept the actual read here.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [.png, .tiff, .fileURL]
+    }
+    override func readSelection(from pboard: NSPasteboard) -> Bool {
+        if let paths = ChatInput.clipboardImagePaths(pboard) {
+            insertText(string.isEmpty ? paths : "\n" + paths, replacementRange: selectedRange())
+            return true
+        }
+        return super.readSelection(from: pboard)
+    }
+    // Image file paths from the clipboard (copied files), or a temp PNG saved from raw screenshot
+    // data. `quoted` wraps each path in single quotes (for pasting into a shell/terminal).
+    static func clipboardImagePaths(_ pb: NSPasteboard, quoted: Bool = false) -> String? {
+        let imgExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp"]
+        func fmt(_ p: String) -> String { quoted ? "'\(p)'" : p }
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+            let imgs = urls.filter { imgExts.contains($0.pathExtension.lowercased()) }
+            if !imgs.isEmpty { return imgs.map { fmt($0.path) }.joined(separator: quoted ? " " : "\n") }
+        }
+        if pb.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.png.rawValue,
+                                                      NSPasteboard.PasteboardType.tiff.rawValue]),
+           let img = NSImage(pasteboard: pb), let path = saveClipboardPNG(img) {
+            return fmt(path)
+        }
+        return nil
+    }
+    static func saveClipboardPNG(_ img: NSImage) -> String? {
+        guard let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return nil }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("riven-paste", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("paste-\(UUID().uuidString.prefix(8)).png")
+        do { try png.write(to: url); return url.path } catch { return nil }
+    }
+}
+
+// Scroll container for ChatInput: grows the composer from 1 line up to a 6-line cap, then SCROLLS
+// its content (so a long draft's cursor stays visible instead of running off the bottom). The
+// capped height is this view's intrinsic size, so the composer hugs it.
+final class InputScroll: NSScrollView {
+    let tv: ChatInput
+    init(_ tv: ChatInput) {
+        self.tv = tv
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        drawsBackground = false; borderType = .noBorder
+        hasVerticalScroller = false; hasHorizontalScroller = false
+        verticalScrollElasticity = .none
+        tv.translatesAutoresizingMaskIntoConstraints = true
+        tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        let big = CGFloat.greatestFiniteMagnitude
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: big, height: big)
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(width: 0, height: big)
+        documentView = tv
+        setContentHuggingPriority(.defaultHigh, for: .vertical)
+        setContentCompressionResistancePriority(.defaultHigh, for: .vertical)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var intrinsicContentSize: NSSize {
+        guard let lm = tv.layoutManager, let tc = tv.textContainer else { return NSSize(width: NSView.noIntrinsicMetric, height: 24) }
+        lm.ensureLayout(for: tc)
+        let line = (tv.font?.boundingRectForFont.height ?? 16)
+        let content = lm.usedRect(for: tc).height
+        let pad = tv.textContainerInset.height * 2
+        let minH = line + pad, maxH = line * 6 + pad
+        return NSSize(width: NSView.noIntrinsicMetric, height: min(max(content + pad, minH), maxH))
     }
 }
 
@@ -244,6 +313,26 @@ final class AssistantText: NSView {
             content.addArrangedSubview(v)
             v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
+    }
+}
+
+// A button whose background is ALWAYS a perfect circle. Rather than rounding the button's own
+// layer (which renders as a capsule the instant the frame isn't perfectly square), it draws a
+// dedicated circular fill layer of diameter = min(width,height), centered — so it's a circle no
+// matter what the frame ends up being.
+final class CircleButton: NSButton {
+    private let fill = CALayer()
+    var fillColor: NSColor = .clear { didSet { fill.backgroundColor = fillColor.cgColor } }
+    var strokeColor: NSColor = .clear { didSet { fill.borderColor = strokeColor.cgColor } }
+    var strokeWidth: CGFloat = 0 { didSet { fill.borderWidth = strokeWidth } }
+    override func layout() {
+        super.layout()
+        wantsLayer = true
+        if fill.superlayer == nil { layer?.insertSublayer(fill, at: 0) }
+        let d = min(bounds.width, bounds.height)
+        fill.frame = CGRect(x: (bounds.width - d) / 2, y: (bounds.height - d) / 2, width: d, height: d)
+        fill.cornerRadius = d / 2
+        fill.masksToBounds = true
     }
 }
 
@@ -492,17 +581,23 @@ final class UserBubble: NSView {
         queuedTag.isHidden = true
         queuedTag.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
+        // The tag sits on its OWN line BELOW the message (it used to be pinned top-right, overlapping
+        // the text). Two card-bottom constraints toggle so the card only reserves the tag's row while
+        // queued — otherwise it collapses to hug the text.
+        bottomToText = card.bottomAnchor.constraint(equalTo: l.bottomAnchor, constant: 8)
+        bottomToTag = card.bottomAnchor.constraint(equalTo: queuedTag.bottomAnchor, constant: 8)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             bar.topAnchor.constraint(equalTo: card.topAnchor),
             bar.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             bar.widthAnchor.constraint(equalToConstant: 3),
             l.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
-            l.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
             l.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 11),
             l.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
-            queuedTag.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
-            queuedTag.topAnchor.constraint(equalTo: card.topAnchor, constant: 5),
+            queuedTag.topAnchor.constraint(equalTo: l.bottomAnchor, constant: 3),
+            queuedTag.leadingAnchor.constraint(equalTo: l.leadingAnchor),
+            queuedTag.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -12),
+            bottomToText,
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -510,9 +605,13 @@ final class UserBubble: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    private var bottomToText: NSLayoutConstraint!
+    private var bottomToTag: NSLayoutConstraint!
     // Mid-turn messages wait their turn: dim + a "대기 중" tag until they start (CLI-style ack).
     func setQueued(_ q: Bool) {
         queuedTag.isHidden = !q
+        bottomToText.isActive = !q       // reserve the tag's row only while queued
+        bottomToTag.isActive = q
         alphaValue = q ? 0.55 : 1
         bar.layer?.backgroundColor = (q ? Theme.warning : Theme.accent.withAlphaComponent(0.8)).cgColor
     }
