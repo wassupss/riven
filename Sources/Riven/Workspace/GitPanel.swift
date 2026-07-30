@@ -141,6 +141,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         pullBtn.contentTintColor = Theme.fgDim
         pushBtn.contentTintColor = Theme.fgDim
         refreshBtn.contentTintColor = Theme.fgDim
+        styleCommitButton()   // its accent fill/tint would otherwise keep the old theme's colors
         render()
     }
 

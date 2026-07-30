@@ -549,7 +549,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             cell.label.textColor = Theme.fg
             cell.badge.isHidden = true
         } else {
-            cell.label.textColor = node.isDir ? Theme.fg : Theme.hex("#c9c9d0")
+            cell.label.textColor = node.isDir ? Theme.fg : Theme.fgDim   // theme-aware (was a fixed light gray, invisible in light themes)
             cell.badge.isHidden = true
         }
         return cell
