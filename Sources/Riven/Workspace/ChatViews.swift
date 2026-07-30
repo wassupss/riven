@@ -16,6 +16,16 @@ final class ClosureButton: NSButton {
     @objc private func fire() { onClick() }
 }
 
+extension NSView {
+    // Nearest ChatPanel ancestor — lets a deeply-nested control (a code-block button) call back to
+    // the exact pane it lives in, instead of a shared static that races across panes.
+    var enclosingChatPanel: ChatPanel? {
+        var v: NSView? = self
+        while let cur = v { if let p = cur as? ChatPanel { return p }; v = cur.superview }
+        return nil
+    }
+}
+
 // Multiline chat input: Enter sends, Shift+Enter inserts a newline; grows 1→6 lines. Replaces
 // the single-line NSTextField so multi-line messages work like the CLI.
 final class ChatInput: NSTextView {
@@ -404,12 +414,6 @@ enum ChatText {
         ])
         return row
     }
-    // Opens a file (edits) or the snippet content (answer code blocks) in riven's editor.
-    // Set by ChatPanel; nil disables the "에디터에서 보기" button.
-    static var openInEditor: ((URL) -> Void)?
-    // Shows an inline before/after diff in the editor for an edit. (url, oldStr, newStr)
-    static var showEdit: ((URL, String, String) -> Void)?
-
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
         let box = NSView()
         box.wantsLayer = true
@@ -425,11 +429,15 @@ enum ChatText {
         langL.textColor = Theme.fgDim.withAlphaComponent(0.8)
         langL.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(langL)
-        let isEdit = diff && path != nil && showEdit != nil
-        if isEdit || openInEditor != nil {
+        let isEdit = diff && path != nil
+        do {
             let title = isEdit ? "변경 보기" : "에디터에서 보기"
-            let btn = ClosureButton(title: title) {
-                if isEdit, let path { showEditFromDiff(code, path: path) } else { openCode(code, path: path) }
+            // Resolve the owning ChatPanel from the clicked button's view tree (NOT a shared static,
+            // which pointed at the last-created/now-dead pane once more than one chat existed).
+            let btn = ClosureButton(title: title) { [weak box] in
+                guard let panel = box?.enclosingChatPanel else { return }
+                if isEdit, let path { panel.showEditFromDiff(code, path: path) }
+                else { panel.openCodeInEditor(code, path: path) }
             }
             btn.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(btn)
@@ -491,19 +499,6 @@ enum ChatText {
         return m
     }
     // Edits open the real file (see the applied change); snippets go to a temp file.
-    private static func openCode(_ code: String, path: String?) {
-        if let path { openInEditor?(URL(fileURLWithPath: path)); return }
-        let tmp = NSTemporaryDirectory() + "riven-snippet-\(abs(code.hashValue)).txt"
-        try? code.write(toFile: tmp, atomically: true, encoding: .utf8)
-        openInEditor?(URL(fileURLWithPath: tmp))
-    }
-    // Reconstruct old/new from our "- …/+ …" diff text and ask the editor to show it inline.
-    private static func showEditFromDiff(_ diff: String, path: String) {
-        let lines = diff.components(separatedBy: "\n")
-        let old = lines.filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n")
-        let new = lines.filter { $0.hasPrefix("+ ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n")
-        showEdit?(URL(fileURLWithPath: path), old, new)
-    }
     private static func diffColored(_ code: String) -> NSAttributedString {
         let m = NSMutableAttributedString()
         let font = UIScale.mono(11)

@@ -313,7 +313,7 @@ final class WorkspaceRail: NSView, Themable {
         let baseName = customNames[url] ?? url.lastPathComponent
         let name = NSTextField(labelWithString: url.fragment.map { "\(baseName) #\($0)" } ?? baseName)
         name.font = UIScale.font(12, isActive ? .semibold : .medium)
-        name.textColor = isActive ? Theme.fg : Theme.hex("#c9c9d0")
+        name.textColor = isActive ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
 
@@ -434,7 +434,7 @@ final class WorkspaceRail: NSView, Themable {
 
         let name = ShimmerLabel(labelWithString: agent.title)
         name.font = UIScale.font(11, isFocused ? .semibold : .regular)
-        name.textColor = isFocused ? Theme.fg : Theme.hex("#c9c9d0")
+        name.textColor = isFocused ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
         name.shimmering = (agent.activity == .busy)   // in-progress pane → title shimmers like the chat

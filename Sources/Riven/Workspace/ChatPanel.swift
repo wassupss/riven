@@ -150,8 +150,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Circular + button on the left of the action row — attaches a file path to the message.
         plusButton.isBordered = false; plusButton.bezelStyle = .regularSquare
         plusButton.imagePosition = .imageOnly
-        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "첨부")?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
         plusButton.wantsLayer = true
         plusButton.toolTip = "파일 첨부"
         plusButton.target = self; plusButton.action = #selector(attachFile)
@@ -163,8 +161,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         // the reader has scrolled up off the live edge. Click → snap to bottom + resume following.
         jumpButton.bezelStyle = .regularSquare; jumpButton.isBordered = false
         jumpButton.wantsLayer = true
-        jumpButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "맨 아래로")?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .semibold))
         jumpButton.imagePosition = .imageOnly
         jumpButton.toolTip = "맨 아래로"
         jumpButton.target = self; jumpButton.action = #selector(jumpToLatest)
@@ -244,8 +240,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipMoved),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        ChatText.openInEditor = { [weak self] url in self?.onOpenFile?(url) }
-        ChatText.showEdit = { [weak self] url, o, n in self?.onShowEdit?(url, o, n) }
         // Same travelling-ember state ring as agent terminal panes, driven by setRingState.
         attnRing.frame = bounds; attnRing.autoresizingMask = [.width, .height]
         addSubview(attnRing)
@@ -256,6 +250,15 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
+
+    // Shown again (workspace switched back): catch the typewriter up to everything buffered while
+    // offscreen and pin to the bottom — the flush timer does no UI work while window == nil.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        while current?.flush() == true {}   // reveal any text buffered offscreen (bounded by content)
+        scrollToBottom()
+    }
 
     func applyTheme() {
         layer?.backgroundColor = Theme.bg.cgColor
@@ -278,7 +281,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         plusButton.strokeColor = Theme.edge
         plusButton.strokeWidth = 1
         plusButton.contentTintColor = Theme.fg
-        styleSendButton()
+        scaleIcons()   // sets +, ↑, ↓ images at the current zoom (also (re)styles the send button)
     }
     // Send pill ⇄ stop pill: while a turn runs the button interrupts (danger tint, "중단").
     private func setRunning(_ r: Bool) { running = r; styleSendButton() }
@@ -288,8 +291,25 @@ final class ChatPanel: NSView, Themable, Scalable {
         sendButton.fillColor = stop ? Theme.danger : Theme.accent
         sendButton.image = NSImage(systemSymbolName: stop ? "stop.fill" : "arrow.up",
                                    accessibilityDescription: stop ? "중단" : "보내기")?
-            .withSymbolConfiguration(.init(pointSize: stop ? 10 : 13, weight: .semibold))
-        sendButton.contentTintColor = .white
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(stop ? 10 : 13), weight: .semibold))
+        // Contrast against the fill by its luminance — a flat .white vanished on light accents
+        // (e.g. the "void" theme's near-white accent left the arrow invisible).
+        sendButton.contentTintColor = ChatPanel.onColor(stop ? Theme.danger : Theme.accent)
+    }
+    // The composer's SF-symbol icons have an explicit point size, so they must be re-set on ⌘+/−
+    // (unlike text, which the tree walk handles). Keeps the +, ↑ and ↓ glyphs in step with the zoom.
+    private func scaleIcons() {
+        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "첨부")?
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(12), weight: .semibold))
+        jumpButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "맨 아래로")?
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(12), weight: .semibold))
+        styleSendButton()
+    }
+    // Pick black or white for whichever reads on top of `bg`.
+    static func onColor(_ bg: NSColor) -> NSColor {
+        let c = bg.usingColorSpace(.sRGB) ?? bg
+        let lum = 0.299 * c.redComponent + 0.587 * c.greenComponent + 0.114 * c.blueComponent
+        return lum > 0.6 ? .black : .white
     }
 
     // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the
@@ -306,7 +326,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             self.lastScaleFactor = factor
             guard abs(ratio - 1) > 0.001 else { return }
             ChatPanel.rescale(self, ratio)
-            self.styleSendButton()   // its attributedTitle pins the font — rebuild it at the new size
+            self.scaleIcons()                          // composer icons have fixed point sizes
+            self.inputScroll.invalidateIntrinsicContentSize()   // grow the composer for the new input font
         }
     }
     private static func rescale(_ v: NSView, _ ratio: CGFloat) {
@@ -424,6 +445,21 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Stop the underlying process when the pane is closed.
     func teardown() { session?.stop(); session = nil; stopFlush() }
 
+    // ---- code-block actions (called by a code block's button via enclosingChatPanel) ----
+    func openCodeInEditor(_ code: String, path: String?) {
+        if let path { onOpenFile?(URL(fileURLWithPath: path)); return }
+        let tmp = NSTemporaryDirectory() + "riven-snippet-\(abs(code.hashValue)).txt"
+        try? code.write(toFile: tmp, atomically: true, encoding: .utf8)
+        onOpenFile?(URL(fileURLWithPath: tmp))
+    }
+    // Reconstruct old/new from our "- …/+ …" diff text and ask the editor to show it inline.
+    func showEditFromDiff(_ diff: String, path: String) {
+        let lines = diff.components(separatedBy: "\n")
+        let old = lines.filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n")
+        let new = lines.filter { $0.hasPrefix("+ ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n")
+        onShowEdit?(URL(fileURLWithPath: path), old, new)
+    }
+
     // A short, CLI-like title from the first message (a heuristic — no extra model call/tokens;
     // a true summary would cost a small request).
     static func shortTitle(_ s: String) -> String {
@@ -438,22 +474,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
-        // Read only the TAIL of the transcript. A long session's .jsonl can be many MB / thousands
-        // of lines; reading + JSON-parsing every line just to render the last 40 messages is what
-        // spiked CPU on resume / workspace-switch. Seek to the last 512KB and drop the partial line.
-        guard let fh = try? FileHandle(forReadingFrom: url) else { return }
-        defer { try? fh.close() }
-        let size = (try? fh.seekToEnd()) ?? 0
-        let window: UInt64 = 512 * 1024
-        let startOff = size > window ? size - window : 0
-        try? fh.seek(toOffset: startOff)
-        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return }
-        var rawLines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
-        if startOff > 0 && !rawLines.isEmpty { rawLines.removeFirst() }   // partial first line
-        // Only the last ~200 lines can contain the 40 messages we render.
-        let tailLines = rawLines.suffix(200)
+        // Render the WHOLE prior conversation — the user wants everything (incl. code blocks)
+        // visible, not just a tail. This runs once per session restore (pane reuse means a
+        // workspace switch does NOT re-run it), so the one-time parse/render cost is acceptable.
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         var msgs: [(user: Bool, text: String)] = []
-        for line in tailLines {
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = o["type"] as? String, let msg = o["message"] as? [String: Any] else { continue }
@@ -462,8 +488,6 @@ final class ChatPanel: NSView, Themable, Scalable {
             if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
             else if type == "assistant" { msgs.append((false, s)) }
         }
-        let cap = 40
-        if msgs.count > cap { addSystem("— 이전 대화 \(msgs.count - cap)개 생략 —"); msgs = Array(msgs.suffix(cap)) }
         for m in msgs {
             if m.user { addUser(m.text) }
             else {
@@ -543,7 +567,15 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onSubagentText = { [weak self] pid, text in self?.subToPane[pid]?.addText(text) }
         s?.onSubagentDone = { [weak self] id, result in self?.subToPane[id]?.finish(result) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
-        s?.onExit = { [weak self] code in if code != 0 { self?.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") } }
+        s?.onExit = { [weak self] code in
+            guard let self else { return }
+            // If the process dies mid-turn (crash, 529 that killed the stream, kill) the result
+            // event never arrives — so WITHOUT this the flush timer runs FOREVER at 20fps doing a
+            // full-transcript layout, which pegs the main thread (the reported "even the shimmer
+            // can't animate" lag). End the turn so the timer stops.
+            if self.turnStart != nil { self.endTurn(cost: nil, usage: nil, error: code != 0 ? "세션이 예기치 않게 종료됨 (code \(code))" : nil) }
+            if code != 0 { self.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") }
+        }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
         s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
         session = s
@@ -874,7 +906,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
     // stay in the CLI session/context — only their VIEWS are dropped.
     private func trimTranscript() {
-        let cap = 120
+        // High cap so a fully-restored conversation isn't immediately trimmed when the next turn
+        // starts (the user wants the whole history to stay visible). Only runaway sessions get bounded.
+        let cap = 600
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
         for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
@@ -905,6 +939,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         flushTimer?.invalidate()
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
+            // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work: skip the
+            // typewriter reveal, the elapsed relabel, and above all the scroll (which forces a full
+            // layout of the whole transcript). The session keeps buffering text; it's revealed when
+            // the pane is shown again. Without this, every background agent's flush pegged the main
+            // thread at 20fps, which is why even the foreground shimmer couldn't animate.
+            guard self.window != nil else { return }
             let grew = block.flush()
             block.tick(Int(Date().timeIntervalSince(start) - self.pausedTotal))   // exclude approval wait
             if grew { self.autoScroll() }
@@ -969,6 +1009,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }
     // FORCED pin to the live edge (user sent / resumed / tapped the pill): also resumes following.
     private func scrollToBottom() {
+        guard window != nil else { return }   // offscreen: don't force a layout; viewDidMoveToWindow handles it
         layoutSubtreeIfNeeded()
         let clip = scroll.contentView
         let y = max(0, stack.frame.height - clip.bounds.height)

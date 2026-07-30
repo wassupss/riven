@@ -1999,12 +1999,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Restore this workspace's editor tabs (adds the editor panel if needed).
         rebuildTabs(for: st)
 
-        explorer.setRoot(url)
-        searchPanel.setRoot(url); gitPanel.setRoot(url); changesPanel.setWorkspace(url)
         updateWorkspaceHeader(url)
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
-        refreshRailAgents()   // populate this workspace's agent rows now its dock is live
-        refreshGit()
+        // Populate the SIDE panels (file tree, git/search/changes roots, rail agent rows) on the
+        // next runloop so the dock swap + active editor tab paint FIRST — this is the heavy tail of
+        // a workspace switch, and running it in the same frame is what made the switch feel janky.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.workspace == url else { return }   // bailed if switched again
+            self.explorer.setRoot(url)
+            self.searchPanel.setRoot(url); self.gitPanel.setRoot(url); self.changesPanel.setWorkspace(url)
+            self.refreshRailAgents()   // this workspace's agent rows
+            self.refreshGit()
+        }
 
         // NOW apply focus — after rebuildTabs (which re-adds the editor) so it can't steal it.
         // Target: an explicit reveal pane, else the pane the user last had focused here.
