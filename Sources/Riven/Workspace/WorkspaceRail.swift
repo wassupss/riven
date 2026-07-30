@@ -432,11 +432,12 @@ final class WorkspaceRail: NSView, Themable {
         dot.translatesAutoresizingMaskIntoConstraints = false
         dot.set(agent.activity)
 
-        let name = NSTextField(labelWithString: agent.title)
+        let name = ShimmerLabel(labelWithString: agent.title)
         name.font = UIScale.font(11, isFocused ? .semibold : .regular)
         name.textColor = isFocused ? Theme.fg : Theme.hex("#c9c9d0")
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
+        name.shimmering = (agent.activity == .busy)   // in-progress pane → title shimmers like the chat
 
         // Agent-type glyph (Claude = sparkles, Codex = code) between the status and the name,
         // for panes launched via the agent button. Hand-typed panes have no glyph.
@@ -717,6 +718,36 @@ final class StatusIndicator: NSView {
 final class RailRow: NSView {
     var onSelect: (() -> Void)?
     override func mouseDown(with event: NSEvent) { onSelect?() }
+}
+
+// A label that can shimmer a bright band left→right across its glyphs (same effect as the chat
+// panel's "생각 중…" indicator), used to flag an in-progress pane in the rail. The gradient is an
+// alpha-only MASK on the label's layer, so only the text shimmers and it inherits the text color.
+final class ShimmerLabel: NSTextField {
+    private let grad = CAGradientLayer()
+    private var on = false
+    var shimmering: Bool {
+        get { on }
+        set { guard newValue != on else { return }; on = newValue; newValue ? start() : stop() }
+    }
+    private func start() {
+        wantsLayer = true
+        grad.startPoint = CGPoint(x: 0, y: 0.5); grad.endPoint = CGPoint(x: 1, y: 0.5)
+        let dim = NSColor.white.withAlphaComponent(0.35).cgColor   // alpha mask: only alpha matters
+        grad.colors = [dim, NSColor.white.cgColor, dim]
+        grad.locations = [0, 0.5, 1]
+        grad.frame = bounds
+        layer?.mask = grad
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+        sweep.duration = 1.4; sweep.repeatCount = .infinity
+        grad.add(sweep, forKey: "shimmer")
+    }
+    private func stop() { grad.removeAllAnimations(); layer?.mask = nil }
+    override func layout() {
+        super.layout()
+        if on { grad.frame = bounds }   // keep the mask sized to the (post-layout) label
+    }
 }
 
 // Marker subclass so WSCard.hitTest can let the collapse chevron receive its own clicks
