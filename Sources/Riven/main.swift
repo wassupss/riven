@@ -1132,6 +1132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
+        chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
@@ -1203,7 +1204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let wsPath = st.url.path, paneId = p.id
         p.onActivate = { [weak self, weak chat, weak p] in       // looking at it clears the "done" ember
             chat?.focusInput()
-            if p?.badge == "attn" { p?.badge = nil; WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false); self?.refreshDockTabs(); self?.refreshRailAgents() }
+            if p?.badge == "attn" { p?.badge = nil; chat?.setRingState(nil); WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false); self?.refreshDockTabs(); self?.refreshRailAgents() }
         }
         p.onClose = { [weak self, weak chat] in
             chat?.teardown()
@@ -1232,11 +1233,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                        body: "\(p.title) · \(t("term.done"))", wsPath: wsPath, panelId: paneId)
                 }
             }
+            chat?.setRingState(p.badge)                          // travelling-ember ring like agents
             self.refreshDockTabs(); self.refreshRailAgents()
         }
-        chat.onAttention = { [weak self, weak p] attn in
+        chat.onAttention = { [weak self, weak p, weak chat] attn in
             guard let self, let p else { return }
             p.badge = attn ? "attn" : "busy"                     // still working after the prompt
+            chat?.setRingState(p.badge)
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: attn)
             self.refreshDockTabs(); self.refreshRailAgents()
         }

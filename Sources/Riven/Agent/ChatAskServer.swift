@@ -48,6 +48,7 @@ final class ChatAskServer {
         """
         이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
+        - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
         - 웹페이지를 사용자에게 보여줄 땐 `riven_open_browser`(url) 로 riven 미리보기 패널에 엽니다.
         - 웹페이지 화면이 필요하면 `riven_screenshot`(url?) 로 캡처합니다. 반환된 PNG 경로를 Read 로 읽어 확인하세요.
         - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
@@ -152,6 +153,9 @@ final class ChatAskServer {
             {"name": "ask_user",
              "description": "Ask the user to choose one option via a native UI. Use instead of writing a numbered list.",
              "inputSchema": {"type": "object", "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}, "required": ["question", "options"]}},
+            {"name": "riven_open_file",
+             "description": "Open a file in riven's code editor (optionally at a line) so the user can review it with you.",
+             "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "line": {"type": "number"}}, "required": ["path"]}},
             {"name": "riven_open_browser",
              "description": "Open a URL in riven's preview browser panel so the user can see it.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},

@@ -52,6 +52,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
 
     var onFocused: (() -> Void)?
     var onOpenFile: ((URL) -> Void)?
+    var onOpenFileAt: ((URL, Int) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
     // Rail/tab integration (mirrors agent terminal panes): busy while a turn runs, attention
     // while awaiting approval, and a title from the first message.
@@ -60,6 +61,11 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     var onTitle: ((String) -> Void)?
     var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
     var onOpenSettings: (() -> Void)?       // /config
+    private let attnRing = AttnRingView(frame: .zero)
+    // busy = static ring, attn = travelling ember, nil = none (mirrors TerminalView).
+    func setRingState(_ badge: String?) {
+        switch badge { case "attn": attnRing.state = .attn; case "busy": attnRing.state = .busy; default: attnRing.state = .none }
+    }
     private var titleSet = false
 
     override init(frame: NSRect) {
@@ -193,6 +199,9 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         ])
         ChatText.openInEditor = { [weak self] url in self?.onOpenFile?(url) }
         ChatText.showEdit = { [weak self] url, o, n in self?.onShowEdit?(url, o, n) }
+        // Same travelling-ember state ring as agent terminal panes, driven by setRingState.
+        attnRing.frame = bounds; attnRing.autoresizingMask = [.width, .height]
+        addSubview(attnRing)
         lastScaleFactor = UIScale.pt(100) / 100        // capture current factor for later ratios
         registerForDraggedTypes([.fileURL, .string])   // drag a file → path, or selected text → snippet
         Theme.register(self)
@@ -384,6 +393,50 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         return ""
     }
 
+    // Switch THIS pane to a past session in place (no new pane) — replaces the transcript and
+    // resumes the chosen session id.
+    func switchSession(to sid: String) {
+        guard let url = workspace, let cmd = AgentDiscovery.claudeCmd() else { return }
+        session?.stop(); session = nil
+        current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll(); titleSet = false
+        approvalQueue.removeAll(); approvalActive = false
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        startSession(cmd: cmd, cwd: url.path, resume: sid)
+        loadHistory(cwd: url.path, sessionId: sid)
+        onSessionId?(sid)
+    }
+    // This workspace's past sessions (newest first) with a title from the first user message.
+    private func listSessions() -> [(id: String, title: String, date: String)] {
+        guard let cwd = workspace?.path else { return [] }
+        let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects/\(enc)")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        let fmt = DateFormatter(); fmt.dateFormat = "MM/dd HH:mm"
+        return files.filter { $0.pathExtension == "jsonl" }.compactMap { url -> (String, String, Date)? in
+            let m = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            return (url.deletingPathExtension().lastPathComponent, sessionTitle(url), m)
+        }.sorted { $0.2 > $1.2 }.prefix(12).map { (id: $0.0, title: $0.1, date: fmt.string(from: $0.2)) }
+    }
+    private func sessionTitle(_ url: URL) -> String {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        for line in text.split(separator: "\n").prefix(60) {
+            guard let d = line.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  o["type"] as? String == "user", let msg = o["message"] as? [String: Any] else { continue }
+            let s = ChatPanel.contentText(msg["content"]).trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+            if s.isEmpty || s.hasPrefix("/") || s.hasPrefix("<") { continue }
+            return String(s.prefix(40))
+        }
+        return ""
+    }
+    // Show a standalone arrow-select card in the transcript (not part of a turn's approval flow).
+    private func presentChoice(_ title: String, options: [(String, () -> Void)]) {
+        let block = newBlock(); current = block
+        let card = block.addApproval(title, "", nil, nil, options: options)
+        scrollSoon()
+        DispatchQueue.main.async { [weak self, weak card] in if let card { self?.window?.makeFirstResponder(card) } }
+    }
+
     private func startSession(cmd: String, cwd: String, resume: String?) {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
@@ -443,6 +496,12 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         switch tool {
         case "ask_user":
             presentAsk(id, s("question"), args["options"] as? [String] ?? [])
+        case "riven_open_file":
+            let p = s("path")
+            let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
+            onOpenFileAt?(URL(fileURLWithPath: p), line)
+            addSystem("📄 에디터에 열었습니다: \(p)")
+            session?.respondTool(id, "opened \(p) in riven editor")
         case "riven_open_browser":
             onOpenBrowser?(s("url"))
             addSystem("🌐 미리보기 패널에 열었습니다: \(s("url"))")
@@ -582,7 +641,14 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll()
             return true
         case "resume":
-            onResumeRequest?(); return true
+            let sessions = listSessions()
+            if sessions.isEmpty { addSystem("이 워크스페이스에 이전 세션이 없습니다."); return true }
+            let opts: [(String, () -> Void)] = sessions.map { s in
+                let label = (s.title.isEmpty ? String(s.id.prefix(8)) : s.title) + "  ·  " + s.date
+                return (label, { [weak self] in self?.switchSession(to: s.id) })
+            }
+            presentChoice("이어서 열 세션 선택", options: opts)
+            return true
         case "model":
             pickModel(); return true
         case "cost", "context":
@@ -703,9 +769,18 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         let secs = turnStart.map { Int(Date().timeIntervalSince($0) - pausedTotal) } ?? 0
         stopFlush()
         lastUsage = usage
-        current?.finish(secs: secs, cost: cost, usage: usage, model: model)
+        let block = current
+        block?.finish(secs: secs, cost: cost, usage: usage, model: model)
         turnStart = nil
         scrollToBottom()
+        // Show how much of the plan quota is used (account 5-hour / weekly window, from the
+        // OAuth usage API) — updates after each turn so you can watch it climb.
+        Usage.limits { lim in
+            DispatchQueue.main.async {
+                block?.setQuota(sessionUsed: lim.sessionRemaining.map { 100 - $0 },
+                                weeklyUsed: lim.weeklyRemaining.map { 100 - $0 })
+            }
+        }
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { beginTurn(queuedMessages.removeFirst()) }
         else { onBusyChange?(false) }
@@ -767,7 +842,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
     private func hideSlash() { slash.isHidden = true; slashHeight.constant = 0 }
     private func acceptSlash() {
-        if let cmd = slash.current() { input.stringValue = "/" + cmd.name + " " }
+        if let cmd = slash.current() { input.stringValue = "/" + cmd.name }   // no trailing space
         hideSlash()
         window?.makeFirstResponder(input)
         input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
