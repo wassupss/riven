@@ -124,6 +124,12 @@ final class ClaudeChatSession {
                    "request": ["subtype": "set_permission_mode", "mode": mode]])
     }
 
+    // Stop the current turn (verified: emits a result with subtype error_during_execution).
+    func interrupt() {
+        ctrlSeq += 1
+        writeLine(["type": "control_request", "request_id": "i\(ctrlSeq)",
+                   "request": ["subtype": "interrupt"]])
+    }
     // Change the model live (verified over the control channel), like set_permission_mode.
     func setModel(_ model: String) {
         ctrlSeq += 1

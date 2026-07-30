@@ -137,7 +137,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         sendButton.wantsLayer = true
         sendButton.layer?.cornerRadius = UIScale.pt(26) / 2
         sendButton.font = UIScale.font(11, .semibold)
-        sendButton.target = self; sendButton.action = #selector(sendFromInput)
+        sendButton.target = self; sendButton.action = #selector(sendOrStop)
         sendButton.translatesAutoresizingMaskIntoConstraints = false
 
         slash.translatesAutoresizingMaskIntoConstraints = false
@@ -216,18 +216,25 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Glass + chip + send-pill colors, all Theme tokens (re-applied on theme switch). The
     // effect view's appearance follows the riven theme, not the system, so the blur matches.
+    private var running = false
     private func applyComposerTheme() {
         composer.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
         composer.layer?.borderColor = Theme.edge.cgColor
         modeChip.layer?.backgroundColor = Theme.hover.cgColor
         input.textColor = Theme.fg
-        sendButton.layer?.backgroundColor = Theme.accentMuted.cgColor
         sendButton.layer?.borderWidth = 1
-        sendButton.layer?.borderColor = Theme.accentBorder.cgColor
+        styleSendButton()
+    }
+    // Send pill ⇄ stop pill: while a turn runs the button interrupts (danger tint, "중단").
+    private func setRunning(_ r: Bool) { running = r; styleSendButton() }
+    private func styleSendButton() {
+        let stop = running
+        sendButton.layer?.backgroundColor = (stop ? Theme.danger.withAlphaComponent(0.14) : Theme.accentMuted).cgColor
+        sendButton.layer?.borderColor = (stop ? Theme.danger.withAlphaComponent(0.5) : Theme.accentBorder).cgColor
         let ps = NSMutableParagraphStyle(); ps.alignment = .center
         sendButton.attributedTitle = NSAttributedString(
-            string: "보내기",
-            attributes: [.foregroundColor: Theme.accent,
+            string: stop ? "중단" : "보내기",
+            attributes: [.foregroundColor: stop ? Theme.danger : Theme.accent,
                          .font: sendButton.font ?? UIScale.font(11, .semibold),
                          .paragraphStyle: ps])
     }
@@ -628,6 +635,15 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     // ---- send / turn lifecycle ----
+    // Interrupt the running turn (Esc / the stop button) — like the CLI's Esc.
+    private func interruptTurn() {
+        guard turnStart != nil else { return }
+        session?.interrupt()
+        queuedMessages.removeAll()            // stop = cancel everything pending
+        addSystem("⏹ 중단됨")
+        // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
+    }
+    @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
     @objc private func sendFromInput() {
         if !slash.isHidden { acceptSlash(); return }
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -736,6 +752,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = newBlock()
         current?.startWorking()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; startFlush()
+        setRunning(true)
         onBusyChange?(true)
         session?.send(text)
         scrollSoon()
@@ -808,7 +825,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { beginTurn(queuedMessages.removeFirst()) }
-        else { onBusyChange?(false) }
+        else { setRunning(false); onBusyChange?(false) }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
         // to a 5k-token turn. Per-turn quota % isn't derivable (no absolute budget from the API).
@@ -852,14 +869,18 @@ final class ChatPanel: NSView, Themable, Scalable {
     // if consumed (so ChatInput doesn't also act on the key).
     private func inputKey(_ sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertBacktab(_:)) { cycleMode(); return true }
-        guard !slash.isHidden else { return false }
-        switch sel {
-        case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true
-        case #selector(NSResponder.moveDown(_:)):        slash.move(1);  return true
-        case #selector(NSResponder.insertNewline(_:)):   acceptSlash();  return true
-        case #selector(NSResponder.cancelOperation(_:)): hideSlash();    return true
-        default: return false
+        if !slash.isHidden {
+            switch sel {
+            case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true
+            case #selector(NSResponder.moveDown(_:)):        slash.move(1);  return true
+            case #selector(NSResponder.insertNewline(_:)):   acceptSlash();  return true
+            case #selector(NSResponder.cancelOperation(_:)): hideSlash();    return true
+            default: return false
+            }
         }
+        // Esc with no popup → interrupt the running turn (like the CLI).
+        if sel == #selector(NSResponder.cancelOperation(_:)), turnStart != nil { interruptTurn(); return true }
+        return false
     }
     private func showSlash(_ list: [SlashCommand]) {
         slash.set(list)
