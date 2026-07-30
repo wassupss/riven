@@ -52,6 +52,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
 
     var onFocused: (() -> Void)?
     var onOpenFile: ((URL) -> Void)?
+    var onOpenFileAt: ((URL, Int) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
     // Rail/tab integration (mirrors agent terminal panes): busy while a turn runs, attention
     // while awaiting approval, and a title from the first message.
@@ -59,6 +60,12 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     var onAttention: ((Bool) -> Void)?
     var onTitle: ((String) -> Void)?
     var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
+    var onOpenSettings: (() -> Void)?       // /config
+    private let attnRing = AttnRingView(frame: .zero)
+    // busy = static ring, attn = travelling ember, nil = none (mirrors TerminalView).
+    func setRingState(_ badge: String?) {
+        switch badge { case "attn": attnRing.state = .attn; case "busy": attnRing.state = .busy; default: attnRing.state = .none }
+    }
     private var titleSet = false
 
     override init(frame: NSRect) {
@@ -192,6 +199,9 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         ])
         ChatText.openInEditor = { [weak self] url in self?.onOpenFile?(url) }
         ChatText.showEdit = { [weak self] url, o, n in self?.onShowEdit?(url, o, n) }
+        // Same travelling-ember state ring as agent terminal panes, driven by setRingState.
+        attnRing.frame = bounds; attnRing.autoresizingMask = [.width, .height]
+        addSubview(attnRing)
         lastScaleFactor = UIScale.pt(100) / 100        // capture current factor for later ratios
         registerForDraggedTypes([.fileURL, .string])   // drag a file → path, or selected text → snippet
         Theme.register(self)
@@ -383,6 +393,50 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         return ""
     }
 
+    // Switch THIS pane to a past session in place (no new pane) — replaces the transcript and
+    // resumes the chosen session id.
+    func switchSession(to sid: String) {
+        guard let url = workspace, let cmd = AgentDiscovery.claudeCmd() else { return }
+        session?.stop(); session = nil
+        current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll(); titleSet = false
+        approvalQueue.removeAll(); approvalActive = false
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        startSession(cmd: cmd, cwd: url.path, resume: sid)
+        loadHistory(cwd: url.path, sessionId: sid)
+        onSessionId?(sid)
+    }
+    // This workspace's past sessions (newest first) with a title from the first user message.
+    private func listSessions() -> [(id: String, title: String, date: String)] {
+        guard let cwd = workspace?.path else { return [] }
+        let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects/\(enc)")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        let fmt = DateFormatter(); fmt.dateFormat = "MM/dd HH:mm"
+        return files.filter { $0.pathExtension == "jsonl" }.compactMap { url -> (String, String, Date)? in
+            let m = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            return (url.deletingPathExtension().lastPathComponent, sessionTitle(url), m)
+        }.sorted { $0.2 > $1.2 }.prefix(12).map { (id: $0.0, title: $0.1, date: fmt.string(from: $0.2)) }
+    }
+    private func sessionTitle(_ url: URL) -> String {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
+        for line in text.split(separator: "\n").prefix(60) {
+            guard let d = line.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  o["type"] as? String == "user", let msg = o["message"] as? [String: Any] else { continue }
+            let s = ChatPanel.contentText(msg["content"]).trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "\n", with: " ")
+            if s.isEmpty || s.hasPrefix("/") || s.hasPrefix("<") { continue }
+            return String(s.prefix(40))
+        }
+        return ""
+    }
+    // Show a standalone arrow-select card in the transcript (not part of a turn's approval flow).
+    private func presentChoice(_ title: String, options: [(String, () -> Void)]) {
+        let block = newBlock(); current = block
+        let card = block.addApproval(title, "", nil, nil, options: options)
+        scrollSoon()
+        DispatchQueue.main.async { [weak self, weak card] in if let card { self?.window?.makeFirstResponder(card) } }
+    }
+
     private func startSession(cmd: String, cwd: String, resume: String?) {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
@@ -398,15 +452,15 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         s?.onTurnDone = { [weak self] cost, _, usage in self?.endTurn(cost: cost, usage: usage) }
         s?.onExit = { [weak self] code in if code != 0 { self?.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") } }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
-        s?.onAskRequest = { [weak self] id, question, options in self?.presentAsk(id, question, options) }
+        s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
         session = s
         if s == nil { addSystem("세션을 시작하지 못했습니다.") }
     }
 
     // ---- permission / choice cards (per-mode policy, applied live) ----
     private func requestPermission(_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) {
-        // riven's own choice tool must never show a permission card — it IS the UI. Let it run.
-        if name == "mcp__riven__ask_user" { session?.respond(id, allow: true); return }
+        // riven's own tools run in-app (choice card / preview / api) — never gate them.
+        if name.hasPrefix("mcp__riven__") { session?.respond(id, allow: true); return }
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
         // choice regardless of the current permission mode.
         if name == "ExitPlanMode" {
@@ -427,10 +481,84 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         default: session?.respond(id, allow: false)         // 계획 — no edits expected
         }
     }
-    // The agent called ask_user (MCP) — show its options as an arrow-select choice card.
+    // ---- riven tools (MCP) ----
+    var onOpenBrowser: ((String) -> Void)?
+    var onScreenshot: ((String?, @escaping (String?) -> Void) -> Void)?
+    var onApiRequest: ((_ method: String, _ url: String, _ headers: String, _ body: String) -> Void)?
+    var onPanels: (() -> String)?
+    var onOpenPanel: ((String) -> String)?
+    var onClosePanel: ((String) -> String)?
+    var onWorkspaces: (() -> String)?
+    var onOpenWorkspace: ((String) -> String)?
+
+    private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
+        func s(_ k: String) -> String { args[k] as? String ?? "" }
+        switch tool {
+        case "ask_user":
+            presentAsk(id, s("question"), args["options"] as? [String] ?? [])
+        case "riven_open_file":
+            let p = s("path")
+            let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
+            onOpenFileAt?(URL(fileURLWithPath: p), line)
+            addSystem("📄 에디터에 열었습니다: \(p)")
+            session?.respondTool(id, "opened \(p) in riven editor")
+        case "riven_open_browser":
+            onOpenBrowser?(s("url"))
+            addSystem("🌐 미리보기 패널에 열었습니다: \(s("url"))")
+            session?.respondTool(id, "opened \(s("url")) in riven preview panel")
+        case "riven_screenshot":
+            let url = args["url"] as? String
+            addSystem("📸 스크린샷 캡처 중…")
+            if let onScreenshot {
+                onScreenshot(url) { [weak self] path in
+                    self?.session?.respondTool(id, path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
+                }
+            } else { session?.respondTool(id, "screenshot unavailable") }
+        case "riven_api_request":
+            // Show it in the API panel AND return the body to the agent.
+            let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
+            onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
+            addSystem("↗ API 패널: \(s("method")) \(s("url"))")
+            apiRequest(args) { [weak self] result in self?.session?.respondTool(id, result) }
+        case "riven_panels":
+            session?.respondTool(id, onPanels?() ?? "(no panels)")
+        case "riven_open_panel":
+            session?.respondTool(id, onOpenPanel?(s("kind")) ?? "unavailable")
+        case "riven_close_panel":
+            session?.respondTool(id, onClosePanel?(s("id")) ?? "unavailable")
+        case "riven_workspaces":
+            session?.respondTool(id, onWorkspaces?() ?? "(none)")
+        case "riven_open_workspace":
+            session?.respondTool(id, onOpenWorkspace?(s("path")) ?? "unavailable")
+        default:
+            session?.respondTool(id, "unknown tool: \(tool)")
+        }
+    }
+    // In-process HTTP for the api-test tool.
+    private func apiRequest(_ args: [String: Any], _ done: @escaping (String) -> Void) {
+        guard let s = args["url"] as? String, let url = URL(string: s) else { done("invalid url"); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = (args["method"] as? String ?? "GET").uppercased()
+        if let h = args["headers"] as? [String: Any] { for (k, v) in h { req.setValue("\(v)", forHTTPHeaderField: k) } }
+        if let b = args["body"] as? String { req.httpBody = b.data(using: .utf8) }
+        req.timeoutInterval = 30
+        addSystem("↗ \(req.httpMethod ?? "GET") \(s)")
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            var out = ""
+            if let err { out = "request failed: \(err.localizedDescription)" }
+            else if let http = resp as? HTTPURLResponse {
+                let headers = http.allHeaderFields.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\n")
+                var body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                if body.count > 4000 { body = String(body.prefix(4000)) + "\n…(truncated)" }
+                out = "HTTP \(http.statusCode)\n\(headers)\n\n\(body)"
+            }
+            DispatchQueue.main.async { done(out) }
+        }.resume()
+    }
+    // The agent called ask_user — show its options as an arrow-select choice card.
     private func presentAsk(_ id: String, _ question: String, _ options: [String]) {
         let opts: [(String, () -> Void)] = options.map { opt in
-            (opt, { [weak self] in self?.session?.answerAsk(id, opt) })
+            (opt, { [weak self] in self?.session?.respondTool(id, opt) })
         }
         enqueueChoice(title: question, detail: "", code: nil, path: nil, options: opts)
     }
@@ -513,7 +641,14 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll()
             return true
         case "resume":
-            onResumeRequest?(); return true
+            let sessions = listSessions()
+            if sessions.isEmpty { addSystem("이 워크스페이스에 이전 세션이 없습니다."); return true }
+            let opts: [(String, () -> Void)] = sessions.map { s in
+                let label = (s.title.isEmpty ? String(s.id.prefix(8)) : s.title) + "  ·  " + s.date
+                return (label, { [weak self] in self?.switchSession(to: s.id) })
+            }
+            presentChoice("이어서 열 세션 선택", options: opts)
+            return true
         case "model":
             pickModel(); return true
         case "cost", "context":
@@ -532,12 +667,35 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             if !riven.isEmpty { lines.append("· riven (내장) — \(riven.map { $0.replacingOccurrences(of: "mcp__riven__", with: "") }.joined(separator: ", "))") }
             addSystem(lines.joined(separator: "\n"))
             return true
+        case "config":
+            onOpenSettings?(); return true
+        case "permissions":
+            addSystem("권한 모드: \(modes[modeIndex].0) — Shift+Tab 또는 하단 모드 셀렉터로 전환 (계획/승인 요청/자동 실행).")
+            return true
+        case "status":
+            var s = ["모델: \(model ?? "?")", "권한: \(modes[modeIndex].0)"]
+            if let u = lastUsage { s.append("최근 턴 ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))") }
+            if let sid = session?.sessionId { s.append("세션 \(sid.prefix(8))") }
+            addSystem(s.joined(separator: " · ")); return true
+        case "init":
+            sendPrompt("이 프로젝트를 분석해서 CLAUDE.md 파일을 생성하거나 업데이트해줘."); return true
+        case "review":
+            sendPrompt("최근 변경사항(git diff)을 리뷰해서 버그와 개선점을 알려줘."); return true
+        case "agents":
+            addSystem("서브에이전트는 Task 도구로 자동 실행되며, 실행 중이면 오른쪽에 컬럼으로 표시됩니다.")
+            return true
         case "help":
-            addSystem("리븐 네이티브 채팅 · /clear 대화지우기 · /resume 이전세션 · /cost 사용량 · Shift+Tab 권한모드 · / 로 명령. 그 외 명령은 CLI/커스텀 명령으로 전달됩니다.")
+            addSystem("리븐 네이티브 채팅 · /clear 지우기 · /resume 이전세션 · /model 모델 · /cost·/status 사용량 · /mcp 서버 · /config 설정 · /init·/review 실행 · Shift+Tab 권한모드")
             return true
         default:
             return false      // pass through to the CLI (custom commands etc.)
         }
+    }
+    // Send an expanded prompt as if the user typed it (for /init, /review).
+    private func sendPrompt(_ text: String) {
+        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
+        addUser(text)
+        if turnStart != nil { queuedMessages.append(text) } else { beginTurn(text) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
     private func pickModel() {
@@ -611,9 +769,18 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         let secs = turnStart.map { Int(Date().timeIntervalSince($0) - pausedTotal) } ?? 0
         stopFlush()
         lastUsage = usage
-        current?.finish(secs: secs, cost: cost, usage: usage, model: model)
+        let block = current
+        block?.finish(secs: secs, cost: cost, usage: usage, model: model)
         turnStart = nil
         scrollToBottom()
+        // Show how much of the plan quota is used (account 5-hour / weekly window, from the
+        // OAuth usage API) — updates after each turn so you can watch it climb.
+        Usage.limits { lim in
+            DispatchQueue.main.async {
+                block?.setQuota(sessionUsed: lim.sessionRemaining.map { 100 - $0 },
+                                weeklyUsed: lim.weeklyRemaining.map { 100 - $0 })
+            }
+        }
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { beginTurn(queuedMessages.removeFirst()) }
         else { onBusyChange?(false) }
@@ -675,7 +842,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
     private func hideSlash() { slash.isHidden = true; slashHeight.constant = 0 }
     private func acceptSlash() {
-        if let cmd = slash.current() { input.stringValue = "/" + cmd.name + " " }
+        if let cmd = slash.current() { input.stringValue = "/" + cmd.name }   // no trailing space
         hideSlash()
         window?.makeFirstResponder(input)
         input.currentEditor()?.selectedRange = NSRange(location: input.stringValue.count, length: 0)
@@ -696,8 +863,6 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         .init(name: "memory", desc: "메모리 편집"),
         .init(name: "model", desc: "모델 변경"),
         .init(name: "permissions", desc: "권한 설정"),
-        .init(name: "pr-comments", desc: "PR 코멘트"),
-        .init(name: "release-notes", desc: "릴리스 노트"),
         .init(name: "resume", desc: "이전 세션 열기"),
         .init(name: "review", desc: "코드 리뷰"),
         .init(name: "agents", desc: "서브에이전트"),

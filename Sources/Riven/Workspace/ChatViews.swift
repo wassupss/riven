@@ -89,6 +89,34 @@ final class ToolLine: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    // Sweeping highlight while THIS tool is in progress (same shadcn-style shimmer as the
+    // thinking label), stopped when the tool finishes. Masks the whole row's layer.
+    private let shimmer = CAGradientLayer()
+    private var shimmerOn = false
+    func startShimmer() {
+        guard !shimmerOn else { return }
+        shimmerOn = true
+        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
+        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
+        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
+        layer?.mask = shimmer
+        needsLayout = true
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+        sweep.duration = 1.4; sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shimmer.add(sweep, forKey: "shimmer")
+    }
+    func stopShimmer() {
+        guard shimmerOn else { return }
+        shimmerOn = false; shimmer.removeAllAnimations(); layer?.mask = nil
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn, let host = layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+    }
     static func symbol(_ name: String) -> String {
         switch name {
         case "Read": return "doc.text"
@@ -265,7 +293,7 @@ enum ChatText {
         l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
         l.translatesAutoresizingMaskIntoConstraints = false
         if diff { l.attributedStringValue = diffColored(code) }
-        else { l.attributedStringValue = monoSpaced(code) }
+        else { l.attributedStringValue = highlight(code) }
         [header, l].forEach { box.addSubview($0) }
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
@@ -281,10 +309,31 @@ enum ChatText {
         ])
         return box
     }
-    // Monospace body with a little line spacing so code lines aren't cramped.
-    private static func monoSpaced(_ code: String) -> NSAttributedString {
+    // Lightweight, language-agnostic syntax highlighting (comments, strings, numbers, keywords)
+    // so code blocks read like the CLI's coloring — a regex pass, not a full grammar.
+    private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
+    static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        return NSAttributedString(string: code, attributes: [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p])
+        let m = NSMutableAttributedString(string: code,
+            attributes: [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p])
+        let full = NSRange(location: 0, length: (code as NSString).length)
+        var protected = IndexSet()
+        func paint(_ pattern: String, _ color: NSColor, options: NSRegularExpression.Options = [], protect: Bool) {
+            guard let re = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+            re.enumerateMatches(in: code, range: full) { match, _, _ in
+                guard let r = match?.range, r.length > 0 else { return }
+                let span = r.location..<(r.location + r.length)
+                if protected.intersection(IndexSet(integersIn: span)).isEmpty == false { return }
+                m.addAttribute(.foregroundColor, value: color, range: r)
+                if protect { protected.insert(integersIn: span) }
+            }
+        }
+        // comments & strings first (and protect them from keyword/number recoloring)
+        paint("(//[^\\n]*)|(#[^\\n]*)|(/\\*[\\s\\S]*?\\*/)", Theme.fgDim, protect: true)
+        paint("\"(\\\\.|[^\"\\\\])*\"|'(\\\\.|[^'\\\\])*'|`[^`]*`", Theme.gitAdded, protect: true)
+        paint("\\b\\d[\\d_.eExXa-fA-F]*\\b", Theme.warning, protect: false)
+        paint(kwPattern, Theme.accent2, protect: false)
+        return m
     }
     // Edits open the real file (see the applied change); snippets go to a temp file.
     private static func openCode(_ code: String, path: String?) {
@@ -572,11 +621,14 @@ final class TurnBlock: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func startWorking() { spinner.startAnimation(nil); workLabel.stringValue = "생각 중…"; startShimmer() }
+    private var phase = "생각 중"          // current activity shown in the shimmer label
+    func startWorking() { phase = "생각 중"; spinner.startAnimation(nil); workLabel.stringValue = "생각 중…"; startShimmer() }
+    // Set the current activity (a tool name etc.) — shown shimmering, like "생각 중".
+    func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
     func tick(_ secs: Int) {
         lastSecs = secs
         guard !finished, !waiting else { return }
-        workLabel.stringValue = (hasText ? "작성 중… " : "생각 중… ") + ChatText.duration(secs)
+        workLabel.stringValue = phase + "… " + ChatText.duration(secs)
         needsLayout = true              // text width changed → re-fit the shimmer mask
     }
     // Pause the "thinking/writing" indicator while the user is being asked to approve/choose —
@@ -625,8 +677,13 @@ final class TurnBlock: NSView {
         CATransaction.commit()
     }
 
+    private weak var activeTool: ToolLine?   // the tool line currently in progress (shimmering)
+    private func stopActiveTool() { activeTool?.stopShimmer(); activeTool = nil }
+
     func bufferText(_ t: String) {
         if !hasText { hasText = true; thinkingSecs = lastSecs }
+        phase = "작성 중"
+        stopActiveTool()                     // text arriving ⇒ the previous tool finished
         if openText == nil { openText = newText() }
         openText?.receive(t)
     }
@@ -650,8 +707,11 @@ final class TurnBlock: NSView {
 
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         closeText()
+        setPhase("\(name.replacingOccurrences(of: "mcp__riven__", with: "")) 실행 중")   // shimmer shows the current tool
+        stopActiveTool()                     // previous tool finished
         let line = ToolLine(name: name, detail: detail)
         add(line)
+        line.startShimmer(); activeTool = line   // shimmer THIS tool while it runs
         if let code, !code.isEmpty {
             add(ChatText.codeBlock(code, diff: name == "Edit" || name == "MultiEdit", path: path))
             content.setCustomSpacing(5, after: line)   // the block belongs to its tool line
@@ -668,7 +728,7 @@ final class TurnBlock: NSView {
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }
         closeText(); finished = true
-        stopShimmer()
+        stopShimmer(); stopActiveTool()
         spinner.stopAnimation(nil); spinnerW.constant = 0   // reclaim the hidden spinner's gap
         // left: thinking/writing times
         var times: [String] = []

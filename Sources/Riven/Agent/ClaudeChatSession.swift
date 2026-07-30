@@ -49,8 +49,9 @@ final class ClaudeChatSession {
     var onExit: ((_ code: Int32) -> Void)?
     // Interactive approval: fired when a gated tool wants to run; answer via respond(id:allow:).
     var onPermissionRequest: ((_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
-    // Interactive choice (MCP ask_user tool): fired when the agent asks the user to pick.
-    var onAskRequest: ((_ id: String, _ question: String, _ options: [String]) -> Void)?
+    // A riven MCP tool was called (ask_user / riven_open_browser / riven_screenshot /
+    // riven_api_request). Handle it and reply via respondTool(id:result:).
+    var onToolRequest: ((_ id: String, _ tool: String, _ args: [String: Any]) -> Void)?
 
     private(set) var sessionId: String?
     private(set) var toolList: [String] = []                       // tools from the init event
@@ -66,8 +67,8 @@ final class ClaudeChatSession {
         self.perm = interactive ? ChatPermissionServer() : nil
         self.ask = ChatAskServer()
         proc.executableURL = URL(fileURLWithPath: command)
-        // Allow our MCP ask tool so it runs without a permission prompt.
-        let tools = ask.map { "\(allowedTools),\($0.toolName)" } ?? allowedTools
+        // Allow all riven MCP tools so they run without a permission prompt.
+        let tools = ask.map { "\(allowedTools),\($0.toolPrefix)" } ?? allowedTools
         var args = ["-p",
                     "--input-format", "stream-json",
                     "--output-format", "stream-json",
@@ -92,8 +93,8 @@ final class ClaudeChatSession {
             let path = self.toolPath(name, input)
             DispatchQueue.main.async { self.onPermissionRequest?(id, name, d, code, path) }
         }
-        ask?.onRequest = { [weak self] id, question, options in
-            DispatchQueue.main.async { self?.onAskRequest?(id, question, options) }
+        ask?.onTool = { [weak self] id, tool, args in
+            DispatchQueue.main.async { self?.onToolRequest?(id, tool, args) }
         }
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
@@ -139,8 +140,8 @@ final class ClaudeChatSession {
 
     // Answer an outstanding permission request (called on the main thread from the UI).
     func respond(_ id: String, allow: Bool) { perm?.resolve(id, allow: allow) }
-    // Answer an outstanding ask_user choice with the picked option text.
-    func answerAsk(_ id: String, _ text: String) { ask?.resolve(id, answer: text) }
+    // Return a riven tool's result to the agent.
+    func respondTool(_ id: String, _ result: String) { ask?.resolve(id, result: result) }
 
     func stop() {
         outPipe.fileHandleForReading.readabilityHandler = nil

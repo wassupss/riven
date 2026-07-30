@@ -180,6 +180,17 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler, WK
         }
     }
 
+    // One-shot capture → PNG path via completion (for the native chat's riven_screenshot tool).
+    func capture(_ done: @escaping (String?) -> Void) {
+        guard loadedURL != nil else { done(nil); return }
+        web.takeSnapshot(with: WKSnapshotConfiguration()) { image, _ in
+            guard let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:]) else { done(nil); return }
+            let path = NSTemporaryDirectory() + "riven-capture-\(UUID().uuidString.prefix(8)).png"
+            do { try png.write(to: URL(fileURLWithPath: path)); done(path) } catch { done(nil) }
+        }
+    }
+
     func applyTheme() {
         layer?.backgroundColor = Theme.bg2.cgColor
         urlField.textColor = Theme.fg

@@ -1,33 +1,36 @@
 import Foundation
 
-// Gives the native chat an interactive "choose one option" prompt (the CLI's arrow-select
-// menu), which headless Claude otherwise can't do — AskUserQuestion isn't in the headless
-// tool set. We provide our OWN tool via MCP: a tiny stdio MCP server (python) exposes
-// `ask_user(question, options)`; an --append-system-prompt tells the agent to call it instead
-// of writing a numbered list. When called, the MCP server forwards the question over this unix
-// socket, riven shows a choice card, and the user's pick is returned as the tool result.
+// riven's OWN tools, provided to headless Claude over MCP (things the headless CLI can't do
+// itself, or that should run inside riven's UI). A tiny stdio MCP server (python) is wired via
+// --mcp-config and exposes these tools; --append-system-prompt tells the agent they exist. On
+// a tool call the server forwards {tool,args} over this unix socket, riven performs it in-app,
+// and the result string is returned to the agent.
 //
-// Verified 2026-07-29: --mcp-config loads the stdio server headless, the agent calls the tool,
-// and uses the returned answer.
+//   ask_user(question, options)            → arrow-select choice card (no AskUserQuestion headless)
+//   riven_open_browser(url)                → open the URL in riven's preview panel
+//   riven_screenshot(url?)                 → open (optional url) + capture → PNG path to Read
+//   riven_api_request(method,url,headers?,body?) → run an HTTP request, return status/body
+//
+// Verified 2026-07-29: --mcp-config loads the stdio server headless and the agent calls tools.
 final class ChatAskServer {
-    // (id, question, options) delivered on an internal queue; answer with resolve(id:answer:).
-    var onRequest: ((_ id: String, _ question: String, _ options: [String]) -> Void)?
+    // (id, tool, args) delivered on an internal queue; return via resolve(id:result:).
+    var onTool: ((_ id: String, _ tool: String, _ args: [String: Any]) -> Void)?
 
     private let path: String
     private let serverPath: String
     private var listenFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
-    private let queue = DispatchQueue(label: "com.riven.chat.ask")
-    private let clientQueue = DispatchQueue(label: "com.riven.chat.ask.client", attributes: .concurrent)
+    private let queue = DispatchQueue(label: "com.riven.chat.tools")
+    private let clientQueue = DispatchQueue(label: "com.riven.chat.tools.client", attributes: .concurrent)
     private let lock = NSLock()
-    private var pending: [String: (String) -> Void] = [:]   // id → resolver(answer)
+    private var pending: [String: (String) -> Void] = [:]   // id → resolver(result string)
     private static let timeout: TimeInterval = 600
 
     init?() {
         let dir = AgentHookServer.ensureSupportDir()
         let uid = UUID().uuidString.prefix(8)
-        self.path = dir.appendingPathComponent("chat-ask-\(uid).sock").path
-        self.serverPath = dir.appendingPathComponent("chat-ask-mcp.py").path
+        self.path = dir.appendingPathComponent("chat-tools-\(uid).sock").path
+        self.serverPath = dir.appendingPathComponent("chat-tools-mcp.py").path
         guard writeServer(), start() else { return nil }
     }
 
@@ -40,14 +43,22 @@ final class ChatAskServer {
         guard let d = try? JSONSerialization.data(withJSONObject: cfg) else { return nil }
         return String(data: d, encoding: .utf8)
     }
-    var toolName: String { "mcp__riven__ask_user" }
+    var toolPrefix: String { "mcp__riven" }        // allowedTools entry: allow all riven tools
     func systemPrompt() -> String {
-        "사용자가 여러 선택지 중 하나를 골라야 하는 상황(진행 방식 확인, 옵션 제시 등)에서는 번호 목록을 텍스트로 쓰지 말고 반드시 `ask_user` 도구(\(toolName))를 호출하세요. options 배열에 각 선택지를 문자열로 넣으면 사용자가 UI에서 방향키로 고릅니다. 반환값이 사용자가 고른 선택지입니다."
+        """
+        이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
+        - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
+        - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
+        - 웹페이지를 사용자에게 보여줄 땐 `riven_open_browser`(url) 로 riven 미리보기 패널에 엽니다.
+        - 웹페이지 화면이 필요하면 `riven_screenshot`(url?) 로 캡처합니다. 반환된 PNG 경로를 Read 로 읽어 확인하세요.
+        - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
+        - riven의 패널/워크스페이스를 파악·조작할 수 있습니다: `riven_panels`(현재 패널 목록), `riven_open_panel`(kind), `riven_close_panel`(id), `riven_workspaces`, `riven_open_workspace`(path).
+        """
     }
 
-    func resolve(_ id: String, answer: String) {
+    func resolve(_ id: String, result: String) {
         lock.lock(); let r = pending.removeValue(forKey: id); lock.unlock()
-        r?(answer)
+        r?(result)
     }
     func stop() {
         acceptSource?.cancel(); acceptSource = nil; listenFD = -1
@@ -86,24 +97,24 @@ final class ChatAskServer {
         defer { close(client) }
         var data = Data()
         var chunk = [UInt8](repeating: 0, count: 16 * 1024)
-        while data.count < 1_000_000 {
+        while data.count < 2_000_000 {
             let n = chunk.withUnsafeMutableBytes { read(client, $0.baseAddress, $0.count) }
             if n < 0 && errno == EINTR { continue }
             if n <= 0 { break }
             data.append(contentsOf: chunk[0..<n])
         }
         guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let q = o["question"] as? String else { _ = writeStr(client, ""); return }
-        let opts = (o["options"] as? [String]) ?? []
+              let tool = o["tool"] as? String else { _ = writeStr(client, ""); return }
+        let args = o["args"] as? [String: Any] ?? [:]
         let id = UUID().uuidString
         let sem = DispatchSemaphore(value: 0)
-        var answer = ""
-        lock.lock(); pending[id] = { a in answer = a; sem.signal() }; lock.unlock()
-        onRequest?(id, q, opts)
+        var result = ""
+        lock.lock(); pending[id] = { r in result = r; sem.signal() }; lock.unlock()
+        onTool?(id, tool, args)
         if sem.wait(timeout: .now() + Self.timeout) == .timedOut {
             lock.lock(); pending.removeValue(forKey: id); lock.unlock()
         }
-        _ = writeStr(client, answer)
+        _ = writeStr(client, result)
     }
     private func writeStr(_ fd: Int32, _ s: String) -> Bool {
         let bytes = Array(s.utf8); var off = 0
@@ -127,10 +138,10 @@ final class ChatAskServer {
         import sys, json, socket
         SOCK = sys.argv[1]
         def send(m): sys.stdout.write(json.dumps(m) + "\n"); sys.stdout.flush()
-        def ask(question, options):
+        def call(tool, args):
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.connect(SOCK)
-            s.sendall((json.dumps({"question": question, "options": options}) + "\n").encode())
+            s.sendall((json.dumps({"tool": tool, "args": args}) + "\n").encode())
             s.shutdown(socket.SHUT_WR)
             buf = b""
             while True:
@@ -138,11 +149,38 @@ final class ChatAskServer {
                 if not b: break
                 buf += b
             return buf.decode("utf-8", "replace").strip()
-        TOOL = {"name": "ask_user",
-                "description": "Ask the user to choose one of several options via a native UI. Use this instead of writing a numbered list whenever you need the user to pick.",
-                "inputSchema": {"type": "object",
-                    "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}},
-                    "required": ["question", "options"]}}
+        TOOLS = [
+            {"name": "ask_user",
+             "description": "Ask the user to choose one option via a native UI. Use instead of writing a numbered list.",
+             "inputSchema": {"type": "object", "properties": {"question": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}}, "required": ["question", "options"]}},
+            {"name": "riven_open_file",
+             "description": "Open a file in riven's code editor (optionally at a line) so the user can review it with you.",
+             "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "line": {"type": "number"}}, "required": ["path"]}},
+            {"name": "riven_open_browser",
+             "description": "Open a URL in riven's preview browser panel so the user can see it.",
+             "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+            {"name": "riven_screenshot",
+             "description": "Open an optional URL in riven's preview and capture a screenshot. Returns a PNG file path — read it with the Read tool to see the page.",
+             "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
+            {"name": "riven_api_request",
+             "description": "Run an HTTP request in riven's API-client panel (opens it, shows the response) and also return status/headers/body.",
+             "inputSchema": {"type": "object", "properties": {"method": {"type": "string"}, "url": {"type": "string"}, "headers": {"type": "object"}, "body": {"type": "string"}}, "required": ["method", "url"]}},
+            {"name": "riven_panels",
+             "description": "List riven's current panels (dock panes) — id, kind, title — so you understand the workspace layout.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "riven_open_panel",
+             "description": "Open a riven panel. kind: editor | terminal | chat | search | git | preview | api | changes.",
+             "inputSchema": {"type": "object", "properties": {"kind": {"type": "string"}}, "required": ["kind"]}},
+            {"name": "riven_close_panel",
+             "description": "Close a panel by its id (from riven_panels).",
+             "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+            {"name": "riven_workspaces",
+             "description": "List open workspaces (folders) and which one is active.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "riven_open_workspace",
+             "description": "Open/switch to a workspace folder by path.",
+             "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
+        ]
         for line in sys.stdin:
             line = line.strip()
             if not line: continue
@@ -152,15 +190,12 @@ final class ChatAskServer {
             if m == "initialize":
                 send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "riven", "version": "1.0"}}})
             elif m == "tools/list":
-                send({"jsonrpc": "2.0", "id": mid, "result": {"tools": [TOOL]}})
+                send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
             elif m == "tools/call":
-                p = r.get("params", {}); a = p.get("arguments", {})
-                if p.get("name") == "ask_user":
-                    try: ans = ask(a.get("question", ""), a.get("options", []))
-                    except Exception: ans = ""
-                    send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": ans or "(사용자가 응답하지 않음)"}]}})
-                else:
-                    send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "unknown tool"}})
+                p = r.get("params", {}); name = p.get("name", ""); a = p.get("arguments", {})
+                try: out = call(name, a)
+                except Exception as e: out = "error: %s" % e
+                send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": out or "(no result)"}]}})
             elif mid is not None:
                 send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "unknown method"}})
         """#
