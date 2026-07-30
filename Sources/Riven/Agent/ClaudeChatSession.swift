@@ -63,7 +63,7 @@ final class ClaudeChatSession {
     init?(command: String, cwd: String, resume: String? = nil,
           permissionMode: String = "acceptEdits",
           allowedTools: String = "Task,Read,Grep,Glob,LS",
-          interactive: Bool = false) {
+          interactive: Bool = false, agentName: String? = nil) {
         self.perm = interactive ? ChatPermissionServer() : nil
         self.ask = ChatAskServer()
         proc.executableURL = URL(fileURLWithPath: command)
@@ -78,6 +78,7 @@ final class ClaudeChatSession {
         if let settings = perm?.settingsJSON() { args += ["--settings", settings] }
         if let cfg = ask?.mcpConfigJSON() { args += ["--mcp-config", cfg] }
         if let sp = ask?.systemPrompt() { args += ["--append-system-prompt", sp] }
+        if let agentName, !agentName.isEmpty { args += ["--agent", agentName] }   // run as this custom agent
         if let resume { args += ["--resume", resume] }
         proc.arguments = args
         proc.currentDirectoryURL = URL(fileURLWithPath: cwd)

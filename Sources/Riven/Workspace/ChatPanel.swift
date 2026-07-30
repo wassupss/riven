@@ -33,6 +33,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var commands: [SlashCommand] = []
     private var lastScaleFactor: CGFloat = 1
     private var pendingResume: String?                   // resume this session id on next bind
+    var agentPersona: String?                            // run this pane as `claude --agent <name>`
     // Approvals/choices are shown ONE AT A TIME (others queue); the elapsed timer is paused
     // while any is pending, since the agent is idle waiting on the user.
     private var approvalQueue: [() -> Void] = []
@@ -454,7 +455,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
         let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
-            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true)
+            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
+            agentName: agentPersona)
         s?.onInit = { [weak self] sid, model in self?.model = model; self?.onSessionId?(sid) }
         s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t) }
         s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.scrollSoon() }

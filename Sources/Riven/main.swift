@@ -1127,10 +1127,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ---- native chat panes (PoC): ONE ClaudeChatSession per pane, like terminals ----
     // A new pane = a new independent agent session (the model the user asked for). Resume
     // reopens a past session id in a fresh pane.
-    private func makeChatPanel(for st: WorkspaceState, resume: String? = nil) -> DockPanel {
+    private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil) -> DockPanel {
         chatSeq += 1
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
+        chat.agentPersona = agent
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
         chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
@@ -1196,9 +1197,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         chat.bind(workspace: st.url, resume: resume)
         let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
-        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: "Claude",
+        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: agent ?? "Claude",
                           icon: icon, content: chat, closable: true)
-        p.agentName = "Claude Code"                              // → appears in the workspace rail
+        p.agentName = agent ?? "Claude Code"                     // → appears in the workspace rail
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
         let wsPath = st.url.path, paneId = p.id
@@ -1270,12 +1271,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content === changesPanel { return "changes" }
         return "panel"
     }
-    private func newChat() {                            // opens a new agent session pane
+    private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
         guard let dock = activeDock, let ws = workspace else { return }
-        let p = makeChatPanel(for: state(for: ws))
+        let p = makeChatPanel(for: state(for: ws), agent: agent)
         dock.addPanel(p, reference: dock.activeGroup, direction: .right)
         dock.setActive(p.group ?? dock.activeGroup!)
         p.content.window?.makeFirstResponder(p.content)
+    }
+    // Custom agents defined in .claude/agents (project + user) — usable as `claude --agent <name>`.
+    private func chatAgents() -> [String] {
+        guard let ws = workspace else { return [] }
+        let fm = FileManager.default
+        var names: [String] = []
+        for dir in ["\(ws.path)/.claude/agents", "\(fm.homeDirectoryForCurrentUser.path)/.claude/agents"] {
+            for f in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where f.hasSuffix(".md") {
+                let n = String(f.dropLast(3)); if !names.contains(n) { names.append(n) }
+            }
+        }
+        return names
+    }
+    // Pick a custom agent, then open a new native chat pane running it.
+    private func newChatWithAgent() {
+        let agents = chatAgents()
+        guard !agents.isEmpty else {
+            let a = NSAlert(); a.messageText = ".claude/agents 에 정의된 에이전트가 없습니다."
+            a.informativeText = "프로젝트 또는 ~/.claude/agents 에 <이름>.md 로 에이전트를 정의하면 여기 나옵니다."; a.runModal(); return
+        }
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Claude (기본)", action: #selector(pickAgent(_:)), keyEquivalent: "").representedObject = ""
+        for name in agents {
+            let item = NSMenuItem(title: name, action: #selector(pickAgent(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = name; menu.addItem(item)
+        }
+        menu.items.first?.target = self
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+    @objc private func pickAgent(_ item: NSMenuItem) {
+        let name = item.representedObject as? String ?? ""
+        newChat(agent: name.isEmpty ? nil : name)
     }
     // Open a past session (from ~/.claude/projects/<cwd>/*.jsonl) in a NEW pane via a popup menu.
     private func resumeChatSession() {
@@ -2754,6 +2787,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: t("api.test"), hint: "", symbol: "network") { [weak self] in self?.toggleDockPanel("api") },
             QuickAction(title: t("title.changes"), hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
             QuickAction(title: "새 채팅", hint: "네이티브 에이전트", symbol: "bubble.left.and.text.bubble.right") { [weak self] in self?.newChat() },
+            QuickAction(title: "새 채팅: 에이전트 선택", hint: "claude --agent", symbol: "person.2") { [weak self] in self?.newChatWithAgent() },
             QuickAction(title: "채팅: 이전 세션 열기", hint: "resume", symbol: "clock.arrow.circlepath") { [weak self] in self?.resumeChatSession() },
             QuickAction(title: t("menu.newWorkspace"), hint: "⌘⇧N", symbol: "folder.badge.plus") { [weak self] in self?.openFolder() },
             QuickAction(title: t("menu.toggleSidebar"), hint: "⌘B", symbol: "sidebar.left") { [weak self] in self?.toggleSidebar() }
