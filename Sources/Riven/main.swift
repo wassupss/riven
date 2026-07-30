@@ -1135,6 +1135,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
+        chat.onOpenSettings = { [weak self] in self?.settingsMenu() }
+        // riven tools: open a URL / capture the preview panel for the agent.
+        chat.onOpenBrowser = { [weak self] url in
+            guard let self else { return }
+            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+            self.previewPanel.openURLString(url)
+        }
+        chat.onScreenshot = { [weak self] url, done in
+            guard let self else { done(nil); return }
+            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+            if let url { self.previewPanel.openURLString(url) }
+            // give the page a moment to load before snapshotting
+            DispatchQueue.main.asyncAfter(deadline: .now() + (url == nil ? 0.2 : 1.6)) {
+                self.previewPanel.capture(done)
+            }
+        }
         chat.bind(workspace: st.url, resume: resume)
         let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
         let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: "Claude",

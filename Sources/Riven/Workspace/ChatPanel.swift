@@ -59,6 +59,7 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     var onAttention: ((Bool) -> Void)?
     var onTitle: ((String) -> Void)?
     var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
+    var onOpenSettings: (() -> Void)?       // /config
     private var titleSet = false
 
     override init(frame: NSRect) {
@@ -398,15 +399,15 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         s?.onTurnDone = { [weak self] cost, _, usage in self?.endTurn(cost: cost, usage: usage) }
         s?.onExit = { [weak self] code in if code != 0 { self?.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") } }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
-        s?.onAskRequest = { [weak self] id, question, options in self?.presentAsk(id, question, options) }
+        s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
         session = s
         if s == nil { addSystem("세션을 시작하지 못했습니다.") }
     }
 
     // ---- permission / choice cards (per-mode policy, applied live) ----
     private func requestPermission(_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) {
-        // riven's own choice tool must never show a permission card — it IS the UI. Let it run.
-        if name == "mcp__riven__ask_user" { session?.respond(id, allow: true); return }
+        // riven's own tools run in-app (choice card / preview / api) — never gate them.
+        if name.hasPrefix("mcp__riven__") { session?.respond(id, allow: true); return }
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
         // choice regardless of the current permission mode.
         if name == "ExitPlanMode" {
@@ -427,10 +428,58 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         default: session?.respond(id, allow: false)         // 계획 — no edits expected
         }
     }
-    // The agent called ask_user (MCP) — show its options as an arrow-select choice card.
+    // ---- riven tools (MCP) ----
+    var onOpenBrowser: ((String) -> Void)?
+    var onScreenshot: ((String?, @escaping (String?) -> Void) -> Void)?
+
+    private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
+        switch tool {
+        case "ask_user":
+            presentAsk(id, args["question"] as? String ?? "", args["options"] as? [String] ?? [])
+        case "riven_open_browser":
+            let url = args["url"] as? String ?? ""
+            onOpenBrowser?(url)
+            addSystem("🌐 미리보기 패널에 열었습니다: \(url)")
+            session?.respondTool(id, "opened \(url) in riven preview panel")
+        case "riven_screenshot":
+            let url = args["url"] as? String
+            addSystem("📸 스크린샷 캡처 중…")
+            if let onScreenshot {
+                onScreenshot(url) { [weak self] path in
+                    self?.session?.respondTool(id, path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
+                }
+            } else { session?.respondTool(id, "screenshot unavailable") }
+        case "riven_api_request":
+            apiRequest(args) { [weak self] result in self?.session?.respondTool(id, result) }
+        default:
+            session?.respondTool(id, "unknown tool: \(tool)")
+        }
+    }
+    // In-process HTTP for the api-test tool.
+    private func apiRequest(_ args: [String: Any], _ done: @escaping (String) -> Void) {
+        guard let s = args["url"] as? String, let url = URL(string: s) else { done("invalid url"); return }
+        var req = URLRequest(url: url)
+        req.httpMethod = (args["method"] as? String ?? "GET").uppercased()
+        if let h = args["headers"] as? [String: Any] { for (k, v) in h { req.setValue("\(v)", forHTTPHeaderField: k) } }
+        if let b = args["body"] as? String { req.httpBody = b.data(using: .utf8) }
+        req.timeoutInterval = 30
+        addSystem("↗ \(req.httpMethod ?? "GET") \(s)")
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            var out = ""
+            if let err { out = "request failed: \(err.localizedDescription)" }
+            else if let http = resp as? HTTPURLResponse {
+                let headers = http.allHeaderFields.map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\n")
+                var body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                if body.count > 4000 { body = String(body.prefix(4000)) + "\n…(truncated)" }
+                out = "HTTP \(http.statusCode)\n\(headers)\n\n\(body)"
+            }
+            DispatchQueue.main.async { done(out) }
+        }.resume()
+    }
+    // The agent called ask_user — show its options as an arrow-select choice card.
     private func presentAsk(_ id: String, _ question: String, _ options: [String]) {
         let opts: [(String, () -> Void)] = options.map { opt in
-            (opt, { [weak self] in self?.session?.answerAsk(id, opt) })
+            (opt, { [weak self] in self?.session?.respondTool(id, opt) })
         }
         enqueueChoice(title: question, detail: "", code: nil, path: nil, options: opts)
     }
@@ -532,12 +581,35 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             if !riven.isEmpty { lines.append("· riven (내장) — \(riven.map { $0.replacingOccurrences(of: "mcp__riven__", with: "") }.joined(separator: ", "))") }
             addSystem(lines.joined(separator: "\n"))
             return true
+        case "config":
+            onOpenSettings?(); return true
+        case "permissions":
+            addSystem("권한 모드: \(modes[modeIndex].0) — Shift+Tab 또는 하단 모드 셀렉터로 전환 (계획/승인 요청/자동 실행).")
+            return true
+        case "status":
+            var s = ["모델: \(model ?? "?")", "권한: \(modes[modeIndex].0)"]
+            if let u = lastUsage { s.append("최근 턴 ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))") }
+            if let sid = session?.sessionId { s.append("세션 \(sid.prefix(8))") }
+            addSystem(s.joined(separator: " · ")); return true
+        case "init":
+            sendPrompt("이 프로젝트를 분석해서 CLAUDE.md 파일을 생성하거나 업데이트해줘."); return true
+        case "review":
+            sendPrompt("최근 변경사항(git diff)을 리뷰해서 버그와 개선점을 알려줘."); return true
+        case "agents":
+            addSystem("서브에이전트는 Task 도구로 자동 실행되며, 실행 중이면 오른쪽에 컬럼으로 표시됩니다.")
+            return true
         case "help":
-            addSystem("리븐 네이티브 채팅 · /clear 대화지우기 · /resume 이전세션 · /cost 사용량 · Shift+Tab 권한모드 · / 로 명령. 그 외 명령은 CLI/커스텀 명령으로 전달됩니다.")
+            addSystem("리븐 네이티브 채팅 · /clear 지우기 · /resume 이전세션 · /model 모델 · /cost·/status 사용량 · /mcp 서버 · /config 설정 · /init·/review 실행 · Shift+Tab 권한모드")
             return true
         default:
             return false      // pass through to the CLI (custom commands etc.)
         }
+    }
+    // Send an expanded prompt as if the user typed it (for /init, /review).
+    private func sendPrompt(_ text: String) {
+        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
+        addUser(text)
+        if turnStart != nil { queuedMessages.append(text) } else { beginTurn(text) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
     private func pickModel() {
@@ -696,8 +768,6 @@ final class ChatPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         .init(name: "memory", desc: "메모리 편집"),
         .init(name: "model", desc: "모델 변경"),
         .init(name: "permissions", desc: "권한 설정"),
-        .init(name: "pr-comments", desc: "PR 코멘트"),
-        .init(name: "release-notes", desc: "릴리스 노트"),
         .init(name: "resume", desc: "이전 세션 열기"),
         .init(name: "review", desc: "코드 리뷰"),
         .init(name: "agents", desc: "서브에이전트"),
