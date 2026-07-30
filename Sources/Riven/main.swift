@@ -1901,6 +1901,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let snap = markClaudePanes(rawSnap, cwd: st.url.path)
             let agents = AgentDiscovery.available()
             var liveTerms = dock.groups.flatMap { $0.panels }.filter { $0.content is TerminalView }
+            // Chat panes hold a LIVE `claude` subprocess. restore() drops the old views WITHOUT
+            // calling onClose, so if we rebuilt them from scratch every switch we'd (a) spawn a new
+            // claude + re-run loadHistory each time and (b) LEAK the previous process (orphaned,
+            // still burning memory/CPU). So reuse the live pane by session id — exactly like
+            // terminals reuse their shell — and only teardown the ones not carried over.
+            var liveChats = dock.groups.flatMap { $0.panels }.filter { $0.content is ChatPanel }
             restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
                 guard let self else { return nil }
                 if desc.hasPrefix("term:") {
@@ -1920,14 +1926,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return self.makeTerminalPanel(for: st, agent: agent, sessionId: sid)   // resume this pane's session
                 }
                 if desc == "editor" { return self.ensureEditorPanel() }
-                // chat panes: resume the persisted session id if present, else fresh.
+                // chat panes: reuse the LIVE pane (keeps its claude process + rendered transcript)
+                // when its session id matches; otherwise resume the persisted id, else fresh.
                 if desc.hasPrefix("chat:") {
                     let sid = String(desc.dropFirst(5))
+                    if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
+                        return liveChats.remove(at: i)          // reuse — no respawn, no reload
+                    }
                     return self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid)
                 }
-                if desc == "chat" || desc.hasPrefix("chat-") { return self.makeChatPanel(for: st) }
+                if desc == "chat" || desc.hasPrefix("chat-") {
+                    // session-less chat (never sent a turn yet) — reuse the first idle live one
+                    if let i = liveChats.firstIndex(where: { $0.sessionId == nil }) {
+                        return liveChats.remove(at: i)
+                    }
+                    return self.makeChatPanel(for: st)
+                }
                 return self.makeAuxPanel(desc)
             }
+            // Any live chat pane NOT carried into the new layout is genuinely gone — stop its
+            // claude process (restore() removed the view but never called onClose).
+            for stale in liveChats { (stale.content as? ChatPanel)?.teardown() }
             if restoredLayout {
                 st.pendingTerminals = nil                 // 구버전 폴백 기록은 더 필요 없다
                 st.openAux = Set(auxDockPanels.keys)      // 레이아웃이 배치한 aux가 곧 열린 aux

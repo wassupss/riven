@@ -378,11 +378,22 @@ final class ChatPanel: NSView, Themable, Scalable {
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        // Parse first, then render only the LAST N messages — rendering a whole long transcript
-        // synchronously (views + syntax highlight) is what made resume lag.
+        // Read only the TAIL of the transcript. A long session's .jsonl can be many MB / thousands
+        // of lines; reading + JSON-parsing every line just to render the last 40 messages is what
+        // spiked CPU on resume / workspace-switch. Seek to the last 512KB and drop the partial line.
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let window: UInt64 = 512 * 1024
+        let startOff = size > window ? size - window : 0
+        try? fh.seek(toOffset: startOff)
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return }
+        var rawLines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        if startOff > 0 && !rawLines.isEmpty { rawLines.removeFirst() }   // partial first line
+        // Only the last ~200 lines can contain the 40 messages we render.
+        let tailLines = rawLines.suffix(200)
         var msgs: [(user: Bool, text: String)] = []
-        for line in text.split(separator: "\n") {
+        for line in tailLines {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = o["type"] as? String, let msg = o["message"] as? [String: Any] else { continue }

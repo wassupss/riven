@@ -125,24 +125,25 @@ final class ToolLine: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = UIScale.font(11, .medium); nameLabel.textColor = Theme.fg
         nameLabel.wantsLayer = true
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.setContentHuggingPriority(.required, for: .horizontal)
+        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         let detailLabel = NSTextField(labelWithString: detail)
         detailLabel.font = UIScale.mono(10.5); detailLabel.textColor = Theme.fgDim
         detailLabel.lineBreakMode = .byTruncatingMiddle
-        detailLabel.translatesAutoresizingMaskIntoConstraints = false
-        [icon, nameLabel, detailLabel].forEach { addSubview($0) }
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // A single horizontal stack pinned to the row's edges — the row height always wraps its
+        // tallest child, so rows can never under-report height and overlap the next item.
+        let row = NSStackView(views: [icon, nameLabel, detailLabel])
+        row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 7
+        row.setCustomSpacing(8, after: nameLabel)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: UIScale.pt(14)),
-            nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
-            nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            detailLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            detailLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
-            detailLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            topAnchor.constraint(equalTo: nameLabel.topAnchor, constant: -3),
-            bottomAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 3)
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -193,7 +194,10 @@ final class ToolLine: NSView {
 // MARK: - assistant text (typewriter reveal, then re-render markdown + code blocks)
 final class AssistantText: NSView {
     private let content = NSStackView()
-    private var full = ""
+    // Backing store is [Character], not String: String.count / Array(full) are BOTH O(n) and were
+    // being run every typewriter tick → O(n²) CPU over a long streamed answer. With an array,
+    // count is O(1) and the prefix slice is O(shown).
+    private var chars: [Character] = []
     private var shownCount = 0
     private var streaming: NSTextField?
     private var finalized = false
@@ -212,16 +216,16 @@ final class AssistantText: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    var isEmpty: Bool { full.isEmpty }
-    func receive(_ chunk: String) { full += chunk }
+    var isEmpty: Bool { chars.isEmpty }
+    func receive(_ chunk: String) { chars.append(contentsOf: chunk) }
 
-    // Reveal a slice toward `full` — steady enough to look typed, fast enough to catch bursts.
+    // Reveal a slice toward the full text — steady enough to look typed, fast enough to catch bursts.
     @discardableResult func advance() -> Bool {
-        guard !finalized, shownCount < full.count else { return false }
-        let remaining = full.count - shownCount
+        guard !finalized, shownCount < chars.count else { return false }
+        let remaining = chars.count - shownCount
         let step = max(3, remaining / 5)                 // ease-out: bigger jumps when behind
-        shownCount = min(full.count, shownCount + step)
-        ensureLabel().attributedStringValue = ChatText.attributedProse(String(Array(full)[0..<shownCount]))
+        shownCount = min(chars.count, shownCount + step)
+        ensureLabel().attributedStringValue = ChatText.attributedProse(String(chars[0..<shownCount]))
         return true
     }
     private func ensureLabel() -> NSTextField {
@@ -236,7 +240,7 @@ final class AssistantText: NSView {
         finalized = true
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         streaming = nil
-        for v in ChatText.render(full) {
+        for v in ChatText.render(String(chars)) {
             content.addArrangedSubview(v)
             v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
@@ -372,8 +376,12 @@ enum ChatText {
     private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
     static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        let m = NSMutableAttributedString(string: code,
-            attributes: [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p])
+        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p]
+        let m = NSMutableAttributedString(string: code, attributes: base)
+        // Skip regex highlighting for large blocks: the string/comment patterns can catastrophically
+        // backtrack, and the per-match `protected` intersection is O(n²) — together they pegged the
+        // CPU and froze the app (e.g. a big SQL dump rendered on workspace switch). Plain mono instead.
+        guard code.utf16.count <= 2500 else { return m }
         let full = NSRange(location: 0, length: (code as NSString).length)
         var protected = IndexSet()
         func paint(_ pattern: String, _ color: NSColor, options: NSRegularExpression.Options = [], protect: Bool) {
@@ -695,9 +703,16 @@ final class TurnBlock: NSView {
     func startWorking() { phase = "생각 중"; spinner.startAnimation(nil); workLabel.stringValue = "생각 중…"; startShimmer() }
     // Set the current activity (a tool name etc.) — shown shimmering, like "생각 중".
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
+    private var lastRenderedSecs = -1
+    private var lastRenderedPhase = ""
     func tick(_ secs: Int) {
         lastSecs = secs
         guard !finished, !waiting else { return }
+        // The flush timer calls tick() ~20×/s, but the label only ever shows whole seconds. Skip the
+        // relayout unless the second OR the phase actually changed — otherwise we forced a full
+        // needsLayout pass (shimmer mask re-fit) 20×/s for identical text.
+        guard secs != lastRenderedSecs || phase != lastRenderedPhase else { return }
+        lastRenderedSecs = secs; lastRenderedPhase = phase
         workLabel.stringValue = phase + "… " + ChatText.duration(secs)
         needsLayout = true              // text width changed → re-fit the shimmer mask
     }
