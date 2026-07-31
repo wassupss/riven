@@ -118,7 +118,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         header.autoresizingMask = [.width, .minYMargin]   // pin to the top
         addSubview(header)
 
-        headerTitle.font = UIScale.font(11, .semibold)
+        headerTitle.font = UIScale.font(UIScale.small, .semibold)
         headerTitle.textColor = Theme.fgDim
         headerTitle.lineBreakMode = .byTruncatingTail
         headerTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // yield to the toolbar buttons
@@ -249,7 +249,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
 
     // Re-lay-out the tree at the current UI zoom (row font + height read UIScale).
     func rebuildForScale() {
-        headerTitle.font = UIScale.font(11, .semibold)
+        headerTitle.font = UIScale.font(UIScale.small, .semibold)
         outline.reloadData()
     }
 
@@ -605,13 +605,13 @@ final class ExplorerCell: NSView {
         chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
-        label.font = UIScale.font(12); label.lineBreakMode = .byTruncatingTail
+        label.font = UIScale.font(UIScale.body); label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
-        badge.font = UIScale.mono(9, .bold); badge.alignment = .center
+        badge.font = UIScale.mono(UIScale.caption, .bold); badge.alignment = .center
         badge.setContentHuggingPriority(.required, for: .horizontal)
         badge.setContentCompressionResistancePriority(.required, for: .horizontal)
         badge.translatesAutoresizingMaskIntoConstraints = false
-        field.font = UIScale.font(12); field.isBezeled = true; field.bezelStyle = .squareBezel
+        field.font = UIScale.font(UIScale.body); field.isBezeled = true; field.bezelStyle = .squareBezel
         field.focusRingType = .none; field.isHidden = true
         field.translatesAutoresizingMaskIntoConstraints = false
         addSubview(chevron); addSubview(icon); addSubview(label); addSubview(badge); addSubview(field)

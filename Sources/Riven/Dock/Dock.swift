@@ -1220,14 +1220,14 @@ final class DockEmptyView: NSView, Themable, Scalable {
         // Faint oversized wordmark (riven: fg 22% blended into bg).
         mark.font = UIScale.font(44, .bold)
         mark.alignment = .center
-        tagline.font = UIScale.font(13)
+        tagline.font = UIScale.font(UIScale.title)
         tagline.alignment = .center
 
-        addBtn = PadButton(title: "  " + t("empty.addTerminal"), font: UIScale.font(13),
+        addBtn = PadButton(title: "  " + t("empty.addTerminal"), font: UIScale.font(UIScale.title),
                            textColor: Theme.accent, bg: Theme.accentMuted, border: Theme.accentBorder,
                            radius: 7, hPad: 14, height: 34)
         addBtn.onClick = { [weak self] in self?.onAddTerminal?() }
-        editorBtn = PadButton(title: "  " + t("empty.addEditor"), font: UIScale.font(13),
+        editorBtn = PadButton(title: "  " + t("empty.addEditor"), font: UIScale.font(UIScale.title),
                               textColor: Theme.fg, bg: Theme.bg3, border: Theme.edge,
                               radius: 7, hPad: 14, height: 34)
         editorBtn.onClick = { [weak self] in self?.onOpenEditor?() }
@@ -1258,5 +1258,5 @@ final class DockEmptyView: NSView, Themable, Scalable {
         mark.textColor = Theme.fg.blended(withFraction: 0.78, of: Theme.bg) ?? Theme.fgDim
         tagline.textColor = Theme.fgDim
     }
-    func applyScale() { mark.font = UIScale.font(44, .bold); tagline.font = UIScale.font(13) }
+    func applyScale() { mark.font = UIScale.font(44, .bold); tagline.font = UIScale.font(UIScale.title) }
 }

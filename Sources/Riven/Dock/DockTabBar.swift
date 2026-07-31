@@ -124,7 +124,7 @@ final class DockTab: NSView, NSDraggingSource {
         badge.translatesAutoresizingMaskIntoConstraints = false
 
         let title = NSTextField(labelWithString: panel.title)
-        title.font = UIScale.font(12)
+        title.font = UIScale.font(UIScale.body)
         // Active tab in the focused group is full-strength; in an unfocused group it's
         // muted; non-active tabs are dim. This is riven's focus cue (no border box).
         title.textColor = active ? (groupActive ? Theme.fg : Theme.fgDim) : Theme.fgDim.withAlphaComponent(0.7)

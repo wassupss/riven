@@ -24,7 +24,7 @@ final class SearchPanel: NSView, Themable, Scalable {
 
         let title = titleLabel
         title.stringValue = t("title.search")
-        title.font = UIScale.font(11, .medium)
+        title.font = UIScale.font(UIScale.small, .medium)
         title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -35,12 +35,12 @@ final class SearchPanel: NSView, Themable, Scalable {
 
         replaceBtn.title = t("search.replaceAll")
         replaceBtn.target = self; replaceBtn.action = #selector(runReplace)
-        replaceBtn.bezelStyle = .roundRect; replaceBtn.font = UIScale.font(11)
+        replaceBtn.bezelStyle = .roundRect; replaceBtn.font = UIScale.font(UIScale.small)
         replaceBtn.controlSize = .small; replaceBtn.translatesAutoresizingMaskIntoConstraints = false
         // Let the button shrink/truncate when narrow so the replace field keeps room.
         replaceBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        summary.font = UIScale.font(10); summary.textColor = Theme.fgDim
+        summary.font = UIScale.font(UIScale.caption); summary.textColor = Theme.fgDim
         summary.translatesAutoresizingMaskIntoConstraints = false
 
         resultsStack.orientation = .vertical
@@ -102,15 +102,15 @@ final class SearchPanel: NSView, Themable, Scalable {
         renderResults(lastResult)   // recolor existing rows
     }
     func applyScale() {
-        titleLabel.font = UIScale.font(11, .medium)
-        queryField.font = UIScale.font(12); replaceField.font = UIScale.font(12)
-        replaceBtn.font = UIScale.font(11); summary.font = UIScale.font(10)
+        titleLabel.font = UIScale.font(UIScale.small, .medium)
+        queryField.font = UIScale.font(UIScale.body); replaceField.font = UIScale.font(UIScale.body)
+        replaceBtn.font = UIScale.font(UIScale.small); summary.font = UIScale.font(UIScale.caption)
         renderResults(lastResult)   // rebuild result rows at the new scale
     }
 
     private func style(_ tf: NSTextField, placeholder: String) {
         tf.placeholderString = placeholder
-        tf.font = UIScale.font(12)
+        tf.font = UIScale.font(UIScale.body)
         tf.textColor = Theme.fg
         tf.backgroundColor = Theme.bg3
         tf.isBordered = false
@@ -178,7 +178,7 @@ final class SearchPanel: NSView, Themable, Scalable {
     private func fileHeader(_ file: String, root: URL) -> NSView {
         let rel = file.hasPrefix(root.path) ? String(file.dropFirst(root.path.count + 1)) : file
         let l = NSTextField(labelWithString: rel)
-        l.font = UIScale.font(11, .medium)
+        l.font = UIScale.font(UIScale.small, .medium)
         l.textColor = Theme.fgDim
         l.lineBreakMode = .byTruncatingMiddle
         l.toolTip = file
@@ -188,11 +188,11 @@ final class SearchPanel: NSView, Themable, Scalable {
 
     private func matchRow(_ m: Search.Match) -> NSView {
         let l = NSTextField(labelWithString: "")
-        l.font = UIScale.mono(11, .regular)
+        l.font = UIScale.mono(UIScale.small, .regular)
         l.lineBreakMode = .byTruncatingTail
         let attr = NSMutableAttributedString()
         attr.append(NSAttributedString(string: "\(m.line)  ",
-            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.mono(10, .regular)]))
+            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.mono(UIScale.caption, .regular)]))
         let text = m.text
         let chars = Array(text)
         let start = max(0, min(m.matchStart, chars.count))

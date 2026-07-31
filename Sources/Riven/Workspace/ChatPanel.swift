@@ -77,6 +77,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         switch badge { case "attn": attnRing.state = .attn; case "busy": attnRing.state = .busy; default: attnRing.state = .none }
     }
     private var titleSet = false
+    private var sessionId: String?          // current CLI session id (for reading the AI title)
+    private var aiTitleSet = false          // once the CLI's summarized title is applied, stop overriding
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -131,7 +133,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Restore the last-used permission mode (persisted globally) — before it always reset to
         // "승인 요청" on every new/reopened pane. Read BEFORE bind() so startSession picks it up.
         modePopup.selectItem(at: min(max(Settings.shared.int("chatPermMode", 1), 0), modes.count - 1))
-        modePopup.font = UIScale.font(10, .medium)
+        modePopup.font = UIScale.font(UIScale.caption, .medium)
         modePopup.controlSize = .small
         modePopup.isBordered = false
         modePopup.toolTip = "권한 모드 (Shift+Tab 으로 전환)"
@@ -444,9 +446,17 @@ final class ChatPanel: NSView, Themable, Scalable {
             addSystem("claude CLI를 찾을 수 없습니다. 터미널에서 `claude` 로그인 여부를 확인하세요.")
             return
         }
+        // The CLI updates itself on the user's own schedule (riven never changes that setting), but
+        // riven parses its stream format — so tell the user WHEN it changed, once per new version.
+        if let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
+            addSystem("claude CLI가 \(prev) → \(now) 로 변경되었습니다. 이상 동작 시 riven 업데이트를 확인하세요.")
+        }
         let resume = pendingResume; pendingResume = nil
         startSession(cmd: cmd, cwd: url.path, resume: resume)
-        if let resume { loadHistory(cwd: url.path, sessionId: resume) }   // replay prior conversation
+        if let resume {
+            loadHistory(cwd: url.path, sessionId: resume)   // replay prior conversation
+            sessionId = resume; titleSet = true; refreshAITitle()   // show the CLI's summarized title
+        }
     }
     // Stop the underlying process when the pane is closed.
     func teardown() { session?.stop(); session = nil; stopFlush() }
@@ -472,6 +482,40 @@ final class ChatPanel: NSView, Themable, Scalable {
         var t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         if let r = t.range(of: "[.?!。？！]", options: .regularExpression) { t = String(t[..<r.lowerBound]) }
         return t.count > 24 ? String(t.prefix(24)) + "…" : t
+    }
+    // The CLI writes an AI-summarized title into the transcript as an `ai-title` entry — read the
+    // latest one so the pane shows the same concise title the CLI does, instead of the raw first
+    // message. Tail-read only (the entry is rewritten each turn, so the last one is near the end).
+    static func latestAITitle(cwd: String, sessionId: String) -> String? {
+        let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+        let size = (try? fh.seekToEnd()) ?? 0
+        let window: UInt64 = 256 * 1024
+        try? fh.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? fh.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+        var title: String?
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard line.contains("ai-title"), let d = line.data(using: .utf8),
+                  let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                  o["type"] as? String == "ai-title" else { continue }
+            if let t = (o["aiTitle"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty { title = t }
+        }
+        return title
+    }
+    // After a turn, adopt the CLI's summarized title if it has produced one.
+    private func refreshAITitle() {
+        guard let cwd = workspace?.path, let sid = sessionId else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let t = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid) else { return }
+            DispatchQueue.main.async {
+                guard let self, self.sessionId == sid else { return }
+                self.aiTitleSet = true
+                self.onTitle?(t)
+            }
+        }
     }
 
     // Render the resumed session's prior turns so the conversation is visible (the CLI restores
@@ -523,7 +567,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // the top auto-loads it (see clipMoved). Not a button — the load is scroll-driven.
     private func addLoadEarlierButton() {
         let l = NSTextField(labelWithString: "⋯ 이전 대화 \(pendingHistory.count)개 (위로 스크롤해 불러오기)")
-        l.font = UIScale.font(10); l.textColor = Theme.fgDim; l.alignment = .center
+        l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.insertArrangedSubview(l, at: 0)
         l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
@@ -581,6 +625,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         }.sorted { $0.2 > $1.2 }.prefix(12).map { (id: $0.0, title: $0.1, date: fmt.string(from: $0.2)) }
     }
     private func sessionTitle(_ url: URL) -> String {
+        // Prefer the CLI's AI-summarized title (matches the /resume list Claude shows).
+        let sid = url.deletingPathExtension().lastPathComponent
+        if let cwd = workspace?.path, let t = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid) { return t }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         for line in text.split(separator: "\n").prefix(60) {
             guard let d = line.data(using: .utf8),
@@ -606,7 +653,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
             permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
             agentName: agentPersona)
-        s?.onInit = { [weak self] sid, model in self?.model = model; self?.onSessionId?(sid) }
+        s?.onInit = { [weak self] sid, model in self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid) }
         s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t) }
         s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon() }
         s?.onSubagentStart = { [weak self] id, type, desc in self?.addSubagentPane(id, type: type, desc: desc) }
@@ -887,10 +934,32 @@ final class ChatPanel: NSView, Themable, Scalable {
             addSystem("권한 모드: \(modes[modeIndex].0) — Shift+Tab 또는 하단 모드 셀렉터로 전환 (계획/승인 요청/자동 실행).")
             return true
         case "status":
-            var s = ["모델: \(model ?? "?")", "권한: \(modes[modeIndex].0)"]
+            // Show the friendly name AND the raw id (a resumed session keeps its original model, so
+            // seeing the exact id matters when it differs from the CLI's current default).
+            var s = ["모델: \(ChatPanel.modelLabel(model)) [\(model ?? "?")]", "권한: \(modes[modeIndex].0)"]
+            if let v = AgentDiscovery.claudeVersion() { s.append("CLI \(v)") }
             if let u = lastUsage { s.append("최근 턴 ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))") }
             if let sid = session?.sessionId { s.append("세션 \(sid.prefix(8))") }
             addSystem(s.joined(separator: " · ")); return true
+        case "update":
+            // Manual CLI update for people who keep auto-update OFF — riven never flips that
+            // setting itself; this just runs `claude update` and reports the result.
+            guard let cmd = AgentDiscovery.claudeCmd() else { addSystem("claude CLI를 찾을 수 없습니다."); return true }
+            addSystem("claude 업데이트 확인 중…")
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = ["update"]
+                let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+                var out = ""
+                if (try? p.run()) != nil {
+                    let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+                    out = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                } else { out = "실행 실패" }
+                DispatchQueue.main.async {
+                    self?.addSystem(out.isEmpty ? "업데이트 완료(출력 없음)" : out)
+                    self?.addSystem("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.")
+                }
+            }
+            return true
         case "init":
             sendPrompt("이 프로젝트를 분석해서 CLAUDE.md 파일을 생성하거나 업데이트해줘."); return true
         case "review":
@@ -912,17 +981,45 @@ final class ChatPanel: NSView, Themable, Scalable {
         if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text, bubble: b) }
     }
     // Live model switch (control channel) via a small menu — the CLI accepts aliases.
+    // The menu names the VERSION each alias maps to and marks the one currently running: a resumed
+    // session keeps the model it was created with, so "기본" is not necessarily what this pane runs
+    // (that's why a resumed pane could sit on an older Opus while new chats start on Opus 5).
     private func pickModel() {
-        let models: [(String, String)] = [("기본", "default"), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku", "haiku")]
+        let models: [(String, String)] = [
+            ("기본 (CLI 기본값)", "default"),
+            ("Opus 5", "opus"),
+            ("Sonnet 5", "sonnet"),
+            ("Haiku 4.5", "haiku"),
+        ]
         let menu = NSMenu()
+        let header = NSMenuItem(title: "현재: \(ChatPanel.modelLabel(model))", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header); menu.addItem(.separator())
+        let cur = (model ?? "").lowercased()
         for (label, id) in models {
             let item = NSMenuItem(title: label, action: #selector(pickModelItem(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = id
+            if id != "default", cur.contains(id) { item.state = .on }   // mark the running model
             menu.addItem(item)
         }
         // Pop up near the composer, in this view's coordinate space.
         let anchor = convert(inputScroll.frame.origin, from: inputScroll.superview)
         menu.popUp(positioning: nil, at: anchor, in: self)
+    }
+    // Human-readable model name from the CLI's id (e.g. "claude-opus-5[1m]" → "Opus 5 (1m)").
+    static func modelLabel(_ id: String?) -> String {
+        guard var s = id, !s.isEmpty else { return "?" }
+        var suffix = ""
+        if let r = s.range(of: "[", options: .literal) {          // context-window tag like [1m]
+            suffix = " (" + s[r.upperBound...].replacingOccurrences(of: "]", with: "") + ")"
+            s = String(s[..<r.lowerBound])
+        }
+        s = s.replacingOccurrences(of: "claude-", with: "")
+        let parts = s.split(separator: "-").map(String.init)
+        guard let family = parts.first else { return id ?? "?" }
+        let ver = parts.dropFirst().filter { $0.allSatisfy { $0.isNumber } }.joined(separator: ".")
+        let name = family.prefix(1).uppercased() + family.dropFirst()
+        return (ver.isEmpty ? name : "\(name) \(ver)") + suffix
     }
     @objc private func pickModelItem(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
@@ -1029,6 +1126,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                                 weeklyUsed: lim.weeklyRemaining.map { 100 - $0 })
             }
         }
+        refreshAITitle()   // adopt the CLI's summarized title if it produced one this turn
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text, bubble: q.bubble) }
         else { setRunning(false); onBusyChange?(false) }
@@ -1048,7 +1146,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private func addSystem(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(10); l.textColor = Theme.fgDim
+        l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
         l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
@@ -1057,7 +1155,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // A visible, danger-tinted line for turn failures (529, etc.) — not the dim system gray.
     private func addError(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(11, .medium); l.textColor = Theme.danger; l.isSelectable = true
+        l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
         l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
@@ -1155,7 +1253,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         .init(name: "resume", desc: "이전 세션 열기"),
         .init(name: "review", desc: "코드 리뷰"),
         .init(name: "agents", desc: "서브에이전트"),
-        .init(name: "status", desc: "상태")
+        .init(name: "status", desc: "상태"),
+        .init(name: "update", desc: "claude CLI 업데이트")
     ]
     private static func discoverCommands(cwd: String) -> [SlashCommand] {
         var out = builtins

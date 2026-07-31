@@ -50,7 +50,7 @@ final class HintTextView: NSTextView {
         super.draw(dirtyRect)
         guard string.isEmpty, !hint.isEmpty else { return }
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: font ?? UIScale.font(12),
+            .font: font ?? UIScale.font(UIScale.body),
             .foregroundColor: Theme.fgDim.withAlphaComponent(0.55),
         ]
         (hint as NSString).draw(at: NSPoint(x: textContainerInset.width + 5, y: textContainerInset.height + 1),
@@ -110,7 +110,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
 
     private func field(_ tf: NSTextField, _ ph: String) {
-        tf.placeholderString = ph; tf.font = UIScale.mono(11, .regular); tf.textColor = Theme.fg
+        tf.placeholderString = ph; tf.font = UIScale.mono(UIScale.small, .regular); tf.textColor = Theme.fg
         tf.backgroundColor = Theme.bg; tf.isBordered = false; tf.bezelStyle = .roundedBezel
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.delegate = self
@@ -168,7 +168,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
             r.del.contentTintColor = Theme.fgDim
         }
     }
-    func applyScale() { for r in rows { r.key.font = UIScale.mono(11, .regular); r.value.font = UIScale.mono(11, .regular) } }
+    func applyScale() { for r in rows { r.key.font = UIScale.mono(UIScale.small, .regular); r.value.font = UIScale.mono(UIScale.small, .regular) } }
 }
 
 // Full-featured native REST client that docks like the other aux panels.
@@ -237,19 +237,19 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
         // --- request line: method ▾ | URL | Send ---
         method.addItems(withTitles: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-        method.font = UIScale.font(12)
+        method.font = UIScale.font(UIScale.body)
         method.target = self; method.action = #selector(methodChanged)
         method.translatesAutoresizingMaskIntoConstraints = false
         methodDot.wantsLayer = true; methodDot.layer?.cornerRadius = 4
         methodDot.translatesAutoresizingMaskIntoConstraints = false
         urlField.placeholderString = "{{base_url}}/v1/…"
         urlField.stringValue = "http://localhost:3000/"
-        urlField.font = UIScale.mono(12, .regular)
+        urlField.font = UIScale.mono(UIScale.body, .regular)
         urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(send)
         urlField.translatesAutoresizingMaskIntoConstraints = false
         sendBtn.bezelStyle = .roundRect; sendBtn.keyEquivalent = "\r"
-        sendBtn.font = UIScale.font(12, .medium)
+        sendBtn.font = UIScale.font(UIScale.body, .medium)
         sendBtn.target = self; sendBtn.action = #selector(send)
         sendBtn.translatesAutoresizingMaskIntoConstraints = false
 
@@ -286,7 +286,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
         // --- response ---
         let respBox = NSView()
-        statusLabel.font = UIScale.font(11, .medium)
+        statusLabel.font = UIScale.font(UIScale.small, .medium)
         statusLabel.textColor = Theme.fgDim
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         respTabs.selectedSegment = 0
@@ -365,7 +365,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         b.imagePosition = .imageLeading
         b.title = title
-        b.font = UIScale.font(11)
+        b.font = UIScale.font(UIScale.small)
         b.bezelStyle = .roundRect; b.controlSize = .small
         b.contentTintColor = Theme.fgDim
         b.target = self; b.action = action
@@ -383,7 +383,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
     private func editor(_ tv: NSTextView, mono: Bool, hint: String) -> NSScrollView {
         tv.isRichText = false
-        tv.font = mono ? UIScale.mono(12, .regular) : UIScale.font(12)
+        tv.font = mono ? UIScale.mono(UIScale.body, .regular) : UIScale.font(UIScale.body)
         tv.textColor = Theme.fg; tv.backgroundColor = Theme.bg; tv.drawsBackground = true
         tv.insertionPointColor = Theme.fg
         tv.isAutomaticQuoteSubstitutionEnabled = false
@@ -406,18 +406,18 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
     private func buildAuthBox() {
         authType.addItems(withTitles: ["None", "Bearer", "Basic"])
-        authType.font = UIScale.font(12)
+        authType.font = UIScale.font(UIScale.body)
         authType.target = self; authType.action = #selector(authTypeChanged)
         authType.translatesAutoresizingMaskIntoConstraints = false
         for (f, ph) in [(tokenField, t("api.auth.token")), (userField, t("api.auth.user"))] {
-            f.placeholderString = ph; f.font = UIScale.mono(12, .regular)
+            f.placeholderString = ph; f.font = UIScale.mono(UIScale.body, .regular)
             f.bezelStyle = .roundedBezel; f.translatesAutoresizingMaskIntoConstraints = false
             f.target = self; f.action = #selector(authFieldChanged)
         }
-        passField.placeholderString = t("api.auth.pass"); passField.font = UIScale.mono(12, .regular)
+        passField.placeholderString = t("api.auth.pass"); passField.font = UIScale.mono(UIScale.body, .regular)
         passField.bezelStyle = .roundedBezel; passField.translatesAutoresizingMaskIntoConstraints = false
         passField.target = self; passField.action = #selector(authFieldChanged)
-        let label = NSTextField(labelWithString: t("api.auth.label")); label.font = UIScale.font(11); label.textColor = Theme.fgDim
+        let label = NSTextField(labelWithString: t("api.auth.label")); label.font = UIScale.font(UIScale.small); label.textColor = Theme.fgDim
         label.translatesAutoresizingMaskIntoConstraints = false
         for v in [label, authType, tokenField, userField, passField] { authBox.addSubview(v) }
         NSLayoutConstraint.activate([
@@ -804,10 +804,10 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         let sc = NSScrollView(frame: NSRect(x: 10, y: 40, width: 300, height: 168))
         sc.hasVerticalScroller = true; sc.documentView = tv; sc.borderType = .bezelBorder
         let hint = NSTextField(labelWithString: t("api.env.hint"))
-        hint.font = UIScale.font(10); hint.textColor = Theme.fgDim
+        hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
         hint.frame = NSRect(x: 10, y: 12, width: 230, height: 14)
         let title = NSTextField(labelWithString: t("api.env.varsTitle", ["name": name]))
-        title.font = UIScale.font(12, .semibold); title.frame = NSRect(x: 10, y: 194, width: 300, height: 18)
+        title.font = UIScale.font(UIScale.body, .semibold); title.frame = NSRect(x: 10, y: 194, width: 300, height: 18)
         let save = NSButton(title: t("common.save"), target: self, action: #selector(closeEnvPopover))
         save.bezelStyle = .roundRect; save.frame = NSRect(x: 250, y: 8, width: 60, height: 26); save.keyEquivalent = "\r"
         root.addSubview(title); root.addSubview(sc); root.addSubview(hint); root.addSubview(save)
@@ -826,7 +826,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         envPopover?.close(); envPopover = nil; envEditTarget = nil
     }
     @discardableResult private func editorStyle(_ tv: NSTextView) -> NSTextView {
-        tv.isRichText = false; tv.font = UIScale.mono(12, .regular)
+        tv.isRichText = false; tv.font = UIScale.mono(UIScale.body, .regular)
         tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
         tv.autoresizingMask = [.width]; tv.textContainer?.widthTracksTextView = true
         tv.isAutomaticQuoteSubstitutionEnabled = false
@@ -980,12 +980,12 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         for b in [servicesBtn, templatesBtn, envBtn, historyBtn, savedBtn, importBtn, copyBtn] { b.contentTintColor = Theme.fgDim }
     }
     func applyScale() {
-        method.font = UIScale.font(12); urlField.font = UIScale.mono(12, .regular); sendBtn.font = UIScale.font(12, .medium)
-        tabs.font = UIScale.font(11); respTabs.font = UIScale.font(11); statusLabel.font = UIScale.font(11, .medium)
-        authType.font = UIScale.font(12)
-        for f in [tokenField, userField, passField] { f.font = UIScale.mono(12, .regular) }
-        bodyView.font = UIScale.mono(12); responseView.font = UIScale.mono(12)
-        for b in [servicesBtn, templatesBtn, envBtn] { b.font = UIScale.font(11) }
+        method.font = UIScale.font(UIScale.body); urlField.font = UIScale.mono(UIScale.body, .regular); sendBtn.font = UIScale.font(UIScale.body, .medium)
+        tabs.font = UIScale.font(UIScale.small); respTabs.font = UIScale.font(UIScale.small); statusLabel.font = UIScale.font(UIScale.small, .medium)
+        authType.font = UIScale.font(UIScale.body)
+        for f in [tokenField, userField, passField] { f.font = UIScale.mono(UIScale.body, .regular) }
+        bodyView.font = UIScale.mono(UIScale.body); responseView.font = UIScale.mono(UIScale.body)
+        for b in [servicesBtn, templatesBtn, envBtn] { b.font = UIScale.font(UIScale.small) }
         refreshBadges()
     }
 }

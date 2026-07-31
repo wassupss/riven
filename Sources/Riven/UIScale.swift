@@ -40,6 +40,21 @@ enum UIScale {
     static var editorFontSize: Int { scaled(Settings.shared.int("editorFontSize", 13)) }
     static var terminalFontSize: Int { scaled(Settings.shared.int("terminalFontSize", 13)) }
 
+    // ---- type scale -------------------------------------------------------
+    // ONE ladder for the whole app. Sizes used to be picked ad-hoc per view (8, 9, 10, 10.5, 11,
+    // 12, 12.5, 13, 14…), which is why panels looked inconsistent — one list 10pt, the next 12pt.
+    // Use these names, not raw numbers:
+    //   caption  meta//badges (timestamps, token counts, +N/−N)
+    //   small    secondary text (paths, dim hints, compact buttons)
+    //   body     default UI text (list rows, labels, fields)
+    //   title    panel/section headers
+    //   prose    chat message text — reading content, deliberately larger than chrome
+    static let caption: CGFloat = 10.5
+    static let small: CGFloat = 11.5
+    static let body: CGFloat = 12.5
+    static let title: CGFloat = 14
+    static let prose: CGFloat = 14.5
+
     // Scale a design-time point metric (height, padding, radius…).
     static func pt(_ v: CGFloat) -> CGFloat { (v * factor).rounded() }
     // A scaled UI font / monospaced font.

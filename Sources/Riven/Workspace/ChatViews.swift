@@ -8,7 +8,7 @@ final class ClosureButton: NSButton {
         self.onClick = onClick
         super.init(frame: .zero)
         self.title = title; bezelStyle = .inline; controlSize = .small
-        font = UIScale.font(10); isBordered = true
+        font = UIScale.font(UIScale.caption); isBordered = true
         contentTintColor = Theme.fgDim
         target = self; action = #selector(fire)
     }
@@ -49,7 +49,7 @@ final class ChatInput: NSTextView {
     // Bare text view; wrapped by InputScroll which handles sizing/scrolling. Configured as a growing
     // document there (isVerticallyResizable + widthTracksTextView), so it grows past 6 lines and the
     // scroll view scrolls to keep the cursor visible instead of hiding it.
-    static let fontSize: CGFloat = 14.5    // match the answer/prose size
+    static let fontSize: CGFloat = UIScale.prose   // same as answers (app type scale)
     static func make() -> ChatInput {
         let tv = ChatInput(frame: .zero)
         tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
@@ -209,12 +209,12 @@ final class ToolLine: NSView {
         icon.contentTintColor = Theme.fgDim
         icon.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = UIScale.font(11, .medium); nameLabel.textColor = Theme.fg
+        nameLabel.font = UIScale.font(UIScale.small, .medium); nameLabel.textColor = Theme.fg
         nameLabel.wantsLayer = true
         nameLabel.setContentHuggingPriority(.required, for: .horizontal)
         nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         let detailLabel = NSTextField(labelWithString: detail)
-        detailLabel.font = UIScale.mono(10.5); detailLabel.textColor = Theme.fgDim
+        detailLabel.font = UIScale.mono(UIScale.caption); detailLabel.textColor = Theme.fgDim
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // A single horizontal stack pinned to the row's edges — the row height always wraps its
@@ -316,9 +316,14 @@ final class AssistantText: NSView {
     }
     private func ensureLabel() -> NSTextField {
         if let s = streaming { return s }
+        // Wrap the streaming label in the SAME bullet + gutter row the final render uses, so the
+        // text is already at its final x-position/indent while typing — renderFinal then only adds
+        // inline emphasis instead of visibly reflowing the whole answer.
         let l = ChatText.prose("")
-        content.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        let row = ChatText.bulletRow(l)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        content.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         streaming = l; return l
     }
     func renderFinal() {
@@ -358,7 +363,7 @@ enum ChatText {
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
     // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
     // emphasis was indistinguishable.
-    private static let proseSize: CGFloat = 14.5
+    private static let proseSize: CGFloat = UIScale.prose   // single source: the app type scale
     static var proseColor: NSColor { Theme.fg.withAlphaComponent(0.80) }   // regular text (calmer)
     static var proseStrong: NSColor { Theme.fg }                           // emphasized text (brighter)
     static func prose(_ s: String) -> NSTextField {
@@ -405,11 +410,16 @@ enum ChatText {
     }
     // A prose paragraph with a CLI-style bullet marker in the left gutter.
     static func proseParagraph(_ text: String) -> NSView {
+        bulletRow(proseMarkdown(text))
+    }
+    // The same bullet + gutter container, around an arbitrary label. Used for the STREAMING label
+    // too, so the text sits at its final position from the first character — previously streaming
+    // used a bare full-width label and the whole answer jumped/indented when renderFinal ran.
+    static func bulletRow(_ label: NSTextField) -> NSView {
         let row = NSView()
         let bullet = NSTextField(labelWithString: "⏺")
         bullet.font = UIScale.font(8); bullet.textColor = Theme.accent2.withAlphaComponent(0.75)
         bullet.translatesAutoresizingMaskIntoConstraints = false
-        let label = proseMarkdown(text)
         row.addSubview(bullet); row.addSubview(label)
         NSLayoutConstraint.activate([
             bullet.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 1),
@@ -432,7 +442,7 @@ enum ChatText {
         // Header: language label (left) + action button (right), separated from the code.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
         let langL = NSTextField(labelWithString: (lang?.isEmpty == false ? lang! : (diff ? "diff" : "code")).uppercased())
-        langL.font = UIScale.mono(9, .semibold)
+        langL.font = UIScale.mono(UIScale.caption, .semibold)
         langL.textColor = Theme.fgDim.withAlphaComponent(0.8)
         langL.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(langL)
@@ -454,7 +464,7 @@ enum ChatText {
             ])
         }
         let l = NSTextField(wrappingLabelWithString: code)
-        l.font = UIScale.mono(12.5); l.textColor = Theme.fg; l.isSelectable = true
+        l.font = UIScale.mono(UIScale.body); l.textColor = Theme.fg; l.isSelectable = true
         l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
         l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -480,7 +490,7 @@ enum ChatText {
     private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
     static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(12.5), .foregroundColor: Theme.fg, .paragraphStyle: p]
+        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(UIScale.body), .foregroundColor: Theme.fg, .paragraphStyle: p]
         let m = NSMutableAttributedString(string: code, attributes: base)
         // Skip regex highlighting for large blocks: the string/comment patterns can catastrophically
         // backtrack, and the per-match `protected` intersection is O(n²) — together they pegged the
@@ -508,7 +518,7 @@ enum ChatText {
     // Edits open the real file (see the applied change); snippets go to a temp file.
     private static func diffColored(_ code: String) -> NSAttributedString {
         let m = NSMutableAttributedString()
-        let font = UIScale.mono(12.5)
+        let font = UIScale.mono(UIScale.body)
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
         for (i, line) in code.components(separatedBy: "\n").enumerated() {
             if i > 0 { m.append(NSAttributedString(string: "\n")) }
@@ -574,12 +584,12 @@ final class UserBubble: NSView {
         bar.layer?.cornerRadius = 1.5
         bar.translatesAutoresizingMaskIntoConstraints = false
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(14); l.textColor = Theme.fg; l.isSelectable = true
+        l.font = UIScale.font(UIScale.prose); l.textColor = Theme.fg; l.isSelectable = true
         let p = NSMutableParagraphStyle(); p.lineSpacing = 4
         l.attributedStringValue = NSAttributedString(string: text,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(14), .paragraphStyle: p])
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.prose), .paragraphStyle: p])
         l.translatesAutoresizingMaskIntoConstraints = false
-        queuedTag.font = UIScale.font(9, .medium); queuedTag.textColor = Theme.warning
+        queuedTag.font = UIScale.font(UIScale.caption, .medium); queuedTag.textColor = Theme.warning
         queuedTag.isHidden = true
         queuedTag.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
@@ -638,10 +648,10 @@ final class ApprovalCard: NSView {
         layer?.borderColor = Theme.warning.withAlphaComponent(0.32).cgColor
 
         let titleL = NSTextField(labelWithString: title)
-        titleL.font = UIScale.font(12, .semibold); titleL.textColor = Theme.fg
+        titleL.font = UIScale.font(UIScale.body, .semibold); titleL.textColor = Theme.fg
         titleL.translatesAutoresizingMaskIntoConstraints = false
         let sub = NSTextField(labelWithString: detail)
-        sub.font = UIScale.mono(10.5); sub.textColor = Theme.fgDim; sub.lineBreakMode = .byTruncatingMiddle
+        sub.font = UIScale.mono(UIScale.caption); sub.textColor = Theme.fgDim; sub.lineBreakMode = .byTruncatingMiddle
         sub.translatesAutoresizingMaskIntoConstraints = false
 
         for (i, opt) in options.enumerated() {
@@ -651,9 +661,9 @@ final class ApprovalCard: NSView {
             b.translatesAutoresizingMaskIntoConstraints = false
             buttons.append(b)
         }
-        statusLabel.font = UIScale.font(11, .semibold); statusLabel.textColor = Theme.fgDim
+        statusLabel.font = UIScale.font(UIScale.small, .semibold); statusLabel.textColor = Theme.fgDim
         statusLabel.translatesAutoresizingMaskIntoConstraints = false; statusLabel.isHidden = true
-        hint.font = UIScale.font(9); hint.textColor = Theme.fgDim
+        hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
         hint.translatesAutoresizingMaskIntoConstraints = false
 
         let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 8
@@ -764,9 +774,9 @@ final class TurnBlock: NSView {
         spinner.style = .spinning; spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        workLabel.font = UIScale.font(10, .medium); workLabel.textColor = Theme.accent2
+        workLabel.font = UIScale.font(UIScale.caption, .medium); workLabel.textColor = Theme.accent2
         workLabel.translatesAutoresizingMaskIntoConstraints = false
-        tokenLabel.font = UIScale.font(10); tokenLabel.textColor = Theme.fgDim; tokenLabel.alignment = .right
+        tokenLabel.font = UIScale.font(UIScale.caption); tokenLabel.textColor = Theme.fgDim; tokenLabel.alignment = .right
         tokenLabel.lineBreakMode = .byTruncatingTail
         tokenLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -994,7 +1004,7 @@ final class SubagentCard: NSView {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         let l = NSTextField(wrappingLabelWithString: t)
-        l.font = UIScale.font(11); l.textColor = Theme.fgDim; l.isSelectable = true
+        l.font = UIScale.font(UIScale.small); l.textColor = Theme.fgDim; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(l)
         l.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
@@ -1007,12 +1017,12 @@ final class SubagentCard: NSView {
     private static func headerText(type: String, desc: String, running: Bool) -> NSAttributedString {
         let m = NSMutableAttributedString()
         m.append(NSAttributedString(string: running ? "⛓ " : "✓ ",
-            attributes: [.foregroundColor: running ? Theme.accent2 : Theme.success, .font: UIScale.font(11, .semibold)]))
+            attributes: [.foregroundColor: running ? Theme.accent2 : Theme.success, .font: UIScale.font(UIScale.small, .semibold)]))
         m.append(NSAttributedString(string: type,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(11, .semibold)]))
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.small, .semibold)]))
         if !desc.isEmpty {
             m.append(NSAttributedString(string: "  ·  " + desc,
-                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(10)]))
+                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.caption)]))
         }
         return m
     }
@@ -1128,10 +1138,10 @@ final class SubagentPane: NSView {
     private static func headerText(type: String, desc: String, running: Bool) -> NSAttributedString {
         let m = NSMutableAttributedString()
         m.append(NSAttributedString(string: type,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(11, .semibold)]))
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.small, .semibold)]))
         if !desc.isEmpty {
             m.append(NSAttributedString(string: "  ·  " + desc,
-                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(10)]))
+                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.caption)]))
         }
         return m
     }
@@ -1185,10 +1195,10 @@ final class SlashPopup: NSView {
         for cmd in items {
             let row = NSView(); row.wantsLayer = true; row.layer?.cornerRadius = 5
             let name = NSTextField(labelWithString: "/" + cmd.name)
-            name.font = UIScale.mono(11, .semibold); name.textColor = Theme.fg
+            name.font = UIScale.mono(UIScale.small, .semibold); name.textColor = Theme.fg
             name.translatesAutoresizingMaskIntoConstraints = false
             let desc = NSTextField(labelWithString: cmd.desc)
-            desc.font = UIScale.font(10); desc.textColor = Theme.fgDim; desc.lineBreakMode = .byTruncatingTail
+            desc.font = UIScale.font(UIScale.caption); desc.textColor = Theme.fgDim; desc.lineBreakMode = .byTruncatingTail
             desc.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(name); row.addSubview(desc)
             row.translatesAutoresizingMaskIntoConstraints = false

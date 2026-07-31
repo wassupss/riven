@@ -22,13 +22,13 @@ final class ChangesPanel: NSView, Themable, Scalable {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg2.cgColor
 
-        titleLabel.font = UIScale.font(11, .medium)
+        titleLabel.font = UIScale.font(UIScale.body, .medium)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         for (b, sel) in [(acceptAllBtn, #selector(acceptAll)), (revertAllBtn, #selector(revertAll))] {
             b.target = self; b.action = sel
-            b.isBordered = false; b.font = UIScale.font(10)
+            b.isBordered = false; b.font = UIScale.font(UIScale.small)
             b.translatesAutoresizingMaskIntoConstraints = false
         }
         acceptAllBtn.contentTintColor = Theme.success
@@ -106,8 +106,8 @@ final class ChangesPanel: NSView, Themable, Scalable {
         render()
     }
     func applyScale() {
-        titleLabel.font = UIScale.font(11, .medium)
-        acceptAllBtn.font = UIScale.font(10); revertAllBtn.font = UIScale.font(10)
+        titleLabel.font = UIScale.font(UIScale.body, .medium)
+        acceptAllBtn.font = UIScale.font(UIScale.small); revertAllBtn.font = UIScale.font(UIScale.small)
         render()   // rebuilds rows with the new scaled fonts
     }
 
@@ -132,7 +132,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
         rowsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         if entries.isEmpty {
             let hint = NSTextField(labelWithString: t("changes.empty2"))
-            hint.font = UIScale.font(11); hint.textColor = Theme.fgDim
+            hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim
             let c = NSView(); hint.translatesAutoresizingMaskIntoConstraints = false; c.addSubview(hint)
             NSLayoutConstraint.activate([
                 hint.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 12),
@@ -159,15 +159,15 @@ final class ChangesPanel: NSView, Themable, Scalable {
         let dir = (rel as NSString).deletingLastPathComponent
 
         let ico = NSTextField(labelWithString: e.isNew ? "✚" : "✎")
-        ico.font = UIScale.font(11); ico.textColor = e.isNew ? Theme.gitAdded : Theme.gitModified
+        ico.font = UIScale.font(UIScale.body); ico.textColor = e.isNew ? Theme.gitAdded : Theme.gitModified
         ico.translatesAutoresizingMaskIntoConstraints = false
 
         let nameL = NSTextField(labelWithString: name)
-        nameL.font = UIScale.font(11); nameL.textColor = Theme.fg
+        nameL.font = UIScale.font(UIScale.body); nameL.textColor = Theme.fg
         nameL.lineBreakMode = .byTruncatingMiddle; nameL.toolTip = e.path
         nameL.translatesAutoresizingMaskIntoConstraints = false
         let dirL = NSTextField(labelWithString: dir)
-        dirL.font = UIScale.font(10); dirL.textColor = Theme.fgDim
+        dirL.font = UIScale.font(UIScale.small); dirL.textColor = Theme.fgDim
         dirL.lineBreakMode = .byTruncatingMiddle
         dirL.translatesAutoresizingMaskIntoConstraints = false
         // Let name/dir TRUNCATE when the panel is narrow instead of overrunning the
@@ -176,12 +176,12 @@ final class ChangesPanel: NSView, Themable, Scalable {
         dirL.setContentCompressionResistancePriority(.init(249), for: .horizontal)
 
         let statsStr = NSMutableAttributedString()
-        if e.added > 0 { statsStr.append(NSAttributedString(string: "+\(e.added) ", attributes: [.foregroundColor: Theme.gitAdded, .font: UIScale.mono(10, .regular)])) }
-        if e.removed > 0 { statsStr.append(NSAttributedString(string: "−\(e.removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: UIScale.mono(10, .regular)])) }
+        if e.added > 0 { statsStr.append(NSAttributedString(string: "+\(e.added) ", attributes: [.foregroundColor: Theme.gitAdded, .font: UIScale.mono(UIScale.small, .regular)])) }
+        if e.removed > 0 { statsStr.append(NSAttributedString(string: "−\(e.removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: UIScale.mono(UIScale.small, .regular)])) }
         let stats = NSTextField(labelWithString: ""); stats.attributedStringValue = statsStr
         stats.translatesAutoresizingMaskIntoConstraints = false
         let time = NSTextField(labelWithString: ago(e.at))
-        time.font = UIScale.font(10); time.textColor = Theme.fgDim
+        time.font = UIScale.font(UIScale.small); time.textColor = Theme.fgDim
         time.translatesAutoresizingMaskIntoConstraints = false
 
         let row = ChangesRowView()
@@ -192,10 +192,10 @@ final class ChangesPanel: NSView, Themable, Scalable {
             if AgentEdits.shared.revert(path: e.path) { self?.onReverted?(e.path) }
             self?.refresh()
         }
-        revert.font = UIScale.font(12); revert.contentTintColor = Theme.warning
+        revert.font = UIScale.font(UIScale.title); revert.contentTintColor = Theme.warning
         revert.isBordered = false; revert.translatesAutoresizingMaskIntoConstraints = false
         let accept = ChangesButton(title: "✓") { [weak self] in AgentEdits.shared.resolve(path: e.path); self?.refresh() }
-        accept.font = UIScale.font(12); accept.contentTintColor = Theme.success
+        accept.font = UIScale.font(UIScale.title); accept.contentTintColor = Theme.success
         accept.isBordered = false; accept.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(revert); row.addSubview(accept)
 
@@ -217,7 +217,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
             stats.trailingAnchor.constraint(equalTo: time.leadingAnchor, constant: -8),
             stats.leadingAnchor.constraint(greaterThanOrEqualTo: dirL.trailingAnchor, constant: 6),
             stats.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            row.heightAnchor.constraint(equalToConstant: 26)
+            row.heightAnchor.constraint(equalToConstant: UIScale.pt(30))   // fits the larger row text (and scales with ⌘+/−)
         ])
         return row
     }
