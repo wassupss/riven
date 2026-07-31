@@ -315,6 +315,7 @@ final class WorkspaceRail: NSView, Themable {
         name.font = UIScale.font(UIScale.body, isActive ? .semibold : .medium)
         name.textColor = isActive ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
+        name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         name.translatesAutoresizingMaskIntoConstraints = false
 
         // Count badge: a capsule CONTAINER with a CENTERED label. The label no longer drives
@@ -327,6 +328,8 @@ final class WorkspaceRail: NSView, Themable {
         countBadge.layer?.cornerRadius = UIScale.pt(8)             // = height/2 (height 16) → circle/capsule
         countBadge.translatesAutoresizingMaskIntoConstraints = false
         countBadge.isHidden = (n == 0)
+        countBadge.setContentHuggingPriority(.required, for: .horizontal)
+        countBadge.setContentCompressionResistancePriority(.required, for: .horizontal)
         let count = NSTextField(labelWithString: n > 0 ? "\(n)" : "")
         count.font = UIScale.font(UIScale.caption, .semibold); count.textColor = Theme.fgDim
         count.alignment = .center; count.translatesAutoresizingMaskIntoConstraints = false
@@ -387,7 +390,11 @@ final class WorkspaceRail: NSView, Themable {
             dot.heightAnchor.constraint(equalToConstant: UIScale.pt(8)),
             name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
             name.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -6),
+            // The count badge sits directly AFTER the name on the same line (was pinned to the
+            // bottom-right, so it read as belonging to the path/branch line instead of the title).
+            countBadge.leadingAnchor.constraint(equalTo: name.trailingAnchor, constant: 6),
+            countBadge.centerYAnchor.constraint(equalTo: name.centerYAnchor),
+            countBadge.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -6),
             // Collapse chevron: TOP-RIGHT.
             chevron.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
             chevron.centerYAnchor.constraint(equalTo: name.centerYAnchor),
@@ -398,18 +405,16 @@ final class WorkspaceRail: NSView, Themable {
             path.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
             branchRow.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 9),
             branchRow.topAnchor.constraint(equalTo: path.bottomAnchor, constant: 3),
-            // Count badge + ⌘N chip: BOTTOM-RIGHT, level with the last text line.
-            countBadge.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
-            countBadge.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
+            // ⌘N chip stays BOTTOM-RIGHT, level with the last text line.
             countBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(16)),
             countBadge.heightAnchor.constraint(equalToConstant: UIScale.pt(16)),
             kbd.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
             kbd.centerYAnchor.constraint(equalTo: bottomLine.centerYAnchor),
             kbd.widthAnchor.constraint(greaterThanOrEqualToConstant: 22),
             kbd.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            // Keep the text lines clear of the bottom-right badges.
-            path.trailingAnchor.constraint(lessThanOrEqualTo: countBadge.leadingAnchor, constant: -8),
-            branchRow.trailingAnchor.constraint(lessThanOrEqualTo: countBadge.leadingAnchor, constant: -8)
+            // Keep the text lines clear of the ⌘N chip in the bottom-right.
+            path.trailingAnchor.constraint(lessThanOrEqualTo: kbd.leadingAnchor, constant: -8),
+            branchRow.trailingAnchor.constraint(lessThanOrEqualTo: kbd.leadingAnchor, constant: -8)
         ]
         // Card height is driven by the last visible line.
         cons.append(bottomLine.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6))
