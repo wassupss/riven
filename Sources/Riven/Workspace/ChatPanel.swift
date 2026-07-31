@@ -49,7 +49,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     //   계획      — read-only planning
     //   승인 요청 — ask per gated tool (cards)
     //   자동 실행 — auto-run everything, no cards (main + sub)
-    private let modes: [(String, String)] = [("계획", "plan"), ("승인 요청", "default"), ("자동 실행", "auto")]
+    // Computed, not stored: the labels must follow a live language switch.
+    private var modes: [(String, String)] { [(t("chat.mode.plan"), "plan"), (t("chat.mode.ask"), "default"), (t("chat.mode.auto"), "auto")] }
     private var modeIndex: Int { max(0, modePopup.indexOfSelectedItem) }
     private var cliMode: String { modeIndex == 0 ? "plan" : "default" }
 
@@ -136,11 +137,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         modePopup.font = UIScale.font(UIScale.caption, .medium)
         modePopup.controlSize = .small
         modePopup.isBordered = false
-        modePopup.toolTip = "권한 모드 (Shift+Tab 으로 전환)"
+        modePopup.toolTip = t("chat.mode.tip")
         modePopup.target = self; modePopup.action = #selector(modeChanged)
         modePopup.translatesAutoresizingMaskIntoConstraints = false
 
-        input.placeholder = "Claude에게 메시지…  ( / 명령 · Shift+Enter 줄바꿈 )"
+        input.placeholder = t("chat.placeholder")
         input.onSubmit = { [weak self] in self?.sendFromInput() }
         input.onTextChange = { [weak self] in self?.inputChanged() }
         input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
@@ -157,7 +158,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         plusButton.isBordered = false; plusButton.bezelStyle = .regularSquare
         plusButton.imagePosition = .imageOnly
         plusButton.wantsLayer = true
-        plusButton.toolTip = "파일 첨부"
+        plusButton.toolTip = t("chat.attachFile")
         plusButton.target = self; plusButton.action = #selector(attachFile)
         plusButton.translatesAutoresizingMaskIntoConstraints = false
 
@@ -168,7 +169,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         jumpButton.bezelStyle = .regularSquare; jumpButton.isBordered = false
         jumpButton.wantsLayer = true
         jumpButton.imagePosition = .imageOnly
-        jumpButton.toolTip = "맨 아래로"
+        jumpButton.toolTip = t("chat.toBottom")
         jumpButton.target = self; jumpButton.action = #selector(jumpToLatest)
         jumpButton.isHidden = true
         jumpButton.translatesAutoresizingMaskIntoConstraints = false
@@ -253,9 +254,27 @@ final class ChatPanel: NSView, Themable, Scalable {
         registerForDraggedTypes([.fileURL, .string])   // drag a file → path, or selected text → snippet
         Theme.register(self)
         UIScale.register(self)
+        // Live language switch: re-label the chrome that was built once at init (the transcript
+        // keeps the language each message was written in, like the rest of the app).
+        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+            self?.relocalize()
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
+
+    private func relocalize() {
+        input.placeholder = t("chat.placeholder")
+        plusButton.toolTip = t("chat.attachFile")
+        jumpButton.toolTip = t("chat.toBottom")
+        modePopup.toolTip = t("chat.mode.tip")
+        let sel = modeIndex
+        modePopup.removeAllItems()
+        modePopup.addItems(withTitles: modes.map { $0.0 })
+        modePopup.selectItem(at: min(sel, modes.count - 1))
+        commands = workspace.map { ChatPanel.discoverCommands(cwd: $0.path) } ?? commands
+        styleSendButton()
+    }
 
     // Shown again (workspace switched back): catch the typewriter up to everything buffered while
     // offscreen and pin to the bottom — the flush timer does no UI work while window == nil.
@@ -301,7 +320,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Circular accent button: ↑ to send, ■ to stop while a turn runs.
         sendButton.fillColor = stop ? Theme.danger : Theme.accent
         sendButton.image = NSImage(systemSymbolName: stop ? "stop.fill" : "arrow.up",
-                                   accessibilityDescription: stop ? "중단" : "보내기")?
+                                   accessibilityDescription: stop ? t("chat.stop") : t("chat.send"))?
             .withSymbolConfiguration(.init(pointSize: UIScale.pt(stop ? 10 : 13), weight: .semibold))
         // Contrast against the fill by its luminance — a flat .white vanished on light accents
         // (e.g. the "void" theme's near-white accent left the arrow invisible).
@@ -310,9 +329,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // The composer's SF-symbol icons have an explicit point size, so they must be re-set on ⌘+/−
     // (unlike text, which the tree walk handles). Keeps the +, ↑ and ↓ glyphs in step with the zoom.
     private func scaleIcons() {
-        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "첨부")?
+        plusButton.image = NSImage(systemSymbolName: "plus", accessibilityDescription: t("chat.attach"))?
             .withSymbolConfiguration(.init(pointSize: UIScale.pt(12), weight: .semibold))
-        jumpButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: "맨 아래로")?
+        jumpButton.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: t("chat.toBottom"))?
             .withSymbolConfiguration(.init(pointSize: UIScale.pt(12), weight: .semibold))
         styleSendButton()
     }
@@ -443,13 +462,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         guard let cmd = AgentDiscovery.claudeCmd() else {
-            addSystem("claude CLI를 찾을 수 없습니다. 터미널에서 `claude` 로그인 여부를 확인하세요.")
+            addSystem(t("chat.noCLI"))
             return
         }
         // The CLI updates itself on the user's own schedule (riven never changes that setting), but
         // riven parses its stream format — so tell the user WHEN it changed, once per new version.
         if let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
-            addSystem("claude CLI가 \(prev) → \(now) 로 변경되었습니다. 이상 동작 시 riven 업데이트를 확인하세요.")
+            addSystem(t("chat.cliChanged", ["prev": prev, "now": now]))
         }
         let resume = pendingResume; pendingResume = nil
         startSession(cmd: cmd, cwd: url.path, resume: resume)
@@ -546,7 +565,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             addLoadEarlierButton()
         }
         renderMessages(msgs, atTop: false)
-        addSystem("— 이전 세션에서 이어짐 —")
+        addSystem(t("chat.resumed"))
         scrollSoon()
     }
     // ---- transcript paging (see loadHistory) ----
@@ -566,7 +585,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // A non-interactive marker at the very top telling the reader there's more above; scrolling to
     // the top auto-loads it (see clipMoved). Not a button — the load is scroll-driven.
     private func addLoadEarlierButton() {
-        let l = NSTextField(labelWithString: "⋯ 이전 대화 \(pendingHistory.count)개 (위로 스크롤해 불러오기)")
+        let l = NSTextField(labelWithString: t("chat.olderNote", ["n": pendingHistory.count]))
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.insertArrangedSubview(l, at: 0)
@@ -668,13 +687,13 @@ final class ChatPanel: NSView, Themable, Scalable {
             // event never arrives — so WITHOUT this the flush timer runs FOREVER at 20fps doing a
             // full-transcript layout, which pegs the main thread (the reported "even the shimmer
             // can't animate" lag). End the turn so the timer stops.
-            if self.turnStart != nil { self.endTurn(cost: nil, usage: nil, error: code != 0 ? "세션이 예기치 않게 종료됨 (code \(code))" : nil) }
-            if code != 0 { self.addSystem("세션 종료(code \(code)). 로그인/권한을 확인하세요.") }
+            if self.turnStart != nil { self.endTurn(cost: nil, usage: nil, error: code != 0 ? t("chat.sessionCrashed", ["c": code]) : nil) }
+            if code != 0 { self.addSystem(t("chat.sessionExit", ["c": code])) }
         }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
         s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
         session = s
-        if s == nil { addSystem("세션을 시작하지 못했습니다.") }
+        if s == nil { addSystem(t("chat.sessionStartFailed")) }
     }
 
     // ---- permission / choice cards (per-mode policy, applied live) ----
@@ -684,18 +703,18 @@ final class ChatPanel: NSView, Themable, Scalable {
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
         // choice regardless of the current permission mode.
         if name == "ExitPlanMode" {
-            enqueueChoice(title: "이 계획대로 진행할까요?", detail: "", code: code, path: nil, options: [
-                ("진행", { [weak self] in self?.session?.respond(id, allow: true) }),
-                ("계획 수정", { [weak self] in self?.session?.respond(id, allow: false) })
+            enqueueChoice(title: t("chat.planProceed"), detail: "", code: code, path: nil, options: [
+                (t("chat.planGo"), { [weak self] in self?.session?.respond(id, allow: true) }),
+                (t("chat.planRevise"), { [weak self] in self?.session?.respond(id, allow: false) })
             ])
             return
         }
-        let approve: (String, () -> Void) = ("승인", { [weak self] in self?.session?.respond(id, allow: true) })
-        let alwaysAuto: (String, () -> Void) = ("이 세션 자동 실행", { [weak self] in
+        let approve: (String, () -> Void) = (t("chat.approve"), { [weak self] in self?.session?.respond(id, allow: true) })
+        let alwaysAuto: (String, () -> Void) = (t("chat.autoThisSession"), { [weak self] in
             self?.modePopup.selectItem(at: 2); self?.modeChanged(); self?.session?.respond(id, allow: true) })
-        let deny: (String, () -> Void) = ("거부", { [weak self] in self?.session?.respond(id, allow: false) })
+        let deny: (String, () -> Void) = (t("chat.deny"), { [weak self] in self?.session?.respond(id, allow: false) })
         switch modeIndex {
-        case 1:  enqueueChoice(title: "권한 요청 · \(name)", detail: detail, code: code, path: path,   // 승인 요청
+        case 1:  enqueueChoice(title: t("chat.permReq", ["name": name]), detail: detail, code: code, path: path,   // 승인 요청
                                options: [approve, alwaysAuto, deny])
         case 2:  session?.respond(id, allow: true)          // 자동 실행 — everything (main + sub)
         default: session?.respond(id, allow: false)         // 계획 — no edits expected
@@ -720,15 +739,15 @@ final class ChatPanel: NSView, Themable, Scalable {
             let p = s("path")
             let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
             onOpenFileAt?(URL(fileURLWithPath: p), line)
-            addSystem("📄 에디터에 열었습니다: \(p)")
+            addSystem(t("chat.openedEditor", ["p": p]))
             session?.respondTool(id, "opened \(p) in riven editor")
         case "riven_open_browser":
             onOpenBrowser?(s("url"))
-            addSystem("🌐 미리보기 패널에 열었습니다: \(s("url"))")
+            addSystem(t("chat.openedPreview", ["u": s("url")]))
             session?.respondTool(id, "opened \(s("url")) in riven preview panel")
         case "riven_screenshot":
             let url = args["url"] as? String
-            addSystem("📸 스크린샷 캡처 중…")
+            addSystem(t("chat.capturing"))
             if let onScreenshot {
                 onScreenshot(url) { [weak self] path in
                     self?.session?.respondTool(id, path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
@@ -738,7 +757,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             // Show it in the API panel AND return the body to the agent.
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
-            addSystem("↗ API 패널: \(s("method")) \(s("url"))")
+            addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
             apiRequest(args) { [weak self] result in self?.session?.respondTool(id, result) }
         case "riven_panels":
             session?.respondTool(id, onPanels?() ?? "(no panels)")
@@ -826,7 +845,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     @objc private func modeChanged() {
         session?.setPermissionMode(cliMode)
         Settings.shared.set("chatPermMode", modeIndex)   // persist so it survives reopen/relaunch
-        addSystem("권한 모드: \(modes[modeIndex].0)")
+        addSystem(t("chat.mode.now", ["m": modes[modeIndex].0]))
     }
     private func cycleMode() {
         modePopup.selectItem(at: (modeIndex + 1) % modes.count)
@@ -851,7 +870,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         currentTurnText = nil; currentTurnBubble = nil
         queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
         queuedMessages.removeAll()            // stop = cancel everything pending
-        addSystem("⏹ 중단됨")
+        addSystem(t("chat.interrupted"))
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
@@ -903,49 +922,49 @@ final class ChatPanel: NSView, Themable, Scalable {
             return true
         case "resume":
             let sessions = listSessions()
-            if sessions.isEmpty { addSystem("이 워크스페이스에 이전 세션이 없습니다."); return true }
+            if sessions.isEmpty { addSystem(t("chat.sessions.none")); return true }
             let opts: [(String, () -> Void)] = sessions.map { s in
                 let label = (s.title.isEmpty ? String(s.id.prefix(8)) : s.title) + "  ·  " + s.date
                 return (label, { [weak self] in self?.switchSession(to: s.id) })
             }
-            presentChoice("이어서 열 세션 선택", options: opts)
+            presentChoice(t("chat.sessions.pick"), options: opts)
             return true
         case "model":
             pickModel(); return true
         case "cost", "context":
             if let u = lastUsage {
-                addSystem("최근 턴 · ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output)) 토큰 · 캐시 \(ChatText.tokens(u.cacheRead))")
-            } else { addSystem("아직 사용량 정보가 없습니다.") }
+                addSystem(t("chat.usage.recent", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output), "cache": ChatText.tokens(u.cacheRead)]))
+            } else { addSystem(t("chat.usage.none")) }
             return true
         case "compact":
-            addSystem("컨텍스트는 한도에 가까워지면 자동으로 압축됩니다. headless 세션에선 수동 /compact 이 지원되지 않습니다.")
+            addSystem(t("chat.compactNote"))
             return true
         case "mcp":
             let servers = session?.mcpServers ?? []
             let riven = (session?.toolList ?? []).filter { $0.hasPrefix("mcp__riven__") }
-            var lines = ["연결된 MCP 서버:"]
-            lines += servers.isEmpty ? ["· (없음)"] : servers.map { "· \($0.name) — \($0.status)" }
+            var lines = [t("chat.mcp.connected")]
+            lines += servers.isEmpty ? [t("chat.mcp.none")] : servers.map { "· \($0.name) — \($0.status)" }
             if !riven.isEmpty { lines.append("· riven (내장) — \(riven.map { $0.replacingOccurrences(of: "mcp__riven__", with: "") }.joined(separator: ", "))") }
             addSystem(lines.joined(separator: "\n"))
             return true
         case "config":
             onOpenSettings?(); return true
         case "permissions":
-            addSystem("권한 모드: \(modes[modeIndex].0) — Shift+Tab 또는 하단 모드 셀렉터로 전환 (계획/승인 요청/자동 실행).")
+            addSystem(t("chat.mode.help", ["m": modes[modeIndex].0]))
             return true
         case "status":
             // Show the friendly name AND the raw id (a resumed session keeps its original model, so
             // seeing the exact id matters when it differs from the CLI's current default).
-            var s = ["모델: \(ChatPanel.modelLabel(model)) [\(model ?? "?")]", "권한: \(modes[modeIndex].0)"]
+            var s = [t("chat.status.model", ["m": "\(ChatPanel.modelLabel(model)) [\(model ?? "?")]"]), t("chat.status.perm", ["m": modes[modeIndex].0])]
             if let v = AgentDiscovery.claudeVersion() { s.append("CLI \(v)") }
-            if let u = lastUsage { s.append("최근 턴 ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))") }
-            if let sid = session?.sessionId { s.append("세션 \(sid.prefix(8))") }
+            if let u = lastUsage { s.append(t("chat.usage.recentShort", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])) }
+            if let sid = session?.sessionId { s.append(t("chat.status.session", ["id": String(sid.prefix(8))])) }
             addSystem(s.joined(separator: " · ")); return true
         case "update":
             // Manual CLI update for people who keep auto-update OFF — riven never flips that
             // setting itself; this just runs `claude update` and reports the result.
-            guard let cmd = AgentDiscovery.claudeCmd() else { addSystem("claude CLI를 찾을 수 없습니다."); return true }
-            addSystem("claude 업데이트 확인 중…")
+            guard let cmd = AgentDiscovery.claudeCmd() else { addSystem(t("chat.noCLIShort")); return true }
+            addSystem(t("chat.updating"))
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = ["update"]
                 let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
@@ -953,22 +972,22 @@ final class ChatPanel: NSView, Themable, Scalable {
                 if (try? p.run()) != nil {
                     let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
                     out = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                } else { out = "실행 실패" }
+                } else { out = t("chat.runFailed") }
                 DispatchQueue.main.async {
-                    self?.addSystem(out.isEmpty ? "업데이트 완료(출력 없음)" : out)
-                    self?.addSystem("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.")
+                    self?.addSystem(out.isEmpty ? t("chat.updateDone") : out)
+                    self?.addSystem(t("chat.updateApplies"))
                 }
             }
             return true
         case "init":
-            sendPrompt("이 프로젝트를 분석해서 CLAUDE.md 파일을 생성하거나 업데이트해줘."); return true
+            sendPrompt(t("chat.prompt.init")); return true
         case "review":
-            sendPrompt("최근 변경사항(git diff)을 리뷰해서 버그와 개선점을 알려줘."); return true
+            sendPrompt(t("chat.prompt.review")); return true
         case "agents":
-            addSystem("서브에이전트는 Task 도구로 자동 실행되며, 실행 중이면 오른쪽에 컬럼으로 표시됩니다.")
+            addSystem(t("chat.agentsNote"))
             return true
         case "help":
-            addSystem("리븐 네이티브 채팅 · /clear 지우기 · /resume 이전세션 · /model 모델 · /cost·/status 사용량 · /mcp 서버 · /config 설정 · /init·/review 실행 · Shift+Tab 권한모드")
+            addSystem(t("chat.help"))
             return true
         default:
             return false      // pass through to the CLI (custom commands etc.)
@@ -986,13 +1005,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     // (that's why a resumed pane could sit on an older Opus while new chats start on Opus 5).
     private func pickModel() {
         let models: [(String, String)] = [
-            ("기본 (CLI 기본값)", "default"),
+            (t("chat.model.default"), "default"),
             ("Opus 5", "opus"),
             ("Sonnet 5", "sonnet"),
             ("Haiku 4.5", "haiku"),
         ]
         let menu = NSMenu()
-        let header = NSMenuItem(title: "현재: \(ChatPanel.modelLabel(model))", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: t("chat.model.now", ["m": ChatPanel.modelLabel(model)]), action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header); menu.addItem(.separator())
         let cur = (model ?? "").lowercased()
@@ -1024,7 +1043,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     @objc private func pickModelItem(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
         session?.setModel(id)
-        addSystem("모델: \(item.title)")
+        addSystem(t("chat.model.set", ["m": item.title]))
         focusInput(force: true)
     }
     private func beginTurn(_ text: String, bubble: UserBubble? = nil) {
@@ -1032,7 +1051,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // (it would hang on "생각 중" forever). Surface it and offer recovery.
         if session == nil || session?.isAlive == false {
             bubble?.setQueued(false)
-            addError("⚠ 세션이 종료되었습니다. /resume 로 이어가거나 새 챗을 여세요.")
+            addError(t("chat.sessionEnded"))
             setRunning(false); onBusyChange?(false)
             return
         }
@@ -1115,7 +1134,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         turnStart = nil
         // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" —
         // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).
-        if let error, !interrupted { addError("⚠ 오류: \(error)") }
+        if let error, !interrupted { addError(t("chat.error", ["e": error])) }
         interrupted = false
         autoScroll()
         // Show how much of the plan quota is used (account 5-hour / weekly window, from the
@@ -1239,22 +1258,22 @@ final class ChatPanel: NSView, Themable, Scalable {
     // from .claude/commands. riven handles the useful ones itself (see handleSlash); the rest
     // pass through to the CLI (custom commands run; a few TUI-only built-ins may report back).
     private static let builtins: [SlashCommand] = [
-        .init(name: "clear", desc: "대화 지우기"),
-        .init(name: "compact", desc: "대화 압축"),
-        .init(name: "context", desc: "컨텍스트 사용량"),
-        .init(name: "cost", desc: "토큰 사용량"),
-        .init(name: "config", desc: "설정"),
-        .init(name: "help", desc: "도움말"),
-        .init(name: "init", desc: "CLAUDE.md 생성"),
-        .init(name: "mcp", desc: "MCP 서버"),
-        .init(name: "memory", desc: "메모리 편집"),
-        .init(name: "model", desc: "모델 변경"),
-        .init(name: "permissions", desc: "권한 설정"),
-        .init(name: "resume", desc: "이전 세션 열기"),
-        .init(name: "review", desc: "코드 리뷰"),
-        .init(name: "agents", desc: "서브에이전트"),
-        .init(name: "status", desc: "상태"),
-        .init(name: "update", desc: "claude CLI 업데이트")
+        .init(name: "clear", desc: t("chat.cmd.clear")),
+        .init(name: "compact", desc: t("chat.cmd.compact")),
+        .init(name: "context", desc: t("chat.cmd.context")),
+        .init(name: "cost", desc: t("chat.cmd.cost")),
+        .init(name: "config", desc: t("chat.cmd.config")),
+        .init(name: "help", desc: t("chat.cmd.help")),
+        .init(name: "init", desc: t("chat.cmd.init")),
+        .init(name: "mcp", desc: t("chat.cmd.mcp")),
+        .init(name: "memory", desc: t("chat.cmd.memory")),
+        .init(name: "model", desc: t("chat.cmd.model")),
+        .init(name: "permissions", desc: t("chat.cmd.permissions")),
+        .init(name: "resume", desc: t("chat.cmd.resume")),
+        .init(name: "review", desc: t("chat.cmd.review")),
+        .init(name: "agents", desc: t("chat.cmd.agents")),
+        .init(name: "status", desc: t("chat.cmd.status")),
+        .init(name: "update", desc: t("chat.cmd.update"))
     ]
     private static func discoverCommands(cwd: String) -> [SlashCommand] {
         var out = builtins
@@ -1275,7 +1294,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Prefer YAML frontmatter `description` (+ `argument-hint`); else the first prose line.
     private static func describe(_ url: URL) -> String {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "사용자 명령" }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return t("chat.cmd.user") }
         var desc = "", hint = ""
         let lines = text.components(separatedBy: "\n")
         if lines.first == "---" {
@@ -1287,7 +1306,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         if desc.isEmpty {
             desc = lines.first(where: { !$0.isEmpty && $0 != "---" })
-                .map { $0.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces) } ?? "사용자 명령"
+                .map { $0.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces) } ?? t("chat.cmd.user")
         }
         let full = hint.isEmpty ? desc : "\(hint)  —  \(desc)"
         return String(full.prefix(60))
