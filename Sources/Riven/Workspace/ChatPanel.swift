@@ -312,23 +312,19 @@ final class ChatPanel: NSView, Themable, Scalable {
         return lum > 0.6 ? .black : .white
     }
 
-    // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the
-    // ratio of the new factor to the last one — no need to know each view's base size.
-    private var scaleDebounce: Timer?
+    // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the ratio of
+    // the new factor to the last one. Applied IMMEDIATELY (not debounced): the old 0.12s debounce
+    // left a window where content rendered between the zoom and the deferred rescale was scaled off
+    // the wrong base — so freshly-typed messages ended up a different size than older ones. The
+    // transcript is capped at 150 views, so an immediate walk is cheap enough for key auto-repeat.
     func applyScale() {
-        // ⌘+/⌘− auto-repeats; each rescale walks the whole transcript (rebuilds every label's
-        // attributed text). Coalesce rapid presses into ONE rescale so CPU doesn't peg.
-        scaleDebounce?.invalidate()
-        scaleDebounce = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            let factor = UIScale.pt(100) / 100
-            let ratio = factor / max(self.lastScaleFactor, 0.01)
-            self.lastScaleFactor = factor
-            guard abs(ratio - 1) > 0.001 else { return }
-            ChatPanel.rescale(self, ratio)
-            self.scaleIcons()                          // composer icons have fixed point sizes
-            self.inputScroll.invalidateIntrinsicContentSize()   // grow the composer for the new input font
-        }
+        let factor = UIScale.pt(100) / 100
+        let ratio = factor / max(lastScaleFactor, 0.01)
+        lastScaleFactor = factor
+        guard abs(ratio - 1) > 0.001 else { return }
+        ChatPanel.rescale(self, ratio)
+        scaleIcons()                          // composer icons have fixed point sizes
+        inputScroll.invalidateIntrinsicContentSize()   // grow the composer for the new input font
     }
     private static func rescale(_ v: NSView, _ ratio: CGFloat) {
         if let tv = v as? NSTextView {
@@ -433,6 +429,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.stop(); session = nil
         current = nil; clearSubagents(); stopFlush()
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         guard let cmd = AgentDiscovery.claudeCmd() else {
             addSystem("claude CLI를 찾을 수 없습니다. 터미널에서 `claude` 로그인 여부를 확인하세요.")
@@ -485,25 +482,55 @@ final class ChatPanel: NSView, Themable, Scalable {
             if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
             else if type == "assistant" { msgs.append((false, s)) }
         }
-        // Render only the LAST N messages. Rendering the WHOLE conversation exploded on launch:
-        // a big session = thousands of message views, and DockManager.restore()'s synchronous
-        // autolayout pass over that tree pegged the CPU at 100% for seconds (profiled). Each
-        // message is several autolayout views, so this MUST stay bounded. (Truly showing all history
-        // needs a virtualized scrollback — a separate change.)
+        // Render only the LAST N messages; keep the older ones as data behind a "load earlier"
+        // pager. Rendering the WHOLE conversation exploded on launch — a big session = thousands of
+        // autolayout views, and DockManager.restore()'s synchronous constraint pass pegged the CPU
+        // (profiled). Paging keeps the live view count bounded no matter how long the history is.
         let cap = 50
-        if msgs.count > cap { addSystem("— 이전 대화 \(msgs.count - cap)개 생략 (스크롤백은 준비 중) —"); msgs = Array(msgs.suffix(cap)) }
-        for m in msgs {
-            if m.user { addUser(m.text) }
-            else {
-                for v in ChatText.render(m.text) {
-                    v.translatesAutoresizingMaskIntoConstraints = false
-                    stack.addArrangedSubview(v)
-                    v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
-                }
-            }
+        if msgs.count > cap {
+            pendingHistory = Array(msgs.dropLast(cap))   // older, oldest-first
+            msgs = Array(msgs.suffix(cap))
+            addLoadEarlierButton()
         }
+        renderMessages(msgs, atTop: false)
         addSystem("— 이전 세션에서 이어짐 —")
         scrollSoon()
+    }
+    // ---- transcript paging (see loadHistory) ----
+    private var pendingHistory: [(user: Bool, text: String)] = []   // older msgs not yet rendered
+    private var loadEarlierBtn: NSView?
+    private func renderMessages(_ msgs: [(user: Bool, text: String)], atTop: Bool) {
+        var idx = atTop ? (loadEarlierBtn != nil ? 1 : 0) : stack.arrangedSubviews.count
+        for m in msgs {
+            let views: [NSView] = m.user ? [UserBubble(text: m.text)] : ChatText.render(m.text)
+            for v in views {
+                v.translatesAutoresizingMaskIntoConstraints = false
+                stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
+                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+            }
+        }
+    }
+    private func addLoadEarlierButton() {
+        let btn = ClosureButton(title: "이전 대화 \(pendingHistory.count)개 더 보기") { [weak self] in self?.loadEarlier() }
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        stack.insertArrangedSubview(btn, at: 0)
+        btn.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        loadEarlierBtn = btn
+    }
+    // Prepend the previous batch ABOVE the current view, keeping the reader's position stable
+    // (anchor by document-height delta) — so paging back never yanks the scroll.
+    @objc private func loadEarlier() {
+        guard !pendingHistory.isEmpty else { return }
+        let batch = Array(pendingHistory.suffix(50)); pendingHistory.removeLast(batch.count)
+        layoutSubtreeIfNeeded()
+        let oldH = stack.frame.height, oldY = scroll.contentView.bounds.origin.y
+        loadEarlierBtn?.removeFromSuperview(); loadEarlierBtn = nil
+        if !pendingHistory.isEmpty { addLoadEarlierButton() }
+        renderMessages(batch, atTop: true)
+        layoutSubtreeIfNeeded()
+        let dy = stack.frame.height - oldH
+        scroll.contentView.setBoundsOrigin(NSPoint(x: 0, y: oldY + dy))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
     private static func contentText(_ c: Any?) -> String {
         if let s = c as? String { return s }
@@ -521,6 +548,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        pendingHistory = []; loadEarlierBtn = nil
         startSession(cmd: cmd, cwd: url.path, resume: sid)
         loadHistory(cwd: url.path, sessionId: sid)
         onSessionId?(sid)
@@ -807,6 +835,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         switch cmd {
         case "clear":
             stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+            pendingHistory = []; loadEarlierBtn = nil
             current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll()
             return true
         case "resume":
