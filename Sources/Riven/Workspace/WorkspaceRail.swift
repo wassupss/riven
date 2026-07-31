@@ -95,7 +95,7 @@ final class WorkspaceRail: NSView, Themable {
         layer?.backgroundColor = Theme.bg2.cgColor
 
         let title = titleLabel
-        title.font = UIScale.font(11, .medium)
+        title.font = UIScale.font(UIScale.small, .medium)
         title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false
 
@@ -312,7 +312,7 @@ final class WorkspaceRail: NSView, Themable {
 
         let baseName = customNames[url] ?? url.lastPathComponent
         let name = NSTextField(labelWithString: url.fragment.map { "\(baseName) #\($0)" } ?? baseName)
-        name.font = UIScale.font(12, isActive ? .semibold : .medium)
+        name.font = UIScale.font(UIScale.body, isActive ? .semibold : .medium)
         name.textColor = isActive ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
@@ -328,7 +328,7 @@ final class WorkspaceRail: NSView, Themable {
         countBadge.translatesAutoresizingMaskIntoConstraints = false
         countBadge.isHidden = (n == 0)
         let count = NSTextField(labelWithString: n > 0 ? "\(n)" : "")
-        count.font = UIScale.font(9, .semibold); count.textColor = Theme.fgDim
+        count.font = UIScale.font(UIScale.caption, .semibold); count.textColor = Theme.fgDim
         count.alignment = .center; count.translatesAutoresizingMaskIntoConstraints = false
         count.drawsBackground = false
         countBadge.addSubview(count)
@@ -345,7 +345,7 @@ final class WorkspaceRail: NSView, Themable {
 
         let idx = (workspaces.firstIndex(of: url) ?? 0) + 1
         let kbd = NSTextField(labelWithString: idx <= 9 ? "⌘\(idx)" : "")
-        kbd.font = UIScale.mono(10, .medium); kbd.textColor = Theme.accent
+        kbd.font = UIScale.mono(UIScale.caption, .medium); kbd.textColor = Theme.accent
         kbd.wantsLayer = true; kbd.layer?.backgroundColor = Theme.accentMuted.cgColor
         kbd.layer?.cornerRadius = 4; kbd.drawsBackground = false
         kbd.alignment = .center; kbd.isHidden = true
@@ -354,7 +354,7 @@ final class WorkspaceRail: NSView, Themable {
 
         // Path line.
         let path = NSTextField(labelWithString: shorten(url.path))
-        path.font = UIScale.font(10); path.textColor = Theme.fgDim
+        path.font = UIScale.font(UIScale.caption); path.textColor = Theme.fgDim
         path.lineBreakMode = .byTruncatingMiddle
         path.translatesAutoresizingMaskIntoConstraints = false
 
@@ -365,7 +365,7 @@ final class WorkspaceRail: NSView, Themable {
         branchIcon.contentTintColor = Theme.fgDim
         branchIcon.translatesAutoresizingMaskIntoConstraints = false
         let branch = NSTextField(labelWithString: branches[url] ?? "")
-        branch.font = UIScale.mono(10); branch.textColor = Theme.fgDim
+        branch.font = UIScale.mono(UIScale.caption); branch.textColor = Theme.fgDim
         branch.lineBreakMode = .byTruncatingTail
         branch.translatesAutoresizingMaskIntoConstraints = false
         let branchRow = NSStackView(views: [branchIcon, branch])
@@ -433,7 +433,7 @@ final class WorkspaceRail: NSView, Themable {
         dot.set(agent.activity)
 
         let name = ShimmerLabel(labelWithString: agent.title)
-        name.font = UIScale.font(11, isFocused ? .semibold : .regular)
+        name.font = UIScale.font(UIScale.small, isFocused ? .semibold : .regular)
         name.textColor = isFocused ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false

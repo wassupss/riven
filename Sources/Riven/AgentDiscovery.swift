@@ -39,6 +39,37 @@ enum AgentDiscovery {
     // Resolved absolute path to the Claude Code CLI, if installed (for the session shim).
     static func claudeCmd() -> String? { available().first { $0.name == "Claude Code" }?.cmd }
 
+    // `claude --version` (e.g. "2.1.220"), cached per launch. riven PARSES the CLI's stream-json,
+    // so a CLI upgrade can change behaviour under us — we surface the version and flag changes
+    // rather than touching the user's own auto-update setting.
+    private static var cachedVersion: String??
+    static func claudeVersion() -> String? {
+        if let v = cachedVersion { return v }
+        var out: String?
+        if let cmd = claudeCmd() {
+            let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = ["--version"]
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
+            if (try? p.run()) != nil {
+                let d = pipe.fileHandleForReading.readDataToEndOfFile()
+                p.waitUntilExit()
+                let s = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                // "2.1.220 (Claude Code)" → "2.1.220"
+                out = s.split(separator: " ").first.map(String.init)
+            }
+        }
+        cachedVersion = .some(out)
+        return out
+    }
+    /// The version changed since the last launch riven recorded (nil when unchanged/unknown).
+    /// Returns the PREVIOUS version and records the current one.
+    static func claudeVersionChange() -> String? {
+        guard let now = claudeVersion() else { return nil }
+        let key = "claudeCLIVersion"
+        let prev = Settings.shared.string(key, "")
+        if prev != now { Settings.shared.set(key, now) }
+        return (prev.isEmpty || prev == now) ? nil : prev
+    }
+
     // Available agents, resolved to absolute paths. Cached after the first scan.
     private static var cached: [Agent]?
     static func available() -> [Agent] {

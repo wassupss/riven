@@ -64,14 +64,14 @@ final class SettingsWindow: NSPanel {
         // Header: "설정" title (left) + Close (right) over the tab bar.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = NSTextField(labelWithString: t("settings.title"))
-        titleLabel.font = UIScale.font(13, .semibold)
+        titleLabel.font = UIScale.font(UIScale.title, .semibold)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = titleLabel
         header.addSubview(titleLabel)
         let closeBtn = NSButton(title: t("common.close"), target: self, action: #selector(closeSettings))
         self.closeBtn = closeBtn
-        closeBtn.isBordered = false; closeBtn.font = UIScale.font(11)
+        closeBtn.isBordered = false; closeBtn.font = UIScale.font(UIScale.small)
         closeBtn.contentTintColor = Theme.fgDim
         closeBtn.wantsLayer = true; closeBtn.layer?.backgroundColor = Theme.hover.cgColor
         closeBtn.layer?.cornerRadius = 6
@@ -148,7 +148,7 @@ final class SettingsWindow: NSPanel {
     private func makeTab(_ t: String, _ i: Int) -> NSButton {
         let b = NSButton(title: t, target: self, action: #selector(tabClicked(_:)))
         b.tag = i; b.isBordered = false
-        b.font = UIScale.font(13, .medium)
+        b.font = UIScale.font(UIScale.title, .medium)
         b.contentTintColor = i == 0 ? Theme.fg : Theme.fgDim
         b.translatesAutoresizingMaskIntoConstraints = false
         b.heightAnchor.constraint(equalToConstant: 34).isActive = true
@@ -224,7 +224,7 @@ final class SettingsWindow: NSPanel {
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
         formatOnSave.target = self; formatOnSave.action = #selector(saveFormatOnSave)
         formatOnSave.contentTintColor = Theme.fg
-        formatOnSave.font = UIScale.font(13)
+        formatOnSave.font = UIScale.font(UIScale.title)
         content.addArrangedSubview(formatOnSave)
 
         addSection(t("settings.terminal"))
@@ -236,13 +236,13 @@ final class SettingsWindow: NSPanel {
         notify.state = s.bool("notifications", true) ? .on : .off
         notify.target = self; notify.action = #selector(saveNotify)
         notify.contentTintColor = Theme.fg
-        notify.font = UIScale.font(13)
+        notify.font = UIScale.font(UIScale.title)
         content.addArrangedSubview(notify)
 
         crashReports.title = t("settings.crashReports")
         crashReports.state = s.bool("crashReporting", true) ? .on : .off
         crashReports.target = self; crashReports.action = #selector(saveCrashReports)
-        crashReports.contentTintColor = Theme.fg; crashReports.font = UIScale.font(13)
+        crashReports.contentTintColor = Theme.fg; crashReports.font = UIScale.font(UIScale.title)
         content.addArrangedSubview(crashReports)
 
         content.addArrangedSubview(spacer(10))
@@ -256,7 +256,7 @@ final class SettingsWindow: NSPanel {
     }
     private func themeSwatch(_ def: ThemeDef) -> NSView {
         let active = def.id == Theme.current.id
-        let b = PadButton(title: def.name, font: UIScale.font(13), textColor: Theme.fg,
+        let b = PadButton(title: def.name, font: UIScale.font(UIScale.title), textColor: Theme.fg,
             bg: active ? Theme.accentMuted : Theme.hover, border: active ? Theme.accentBorder : Theme.edge,
             radius: 13, hPad: 11, height: 26, dotColor: Theme.hex(def.accent))
         b.identifierString = def.id
@@ -307,13 +307,13 @@ final class SettingsWindow: NSPanel {
         aiEnable.state = s.bool("aiComplete", false) ? .on : .off
         aiEnable.target = self; aiEnable.action = #selector(saveAI)
         aiEnable.contentTintColor = Theme.fg
-        aiEnable.font = UIScale.font(13)
+        aiEnable.font = UIScale.font(UIScale.title)
         content.addArrangedSubview(aiEnable)
 
         agentNative.state = s.string("agentUI", "cli") == "native" ? .on : .off
         agentNative.target = self; agentNative.action = #selector(saveAgentUI)
         agentNative.contentTintColor = Theme.fg
-        agentNative.font = UIScale.font(13)
+        agentNative.font = UIScale.font(UIScale.title)
         content.addArrangedSubview(agentNative)
 
         provider.removeAllItems()
@@ -337,15 +337,15 @@ final class SettingsWindow: NSPanel {
         // Snippets — prefix expands to body (${1} tab stops) via Monaco completion.
         addSection(t("settings.snippets"))
         let hint = NSTextField(labelWithString: t("settings.snippetsHint"))
-        hint.font = UIScale.font(11); hint.textColor = Theme.fgDim
+        hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         hint.lineBreakMode = .byWordWrapping; hint.preferredMaxLayoutWidth = 500
         content.addArrangedSubview(hint)
         let snips = (Settings.shared.object("snippets") as? [String: String]) ?? [:]
         for (prefix, body) in snips.sorted(by: { $0.key < $1.key }) {
             let l = NSTextField(labelWithString: "\(prefix)  →  \(body.replacingOccurrences(of: "\n", with: "⏎"))")
-            l.font = UIScale.mono(11, .regular); l.textColor = Theme.fgDim
+            l.font = UIScale.mono(UIScale.small, .regular); l.textColor = Theme.fgDim
             l.lineBreakMode = .byTruncatingTail
-            let del = PadButton(title: "삭제", font: UIScale.font(11), textColor: Theme.danger,
+            let del = PadButton(title: "삭제", font: UIScale.font(UIScale.small), textColor: Theme.danger,
                                 bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
             del.onClick = { [weak self] in self?.deleteSnippet(prefix) }
             let sp = NSView(); sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -399,7 +399,7 @@ final class SettingsWindow: NSPanel {
         let row = NSStackView(); row.orientation = .horizontal; row.spacing = 6
         for (i, n) in names.enumerated() {
             let on = i == kbSubtab
-            let b = PadButton(title: n, font: UIScale.font(12, .medium),
+            let b = PadButton(title: n, font: UIScale.font(UIScale.body, .medium),
                 textColor: on ? Theme.accent : Theme.fgDim, bg: on ? Theme.accentMuted : Theme.hover,
                 border: on ? Theme.accentBorder : Theme.edge, radius: 6, hPad: 12, height: 26)
             b.onClick = { [weak self] in self?.kbSubtab = i; self?.showTab(2) }
@@ -409,7 +409,7 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(spacer(6))
 
         let hint = NSTextField(labelWithString: "칩을 클릭하고 원하는 키를 누르세요. Esc로 취소.")
-        hint.font = UIScale.font(11); hint.textColor = Theme.fgDim
+        hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
         content.addArrangedSubview(spacer(4))
         switch kbSubtab {
@@ -425,10 +425,10 @@ final class SettingsWindow: NSPanel {
     private var kbMonitor: Any?
     private func kbRecordRow(_ action: Keys.Action) -> NSView {
         let l = NSTextField(labelWithString: action.label)
-        l.font = UIScale.font(13); l.textColor = Theme.fg
+        l.font = UIScale.font(UIScale.title); l.textColor = Theme.fg
         l.translatesAutoresizingMaskIntoConstraints = false
         let chip = PadButton(title: Keys.display(Keys.effective(action.id)),
-                             font: UIScale.mono(11, .medium),
+                             font: UIScale.mono(UIScale.small, .medium),
                              textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
                              radius: 5, hPad: 8, height: 24)
         chip.onClick = { [weak self, weak chip] in self?.beginRecording(action.id, action.cat, chip) }
@@ -468,7 +468,7 @@ final class SettingsWindow: NSPanel {
         let cur = Settings.shared.string("editorKeymap", "vscode")
         for id in ["vscode", "jetbrains", "sublime"] {
             let on = id == cur
-            let b = PadButton(title: editorPresets[id]!, font: UIScale.font(12),
+            let b = PadButton(title: editorPresets[id]!, font: UIScale.font(UIScale.body),
                 textColor: on ? Theme.accent : Theme.fgDim, bg: on ? Theme.accentMuted : Theme.hover,
                 border: on ? Theme.accentBorder : Theme.edge, radius: 6, hPad: 12, height: 26)
             b.onClick = { [weak self] in
@@ -518,10 +518,10 @@ final class SettingsWindow: NSPanel {
     ]
     private func kbRow(_ command: String, _ chord: String) -> NSView {
         let l = NSTextField(labelWithString: command)
-        l.font = UIScale.font(13); l.textColor = Theme.fg
+        l.font = UIScale.font(UIScale.title); l.textColor = Theme.fg
         l.translatesAutoresizingMaskIntoConstraints = false
         let cap = NSTextField(labelWithString: chord)
-        cap.font = UIScale.mono(11, .medium)
+        cap.font = UIScale.mono(UIScale.small, .medium)
         cap.textColor = Theme.fgDim
         cap.alignment = .center
         cap.drawsBackground = false
@@ -562,7 +562,7 @@ final class SettingsWindow: NSPanel {
         addSection(t("account.title"))
         let note = NSTextField(labelWithString:
             "riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
-        note.font = UIScale.font(12); note.textColor = Theme.fgDim
+        note.font = UIScale.font(UIScale.body); note.textColor = Theme.fgDim
         note.lineBreakMode = .byWordWrapping; note.maximumNumberOfLines = 4
         note.preferredMaxLayoutWidth = 500
         note.translatesAutoresizingMaskIntoConstraints = false
@@ -574,19 +574,19 @@ final class SettingsWindow: NSPanel {
             addSection(t("settings.status"))
             let status = NSTextField(labelWithString:
                 "Supabase 미구성 — 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.")
-            status.font = UIScale.font(11); status.textColor = Theme.warning
+            status.font = UIScale.font(UIScale.small); status.textColor = Theme.warning
             status.lineBreakMode = .byWordWrapping; status.maximumNumberOfLines = 3
             status.preferredMaxLayoutWidth = 500
             content.addArrangedSubview(status)
             let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
-            sync.font = UIScale.font(11); sync.textColor = Theme.fgDim
+            sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
             content.addArrangedSubview(sync)
             return
         }
 
         if SupabaseAuth.shared.isSignedIn {
             let who = NSTextField(labelWithString: "✓ \(SupabaseAuth.shared.email ?? "로그인됨") — 설정이 이 계정에 동기화됩니다.")
-            who.font = UIScale.font(12); who.textColor = Theme.success
+            who.font = UIScale.font(UIScale.body); who.textColor = Theme.success
             who.lineBreakMode = .byTruncatingMiddle; who.preferredMaxLayoutWidth = 500
             content.addArrangedSubview(who)
             content.addArrangedSubview(spacer(6))
@@ -609,13 +609,13 @@ final class SettingsWindow: NSPanel {
             content.addArrangedSubview(NSStackView(views: [btn]))
             if let msg = accountError {
                 let e = NSTextField(labelWithString: "로그인 실패: \(msg)")
-                e.font = UIScale.font(11); e.textColor = Theme.danger
+                e.font = UIScale.font(UIScale.small); e.textColor = Theme.danger
                 e.lineBreakMode = .byWordWrapping; e.maximumNumberOfLines = 3; e.preferredMaxLayoutWidth = 500
                 content.addArrangedSubview(e)
             }
         }
         let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
-        sync.font = UIScale.font(11); sync.textColor = Theme.fgDim
+        sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
         content.addArrangedSubview(spacer(4)); content.addArrangedSubview(sync)
     }
 
@@ -626,7 +626,7 @@ final class SettingsWindow: NSPanel {
             .withSymbolConfiguration(.init(pointSize: 13, weight: .regular))
         iv.contentTintColor = tint; iv.translatesAutoresizingMaskIntoConstraints = false
         let lbl = NSTextField(labelWithString: title)
-        lbl.font = UIScale.font(13); lbl.textColor = tint
+        lbl.font = UIScale.font(UIScale.title); lbl.textColor = tint
         lbl.translatesAutoresizingMaskIntoConstraints = false
         let box = ClickBox(action)
         box.wantsLayer = true
@@ -653,17 +653,17 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(name)
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
         let verL = NSTextField(labelWithString: "v\(ver)")
-        verL.font = UIScale.mono(12, .regular); verL.textColor = Theme.fgDim
+        verL.font = UIScale.mono(UIScale.body, .regular); verL.textColor = Theme.fgDim
         content.addArrangedSubview(verL)
         let tag = NSTextField(labelWithString: t("about.tagline"))
-        tag.font = UIScale.font(12); tag.textColor = Theme.fgDim
+        tag.font = UIScale.font(UIScale.body); tag.textColor = Theme.fgDim
         content.addArrangedSubview(tag)
         content.addArrangedSubview(spacer(8))
 
         addSection(t("about.update"))
         // 탭을 다시 그릴 때도 실제 진행 상태를 따른다 (창을 닫았다 열면 "확인 중…"이 남던 문제).
         updateStatusLabel = NSTextField(labelWithString: Updater.shared.isChecking ? t("about.checking") : t("about.checkHint"))
-        updateStatusLabel.font = UIScale.font(12); updateStatusLabel.textColor = Theme.fgDim
+        updateStatusLabel.font = UIScale.font(UIScale.body); updateStatusLabel.textColor = Theme.fgDim
         content.addArrangedSubview(updateStatusLabel)
         content.addArrangedSubview(spacer(4))
         content.addArrangedSubview(primaryButton(t("about.check"), #selector(checkUpdate)))
@@ -682,7 +682,7 @@ final class SettingsWindow: NSPanel {
     // A dark, theme-aware secondary button (void state is NOT white).
     private func secondaryButton(_ title: String, symbol: String? = nil, _ handler: @escaping () -> Void) -> PadButton {
         let img = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
-        let b = PadButton(title: title, font: UIScale.font(12),
+        let b = PadButton(title: title, font: UIScale.font(UIScale.body),
                           textColor: Theme.fg, bg: Theme.bg3, border: Theme.edge, radius: 7, hPad: 12, height: 28,
                           icon: img)
         b.onClick = handler
@@ -727,7 +727,7 @@ final class SettingsWindow: NSPanel {
     }
     private func sectionLabel(_ t: String) -> NSView {
         let l = NSTextField(labelWithString: t)
-        l.font = UIScale.font(11, .semibold); l.textColor = Theme.fgDim
+        l.font = UIScale.font(UIScale.small, .semibold); l.textColor = Theme.fgDim
         return l
     }
     private func spacer(_ h: CGFloat) -> NSView {
@@ -737,7 +737,7 @@ final class SettingsWindow: NSPanel {
     }
     private func setRow(_ label: String, _ control: NSView) -> NSView {
         let l = NSTextField(labelWithString: label)
-        l.font = UIScale.font(13); l.textColor = Theme.fgDim
+        l.font = UIScale.font(UIScale.title); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         l.widthAnchor.constraint(equalToConstant: 76).isActive = true
         control.translatesAutoresizingMaskIntoConstraints = false
@@ -755,7 +755,7 @@ final class SettingsWindow: NSPanel {
             cell.usesSingleLineMode = true; cell.wraps = false; cell.isBezeled = false
             tf.cell = cell; tf.stringValue = val
         }
-        tf.font = UIScale.font(12); tf.textColor = Theme.fg
+        tf.font = UIScale.font(UIScale.body); tf.textColor = Theme.fg
         tf.backgroundColor = Theme.isLight ? Theme.bg : Theme.bg3
         tf.drawsBackground = true
         tf.isBordered = false
@@ -770,7 +770,7 @@ final class SettingsWindow: NSPanel {
         return tf
     }
     private func primaryButton(_ title: String, _ action: Selector) -> NSView {
-        let b = PadButton(title: title, font: UIScale.font(13, .semibold),
+        let b = PadButton(title: title, font: UIScale.font(UIScale.title, .semibold),
             textColor: Theme.isLight ? .white : Theme.hex(Theme.current.bg),
             bg: Theme.accent, border: .clear, radius: 7, hPad: 16, height: 30)
         b.onClick = { [weak self] in _ = self?.perform(action) }

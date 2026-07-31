@@ -27,14 +27,14 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler, WK
 
         urlField.stringValue = "http://localhost:3000"
         urlField.placeholderString = "http://localhost:3000"
-        urlField.font = UIScale.font(12)
+        urlField.font = UIScale.font(UIScale.body)
         urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(openURL)
         urlField.translatesAutoresizingMaskIntoConstraints = false
 
         openBtn.target = self; openBtn.action = #selector(openURL)
         openBtn.bezelStyle = .roundRect; openBtn.controlSize = .small
-        openBtn.font = UIScale.font(11)
+        openBtn.font = UIScale.font(UIScale.small)
         openBtn.translatesAutoresizingMaskIntoConstraints = false
         openBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // shrink before the URL field
 
@@ -80,7 +80,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler, WK
         externalBtn.target = self; externalBtn.action = #selector(openExternal)
         externalBtn.translatesAutoresizingMaskIntoConstraints = false
 
-        emptyLabel.font = UIScale.font(11); emptyLabel.textColor = Theme.fgDim
+        emptyLabel.font = UIScale.font(UIScale.small); emptyLabel.textColor = Theme.fgDim
         emptyLabel.alignment = .center
         emptyLabel.maximumNumberOfLines = 3
         emptyLabel.lineBreakMode = .byWordWrapping
@@ -125,7 +125,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler, WK
     deinit { if let o = langObserver { NotificationCenter.default.removeObserver(o) } }
 
     func applyScale() {
-        urlField.font = UIScale.font(12); openBtn.font = UIScale.font(11); emptyLabel.font = UIScale.font(11)
+        urlField.font = UIScale.font(UIScale.body); openBtn.font = UIScale.font(UIScale.small); emptyLabel.font = UIScale.font(UIScale.small)
     }
 
     func focusURL() { window?.makeFirstResponder(urlField) }

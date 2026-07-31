@@ -167,9 +167,9 @@ private final class FileResultRow: NSView {
         super.init(frame: frame)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.imageScaling = .scaleProportionallyUpOrDown
-        name.font = UIScale.font(13); name.textColor = Theme.fg
+        name.font = UIScale.font(UIScale.title); name.textColor = Theme.fg
         name.translatesAutoresizingMaskIntoConstraints = false
-        dir.font = UIScale.mono(10, .regular); dir.textColor = Theme.fgDim
+        dir.font = UIScale.mono(UIScale.caption, .regular); dir.textColor = Theme.fgDim
         dir.lineBreakMode = .byTruncatingMiddle
         dir.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon); addSubview(name); addSubview(dir)

@@ -75,9 +75,9 @@ final class CommandPalette: NSPanel, NSTableViewDataSource, NSTableViewDelegate,
             return c
         }()
         let cmd = filtered[row]
-        let s = NSMutableAttributedString(string: cmd.title, attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(13)])
+        let s = NSMutableAttributedString(string: cmd.title, attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.title)])
         if !cmd.hint.isEmpty {
-            s.append(NSAttributedString(string: "   \(cmd.hint)", attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
+            s.append(NSAttributedString(string: "   \(cmd.hint)", attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.small)]))
         }
         cell.textField?.attributedStringValue = s
         return cell

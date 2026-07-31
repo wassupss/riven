@@ -28,7 +28,7 @@ final class QuickPanel: NSPanel, NSTableViewDataSource, NSTableViewDelegate {
 
         // Title header (riven .qp-title: uppercase, letter-spaced, dim).
         titleLabel.stringValue = t("toolbar.addPanel")
-        titleLabel.font = UIScale.font(11, .medium)
+        titleLabel.font = UIScale.font(UIScale.small, .medium)
         titleLabel.textColor = Theme.fgDim
         titleLabel.frame = NSRect(x: 16, y: 268, width: 340, height: 20)
         titleLabel.autoresizingMask = [.width, .minYMargin]
@@ -61,7 +61,7 @@ final class QuickPanel: NSPanel, NSTableViewDataSource, NSTableViewDelegate {
         hair.autoresizingMask = [.width, .maxYMargin]
         content.addSubview(hair)
         let foot = NSTextField(labelWithString: t("quick.footer"))
-        foot.font = UIScale.font(11); foot.textColor = Theme.fgDim
+        foot.font = UIScale.font(UIScale.small); foot.textColor = Theme.fgDim
         foot.frame = NSRect(x: 14, y: 7, width: 400, height: 16)
         foot.autoresizingMask = [.width, .maxYMargin]
         content.addSubview(foot)
@@ -146,9 +146,9 @@ private final class QuickRow: NSView {
         super.init(frame: frame)
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.contentTintColor = Theme.fgDim
-        label.font = UIScale.font(13); label.textColor = Theme.fg
+        label.font = UIScale.font(UIScale.title); label.textColor = Theme.fg
         label.translatesAutoresizingMaskIntoConstraints = false
-        hint.font = UIScale.mono(11, .regular); hint.textColor = Theme.fgDim
+        hint.font = UIScale.mono(UIScale.small, .regular); hint.textColor = Theme.fgDim
         hint.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon); addSubview(label); addSubview(hint)
         NSLayoutConstraint.activate([

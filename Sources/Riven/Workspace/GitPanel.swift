@@ -28,7 +28,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg2.cgColor
 
-        branchLabel.font = UIScale.font(11, .medium)
+        branchLabel.font = UIScale.font(UIScale.small, .medium)
         branchLabel.textColor = Theme.fg
         branchLabel.lineBreakMode = .byTruncatingTail
         branchLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -50,7 +50,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         headActions.translatesAutoresizingMaskIntoConstraints = false
 
         // Commit message box (a small scrollable text view) with a placeholder overlay.
-        commitMsg.font = UIScale.font(12)
+        commitMsg.font = UIScale.font(UIScale.body)
         commitMsg.isRichText = false
         commitMsg.drawsBackground = true
         commitMsg.textContainerInset = NSSize(width: 4, height: 4)
@@ -63,13 +63,13 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         commitScroll.layer?.cornerRadius = 6
         commitScroll.layer?.borderWidth = 1
         commitPlaceholder.stringValue = t("git.commitMessage")
-        commitPlaceholder.font = UIScale.font(12)
+        commitPlaceholder.font = UIScale.font(UIScale.body)
         commitPlaceholder.textColor = Theme.fgDim
         commitPlaceholder.translatesAutoresizingMaskIntoConstraints = false
 
         commitBtn.target = self; commitBtn.action = #selector(commit)
         commitBtn.bezelStyle = .roundRect; commitBtn.controlSize = .small
-        commitBtn.font = UIScale.font(11, .semibold)
+        commitBtn.font = UIScale.font(UIScale.small, .semibold)
         commitBtn.wantsLayer = true
         commitBtn.isBordered = false
         commitBtn.translatesAutoresizingMaskIntoConstraints = false
@@ -119,7 +119,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         }
     }
     func applyScale() {
-        branchLabel.font = UIScale.font(11, .medium)
+        branchLabel.font = UIScale.font(UIScale.small, .medium)
         render()   // rebuild change rows at the new scale
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -211,7 +211,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         commitBtn.isHidden = !repo
         if !repo {
             let hint = NSTextField(labelWithString: t("git.notRepo"))
-            hint.font = UIScale.font(12); hint.textColor = Theme.fgDim; hint.alignment = .center
+            hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim; hint.alignment = .center
             hint.translatesAutoresizingMaskIntoConstraints = false
             let box = NSView(); box.addSubview(hint)
             NSLayoutConstraint.activate([
@@ -248,7 +248,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         for f in changed { rowsStack.addArrangedSubview(fileRow(f, staged: false)) }
         if staged.isEmpty && changed.isEmpty {
             let hint = NSTextField(labelWithString: t("git.noChanges"))
-            hint.font = UIScale.font(12); hint.textColor = Theme.fgDim
+            hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim
             rowsStack.addArrangedSubview(pad(hint))
         }
     }
@@ -280,7 +280,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
     private func section(_ title: String, action: (String, Selector)?) -> NSView {
         let l = NSTextField(labelWithString: title)
-        l.font = UIScale.font(11, .medium); l.textColor = Theme.fgDim
+        l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         let c = NSView(); c.addSubview(l)
         NSLayoutConstraint.activate([
@@ -290,7 +290,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         ])
         if let (t, sel) = action {
             let b = NSButton(title: t, target: self, action: sel)
-            b.isBordered = false; b.font = UIScale.font(10); b.contentTintColor = Theme.accent
+            b.isBordered = false; b.font = UIScale.font(UIScale.caption); b.contentTintColor = Theme.accent
             b.translatesAutoresizingMaskIntoConstraints = false
             c.addSubview(b)
             NSLayoutConstraint.activate([
@@ -310,11 +310,11 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         let badge = pill(info.word, info.color)
 
         let nameL = NSTextField(labelWithString: name)
-        nameL.font = UIScale.font(12); nameL.textColor = Theme.fg
+        nameL.font = UIScale.font(UIScale.body); nameL.textColor = Theme.fg
         nameL.lineBreakMode = .byTruncatingMiddle; nameL.toolTip = f.path
         nameL.translatesAutoresizingMaskIntoConstraints = false
         let dirL = NSTextField(labelWithString: dir)
-        dirL.font = UIScale.font(11); dirL.textColor = Theme.fgDim
+        dirL.font = UIScale.font(UIScale.small); dirL.textColor = Theme.fgDim
         dirL.lineBreakMode = .byTruncatingMiddle
         dirL.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         dirL.translatesAutoresizingMaskIntoConstraints = false
@@ -366,7 +366,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         v.setContentHuggingPriority(.required, for: .horizontal)
         v.setContentCompressionResistancePriority(.required, for: .horizontal)
         let l = NSTextField(labelWithString: word)
-        l.font = UIScale.mono(9, .bold)
+        l.font = UIScale.mono(UIScale.caption, .bold)
         l.textColor = color
         l.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(l)

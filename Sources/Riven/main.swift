@@ -531,7 +531,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let hIcon = NSImageView(); hIcon.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         hIcon.contentTintColor = Theme.fgDim; hIcon.translatesAutoresizingMaskIntoConstraints = false
-        let hLabel = NSTextField(labelWithString: ""); hLabel.font = UIScale.font(12, .medium)
+        let hLabel = NSTextField(labelWithString: ""); hLabel.font = UIScale.font(UIScale.body, .medium)
         hLabel.textColor = Theme.fg; hLabel.translatesAutoresizingMaskIntoConstraints = false
         headerLabel = hLabel; headerIcon = hIcon
         dockHeader.addSubview(hIcon); dockHeader.addSubview(hLabel)
@@ -542,7 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         uIcon.image = NSImage(systemSymbolName: "gauge.with.dots.needle.33percent", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         uIcon.contentTintColor = Theme.fgDim; uIcon.translatesAutoresizingMaskIntoConstraints = false
-        let uLabel = NSTextField(labelWithString: ""); uLabel.font = UIScale.font(11)
+        let uLabel = NSTextField(labelWithString: ""); uLabel.font = UIScale.font(UIScale.small)
         uLabel.textColor = Theme.fgDim; uLabel.translatesAutoresizingMaskIntoConstraints = false
         headerUsage = uLabel
         let usageItem = NSStackView(views: [uIcon, uLabel])
@@ -626,7 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addBtn.imagePosition = .imageLeading
         addBtn.isBordered = false
         addBtn.contentTintColor = Theme.fgDim
-        addBtn.font = UIScale.font(12, .medium)
+        addBtn.font = UIScale.font(UIScale.body, .medium)
         addBtn.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(addBtn)
         NSLayoutConstraint.activate([
@@ -745,7 +745,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return self.window?.firstResponder === tv && self.window?.isKeyWindow == true
             },
             notify: { [weak self] pane, body in
-                let title = (pane.workspace as NSString).lastPathComponent
+                let title = self?.displayName(for: URL(fileURLWithPath: pane.workspace))
+                    ?? (pane.workspace as NSString).lastPathComponent
                 let name = self?.panel(pane)?.title ?? t("title.terminal")
                 Notifications.post(title: title, body: "\(name) · \(body)", wsPath: pane.workspace, panelId: pane.paneId)
             }
@@ -991,7 +992,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Post one completion banner per user turn (armed by Enter), only when unwatched.
             if !watching, tv.turnArmed {
                 tv.turnArmed = false
-                let wsName = (wsPath as NSString).lastPathComponent
+                // Honor the user's custom rail name (was always the raw folder name).
+                let wsName = self.displayName(for: URL(fileURLWithPath: wsPath))
                 Notifications.post(title: wsName, body: "\(p.title) · \(t("term.done"))", wsPath: wsPath, panelId: paneId)
             }
         }
@@ -1282,7 +1284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } else {
                     p.badge = "attn"
                     WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: true)
-                    Notifications.post(title: (wsPath as NSString).lastPathComponent,
+                    Notifications.post(title: self.displayName(for: URL(fileURLWithPath: wsPath)),
                                        body: "\(p.title) · \(t("term.done"))", wsPath: wsPath, panelId: paneId)
                 }
             }
@@ -1778,10 +1780,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         icon.contentTintColor = Theme.accent
         icon.translatesAutoresizingMaskIntoConstraints = false
         let name = NSTextField(labelWithString: auth.displayName ?? "riven")
-        name.font = UIScale.font(13, .semibold); name.textColor = Theme.fg
+        name.font = UIScale.font(UIScale.title, .semibold); name.textColor = Theme.fg
         name.lineBreakMode = .byTruncatingTail; name.translatesAutoresizingMaskIntoConstraints = false
         let email = NSTextField(labelWithString: auth.email ?? "")
-        email.font = UIScale.font(11); email.textColor = Theme.fgDim
+        email.font = UIScale.font(UIScale.small); email.textColor = Theme.fgDim
         email.lineBreakMode = .byTruncatingTail; email.isHidden = (auth.email == nil)
         email.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1789,10 +1791,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hair.translatesAutoresizingMaskIntoConstraints = false
 
         let sync = NSTextField(labelWithString: "설정 자동 동기화")
-        sync.font = UIScale.font(11); sync.textColor = Theme.fgDim
+        sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
         sync.translatesAutoresizingMaskIntoConstraints = false
         let syncBtn = NSButton(title: "지금 동기화", target: self, action: #selector(accountSyncNow))
-        syncBtn.isBordered = false; syncBtn.font = UIScale.font(11, .medium)
+        syncBtn.isBordered = false; syncBtn.font = UIScale.font(UIScale.small, .medium)
         syncBtn.contentTintColor = Theme.accent
         syncBtn.translatesAutoresizingMaskIntoConstraints = false
         (syncBtn.cell as? NSButtonCell)?.highlightsBy = []
@@ -1801,7 +1803,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         logout.image = NSImage(systemSymbolName: "rectangle.portrait.and.arrow.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
         logout.imagePosition = .imageLeading; logout.isBordered = false
-        logout.font = UIScale.font(12); logout.contentTintColor = Theme.danger
+        logout.font = UIScale.font(UIScale.body); logout.contentTintColor = Theme.danger
         logout.alignment = .left; logout.translatesAutoresizingMaskIntoConstraints = false
         (logout.cell as? NSButtonCell)?.highlightsBy = []
 
@@ -1869,7 +1871,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // The name to show for a workspace: the user's custom rail name if set, else the folder.
     private func displayName(for url: URL) -> String {
-        let custom = workspaceNames[url]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Match by PATH, not URL identity: the stored keys are directory URLs (trailing "/"), so a
+        // URL(fileURLWithPath:) rebuilt from a pane's workspace path missed the entry entirely —
+        // which is why notifications fell back to the raw folder name after a rename.
+        var custom = workspaceNames[url]?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if custom?.isEmpty != false {
+            let p = url.standardizedFileURL.path
+            custom = workspaceNames.first { $0.key.standardizedFileURL.path == p }?.value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         return (custom?.isEmpty == false ? custom! : url.lastPathComponent)
     }
     // Window title + status bar + dock header for a workspace, honoring a custom name.
@@ -1880,9 +1890,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
         let hs = NSMutableAttributedString(string: name,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12, .medium)])
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.body, .medium)])
         hs.append(NSAttributedString(string: "   \(short)",
-            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(11)]))
+            attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.small)]))
         headerLabel?.attributedStringValue = hs
     }
     private func activate(_ url: URL, focusPaneId: String? = nil) {
@@ -2977,8 +2987,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusBar.rebuildForScale()
         for ws in workspaces { state(for: ws).dock?.groups.forEach { $0.tabBar.rebuild() } }
         explorer.rebuildForScale()
-        headerLabel?.font = UIScale.font(12, .medium)
-        headerUsage?.font = UIScale.font(11)
+        headerLabel?.font = UIScale.font(UIScale.body, .medium)
+        headerUsage?.font = UIScale.font(UIScale.small)
         rebuildPinnedUsage()
         UIScale.broadcast()   // re-font every registered aux panel (changes/search/git/preview/api/…)
     }
@@ -3256,13 +3266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hair.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(hair)
         // Header row: "남은 한도" + 고정 해제.
         let title = NSTextField(labelWithString: "남은 한도")
-        title.font = UIScale.font(10, .semibold); title.textColor = Theme.fgDim
+        title.font = UIScale.font(UIScale.caption, .semibold); title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(title)
         let unpin = NSButton(title: " 고정 해제", target: self, action: #selector(unpinUsageMenu))
         unpin.image = NSImage(systemSymbolName: "pin.slash", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
         unpin.imagePosition = .imageLeading; unpin.isBordered = false
-        unpin.font = UIScale.font(10); unpin.contentTintColor = Theme.fgDim
+        unpin.font = UIScale.font(UIScale.caption); unpin.contentTintColor = Theme.fgDim
         unpin.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(unpin)
         let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday) { }
         content.translatesAutoresizingMaskIntoConstraints = false

@@ -37,7 +37,7 @@ final class StatusBarView: NSView, Themable {
         let bItem = item(branchIcon, branchLabel)
         branchLabel.textColor = Theme.fg   // riven: .status-item.branch = --fg
 
-        langLabel.font = UIScale.font(11)
+        langLabel.font = UIScale.font(UIScale.small)
         langLabel.textColor = Theme.fgDim
 
         settings.image = symbol("gearshape", 13)
@@ -66,7 +66,7 @@ final class StatusBarView: NSView, Themable {
         updateButton.imagePosition = .imageLeading
         updateButton.image = symbol("arrow.down.circle.fill", 12)
         updateButton.contentTintColor = Theme.accent
-        updateButton.font = UIScale.font(11, .medium)
+        updateButton.font = UIScale.font(UIScale.small, .medium)
         updateButton.target = self; updateButton.action = #selector(updateClicked)
         updateButton.translatesAutoresizingMaskIntoConstraints = false
         updateButton.isHidden = true
@@ -98,7 +98,7 @@ final class StatusBarView: NSView, Themable {
         icon.contentTintColor = Theme.fgDim
         icon.widthAnchor.constraint(equalToConstant: 14).isActive = true
         icon.heightAnchor.constraint(equalToConstant: 14).isActive = true
-        label.font = UIScale.font(11)
+        label.font = UIScale.font(UIScale.small)
         label.textColor = Theme.fgDim
         let s = NSStackView(views: [icon, label])
         s.orientation = .horizontal; s.spacing = 5; s.alignment = .centerY
@@ -171,7 +171,7 @@ final class StatusBarView: NSView, Themable {
         let s = limits?.sessionRemaining, w = limits?.weeklyRemaining
         if s != nil || w != nil {
             let str = NSMutableAttributedString()
-            let f = UIScale.font(11)
+            let f = UIScale.font(UIScale.small)
             func pct(_ v: Int) { str.append(NSAttributedString(string: "\(v)%", attributes: [.font: f, .foregroundColor: remColor(v)])) }
             if let s { pct(s) }
             if let w {
@@ -182,7 +182,7 @@ final class StatusBarView: NSView, Themable {
             usageItem.isHidden = false
         } else if let c = today?.totalCost, c > 0 {
             usageLabel.attributedStringValue = NSAttributedString(string: String(format: "$%.2f", c),
-                attributes: [.font: UIScale.font(11), .foregroundColor: Theme.fgDim])
+                attributes: [.font: UIScale.font(UIScale.small), .foregroundColor: Theme.fgDim])
             usageItem.isHidden = false
         } else {
             usageItem.isHidden = true
@@ -210,9 +210,9 @@ final class StatusBarView: NSView, Themable {
 
     // Re-apply fonts at the current UI zoom.
     func rebuildForScale() {
-        folderLabel.font = UIScale.font(11)
-        branchLabel.font = UIScale.font(11)
-        langLabel.font = UIScale.font(11)
+        folderLabel.font = UIScale.font(UIScale.small)
+        branchLabel.font = UIScale.font(UIScale.small)
+        langLabel.font = UIScale.font(UIScale.small)
         setUsage(limits: usageLimits, today: usageToday)
     }
 
