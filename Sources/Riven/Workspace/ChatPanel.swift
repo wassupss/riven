@@ -474,9 +474,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
-        // Render the WHOLE prior conversation — the user wants everything (incl. code blocks)
-        // visible, not just a tail. This runs once per session restore (pane reuse means a
-        // workspace switch does NOT re-run it), so the one-time parse/render cost is acceptable.
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         var msgs: [(user: Bool, text: String)] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
@@ -488,6 +485,13 @@ final class ChatPanel: NSView, Themable, Scalable {
             if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
             else if type == "assistant" { msgs.append((false, s)) }
         }
+        // Render only the LAST N messages. Rendering the WHOLE conversation exploded on launch:
+        // a big session = thousands of message views, and DockManager.restore()'s synchronous
+        // autolayout pass over that tree pegged the CPU at 100% for seconds (profiled). Each
+        // message is several autolayout views, so this MUST stay bounded. (Truly showing all history
+        // needs a virtualized scrollback — a separate change.)
+        let cap = 50
+        if msgs.count > cap { addSystem("— 이전 대화 \(msgs.count - cap)개 생략 (스크롤백은 준비 중) —"); msgs = Array(msgs.suffix(cap)) }
         for m in msgs {
             if m.user { addUser(m.text) }
             else {
@@ -906,9 +910,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
     // stay in the CLI session/context — only their VIEWS are dropped.
     private func trimTranscript() {
-        // High cap so a fully-restored conversation isn't immediately trimmed when the next turn
-        // starts (the user wants the whole history to stay visible). Only runaway sessions get bounded.
-        let cap = 600
+        // Bound the LIVE view count: autolayout over the transcript is superlinear, so an unbounded
+        // stack pegs the CPU on every relayout (profiled — a huge restored stack froze launch).
+        let cap = 150
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
         for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
