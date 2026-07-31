@@ -99,7 +99,11 @@ final class ClaudeChatSession {
         }
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
-            if d.isEmpty { return }
+            // EOF (process exited / closed stdout): availableData is empty AND the fd stays
+            // signalled forever, so the handler is re-invoked in a tight loop pegging a worker
+            // thread at 100%. MUST detach the handler here — this was the runaway CPU when an agent
+            // died (bad --resume, crash, 529-exit): every dead session left a spinning pipe reader.
+            if d.isEmpty { h.readabilityHandler = nil; return }
             self?.queue.async { self?.feed(d) }
         }
         proc.terminationHandler = { [weak self] p in
