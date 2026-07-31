@@ -57,6 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workspaceNames: [URL: String] = [:]    // custom rail names, persisted per session
     private var sigtermSource: DispatchSourceSignal?   // persist on SIGTERM (kill/restart/logout)
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
+    private var subagentPanels: [String: DockPanel] = [:]  // sub-agent id → its dock panel
+    private var lastSubagentPanel: [String: DockPanel] = [:]  // chat pane id → its most recent sub-agent panel
     private var editorVisible = false
     var workspace: URL?
     let lsp = LSPManager.shared
@@ -1138,6 +1140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.agentPersona = agent
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
         chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
+        chat.onEditedFile = { [weak self] path in self?.recordAgentFileEdit(workspace: st.url.path, path: path) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
@@ -1213,6 +1216,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             p?.badge = nil; chat?.setRingState(nil)
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
             self?.refreshDockTabs(); self?.refreshRailAgents()
+        }
+        // Sub-agents open as REAL dock panels next to THIS chat (in its own workspace's dock, so a
+        // background turn doesn't drop them into the wrong workspace). Full resize/move/tab for free.
+        chat.onOpenSubagentPane = { [weak self, weak p, weak chat] id, view, title in
+            guard let self, let p, let group = p.group, let dock = group.manager else { return }
+            view.autoresizingMask = [.width, .height]
+            let icon = NSImage(systemSymbolName: "sparkles.rectangle.stack", accessibilityDescription: nil)
+            let panel = DockPanel(id: "sub-\(id)", title: title, icon: icon, content: view, closable: true)
+            panel.onClose = { [weak self, weak chat] in self?.subagentPanels[id] = nil; chat?.clearSubagentRef(id) }
+            // First sub-agent of this chat → open to the RIGHT of the chat. Additional ones stack
+            // BELOW the previous sub-agent (split the sub-agent column vertically) instead of pushing
+            // ever further right. `activate: false` so the sub-agent NEVER steals focus from the chat.
+            let ref: DockGroup; let dir: DockDir
+            if let last = self.lastSubagentPanel[p.id], let lg = last.group, lg.manager === dock {
+                ref = lg; dir = .down
+            } else {
+                ref = group; dir = .right
+            }
+            dock.addPanel(panel, reference: ref, direction: dir, activate: false)
+            self.subagentPanels[id] = panel
+            self.lastSubagentPanel[p.id] = panel
+        }
+        chat.onCloseSubagentPanes = { [weak self, weak p] ids in
+            guard let self else { return }
+            for id in ids {
+                if let panel = self.subagentPanels.removeValue(forKey: id), let dock = panel.group?.manager {
+                    dock.removePanel(panel)
+                }
+            }
+            if let pid = p?.id { self.lastSubagentPanel[pid] = nil }   // column reset for the next turn
         }
         p.onActivate = { [weak chat] in chat?.focusInput(); clearAttn() }   // tab/group activation
         // Clicking INTO the pane also clears it — even when it's already the active panel, where

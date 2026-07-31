@@ -34,6 +34,7 @@ final class ClaudeChatSession {
     private var buffer = Data()
     private let queue = DispatchQueue(label: "com.riven.chat.claude")
     private var agentToolIds = Set<String>()   // ids of `Agent`/`Task` tool_uses = sub-agent launches
+    private var editPaths: [String: String] = [:]   // main-thread edit tool_use id → file path
     private let perm: ChatPermissionServer?
     private let ask: ChatAskServer?
 
@@ -45,6 +46,7 @@ final class ClaudeChatSession {
     var onSubagentText: ((_ parentId: String, _ text: String) -> Void)?
     var onSubagentTool: ((_ parentId: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentDone: ((_ id: String, _ result: String) -> Void)?
+    var onFileEdited: ((_ path: String) -> Void)?   // a main-thread edit landed → feed the Changes panel
     var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?, _ error: String?) -> Void)?
     var onExit: ((_ code: Int32) -> Void)?
     // Interactive approval: fired when a gated tool wants to run; answer via respond(id:allow:).
@@ -113,6 +115,8 @@ final class ClaudeChatSession {
         do { try proc.run() } catch { perm?.stop(); ask?.stop(); return nil }
     }
 
+    var isAlive: Bool { proc.isRunning }
+
     func send(_ text: String) {
         writeLine(["type": "user",
                    "message": ["role": "user", "content": text],
@@ -144,8 +148,12 @@ final class ClaudeChatSession {
     private func writeLine(_ obj: [String: Any]) {
         guard let body = try? JSONSerialization.data(withJSONObject: obj) else { return }
         queue.async { [weak self] in
+            guard let self, self.proc.isRunning else { return }   // never write to a dead process
             var line = body; line.append(0x0a)
-            self?.inPipe.fileHandleForWriting.write(line)
+            // Use the THROWING write and swallow the error: if the process died mid-write the pipe
+            // is broken, and the old `write(_:)` raised an NSException ("Broken pipe") that crashed
+            // the whole app the moment you typed after a session had exited (bad --resume, 529-exit).
+            do { try self.inPipe.fileHandleForWriting.write(contentsOf: line) } catch {}
         }
     }
 
@@ -210,6 +218,10 @@ final class ClaudeChatSession {
                         main { self.onSubagentTool?(parent, name, d, c, p) }
                     } else {                                          // main thread tool call
                         let d = self.toolDetail(name, input); let c = self.toolCode(name, input); let p = self.toolPath(name, input)
+                        // Remember file-editing calls so we can report them to the Changes panel once
+                        // the tool_result confirms the edit landed (the native chat has no PostToolUse
+                        // hook, so this stream is how it feeds recordAgentFileEdit).
+                        if let p, ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(name) { editPaths[id] = p }
                         main { self.onMainTool?(name, d, c, p) }
                     }
                 } else if bt == "text", let text = block["text"] as? String, let parent {
@@ -218,7 +230,13 @@ final class ClaudeChatSession {
             }
         case "user":
             for block in blocks(o) where block["type"] as? String == "tool_result" {
-                guard let tid = block["tool_use_id"] as? String, agentToolIds.contains(tid) else { continue }
+                guard let tid = block["tool_use_id"] as? String else { continue }
+                // A main-thread edit finished (file is now written) → tell the Changes panel.
+                if let path = editPaths.removeValue(forKey: tid) {
+                    let isErr = (block["is_error"] as? Bool) ?? false
+                    if !isErr { main { self.onFileEdited?(path) } }
+                }
+                guard agentToolIds.contains(tid) else { continue }
                 let text = resultText(block["content"])
                 main { self.onSubagentDone?(tid, text) }
             }
