@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var previewPanel: PreviewPanel!
     var apiPanel: APIClientPanel!
     var changesPanel: ChangesPanel!
+    var notesPanel: NotesPanel!            // per-workspace private scratchpad
     private var chatSeq = 0                  // multi-instance chat panes: one session per pane
     var sourceControl: SourceControlView!   // git panel = commit graph + working changes
     var sidebarLower: NSView!
@@ -458,6 +459,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         apiPanel = APIClientPanel(frame: .zero)
         changesPanel = ChangesPanel(frame: .zero)
+        notesPanel = NotesPanel(frame: .zero)
         changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
         changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
 
@@ -1076,7 +1078,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Re-title open singleton/aux panels for the current language, then repaint tabs.
     private func relocalizeOpenPanels() {
-        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "api": "title.api", "changes": "title.changes"]
+        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "api": "title.api", "changes": "title.changes", "notes": "title.notes"]
         for (id, p) in auxDockPanels { if let k = key[id] { p.title = t(k) } }
         editorDockPanel?.title = t("title.editor")
         for ws in workspaces {
@@ -1180,7 +1182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "editor": self.showEditorPane()
             case "terminal": self.newTerminal()
             case "chat": self.newChat()
-            case "search", "git", "preview", "api", "changes": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
+            case "search", "git", "preview", "api", "changes", "notes": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
             default: return "unknown kind: \(kind)"
             }
             return "opened \(kind)"
@@ -1323,6 +1325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content === previewPanel { return "preview" }
         if p.content === apiPanel { return "api" }
         if p.content === changesPanel { return "changes" }
+        if p.content === notesPanel { return "notes" }
         return "panel"
     }
     private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
@@ -2042,7 +2045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 기록된 자리로 복원된다 (#4). 레이아웃 복원이 이미 배치했다면 건너뛴다
         // (기본 가장자리에 또 붙이지 않게).
         if !restoredLayout {
-            for id in ["search", "git", "preview", "changes", "api"] where st.openAux.contains(id) {
+            for id in ["search", "git", "preview", "changes", "api", "notes"] where st.openAux.contains(id) {
                 if auxDockPanels[id] == nil { toggleDockPanel(id) }
             }
         }
@@ -2058,6 +2061,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, self.workspace == url else { return }   // bailed if switched again
             self.explorer.setRoot(url)
             self.searchPanel.setRoot(url); self.gitPanel.setRoot(url); self.changesPanel.setWorkspace(url)
+            self.notesPanel.setWorkspace(url)   // flushes the previous workspace's note first
             self.refreshRailAgents()   // this workspace's agent rows
             self.refreshGit()
         }
@@ -2705,6 +2709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addRemap(viewMenu, t("menu.git"), "view.git", #selector(gitMenu))
         addRemap(viewMenu, t("menu.preview"), "view.preview", #selector(previewMenu))
         addRemap(viewMenu, t("menu.changes"), "view.changes", #selector(changesMenu))
+        addRemap(viewMenu, t("menu.notes"), "view.notes", #selector(notesMenu))
         addRemap(viewMenu, "Chat", "view.chat", #selector(chatMenu))
         addRemap(viewMenu, t("menu.focusEditor"), "view.focusEditor", #selector(focusEditorMenu))
         addRemap(viewMenu, t("menu.focusTerminal"), "view.focusTerminal", #selector(focusTerminalMenu))
@@ -2873,6 +2878,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: t("title.preview"), hint: "⌘⇧V", symbol: "safari") { [weak self] in self?.toggleDockPanel("preview") },
             QuickAction(title: t("api.test"), hint: "", symbol: "network") { [weak self] in self?.toggleDockPanel("api") },
             QuickAction(title: t("title.changes"), hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
+            QuickAction(title: t("title.notes"), hint: "", symbol: "note.text") { [weak self] in self?.toggleDockPanel("notes") },
             QuickAction(title: "새 채팅", hint: "네이티브 에이전트", symbol: "bubble.left.and.text.bubble.right") { [weak self] in self?.newChat() },
             QuickAction(title: "새 채팅: 에이전트 선택", hint: "claude --agent", symbol: "person.2") { [weak self] in self?.newChatWithAgent() },
             QuickAction(title: "채팅: 이전 세션 열기", hint: "resume", symbol: "clock.arrow.circlepath") { [weak self] in self?.resumeChatSession() },
@@ -2997,6 +3003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func gitMenu() { toggleDockPanel("git") }
     @objc private func previewMenu() { toggleDockPanel("preview") }
     @objc private func changesMenu() { toggleDockPanel("changes") }
+    @objc private func notesMenu() { toggleDockPanel("notes") }
     @objc private func chatMenu() { newChat() }
     @objc private func focusEditorMenu() { editor.focusEditor() }
     @objc private func focusTerminalMenu() { currentTerminal()?.focusTerminal() }
@@ -3120,6 +3127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
         case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
+        case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
         default: return nil
         }
         let panel = DockPanel(id: id, title: title,
@@ -3315,7 +3323,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { persistSession(); lsp.stopAll() }
+    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); lsp.stopAll() }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the

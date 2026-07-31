@@ -40,6 +40,36 @@ private enum APIStore {
     }
 }
 
+
+// Applies the shared RivenInput look to a plain NSTextField (used for fields the panel already
+// owns, e.g. the secure password field). New controls should use RivenInput/RivenSelect directly.
+func styleAPIInput(_ tf: NSTextField, mono: Bool = true, placeholder: String = "") {
+    if !(tf.cell is PaddedFieldCell), !(tf is NSSecureTextField) {
+        let c = PaddedFieldCell(textCell: tf.stringValue)
+        c.isEditable = true; c.isSelectable = true; c.isScrollable = true; c.wraps = false
+        c.placeholderString = tf.placeholderString
+        tf.cell = c
+    }
+    if !placeholder.isEmpty { tf.placeholderString = placeholder }
+    tf.font = mono ? UIScale.mono(UIScale.body) : UIScale.font(UIScale.body)
+    tf.isBordered = false; tf.drawsBackground = false; tf.focusRingType = .none
+    tf.usesSingleLineMode = true
+    tf.wantsLayer = true
+    tf.layer?.cornerRadius = UIMetrics.radius
+    tf.layer?.borderWidth = 1
+    restyleAPIInput(tf)
+}
+func styleAPISelect(_ pb: NSPopUpButton) {
+    pb.font = UIScale.font(UIScale.body)
+    pb.bezelStyle = .roundRect
+    pb.contentTintColor = Theme.fg
+}
+func restyleAPIInput(_ tf: NSTextField) {
+    tf.textColor = Theme.fg
+    tf.layer?.backgroundColor = Theme.bg.cgColor
+    tf.layer?.borderColor = Theme.edge.cgColor
+}
+
 // A discovered local service (listening port + owner label).
 private struct Service { let port: Int; let label: String }
 
@@ -71,7 +101,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 4
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 0   // table rows sit flush; hairlines separate them
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack; scroll.drawsBackground = false; scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -83,7 +113,9 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.widthAnchor),
         ])
+        addHeaderRow()
         addRow()   // start with one empty row
+        addPlusRow()
         Theme.register(self); UIScale.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -98,6 +130,8 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
         }
         set {
             rows.forEach { $0.box.removeFromSuperview() }; rows = []
+            plusRow?.removeFromSuperview()
+            addHeaderRow()
             for line in newValue.split(separator: "\n") {
                 let s = line.trimmingCharacters(in: .whitespaces); if s.isEmpty { continue }
                 let sep = [s.firstIndex(of: "="), s.firstIndex(of: ":")].compactMap { $0 }.min()
@@ -106,12 +140,68 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
                 addRow(k.trimmingCharacters(in: .whitespaces), v.trimmingCharacters(in: .whitespaces))
             }
             addRow()   // trailing empty row
+            addPlusRow()
         }
     }
 
+    // Column captions above the rows — without them a bare pair of boxes gives no clue which is
+    // the key and which is the value until you click in.
+    private var headerRow: NSView?
+    private var plusRow: NSView?
+    // An explicit "+ 행 추가" affordance. Before, you had to notice that a blank trailing row existed
+    // and click into it — there was no visible way to add.
+    private func addPlusRow() {
+        plusRow?.removeFromSuperview()
+        let b = NSButton(title: "  + " + t("api.addRow"), target: self, action: #selector(addRowClicked))
+        b.isBordered = false; b.font = UIScale.font(UIScale.small, .medium)
+        b.contentTintColor = Theme.accent
+        b.alignment = .left
+        b.translatesAutoresizingMaskIntoConstraints = false
+        let box = NSView(); box.addSubview(b); box.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            b.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 2),
+            b.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
+        ])
+        stack.addArrangedSubview(box)
+        if box.superview === stack { box.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        plusRow = box
+    }
+    @objc private func addRowClicked() {
+        let r = addRow()
+        addPlusRow()                       // keep the button last
+        window?.makeFirstResponder(r.key)
+        onChange?()
+    }
+    private func addHeaderRow() {
+        headerRow?.removeFromSuperview()
+        let mk: (String) -> NSTextField = { s in
+            let l = NSTextField(labelWithString: s)
+            l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.fgDim
+            l.translatesAutoresizingMaskIntoConstraints = false
+            return l
+        }
+        let k = mk(keyPlaceholder), v = mk(valuePlaceholder)
+        let h = NSStackView(views: [k, v]); h.orientation = .horizontal; h.spacing = 5
+        h.distribution = .fillEqually; h.translatesAutoresizingMaskIntoConstraints = false
+        let box = NSView(); box.addSubview(h); box.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            h.topAnchor.constraint(equalTo: box.topAnchor),
+            h.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+            h.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 4),
+            h.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -25),   // clear the ✕ column
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(16)),
+        ])
+        stack.addArrangedSubview(box)
+        if box.superview === stack { box.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true }
+        headerRow = box
+    }
     private func field(_ tf: NSTextField, _ ph: String) {
-        tf.placeholderString = ph; tf.font = UIScale.mono(UIScale.small, .regular); tf.textColor = Theme.fg
-        tf.backgroundColor = Theme.bg; tf.isBordered = false; tf.bezelStyle = .roundedBezel
+        styleAPIInput(tf, placeholder: ph)
+        // Inside the table the ROW draws the grid — individual boxed inputs made it look like a
+        // pile of separate widgets rather than a table.
+        tf.layer?.borderWidth = 0
+        tf.layer?.backgroundColor = NSColor.clear.cgColor
         tf.translatesAutoresizingMaskIntoConstraints = false
         tf.delegate = self
         tf.target = self; tf.action = #selector(fieldEdited(_:))
@@ -124,16 +214,35 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
         r.del.image?.isTemplate = true; r.del.imagePosition = .imageOnly; r.del.isBordered = false
         r.del.contentTintColor = Theme.fgDim; r.del.target = self; r.del.action = #selector(deleteRow(_:))
         r.del.translatesAutoresizingMaskIntoConstraints = false
-        let h = NSStackView(views: [r.key, r.value, r.del]); h.orientation = .horizontal; h.spacing = 5
+        let h = NSStackView(views: [r.key, r.value, r.del]); h.orientation = .horizontal; h.spacing = 0
         h.distribution = .fill; h.translatesAutoresizingMaskIntoConstraints = false
+        r.box.wantsLayer = true
         r.box.addSubview(h); r.box.translatesAutoresizingMaskIntoConstraints = false
+        // grid: a rule under the row and one between the two columns
+        let underline = NSView(); underline.wantsLayer = true
+        underline.layer?.backgroundColor = Theme.hairline.cgColor
+        underline.translatesAutoresizingMaskIntoConstraints = false
+        let vrule = NSView(); vrule.wantsLayer = true
+        vrule.layer?.backgroundColor = Theme.hairline.cgColor
+        vrule.translatesAutoresizingMaskIntoConstraints = false
+        r.box.addSubview(underline); r.box.addSubview(vrule)
+        NSLayoutConstraint.activate([
+            underline.leadingAnchor.constraint(equalTo: r.box.leadingAnchor),
+            underline.trailingAnchor.constraint(equalTo: r.box.trailingAnchor),
+            underline.bottomAnchor.constraint(equalTo: r.box.bottomAnchor),
+            underline.heightAnchor.constraint(equalToConstant: 1),
+            vrule.centerXAnchor.constraint(equalTo: r.key.trailingAnchor),
+            vrule.topAnchor.constraint(equalTo: r.box.topAnchor, constant: 3),
+            vrule.bottomAnchor.constraint(equalTo: r.box.bottomAnchor, constant: -3),
+            vrule.widthAnchor.constraint(equalToConstant: 1),
+        ])
         NSLayoutConstraint.activate([
             h.topAnchor.constraint(equalTo: r.box.topAnchor), h.bottomAnchor.constraint(equalTo: r.box.bottomAnchor),
             h.leadingAnchor.constraint(equalTo: r.box.leadingAnchor, constant: 2),
             h.trailingAnchor.constraint(equalTo: r.box.trailingAnchor, constant: -2),
             r.key.widthAnchor.constraint(equalTo: r.value.widthAnchor),   // key/value share width
             r.del.widthAnchor.constraint(equalToConstant: 18),
-            r.box.heightAnchor.constraint(equalToConstant: 24),
+            r.box.heightAnchor.constraint(equalToConstant: UIMetrics.rowHCompact),
         ])
         stack.addArrangedSubview(r.box)
         // Full-width rows. Guard the cross-view constraint: addArrangedSubview normally makes
@@ -163,6 +272,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) { if let tf = obj.object as? NSTextField { fieldEdited(tf) } }
 
     func applyTheme() {
+        rows.forEach { restyleAPIInput($0.key); restyleAPIInput($0.value) }
         for r in rows {
             for f in [r.key, r.value] { f.textColor = Theme.fg; f.backgroundColor = Theme.bg }
             r.del.contentTintColor = Theme.fgDim
@@ -203,6 +313,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
     private let passField = NSSecureTextField()
     // response
     private let split = NSSplitView()
+    private let statusPill = NSTextField(labelWithString: "")   // colored HTTP-status capsule
     private let statusLabel = NSTextField(labelWithString: t("api.hint.send"))
     private let respTabs = NSSegmentedControl(labels: ["Body", "Headers"],
                                               trackingMode: .selectOne, target: nil, action: nil)
@@ -237,19 +348,24 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
         // --- request line: method ▾ | URL | Send ---
         method.addItems(withTitles: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
-        method.font = UIScale.font(UIScale.body)
+        styleAPISelect(method)
         method.target = self; method.action = #selector(methodChanged)
         method.translatesAutoresizingMaskIntoConstraints = false
         methodDot.wantsLayer = true; methodDot.layer?.cornerRadius = 4
         methodDot.translatesAutoresizingMaskIntoConstraints = false
         urlField.placeholderString = "{{base_url}}/v1/…"
         urlField.stringValue = "http://localhost:3000/"
+        styleAPIInput(urlField, placeholder: urlField.placeholderString ?? "")
         urlField.font = UIScale.mono(UIScale.body, .regular)
-        urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(send)
         urlField.translatesAutoresizingMaskIntoConstraints = false
+        // Accent-filled primary action — the plain 60pt roundRect read as a secondary control.
         sendBtn.bezelStyle = .roundRect; sendBtn.keyEquivalent = "\r"
-        sendBtn.font = UIScale.font(UIScale.body, .medium)
+        sendBtn.isBordered = false
+        sendBtn.wantsLayer = true
+        sendBtn.layer?.cornerRadius = 5
+        sendBtn.font = UIScale.font(UIScale.body, .semibold)
+        sendBtn.toolTip = "⏎"
         sendBtn.target = self; sendBtn.action = #selector(send)
         sendBtn.translatesAutoresizingMaskIntoConstraints = false
 
@@ -286,6 +402,14 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
         // --- response ---
         let respBox = NSView()
+        // Status reads as a COLORED PILL (2xx green / 3xx accent / 4xx amber / 5xx red) with the
+        // timing + size beside it — a dim one-line string made you squint to tell success from failure.
+        statusPill.wantsLayer = true
+        statusPill.font = UIScale.font(UIScale.caption, .semibold)
+        statusPill.alignment = .center
+        statusPill.isBezeled = false; statusPill.isEditable = false; statusPill.drawsBackground = false
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.isHidden = true
         statusLabel.font = UIScale.font(UIScale.small, .medium)
         statusLabel.textColor = Theme.fgDim
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -296,11 +420,17 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         responseScroll = editor(responseView, mono: true, hint: "")
         responseView.isEditable = false
         styleIconButton(copyBtn, symbol: "doc.on.doc", tip: t("common.copy"), action: #selector(copyResponse))
-        respBox.addSubview(statusLabel); respBox.addSubview(respTabs); respBox.addSubview(responseScroll); respBox.addSubview(copyBtn)
+        let statusRow = NSStackView(views: [statusPill, statusLabel])
+        statusRow.orientation = .horizontal; statusRow.spacing = 8; statusRow.alignment = .centerY
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+        respBox.addSubview(statusRow); respBox.addSubview(respTabs); respBox.addSubview(responseScroll); respBox.addSubview(copyBtn)
         NSLayoutConstraint.activate([
-            statusLabel.topAnchor.constraint(equalTo: respBox.topAnchor, constant: 6),
-            statusLabel.leadingAnchor.constraint(equalTo: respBox.leadingAnchor, constant: 10),
-            respTabs.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 6),
+            statusRow.topAnchor.constraint(equalTo: respBox.topAnchor, constant: 6),
+            statusRow.leadingAnchor.constraint(equalTo: respBox.leadingAnchor, constant: 10),
+            statusRow.trailingAnchor.constraint(lessThanOrEqualTo: respBox.trailingAnchor, constant: -10),
+            statusPill.heightAnchor.constraint(equalToConstant: UIScale.pt(18)),
+            statusPill.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(34)),
+            respTabs.topAnchor.constraint(equalTo: statusRow.bottomAnchor, constant: 6),
             respTabs.leadingAnchor.constraint(equalTo: respBox.leadingAnchor, constant: 8),
             copyBtn.centerYAnchor.constraint(equalTo: respTabs.centerYAnchor),
             copyBtn.trailingAnchor.constraint(equalTo: respBox.trailingAnchor, constant: -10),
@@ -329,13 +459,18 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
             methodDot.widthAnchor.constraint(equalToConstant: 8), methodDot.heightAnchor.constraint(equalToConstant: 8),
             method.leadingAnchor.constraint(equalTo: methodDot.trailingAnchor, constant: 6),
             method.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 8),
-            method.widthAnchor.constraint(equalToConstant: 84),
+            method.widthAnchor.constraint(equalToConstant: UIScale.pt(92)),
+            // The request line shares ONE height — the URL field had no height constraint at all, so
+            // it collapsed to its minimum and looked cramped next to the method select.
             urlField.leadingAnchor.constraint(equalTo: method.trailingAnchor, constant: 6),
             urlField.centerYAnchor.constraint(equalTo: method.centerYAnchor),
             urlField.trailingAnchor.constraint(equalTo: sendBtn.leadingAnchor, constant: -6),
+            urlField.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
+            method.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
             sendBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             sendBtn.centerYAnchor.constraint(equalTo: method.centerYAnchor),
-            sendBtn.widthAnchor.constraint(equalToConstant: 60),
+            sendBtn.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
+            sendBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(78)),
             split.leadingAnchor.constraint(equalTo: leadingAnchor),
             split.trailingAnchor.constraint(equalTo: trailingAnchor),
             split.topAnchor.constraint(equalTo: method.bottomAnchor, constant: 8),
@@ -355,7 +490,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         historyBtn.toolTip = t("api.history"); savedBtn.toolTip = t("api.saved"); importBtn.toolTip = t("api.importCurl")
         bodyView.hint = t("api.hint.body")
         refreshEnvTitle()
-        if task == nil, respBody.isEmpty { statusLabel.stringValue = t("api.hint.send") }
+        if task == nil, respBody.isEmpty { statusLabel.stringValue = t("api.hint.send"); statusPill.isHidden = true }
     }
 
 
@@ -406,16 +541,16 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
     private func buildAuthBox() {
         authType.addItems(withTitles: ["None", "Bearer", "Basic"])
-        authType.font = UIScale.font(UIScale.body)
+        styleAPISelect(authType)
         authType.target = self; authType.action = #selector(authTypeChanged)
         authType.translatesAutoresizingMaskIntoConstraints = false
         for (f, ph) in [(tokenField, t("api.auth.token")), (userField, t("api.auth.user"))] {
-            f.placeholderString = ph; f.font = UIScale.mono(UIScale.body, .regular)
-            f.bezelStyle = .roundedBezel; f.translatesAutoresizingMaskIntoConstraints = false
+            styleAPIInput(f, placeholder: ph)
+            f.translatesAutoresizingMaskIntoConstraints = false
             f.target = self; f.action = #selector(authFieldChanged)
         }
-        passField.placeholderString = t("api.auth.pass"); passField.font = UIScale.mono(UIScale.body, .regular)
-        passField.bezelStyle = .roundedBezel; passField.translatesAutoresizingMaskIntoConstraints = false
+        styleAPIInput(passField, placeholder: t("api.auth.pass"))
+        passField.translatesAutoresizingMaskIntoConstraints = false
         passField.target = self; passField.action = #selector(authFieldChanged)
         let label = NSTextField(labelWithString: t("api.auth.label")); label.font = UIScale.font(UIScale.small); label.textColor = Theme.fgDim
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -425,7 +560,11 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
             label.leadingAnchor.constraint(equalTo: authBox.leadingAnchor, constant: 2),
             authType.centerYAnchor.constraint(equalTo: label.centerYAnchor),
             authType.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 8),
-            authType.widthAnchor.constraint(equalToConstant: 110),
+            authType.widthAnchor.constraint(equalToConstant: UIScale.pt(110)),
+            authType.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
+            tokenField.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
+            userField.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
+            passField.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
             tokenField.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 8),
             tokenField.leadingAnchor.constraint(equalTo: authBox.leadingAnchor, constant: 2),
             tokenField.trailingAnchor.constraint(equalTo: authBox.trailingAnchor, constant: -2),
@@ -462,8 +601,63 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         headersKV.isHidden = sel != 2
         bodyScroll.isHidden = sel != 3
     }
-    @objc private func switchRespTab() {
-        responseView.string = respTabs.selectedSegment == 0 ? respBody : respHeaders
+    @objc private func switchRespTab() { renderResponse() }
+
+    /// Paint the response body/headers into the viewer, colouring JSON.
+    private func renderResponse() {
+        let text = respTabs.selectedSegment == 0 ? respBody : respHeaders
+        responseView.textStorage?.setAttributedString(APIClientPanel.colorJSON(text))
+    }
+    // A tiny hand-written JSON colouriser: keys, strings, numbers, literals. Deliberately a single
+    // linear scan rather than regex — a big response through a backtracking pattern is exactly the
+    // kind of thing that froze the app before, and this stays O(n).
+    static func colorJSON(_ s: String) -> NSAttributedString {
+        let p = NSMutableParagraphStyle(); p.lineSpacing = 2
+        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(UIScale.small),
+                                                   .foregroundColor: Theme.fg, .paragraphStyle: p]
+        let out = NSMutableAttributedString(string: s, attributes: base)
+        guard s.utf16.count <= 200_000 else { return out }        // very large payload → plain
+        let ns = s as NSString
+        var i = 0
+        func color(_ r: NSRange, _ c: NSColor) { out.addAttribute(.foregroundColor, value: c, range: r) }
+        while i < ns.length {
+            let ch = ns.character(at: i)
+            if ch == 0x22 {                                        // " → string (key or value)
+                let start = i; i += 1
+                while i < ns.length {
+                    let c = ns.character(at: i)
+                    if c == 0x5C { i += 2; continue }               // escape
+                    if c == 0x22 { i += 1; break }
+                    i += 1
+                }
+                // a ':' after the closing quote means this string was a KEY
+                var j = i
+                while j < ns.length, ns.character(at: j) == 0x20 || ns.character(at: j) == 0x0A { j += 1 }
+                let isKey = j < ns.length && ns.character(at: j) == 0x3A
+                color(NSRange(location: start, length: i - start), isKey ? Theme.accent2 : Theme.gitAdded)
+                continue
+            }
+            if (ch >= 0x30 && ch <= 0x39) || ch == 0x2D {          // number
+                let start = i
+                while i < ns.length {
+                    let c = ns.character(at: i)
+                    if (c >= 0x30 && c <= 0x39) || c == 0x2E || c == 0x2D || c == 0x2B || c == 0x65 || c == 0x45 { i += 1 } else { break }
+                }
+                color(NSRange(location: start, length: i - start), Theme.warning)
+                continue
+            }
+            if ch == 0x74 || ch == 0x66 || ch == 0x6E {            // true / false / null
+                for lit in ["true", "false", "null"] where i + lit.utf16.count <= ns.length {
+                    if ns.substring(with: NSRange(location: i, length: lit.utf16.count)) == lit {
+                        color(NSRange(location: i, length: lit.utf16.count), Theme.accent)
+                        i += lit.utf16.count
+                        break
+                    }
+                }
+            }
+            i += 1
+        }
+        return out
     }
     @objc private func copyResponse() {
         let text = responseView.string
@@ -575,6 +769,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         }
 
         recordHistory()
+        statusPill.isHidden = true            // no stale code while the new request is in flight
         setStatus(t("api.status.sending"), bad: false)
         responseView.string = ""; respBody = ""; respHeaders = ""
         sendBtn.isEnabled = false
@@ -586,7 +781,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
                 self.sendBtn.isEnabled = true
                 if let err = err as NSError?, err.code != NSURLErrorCancelled {
                     self.setStatus(t("api.status.failed", ["ms": ms]), bad: true)
-                    self.respBody = err.localizedDescription; self.responseView.string = self.respBody
+                    self.respBody = err.localizedDescription; self.renderResponse()
                     return
                 }
                 guard let http = resp as? HTTPURLResponse else { return }
@@ -598,7 +793,8 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
 
     private func showResponse(_ http: HTTPURLResponse, _ data: Data, ms: Int) {
         let ok = (200..<400).contains(http.statusCode)
-        setStatus("\(http.statusCode) \(reason(http.statusCode)) · \(ms)ms · \(byteSize(data.count))", bad: !ok)
+        setPill(http.statusCode)
+        setStatus("\(reason(http.statusCode)) · \(ms)ms · \(byteSize(data.count))", bad: !ok)
         var text = String(data: data, encoding: .utf8) ?? "<\(data.count) bytes binary>"
         if let obj = try? JSONSerialization.jsonObject(with: data),
            let pretty = try? JSONSerialization.data(withJSONObject: obj,
@@ -607,12 +803,27 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         respBody = text
         respHeaders = http.allHeaderFields
             .map { "\($0.key): \($0.value)" }.sorted().joined(separator: "\n")
-        responseView.string = respTabs.selectedSegment == 0 ? respBody : respHeaders
+        renderResponse()
     }
 
     private func setStatus(_ s: String, bad: Bool) {
         statusLabel.stringValue = s
-        statusLabel.textColor = bad ? Theme.hex("#ef5350") : Theme.fgDim
+        statusLabel.textColor = bad ? Theme.danger : Theme.fgDim
+    }
+    // The status capsule: colour by response class so success/failure reads at a glance.
+    private func setPill(_ code: Int) {
+        let bg: NSColor
+        switch code {
+        case 200..<300: bg = Theme.success
+        case 300..<400: bg = Theme.accent2
+        case 400..<500: bg = Theme.warning
+        default:        bg = Theme.danger
+        }
+        statusPill.isHidden = false
+        statusPill.stringValue = " \(code) "
+        statusPill.textColor = ChatPanel.onColor(bg)   // black/white by luminance, like the send button
+        statusPill.layer?.backgroundColor = bg.cgColor
+        statusPill.layer?.cornerRadius = UIScale.pt(18) / 2
     }
     private func reason(_ code: Int) -> String {
         let m: [Int: String] = [200: "OK", 201: "Created", 202: "Accepted", 204: "No Content",
@@ -978,6 +1189,14 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         }
         for s in [bodyScroll, responseScroll] { s?.backgroundColor = Theme.bg }
         for b in [servicesBtn, templatesBtn, envBtn, historyBtn, savedBtn, importBtn, copyBtn] { b.contentTintColor = Theme.fgDim }
+        // Primary action: accent fill with a luminance-picked label so it reads on light accents too.
+        for f in [urlField, tokenField, userField, passField] { restyleAPIInput(f) }
+        sendBtn.layer?.backgroundColor = Theme.accent.cgColor
+        sendBtn.contentTintColor = ChatPanel.onColor(Theme.accent)
+        sendBtn.attributedTitle = NSAttributedString(string: "Send", attributes: [
+            .foregroundColor: ChatPanel.onColor(Theme.accent),
+            .font: UIScale.font(UIScale.body, .semibold)])
+        renderResponse()   // re-colour JSON for the new palette
     }
     func applyScale() {
         method.font = UIScale.font(UIScale.body); urlField.font = UIScale.mono(UIScale.body, .regular); sendBtn.font = UIScale.font(UIScale.body, .medium)

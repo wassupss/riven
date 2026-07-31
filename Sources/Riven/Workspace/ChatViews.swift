@@ -448,7 +448,7 @@ enum ChatText {
         header.addSubview(langL)
         let isEdit = diff && path != nil
         do {
-            let title = isEdit ? "변경 보기" : "에디터에서 보기"
+            let title = isEdit ? t("chat.viewDiff") : t("chat.openInEditor")
             // Resolve the owning ChatPanel from the clicked button's view tree (NOT a shared static,
             // which pointed at the last-created/now-dead pane once more than one chat existed).
             let btn = ClosureButton(title: title) { [weak box] in
@@ -559,9 +559,9 @@ enum ChatText {
     static func tokens(_ n: Int) -> String { n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }
     // elapsed: seconds → "45초" / "2분 5초" / "1시간 3분"
     static func duration(_ secs: Int) -> String {
-        if secs < 60 { return "\(secs)초" }
-        if secs < 3600 { let m = secs / 60, s = secs % 60; return s == 0 ? "\(m)분" : "\(m)분 \(s)초" }
-        let h = secs / 3600, m = (secs % 3600) / 60; return m == 0 ? "\(h)시간" : "\(h)시간 \(m)분"
+        if secs < 60 { return t("chat.dur.sec", ["n": secs]) }
+        if secs < 3600 { let m = secs / 60, s = secs % 60; return s == 0 ? t("chat.dur.min", ["n": m]) : t("chat.dur.minSec", ["m": m, "s": s]) }
+        let h = secs / 3600, m = (secs % 3600) / 60; return m == 0 ? t("chat.dur.hour", ["n": h]) : t("chat.dur.hourMin", ["h": h, "m": m])
     }
 }
 
@@ -569,7 +569,7 @@ enum ChatText {
 // prompt line: instantly reads as "you said this" without a loud bordered box.
 final class UserBubble: NSView {
     private let bar = NSView()
-    private let queuedTag = NSTextField(labelWithString: "⋯ 대기 중")
+    private let queuedTag = NSTextField(labelWithString: t("chat.queuedTag"))
     init(text: String) {
         super.init(frame: .zero)
         wantsLayer = true
@@ -635,7 +635,7 @@ final class ApprovalCard: NSView {
     private var buttons: [NSButton] = []
     private let options: [(String, () -> Void)]
     private let statusLabel = NSTextField(labelWithString: "")
-    private let hint = NSTextField(labelWithString: "←/→ 선택 · Enter 결정")
+    private let hint = NSTextField(labelWithString: t("chat.cardHint"))
     private var sel = 0
     private var decided = false
 
@@ -810,8 +810,8 @@ final class TurnBlock: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    private var phase = "생각 중"          // current activity shown in the shimmer label
-    func startWorking() { phase = "생각 중"; spinner.startAnimation(nil); workLabel.stringValue = "생각 중…"; startShimmer() }
+    private var phase = t("chat.thinking")          // current activity shown in the shimmer label
+    func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); workLabel.stringValue = t("chat.thinking") + "…"; startShimmer() }
     // Set the current activity (a tool name etc.) — shown shimmering, like "생각 중".
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
     private var lastRenderedSecs = -1
@@ -832,7 +832,7 @@ final class TurnBlock: NSView {
     func setWaiting(_ w: Bool) {
         guard !finished else { return }
         waiting = w
-        if w { spinner.stopAnimation(nil); stopShimmer(); workLabel.stringValue = "⏸ 승인 대기 중…"; workLabel.textColor = Theme.warning }
+        if w { spinner.stopAnimation(nil); stopShimmer(); workLabel.stringValue = t("chat.awaitingApproval"); workLabel.textColor = Theme.warning }
         else { spinner.startAnimation(nil); workLabel.textColor = Theme.accent2; startShimmer() }
     }
 
@@ -878,7 +878,7 @@ final class TurnBlock: NSView {
 
     func bufferText(_ t: String) {
         if !hasText { hasText = true; thinkingSecs = lastSecs }
-        phase = "작성 중"
+        phase = I18n.t("chat.writing")
         stopActiveTool()                     // text arriving ⇒ the previous tool finished
         if openText == nil { openText = newText() }
         openText?.receive(t)
@@ -903,7 +903,7 @@ final class TurnBlock: NSView {
 
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         closeText()
-        setPhase("\(name.replacingOccurrences(of: "mcp__riven__", with: "")) 실행 중")   // shimmer shows the current tool
+        setPhase(t("chat.running", ["name": name.replacingOccurrences(of: "mcp__riven__", with: "")]))   // shimmer shows the current tool
         stopActiveTool()                     // previous tool finished
         let line = ToolLine(name: name, detail: detail)
         add(line)
@@ -928,14 +928,14 @@ final class TurnBlock: NSView {
         spinner.stopAnimation(nil); spinnerW.constant = 0   // reclaim the hidden spinner's gap
         // left: thinking/writing times
         var times: [String] = []
-        if let t = thinkingSecs { times.append("생각 \(ChatText.duration(t))"); if secs > t { times.append("작성 \(ChatText.duration(secs - t))") } }
+        if let think = thinkingSecs { times.append(t("chat.thinkFor", ["d": ChatText.duration(think)])); if secs > think { times.append(t("chat.writeFor", ["d": ChatText.duration(secs - think)])) } }
         else { times.append(ChatText.duration(secs)) }
         workLabel.stringValue = "✓ " + times.joined(separator: " · ")
         workLabel.textColor = Theme.fgDim
         // right: tokens actually consumed THIS turn (new input incl. cache-write, + output).
         // cacheRead is excluded — it's context re-read, summed across tool iterations, not work.
         if let u = usage {
-            tokenBase = "↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output)) 토큰"
+            tokenBase = t("chat.tokens", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])
         }
         tokenLabel.stringValue = tokenBase
     }
@@ -943,10 +943,10 @@ final class TurnBlock: NSView {
     // weekly window utilization, not this turn's share (the API gives no absolute budget).
     func setQuota(sessionUsed: Int?, weeklyUsed: Int?) {
         var q: [String] = []
-        if let s = sessionUsed { q.append("세션 \(s)%") }
-        if let w = weeklyUsed { q.append("주간 \(w)%") }
+        if let s = sessionUsed { q.append(t("chat.quota.session", ["n": s])) }
+        if let w = weeklyUsed { q.append(t("chat.quota.week", ["n": w])) }
         guard !q.isEmpty else { return }
-        let quota = "플랜 " + q.joined(separator: " · ")
+        let quota = t("chat.plan") + q.joined(separator: " · ")
         tokenLabel.stringValue = tokenBase.isEmpty ? quota : tokenBase + "  ·  " + quota
     }
 }
@@ -1012,7 +1012,7 @@ final class SubagentCard: NSView {
     func finish(_ result: String) {
         guard !done else { return }
         done = true
-        header.attributedStringValue = SubagentCard.headerText(type: type, desc: "완료", running: false)
+        header.attributedStringValue = SubagentCard.headerText(type: type, desc: t("chat.done"), running: false)
     }
     private static func headerText(type: String, desc: String, running: Bool) -> NSAttributedString {
         let m = NSMutableAttributedString()
@@ -1129,7 +1129,7 @@ final class SubagentPane: NSView {
     func finish(_ result: String) {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil)
-        header.attributedStringValue = SubagentPane.headerText(type: type, desc: "완료", running: false)
+        header.attributedStringValue = SubagentPane.headerText(type: type, desc: t("chat.done"), running: false)
         // Show the sub-agent's FINAL answer — it arrives in the Agent tool_result and was being
         // dropped, which is why the sub-agent's analysis never appeared in its panel.
         let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
