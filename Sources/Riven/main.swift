@@ -1937,12 +1937,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         auxDockPanels.removeAll()
 
         // Swap the dock view for this workspace's dock (create it on first visit).
-        activeDock?.container.removeFromSuperview()
+        //
+        // HIDE the outgoing one instead of removing it, and only addSubview a dock the FIRST time.
+        // Profiling a real switch showed the cost was almost entirely
+        //   activate → addSubview → _setSuperview → _setLayoutEngine (recursive)
+        // — AppKit migrates the ENTIRE subtree into the window's autolayout engine on every
+        // insertion, and riven's dock is thousands of views (splits, panels, chat transcript). A
+        // visibility toggle keeps the tree in the engine, so switching costs nothing to re-adopt.
+        activeDock?.container.isHidden = true
         let isNew = (st.dock == nil)
         let dock = st.dock ?? { let d = makeDock(for: st); st.dock = d; return d }()
         dock.container.frame = dockHost.bounds
         dock.container.autoresizingMask = [.width, .height]
-        dockHost.addSubview(dock.container)
+        if dock.container.superview !== dockHost { dockHost.addSubview(dock.container) }
+        dock.container.isHidden = false
         activeDock = dock
         workspace = url
         // Invariant: a non-empty dock must have a LIVE activeGroup. Detaching the outgoing
@@ -2126,8 +2134,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Close a workspace: tear down its dock + state, switch to another (or empty).
     private func closeWorkspace(_ url: URL) {
         if let st = states[url] {
+            // Dock containers now STAY in dockHost (hidden) across switches, so closing a workspace
+            // must remove this one explicitly, and stop its chat sessions — otherwise its hidden
+            // tree and its claude processes would outlive the workspace.
             st.dock?.container.removeFromSuperview()
-            for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] { (p.content as? TerminalView)?.dispose() }
+            for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] {
+                (p.content as? TerminalView)?.dispose()
+                (p.content as? ChatPanel)?.teardown()
+            }
         }
         states[url] = nil
         lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
