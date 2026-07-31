@@ -510,17 +510,23 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
     }
+    // A non-interactive marker at the very top telling the reader there's more above; scrolling to
+    // the top auto-loads it (see clipMoved). Not a button — the load is scroll-driven.
     private func addLoadEarlierButton() {
-        let btn = ClosureButton(title: "이전 대화 \(pendingHistory.count)개 더 보기") { [weak self] in self?.loadEarlier() }
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        stack.insertArrangedSubview(btn, at: 0)
-        btn.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
-        loadEarlierBtn = btn
+        let l = NSTextField(labelWithString: "⋯ 이전 대화 \(pendingHistory.count)개 (위로 스크롤해 불러오기)")
+        l.font = UIScale.font(10); l.textColor = Theme.fgDim; l.alignment = .center
+        l.translatesAutoresizingMaskIntoConstraints = false
+        stack.insertArrangedSubview(l, at: 0)
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        loadEarlierBtn = l
     }
+    private var loadingEarlier = false
     // Prepend the previous batch ABOVE the current view, keeping the reader's position stable
-    // (anchor by document-height delta) — so paging back never yanks the scroll.
+    // (anchor by document-height delta) — so auto-loading never yanks the scroll.
     @objc private func loadEarlier() {
-        guard !pendingHistory.isEmpty else { return }
+        guard !pendingHistory.isEmpty, !loadingEarlier else { return }
+        loadingEarlier = true
+        defer { loadingEarlier = false }
         let batch = Array(pendingHistory.suffix(50)); pendingHistory.removeLast(batch.count)
         layoutSubtreeIfNeeded()
         let oldH = stack.frame.height, oldY = scroll.contentView.bounds.origin.y
@@ -1066,6 +1072,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     @objc private func clipMoved() {
         stickToBottom = isAtBottom()
         jumpButton.isHidden = stickToBottom
+        // Infinite scroll: reaching the TOP auto-loads the previous batch (no button). After a load
+        // the content grows above and the position is preserved, so this won't re-trigger until the
+        // reader scrolls up to the new top again.
+        if !loadingEarlier, !pendingHistory.isEmpty, scroll.contentView.bounds.origin.y < UIScale.pt(80) {
+            loadEarlier()
+        }
     }
     @objc private func jumpToLatest() { scrollToBottom() }
 
