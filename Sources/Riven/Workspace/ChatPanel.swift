@@ -139,6 +139,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         input.onSubmit = { [weak self] in self?.sendFromInput() }
         input.onTextChange = { [weak self] in self?.inputChanged() }
         input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
+        input.onFocus = { [weak self] in self?.onFocused?() }   // clicking the input clears the "done" ember
 
         // Circular ↑ send button (shadcn message-scroller style) — no "보내기" text pill.
         // CircleButton keeps it a perfect circle; sizes match the mode chip via `rowH`.

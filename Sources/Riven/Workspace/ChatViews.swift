@@ -32,7 +32,13 @@ final class ChatInput: NSTextView {
     var onSubmit: (() -> Void)?
     var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle — return true if consumed
     var onTextChange: (() -> Void)?
+    var onFocus: (() -> Void)?           // gained keyboard focus (click/tab) → pane is being looked at
     var placeholder = "" { didSet { needsDisplay = true } }
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok { onFocus?() }
+        return ok
+    }
     // Compatibility shim so call sites can keep using stringValue. Setting it programmatically must
     // also re-measure the enclosing InputScroll (that owns the 1–6 line capped height).
     var stringValue: String {

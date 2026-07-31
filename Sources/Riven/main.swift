@@ -1207,10 +1207,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
         let wsPath = st.url.path, paneId = p.id
-        p.onActivate = { [weak self, weak chat, weak p] in       // looking at it clears the "done" ember
-            chat?.focusInput()
-            if p?.badge == "attn" { p?.badge = nil; chat?.setRingState(nil); WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false); self?.refreshDockTabs(); self?.refreshRailAgents() }
+        // Clear the "done" ember/attn badge — call whenever the user looks at or focuses the pane.
+        let clearAttn: () -> Void = { [weak self, weak chat, weak p] in
+            guard p?.badge == "attn" else { return }
+            p?.badge = nil; chat?.setRingState(nil)
+            WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: false)
+            self?.refreshDockTabs(); self?.refreshRailAgents()
         }
+        p.onActivate = { [weak chat] in chat?.focusInput(); clearAttn() }   // tab/group activation
+        // Clicking INTO the pane also clears it — even when it's already the active panel, where
+        // focusGroup/setActive is a no-op so onActivate wouldn't fire (the lingering-完료 bug).
+        chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat); clearAttn() }
         p.onClose = { [weak self, weak chat] in
             chat?.teardown()
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
