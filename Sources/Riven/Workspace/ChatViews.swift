@@ -357,7 +357,7 @@ enum ChatText {
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
     // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
     // emphasis was indistinguishable.
-    private static let proseSize: CGFloat = 13
+    private static let proseSize: CGFloat = 14.5
     static var proseColor: NSColor { Theme.fg.withAlphaComponent(0.80) }   // regular text (calmer)
     static var proseStrong: NSColor { Theme.fg }                           // emphasized text (brighter)
     static func prose(_ s: String) -> NSTextField {
@@ -453,7 +453,7 @@ enum ChatText {
             ])
         }
         let l = NSTextField(wrappingLabelWithString: code)
-        l.font = UIScale.mono(11); l.textColor = Theme.fg; l.isSelectable = true
+        l.font = UIScale.mono(12.5); l.textColor = Theme.fg; l.isSelectable = true
         l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
         l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -479,7 +479,7 @@ enum ChatText {
     private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
     static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(11), .foregroundColor: Theme.fg, .paragraphStyle: p]
+        let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(12.5), .foregroundColor: Theme.fg, .paragraphStyle: p]
         let m = NSMutableAttributedString(string: code, attributes: base)
         // Skip regex highlighting for large blocks: the string/comment patterns can catastrophically
         // backtrack, and the per-match `protected` intersection is O(n²) — together they pegged the
@@ -507,7 +507,7 @@ enum ChatText {
     // Edits open the real file (see the applied change); snippets go to a temp file.
     private static func diffColored(_ code: String) -> NSAttributedString {
         let m = NSMutableAttributedString()
-        let font = UIScale.mono(11)
+        let font = UIScale.mono(12.5)
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
         for (i, line) in code.components(separatedBy: "\n").enumerated() {
             if i > 0 { m.append(NSAttributedString(string: "\n")) }
@@ -573,10 +573,10 @@ final class UserBubble: NSView {
         bar.layer?.cornerRadius = 1.5
         bar.translatesAutoresizingMaskIntoConstraints = false
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(12.5); l.textColor = Theme.fg; l.isSelectable = true
+        l.font = UIScale.font(14); l.textColor = Theme.fg; l.isSelectable = true
         let p = NSMutableParagraphStyle(); p.lineSpacing = 4
         l.attributedStringValue = NSAttributedString(string: text,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(12.5), .paragraphStyle: p])
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(14), .paragraphStyle: p])
         l.translatesAutoresizingMaskIntoConstraints = false
         queuedTag.font = UIScale.font(9, .medium); queuedTag.textColor = Theme.warning
         queuedTag.isHidden = true
@@ -1049,9 +1049,6 @@ final class SubagentPane: NSView {
         header.attributedStringValue = SubagentPane.headerText(type: type, desc: desc, running: true)
         header.lineBreakMode = .byTruncatingTail
         header.translatesAutoresizingMaskIntoConstraints = false
-        let closeBtn = ClosureButton(title: "✕") { [weak self] in self?.onClose?() }
-        closeBtn.isBordered = false
-        closeBtn.translatesAutoresizingMaskIntoConstraints = false
 
         body.orientation = .vertical; body.spacing = 8; body.alignment = .leading
         body.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
@@ -1061,7 +1058,7 @@ final class SubagentPane: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         [bar, sep, scroll].forEach { addSubview($0) }
-        bar.addSubview(spinner); bar.addSubview(header); bar.addSubview(closeBtn)
+        bar.addSubview(spinner); bar.addSubview(header)   // no ✕ — the dock panel provides close
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: topAnchor),
             bar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1075,10 +1072,8 @@ final class SubagentPane: NSView {
             spinner.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
             header.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 6),
-            header.trailingAnchor.constraint(equalTo: closeBtn.leadingAnchor, constant: -6),
+            header.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -10),
             header.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            closeBtn.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -6),
-            closeBtn.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             scroll.topAnchor.constraint(equalTo: sep.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1096,7 +1091,20 @@ final class SubagentPane: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -20).isActive = true
-        if let last = body.arrangedSubviews.last { last.scrollToVisible(last.bounds) }
+        scrollToBottom()
+    }
+    // Pin the sub-agent view to its newest line (flipped doc → bottom = max y). Skips the forced
+    // layout when off-screen (window == nil) so a background pane's sub-agents don't peg the CPU.
+    private func scrollToBottom() {
+        guard window != nil else { return }
+        layoutSubtreeIfNeeded()
+        let clip = scroll.contentView
+        clip.setBoundsOrigin(NSPoint(x: 0, y: max(0, body.frame.height - clip.bounds.height)))
+        scroll.reflectScrolledClipView(clip)
+    }
+    override func viewDidMoveToWindow() {   // shown again → catch the scroll up to the latest
+        super.viewDidMoveToWindow()
+        if window != nil { scrollToBottom() }
     }
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         add(ToolLine(name: name, detail: detail))
@@ -1111,6 +1119,10 @@ final class SubagentPane: NSView {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil)
         header.attributedStringValue = SubagentPane.headerText(type: type, desc: "완료", running: false)
+        // Show the sub-agent's FINAL answer — it arrives in the Agent tool_result and was being
+        // dropped, which is why the sub-agent's analysis never appeared in its panel.
+        let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !r.isEmpty { add(ChatText.proseMarkdown(r)) }
     }
     private static func headerText(type: String, desc: String, running: Bool) -> NSAttributedString {
         let m = NSMutableAttributedString()

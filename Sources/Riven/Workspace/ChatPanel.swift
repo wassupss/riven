@@ -56,6 +56,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onFocused: (() -> Void)?
     var onOpenFile: ((URL) -> Void)?
     var onOpenFileAt: ((URL, Int) -> Void)?
+    var onEditedFile: ((String) -> Void)?   // agent edited a file → record it in the Changes panel
+    var onOpenSubagentPane: ((_ id: String, _ view: NSView, _ title: String) -> Void)?   // place as a dock panel
+    var onCloseSubagentPanes: ((_ ids: [String]) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
     // Rail/tab integration (mirrors agent terminal panes): busy while a turn runs, attention
     // while awaiting approval, and a title from the first message.
@@ -605,6 +608,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in self?.subToPane[pid]?.addTool(name, detail, code, path) }
         s?.onSubagentText = { [weak self] pid, text in self?.subToPane[pid]?.addText(text) }
         s?.onSubagentDone = { [weak self] id, result in self?.subToPane[id]?.finish(result) }
+        s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
         s?.onExit = { [weak self] code in
             guard let self else { return }
@@ -922,7 +926,17 @@ final class ChatPanel: NSView, Themable, Scalable {
         focusInput(force: true)
     }
     private func beginTurn(_ text: String, bubble: UserBubble? = nil) {
-        clearSubagents()               // fresh turn → clear the previous turn's sub-agent panes
+        // Dead session (crashed / bad resume / exited) → don't start a turn that can never complete
+        // (it would hang on "생각 중" forever). Surface it and offer recovery.
+        if session == nil || session?.isAlive == false {
+            bubble?.setQueued(false)
+            addError("⚠ 세션이 종료되었습니다. /resume 로 이어가거나 새 챗을 여세요.")
+            setRunning(false); onBusyChange?(false)
+            return
+        }
+        // Do NOT close the previous turn's sub-agent panels here — the user wants to keep viewing
+        // them (and closing them while one was still running lost visibility). They're real dock
+        // panels now: they stay open until the user closes them (or the workspace changes).
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
         current = newBlock()
         current?.startWorking()
@@ -954,26 +968,24 @@ final class ChatPanel: NSView, Themable, Scalable {
         for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
     }
 
-    // ---- sub-agent panes (right split, one column each — a nested riven-style pane layout) ----
+    // ---- sub-agent panes ----
+    // Each sub-agent opens as a REAL dock panel (main.swift places it via onOpenSubagentPane), so it
+    // resizes / moves / tabs exactly like every other panel — instead of the old fixed left/right
+    // split that couldn't be positioned. This panel only owns the SubagentPane VIEW; the dock owns
+    // its placement.
     private func addSubagentPane(_ id: String, type: String, desc: String) {
         let pane = SubagentPane(type: type, desc: desc)
-        pane.translatesAutoresizingMaskIntoConstraints = false
-        pane.onClose = { [weak self, weak pane] in
-            guard let self, let pane else { return }
-            subToPane[id] = nil
-            pane.removeFromSuperview()
-            if subToPane.isEmpty { showSubSide(false) }
-        }
-        subStack.addArrangedSubview(pane)
-        pane.heightAnchor.constraint(equalTo: subStack.heightAnchor).isActive = true   // fillEqually sets width
+        pane.onClose = { [weak self] in self?.subToPane[id] = nil; self?.onCloseSubagentPanes?([id]) }
         subToPane[id] = pane
-        showSubSide(true)
+        onOpenSubagentPane?(id, pane, type.isEmpty ? "Sub-agent" : type)
     }
     private func clearSubagents() {
-        subStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let ids = Array(subToPane.keys)
         subToPane.removeAll()
-        showSubSide(false)
+        if !ids.isEmpty { onCloseSubagentPanes?(ids) }
     }
+    // The user closed a sub-agent's dock panel directly — drop our view reference.
+    func clearSubagentRef(_ id: String) { subToPane[id] = nil }
 
     private func startFlush() {
         flushTimer?.invalidate()

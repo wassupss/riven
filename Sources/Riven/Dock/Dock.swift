@@ -159,16 +159,16 @@ final class DockManager {
     // 1/N of its container (see rebalanceAfterInsert).
     @discardableResult
     func addPanel(_ panel: DockPanel, reference: DockGroup? = nil, direction: DockDir? = nil,
-                  sizeHint: CGFloat? = nil) -> DockGroup {
+                  sizeHint: CGFloat? = nil, activate: Bool = true) -> DockGroup {
         if let ref = reference, let dir = direction, dir != .center {
             let g = DockGroup(); g.manager = self
             split(ref, with: g, direction: dir, sizeHint: sizeHint)
-            g.add(panel); setActive(g); return g
+            g.add(panel); if activate { setActive(g) }; return g
         }
         let g = reference ?? activeGroup ?? {
             let g = DockGroup(); setRoot(g); return g
         }()
-        g.add(panel); setActive(g); refreshEmpty(); return g
+        g.add(panel); if activate { setActive(g) }; refreshEmpty(); return g
     }
 
     func setActive(_ g: DockGroup) {
