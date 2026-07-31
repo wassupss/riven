@@ -262,6 +262,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard window != nil else { return }
         while current?.flush() == true {}   // reveal any text buffered offscreen (bounded by content)
         scrollToBottom()
+        // The dock lays out AFTER this callback, so the height used above can be stale — which
+        // intermittently left the transcript scrolled up after a workspace switch. Re-pin to the
+        // bottom on the next runloop (and once more) when the geometry is final.
+        DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.scrollToBottom() }
     }
 
     func applyTheme() {

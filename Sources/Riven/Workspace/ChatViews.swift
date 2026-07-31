@@ -49,10 +49,11 @@ final class ChatInput: NSTextView {
     // Bare text view; wrapped by InputScroll which handles sizing/scrolling. Configured as a growing
     // document there (isVerticallyResizable + widthTracksTextView), so it grows past 6 lines and the
     // scroll view scrolls to keep the cursor visible instead of hiding it.
+    static let fontSize: CGFloat = 14.5    // match the answer/prose size
     static func make() -> ChatInput {
         let tv = ChatInput(frame: .zero)
         tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
-        tv.font = UIScale.font(13); tv.textColor = Theme.fg
+        tv.font = UIScale.font(ChatInput.fontSize); tv.textColor = Theme.fg
         tv.textContainerInset = NSSize(width: 2, height: 6)
         return tv
     }
@@ -76,7 +77,7 @@ final class ChatInput: NSTextView {
         super.draw(dirtyRect)
         guard string.isEmpty, !placeholder.isEmpty else { return }
         (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
-            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(13)])
+            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(ChatInput.fontSize)])
     }
 
     // Paste an IMAGE (a Cmd-Shift-4 screenshot on the clipboard, or copied image files) like the
