@@ -1908,7 +1908,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // not just "which aux were open". Must run BEFORE detaching the singletons below.
         if let old = workspace, old != url {
             state(for: old).openAux = Set(auxDockPanels.keys)
-            state(for: old).pendingLayout = activeDock?.snapshot()
+            // NO snapshot here. The dock stays alive with its split tree; only the shared editor/aux
+            // singletons leave, and their slots are recorded above. Snapshotting on every switch made
+            // the return path rebuild the whole tree (profiled: DockManager.restore → a full
+            // layoutSubtreeIfNeeded over thousands of views was the rest of the switch lag).
+            // `pendingLayout` now only carries a layout loaded from DISK at launch. We still take a
+            // cheap snapshot for SAVING (walking the tree is not what cost time — rebuilding it was).
+            state(for: old).savedLayout = activeDock?.snapshot()
             state(for: old).activePanelId = activeDock?.activeGroup?.activePanel?.id  // restore focus on return
         }
 
@@ -1931,6 +1937,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 old.recordPlacement(of: ep); old.detach(ep)
             }
             for (_, ap) in auxDockPanels where ap.group?.manager === old {
+                old.recordPlacement(of: ap)   // remember the exact slot so returning doesn't need a rebuild
                 old.detach(ap)   // singleton view leaves this workspace's dock; re-tabs into focus on return
             }
         }
@@ -2230,7 +2237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var layouts: [String: Any] = [:]
         for url in workspaces {
             let st = state(for: url)
-            if let snap = st.dock?.snapshot() {
+            // Active workspace: its live dock holds the editor/aux, so snapshot it. Inactive ones:
+            // use the layout captured when we left (their live dock lost the shared singletons).
+            let live = (url == workspace) ? st.dock?.snapshot() : (st.savedLayout ?? st.dock?.snapshot())
+            if let snap = live {
                 layouts[url.absoluteString] = markClaudePanes(snap, cwd: url.path)   // auto-resume typed claude
             } else if let pending = st.pendingLayout {
                 layouts[url.absoluteString] = pending    // 아직 방문 전이면 기존 기록 유지
@@ -3123,7 +3133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // died when the outgoing aux group was cleaned up). Without a live anchor, addPanel
         // would fall through to setRoot() and EJECT THE WHOLE TERMINAL TREE — the reported
         // "terminals disappear on workspace return" bug. groups.last is a live terminal group.
-        dock.addPanel(panel, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
+        // Prefer the slot this panel last occupied in THIS workspace; fall back to the default edge.
+        if !dock.restorePlacement(panel) {
+            dock.addPanel(panel, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
+        }
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
