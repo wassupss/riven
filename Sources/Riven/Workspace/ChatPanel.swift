@@ -24,6 +24,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let hairline = NSView()
     private let slash = SlashPopup()
     private var slashHeight: NSLayoutConstraint!
+    private var stackWidth: NSLayoutConstraint!        // transcript width = clip width
+    private var frozenWidth: NSLayoutConstraint?       // pinned while a divider is being dragged
 
     private var session: ClaudeChatSession?
     private var workspace: URL?
@@ -178,6 +180,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         [modeChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
         [scroll, subSide, hairline, composer, slash, jumpButton].forEach { addSubview($0) }
         applyComposerTheme()
+        stackWidth = stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         slashHeight = slash.heightAnchor.constraint(equalToConstant: 0)
         subWidthShown = subSide.widthAnchor.constraint(equalTo: widthAnchor, multiplier: 0.45)
         subWidthHidden = subSide.widthAnchor.constraint(equalToConstant: 0)
@@ -193,7 +196,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             subWidthHidden,
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),   // clip width → no h-overflow jitter
+            stackWidth,   // clip width → no h-overflow jitter (pinned during live resize)
             subStack.topAnchor.constraint(equalTo: subSide.contentView.topAnchor),
             subStack.leadingAnchor.constraint(equalTo: subSide.contentView.leadingAnchor),
             subStack.widthAnchor.constraint(equalTo: subSide.contentView.widthAnchor),      // fill width (no h-scroll)
@@ -259,6 +262,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.relocalize()
         }
+        // A divider drag re-wraps every rendered message on every frame (~15ms measured). Freeze the
+        // transcript width for the drag and reflow once when it ends.
+        NotificationCenter.default.addObserver(forName: .rivenDividerDragBegan, object: nil, queue: .main) { [weak self] _ in
+            self?.freezeTranscriptWidth()
+        }
+        NotificationCenter.default.addObserver(forName: .rivenDividerDragEnded, object: nil, queue: .main) { [weak self] _ in
+            self?.thawTranscriptWidth()
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -278,6 +289,38 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // Shown again (workspace switched back): catch the typewriter up to everything buffered while
     // offscreen and pin to the bottom — the flush timer does no UI work while window == nil.
+    // A drag changes our width every frame, and each rendered message is a wrapping label whose
+    // height must be recomputed — measured at ~15ms/frame with a restored transcript, i.e. the whole
+    // 60fps budget. The text can't reflow usefully mid-drag anyway, so freeze the document while the
+    // divider is moving and do ONE layout when the user lets go.
+    private func freezeTranscriptWidth() {
+        guard frozenWidth == nil, stack.frame.width > 1, window != nil else { return }
+        stackWidth.isActive = false
+        let w = stack.widthAnchor.constraint(equalToConstant: stack.frame.width)
+        w.isActive = true; frozenWidth = w
+    }
+    private func thawTranscriptWidth() {
+        guard let w = frozenWidth else { return }
+        w.isActive = false; frozenWidth = nil
+        stackWidth.isActive = true
+        layoutSubtreeIfNeeded()
+        if stickToBottom { scrollToBottom() }
+    }
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        guard frozenWidth == nil, stack.frame.width > 1 else { return }
+        stackWidth.isActive = false                       // stop tracking the clip width…
+        let w = stack.widthAnchor.constraint(equalToConstant: stack.frame.width)
+        w.isActive = true; frozenWidth = w                // …and hold the current one instead
+    }
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        guard let w = frozenWidth else { return }
+        w.isActive = false; frozenWidth = nil
+        stackWidth.isActive = true                        // one reflow, at the final width
+        layoutSubtreeIfNeeded()
+        if stickToBottom { scrollToBottom() }
+    }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil else { return }
@@ -639,7 +682,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // views from the BOTTOM once the window is full — they're re-rendered from the session when the
     // reader scrolls back down.
     private func trimBottomIfNeeded() {
-        let maxViews = 260
+        let maxViews = 120
         var subs = stack.arrangedSubviews
         guard subs.count > maxViews else { return }
         var drop = subs.count - maxViews
@@ -1122,7 +1165,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func trimTranscript() {
         // Bound the LIVE view count: autolayout over the transcript is superlinear, so an unbounded
         // stack pegs the CPU on every relayout (profiled — a huge restored stack froze launch).
-        let cap = 150
+        let cap = 80
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
         for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }

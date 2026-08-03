@@ -213,6 +213,8 @@ final class WorkspaceRail: NSView, Themable {
 
     @objc private func addClicked() { onOpen?() }
 
+    /// Debug: the rail's own ordering (the ⌘N chip numbers come from this).
+    func orderDump() -> String { workspaces.map { $0.lastPathComponent }.joined(separator: ",") }
     func addWorkspace(_ url: URL) {
         if !workspaces.contains(url) { workspaces.append(url) }
         active = url

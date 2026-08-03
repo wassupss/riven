@@ -1177,6 +1177,11 @@ final class DockSplitView: NSSplitView, NSSplitViewDelegate {
     override init(frame: NSRect) { super.init(frame: frame); delegate = self; dividerStyle = .thin }
     required init?(coder: NSCoder) { fatalError() }
     override var mouseDownCanMoveWindow: Bool { false }   // divider drags must not move the window
+    override func mouseDown(with event: NSEvent) {
+        NotificationCenter.default.post(name: .rivenDividerDragBegan, object: nil)
+        super.mouseDown(with: event)      // modal tracking loop: returns when the drag ends
+        NotificationCenter.default.post(name: .rivenDividerDragEnded, object: nil)
+    }
     override var dividerThickness: CGFloat { 6 }
     override func drawDivider(in rect: NSRect) {
         Theme.hairline.setFill()
