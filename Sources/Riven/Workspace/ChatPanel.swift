@@ -524,15 +524,31 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         return title
     }
-    // After a turn, adopt the CLI's summarized title if it has produced one.
-    private func refreshAITitle() {
+    // Adopt the CLI's summarized title once it has produced one.
+    //
+    // The CLI writes the `ai-title` transcript entry ASYNCHRONOUSLY, shortly AFTER the turn's
+    // result event — so reading once at endTurn usually missed it and the pane kept the raw
+    // first-message title until the next turn ("타이틀 자동 생성이 안 된다"). Re-check a few times
+    // with a backoff and stop as soon as the title changes.
+    private var lastAITitle: String?
+    private func refreshAITitle(attempt: Int = 0) {
         guard let cwd = workspace?.path, let sid = sessionId else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let t = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid) else { return }
+            let found = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid)
             DispatchQueue.main.async {
                 guard let self, self.sessionId == sid else { return }
-                self.aiTitleSet = true
-                self.onTitle?(t)
+                if let t = found, t != self.lastAITitle {
+                    self.lastAITitle = t
+                    self.aiTitleSet = true
+                    self.onTitle?(t)
+                    return                       // got it — stop polling
+                }
+                // Not written yet: 1s, 3s, 6s. Cheap (a 256KB tail read off the main thread).
+                let delays: [Double] = [1, 2, 3]
+                guard attempt < delays.count else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) { [weak self] in
+                    self?.refreshAITitle(attempt: attempt + 1)
+                }
             }
         }
     }

@@ -43,6 +43,14 @@ final class ChatAskServer {
         guard let d = try? JSONSerialization.data(withJSONObject: cfg) else { return nil }
         return String(data: d, encoding: .utf8)
     }
+    /// Write the --mcp-config JSON to a file and return its path (the shell shim passes a path,
+    /// not inline JSON, so a hand-typed `claude` gets riven's tools too).
+    func mcpConfigPath() -> String? {
+        guard let json = mcpConfigJSON() else { return nil }
+        let url = AgentHookServer.ensureSupportDir().appendingPathComponent("riven-mcp.json")
+        guard (try? json.write(to: url, atomically: true, encoding: .utf8)) != nil else { return nil }
+        return url.path
+    }
     var toolPrefix: String { "mcp__riven" }        // allowedTools entry: allow all riven tools
     func systemPrompt() -> String {
         """
