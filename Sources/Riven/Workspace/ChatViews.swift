@@ -382,9 +382,19 @@ enum ChatText {
     static func attributedProse(_ s: String) -> NSAttributedString {
         NSAttributedString(string: s, attributes: [.foregroundColor: proseColor, .font: UIScale.font(proseSize), .paragraphStyle: para])
     }
+    // A SINGLE tilde is strikethrough to the markdown parser, but in Korean prose "20~30행" is a
+    // numeric range — the range marker was opening a strikethrough that swallowed the rest of the
+    // sentence (and ate the "~" itself). Escape lone tildes so they stay literal; "~~real~~"
+    // strikethrough still works.
+    private static let loneTilde = try? NSRegularExpression(pattern: "(?<!~)~(?!~)")
+    static func escapeLoneTildes(_ s: String) -> String {
+        guard let re = loneTilde, s.contains("~") else { return s }
+        return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s),
+                                           withTemplate: "\\\\~")
+    }
     static func proseMarkdown(_ s: String) -> NSTextField {
         let l = prose(s)
-        if let attr = try? NSAttributedString(markdown: s,
+        if let attr = try? NSAttributedString(markdown: escapeLoneTildes(s),
               options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             let m = NSMutableAttributedString(attributedString: attr)
             let full = NSRange(location: 0, length: m.length)

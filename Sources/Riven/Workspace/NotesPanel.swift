@@ -55,7 +55,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
 
         titleLabel.font = UIScale.font(UIScale.body, .medium)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        savedLabel.font = UIScale.font(UIScale.caption)
+        savedLabel.font = UIScale.font(UIScale.small)
         savedLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addButton.target = self; addButton.action = #selector(newNote)
@@ -87,13 +87,13 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
 
 
         titleField.placeholderString = t("notes.titlePlaceholder")
-        titleField.font = UIScale.font(UIScale.body, .semibold)
+        titleField.font = UIScale.font(UIScale.title, .semibold)
         titleField.isBordered = false; titleField.drawsBackground = false
         titleField.focusRingType = .none
         titleField.delegate = self
         titleField.translatesAutoresizingMaskIntoConstraints = false
 
-        body.font = UIScale.font(UIScale.body)
+        body.font = UIScale.font(UIScale.prose)
         body.isRichText = false; body.allowsUndo = true; body.drawsBackground = false
         body.delegate = self
         body.textContainerInset = NSSize(width: 8, height: 8)
@@ -169,10 +169,10 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     }
     func applyScale() {
         titleLabel.font = UIScale.font(UIScale.body, .medium)
-        savedLabel.font = UIScale.font(UIScale.caption)
+        savedLabel.font = UIScale.font(UIScale.small)
         addButton.font = UIScale.font(UIScale.title)
-        titleField.font = UIScale.font(UIScale.body, .semibold)
-        body.font = UIScale.font(UIScale.body)
+        titleField.font = UIScale.font(UIScale.title, .semibold)
+        body.font = UIScale.font(UIScale.prose)
         renderList()
     }
 
@@ -214,7 +214,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard !notes.isEmpty else {
             let hint = NSTextField(labelWithString: t("notes.empty"))
-            hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
+            hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim
             hint.translatesAutoresizingMaskIntoConstraints = false
             let c = NSView(); c.addSubview(hint)
             NSLayoutConstraint.activate([
@@ -240,18 +240,18 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         row.translatesAutoresizingMaskIntoConstraints = false
 
         let name = NSTextField(labelWithString: n.displayTitle)
-        name.font = UIScale.font(UIScale.body, isSel ? .semibold : .regular)
+        name.font = UIScale.font(UIScale.title, isSel ? .semibold : .regular)
         name.textColor = Theme.fg
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
         let time = NSTextField(labelWithString: ago(n.updated))
-        time.font = UIScale.font(UIScale.caption); time.textColor = Theme.fgDim
+        time.font = UIScale.font(UIScale.small); time.textColor = Theme.fgDim
         time.setContentHuggingPriority(.required, for: .horizontal)
         time.translatesAutoresizingMaskIntoConstraints = false
 
         row.addSubview(name); row.addSubview(time)
         NSLayoutConstraint.activate([
-            row.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
+            row.heightAnchor.constraint(equalToConstant: UIMetrics.rowHCompact),
             name.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
             name.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             time.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 6),

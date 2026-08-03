@@ -33,13 +33,33 @@ final class Settings {
     }
     func object(_ key: String) -> [String: Any]? { read { dict[key] as? [String: Any] } }
 
+    // In-memory update is immediate; the DISK write is coalesced. set() used to serialize the whole
+    // settings dictionary and write it synchronously on every call — and divider drags call it on
+    // every frame (sidebar width / rail height), so resizing a panel stuttered against the disk.
+    // Readers see the new value at once; the file catches up within a runloop turn.
+    private var flushScheduled = false
     func set(_ key: String, _ value: Any) {
         lock.lock()
         dict[key] = value
-        let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
         lock.unlock()
-        if let data { try? data.write(to: url) }
+        scheduleFlush()
         NotificationCenter.default.post(name: .rivenSettingChanged, object: key)
+    }
+    private func scheduleFlush() {
+        lock.lock(); let already = flushScheduled; flushScheduled = true; lock.unlock()
+        guard !already else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.flush() }
+    }
+    /// Write the settings file now (also called on quit so nothing is lost).
+    func flush() {
+        lock.lock()
+        flushScheduled = false
+        let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+        let dest = url
+        lock.unlock()
+        guard let data else { return }
+        // Off the main thread: the write is the expensive part and nothing waits on it.
+        DispatchQueue.global(qos: .utility).async { try? data.write(to: dest) }
     }
 
     // A JSON-safe copy of all settings minus the given keys (used for cloud sync —

@@ -59,6 +59,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var sigtermSource: DispatchSourceSignal?   // persist on SIGTERM (kill/restart/logout)
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var subagentPanels: [String: DockPanel] = [:]  // sub-agent id → its dock panel
+    // riven's own tools for the CLI running in TERMINAL panes (the native chat has a per-session
+    // server). One app-level instance: these tools act on the app (open a file/panel/workspace,
+    // run a request, ask the user), not on a particular chat.
+    private lazy var terminalTools: ChatAskServer? = {
+        guard let srv = ChatAskServer() else { return nil }
+        srv.onTool = { [weak self] id, tool, args in
+            DispatchQueue.main.async { self?.handleTerminalTool(id, tool, args, srv) }
+        }
+        return srv
+    }()
     // Shown over the dock while a workspace switch finishes. Some of the switch cost is irreducible
     // (the incoming dock's first layout), so tell the user something is happening instead of
     // freezing silently. It only helps if it actually PAINTS, which is why the heavy tail below runs
@@ -735,6 +745,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 esac
                 # riven's agent hooks (deep-merged, so the user's own hooks still fire).
                 [ -n "$RIVEN_HOOKS_SETTINGS" ] && rv+=(--settings "$RIVEN_HOOKS_SETTINGS")
+                # riven's OWN tools (ask_user / open file / preview / API / panels / workspaces),
+                # so a CLI typed in a riven terminal can drive the IDE just like the native chat.
+                if [ -n "$RIVEN_MCP_CONFIG" ]; then
+                  rv+=(--mcp-config "$RIVEN_MCP_CONFIG")
+                  [ -n "$RIVEN_MCP_PROMPT" ] && rv+=(--append-system-prompt "$RIVEN_MCP_PROMPT")
+                fi
                 command "${RIVEN_REAL_CLAUDE:-claude}" "${rv[@]}" "$@"
               }
             fi
@@ -788,6 +804,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             AgentActivity.shared.handle(event)
         }
         AgentHookServer.shared.start()
+        _ = terminalTools?.mcpConfigPath()   // write the config now so the first terminal already has it
     }
 
     // Workspaces with an agent turn currently in flight (UserPromptSubmit → Stop), keyed
@@ -920,6 +937,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "RIVEN_HOOK_SOCKET": AgentHookServer.socketPath,
         ]
         if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
+        if let srv = terminalTools, let cfg = srv.mcpConfigPath() {
+            env["RIVEN_MCP_CONFIG"] = cfg
+            env["RIVEN_MCP_PROMPT"] = srv.systemPrompt()
+        }
         // An agent panel runs the CLI directly (no shell). For a session-capable agent
         // (Claude Code): CREATE with `--session-id <id>` the first time, but RESUME with
         // `--resume <id>` once a transcript exists. `--session-id` REFUSES an id that
@@ -938,6 +959,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // own hooks keep firing alongside ours.
         if agent?.name == "Claude Code", let settings = AgentHooksInstall.claudeSettingsPath() {
             cmd = "\(cmd ?? "claude") --settings \(shellQuote(settings))"
+            if let srv = terminalTools, let cfg = srv.mcpConfigPath() {
+                cmd = "\(cmd ?? "claude") --mcp-config \(shellQuote(cfg)) --append-system-prompt \(shellQuote(srv.systemPrompt()))"
+            }
         } else if agent?.name == "Codex" {
             let overrides = AgentHooksInstall.codexLaunchOverrides()
             if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
@@ -3109,7 +3133,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func zoomInMenu() { applyZoom(UIScale.step(+1), delta: +1) }
     @objc private func zoomOutMenu() { applyZoom(UIScale.step(-1), delta: -1) }
     @objc private func zoomResetMenu() { applyZoom(UIScale.reset(), delta: 0) }
+    // ⌘+/⌘− AUTO-REPEATS. Each press used to synchronously re-font the editor, reload the ghostty
+    // config, re-set every terminal surface's font, rebuild the rail/status/tabs/explorer and
+    // broadcast applyScale() to every registered panel (which walks the whole chat transcript).
+    // Holding the key queued that whole pipeline per repeat — the reported lag. UIScale.factor is
+    // already updated by the caller, so coalescing the EXPENSIVE part is safe: the single rebuild
+    // that runs uses the final factor.
+    private var zoomWork: DispatchWorkItem?
     private func applyZoom(_ baseFont: Int, delta: Int) {
+        zoomWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.applyZoomNow() }
+        zoomWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
+    }
+    private func applyZoomNow() {
         // ⌘+/⌘−/⌘0 scales EVERYTHING. The editor and terminal sizes are the user's chosen
         // Settings sizes multiplied by the zoom factor (UIScale.editorFontSize /
         // .terminalFontSize) — not a separate 12pt base — so zoom and the font-size setting
@@ -3295,6 +3332,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         editor.open(path: path, content: content)
     }
 
+    // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
+    // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
+    // asks with a modal (the terminal agent is blocked waiting for the answer either way).
+    private func handleTerminalTool(_ id: String, _ tool: String, _ args: [String: Any], _ srv: ChatAskServer) {
+        func s(_ k: String) -> String { args[k] as? String ?? "" }
+        switch tool {
+        case "ask_user":
+            let opts = args["options"] as? [String] ?? []
+            let a = NSAlert()
+            a.messageText = s("question").isEmpty ? t("title.terminal") : s("question")
+            a.alertStyle = .informational
+            for o in opts.prefix(3) { a.addButton(withTitle: o) }
+            if opts.isEmpty { a.addButton(withTitle: t("common.ok")) }
+            let idx = a.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+            srv.resolve(id, result: opts.indices.contains(idx) ? opts[idx] : (opts.first ?? "ok"))
+        case "riven_open_file":
+            let p = s("path")
+            let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
+            openFileAt(URL(fileURLWithPath: p), line: line, column: 1)
+            srv.resolve(id, result: "opened \(p) in riven editor")
+        case "riven_open_browser":
+            if auxDockPanels["preview"] == nil { toggleDockPanel("preview") }
+            previewPanel.openURLString(s("url"))
+            srv.resolve(id, result: "opened \(s("url")) in riven preview panel")
+        case "riven_screenshot":
+            if auxDockPanels["preview"] == nil { toggleDockPanel("preview") }
+            let u = args["url"] as? String
+            if let u { previewPanel.openURLString(u) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + (u == nil ? 0.2 : 1.6)) {
+                self.previewPanel.capture { path in
+                    srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
+                }
+            }
+        case "riven_api_request":
+            let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
+            if auxDockPanels["api"] == nil { toggleDockPanel("api") }
+            apiPanel.run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
+            srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
+        case "riven_panels":
+            guard let dock = activeDock else { srv.resolve(id, result: "(no dock)"); return }
+            var out: [String] = []
+            for g in dock.groups { for p in g.panels { out.append("- id=\(p.id) kind=\(panelKind(p)) title=\(p.title)") } }
+            srv.resolve(id, result: "workspace: \(workspace?.path ?? "?")\npanels:\n" + out.joined(separator: "\n"))
+        case "riven_open_panel":
+            let kind = s("kind")
+            switch kind {
+            case "editor": showEditorPane()
+            case "terminal": newTerminal()
+            case "chat": newChat()
+            case "search", "git", "preview", "api", "changes", "notes":
+                if auxDockPanels[kind] == nil { toggleDockPanel(kind) }
+            default: srv.resolve(id, result: "unknown kind: \(kind)"); return
+            }
+            srv.resolve(id, result: "opened \(kind)")
+        case "riven_close_panel":
+            let pid = s("id")
+            if let dock = activeDock {
+                for g in dock.groups { for p in g.panels where p.id == pid { dock.removePanel(p); refreshRailAgents(); srv.resolve(id, result: "closed \(pid)"); return } }
+            }
+            srv.resolve(id, result: "no panel with id \(pid)")
+        case "riven_workspaces":
+            srv.resolve(id, result: workspaces.map { ($0 == workspace ? "* " : "- ") + $0.path }.joined(separator: "\n"))
+        case "riven_open_workspace":
+            let url = URL(fileURLWithPath: s("path")).standardizedFileURL.resolvingSymlinksInPath()
+            if let existing = workspaces.first(where: { $0.path == url.path }) { activate(existing); srv.resolve(id, result: "switched to \(url.path)"); return }
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                let ws = uniqueWorkspaceURL(for: url); rail.addWorkspace(ws); activate(ws)
+                srv.resolve(id, result: "opened \(url.path)")
+            } else { srv.resolve(id, result: "not a folder: \(s("path"))") }
+        default:
+            srv.resolve(id, result: "unknown tool: \(tool)")
+        }
+    }
+
     // Open an agent-edited file with its before/after diff (green added lines, red
     // deleted view-zones, hunk revert) — the editor opens to the RIGHT of the terminal.
     private func openAgentEdit(_ path: String) {
@@ -3470,7 +3582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); lsp.stopAll() }
+    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); Settings.shared.flush(); lsp.stopAll() }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the
