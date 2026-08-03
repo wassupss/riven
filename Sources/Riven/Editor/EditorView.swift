@@ -201,17 +201,30 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     // Swap the visible tab set WITHOUT disposing models (workspace switch). Calls back with the
     // paths that have no model yet, so the caller only reads THOSE files from disk.
     func setTabs(_ paths: [String], active: String?, missing: @escaping ([String]) -> Void) {
+        // The webview isn't loaded yet during session restore — evaluating then is a no-op and the
+        // tabs never appear. Queue it and replay on "ready" (same contract as open()/pending).
+        guard ready else {
+            pendingTabs = (paths, active, missing)
+            return
+        }
         let arr = "[" + paths.map { jsString($0) }.joined(separator: ",") + "]"
         let act = active.map { jsString($0) } ?? "null"
         web.evaluateJavaScript("window.rivenSetTabs(\(arr), \(act))") { result, _ in
             missing((result as? [String]) ?? [])
         }
     }
+    private var pendingTabs: (paths: [String], active: String?, missing: ([String]) -> Void)?
     /// Free the Monaco models of a closed workspace (switching keeps them resident).
     func disposePaths(_ paths: [String]) {
         guard !paths.isEmpty else { return }
         let arr = "[" + paths.map { jsString($0) }.joined(separator: ",") + "]"
         web.evaluateJavaScript("window.rivenDisposePaths && window.rivenDisposePaths(\(arr))", completionHandler: nil)
+    }
+    /// Debug: the tab order the webview actually holds.
+    func dumpTabs(_ done: @escaping (String) -> Void) {
+        web.evaluateJavaScript("Array.from(document.querySelectorAll('.etabs > *')).map(e => (e.dataset.path||e.textContent||'').split('/').pop().trim()).filter(Boolean).join(',')") { r, _ in
+            done((r as? String) ?? "?")
+        }
     }
     func showEmpty() {
         web.evaluateJavaScript("window.rivenShowEmpty()", completionHandler: nil)
@@ -263,7 +276,10 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             pushI18n()
             // Re-push the current file (survives a WKWebView reload from being
             // reparented into the dock). Falls back to any queued open.
-            if let c = currentOpen { push(path: c.path, content: c.content) }
+            if let t = pendingTabs {          // restore queued the tab set before the webview loaded
+                pendingTabs = nil
+                setTabs(t.paths, active: t.active, missing: t.missing)
+            } else if let c = currentOpen { push(path: c.path, content: c.content) }
             else if let p = pending { push(path: p.path, content: p.content) }
             pending = nil
             // A reload wipes ALL web-side models, but native still lists every open tab.

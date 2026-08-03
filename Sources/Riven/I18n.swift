@@ -14,6 +14,11 @@ extension Notification.Name {
     static let rivenSnippetsChanged = Notification.Name("rivenSnippetsChanged")
     // 에디터/터미널 폰트 크기 설정이 바뀜 → 각 뷰가 즉시 반영 (재시작 불필요).
     static let rivenFontSizeChanged = Notification.Name("rivenFontSizeChanged")
+    // Divider drag begin/end. NSSplitView's mouseDown runs a modal tracking loop for the whole
+    // drag, so these bracket it exactly — unlike viewWillStartLiveResize, which isn't guaranteed
+    // for divider tracking. Panes with expensive layout (the chat transcript) freeze on begin.
+    static let rivenDividerDragBegan = Notification.Name("rivenDividerDragBegan")
+    static let rivenDividerDragEnded = Notification.Name("rivenDividerDragEnded")
 }
 
 enum I18n {

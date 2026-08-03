@@ -1739,6 +1739,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 for (p, content) in loaded where cur.openTabs.contains(p) {
                     ed.openBackground(path: p, content: content)
                 }
+                // Tabs are APPENDED as their content arrives, and the active tab is re-pushed
+                // separately by EditorView — so the strip ended up in load order (t2,t3,t1), not the
+                // user's order. Re-assert the canonical order once every model exists.
+                ed.setTabs(cur.openTabs, active: cur.activeTab) { _ in }
             }
         }
     }
@@ -2001,6 +2005,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // RIVEN_SWITCH_BENCH=<n>: switch back and forth n times and log each activate() duration, so
     // the switch path can be measured without a human clicking (and with real panes: chat, editor
     // tabs, terminals). Debug-only; never runs unless the env var is set.
+    // RIVEN_RESIZE_BENCH=<n>: drag a dock divider n times and log how long each step takes, so the
+    // resize path can be measured without a human holding the mouse.
+    private func runResizeBench() {
+        guard let n = ProcessInfo.processInfo.environment["RIVEN_RESIZE_BENCH"].flatMap(Int.init) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, let dock = self.activeDock,
+                  let sv = dock.container.subviews.compactMap({ $0 as? NSSplitView }).first,
+                  sv.arrangedSubviews.count >= 2 else { RLog.log("RESIZEBENCH no split"); return }
+            // Measure BOTH splits, and include the display pass — a drag repaints every frame, so
+            // layout alone understates it.
+            func run(_ label: String, _ target: NSSplitView) {
+                var times: [Double] = []
+                let base = target.arrangedSubviews[0].frame.size
+                let start = target.isVertical ? base.width : base.height
+                for i in 0..<n {
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    target.setPosition(start + CGFloat((i % 20) * 6 - 60), ofDividerAt: 0)
+                    target.layoutSubtreeIfNeeded()
+                    self.window.displayIfNeeded()          // include drawing, like a real drag
+                    times.append(CFAbsoluteTimeGetCurrent() - t0)
+                }
+                let ms = times.map { $0 * 1000 }
+                RLog.log(String(format: "RESIZEBENCH[%@] n=%d avg=%.1fms max=%.1fms", label, ms.count,
+                                ms.reduce(0,+) / Double(max(ms.count,1)), ms.max() ?? 0))
+            }
+            run("dock-first", sv)
+            // The divider NEXT TO the chat pane: resizing it re-wraps every rendered message.
+            if sv.arrangedSubviews.count >= 2 {
+                var times: [Double] = []
+                let last = sv.arrangedSubviews.count - 2
+                let start = sv.arrangedSubviews[last].frame.width
+                for i in 0..<n {
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    sv.setPosition(start + CGFloat((i % 20) * 6 - 60), ofDividerAt: last)
+                    sv.layoutSubtreeIfNeeded(); self.window.displayIfNeeded()
+                    times.append(CFAbsoluteTimeGetCurrent() - t0)
+                }
+                let ms = times.map { $0 * 1000 }
+                RLog.log(String(format: "RESIZEBENCH[dock-chat] n=%d avg=%.1fms max=%.1fms", ms.count,
+                                ms.reduce(0,+) / Double(max(ms.count,1)), ms.max() ?? 0))
+            }
+            if let body = self.bodySplit { run("sidebar", body) }
+        }
+    }
     private func runSwitchBench() {
         guard let n = ProcessInfo.processInfo.environment["RIVEN_SWITCH_BENCH"].flatMap(Int.init),
               workspaces.count >= 2 else { return }
@@ -2446,6 +2494,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
         activate(active)
         runSwitchBench()
+        runResizeBench()
+        // RIVEN_ORDERDUMP=1: log the app's workspace order, the rail's order and the editor's tab
+        // order 3s after restore, to see which one diverges (⌘N uses the app array; the ⌘N chip is
+        // numbered from the rail's array; the tabs come from the webview).
+        if ProcessInfo.processInfo.environment["RIVEN_ORDERDUMP"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                RLog.log("ORDER app=" + self.workspaces.map { $0.lastPathComponent }.joined(separator: ","))
+                RLog.log("ORDER rail=" + self.rail.orderDump())
+                if let ws = self.workspace {
+                    RLog.log("ORDER openTabs=" + self.state(for: ws).openTabs.map { ($0 as NSString).lastPathComponent }.joined(separator: ","))
+                }
+                self.editor.dumpTabs { RLog.log("ORDER jsTabs=" + $0) }
+            }
+        }
         // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
         if let frac = s["sidebarRail"] as? Double, frac > 0.05, frac < 0.95 {
             DispatchQueue.main.async { [weak self] in
@@ -2489,6 +2552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         if p == cur.activeTab { self.editor.open(path: p, content: content) }
                         else { self.editor.openBackground(path: p, content: content) }
                     }
+                    self.editor.setTabs(cur.openTabs, active: cur.activeTab) { _ in }   // keep the user's order
                 }
             }
         }
@@ -3684,7 +3748,9 @@ final class PersistingSplitView: NSSplitView {
     private(set) var isUserDragging = false
     override func mouseDown(with event: NSEvent) {
         isUserDragging = true
+        NotificationCenter.default.post(name: .rivenDividerDragBegan, object: nil)
         super.mouseDown(with: event)
+        NotificationCenter.default.post(name: .rivenDividerDragEnded, object: nil)
         isUserDragging = false
     }
 }
