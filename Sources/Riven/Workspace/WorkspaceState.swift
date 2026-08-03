@@ -25,6 +25,23 @@ final class WorkspaceState {
     // singletons (they follow the active workspace), so snapshotting it at quit would persist a
     // layout with the editor slot gone.
     var savedLayout: [String: Any]?
+    // This workspace's OWN editor panel. Its content is `editorHost`, an empty container the shared
+    // editor view (one WKWebView for the app) is moved into when this workspace is shown. Panels
+    // used to be a single shared instance detached from one dock and re-inserted into another on
+    // every switch — profiling showed that detach/cleanupEmpty + restorePlacement dance was the
+    // remaining switch cost. Now the tree never changes; only the webview is re-parented.
+    var editorPanel: DockPanel?
+    let editorHost = NSView()
+    /// This workspace's aux panels (search/git/preview/api/changes/notes). Each hosts an empty
+    /// container; the shared panel view is moved in when this workspace is shown.
+    var auxPanels: [String: DockPanel] = [:]
+    var auxHosts: [String: NSView] = [:]
+    func auxHost(_ id: String) -> NSView {
+        if let v = auxHosts[id] { return v }
+        let v = NSView(); v.autoresizingMask = [.width, .height]
+        auxHosts[id] = v
+        return v
+    }
     // 구버전 세션("terminals" 키)의 터미널 구성(에이전트 이름 또는 "" = 일반 터미널).
     // pendingLayout이 없을 때만 쓰는 하위 호환 폴백 — 새 세션은 layout으로만 저장한다.
     var pendingTerminals: [String]?

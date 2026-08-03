@@ -59,6 +59,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var sigtermSource: DispatchSourceSignal?   // persist on SIGTERM (kill/restart/logout)
     private var auxDockPanels: [String: DockPanel] = [:]  // search/git/preview/changes
     private var subagentPanels: [String: DockPanel] = [:]  // sub-agent id → its dock panel
+    // Shown over the dock while a workspace switch finishes. Some of the switch cost is irreducible
+    // (the incoming dock's first layout), so tell the user something is happening instead of
+    // freezing silently. It only helps if it actually PAINTS, which is why the heavy tail below runs
+    // on the next runloop turn.
+    private lazy var switchOverlay: NSView = {
+        let v = NSView(); v.wantsLayer = true
+        v.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.6).cgColor
+        let spin = NSProgressIndicator()
+        spin.style = .spinning; spin.controlSize = .small
+        spin.translatesAutoresizingMaskIntoConstraints = false
+        spin.startAnimation(nil)
+        v.addSubview(spin)
+        NSLayoutConstraint.activate([
+            spin.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            spin.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+        ])
+        v.isHidden = true
+        return v
+    }()
+    private func showSwitchOverlay() {
+        if switchOverlay.superview !== dockHost {
+            switchOverlay.frame = dockHost.bounds
+            switchOverlay.autoresizingMask = [.width, .height]
+            dockHost.addSubview(switchOverlay, positioned: .above, relativeTo: nil)
+        }
+        dockHost.addSubview(switchOverlay, positioned: .above, relativeTo: nil)   // keep it on top
+        switchOverlay.isHidden = false
+        switchOverlay.displayIfNeeded()
+    }
+    private func hideSwitchOverlay() { switchOverlay.isHidden = true }
     private var lastSubagentPanel: [String: DockPanel] = [:]  // chat pane id → its most recent sub-agent panel
     private var editorVisible = false
     var workspace: URL?
@@ -1317,7 +1347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     // Human-readable kind of a dock panel (for the chat's riven_panels tool).
     private func panelKind(_ p: DockPanel) -> String {
-        if p === editorDockPanel { return "editor" }
+        if p.id == "editor" { return "editor" }
         if p.content is TerminalView { return p.agentName != nil ? "agent" : "terminal" }
         if p.content is ChatPanel { return "chat" }
         if p.content === sourceControl { return "git" }
@@ -1546,14 +1576,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 공유 에디터 패널(싱글턴)을 만들거나 돌려준다 — 배치는 호출자 몫 (showEditorPane
     // 의 기본 배치 또는 레이아웃 복원의 스냅샷 자리).
     private func ensureEditorPanel() -> DockPanel {
-        if editorDockPanel == nil {
+        guard let ws = workspace else { return editorDockPanel ?? DockPanel(id: "editor", title: t("title.editor"), content: NSView()) }
+        let st = state(for: ws)
+        if st.editorPanel == nil {
+            let host = st.editorHost
+            host.translatesAutoresizingMaskIntoConstraints = true
+            host.autoresizingMask = [.width, .height]
             let p = DockPanel(id: "editor", title: t("title.editor"),
                 icon: NSImage(systemSymbolName: "curlybraces", accessibilityDescription: nil),
-                content: editorPane, closable: true)
+                content: host, closable: true)
             p.onClose = { [weak self] in self?.closeAllEditorTabs() }
-            editorDockPanel = p
+            st.editorPanel = p
         }
-        return editorDockPanel!
+        editorDockPanel = st.editorPanel     // "the editor panel of the CURRENT workspace"
+        adoptEditor(into: st)
+        return st.editorPanel!
+    }
+    private func sharedAuxView(_ id: String) -> NSView {
+        switch id {
+        case "search": return searchPanel
+        case "git": return sourceControl
+        case "preview": return previewPanel
+        case "api": return apiPanel
+        case "changes": return changesPanel
+        case "notes": return notesPanel
+        default: return NSView()
+        }
+    }
+    /// Point a shared aux panel at this workspace (they hold per-workspace roots).
+    private func refreshAuxRoot(_ id: String, ws: URL) {
+        switch id {
+        case "search": searchPanel.setRoot(ws)
+        case "git": sourceControl.setRoot(ws)
+        case "changes": changesPanel.setWorkspace(ws)
+        case "notes": notesPanel.setWorkspace(ws)
+        default: break
+        }
+    }
+    /// Move a shared panel view into a workspace's host container (one view; cheap).
+    private func adopt(_ view: NSView, into host: NSView) {
+        guard view.superview !== host else { return }
+        view.removeFromSuperview()
+        view.frame = host.bounds
+        view.autoresizingMask = [.width, .height]
+        view.translatesAutoresizingMaskIntoConstraints = true
+        host.addSubview(view)
+    }
+    /// Move the shared editor view into this workspace's host container (cheap: one view, and its
+    /// subtree is a single hosted WKWebView).
+    private func adoptEditor(into st: WorkspaceState) {
+        guard editorPane.superview !== st.editorHost else { return }
+        editorPane.removeFromSuperview()
+        editorPane.frame = st.editorHost.bounds
+        editorPane.autoresizingMask = [.width, .height]
+        st.editorHost.addSubview(editorPane)
     }
     private func closeAllEditorTabs() {
         guard let ws = workspace else { return }
@@ -1662,7 +1738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Monaco focus (JS), anything else → make it first responder. Used on activation, on
     // close-survivor, on workspace return, and on app re-activation so focus is never lost.
     private func focusPanelContent(_ p: DockPanel) {
-        if p === editorDockPanel { editor.focusEditor() }
+        if p.id == "editor" { editor.focusEditor() }
         else if let tv = p.content as? TerminalView { tv.focusTerminal() }
         else if let chat = p.content as? ChatPanel { chat.focusInput() }   // cursor → message field
         else { p.content.window?.makeFirstResponder(p.content) }
@@ -1898,7 +1974,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.small)]))
         headerLabel?.attributedStringValue = hs
     }
+    // RIVEN_SWITCH_BENCH=<n>: switch back and forth n times and log each activate() duration, so
+    // the switch path can be measured without a human clicking (and with real panes: chat, editor
+    // tabs, terminals). Debug-only; never runs unless the env var is set.
+    private func runSwitchBench() {
+        guard let n = ProcessInfo.processInfo.environment["RIVEN_SWITCH_BENCH"].flatMap(Int.init),
+              workspaces.count >= 2 else { return }
+        var times: [Double] = []
+        func step(_ i: Int) {
+            guard i < n else {
+                let ms = times.map { $0 * 1000 }
+                let avg = ms.reduce(0, +) / Double(max(ms.count, 1))
+                RLog.log(String(format: "SWITCHBENCH n=%d avg=%.0fms max=%.0fms all=%@",
+                                ms.count, avg, ms.max() ?? 0,
+                                ms.map { String(format: "%.0f", $0) }.joined(separator: ",")))
+                return
+            }
+            let target = workspaces[i % workspaces.count]
+            guard target != workspace else { step(i + 1); return }
+            let t0 = CFAbsoluteTimeGetCurrent()
+            activate(target)
+            times.append(CFAbsoluteTimeGetCurrent() - t0)
+            // next switch after the deferred tail has run, so each measurement is a clean switch
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { step(i + 1) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { step(0) }
+    }
+
     private func activate(_ url: URL, focusPaneId: String? = nil) {
+        if workspace != nil, workspace != url { showSwitchOverlay() }
         suppressAutoFocus = true   // don't let restored panels (editor/aux) steal focus; applied at the end
         if !workspaces.contains(url) { workspaces.append(url) }
         let st = state(for: url)
@@ -1933,13 +2037,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 분리 전에 각 싱글턴이 있던 자리를 그 독에 기록해 두고, 돌아올 때 기본
         // 위치가 아니라 그 자리로 복원한다 (#4).
         if let old = activeDock {
-            if let ep = editorDockPanel, ep.group?.manager === old {
-                old.recordPlacement(of: ep); old.detach(ep)
-            }
-            for (_, ap) in auxDockPanels where ap.group?.manager === old {
-                old.recordPlacement(of: ap)   // remember the exact slot so returning doesn't need a rebuild
-                old.detach(ap)   // singleton view leaves this workspace's dock; re-tabs into focus on return
-            }
         }
         auxDockPanels.removeAll()
 
@@ -2059,6 +2156,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 이웃으로 참조하는 경우가 많아, aux가 먼저 제자리에 있어야 에디터도
         // 기록된 자리로 복원된다 (#4). 레이아웃 복원이 이미 배치했다면 건너뛴다
         // (기본 가장자리에 또 붙이지 않게).
+        // This workspace's aux panels live in ITS dock permanently; just move the shared views back
+        // into their hosts and re-point the active map (no detach/re-insert, no tree mutation).
+        auxDockPanels.removeAll()
+        for (id, panel) in st.auxPanels where panel.group?.manager === dock {
+            adopt(sharedAuxView(id), into: st.auxHost(id))
+            auxDockPanels[id] = panel
+            refreshAuxRoot(id, ws: url)
+        }
         if !restoredLayout {
             for id in ["search", "git", "preview", "changes", "api", "notes"] where st.openAux.contains(id) {
                 if auxDockPanels[id] == nil { toggleDockPanel(id) }
@@ -2078,6 +2183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.searchPanel.setRoot(url); self.gitPanel.setRoot(url); self.changesPanel.setWorkspace(url)
             self.notesPanel.setWorkspace(url)   // flushes the previous workspace's note first
             self.refreshRailAgents()   // this workspace's agent rows
+            self.hideSwitchOverlay()
             self.refreshGit()
         }
 
@@ -2140,6 +2246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Close a workspace: tear down its dock + state, switch to another (or empty).
     private func closeWorkspace(_ url: URL) {
+        let st0 = states[url]
         if let st = states[url] {
             // Dock containers now STAY in dockHost (hidden) across switches, so closing a workspace
             // must remove this one explicitly, and stop its chat sessions — otherwise its hidden
@@ -2150,6 +2257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (p.content as? ChatPanel)?.teardown()
             }
         }
+        editor.disposePaths(st0?.openTabs ?? [])   // models stay resident across switches now
         states[url] = nil
         lsp.stopClients(rootPath: url.path)   // don't leave orphaned language-server processes
         AgentEdits.shared.clearWorkspace(url.path)   // release retained file contents (#60)
@@ -2313,6 +2421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let activeKey = s["active"] as? String
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
         activate(active)
+        runSwitchBench()
         // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
         if let frac = s["sidebarRail"] as? Double, frac > 0.05, frac < 0.95 {
             DispatchQueue.main.async { [weak self] in
@@ -2328,7 +2437,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 탭을 전부 다시 연다 (활성 탭을 마지막에 열어 그 탭이 보이게).
     private func rebuildTabs(for st: WorkspaceState) {
         tabBar.closeAll()
-        editor.showEmpty()   // 이전 워크스페이스의 모델을 전부 dispose + 그룹 하나로 리셋
         // 디스크에서 사라진 파일은 건너뛴다 (restoreSession과 같은 필터).
         let fm = FileManager.default
         st.openTabs = st.openTabs.filter { fm.fileExists(atPath: $0) }
@@ -2336,28 +2444,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if st.activeTab == nil { st.activeTab = st.openTabs.last }
         for p in st.openTabs { tabBar.open(p) }
         guard let active = st.activeTab else {
+            editor.setTabs([], active: nil) { _ in }   // clear the view, KEEP the models
             hideEditorPane()   // workspace has no open tabs → terminal full width
             statusBar.setFileInfo("")
             return
         }
         showEditorPane()
-        showTabContent(active)   // 활성 탭은 동기 로드 → 즉시 보임
-        tabBar.setActive(active)
-        statusBar.setFileInfo(fileInfo(active))
-        // 비활성 탭 복원: 파일 읽기를 메인 스레드에서 하면 탭이 많거나 큰 워크스페이스에서
-        // 전환 때마다 UI가 멈춘다 — 백그라운드에서 읽고, 활성 뷰를 뺏지 않고 탭 칩만 추가한다.
-        let inactive = st.openTabs.filter { $0 != active }
-        guard !inactive.isEmpty, let ws = workspace else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
-            let loaded = inactive.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
-            DispatchQueue.main.async {
-                guard self.workspace == ws else { return }   // 그새 다른 워크스페이스로 전환됨 → 취소
-                let cur = self.state(for: ws)
-                for (p, content) in loaded where cur.openTabs.contains(p) {
-                    self.editor.openBackground(path: p, content: content)
+        // Swap the tab set instead of disposing every Monaco model and re-creating it. Disposing
+        // meant each switch re-read and re-tokenized every file — the 1-2s workspace-switch stall.
+        // Models now live until the workspace is closed, so returning is a pure tab swap and only
+        // never-loaded files are read from disk (reported back as `missing`).
+        let ws = workspace
+        editor.setTabs(st.openTabs, active: active) { [weak self] missing in
+            guard let self, self.workspace == ws, !missing.isEmpty else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let loaded = missing.map { ($0, (try? String(contentsOfFile: $0, encoding: .utf8)) ?? "") }
+                DispatchQueue.main.async {
+                    guard self.workspace == ws, let cur = ws.map({ self.state(for: $0) }) else { return }
+                    for (p, content) in loaded where cur.openTabs.contains(p) {
+                        if p == cur.activeTab { self.editor.open(path: p, content: content) }
+                        else { self.editor.openBackground(path: p, content: content) }
+                    }
                 }
             }
         }
+        tabBar.setActive(active)
+        statusBar.setFileInfo(fileInfo(active))
     }
 
     private func refreshGit() {
@@ -3157,12 +3269,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
         default: return nil
         }
-        let panel = DockPanel(id: id, title: title,
-            icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: content)
+        // Per-workspace panel hosting the SHARED view (same pattern as the editor): the dock tree
+        // then never changes on a switch — we only re-parent the content view.
+        let st = state(for: ws)
+        let host = st.auxHost(id)
+        adopt(content, into: host)
+        let panel = st.auxPanels[id] ?? DockPanel(id: id, title: title,
+            icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: host)
+        panel.title = title
         panel.onClose = { [weak self] in
             self?.auxDockPanels[id] = nil
+            st.auxPanels[id] = nil
             self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
         }
+        st.auxPanels[id] = panel
         auxDockPanels[id] = panel
         return panel
     }

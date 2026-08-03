@@ -868,6 +868,37 @@ window.rivenClose = function (path) {
   if (ag) updateHunkNav(currentPath);
   if (!groups.some(x => x.tabs.length)) document.getElementById('empty').style.display = 'flex';
 };
+// Switch the visible tab set WITHOUT disposing models — the workspace-switch path.
+// rivenShowEmpty() disposes every Monaco model, so returning to a workspace had to re-create
+// and re-tokenize each file: that was 1-2s of the switch. Keeping models resident makes a
+// return a pure tab swap. Models are freed when a workspace is CLOSED (rivenDisposePaths).
+// Returns the paths that have no model yet, so native only reads those files from disk.
+window.rivenSetTabs = function (paths, active) {
+  for (const g of groups.slice(1)) removeGroup(g);   // collapse splits; group 0 carries the set
+  const g = groups[0];
+  const missing = [];
+  if (!g) return missing;
+  g.tabs = paths.filter(p => models[p] || imageSrc[p]);
+  for (const p of paths) if (!models[p] && !imageSrc[p]) missing.push(p);
+  g.active = (active && g.tabs.includes(active)) ? active : (g.tabs[0] || null);
+  g.ed.setModel(g.active && !isImage(g.active) ? (models[g.active] || null) : null);
+  applyImageMode(g);
+  renderTabs(g);
+  currentPath = g.active;
+  if (currentPath) { updateHunkNav(currentPath); updateBlame(); }
+  document.getElementById('empty').style.display = g.tabs.length ? 'none' : 'flex';
+  return missing;
+};
+// Free the models of a closed workspace (switching no longer disposes anything).
+window.rivenDisposePaths = function (paths) {
+  for (const p of paths) {
+    const m = models[p];
+    if (m) { try { m.dispose(); } catch (e) {} }
+    delete models[p]; delete savedVersion[p]; delete docVersion[p];
+    delete agentState[p]; delete agentDecos[p]; delete blameData[p]; delete imageSrc[p];
+  }
+  for (const g of groups) { g.tabs = g.tabs.filter(t => models[t] || imageSrc[t]); renderTabs(g); }
+};
 window.rivenShowEmpty = function () {
   for (const g of groups.slice(1)) removeGroup(g);
   const g = groups[0];

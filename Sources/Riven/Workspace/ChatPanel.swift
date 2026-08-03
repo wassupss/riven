@@ -595,20 +595,43 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var loadingEarlier = false
     // Prepend the previous batch ABOVE the current view, keeping the reader's position stable
     // (anchor by document-height delta) — so auto-loading never yanks the scroll.
+    // Load one small batch per runloop turn. Rendering 50 messages at once — markdown parsing and
+    // syntax highlighting for each — froze the main thread; the "scrolling up lags" report. Small
+    // chunks keep each turn short, and the scroll stays anchored after every chunk.
+    private static let pageBatch = 12
     @objc private func loadEarlier() {
         guard !pendingHistory.isEmpty, !loadingEarlier else { return }
         loadingEarlier = true
-        defer { loadingEarlier = false }
-        let batch = Array(pendingHistory.suffix(50)); pendingHistory.removeLast(batch.count)
+        let batch = Array(pendingHistory.suffix(ChatPanel.pageBatch))
+        pendingHistory.removeLast(batch.count)
         layoutSubtreeIfNeeded()
         let oldH = stack.frame.height, oldY = scroll.contentView.bounds.origin.y
         loadEarlierBtn?.removeFromSuperview(); loadEarlierBtn = nil
         if !pendingHistory.isEmpty { addLoadEarlierButton() }
         renderMessages(batch, atTop: true)
+        trimBottomIfNeeded()
         layoutSubtreeIfNeeded()
         let dy = stack.frame.height - oldH
         scroll.contentView.setBoundsOrigin(NSPoint(x: 0, y: oldY + dy))
         scroll.reflectScrolledClipView(scroll.contentView)
+        // Release the guard on the NEXT turn, not via defer: defer would clear it inside this call,
+        // and the setBoundsOrigin above posts a bounds change that re-enters clipMoved immediately.
+        DispatchQueue.main.async { [weak self] in self?.loadingEarlier = false }
+    }
+    // Paging upward used to grow the rendered stack without limit (trimTranscript only runs when a
+    // NEW turn starts), so after a few loads every layout pass walked hundreds of extra views. Drop
+    // views from the BOTTOM once the window is full — they're re-rendered from the session when the
+    // reader scrolls back down.
+    private func trimBottomIfNeeded() {
+        let maxViews = 260
+        var subs = stack.arrangedSubviews
+        guard subs.count > maxViews else { return }
+        var drop = subs.count - maxViews
+        while drop > 0, let last = subs.last {
+            if last === current { break }          // never drop the live turn
+            last.removeFromSuperview()
+            subs.removeLast(); drop -= 1
+        }
     }
     private static func contentText(_ c: Any?) -> String {
         if let s = c as? String { return s }
@@ -1210,7 +1233,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Infinite scroll: reaching the TOP auto-loads the previous batch (no button). After a load
         // the content grows above and the position is preserved, so this won't re-trigger until the
         // reader scrolls up to the new top again.
-        if !loadingEarlier, !pendingHistory.isEmpty, scroll.contentView.bounds.origin.y < UIScale.pt(80) {
+        if !loadingEarlier, !pendingHistory.isEmpty, scroll.contentView.bounds.origin.y < UIScale.pt(220) {
             loadEarlier()
         }
     }
