@@ -198,6 +198,21 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     // Show the empty state (no active file) — used when switching to a workspace
     // that has no open tabs.
+    // Swap the visible tab set WITHOUT disposing models (workspace switch). Calls back with the
+    // paths that have no model yet, so the caller only reads THOSE files from disk.
+    func setTabs(_ paths: [String], active: String?, missing: @escaping ([String]) -> Void) {
+        let arr = "[" + paths.map { jsString($0) }.joined(separator: ",") + "]"
+        let act = active.map { jsString($0) } ?? "null"
+        web.evaluateJavaScript("window.rivenSetTabs(\(arr), \(act))") { result, _ in
+            missing((result as? [String]) ?? [])
+        }
+    }
+    /// Free the Monaco models of a closed workspace (switching keeps them resident).
+    func disposePaths(_ paths: [String]) {
+        guard !paths.isEmpty else { return }
+        let arr = "[" + paths.map { jsString($0) }.joined(separator: ",") + "]"
+        web.evaluateJavaScript("window.rivenDisposePaths && window.rivenDisposePaths(\(arr))", completionHandler: nil)
+    }
     func showEmpty() {
         web.evaluateJavaScript("window.rivenShowEmpty()", completionHandler: nil)
     }
