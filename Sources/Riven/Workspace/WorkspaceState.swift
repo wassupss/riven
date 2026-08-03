@@ -20,6 +20,11 @@ final class WorkspaceState {
     // 팬 크기 + 탭 구성). 이 워크스페이스의 독을 처음 만들 때 restore()로 그대로
     // 재현하고 비운다. nil이면 복원할 레이아웃이 없다.
     var pendingLayout: [String: Any]?
+    // Layout captured when leaving this workspace, WITH the shared editor/aux panels still in
+    // place. Used only when saving the session: an inactive workspace's live dock is missing those
+    // singletons (they follow the active workspace), so snapshotting it at quit would persist a
+    // layout with the editor slot gone.
+    var savedLayout: [String: Any]?
     // 구버전 세션("terminals" 키)의 터미널 구성(에이전트 이름 또는 "" = 일반 터미널).
     // pendingLayout이 없을 때만 쓰는 하위 호환 폴백 — 새 세션은 layout으로만 저장한다.
     var pendingTerminals: [String]?
