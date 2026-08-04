@@ -80,6 +80,159 @@ final class RivenSelect: NSPopUpButton, Themable {
     func applyTheme() { contentTintColor = Theme.fg }
 }
 
+/// Outlined secondary button — same height/radius as the primary so the two line up
+/// in a column or a row; used for non-committing actions next to a primary (add a row,
+/// cancel, reset).
+final class RivenSecondaryButton: NSButton, Themable {
+    convenience init(_ title: String, target: AnyObject?, action: Selector) {
+        self.init(frame: .zero)
+        self.title = title
+        self.target = target; self.action = action
+        isBordered = false
+        wantsLayer = true
+        layer?.cornerRadius = UIMetrics.radius
+        layer?.borderWidth = 1
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: UIMetrics.rowH).isActive = true
+        applyTheme()
+        Theme.register(self)
+    }
+    func applyTheme() {
+        layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.borderColor = Theme.edge.cgColor
+        contentTintColor = Theme.fg
+        attributedTitle = NSAttributedString(string: title, attributes: [
+            .foregroundColor: Theme.fg, .font: UIScale.font(UIScale.body, .medium)])
+    }
+}
+
+/// Flat underline tabs — the same tab language as the dock strip (text + a 2pt accent underline
+/// under the active one, hairline baseline across the whole strip). NOT pills: a pill reads as a
+/// filter chip, and a row of pills next to another row of pills reads as nothing at all.
+final class RivenTabStrip: NSView, Themable, Scalable {
+    /// (label, optional trailing count) per tab.
+    var tabs: [(String, Int?)] = [] { didSet { rebuild() } }
+    private(set) var selected = 0
+    var onSelect: ((Int) -> Void)?
+
+    private let row = NSStackView()
+    private let scroll = NSScrollView()
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        row.orientation = .horizontal; row.spacing = 0; row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = row
+        scroll.drawsBackground = false
+        scroll.hasHorizontalScroller = false; scroll.hasVerticalScroller = false
+        scroll.horizontalScrollElasticity = .allowed; scroll.verticalScrollElasticity = .none
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            row.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            row.heightAnchor.constraint(equalTo: scroll.heightAnchor),
+        ])
+        heightAnchor.constraint(equalToConstant: UIScale.pt(32)).isActive = true
+        Theme.register(self); UIScale.register(self)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func select(_ i: Int, notify: Bool = false) {
+        guard i >= 0, i < tabs.count else { return }
+        selected = i; rebuild()
+        if notify { onSelect?(i) }
+    }
+    func applyTheme() { rebuild() }
+    func applyScale() { rebuild() }
+
+    /// 세로 델타를 가로 이동으로 (탭이 많아 넘칠 때 휠로 훑을 수 있게).
+    override func scrollWheel(with e: NSEvent) {
+        let dx = e.scrollingDeltaX != 0 ? e.scrollingDeltaX : e.scrollingDeltaY
+        guard dx != 0 else { super.scrollWheel(with: e); return }
+        let maxX = max(0, row.frame.width - scroll.contentView.bounds.width)
+        let x = min(maxX, max(0, scroll.contentView.bounds.origin.x - dx))
+        scroll.contentView.scroll(to: NSPoint(x: x, y: 0))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    // 아래쪽 하드라인(기준선)은 스트립 자신이 그린다 — 탭 사이 간격에서도 끊기지 않게.
+    override func draw(_ dirty: NSRect) {
+        Theme.hairline.setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
+    }
+
+    private func rebuild() {
+        row.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (i, tab) in tabs.enumerated() {
+            row.addArrangedSubview(TabItem(title: tab.0, count: tab.1, active: i == selected) { [weak self] in
+                self?.select(i, notify: true)
+            })
+        }
+        needsDisplay = true
+    }
+
+    private final class TabItem: NSView {
+        private let onTap: () -> Void
+        private let active: Bool
+        private var hot = false
+        private var track: NSTrackingArea?
+        init(title: String, count: Int?, active: Bool, onTap: @escaping () -> Void) {
+            self.onTap = onTap; self.active = active
+            super.init(frame: .zero)
+            wantsLayer = true
+            translatesAutoresizingMaskIntoConstraints = false
+            let label = NSTextField(labelWithString: title)
+            label.font = UIScale.font(UIScale.body, active ? .semibold : .regular)
+            label.textColor = active ? Theme.fg : Theme.fgDim
+            label.translatesAutoresizingMaskIntoConstraints = false
+            var views: [NSView] = [label]
+            if let count {
+                let c = NSTextField(labelWithString: "\(count)")
+                c.font = UIScale.font(UIScale.caption, .medium)
+                c.textColor = active ? Theme.accent : Theme.fgDim.withAlphaComponent(0.8)
+                c.translatesAutoresizingMaskIntoConstraints = false
+                views.append(c)
+            }
+            let stack = NSStackView(views: views)
+            stack.orientation = .horizontal; stack.spacing = 5; stack.alignment = .firstBaseline
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(stack)
+            let pad = UIScale.pt(13)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+                stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+                stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let t = track { removeTrackingArea(t) }
+            let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+            addTrackingArea(t); track = t
+        }
+        override func hitTest(_ p: NSPoint) -> NSView? { bounds.contains(convert(p, from: superview)) ? self : nil }
+        override func mouseEntered(with e: NSEvent) { hot = true; needsDisplay = true }
+        override func mouseExited(with e: NSEvent) { hot = false; needsDisplay = true }
+        override func mouseDown(with e: NSEvent) { onTap() }
+        override func draw(_ dirty: NSRect) {
+            if hot && !active {
+                Theme.fgDim.withAlphaComponent(0.07).setFill()
+                NSRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 1).fill()
+            }
+            guard active else { return }
+            Theme.accent.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width, height: 2).fill()
+        }
+    }
+}
+
 /// Filled primary button (accent) with a label colour picked for contrast.
 final class RivenPrimaryButton: NSButton, Themable {
     convenience init(_ title: String, target: AnyObject?, action: Selector) {

@@ -38,6 +38,11 @@ final class Settings {
     // every frame (sidebar width / rail height), so resizing a panel stuttered against the disk.
     // Readers see the new value at once; the file catches up within a runloop turn.
     private var flushScheduled = false
+    /// 접두사로 시작하는 키들 (에이전트 그룹 명단처럼 키에 이름이 들어가는 경우).
+    func keys(prefix: String) -> [String] {
+        read { dict.keys.filter { $0.hasPrefix(prefix) }.sorted() }
+    }
+
     func set(_ key: String, _ value: Any) {
         lock.lock()
         dict[key] = value

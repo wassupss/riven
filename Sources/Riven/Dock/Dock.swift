@@ -34,6 +34,14 @@ final class DockPanel {
     // 에이전트 세션 id (Claude Code `--session-id`). 저장했다가 복원 때 `--resume <id>`로
     // 그 패널의 정확한 대화를 이어간다. (cwd 기반 --continue의 다중 패널 한계를 넘음)
     var sessionId: String?
+    /// Chat panes only: the human-readable handle peers address it by, and the custom agent
+    /// (.claude/agents) it runs as. Persisted in the layout snapshot so an agent group keeps its
+    /// roles across a relaunch — restoring only the session id lost who each pane WAS.
+    var chatNickname: String?
+    var chatAgent: String?
+    var chatGroup: String?      // agent-group name, shown in the title and kept across restarts
+    var chatParent: String?     // nickname of the agent this one reports to (org chart / hierarchy)
+    var chatModel: String?      // model this pane is pinned to ("opus"/"sonnet"/…), nil = 계정 기본
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable
@@ -108,6 +116,41 @@ final class DockManager {
         emptyView.onOpenEditor = { [weak self] in self?.onOpenEditor?() }
         emptyView.isHidden = true
         container.addSubview(emptyView)
+        DockManager.installClickMonitor()
+    }
+
+    /// 이번 setActive가 마우스 클릭에서 왔는지 — onActivePanel 안에서만 유효.
+    /// 클릭일 땐 앱이 강제 포커스를 걸지 않는다(트랜스크립트 텍스트 선택을 뺏지 않도록).
+    private(set) var activationFromClick = false
+
+    // 패널의 어느 지점을 클릭하든 그 패널이 활성화되어야 한다. 예전에는 터미널·챗만
+    // mouseDown을 구현해 두어 노트/검색/깃/API 패널은 본문을 클릭해도 활성 링이 그대로였다.
+    // 타입마다 심는 대신 창 전체에서 좌/우클릭을 한 번 관찰해 hitTest가 속한 DockGroup을
+    // 활성화한다(이벤트는 그대로 흘려보내 드래그·선택에 영향 없음).
+    private static var clickMonitor: Any?
+    private static func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { e in
+            guard let win = e.window, let root = win.contentView else { return e }
+            var v: NSView? = root.hitTest(root.convert(e.locationInWindow, from: nil))
+            while let cur = v {
+                if let g = cur as? DockGroup {
+                    if let mgr = g.manager, !g.panels.isEmpty {
+                        mgr.setActive(g, fromClick: true)
+                        // 클릭 지점이 스스로 포커스를 받지 못하는 곳(패널 여백·라벨 등)이면
+                        // 창 포커스가 이전 패널에 남는다 → 이벤트 처리 후 확인해서 보정.
+                        DispatchQueue.main.async { [weak g] in
+                            guard let g, let mgr = g.manager, mgr.activeGroup === g else { return }
+                            if let fr = win.firstResponder as? NSView, fr.isDescendant(of: g) { return }
+                            mgr.onActivePanel?(g.activePanel)
+                        }
+                    }
+                    break
+                }
+                v = cur.superview
+            }
+            return e
+        }
     }
 
     // Total panels across every group; drives the empty-state overlay.
@@ -160,6 +203,15 @@ final class DockManager {
     @discardableResult
     func addPanel(_ panel: DockPanel, reference: DockGroup? = nil, direction: DockDir? = nil,
                   sizeHint: CGFloat? = nil, activate: Bool = true) -> DockGroup {
+        // 빈 독에서는 방향 분할을 무시한다. 패널이 하나도 없는 상태에서 (빈) 기준 그룹
+        // 옆으로 쪼개면 원래 자리가 빈 팬으로 남아 왼쪽은 공백, 새 패널은 오른쪽 절반만
+        // 차지한다 — 첫 패널은 언제나 독 전체를 채워야 한다.
+        if totalPanels == 0 {
+            let g = container.subviews.compactMap({ $0 as? DockGroup }).first
+                ?? { let g = DockGroup(); setRoot(g); return g }()
+            g.manager = self
+            g.add(panel); if activate { setActive(g) }; refreshEmpty(); return g
+        }
         if let ref = reference, let dir = direction, dir != .center {
             let g = DockGroup(); g.manager = self
             split(ref, with: g, direction: dir, sizeHint: sizeHint)
@@ -171,10 +223,12 @@ final class DockManager {
         g.add(panel); if activate { setActive(g) }; refreshEmpty(); return g
     }
 
-    func setActive(_ g: DockGroup) {
+    func setActive(_ g: DockGroup, fromClick: Bool = false) {
         for grp in groups { grp.isActiveGroup = (grp === g) }
         activeGroup = g
+        activationFromClick = fromClick
         onActivePanel?(g.activePanel)
+        activationFromClick = false
     }
 
     // Split `group` in `direction`, placing `newGroup` next to it.
@@ -270,6 +324,37 @@ final class DockManager {
     // Set every pane's extent by walking the dividers left→right / top→bottom.
     // `extents` must have one entry per arranged subview; positions are cumulative
     // (divider i sits after panes 0…i plus the i dividers before it).
+    /// 한 팬이 속한 split의 형제들을 같은 크기로 맞춘다. 연속으로 쪼개면 절반의 절반씩
+    /// 줄어들어 3열이 140/63/134 처럼 들쭉날쭉해진다 — 그룹을 만들 때 균등하게 편다.
+    func equalizeSiblings(of group: DockGroup?) {
+        container.layoutSubtreeIfNeeded()
+        guard let sv = group?.superview as? NSSplitView, sv.arrangedSubviews.count > 1 else { return }
+        let total = sv.isVertical ? sv.bounds.width : sv.bounds.height
+        let n = CGFloat(sv.arrangedSubviews.count)
+        let each = max(1, (total - sv.dividerThickness * (n - 1)) / n)
+        setExtents(sv, Array(repeating: each, count: sv.arrangedSubviews.count))
+    }
+
+    /// 이 팬이 속한 (좌우) 분할에서 그쪽이 화면의 대부분을 갖게 한다. 그룹을 만들면 설정
+    /// 패널과 반반으로 나뉘어 정작 에이전트들이 절반 안에 갇히던 걸 막는다.
+    func giveMajority(to group: DockGroup?, fraction: CGFloat) {
+        container.layoutSubtreeIfNeeded()
+        // 가장 바깥쪽의 좌우 2분할을 고른다 — 그룹 안쪽(리드 | 멤버영역)이 아니라 패널과
+        // 그룹 전체를 가르는 경계여야 한다.
+        var v: NSView? = group
+        var target: (NSSplitView, Int)?
+        while let cur = v, let sv = cur.superview as? NSSplitView {
+            if sv.isVertical, sv.arrangedSubviews.count == 2,
+               let idx = sv.arrangedSubviews.firstIndex(of: cur) { target = (sv, idx) }
+            v = sv
+        }
+        if let (sv, idx) = target {
+            let total = sv.bounds.width - sv.dividerThickness
+            let mine = max(1, total * fraction), other = max(1, total - mine)
+            setExtents(sv, idx == 0 ? [mine, other] : [other, mine])
+        }
+    }
+
     private func setExtents(_ sv: NSSplitView, _ extents: [CGFloat]) {
         guard extents.count == sv.arrangedSubviews.count, extents.count >= 2 else { return }
         var pos: CGFloat = 0
@@ -633,7 +718,9 @@ final class DockManager {
     // After a close, make a group that still has panels active so its content takes
     // focus (via onActivePanel → onActivate). Prevents "focus vanished → ⌘W quits".
     func focusSurvivor() {
-        if let g = activeGroup, !g.panels.isEmpty { setActive(g); return }
+        // 트리에서 이미 떨어져 나간 그룹은 후보가 아니다 — 방금 비워져 제거된 그룹을
+        // 그대로 활성으로 두면 링도 창 포커스도 어디에도 남지 않는다("포커스 사라짐").
+        if let g = activeGroup, !g.panels.isEmpty, g.isDescendant(of: container) { setActive(g); return }
         if let g = groups.first(where: { !$0.panels.isEmpty }) { setActive(g) }
     }
 
@@ -648,7 +735,13 @@ final class DockManager {
         g?.remove(panel, dispose: false)
         container.layoutSubtreeIfNeeded()
         cleanupEmpty(g)
-        if normalize { normalizeTree() }
+        if normalize {
+            normalizeTree()
+            // 사용자가 닫은 경우(토글/메뉴)엔 removePanel과 똑같이 살아남은 팬으로 포커스를
+            // 넘긴다. 예전엔 remove() 안의 setActive가 방금 빈 그룹을 활성으로 잡아둔 채
+            // 끝나 활성 링과 창 포커스가 모두 사라졌다.
+            focusSurvivor()
+        }
         // NOTE: intentionally NO normalizeTree() here. detach runs on every workspace
         // switch (editor + each aux panel move out); a full-tree ensureMinExtents sweep
         // would resize the OUTGOING dock's surviving panes every time, so a workspace's
@@ -695,6 +788,9 @@ final class DockManager {
     @discardableResult
     func restorePlacement(_ panel: DockPanel) -> Bool {
         guard let pl = savedPlacements.removeValue(forKey: panel.id) else { return false }
+        // 빈 독이면 기억해 둔 자리(절반/사이드)로 되돌리지 않는다 — 옆자리가 전부 비어
+        // 있어 화면 절반이 공백으로 남는다. addPanel의 전체 채우기 경로로 넘긴다.
+        guard totalPanels > 0 else { return false }
         container.layoutSubtreeIfNeeded()
         // 1) 탭으로 있던 그룹이 아직 살아있으면 그 자리(탭 인덱스)로.
         if let host = resolveGroup(pl.hostGroup, pl.hostPanelIds) {
@@ -810,7 +906,19 @@ final class DockManager {
             guard !g.panels.isEmpty else { return nil }      // 빈 그룹은 저장하지 않는다
             let descs = g.panels.map { p -> String in
                 // Native chat panes persist their session id so they resume on relaunch.
-                if p.id.hasPrefix("chat-") { return p.sessionId.map { "chat:\($0)" } ?? "chat" }
+                if p.id.hasPrefix("chat-") {
+                    // "chat:<sid>\t<nickname>\t<agent>\t<group>\t<parent>\t<model>" — tabs are safe
+                    // (ids/names can't contain them) and every shorter/older form still parses.
+                    // and the old "chat:<sessionId>" form still parses.
+                    // Always carry the role, even before the CLI has handed us a session id — a
+                    // freshly created group saved at that moment used to come back as anonymous panes.
+                    let sid = p.sessionId ?? ""
+                    let nick = p.chatNickname ?? "", agent = p.chatAgent ?? ""
+                    let group = p.chatGroup ?? "", parent = p.chatParent ?? ""
+                    let model = p.chatModel ?? ""
+                    if sid.isEmpty && nick.isEmpty && agent.isEmpty && group.isEmpty && model.isEmpty { return "chat" }
+                    return "chat:\(sid)\t\(nick)\t\(agent)\t\(group)\t\(parent)\t\(model)"
+                }
                 guard p.id.hasPrefix("term-") else { return p.id }
                 // "term:<agent>" plus, if we own a resumable session id, "\t<sessionId>".
                 let base = "term:\(p.agentName ?? "")"
@@ -958,7 +1066,7 @@ final class DockManager {
 
 // A tabbed group: a 30px dock-tab bar over the active panel's content. Acts as a
 // drag destination so panels can be dropped in (tab) or on an edge (split).
-final class DockGroup: NSView {
+final class DockGroup: NSView, Scalable {
     private(set) var panels: [DockPanel] = []
     private(set) var activeIndex = 0
     let tabBar = DockTabBar()
@@ -994,7 +1102,8 @@ final class DockGroup: NSView {
         return v
     }()
 
-    static let tabBarHeight: CGFloat = 30
+    // UI 배율을 따라간다 — 30 고정이던 시절엔 ⌘+로 글꼴만 커져서 탭 글자가 바 안에 갇혔다.
+    static var tabBarHeight: CGFloat { UIScale.pt(30) }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1005,8 +1114,12 @@ final class DockGroup: NSView {
         addSubview(borderOverlay)   // always on top
         // Manual frame layout (see layout()) — deterministic, no constraint-timing
         // gaps that left `content` at zero size while a terminal surface was created.
+        UIScale.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// ⌘+/- 로 배율이 바뀌면 탭 높이·폰트가 함께 커져야 한다 (탭을 다시 만들고 재배치).
+    func applyScale() { tabBar.rebuild(); needsLayout = true; layout() }
 
     // Drop zones cover the content during a drag so panel content (WKWebView /
     // Metal) can't swallow the drop. Added by the manager on drag start.
@@ -1063,7 +1176,9 @@ final class DockGroup: NSView {
         if dispose { panel.onClose?() }
         activeIndex = min(activeIndex, panels.count - 1)
         showActive(); tabBar.rebuild()
-        manager?.setActive(self)
+        // 비어버린 그룹은 곧 트리에서 제거된다 — 여기서 활성으로 잡으면 호출자가 이웃으로
+        // 포커스를 넘기기 전에 활성 링이 죽은 그룹에 묶인다. 남은 탭이 있을 때만 활성화.
+        if !panels.isEmpty { manager?.setActive(self) }
         manager?.refreshEmpty()
     }
     func select(id: String) {
@@ -1149,7 +1264,7 @@ final class DockDropZone: NSView {
         let w = bounds.width, h = bounds.height
         guard w > 0, h > 0 else { return .center }
         // 탭 바 위에 놓으면 언제나 "이 그룹의 탭으로 추가". 드롭존이 탭 바까지 덮는데
-        // 탭 바는 그룹 최상단 30px라 아래의 위쪽 가장자리 밴드(28%)에 항상 걸려서,
+        // 탭 바는 그룹 최상단 한 줄이라 아래의 위쪽 가장자리 밴드(28%)에 항상 걸려서,
         // 탭에 떨어뜨려도 탭 추가가 아니라 위로 분할돼 버렸다.
         if pt.y >= h - DockGroup.tabBarHeight { return .center }
         let fx = pt.x / w, fy = pt.y / h, e: CGFloat = 0.28
@@ -1193,10 +1308,21 @@ final class DockSplitView: NSSplitView, NSSplitViewDelegate {
     // Side-by-side (vertical divider) panes get a wider floor so content panels stay
     // usable when narrowed; stacked (horizontal divider) panes keep the smaller floor.
     private func minPane(_ v: NSSplitView) -> CGFloat { v.isVertical ? 140 : 80 }
-    func splitView(_ v: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat { minPane(v) }
-    func splitView(_ v: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        (v.isVertical ? v.bounds.width : v.bounds.height) - minPane(v)
+    // 좌표는 split 전체 기준이므로 앞/뒤에 몇 개가 더 있는지까지 세어야 한다. 상수 하나만
+    // 돌려주면 팬이 3개 이상일 때 두 번째 디바이더의 최소>최대가 되어(3열 = 140/63/134)
+    // 균등 배치도 사용자의 드래그도 엉뚱한 곳에 붙는다.
+    func splitView(_ v: NSSplitView, constrainMinCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
+        let m = minPane(v)
+        return CGFloat(i) * (m + v.dividerThickness) + m
     }
+    func splitView(_ v: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
+        let m = minPane(v), total = v.isVertical ? v.bounds.width : v.bounds.height
+        let after = CGFloat(v.arrangedSubviews.count - 1 - i)
+        // 자리가 근본적으로 모자라면 최소치를 지켜 범위가 뒤집히지 않게 한다.
+        return max(CGFloat(i) * (m + v.dividerThickness) + m, total - after * (m + v.dividerThickness))
+    }
+    /// 나란히 놓을 수 있는 최대 열 수 (이보다 많으면 팬이 최소 폭에 걸려 쓸모없어진다).
+    static func maxColumns(forWidth w: CGFloat) -> Int { max(1, Int(w / 150)) }
 }
 
 // riven's empty workbench (Workbench.tsx .dock-empty): shown when the dock holds no

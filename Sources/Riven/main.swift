@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var apiPanel: APIClientPanel!
     var changesPanel: ChangesPanel!
     var notesPanel: NotesPanel!            // per-workspace private scratchpad
+    var teamPanel: AgentGroupPanel!        // orchestration: set up a group of agents
     private var chatSeq = 0                  // multi-instance chat panes: one session per pane
     var sourceControl: SourceControlView!   // git panel = commit graph + working changes
     var sidebarLower: NSView!
@@ -517,6 +518,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         apiPanel = APIClientPanel(frame: .zero)
         changesPanel = ChangesPanel(frame: .zero)
         notesPanel = NotesPanel(frame: .zero)
+        teamPanel = AgentGroupPanel(frame: .zero)
+        teamPanel.agentsProvider = { [weak self] in self?.chatAgents() ?? [] }
+        teamPanel.onCreate = { [weak self] group, specs in self?.createAgentGroup(group, specs) }
+        // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
+        teamPanel.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
+        teamPanel.onFocusAgent = { [weak self] group, name in self?.focusAgentPane(group, name) }
+        teamPanel.onEditAgent = { [weak self] group, old, name, model, parent in
+            self?.editAgentPane(group, old, name: name, model: model, parent: parent)
+        }
+        teamPanel.onAddAgent = { [weak self] group, name, persona, model, parent in
+            self?.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
+        }
+        teamPanel.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
         changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
         changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
 
@@ -700,7 +714,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // with a zero frame never spawns its shell.
     private func makeDock(for st: WorkspaceState) -> DockManager {
         let dock = DockManager()
-        dock.onActivePanel = { [weak self] p in self?.dockActivePanelChanged(p) }
+        dock.onActivePanel = { [weak self, weak dock] p in
+            self?.dockActivePanelChanged(p, click: dock?.activationFromClick ?? false)
+        }
         dock.onAddTerminal = { [weak self] in self?.newTerminal() }
         dock.onOpenEditor = { [weak self] in self?.showEditorPane(); self?.editor.focusEditor() }
         dock.setRoot(DockGroup())
@@ -1149,7 +1165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Re-title open singleton/aux panels for the current language, then repaint tabs.
     private func relocalizeOpenPanels() {
-        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "api": "title.api", "changes": "title.changes", "notes": "title.notes"]
+        let key = ["search": "title.search", "git": "title.git", "preview": "title.preview", "api": "title.api", "changes": "title.changes", "notes": "title.notes", "team": "title.team"]
         for (id, p) in auxDockPanels { if let k = key[id] { p.title = t(k) } }
         editorDockPanel?.title = t("title.editor")
         for ws in workspaces {
@@ -1208,14 +1224,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ---- native chat panes (PoC): ONE ClaudeChatSession per pane, like terminals ----
     // A new pane = a new independent agent session (the model the user asked for). Resume
     // reopens a past session id in a fresh pane.
-    private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil) -> DockPanel {
+    private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil,
+                               model: String? = nil) -> DockPanel {
         chatSeq += 1
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
         chat.agentPersona = agent
+        chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
         chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
         chat.onEditedFile = { [weak self] path in self?.recordAgentFileEdit(workspace: st.url.path, path: path) }
+        chat.onListAgents = { [weak self] in self?.chatAgents() ?? [] }
+        chat.onAgentPanes = { [weak self] in self?.agentPanesReport() ?? "(unavailable)" }
+        chat.onAskAgent = { [weak self, weak chat] target, message, done in
+            self?.askAgentPane(target, message, from: chat, done)
+        }
+        chat.onAskAgents = { [weak self, weak chat] tasks, done in
+            self?.askAgentPanes(tasks, from: chat, done)
+        }
+        chat.onOpenAgentChat = { [weak self] name in self?.newChat(agent: name) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
@@ -1253,7 +1280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "editor": self.showEditorPane()
             case "terminal": self.newTerminal()
             case "chat": self.newChat()
-            case "search", "git", "preview", "api", "changes", "notes": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
+            case "search", "git", "preview", "api", "changes", "notes", "team": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
             default: return "unknown kind: \(kind)"
             }
             return "opened \(kind)"
@@ -1282,6 +1309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: agent ?? "Claude",
                           icon: icon, content: chat, closable: true)
         p.agentName = agent ?? "Claude Code"                     // → appears in the workspace rail
+        p.chatAgent = agent                                      // persisted so a restore keeps the role
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
         let wsPath = st.url.path, paneId = p.id
@@ -1326,7 +1354,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Clicking INTO the pane also clears it — even when it's already the active panel, where
         // focusGroup/setActive is a no-op so onActivate wouldn't fire (the lingering-完료 bug).
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat); clearAttn() }
-        p.onClose = { [weak self, weak chat] in
+        p.onClose = { [weak self, weak chat, weak p] in
+            // 그룹 팬이면 닫기 전에 명단에 마지막 상태(세션 id 포함)를 남긴다 — 조직도에서
+            // 다시 열 때 그 세션을 --resume 으로 이어받는다.
+            if let p, let g = p.chatGroup { self?.noteClosedAgent(g, p) }
             chat?.teardown()
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
             self?.refreshRailAgents()
@@ -1373,7 +1404,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         chat.onTitle = { [weak self, weak p] title in
             guard let self, let p else { return }
-            p.title = title; self.refreshDockTabs(); self.refreshRailAgents()
+            // 그룹 팬은 정체성이 먼저다 — "배포팀 · 구현"을 요약 제목으로 덮어쓰면 누가 누군지
+            // 알 수 없다. 그룹/닉네임은 고정하고 요약은 뒤에 덧붙인다.
+            if let g = p.chatGroup, let nick = p.chatNickname {
+                let base = "\(g) · \(nick)"
+                let short = title.trimmingCharacters(in: .whitespaces)
+                p.title = short.isEmpty || short == nick ? base : "\(base) · \(short)"
+            } else {
+                p.title = title
+            }
+            self.refreshDockTabs(); self.refreshRailAgents()
         }
         return p
     }
@@ -1397,6 +1437,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content === apiPanel { return "api" }
         if p.content === changesPanel { return "changes" }
         if p.content === notesPanel { return "notes" }
+        if p.content === teamPanel { return "team" }
         return "panel"
     }
     private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
@@ -1449,7 +1490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let fmt = DateFormatter(); fmt.dateFormat = "MM/dd HH:mm"
         for s in sessions.prefix(20) {
             let title = s.title.isEmpty ? String(s.id.prefix(8)) : s.title
-            let item = NSMenuItem(title: "\(title)   —   \(fmt.string(from: s.modified))",
+            let item = NSMenuItem(title: "\(title)   ·   \(fmt.string(from: s.modified))",
                                   action: #selector(pickResume(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = s.id
             menu.addItem(item)
@@ -1641,6 +1682,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "api": return apiPanel
         case "changes": return changesPanel
         case "notes": return notesPanel
+        case "team": return teamPanel
+        // 여기 빠진 id는 빈 NSView가 호스트에 덮여 패널이 통째로 클릭 불능이 된다
+        // (team이 빠져 있어 에이전트 그룹의 모든 클릭이 먹혔다). 새 aux 패널을 추가하면
+        // makeAuxPanel과 여기 둘 다 등록할 것.
         default: return NSView()
         }
     }
@@ -1768,10 +1813,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // panel restored (usually the editor) ended up focused instead of the pane the user was
     // on. Suppress focus during activation; activate() applies the intended focus at the end.
     private var suppressAutoFocus = false
-    private func dockActivePanelChanged(_ p: DockPanel?) {
+    private func dockActivePanelChanged(_ p: DockPanel?, click: Bool = false) {
         guard let p else { return }
         refreshRailAgents()   // pane added/closed/switched → keep the rail's agent rows in sync
         guard !suppressAutoFocus else { return }
+        // 클릭으로 활성화된 경우엔 강제 포커스를 걸지 않는다 — 클릭 지점(트랜스크립트 본문,
+        // 코드블록 등)이 스스로 포커스를 가져간다. 여기서 입력창을 잡아채면 드래그 선택이
+        // 끊긴다. 클릭 지점이 포커스를 못 받는 여백이면 Dock 쪽에서 한 번 더 불러 보정한다.
+        if click { return }
         // Terminals carry an onActivate (makeFirstResponder + clear attn). Editor/aux panels
         // don't, so without this fallback setActive would move the ring but leave the window
         // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared". Route every
@@ -2009,7 +2058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Window title + status bar + dock header for a workspace, honoring a custom name.
     private func updateWorkspaceHeader(_ url: URL) {
         let name = displayName(for: url)
-        window.title = "riven — \(name)"
+        window.title = "riven · \(name)"
         statusBar.setWorkspaceName(name)
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
@@ -2065,6 +2114,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if let body = self.bodySplit { run("sidebar", body) }
         }
+    }
+    // The FIRST switch to a workspace pays one-time costs (build its dock, spawn its panes) —
+    // measured at ~186ms vs ~20ms for later switches, which is the "재실행 후 첫 이동이 렉" report.
+    // Build those docks while the app is idle instead, one per runloop pass so the UI stays live.
+    private func prewarmWorkspaces(except active: URL) {
+        let targets = workspaces.filter { $0 != active && state(for: $0).dock == nil }
+        guard !targets.isEmpty else { return }
+        func step(_ i: Int) {
+            guard i < targets.count, let url = targets.first(where: { $0 == targets[i] }) else { return }
+            let st = state(for: url)
+            if st.dock == nil {
+                let d = makeDock(for: st); st.dock = d
+                d.container.frame = dockHost.bounds
+                d.container.autoresizingMask = [.width, .height]
+                d.container.isHidden = true                 // built, not shown
+                if d.container.superview !== dockHost { dockHost.addSubview(d.container) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { step(i + 1) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { step(0) }   // after the first paint
     }
     private func runSwitchBench() {
         guard let n = ProcessInfo.processInfo.environment["RIVEN_SWITCH_BENCH"].flatMap(Int.init),
@@ -2195,11 +2264,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // chat panes: reuse the LIVE pane (keeps its claude process + rendered transcript)
                 // when its session id matches; otherwise resume the persisted id, else fresh.
                 if desc.hasPrefix("chat:") {
-                    let sid = String(desc.dropFirst(5))
+                    // sid \t nickname \t persona \t group \t parent — 짧은(구버전) 형식도 그대로 읽힌다.
+                    let f = desc.dropFirst(5).components(separatedBy: "\t")
+                    func fld(_ i: Int) -> String { i < f.count ? f[i] : "" }
+                            let sid = fld(0), nick = fld(1), persona = fld(2), group = fld(3)
+                    let parent = fld(4), model = fld(5)
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
                         return liveChats.remove(at: i)          // reuse — no respawn, no reload
                     }
-                    return self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid)
+                    let p = self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid,
+                                               agent: persona.isEmpty ? nil : persona,
+                                               model: model.isEmpty ? nil : model)
+                    p.chatModel = model.isEmpty ? nil : model
+                    if !nick.isEmpty {                          // restore the group role
+                        p.title = group.isEmpty ? nick : "\(group) · \(nick)"
+                        p.agentName = nick; p.chatNickname = nick; p.chatGroup = group.isEmpty ? nil : group
+                        p.chatParent = parent.isEmpty ? nil : parent
+                        let chat = p.content as? ChatPanel
+                        chat?.nickname = nick; chat?.groupName = group.isEmpty ? nil : group
+                        chat?.parentName = parent.isEmpty ? nil : parent
+                    }
+                    return p
                 }
                 if desc == "chat" || desc.hasPrefix("chat-") {
                     // session-less chat (never sent a turn yet) — reuse the first idle live one
@@ -2254,7 +2339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             refreshAuxRoot(id, ws: url)
         }
         if !restoredLayout {
-            for id in ["search", "git", "preview", "changes", "api", "notes"] where st.openAux.contains(id) {
+            for id in ["search", "git", "preview", "changes", "api", "notes", "team"] where st.openAux.contains(id) {
                 if auxDockPanels[id] == nil { toggleDockPanel(id) }
             }
         }
@@ -2510,6 +2595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let activeKey = s["active"] as? String
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
         activate(active)
+        prewarmWorkspaces(except: active)
         runSwitchBench()
         runResizeBench()
         // RIVEN_ORDERDUMP=1: log the app's workspace order, the rail's order and the editor's tab
@@ -2524,6 +2610,280 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     RLog.log("ORDER openTabs=" + self.state(for: ws).openTabs.map { ($0 as NSString).lastPathComponent }.joined(separator: ","))
                 }
                 self.editor.dumpTabs { RLog.log("ORDER jsTabs=" + $0) }
+            }
+        }
+        // RIVEN_STATEDUMP=1: 재기동 후 복원된 그룹 상태 (그룹·닉네임·보고 라인·모델·제목).
+        if ProcessInfo.processInfo.environment["RIVEN_STATEDUMP"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                RLog.log("STATE panes=" + self.agentPanes().map {
+                    "[\($0.chat.groupName ?? "-")]\($0.chat.agentRole)←\($0.chat.parentName ?? "-")"
+                    + "/\($0.chat.preferredModel ?? "default")/\($0.chat.agentPersona ?? "-")"
+                }.joined(separator: " "))
+                RLog.log("STATE titles=" + self.agentPanes().map { $0.panel.title }.joined(separator: " | "))
+                // 패널을 열어야 탭이 채워진다 (열 때마다 살아있는 팬에서 다시 읽는다).
+                self.toggleDockPanel("team")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    RLog.log("STATE tabs=" + self.teamPanel.debugTabTitles().joined(separator: "|"))
+                }
+                self.activeDock?.dumpTree("STATE tree")
+            }
+        }
+        // RIVEN_ASKBENCH=1: 도구 응답 전달 규칙 — 정상 resolve / 만료된 id / 세션 종료 시.
+        if ProcessInfo.processInfo.environment["RIVEN_ASKBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let srv = ChatAskServer() else { RLog.log("ASK server unavailable"); return }
+                var got: String?
+                srv.onTool = { id, _, _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        RLog.log("ASK resolve(live)=\(srv.resolve(id, result: "선택 A"))")
+                        RLog.log("ASK resolve(stale)=\(srv.resolve(id, result: "늦은 클릭"))")
+                    }
+                }
+                DispatchQueue.global().async {
+                    got = ChatAskServer.debugCall(sock: srv.path, tool: "ask_user")
+                    DispatchQueue.main.async { RLog.log("ASK client got=\(got ?? "nil")") }
+                }
+            }
+        }
+        // RIVEN_PLANBENCH=1: 계획 파일 제목 추출 + 배지 노출/클릭 경로.
+        if ProcessInfo.processInfo.environment["RIVEN_PLANBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/plans")
+                let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasSuffix(".md") }
+                for f in files.prefix(3) {
+                    let path = (dir as NSString).appendingPathComponent(f)
+                    RLog.log("PLAN file=\(f) title=\(ChatPanel.planTitle(of: path))")
+                }
+                let badge = PlanBadge(frame: .zero)
+                badge.show(title: "사업장 정보 수정", file: "reactive-moseying-key.md")
+                var opened = false
+                badge.onOpen = { opened = true }
+                badge.mouseDown(with: NSEvent())
+                RLog.log("PLAN badge hidden=\(badge.isHidden) click=\(opened) tip=\(badge.toolTip ?? "-")")
+            }
+        }
+        // RIVEN_MDBENCH=1: 스트리밍 중 서식이 실제로 붙는지 + 표/제목/목록이 뷰로 그려지는지.
+        if ProcessInfo.processInfo.environment["RIVEN_MDBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let seg = AssistantText(frame: NSRect(x: 0, y: 0, width: 640, height: 10))
+                let md = """
+                # 요약
+
+                **굵게** 와 `코드` 가 섞인 문단입니다.
+
+                | 이름 | 모델 | 상태 |
+                |---|---|---|
+                | 리드 | Opus 5 | 대기 |
+                | 구현 | Sonnet 5 | 작업 중 |
+
+                - 첫째 항목
+                - 둘째 항목
+
+                ```swift
+                let x = 1
+                ```
+
+                마지막 문단입니다.
+                """
+                func grids(_ v: NSView) -> Int {
+                    (v is NSGridView ? 1 : 0) + v.subviews.reduce(0) { $0 + grids($1) }
+                }
+                func dump(_ tag: String) {
+                    let kinds = seg.subviews.first?.subviews.compactMap { v -> String in
+                        if let inner = v.subviews.first, !(v is NSStackView) { return "\(type(of: inner))" }
+                        return "\(type(of: v))"
+                    } ?? []
+                    RLog.log("MD \(tag) blocks=\(kinds.count) tables=\(grids(seg)) [\(kinds.joined(separator: ", "))]")
+                }
+                // 20자씩 흘려 넣으며 타이핑 진행
+                var i = md.startIndex
+                var ticks = 0
+                while i < md.endIndex {
+                    let j = md.index(i, offsetBy: 20, limitedBy: md.endIndex) ?? md.endIndex
+                    seg.receive(String(md[i..<j])); i = j
+                    while seg.advance() { }
+                    ticks += 1
+                    if ticks == 6 { dump("mid") }
+                }
+                dump("streamed")
+                seg.renderFinal()
+                dump("final")
+            }
+        }
+        // RIVEN_ZOOMBENCH=1: ⌘+ 로 배율을 올렸을 때 탭 바 높이·탭 폭이 함께 따라오는지.
+        // (30px 고정이던 시절엔 글꼴만 커져 탭 글자가 바 안에 갇혔다.)
+        if ProcessInfo.processInfo.environment["RIVEN_ZOOMBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                func grids(_ v: NSView) -> Int {
+                    (v is NSGridView ? 1 : 0) + v.subviews.reduce(0) { $0 + grids($1) }
+                }
+                func dump(_ tag: String) {
+                    let g = self.activeDock?.groups.first(where: { !$0.panels.isEmpty })
+                    let tabs = g?.tabBar.subviews.first?.subviews.first?.subviews.first?.subviews ?? []
+                    let widths = tabs.map { Int($0.frame.width) }
+                    RLog.log("ZOOM \(tag) factor=\(UIScale.factor) barH=\(Int(DockGroup.tabBarHeight)) "
+                           + "tabBar=\(Int(g?.tabBar.frame.height ?? 0)) tabW=\(widths)")
+                }
+                dump("before")
+                for _ in 0..<4 { self.zoomInMenu() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dump("after") }
+            }
+        }
+        // RIVEN_UIBENCH=1: 사용자가 실제로 하는 순서 그대로 — 패널을 열고 기본값으로 [그룹 만들기].
+        if ProcessInfo.processInfo.environment["RIVEN_UIBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                self.activeDock?.dumpTree("UI before")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    if ProcessInfo.processInfo.environment["RIVEN_UIBENCH"] == "5" {
+                        self.teamPanel.debugAddAgents(2)     // 리드 + 멤버 4명
+                    }
+                    self.teamPanel.debugCreate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        self.activeDock?.dumpTree("UI after")
+                        // 멤버 하나를 닫았다가 조직도에서 되살린다.
+                        if let victim = self.agentPanes().first(where: { $0.chat.agentRole == "멤버1" }) {
+                            self.activeDock?.removePanel(victim.panel)
+                            let after = self.liveAgentGroups().first { $0.group == "팀" }?.members ?? []
+                            RLog.log("REOPEN closed=" + after.map { "\($0.name):\($0.open ? "open" : "closed")" }.joined(separator: " "))
+                            self.focusAgentPane("팀", "멤버1")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                let now = self.liveAgentGroups().first { $0.group == "팀" }?.members ?? []
+                                RLog.log("REOPEN after=" + now.map { "\($0.name):\($0.open ? "open" : "closed")" }.joined(separator: " "))
+                                self.activeDock?.dumpTree("REOPEN tree")
+                            }
+                        }
+                        // 창을 그대로 PNG 로 떠서 눈으로 확인한다 (스크린 전체가 아니라 riven 창만).
+                        if let v = self.window.contentView,
+                           let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let png = rep.representation(using: .png, properties: [:]) {
+                                try? png.write(to: URL(fileURLWithPath: "/tmp/uibench.png"))
+                                RLog.log("UI shot /tmp/uibench.png \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // RIVEN_TEAMBENCH=1: 3단 계층 그룹을 만들어 팬이 깊이별 열로 놓이는지, 역할/부모가
+        // 스냅샷에 실려 다시 읽히는지 확인한다 (메인 | 리포트 열 | 그 아래 열).
+        if ProcessInfo.processInfo.environment["RIVEN_TEAMBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                // 넓은 오른쪽 영역에서 3열이 나오는지 보려고 기존 팬을 비운다.
+                if ProcessInfo.processInfo.environment["RIVEN_WIDEBENCH"] != nil,
+                   let dock = self.activeDock {
+                    for p in dock.groups.flatMap({ $0.panels }) { dock.removePanel(p) }
+                }
+                self.createAgentGroup("배포팀", [
+                    (name: "리드", agent: nil, model: nil, parent: nil),
+                    (name: "구현", agent: nil, model: "sonnet", parent: 0),
+                    (name: "리뷰", agent: nil, model: "haiku", parent: 0),
+                ])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let panes = self.agentPanes().map { "\($0.chat.agentRole)←\($0.chat.parentName ?? "-")/\($0.chat.preferredModel ?? "default")" }
+                    RLog.log("TEAM panes=" + panes.joined(separator: " "))
+                    RLog.log("TEAM report\n" + self.agentPanesReport())
+                    self.activeDock?.container.layoutSubtreeIfNeeded()
+                    let cols = self.agentPanes().map { p -> String in
+                        let f = p.panel.group?.convert(p.panel.group!.bounds, to: nil) ?? .zero
+                        return "\(p.chat.agentRole)@x\(Int(f.minX)),y\(Int(f.minY)),w\(Int(f.width))"
+                    }
+                    RLog.log("TEAM layout " + cols.joined(separator: " "))
+                    self.activeDock?.dumpTree("TEAM tree")
+                    // 지연 후 다시 균등화해 보고(타이밍 문제인지 확인) 트리를 또 찍는다.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let row = self.agentPanes().first { $0.chat.agentRole == "테스트" }
+                        self.activeDock?.equalizeSiblings(of: row?.panel.group)
+                        self.activeDock?.dumpTree("TEAM tree-after-equalize")
+                    }
+                    // 요약 제목이 와도 그룹·닉네임이 앞에 남아야 한다.
+                    for pane in self.agentPanes() { pane.chat.onTitle?("로그 파서 리팩터링") }
+                    RLog.log("TEAM titles=" + self.agentPanes().map { $0.panel.title }.joined(separator: " | "))
+                    // 실제 병렬 위임: 세 명에게 동시에 던지고 시작/도착 시각을 잰다.
+                    if ProcessInfo.processInfo.environment["RIVEN_PARBENCH"] != nil {
+                        let t0 = Date()
+                        let tasks = self.agentPanes().dropFirst().map {
+                            (agent: $0.chat.agentRole, message: "숫자 7만 답해. 설명 금지.")
+                        }
+                        for task in tasks {
+                            self.askAgentPane(task.agent, task.message, from: nil) { _ in
+                                RLog.log(String(format: "PAR done %@ at %.2fs", task.agent, Date().timeIntervalSince(t0)))
+                            }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            let busy = self.agentPanes().filter { $0.chat.isBusy }.map { $0.chat.agentRole }
+                            RLog.log("PAR busy-at-0.3s=" + busy.joined(separator: ","))
+                        }
+                    }
+                    // 조직도 편집: 이름·모델·보고 대상을 바꾸고 팬/자식 참조/스냅샷에 반영되는지.
+                    self.editAgentPane("배포팀", "구현", name: "빌더", model: "opus", parent: nil)
+                    RLog.log("TEAM edited=" + self.agentPanes().map {
+                        "\($0.chat.agentRole)←\($0.chat.parentName ?? "-")/\($0.chat.preferredModel ?? "default")"
+                    }.joined(separator: " "))
+                    RLog.log("TEAM editedTitles=" + self.agentPanes().map { $0.panel.title }.joined(separator: " | "))
+                    // 같은 이름으로 하나 더 만들면 합쳐지지 않고 분리돼야 한다.
+                    self.createAgentGroup("배포팀", [
+                        (name: "리드", agent: nil, model: nil, parent: nil),
+                        (name: "구현", agent: nil, model: nil, parent: 0),
+                    ])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        RLog.log("TEAM dup tabs=" + self.teamPanel.debugTabTitles().joined(separator: "|"))
+                        RLog.log("TEAM dup panes=" + self.agentPanes().map {
+                            "[\($0.chat.groupName ?? "-")]\($0.chat.agentRole)"
+                        }.joined(separator: " "))
+                    }
+                    RLog.log("TEAM panelOpen=\(self.auxDockPanels["team"] != nil) "
+                           + "tabs=" + self.teamPanel.debugTabTitles().joined(separator: "|")
+                           + " selected=\(self.teamPanel.debugSelectedTab()) chart=\(self.teamPanel.debugChartVisible())")
+                }
+            }
+        }
+        // RIVEN_FOCUSBENCH=1: 빈 독에 패널을 열었을 때 전체를 차지하는지, 여러 팬 중 하나를
+        // 닫았을 때 활성 그룹과 창 포커스가 살아남는지를 실제 트리로 찍는다 (클릭 없이 검증).
+        if ProcessInfo.processInfo.environment["RIVEN_FOCUSBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self, let dock = self.activeDock else { return }
+                for p in dock.groups.flatMap({ $0.panels }) { dock.removePanel(p) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    self.toggleDockPanel("notes")
+                    dock.container.layoutSubtreeIfNeeded()
+                    let frames = dock.groups.map { g in
+                        "\(g.panels.first?.id ?? "empty")=\(Int(g.frame.width))x\(Int(g.frame.height))"
+                    }
+                    RLog.log("FOCUS empty-open dock=\(Int(dock.container.bounds.width))x\(Int(dock.container.bounds.height)) panes[\(dock.groups.count)] " + frames.joined(separator: " "))
+                    self.newTerminal(); self.toggleDockPanel("search")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        let victim = dock.groups.flatMap({ $0.panels }).first { $0.id == "notes" }
+                        if let v = victim { dock.removePanel(v) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            let active = dock.groups.first(where: { $0.isActiveGroup })
+                            let fr = self.window.firstResponder
+                            let live = (fr as? NSView).map { v in dock.groups.contains { v.isDescendant(of: $0) } } ?? false
+                            RLog.log("FOCUS after-close active=\(active?.activePanel?.id ?? "NONE") "
+                                   + "firstResponder=\(fr.map { String(describing: type(of: $0)) } ?? "nil") inDock=\(live)")
+                            // 비활성 팬의 본문 한가운데를 합성 클릭 → 활성 그룹이 옮겨가는지.
+                            guard let target = dock.groups.first(where: { !$0.isActiveGroup && !$0.panels.isEmpty }),
+                                  let win = self.window as NSWindow? else { return }
+                            let c = target.convert(NSPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
+                            if let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: c, modifierFlags: [],
+                                                           timestamp: ProcessInfo.processInfo.systemUptime,
+                                                           windowNumber: win.windowNumber, context: nil,
+                                                           eventNumber: 0, clickCount: 1, pressure: 1) {
+                                let want = target.activePanel?.id ?? "?"
+                                NSApp.postEvent(ev, atStart: false)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    let now = dock.groups.first(where: { $0.isActiveGroup })?.activePanel?.id ?? "NONE"
+                                    RLog.log("FOCUS click target=\(want) active=\(now) ok=\(now == want)")
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
@@ -2902,7 +3262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateTitle(path: String, dirty: Bool) {
         let name = URL(fileURLWithPath: path).lastPathComponent
         let ws = workspace?.lastPathComponent ?? "riven"
-        window.title = "riven — \(ws)" + (dirty ? "  •  \(name) (수정됨)" : "  •  \(name)")
+        window.title = "riven · \(ws)" + (dirty ? "  •  \(name) (수정됨)" : "  •  \(name)")
     }
 
     // ---- menu (keyEquivalents are the reliable native shortcut path) ----
@@ -2951,6 +3311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addRemap(viewMenu, t("menu.preview"), "view.preview", #selector(previewMenu))
         addRemap(viewMenu, t("menu.changes"), "view.changes", #selector(changesMenu))
         addRemap(viewMenu, t("menu.notes"), "view.notes", #selector(notesMenu))
+        addRemap(viewMenu, t("menu.team"), "view.team", #selector(teamMenu))
         addRemap(viewMenu, "Chat", "view.chat", #selector(chatMenu))
         addRemap(viewMenu, t("menu.focusEditor"), "view.focusEditor", #selector(focusEditorMenu))
         addRemap(viewMenu, t("menu.focusTerminal"), "view.focusTerminal", #selector(focusTerminalMenu))
@@ -3103,7 +3464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Installed AI agents (scanned from PATH) — riven's AgentPicker entries. A setting
         // ("agentUI": "native" | "cli") decides whether Claude opens as the native chat panel
         // or the raw CLI in a terminal. Claude Code supports native; others (Codex) → CLI.
-        let nativeUI = Settings.shared.string("agentUI", "cli") == "native"
+        let nativeUI = Settings.shared.string("agentUI", "native") == "native"
         for a in AgentDiscovery.available() {
             let native = nativeUI && a.name == "Claude Code"
             actions.append(QuickAction(title: a.name,
@@ -3120,6 +3481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: t("api.test"), hint: "", symbol: "network") { [weak self] in self?.toggleDockPanel("api") },
             QuickAction(title: t("title.changes"), hint: "⌘⇧C", symbol: "clock.arrow.circlepath") { [weak self] in self?.toggleDockPanel("changes") },
             QuickAction(title: t("title.notes"), hint: "", symbol: "note.text") { [weak self] in self?.toggleDockPanel("notes") },
+            QuickAction(title: t("title.team"), hint: "", symbol: "person.3") { [weak self] in self?.toggleDockPanel("team") },
             QuickAction(title: "새 채팅", hint: "네이티브 에이전트", symbol: "bubble.left.and.text.bubble.right") { [weak self] in self?.newChat() },
             QuickAction(title: "새 채팅: 에이전트 선택", hint: "claude --agent", symbol: "person.2") { [weak self] in self?.newChatWithAgent() },
             QuickAction(title: "채팅: 이전 세션 열기", hint: "resume", symbol: "clock.arrow.circlepath") { [weak self] in self?.resumeChatSession() },
@@ -3258,6 +3620,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func previewMenu() { toggleDockPanel("preview") }
     @objc private func changesMenu() { toggleDockPanel("changes") }
     @objc private func notesMenu() { toggleDockPanel("notes") }
+    @objc private func teamMenu() { toggleDockPanel("team") }
     @objc private func chatMenu() { newChat() }
     @objc private func focusEditorMenu() { editor.focusEditor() }
     @objc private func focusTerminalMenu() { currentTerminal()?.focusTerminal() }
@@ -3367,6 +3730,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !dock.restorePlacement(panel) {
             dock.addPanel(panel, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
         }
+        if id == "team" { teamPanel.refresh() }      // 칩·조직도는 열 때마다 현재 팬에서 다시 읽는다
         if id == "search" { searchPanel.focusQuery() }
         else if id == "preview" { previewPanel.focusURL() }
     }
@@ -3385,6 +3749,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
+        case "team":    title = t("title.team"); symbol = "person.3"; content = teamPanel
         default: return nil
         }
         // Per-workspace panel hosting the SHARED view (same pattern as the editor): the dock tree
@@ -3411,6 +3776,331 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               let content = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         editor.close(path: path)
         editor.open(path: path, content: content)
+    }
+
+    /// Build a group of agent panes the way the user describes it: the MAIN agent owns one whole
+    /// vertical slot on the left, and the members fill the slot next to it top-to-bottom, at most
+    /// THREE per slot; a fourth member starts a new slot to the right.
+    ///
+    ///     ┌──────┬────────┬────────┐
+    ///     │ 리드 │ 멤버1  │ 멤버4  │
+    ///     │      │ 멤버2  │        │
+    ///     │      │ 멤버3  │        │
+    ///     └──────┴────────┴────────┘
+    ///
+    /// The slots are created FIRST, while each still holds a single pane, and only then filled
+    /// downward. Done the other way round the next slot nests inside one cell of the previous slot
+    /// instead of standing on its own.
+    private func createAgentGroup(_ requested: String, _ specs: [(name: String, agent: String?, model: String?, parent: Int?)]) {
+        guard let dock = activeDock, let ws = workspace, !specs.isEmpty else { return }
+        let st = state(for: ws)
+        // 그룹 이름이 곧 식별자다(탭·조직도·riven_ask_agent 가 이름으로 찾는다). 같은 이름으로
+        // 또 만들면 두 그룹이 하나로 합쳐져 보이므로, 살아 있는 그룹과 겹치지 않게 번호를 붙인다.
+        let group = uniqueGroupName(requested)
+        func makeMember(_ i: Int) -> DockPanel {
+            let spec = specs[i]
+            let p = makeChatPanel(for: st, agent: spec.agent, model: spec.model)
+            p.title = "\(group) · \(spec.name)"          // the tab says which group it belongs to
+            p.agentName = spec.name                       // rail shows the nickname
+            p.chatNickname = spec.name; p.chatGroup = group   // persisted with the layout
+            let parentName = spec.parent.flatMap { $0 >= 0 && $0 < specs.count ? specs[$0].name : nil }
+            p.chatParent = parentName; p.chatModel = spec.model
+            let chat = p.content as? ChatPanel
+            chat?.nickname = spec.name; chat?.groupName = group; chat?.parentName = parentName
+            return p
+        }
+        let main = makeMember(0)
+        dock.addPanel(main, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
+        let members = Array(specs.indices.dropFirst())
+        guard !members.isEmpty else { dock.setActive(main.group ?? dock.activeGroup!); return }
+        let perSlot = 3
+        var slotHeads: [DockPanel] = []
+        for start in stride(from: 0, to: members.count, by: perSlot) {
+            let p = makeMember(members[start])
+            dock.addPanel(p, reference: (slotHeads.last ?? main).group, direction: .right, activate: false)
+            slotHeads.append(p)
+        }
+        for (sIdx, head) in slotHeads.enumerated() {
+            var tail = head
+            for k in 1..<perSlot {
+                let i = sIdx * perSlot + k
+                guard i < members.count else { break }
+                let p = makeMember(members[i])
+                dock.addPanel(p, reference: tail.group, direction: .down, activate: false)
+                tail = p
+            }
+            dock.equalizeSiblings(of: tail.group)      // 한 칸 안의 가로줄을 균등하게
+        }
+        dock.equalizeSiblings(of: slotHeads.last?.group)   // 칸끼리도 균등하게
+        // 옆에 설정 패널(에이전트 그룹)이 있으면 반반이 되어 그룹이 절반에 갇힌다. 그룹 쪽이
+        // 대부분을 갖게 하고 패널은 조직도를 볼 만큼만 남긴다.
+        dock.giveMajority(to: main.group, fraction: 0.72)
+        dock.setActive(main.group ?? dock.activeGroup!)
+        refreshDockTabs(); refreshRailAgents()
+        // 만든 그룹의 조직도로 바로 넘어간다 (패널은 그대로 둔다 — 방금 만든 구조를 확인하고
+        // 다른 그룹으로 옮겨 다니는 게 자연스럽다).
+        saveGroupRoster(group)
+        teamPanel.show(group: group)
+        // Tell the main agent who its team is (with the reporting lines), so it can delegate at once.
+        (main.content as? ChatPanel)?.noteTeam(group, specs.dropFirst().map { s in
+            let par = s.parent.flatMap { $0 >= 0 && $0 < specs.count ? specs[$0].name : nil }
+            return par.map { "\(s.name) ← \($0)" } ?? s.name
+        })
+    }
+
+    // ---- agent teams -------------------------------------------------------------------
+    // Every chat pane is an independent agent (its own session, context and role). These two verbs
+    // turn that into a TEAM: an agent can see its peers and delegate work to one, then continue with
+    // the answer. Hand-offs are visible in the target's transcript, so the user can watch or step in.
+    private func agentPanes() -> [(panel: DockPanel, chat: ChatPanel)] {
+        guard let dock = activeDock else { return [] }
+        return dock.groups.flatMap { $0.panels }.compactMap { p in
+            (p.content as? ChatPanel).map { (panel: p, chat: $0) }
+        }
+    }
+    /// 그룹 명단을 워크스페이스에 저장한다. 패널을 닫아도 조직도에 남기고 다시 열 수 있어야
+    /// 하므로, 살아 있는 팬 + 이미 저장돼 있던 멤버를 합쳐 기록한다 (닫힌 멤버는 마지막 세션
+    /// id 를 들고 있어 --resume 으로 대화까지 되살아난다).
+    private func saveGroupRoster(_ group: String) {
+        guard let ws = workspace else { return }
+        var byName: [String: [String: String]] = [:]
+        for m in savedRoster(ws, group) { byName[m["name"] ?? ""] = m }
+        for p in agentPanes() where p.chat.groupName == group {
+            byName[p.chat.agentRole] = [
+                "name": p.chat.agentRole,
+                "agent": p.chat.agentPersona ?? "",
+                "model": p.chat.preferredModel ?? "",
+                "parent": p.chat.parentName ?? "",
+                "sid": p.panel.sessionId ?? byName[p.chat.agentRole]?["sid"] ?? "",
+            ]
+        }
+        let order = agentPanes().filter { $0.chat.groupName == group }.map { $0.chat.agentRole }
+        let rest = byName.keys.filter { !order.contains($0) }.sorted()
+        let list = (order + rest).compactMap { byName[$0] }
+        if let d = try? JSONSerialization.data(withJSONObject: list),
+           let json = String(data: d, encoding: .utf8) {
+            Settings.shared.set("group.\(ws.path)|\(group)", json)
+        }
+    }
+    /// 닫힌 그룹 팬의 마지막 상태를 명단에 남긴다.
+    private func noteClosedAgent(_ group: String, _ p: DockPanel) {
+        guard let ws = workspace else { return }
+        var list = savedRoster(ws, group)
+        let name = p.chatNickname ?? p.agentName ?? ""
+        guard !name.isEmpty else { return }
+        let entry = ["name": name, "agent": p.chatAgent ?? "", "model": p.chatModel ?? "",
+                     "parent": p.chatParent ?? "", "sid": p.sessionId ?? ""]
+        if let i = list.firstIndex(where: { $0["name"] == name }) { list[i] = entry } else { list.append(entry) }
+        if let d = try? JSONSerialization.data(withJSONObject: list),
+           let json = String(data: d, encoding: .utf8) {
+            Settings.shared.set("group.\(ws.path)|\(group)", json)
+        }
+        teamPanel.refresh()
+    }
+
+    private func savedRoster(_ ws: URL, _ group: String) -> [[String: String]] {
+        let json = Settings.shared.string("group.\(ws.path)|\(group)", "")
+        guard let d = json.data(using: .utf8),
+              let list = try? JSONSerialization.jsonObject(with: d) as? [[String: String]] else { return [] }
+        return list
+    }
+    /// 이 워크스페이스에 기록된 모든 그룹 이름.
+    private func savedGroupNames(_ ws: URL) -> [String] {
+        Settings.shared.keys(prefix: "group.\(ws.path)|").map { String($0.dropFirst("group.\(ws.path)|".count)) }
+    }
+
+    /// Groups that actually exist right now, read off the live panes — name → members with their
+    /// reporting lines. Drives the panel's group chips and its org chart.
+    private func liveAgentGroups() -> [(group: String, members: [AgentNode])] {
+        var out: [String: [AgentNode]] = [:]
+        var order: [String] = []
+        for p in agentPanes() {
+            guard let g = p.chat.groupName else { continue }
+            if out[g] == nil { order.append(g) }
+            out[g, default: []].append(AgentNode(name: p.chat.agentRole, persona: p.chat.agentPersona,
+                                                 model: p.chat.preferredModel,
+                                                 parent: p.chat.parentName, busy: p.chat.isBusy, open: true))
+        }
+        // 닫힌 멤버를 명단에서 채운다 — 그룹 전체를 닫아도 탭과 조직도는 남는다.
+        if let ws = workspace {
+            for g in savedGroupNames(ws) {
+                let live = Set((out[g] ?? []).map { $0.name })
+                let closed = savedRoster(ws, g).filter { !live.contains($0["name"] ?? "") }.map {
+                    AgentNode(name: $0["name"] ?? "", persona: ($0["agent"] ?? "").isEmpty ? nil : $0["agent"],
+                              model: ($0["model"] ?? "").isEmpty ? nil : $0["model"],
+                              parent: ($0["parent"] ?? "").isEmpty ? nil : $0["parent"],
+                              busy: false, open: false)
+                }
+                guard !closed.isEmpty || out[g] != nil else { continue }
+                if out[g] == nil { order.append(g) }
+                out[g, default: []].append(contentsOf: closed)
+            }
+        }
+        return order.map { (group: $0, members: out[$0] ?? []) }
+    }
+
+    /// 지금 열려 있는 그룹과 겹치지 않는 이름 ("팀" → "팀 2" → "팀 3").
+    private func uniqueGroupName(_ base: String) -> String {
+        let taken = Set(agentPanes().compactMap { $0.chat.groupName })
+        guard taken.contains(base) else { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
+    /// Apply org-chart edits to the live pane: nickname, model, reporting line. The model change
+    /// goes over the running session's control channel, so nothing restarts; every field is also
+    /// written onto the DockPanel so it survives in the layout snapshot.
+    private func editAgentPane(_ group: String, _ old: String, name: String, model: String?, parent: String?) {
+        for p in agentPanes() where p.chat.groupName == group {
+            if p.chat.agentRole == old {
+                p.chat.applyNickname(name)
+                p.chat.parentName = parent
+                if p.chat.preferredModel != model { p.chat.applyModel(model) }
+                p.panel.chatNickname = name; p.panel.agentName = name
+                p.panel.chatParent = parent; p.panel.chatModel = model
+                p.panel.title = "\(group) · \(name)"
+            } else if p.chat.parentName == old {
+                // 이름이 바뀌면 그를 상사로 두던 팬들의 보고 라인도 따라가야 한다.
+                p.chat.parentName = name; p.panel.chatParent = name
+            }
+        }
+        saveGroupRoster(group)
+        refreshDockTabs(); refreshRailAgents()
+    }
+
+    /// 기존 그룹에 멤버를 하나 더 연다. 자리 규칙은 생성 때와 같다: 마지막 칸이 3개 미만이면
+    /// 그 칸 아래로, 꽉 찼으면 오른쪽에 새 칸을 만든다.
+    private func addAgentToGroup(_ group: String, name: String, persona: String?, model: String?, parent: String?) {
+        guard let dock = activeDock, let ws = workspace else { return }
+        let st = state(for: ws)
+        let mates = agentPanes().filter { $0.chat.groupName == group }
+        let uniqueName = mates.contains { $0.chat.agentRole == name } ? "\(name) 2" : name
+        let p = makeChatPanel(for: st, agent: persona, model: model)
+        p.title = "\(group) · \(uniqueName)"
+        p.agentName = uniqueName; p.chatNickname = uniqueName; p.chatGroup = group
+        p.chatParent = parent; p.chatModel = model; p.chatAgent = persona
+        let chat = p.content as? ChatPanel
+        chat?.nickname = uniqueName; chat?.groupName = group; chat?.parentName = parent
+        let members = mates.filter { $0.chat.parentName != nil }
+        if members.count % 3 == 0, let anchor = (members.last ?? mates.first)?.panel.group {
+            dock.addPanel(p, reference: anchor, direction: .right)     // 새 칸
+        } else if let last = members.last?.panel.group {
+            dock.addPanel(p, reference: last, direction: .down)        // 같은 칸 아래
+        } else {
+            dock.addPanel(p, reference: mates.first?.panel.group ?? dock.activeGroup, direction: .right)
+        }
+        saveGroupRoster(group)
+        refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
+    }
+
+    /// 멤버를 그룹에서 완전히 뺀다: 팬을 닫고, 명단에서 지우고, 그를 상사로 두던 멤버는
+    /// 메인 직속으로 올린다 (조직도에 끊긴 가지가 남지 않게).
+    private func removeAgentFromGroup(_ group: String, _ name: String) {
+        guard let ws = workspace, let dock = activeDock else { return }
+        let mainName = agentPanes().first { $0.chat.groupName == group && $0.chat.parentName == nil }?.chat.agentRole
+        for p in agentPanes() where p.chat.groupName == group && p.chat.parentName == name {
+            p.chat.parentName = mainName; p.panel.chatParent = mainName
+        }
+        if let victim = agentPanes().first(where: { $0.chat.groupName == group && $0.chat.agentRole == name }) {
+            victim.panel.chatGroup = nil          // 닫기 훅이 명단에 다시 넣지 않도록
+            dock.removePanel(victim.panel)
+        }
+        var list = savedRoster(ws, group).filter { $0["name"] != name }
+        for i in list.indices where list[i]["parent"] == name { list[i]["parent"] = mainName ?? "" }
+        if let d = try? JSONSerialization.data(withJSONObject: list),
+           let json = String(data: d, encoding: .utf8) {
+            Settings.shared.set("group.\(ws.path)|\(group)", json)
+        }
+        refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
+    }
+
+    /// Jump to one agent's pane (org chart node click).
+    private func focusAgentPane(_ group: String, _ name: String) {
+        guard let dock = activeDock, let ws = workspace else { return }
+        for p in agentPanes() where p.chat.groupName == group && p.chat.agentRole == name {
+            if let g = p.panel.group { g.select(id: p.panel.id); dock.setActive(g) }
+            return
+        }
+        // 닫힌 멤버 → 저장해 둔 역할·모델·세션으로 되살린다.
+        guard let m = savedRoster(ws, group).first(where: { $0["name"] == name }) else { return }
+        let st = state(for: ws)
+        let sid = m["sid"] ?? "", persona = m["agent"] ?? "", model = m["model"] ?? ""
+        let p = makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid,
+                              agent: persona.isEmpty ? nil : persona,
+                              model: model.isEmpty ? nil : model)
+        p.title = "\(group) · \(name)"
+        p.agentName = name; p.chatNickname = name; p.chatGroup = group
+        p.chatParent = (m["parent"] ?? "").isEmpty ? nil : m["parent"]
+        p.chatModel = model.isEmpty ? nil : model
+        let chat = p.content as? ChatPanel
+        chat?.nickname = name; chat?.groupName = group; chat?.parentName = p.chatParent
+        // 원래 자리로 되돌린다: 같은 그룹의 다른 멤버가 있으면 그 아래(같은 칸)로, 멤버가
+        // 하나도 없으면 리드 옆 칸으로. 그냥 활성 팬 옆에 붙이면 칸 구조가 무너진다.
+        let mates = agentPanes().filter { $0.chat.groupName == group }
+        let lastMember = mates.last { $0.chat.parentName != nil || $0.chat.agentRole != name }
+        if let member = mates.last(where: { $0.chat.parentName != nil }) ?? lastMember, member.chat.parentName != nil {
+            dock.addPanel(p, reference: member.panel.group, direction: .down)
+        } else if let lead = mates.first(where: { $0.chat.parentName == nil }) {
+            dock.addPanel(p, reference: lead.panel.group, direction: .right)
+        } else {
+            dock.addPanel(p, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
+        }
+        refreshDockTabs(); refreshRailAgents()
+        teamPanel.refresh()
+        (p.content as? ChatPanel)?.noteSystem(t("team.reopened", ["name": name]))
+    }
+
+    /// Fan out to several panes at once. Every ask is dispatched in the SAME runloop turn, so the
+    /// peers' claude processes run concurrently; the completion fires when the last one answers.
+    private func askAgentPanes(_ tasks: [(agent: String, message: String)], from sender: ChatPanel?,
+                               _ done: @escaping ([(String, String)]) -> Void) {
+        var answers = [String?](repeating: nil, count: tasks.count)
+        var left = tasks.count
+        for (i, task) in tasks.enumerated() {
+            askAgentPane(task.agent, task.message, from: sender) { answer in
+                // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 — 잠금 없이 안전하다.
+                guard answers[i] == nil else { return }
+                answers[i] = answer
+                left -= 1
+                if left == 0 { done(tasks.enumerated().map { ($1.agent, answers[$0] ?? "") }) }
+            }
+        }
+    }
+
+    private func agentPanesReport() -> String {
+        let panes = agentPanes()
+        guard !panes.isEmpty else { return "(no agent panes open)" }
+        return panes.map { p in
+            let state = p.chat.isBusy ? "busy" : "idle"
+            let role = p.chat.agentPersona.map { " (\($0))" } ?? ""
+            let grp = p.chat.groupName.map { "[\($0)] " } ?? ""
+            let up = p.chat.parentName.map { " ← \($0)" } ?? ""   // 보고 라인 (조직도)
+            return "- \(grp)\(p.chat.agentRole)\(role)\(up)  \(state)"
+        }.joined(separator: "\n")
+    }
+    /// Deliver `message` to the agent named/identified by `target` and return its answer.
+    /// `target` matches a pane id, an agent role, or a panel title (case-insensitive).
+    private func askAgentPane(_ target: String, _ message: String, from sender: ChatPanel?,
+                              _ done: @escaping (String) -> Void) {
+        let q = target.trimmingCharacters(in: .whitespaces).lowercased()
+        let panes = agentPanes().filter { $0.chat !== sender }      // never delegate to yourself
+        // 같은 그룹 동료를 먼저 본다 — 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
+        // 그때 남의 팀 사람에게 일이 넘어가면 안 된다.
+        let mates = sender?.groupName.map { g in panes.filter { $0.chat.groupName == g } } ?? []
+        let hit = mates.first { $0.chat.agentRole.lowercased() == q }
+            ?? mates.first { ($0.chat.agentPersona ?? "").lowercased() == q }
+            ?? panes.first { $0.chat.agentRole.lowercased() == q }
+            ?? panes.first { ($0.chat.agentPersona ?? "").lowercased() == q }
+            ?? panes.first { $0.panel.id.lowercased() == q }
+            ?? panes.first { $0.panel.title.lowercased().contains(q) }
+        guard let hit else {
+            done("no agent matched \(target). Open one with riven_open_panel(chat) or pick from:\n" + agentPanesReport())
+            return
+        }
+        hit.panel.badge = hit.panel.badge ?? "busy"
+        refreshDockTabs(); refreshRailAgents()
+        hit.chat.ask(message) { answer in done(answer) }
     }
 
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
@@ -3462,7 +4152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "editor": showEditorPane()
             case "terminal": newTerminal()
             case "chat": newChat()
-            case "search", "git", "preview", "api", "changes", "notes":
+            case "search", "git", "preview", "api", "changes", "notes", "team":
                 if auxDockPanels[kind] == nil { toggleDockPanel(kind) }
             default: srv.resolve(id, result: "unknown kind: \(kind)"); return
             }
@@ -3473,6 +4163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 for g in dock.groups { for p in g.panels where p.id == pid { dock.removePanel(p); refreshRailAgents(); srv.resolve(id, result: "closed \(pid)"); return } }
             }
             srv.resolve(id, result: "no panel with id \(pid)")
+        case "riven_agents":
+            srv.resolve(id, result: agentPanesReport())
+        case "riven_ask_agent":
+            askAgentPane(s("agent"), s("message"), from: nil) { srv.resolve(id, result: $0) }
         case "riven_workspaces":
             srv.resolve(id, result: workspaces.map { ($0 == workspace ? "* " : "- ") + $0.path }.joined(separator: "\n"))
         case "riven_open_workspace":

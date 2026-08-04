@@ -286,7 +286,14 @@ final class AssistantText: NSView {
     private var chars: [Character] = []
     private var shownCount = 0
     private var streaming: NSTextField?
+    private var streamRow: NSView?
     private var finalized = false
+    // 이미 최종 서식으로 확정한 접두부. 스트리밍은 그 뒤 꼬리만 담당한다.
+    private var committed = 0
+    // 블록 경계 스캐너의 상태 (앞부분을 매 틱마다 다시 훑으면 O(n²)이 된다).
+    private var scanIdx = 0
+    private var fenceOpen = false
+    private var boundary = 0
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -311,27 +318,71 @@ final class AssistantText: NSView {
         let remaining = chars.count - shownCount
         let step = max(3, remaining / 5)                 // ease-out: bigger jumps when behind
         shownCount = min(chars.count, shownCount + step)
-        ensureLabel().attributedStringValue = ChatText.attributedProse(String(chars[0..<shownCount]))
+        scanForBoundary()
+        // 빈 줄로 끝난 완성 블록은 바로 최종 서식으로 굳힌다 → 제목·표·목록·코드블록이
+        // 답변이 끝나기 전에 제 모습으로 나타난다.
+        if boundary > committed { commit(upTo: boundary) }
+        let tail = String(chars[committed..<shownCount])
+        if tail.isEmpty { streamRow?.isHidden = true }
+        else {
+            streamRow?.isHidden = false
+            // 꼬리도 인라인 마크다운을 입혀서 그린다 (**굵게**·`코드`가 타이핑 중에도 보인다).
+            ensureLabel().attributedStringValue = ChatText.attributedMarkdown(tail)
+        }
         return true
     }
+
+    /// 새로 드러난 구간만 훑어 "코드펜스 밖의 빈 줄" 위치를 기록한다.
+    private func scanForBoundary() {
+        // 항상 2자를 앞서 볼 수 있는 구간까지만 훑는다. 예전엔 "\n\n"이나 "```"가 이번에
+        // 드러난 마지막 글자에 걸치면 그 자리를 건너뛴 채 scanIdx가 지나가 버려서, 코드펜스가
+        // 열린 상태로 굳거나 문단 경계를 영영 놓쳤다 (스트리밍 중 블록 확정이 멈추던 원인).
+        var i = max(scanIdx, 0)
+        while i + 2 < shownCount {
+            if chars[i] == "`", chars[i + 1] == "`", chars[i + 2] == "`" {
+                fenceOpen.toggle(); i += 3; continue
+            }
+            if !fenceOpen, chars[i] == "\n", chars[i + 1] == "\n" { boundary = i + 2 }
+            i += 1
+        }
+        scanIdx = i
+    }
+
+    private func commit(upTo idx: Int) {
+        let seg = String(chars[committed..<idx])
+        committed = idx
+        // 스트리밍 행을 잠시 걷어내고 확정 블록을 넣은 뒤, 다시 맨 아래에 붙인다.
+        streamRow?.removeFromSuperview(); streamRow = nil; streaming = nil
+        for v in ChatText.render(seg, bullet: content.arrangedSubviews.isEmpty) {
+            content.addArrangedSubview(v)
+            v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        }
+    }
+
     private func ensureLabel() -> NSTextField {
         if let s = streaming { return s }
         // Wrap the streaming label in the SAME bullet + gutter row the final render uses, so the
         // text is already at its final x-position/indent while typing — renderFinal then only adds
         // inline emphasis instead of visibly reflowing the whole answer.
         let l = ChatText.prose("")
-        let row = ChatText.bulletRow(l)
+        // ⏺ 는 답변의 첫 블록에만. 확정된 블록이 이미 있으면 같은 들여쓰기만 맞춘다 —
+        // 안 그러면 문단이 확정될 때마다 꼬리에 점이 새로 붙었다 사라진다.
+        let row = content.arrangedSubviews.isEmpty ? ChatText.bulletRow(l) : ChatText.indentedProse(l)
         row.translatesAutoresizingMaskIntoConstraints = false
         content.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
-        streaming = l; return l
+        streaming = l; streamRow = row; return l
     }
+
     func renderFinal() {
         guard !finalized else { return }
         finalized = true
-        content.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        streaming = nil
-        for v in ChatText.render(String(chars)) {
+        // 확정된 블록은 그대로 두고 남은 꼬리만 최종 서식으로 바꾼다 — 예전엔 전체를 지우고
+        // 다시 그려서 긴 답변이 끝날 때 화면이 통째로 리플로우됐다.
+        streamRow?.removeFromSuperview(); streamRow = nil; streaming = nil
+        let rest = String(chars[min(committed, chars.count)...])
+        guard !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        for v in ChatText.render(rest, bullet: content.arrangedSubviews.isEmpty) {
             content.addArrangedSubview(v)
             v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
         }
@@ -389,11 +440,25 @@ enum ChatText {
     private static let loneTilde = try? NSRegularExpression(pattern: "(?<!~)~(?!~)")
     static func escapeLoneTildes(_ s: String) -> String {
         guard let re = loneTilde, s.contains("~") else { return s }
-        return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s),
-                                           withTemplate: "\\\\~")
+        // Escape ONLY outside inline-code spans: markdown doesn't interpret escapes inside
+        // backticks, so escaping there leaked a literal backslash into the rendered text
+        // (`ls ~/tmp` came out as `ls \~/tmp`). Split on backticks and skip the odd segments.
+        return s.components(separatedBy: "`").enumerated().map { i, part in
+            guard i % 2 == 0, part.contains("~") else { return part }
+            return re.stringByReplacingMatches(in: part, range: NSRange(part.startIndex..., in: part),
+                                               withTemplate: "\\\\~")
+        }.joined(separator: "`")
     }
     static func proseMarkdown(_ s: String) -> NSTextField {
         let l = prose(s)
+        l.attributedStringValue = attributedMarkdown(s)
+        return l
+    }
+    /// 인라인 마크다운(**굵게**, `코드`, *기울임*)이 적용된 본문 속성 문자열.
+    /// 스트리밍 중에도 이걸 쓴다 — 예전엔 타이핑 동안 순수 텍스트로 그리다가 턴이 끝나야
+    /// 서식이 튀어나와서, 답변이 다 끝날 때까지 굵게·코드가 원문 그대로 보였다.
+    /// 미완성 마크업(닫히지 않은 **)은 그냥 매치가 안 될 뿐이라 부분 문자열에도 안전하다.
+    static func attributedMarkdown(_ s: String) -> NSAttributedString {
         if let attr = try? NSAttributedString(markdown: escapeLoneTildes(s),
               options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             let m = NSMutableAttributedString(attributedString: attr)
@@ -414,9 +479,9 @@ enum ChatText {
                                      .foregroundColor: Theme.accent2], range: r)
                 }
             }
-            l.attributedStringValue = m
+            return m
         }
-        return l
+        return attributedProse(s)
     }
     // A prose paragraph with a CLI-style bullet marker in the left gutter.
     static func proseParagraph(_ text: String) -> NSView {
@@ -539,15 +604,14 @@ enum ChatText {
         }
         return m
     }
-    static func render(_ text: String) -> [NSView] {
-        let parts = text.components(separatedBy: "```")
+    /// 코드펜스로 먼저 자르고, 산문 구간은 블록 단위(제목·표·목록·문단)로 파싱한다.
+    /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
+    /// "| a | b |" 가 전부 원문 그대로 보였다.
+    static func render(_ text: String, bullet: Bool = true) -> [NSView] {
         var out: [NSView] = []
-        for (i, part) in parts.enumerated() {
+        for (i, part) in text.components(separatedBy: "```").enumerated() {
             if i % 2 == 0 {
-                let t = part.trimmingCharacters(in: .whitespacesAndNewlines)
-                // ONE bullet per prose segment (like the CLI's ⏺), with the whole block indented
-                // under it; internal paragraphs are spaced apart by the paragraph style.
-                if !t.isEmpty { out.append(proseParagraph(t)) }
+                out += blocks(part)
             } else {
                 var code = part
                 var lang: String?
@@ -562,9 +626,194 @@ enum ChatText {
                 if !trimmed.isEmpty { out.append(codeBlock(trimmed, lang: lang)) }
             }
         }
-        if out.isEmpty { out.append(proseMarkdown(text)) }
+        if out.isEmpty {
+            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty { return [] }
+            out.append(proseMarkdown(t))
+        }
+        // 첫 블록만 ⏺ 를 달고 나머지는 같은 들여쓰기로 맞춘다 (블록마다 점을 찍으면 산만하다).
+        return out.enumerated().map { i, v in
+            if i == 0, bullet, let label = v as? NSTextField { return bulletRow(label) }
+            return indented(v, by: UIScale.pt(16))
+        }
+    }
+
+    /// 본문 블록과 같은 왼쪽 여백을 가진 컨테이너 (스트리밍 꼬리용).
+    static func indentedProse(_ v: NSView) -> NSView { indented(v, by: UIScale.pt(16)) }
+
+    private static func indented(_ v: NSView, by x: CGFloat) -> NSView {
+        let row = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: x),
+            v.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            v.topAnchor.constraint(equalTo: row.topAnchor),
+            v.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+        ])
+        return row
+    }
+
+    private static let headingRe = try? NSRegularExpression(pattern: "^(#{1,6})\\s+(.*)$")
+    private static let listRe = try? NSRegularExpression(pattern: "^\\s*(?:[-*+]|\\d+[.)])\\s+(.*)$")
+    private static func isTableRow(_ l: String) -> Bool {
+        let t = l.trimmingCharacters(in: .whitespaces)
+        return t.hasPrefix("|") && t.dropFirst().contains("|")
+    }
+    private static func isTableDivider(_ l: String) -> Bool {
+        let t = l.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("|") else { return false }
+        return t.allSatisfy { "|-: ".contains($0) } && t.contains("-")
+    }
+    private static func match(_ re: NSRegularExpression?, _ line: String) -> [String]? {
+        guard let re, let m = re.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)) else { return nil }
+        return (0..<m.numberOfRanges).map { i in
+            Range(m.range(at: i), in: line).map { String(line[$0]) } ?? ""
+        }
+    }
+
+    /// 산문 구간 → 블록 뷰들.
+    private static func blocks(_ text: String) -> [NSView] {
+        var out: [NSView] = []
+        var para: [String] = []
+        func flushPara() {
+            let joined = para.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            para = []
+            if !joined.isEmpty { out.append(proseMarkdown(joined)) }
+        }
+        let lines = text.components(separatedBy: "\n")
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { flushPara(); i += 1; continue }
+            // 표: 헤더 행 + 구분선(|---|)이 이어질 때만 표로 본다 (본문의 "|" 오인 방지).
+            if isTableRow(line), i + 1 < lines.count, isTableDivider(lines[i + 1]) {
+                flushPara()
+                var rows: [[String]] = [tableCells(line)]
+                i += 2
+                while i < lines.count, isTableRow(lines[i]) { rows.append(tableCells(lines[i])); i += 1 }
+                out.append(tableBlock(rows))
+                continue
+            }
+            if let m = match(headingRe, line) {
+                flushPara()
+                out.append(heading(m[2], level: m[1].count))
+                i += 1; continue
+            }
+            if match(listRe, line) != nil {
+                flushPara()
+                var items: [String] = []
+                var ordered = false
+                while i < lines.count, let m = match(listRe, lines[i]) {
+                    if lines[i].trimmingCharacters(in: .whitespaces).first?.isNumber == true { ordered = true }
+                    items.append(m[1]); i += 1
+                }
+                out.append(listBlock(items, ordered: ordered))
+                continue
+            }
+            para.append(line); i += 1
+        }
+        flushPara()
         return out
     }
+
+    private static func tableCells(_ line: String) -> [String] {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("|") { t.removeFirst() }
+        if t.hasSuffix("|") { t.removeLast() }
+        return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func heading(_ text: String, level: Int) -> NSView {
+        let l = prose(text)
+        let size = proseSize + (level <= 1 ? 4 : level == 2 ? 2 : 1)
+        l.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: UIScale.font(size, .bold), .foregroundColor: proseStrong])
+        return l
+    }
+
+    private static func listBlock(_ items: [String], ordered: Bool) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical; stack.spacing = 4; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        for (i, item) in items.enumerated() {
+            let marker = NSTextField(labelWithString: ordered ? "\(i + 1)." : "•")
+            marker.font = UIScale.font(proseSize); marker.textColor = Theme.fgDim
+            marker.translatesAutoresizingMaskIntoConstraints = false
+            marker.setContentHuggingPriority(.required, for: .horizontal)
+            let body = proseMarkdown(item)
+            let row = NSView()
+            row.addSubview(marker); row.addSubview(body)
+            NSLayoutConstraint.activate([
+                marker.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                marker.firstBaselineAnchor.constraint(equalTo: body.firstBaselineAnchor),
+                marker.widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(16)),
+                body.leadingAnchor.constraint(equalTo: marker.trailingAnchor, constant: UIScale.pt(6)),
+                body.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+                body.topAnchor.constraint(equalTo: row.topAnchor),
+                body.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            ])
+            row.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        return stack
+    }
+
+    /// 마크다운 표 → 실제 표. 헤더는 굵게 + 옅은 바탕, 행 사이에 hairline.
+    private static func tableBlock(_ rows: [[String]]) -> NSView {
+        let cols = rows.map { $0.count }.max() ?? 0
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.bg3.withAlphaComponent(0.5).cgColor
+        box.layer?.cornerRadius = 8
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = Theme.edge.cgColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let grid = NSGridView(numberOfColumns: max(1, cols), rows: 0)
+        grid.rowSpacing = UIScale.pt(7); grid.columnSpacing = UIScale.pt(14)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        for (r, row) in rows.enumerated() {
+            let cells: [NSView] = (0..<max(1, cols)).map { c in
+                let text = c < row.count ? row[c] : ""
+                let l = prose(text)
+                if r == 0 {
+                    l.attributedStringValue = NSAttributedString(string: text, attributes: [
+                        .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong])
+                } else {
+                    l.attributedStringValue = attributedMarkdown(text)
+                }
+                l.maximumNumberOfLines = 0
+                return l
+            }
+            grid.addRow(with: cells)
+        }
+        // 헤더 아래 구분선 (NSGridView는 셀 사이 선을 못 그리므로 얇은 뷰를 깐다).
+        box.addSubview(grid)
+        let pad = UIScale.pt(12)
+        NSLayoutConstraint.activate([
+            grid.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: pad),
+            grid.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -pad),
+            grid.topAnchor.constraint(equalTo: box.topAnchor, constant: pad),
+            grid.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -pad),
+        ])
+        if rows.count > 1 {
+            let hair = NSView(); hair.wantsLayer = true
+            hair.layer?.backgroundColor = Theme.edge.cgColor
+            hair.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(hair)
+            let headerRow = grid.row(at: 0)
+            NSLayoutConstraint.activate([
+                hair.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+                hair.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+                hair.heightAnchor.constraint(equalToConstant: 1),
+                hair.topAnchor.constraint(equalTo: headerRow.cell(at: 0).contentView!.bottomAnchor,
+                                          constant: UIScale.pt(4)),
+            ])
+        }
+        return box
+    }
+
     // token formatting: 1234 → "1.2k"
     static func tokens(_ n: Int) -> String { n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }
     // elapsed: seconds → "45초" / "2분 5초" / "1시간 3분"
@@ -645,9 +894,12 @@ final class ApprovalCard: NSView {
     private var buttons: [NSButton] = []
     private let options: [(String, () -> Void)]
     private let statusLabel = NSTextField(labelWithString: "")
-    private let hint = NSTextField(labelWithString: t("chat.cardHint"))
+    private let hint = NSTextField(labelWithString: t("chat.cardHintCancel"))
     private var sel = 0
     private var decided = false
+    /// Esc / the 취소 button. Nil means the card can't be dismissed (a permission prompt must be
+    /// answered), so only riven's own choice cards set it.
+    var onCancel: (() -> Void)?
 
     init(title: String, detail: String, code: String?, path: String?, options: [(String, () -> Void)]) {
         self.options = options
@@ -726,6 +978,7 @@ final class ApprovalCard: NSView {
         case 123, 126: sel = (sel - 1 + options.count) % options.count; restyleSel()   // ← / ↑
         case 124, 125: sel = (sel + 1) % options.count; restyleSel()                    // → / ↓
         case 36, 76, 49: pick(sel)                                                       // return / enter / space
+        case 53: onCancel?()                                                             // esc — back out
         default: super.keyDown(with: e)
         }
     }
@@ -745,6 +998,16 @@ final class ApprovalCard: NSView {
         statusLabel.textColor = Theme.success
         layer?.borderColor = Theme.success.withAlphaComponent(0.4).cgColor
         options[i].1()
+    }
+    /// Close the card without running an option (Esc / 취소).
+    func dismiss(_ label: String) {
+        guard !decided else { return }
+        decided = true
+        buttons.forEach { $0.isHidden = true }; hint.isHidden = true
+        statusLabel.isHidden = false
+        statusLabel.stringValue = "· " + label
+        statusLabel.textColor = Theme.fgDim
+        layer?.borderColor = Theme.edge.cgColor
     }
 }
 
@@ -1234,5 +1497,78 @@ final class SlashPopup: NSView {
     private func scrollToSelected() {
         guard rows.indices.contains(selected) else { return }
         rows[selected].scrollToVisible(rows[selected].bounds)
+    }
+}
+
+// MARK: - plan badge
+//
+// Claude Code's plan mode writes the approved plan to ~/.claude/plans/<slug>.md and then keeps the
+// plan's title pinned in the corner while it works through the tasks. riven mirrors that: a small
+// bordered chip that overlaps the top-right of the conversation, naming the plan and opening the
+// markdown file in the editor when clicked.
+final class PlanBadge: NSView, Themable, Scalable {
+    var onOpen: (() -> Void)?
+    private let icon = NSTextField(labelWithString: "◳")
+    private let label = NSTextField(labelWithString: "")
+    private let file = NSTextField(labelWithString: "")
+    private var hot = false
+    private var track: NSTrackingArea?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        [icon, label, file].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
+        let pad = UIScale.pt(9)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: UIScale.pt(6)),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            file.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: UIScale.pt(8)),
+            file.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            file.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
+        ])
+        applyTheme(); applyScale()
+        Theme.register(self); UIScale.register(self)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(title: String, file name: String) {
+        label.stringValue = title
+        file.stringValue = name
+        toolTip = t("chat.plan.tip", ["f": name])
+        isHidden = false
+        applyTheme()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let t = track { removeTrackingArea(t) }
+        let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+        addTrackingArea(t); track = t
+    }
+    override func hitTest(_ p: NSPoint) -> NSView? { bounds.contains(convert(p, from: superview)) ? self : nil }
+    override func mouseEntered(with e: NSEvent) { hot = true; applyTheme(); NSCursor.pointingHand.set() }
+    override func mouseExited(with e: NSEvent) { hot = false; applyTheme(); NSCursor.arrow.set() }
+    override func mouseDown(with e: NSEvent) { onOpen?() }
+
+    func applyTheme() {
+        layer?.cornerRadius = UIScale.pt(13)
+        layer?.borderWidth = 1
+        layer?.borderColor = (hot ? Theme.accent : Theme.accent.withAlphaComponent(0.55)).cgColor
+        // 대화 위에 겹쳐 뜨므로 불투명한 표면이어야 글이 비쳐 보이지 않는다.
+        layer?.backgroundColor = Theme.bg2.cgColor
+        icon.textColor = Theme.accent
+        label.textColor = Theme.fg
+        file.textColor = Theme.fgDim
+    }
+    func applyScale() {
+        icon.font = UIScale.font(UIScale.caption, .semibold)
+        label.font = UIScale.font(UIScale.caption, .semibold)
+        file.font = UIScale.font(UIScale.caption)
     }
 }

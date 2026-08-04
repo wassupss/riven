@@ -9,6 +9,10 @@ import AppKit
 // scrollable slash-command popup autocompletes `/` commands.
 final class ChatPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()                   // conversation
+    /// 계획 모드 결과 배지 — CLI가 ~/.claude/plans/<slug>.md 로 저장한 계획의 제목을
+    /// 대화 오른쪽 위에 살짝 겹쳐 띄운다. 계획대로 작업이 도는 동안 계속 보인다.
+    private let planBadge = PlanBadge()
+    private var planPath: String?
     private let stack = FlippedStack()
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
@@ -34,6 +38,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var turnStart: Date?
     private var flushTimer: Timer?
     private var model: String?
+    /// Model this pane was started with ("opus"/"sonnet"/... , nil = account default). Set before
+    /// the session starts (agent groups pick one per agent) and persisted with the layout.
+    var preferredModel: String?
     private var commands: [SlashCommand] = []
     private var lastScaleFactor: CGFloat = 1
     private var pendingResume: String?                   // resume this session id on next bind
@@ -60,6 +67,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onOpenFile: ((URL) -> Void)?
     var onOpenFileAt: ((URL, Int) -> Void)?
     var onEditedFile: ((String) -> Void)?   // agent edited a file → record it in the Changes panel
+    var onListAgents: (() -> [String])?         // .claude/agents names (project + user)
+    var onOpenAgentChat: ((String?) -> Void)?   // open a NEW chat pane running `claude --agent <name>`
+    var onAgentPanes: (() -> String)?                                     // peers this agent can talk to
+    var onAskAgent: ((String, String, @escaping (String) -> Void) -> Void)?  // delegate work to a peer
+    /// Fan out to several peers at once; the callback fires when every one of them has answered.
+    var onAskAgents: (([(agent: String, message: String)], @escaping ([(String, String)]) -> Void) -> Void)?
     var onOpenSubagentPane: ((_ id: String, _ view: NSView, _ title: String) -> Void)?   // place as a dock panel
     var onCloseSubagentPanes: ((_ ids: [String]) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
@@ -178,7 +191,12 @@ final class ChatPanel: NSView, Themable, Scalable {
 
         modeChip.addSubview(modePopup)
         [modeChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
-        [scroll, subSide, hairline, composer, slash, jumpButton].forEach { addSubview($0) }
+        [scroll, subSide, hairline, composer, slash, jumpButton, planBadge].forEach { addSubview($0) }
+        planBadge.isHidden = true
+        planBadge.onOpen = { [weak self] in
+            guard let self, let p = self.planPath else { return }
+            self.onOpenFile?(URL(fileURLWithPath: p))
+        }
         applyComposerTheme()
         stackWidth = stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         slashHeight = slash.heightAnchor.constraint(equalToConstant: 0)
@@ -186,6 +204,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         subWidthHidden = subSide.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             // conversation (left) | sub-agent area (right), sized by subWidthHidden/Shown
+            // 대화 오른쪽 위에 살짝 걸치게 (CLI의 계획 배지와 같은 자리).
+            planBadge.trailingAnchor.constraint(equalTo: scroll.trailingAnchor, constant: -10),
+            planBadge.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            planBadge.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6),
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor),
@@ -523,6 +545,33 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Stop the underlying process when the pane is closed.
     func teardown() { session?.stop(); session = nil; stopFlush() }
 
+    /// Shown when a group is created: the team roster, so the user (and the agent, since it's in the
+    /// transcript) knows who can be delegated to by name.
+    func noteTeam(_ group: String, _ names: [String]) {
+        addSystem(t("team.created", ["group": group, "names": names.joined(separator: ", ")]))
+    }
+    /// Another agent delegates work to THIS pane. The message is shown like a user message (so the
+    /// hand-off is visible and steerable), and `done` fires with the answer when the turn ends —
+    /// queued behind any turn already running, exactly like a message the user types.
+    func ask(_ text: String, done: @escaping (String) -> Void) {
+        guard session != nil, session?.isAlive != false else { done("agent session is not running"); return }
+        askWaiters.append(done)
+        let bubble = addUser(text)
+        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
+        if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)) }
+        else { beginTurn(text, bubble: bubble) }
+    }
+    /// Human-readable handle other agents address this pane by (riven_ask_agent). Falls back to the
+    /// custom-agent name — "chat-90690212265" is a dock id, not something an agent should have to use.
+    var nickname: String?
+    /// Agent-group this pane belongs to (nil = standalone chat).
+    var groupName: String?
+    /// Nickname of the agent this one reports to — the group's org chart / who to escalate to.
+    var parentName: String?
+    /// This pane's role (nickname › custom agent) and whether it's mid-turn — for riven_agents().
+    var agentRole: String { nickname ?? agentPersona ?? "Claude" }
+    var isBusy: Bool { turnStart != nil }
+
     // ---- code-block actions (called by a code block's button via enclosingChatPanel) ----
     func openCodeInEditor(_ code: String, path: String?) {
         if let path { onOpenFile?(URL(fileURLWithPath: path)); return }
@@ -574,6 +623,58 @@ final class ChatPanel: NSView, Themable, Scalable {
     // first-message title until the next turn ("타이틀 자동 생성이 안 된다"). Re-check a few times
     // with a backoff and stop as soon as the title changes.
     private var lastAITitle: String?
+    /// ExitPlanMode 직후 CLI가 쓴 계획 파일을 집는다. 파일이 쓰이는 타이밍이 도구 이벤트보다
+    /// 살짝 늦을 수 있어 0.4/1/2초로 재시도한다.
+    private func pickUpPlanFile(attempt: Int) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let dir = (NSHomeDirectory() as NSString).appendingPathComponent(".claude/plans")
+            let fm = FileManager.default
+            let files = (try? fm.contentsOfDirectory(atPath: dir))?.filter { $0.hasSuffix(".md") } ?? []
+            let newest = files.map { (dir as NSString).appendingPathComponent($0) }
+                .compactMap { path -> (String, Date)? in
+                    guard let d = (try? fm.attributesOfItem(atPath: path))?[.modificationDate] as? Date else { return nil }
+                    return (path, d)
+                }
+                .max(by: { $0.1 < $1.1 })
+            // 방금(2분 이내) 쓰인 것만 이번 계획으로 인정한다.
+            guard let newest, Date().timeIntervalSince(newest.1) < 120 else {
+                let delays: [Double] = [0.4, 1, 2]
+                guard attempt < delays.count else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) {
+                    self?.pickUpPlanFile(attempt: attempt + 1)
+                }
+                return
+            }
+            let title = ChatPanel.planTitle(of: newest.0)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.planPath = newest.0
+                self.planBadge.show(title: title, file: (newest.0 as NSString).lastPathComponent)
+                // 세션에 묶어 저장한다 — 재기동해서 이 대화를 이어받으면 배지도 같이 돌아온다.
+                if let sid = self.sessionId { Settings.shared.set("plan.\(sid)", newest.0) }
+            }
+        }
+    }
+    /// 이 세션에 붙어 있던 계획 배지를 되살린다 (파일이 아직 있을 때만).
+    private func restorePlanBadge(_ sid: String) {
+        let path = Settings.shared.string("plan.\(sid)", "")
+        guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
+        planPath = path
+        planBadge.show(title: ChatPanel.planTitle(of: path), file: (path as NSString).lastPathComponent)
+    }
+
+    /// 계획 파일의 제목: 첫 H1, 없으면 파일명.
+    static func planTitle(of path: String) -> String {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return (path as NSString).deletingPathExtension as NSString as String
+        }
+        for line in text.split(separator: "\n", maxSplits: 40, omittingEmptySubsequences: true) {
+            let l = line.trimmingCharacters(in: .whitespaces)
+            if l.hasPrefix("#") { return l.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces) }
+        }
+        return ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
+
     private func refreshAITitle(attempt: Int = 0) {
         guard let cwd = workspace?.path, let sid = sessionId else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -741,9 +842,21 @@ final class ChatPanel: NSView, Themable, Scalable {
         return ""
     }
     // Show a standalone arrow-select card in the transcript (not part of a turn's approval flow).
-    private func presentChoice(_ title: String, options: [(String, () -> Void)]) {
+    /// riven's OWN choice cards (session picker, agent picker…). Unlike a permission prompt these
+    /// are dismissible, so they always get 기타(직접 입력) — hand it back to the composer — and 취소,
+    /// plus Esc. Without them a card was a dead end you couldn't back out of.
+    private func presentChoice(_ title: String, options: [(String, () -> Void)], allowOther: Bool = true) {
         let block = newBlock(); current = block
-        let card = block.addApproval(title, "", nil, nil, options: options)
+        var opts = options
+        if allowOther {
+            opts.append((t("chat.other"), { [weak self] in self?.focusInput(force: true) }))
+        }
+        opts.append((t("chat.cancel"), { }))
+        let card = block.addApproval(title, "", nil, nil, options: opts)
+        card.onCancel = { [weak self, weak card] in
+            card?.dismiss(t("chat.cancel"))
+            self?.focusInput(force: true)
+        }
         scrollSoon()
         DispatchQueue.main.async { [weak self, weak card] in if let card { self?.window?.makeFirstResponder(card) } }
     }
@@ -753,10 +866,17 @@ final class ChatPanel: NSView, Themable, Scalable {
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
         let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
             permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
-            agentName: agentPersona)
-        s?.onInit = { [weak self] sid, model in self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid) }
-        s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t) }
-        s?.onMainTool = { [weak self] name, detail, code, path in self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon() }
+            agentName: agentPersona, model: preferredModel)
+        s?.onInit = { [weak self] sid, model in
+            self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid)
+            self?.restorePlanBadge(sid)
+        }
+        s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t); self?.turnText += t }
+        s?.onMainTool = { [weak self] name, detail, code, path in
+            self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
+            // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 — 조금 기다렸다 집어서 배지로.
+            if name == "ExitPlanMode" { self?.pickUpPlanFile(attempt: 0) }
+        }
         s?.onSubagentStart = { [weak self] id, type, desc in self?.addSubagentPane(id, type: type, desc: desc) }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in self?.subToPane[pid]?.addTool(name, detail, code, path) }
         s?.onSubagentText = { [weak self] pid, text in self?.subToPane[pid]?.addText(text) }
@@ -814,9 +934,18 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
         func s(_ k: String) -> String { args[k] as? String ?? "" }
+        // 답은 "물어본" 세션에게 돌려줘야 한다. self.session 을 클릭/완료 시점에 다시 읽으면,
+        // 그 사이 세션이 바뀌었을 때(대화 재개·다른 세션으로 전환·크래시 후 재기동) 엉뚱한
+        // 서버로 가고 원래 요청자는 영영 기다린다 — "선택했는데 아무 일도 안 일어남".
+        let asker = session
+        func reply(_ text: String) {
+            // 이미 만료·취소된 요청이면 조용히 사라지지 않고 대화에 남긴다 — 예전엔 카드를
+            // 눌러도 아무 일이 없어서 클릭이 씹힌 건지 알 수 없었다.
+            if asker?.respondTool(id, text) != true { addSystem(t("chat.tool.expired")) }
+        }
         switch tool {
         case "ask_user":
-            presentAsk(id, s("question"), args["options"] as? [String] ?? [])
+            presentAsk(id, s("question"), args["options"] as? [String] ?? [], reply)
         case "riven_open_file":
             let p = s("path")
             let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
@@ -832,7 +961,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             addSystem(t("chat.capturing"))
             if let onScreenshot {
                 onScreenshot(url) { [weak self] path in
-                    self?.session?.respondTool(id, path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
+                    reply(path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             } else { session?.respondTool(id, "screenshot unavailable") }
         case "riven_api_request":
@@ -840,13 +969,40 @@ final class ChatPanel: NSView, Themable, Scalable {
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
             addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
-            apiRequest(args) { [weak self] result in self?.session?.respondTool(id, result) }
+            apiRequest(args) { result in reply(result) }
         case "riven_panels":
             session?.respondTool(id, onPanels?() ?? "(no panels)")
         case "riven_open_panel":
             session?.respondTool(id, onOpenPanel?(s("kind")) ?? "unavailable")
         case "riven_close_panel":
             session?.respondTool(id, onClosePanel?(s("id")) ?? "unavailable")
+        case "riven_agents":
+            session?.respondTool(id, onAgentPanes?() ?? "(unavailable)")
+        case "riven_ask_agent":
+            let target = s("agent"), msg = s("message")
+            addSystem("→ \(target): \(ChatPanel.shortTitle(msg))")
+            if let onAskAgent {
+                onAskAgent(target, msg) { [weak self] answer in
+                    self?.addSystem("← \(target)")
+                    reply(answer)
+                }
+            } else { session?.respondTool(id, "agent messaging unavailable") }
+        case "riven_ask_agents":
+            // 한 번에 여러 명 — 전원이 동시에 시작하고, 마지막 한 명이 끝나면 한꺼번에 돌려준다.
+            let tasks: [(agent: String, message: String)] = (args["tasks"] as? [[String: Any]] ?? []).compactMap {
+                guard let a = $0["agent"] as? String, let m = $0["message"] as? String else { return nil }
+                return (agent: a, message: m)
+            }
+            guard !tasks.isEmpty, let onAskAgents else {
+                session?.respondTool(id, tasks.isEmpty ? "tasks must be a non-empty array of {agent, message}"
+                                                       : "agent messaging unavailable")
+                return
+            }
+            addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", "))
+            onAskAgents(tasks) { [weak self] answers in
+                self?.addSystem("← " + answers.map { $0.0 }.joined(separator: ", "))
+                reply(answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n"))
+            }
         case "riven_workspaces":
             session?.respondTool(id, onWorkspaces?() ?? "(none)")
         case "riven_open_workspace":
@@ -877,10 +1033,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         }.resume()
     }
     // The agent called ask_user — show its options as an arrow-select choice card.
-    private func presentAsk(_ id: String, _ question: String, _ options: [String]) {
-        let opts: [(String, () -> Void)] = options.map { opt in
-            (opt, { [weak self] in self?.session?.respondTool(id, opt) })
-        }
+    private func presentAsk(_ id: String, _ question: String, _ options: [String],
+                            _ reply: @escaping (String) -> Void) {
+        let opts: [(String, () -> Void)] = options.map { opt in (opt, { reply(opt) }) }
         enqueueChoice(title: question, detail: "", code: nil, path: nil, options: opts)
     }
 
@@ -994,6 +1149,98 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
     // commands, passthrough built-ins) return false and go to the CLI as a normal message.
+    // ---- richer slash-command reports -------------------------------------------------
+    // /cost — the account's PLAN usage (the same OAuth endpoint the header widget uses), refreshed
+    // on demand, plus this session's last turn. It used to print only the last turn's tokens.
+    private func showUsage() {
+        addSystem(t("chat.usage.loading"))
+        Usage.limits { [weak self] lim in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                var lines: [String] = []
+                func bar(_ remaining: Int) -> String {
+                    let used = max(0, min(100, 100 - remaining))
+                    let filled = Int((Double(used) / 10).rounded())
+                    return String(repeating: "█", count: filled) + String(repeating: "░", count: 10 - filled) + "  \(used)%"
+                }
+                if let s5 = lim.sessionRemaining {
+                    var l = "\(t("chat.usage.session"))  \(bar(s5))"
+                    if let r = lim.sessionResetsAt { l += "   (\(t("chat.usage.resets", ["t": ChatPanel.shortTime(r)])))" }
+                    lines.append(l)
+                }
+                if let w = lim.weeklyRemaining {
+                    var l = "\(t("chat.usage.week"))      \(bar(w))"
+                    if let r = lim.weeklyResetsAt { l += "   (\(t("chat.usage.resets", ["t": ChatPanel.shortTime(r)])))" }
+                    lines.append(l)
+                }
+                if lines.isEmpty { lines.append(t("chat.usage.unavailable")) }
+                if let u = self.lastUsage {
+                    lines.append("")
+                    lines.append("\(t("chat.usage.turn"))  ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))  ·  cache \(ChatText.tokens(u.cacheRead))")
+                }
+                self.addReport(t("chat.usage.title"), lines)
+            }
+        }
+    }
+    // /mcp — which servers are connected and WHAT they give the agent, not just a name list.
+    private func showMCP() {
+        let servers = session?.mcpServers ?? []
+        let tools = session?.toolList ?? []
+        var lines: [String] = []
+        for srv in servers.sorted(by: { $0.name < $1.name }) {
+            let mine = tools.filter { $0.hasPrefix("mcp__\(srv.name)__") }
+                .map { $0.replacingOccurrences(of: "mcp__\(srv.name)__", with: "") }
+            let mark = srv.status == "connected" ? "●" : "○"
+            var line = "\(mark) \(srv.name)"
+            if srv.status != "connected" { line += "  · \(t("chat.mcp.needsAuth"))" }
+            else if !mine.isEmpty { line += "  · \(t("chat.mcp.tools", ["n": mine.count]))" }
+            lines.append(line)
+            if !mine.isEmpty { lines.append("   " + mine.sorted().joined(separator: ", ")) }
+        }
+        if servers.isEmpty { lines.append(t("chat.mcp.none")) }
+        self.addReport(t("chat.mcp.title"), lines)
+    }
+    // /status — what this pane is actually running.
+    private func showStatus() {
+        var lines: [String] = []
+        lines.append("\(t("chat.status.model", ["m": ChatPanel.modelLabel(model)]))   [\(model ?? "?")]")
+        lines.append("\(t("chat.perm.title")): \(modes[modeIndex].0)")
+        if let ws = workspace { lines.append("\(t("chat.status.workspace")): \(ws.path)") }
+        if let sid = session?.sessionId { lines.append("\(t("chat.status.session", ["id": String(sid.prefix(8))]))") }
+        if let v = AgentDiscovery.claudeVersion() { lines.append("\(t("chat.status.cli")): \(v)") }
+        let tools = session?.toolList ?? []
+        if !tools.isEmpty {
+            let mcp = tools.filter { $0.hasPrefix("mcp__") }.count
+            lines.append("\(t("chat.status.tools")): \(tools.count)  (MCP \(mcp))")
+        }
+        if let u = lastUsage {
+            lines.append("\(t("chat.usage.turn")): ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))")
+        }
+        addReport(t("chat.status.title"), lines)
+    }
+    /// A titled, monospaced block — readable columns instead of one dim run-on line.
+    private func addReport(_ title: String, _ lines: [String]) {
+        let head = NSTextField(labelWithString: title)
+        head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
+        head.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(head)
+        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        let body = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
+        body.font = UIScale.mono(UIScale.small); body.textColor = Theme.fgDim; body.isSelectable = true
+        body.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(body)
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        scrollSoon()
+    }
+    /// "2026-08-04T09:00:00Z" → "09:00" (local), for reset times.
+    static func shortTime(_ iso: String) -> String {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        guard let d else { return iso }
+        let out = DateFormatter(); out.dateFormat = "M/d HH:mm"
+        return out.string(from: d)
+    }
+
     private func handleSlash(_ text: String) -> Bool {
         let cmd = String(text.dropFirst()).split(separator: " ").first.map(String.init) ?? ""
         switch cmd {
@@ -1009,42 +1256,29 @@ final class ChatPanel: NSView, Themable, Scalable {
                 let label = (s.title.isEmpty ? String(s.id.prefix(8)) : s.title) + "  ·  " + s.date
                 return (label, { [weak self] in self?.switchSession(to: s.id) })
             }
-            presentChoice(t("chat.sessions.pick"), options: opts)
+            presentChoice(t("chat.sessions.pick"), options: opts, allowOther: false)
             return true
         case "model":
             pickModel(); return true
-        case "cost", "context":
-            if let u = lastUsage {
-                addSystem(t("chat.usage.recent", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output), "cache": ChatText.tokens(u.cacheRead)]))
-            } else { addSystem(t("chat.usage.none")) }
-            return true
-        case "compact":
-            addSystem(t("chat.compactNote"))
-            return true
+        case "cost", "context", "usage":
+            showUsage(); return true
         case "mcp":
-            let servers = session?.mcpServers ?? []
-            let riven = (session?.toolList ?? []).filter { $0.hasPrefix("mcp__riven__") }
-            var lines = [t("chat.mcp.connected")]
-            lines += servers.isEmpty ? [t("chat.mcp.none")] : servers.map { "· \($0.name) — \($0.status)" }
-            if !riven.isEmpty { lines.append("· riven (내장) — \(riven.map { $0.replacingOccurrences(of: "mcp__riven__", with: "") }.joined(separator: ", "))") }
-            addSystem(lines.joined(separator: "\n"))
-            return true
+            showMCP(); return true
         case "config":
             onOpenSettings?(); return true
         case "permissions":
-            addSystem(t("chat.mode.help", ["m": modes[modeIndex].0]))
+            // Not a paragraph of prose — a picker that actually switches the mode.
+            let descs = [t("chat.perm.planDesc"), t("chat.perm.askDesc"), t("chat.perm.autoDesc")]
+            let opts: [(String, () -> Void)] = modes.enumerated().map { i, m in
+                ("\(m.0) · \(descs[i])", { [weak self] in
+                    self?.modePopup.selectItem(at: i); self?.modeChanged()
+                })
+            }
+            presentChoice(t("chat.perm.pick"), options: opts, allowOther: false)
             return true
         case "status":
-            // Show the friendly name AND the raw id (a resumed session keeps its original model, so
-            // seeing the exact id matters when it differs from the CLI's current default).
-            var s = [t("chat.status.model", ["m": "\(ChatPanel.modelLabel(model)) [\(model ?? "?")]"]), t("chat.status.perm", ["m": modes[modeIndex].0])]
-            if let v = AgentDiscovery.claudeVersion() { s.append("CLI \(v)") }
-            if let u = lastUsage { s.append(t("chat.usage.recentShort", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])) }
-            if let sid = session?.sessionId { s.append(t("chat.status.session", ["id": String(sid.prefix(8))])) }
-            addSystem(s.joined(separator: " · ")); return true
+            showStatus(); return true
         case "update":
-            // Manual CLI update for people who keep auto-update OFF — riven never flips that
-            // setting itself; this just runs `claude update` and reports the result.
             guard let cmd = AgentDiscovery.claudeCmd() else { addSystem(t("chat.noCLIShort")); return true }
             addSystem(t("chat.updating"))
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -1066,7 +1300,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "review":
             sendPrompt(t("chat.prompt.review")); return true
         case "agents":
-            addSystem(t("chat.agentsNote"))
+            // Actually open the chosen agent in its own pane (it used to just print a sentence).
+            let names = onListAgents?() ?? []
+            var opts: [(String, () -> Void)] = [(t("chat.agents.default"), { [weak self] in self?.onOpenAgentChat?(nil) })]
+            opts += names.map { n in (n, { [weak self] in self?.onOpenAgentChat?(n) }) }
+            if names.isEmpty { addSystem(t("chat.agents.none")) }
+            presentChoice(t("chat.agents.pick"), options: opts, allowOther: false)
             return true
         case "help":
             addSystem(t("chat.help"))
@@ -1086,12 +1325,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // session keeps the model it was created with, so "기본" is not necessarily what this pane runs
     // (that's why a resumed pane could sit on an older Opus while new chats start on Opus 5).
     private func pickModel() {
-        let models: [(String, String)] = [
-            (t("chat.model.default"), "default"),
-            ("Opus 5", "opus"),
-            ("Sonnet 5", "sonnet"),
-            ("Haiku 4.5", "haiku"),
-        ]
+        let models = ChatPanel.selectableModels
         let menu = NSMenu()
         let header = NSMenuItem(title: t("chat.model.now", ["m": ChatPanel.modelLabel(model)]), action: nil, keyEquivalent: "")
         header.isEnabled = false
@@ -1107,6 +1341,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         let anchor = convert(inputScroll.frame.origin, from: inputScroll.superview)
         menu.popUp(positioning: nil, at: anchor, in: self)
     }
+    /// The models a pane can be pinned to — one source for the ⌥ menu and the agent-group cards.
+    static var selectableModels: [(String, String)] {
+        [(t("chat.model.default"), "default"), ("Fable 5", "fable"), ("Opus 5", "opus"),
+         ("Sonnet 5", "sonnet"), ("Haiku 4.5", "haiku")]
+    }
+
     // Human-readable model name from the CLI's id (e.g. "claude-opus-5[1m]" → "Opus 5 (1m)").
     static func modelLabel(_ id: String?) -> String {
         guard var s = id, !s.isEmpty else { return "?" }
@@ -1122,6 +1362,23 @@ final class ChatPanel: NSView, Themable, Scalable {
         let name = family.prefix(1).uppercased() + family.dropFirst()
         return (ver.isEmpty ? name : "\(name) \(ver)") + suffix
     }
+    /// 실행 중인 세션의 모델을 바꾸고, 그 선택을 팬에 기록한다 (레이아웃과 함께 저장되어
+    /// 다음 실행에도 유지된다). 조직도 편집·모델 메뉴가 공유하는 하나의 경로.
+    func applyModel(_ id: String?) {
+        preferredModel = id
+        session?.setModel(id ?? "default")
+        let label = ChatPanel.selectableModels.first { $0.1 == (id ?? "default") }?.0 ?? "?"
+        addSystem(t("chat.model.set", ["m": label]))
+    }
+    /// 앱이 이 팬의 대화에 한 줄 남긴다 (그룹 복구 안내 등).
+    func noteSystem(_ text: String) { addSystem(text) }
+    /// 조직도에서 닉네임을 바꿨을 때 — 대화에도 남겨 동료가 새 이름을 알 수 있게 한다.
+    func applyNickname(_ name: String) {
+        guard name != nickname else { return }
+        nickname = name
+        addSystem(t("team.renamed", ["name": name]))
+    }
+
     @objc private func pickModelItem(_ item: NSMenuItem) {
         guard let id = item.representedObject as? String else { return }
         session?.setModel(id)
@@ -1141,6 +1398,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // them (and closing them while one was still running lost visibility). They're real dock
         // panels now: they stay open until the user closes them (or the workspace changes).
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
+        turnText = ""
         current = newBlock()
         current?.startWorking()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; startFlush()
@@ -1150,6 +1408,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         scrollSoon()
     }
     private var currentTurnText: String?
+    private var turnText = ""                                   // assistant text of the running turn
+    private var askWaiters: [(String) -> Void] = []             // agents waiting on this pane's answer
     private var currentTurnBubble: UserBubble?
     private func newBlock() -> TurnBlock {
         trimTranscript()               // bound the rendered view count before adding a new turn
@@ -1226,6 +1486,12 @@ final class ChatPanel: NSView, Themable, Scalable {
                 block?.setQuota(sessionUsed: lim.sessionRemaining.map { 100 - $0 },
                                 weeklyUsed: lim.weeklyRemaining.map { 100 - $0 })
             }
+        }
+        // Hand this turn's answer to any agent that delegated work here (riven_ask_agent).
+        if !askWaiters.isEmpty {
+            let answer = turnText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let waiters = askWaiters; askWaiters.removeAll()
+            waiters.forEach { $0(answer.isEmpty ? (error ?? "(no answer)") : answer) }
         }
         refreshAITitle()   // adopt the CLI's summarized title if it produced one this turn
         // Send the next queued user message (typed while this turn was running).
@@ -1339,23 +1605,23 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Claude Code's standard slash commands (for CLI-parity autocomplete) + custom commands
     // from .claude/commands. riven handles the useful ones itself (see handleSlash); the rest
     // pass through to the CLI (custom commands run; a few TUI-only built-ins may report back).
+    // Only commands that DO something. /compact and /memory were removed: headless sessions don't
+    // support manual compaction, and memory editing has no UI here — printing "not supported" is
+    // worse than not offering it.
     private static let builtins: [SlashCommand] = [
         .init(name: "clear", desc: t("chat.cmd.clear")),
-        .init(name: "compact", desc: t("chat.cmd.compact")),
-        .init(name: "context", desc: t("chat.cmd.context")),
-        .init(name: "cost", desc: t("chat.cmd.cost")),
-        .init(name: "config", desc: t("chat.cmd.config")),
-        .init(name: "help", desc: t("chat.cmd.help")),
-        .init(name: "init", desc: t("chat.cmd.init")),
-        .init(name: "mcp", desc: t("chat.cmd.mcp")),
-        .init(name: "memory", desc: t("chat.cmd.memory")),
+        .init(name: "resume", desc: t("chat.cmd.resume")),
+        .init(name: "agents", desc: t("chat.cmd.agents")),
         .init(name: "model", desc: t("chat.cmd.model")),
         .init(name: "permissions", desc: t("chat.cmd.permissions")),
-        .init(name: "resume", desc: t("chat.cmd.resume")),
-        .init(name: "review", desc: t("chat.cmd.review")),
-        .init(name: "agents", desc: t("chat.cmd.agents")),
+        .init(name: "cost", desc: t("chat.cmd.cost")),
         .init(name: "status", desc: t("chat.cmd.status")),
-        .init(name: "update", desc: t("chat.cmd.update"))
+        .init(name: "mcp", desc: t("chat.cmd.mcp")),
+        .init(name: "init", desc: t("chat.cmd.init")),
+        .init(name: "review", desc: t("chat.cmd.review")),
+        .init(name: "config", desc: t("chat.cmd.config")),
+        .init(name: "update", desc: t("chat.cmd.update")),
+        .init(name: "help", desc: t("chat.cmd.help"))
     ]
     private static func discoverCommands(cwd: String) -> [SlashCommand] {
         var out = builtins
@@ -1390,7 +1656,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             desc = lines.first(where: { !$0.isEmpty && $0 != "---" })
                 .map { $0.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces) } ?? t("chat.cmd.user")
         }
-        let full = hint.isEmpty ? desc : "\(hint)  —  \(desc)"
+        let full = hint.isEmpty ? desc : "\(hint)  ·  \(desc)"
         return String(full.prefix(60))
     }
 }
