@@ -2928,6 +2928,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        // RIVEN_TOKENSHOT=<theme>: 그 테마에서 @멘션 / 슬래시 토큰이 실제로 읽히는지 캡처.
+        if let theme = ProcessInfo.processInfo.environment["RIVEN_TOKENSHOT"] {
+            Theme.apply(id: theme)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.teamPanel.debugCreate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if let lead = self.agentPanes().first(where: { $0.chat.parentName == nil }) {
+                            lead.chat.debugFillInput("/status @멤버1 저녁메뉴 @멤버2 점심메뉴")
+                            self.focusPanelContent(lead.panel)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            if let v = self.window.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let png = rep.representation(using: .png, properties: [:]) {
+                                    try? png.write(to: URL(fileURLWithPath: "/tmp/token-\(theme).png"))
+                                    RLog.log("TOKEN shot /tmp/token-\(theme).png")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // RIVEN_MENTIONSPLIT=1: 멘션마다 다른 지시가 각자에게 가는지 (문자열 분해만 검증).
         if ProcessInfo.processInfo.environment["RIVEN_MENTIONSPLIT"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {

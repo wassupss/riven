@@ -14,11 +14,26 @@ enum ChatTokens {
         let name: String
     }
 
+    /// 토큰 글자색. 팔레트에 따라 accent 가 본문색과 거의 같을 수 있어(void: accent #eef0f3 vs
+    /// fg #f4f4f6) 대비를 직접 확인하고, 너무 가까우면 보조 액센트로 물러난다.
     static func color(_ kind: Kind) -> NSColor {
         switch kind {
-        case .command: return Theme.info       // 명령·스킬
-        case .mention: return Theme.accent     // 동료 호출 (조직도의 위임선과 같은 색)
+        case .command: return legible(Theme.info)
+        case .mention: return legible(Theme.accent)
         }
+    }
+    /// 토큰 뒤에 까는 옅은 칩 배경. 색만으로는 구분이 안 되는 테마에서도 "이건 토큰"이 읽힌다.
+    static func chip(_ kind: Kind) -> NSColor { color(kind).withAlphaComponent(0.18) }
+
+    /// 본문색과 너무 비슷하면 보조 액센트로 바꾼다 (그것도 비슷하면 그냥 쓴다).
+    private static func legible(_ c: NSColor) -> NSColor {
+        contrastOK(c) ? c : (contrastOK(Theme.accent2) ? Theme.accent2 : c)
+    }
+    private static func contrastOK(_ c: NSColor) -> Bool {
+        guard let a = c.usingColorSpace(.sRGB), let b = Theme.fg.usingColorSpace(.sRGB) else { return true }
+        let d = abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent)
+              + abs(a.blueComponent - b.blueComponent)
+        return d > 0.25
     }
 
     /// 텍스트에서 색을 입힐 토큰들을 찾는다.
@@ -117,8 +132,13 @@ enum ChatTokens {
     static func attributed(_ text: String, base: [NSAttributedString.Key: Any],
                            commands: Set<String>, peers: [String]) -> NSAttributedString {
         let s = NSMutableAttributedString(string: text, attributes: base)
+        let bold = (base[.font] as? NSFont).map { NSFontManager.shared.convert($0, toHaveTrait: .boldFontMask) }
         for tok in scan(text, commands: commands, peers: peers) {
-            s.addAttributes([.foregroundColor: color(tok.kind)], range: tok.range)
+            // 글자색 + 옅은 칩 + 굵기. void 처럼 액센트가 본문색과 겹치는 팔레트에서도 읽힌다.
+            var at: [NSAttributedString.Key: Any] = [
+                .foregroundColor: color(tok.kind), .backgroundColor: chip(tok.kind)]
+            if let bold { at[.font] = bold }
+            s.addAttributes(at, range: tok.range)
         }
         return s
     }

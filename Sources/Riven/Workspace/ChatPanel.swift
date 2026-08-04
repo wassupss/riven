@@ -1493,6 +1493,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         return "n=\(commands.count) skills=\(skills.count) sample=\(skills.prefix(3).joined(separator: ","))"
     }
 
+    /// 벤치용: 입력창에 글을 넣고 색칠까지 돌린다.
+    func debugFillInput(_ text: String) {
+        input.stringValue = text
+        highlightInput()
+    }
+
     /// 벤치용: 선택 카드를 하나 띄운다.
     func debugPresentChoice(_ options: [String]) {
         enqueueChoice(title: "테스트 선택", detail: "", code: nil, path: nil,
@@ -1810,11 +1816,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     // 실재하는 명령/스킬과 실재하는 동료만 색이 붙는다. 임시 속성(temporary attributes)이라
     // 텍스트 자체는 평문 그대로다 (복사·전송에 영향 없음).
     private var lastSpans: [(NSRange, NSColor)] = []
+    private var lastChips: [(NSRange, NSColor)] = []
     private func highlightInput() {
         guard let lm = input.layoutManager else { return }
         let text = input.stringValue
-        let spans = ChatTokens.scan(text, commands: commandNames, peers: peerNames())
-            .map { ($0.range, ChatTokens.color($0.kind)) }
+        let toks = ChatTokens.scan(text, commands: commandNames, peers: peerNames())
+        let spans = toks.map { ($0.range, ChatTokens.color($0.kind)) }
+        let chips = toks.map { ($0.range, ChatTokens.chip($0.kind)) }
         // 바뀐 게 없으면 아무것도 하지 않는다 (키 입력마다 레이아웃을 건드리지 않게).
         if spans.count == lastSpans.count,
            zip(spans, lastSpans).allSatisfy({ NSEqualRanges($0.0, $1.0) && $0.1 == $1.1 }) { return }
@@ -1823,10 +1831,17 @@ final class ChatPanel: NSView, Themable, Scalable {
         for (r, _) in lastSpans + spans { dirty = dirty.map { NSUnionRange($0, r) } ?? r }
         if var d = dirty {
             d = NSIntersectionRange(d, NSRange(location: 0, length: (text as NSString).length))
-            if d.length > 0 { lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: d) }
+            if d.length > 0 {
+                lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: d)
+                lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: d)
+            }
         }
-        for (r, c) in spans { lm.setTemporaryAttributes([.foregroundColor: c], forCharacterRange: r) }
-        lastSpans = spans
+        for (i, (r, c)) in spans.enumerated() {
+            // 글자색 + 옅은 칩 배경. 색만으로 구분되지 않는 팔레트(void)에서도 눈에 띈다.
+            lm.setTemporaryAttributes([.foregroundColor: c, .backgroundColor: chips[i].1],
+                                      forCharacterRange: r)
+        }
+        lastSpans = spans; lastChips = chips
     }
     // Shift+Tab (mode cycle) any time; when the popup is up: arrows / Enter / Esc. Return true
     // if consumed (so ChatInput doesn't also act on the key).
