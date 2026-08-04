@@ -50,16 +50,21 @@ final class Settings {
         guard !already else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.flush() }
     }
-    /// Write the settings file now (also called on quit so nothing is lost).
-    func flush() {
+    /// Write the settings file.
+    ///
+    /// `sync: true` (quit) writes on the CALLING thread: an async write scheduled at termination
+    /// never ran — the process exited first — and left a 0-byte settings file, i.e. the whole
+    /// session (workspaces, layouts, tabs) gone. The write is also ATOMIC, so an interrupted write
+    /// can never truncate the existing file.
+    func flush(sync: Bool = false) {
         lock.lock()
         flushScheduled = false
         let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
         let dest = url
         lock.unlock()
-        guard let data else { return }
-        // Off the main thread: the write is the expensive part and nothing waits on it.
-        DispatchQueue.global(qos: .utility).async { try? data.write(to: dest) }
+        guard let data, !data.isEmpty else { return }
+        if sync { try? data.write(to: dest, options: .atomic); return }
+        DispatchQueue.global(qos: .utility).async { try? data.write(to: dest, options: .atomic) }
     }
 
     // A JSON-safe copy of all settings minus the given keys (used for cloud sync —
