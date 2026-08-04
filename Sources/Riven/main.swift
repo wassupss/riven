@@ -80,14 +80,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         spin.style = .spinning; spin.controlSize = .small
         spin.translatesAutoresizingMaskIntoConstraints = false
         spin.startAnimation(nil)
-        v.addSubview(spin)
+        loadingLabel.font = UIScale.font(UIScale.small)
+        loadingLabel.textColor = Theme.fgDim
+        loadingLabel.alignment = .center
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(spin); v.addSubview(loadingLabel)
         NSLayoutConstraint.activate([
             spin.centerXAnchor.constraint(equalTo: v.centerXAnchor),
             spin.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+            loadingLabel.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            loadingLabel.topAnchor.constraint(equalTo: spin.bottomAnchor, constant: 10),
         ])
         v.isHidden = true
         return v
     }()
+    private func showLoadingOverlay(_ label: String? = nil) {
+        loadingLabel.stringValue = label ?? ""
+        loadingLabel.isHidden = (label == nil)
+        showSwitchOverlay()
+    }
+    private let loadingLabel = NSTextField(labelWithString: "")
     private func showSwitchOverlay() {
         if switchOverlay.superview !== dockHost {
             switchOverlay.frame = dockHost.bounds
@@ -294,6 +306,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // but NOT when a debug folder is forced via RIVEN_OPEN (else both would
         // open and the restored session would clobber the forced folder).
         if ProcessInfo.processInfo.environment["RIVEN_OPEN"] == nil {
+            // Reopening restores workspaces, dock layouts, editor tabs and chat transcripts — enough
+            // work to look like a freeze. Show the overlay FIRST and force a paint, then restore on
+            // the next runloop turn so the spinner is actually on screen while it happens.
+            let willRestore = (Settings.shared.object("session")?["workspaces"] as? [String])?.isEmpty == false
+            if willRestore { showLoadingOverlay(t("app.restoring")) }
             DispatchQueue.main.async { self.restoreSession() }
         }
         // No auto folder-open on launch; the user opens one via + / ⌘O.
@@ -2464,7 +2481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func restoreSession() {
         guard let s = Settings.shared.object("session"),
-              let keys = s["workspaces"] as? [String], !keys.isEmpty else { return }
+              let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); return }
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
         let colors = s["colors"] as? [String: String] ?? [:]
@@ -2488,7 +2505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let n = names[key] { workspaceNames[url] = n; rail.setName(url, n) }                        // restore custom name
             restored.append(url)
         }
-        guard !restored.isEmpty else { return }
+        guard !restored.isEmpty else { hideSwitchOverlay(); return }
         workspaces = restored
         let activeKey = s["active"] as? String
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
@@ -3646,7 +3663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); Settings.shared.flush(); lsp.stopAll() }
+    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true); lsp.stopAll() }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the

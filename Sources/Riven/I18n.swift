@@ -87,6 +87,7 @@ enum I18n {
         "notes.titlePlaceholder": ("제목", "Title"),
         "notes.back": ("목록", "Notes"),
         "menu.notes": ("메모", "Notes"),
+        "app.restoring": ("작업 공간 복원 중…", "Restoring your workspaces…"),
         "api.addRow": ("행 추가", "Add row"),
         // ---- native chat panel ----
         "chat.placeholder": ("Claude에게 메시지…  ( / 명령 · Shift+Enter 줄바꿈 )",
