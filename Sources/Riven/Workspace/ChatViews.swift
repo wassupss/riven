@@ -829,7 +829,10 @@ enum ChatText {
 final class UserBubble: NSView {
     private let bar = NSView()
     private let queuedTag = NSTextField(labelWithString: t("chat.queuedTag"))
-    init(text: String) {
+    /// 색을 입힐 토큰 정보 (실재하는 명령/스킬, 같은 그룹 동료). 입력창에서 보던 색이 보낸
+    /// 뒤에도 그대로 남게 한다.
+    struct Tokens { let commands: Set<String>; let peers: [String] }
+    init(text: String, tokens: Tokens? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
         let card = NSView()
@@ -845,8 +848,11 @@ final class UserBubble: NSView {
         let l = NSTextField(wrappingLabelWithString: text)
         l.font = UIScale.font(UIScale.prose); l.textColor = Theme.fg; l.isSelectable = true
         let p = NSMutableParagraphStyle(); p.lineSpacing = 4
-        l.attributedStringValue = NSAttributedString(string: text,
-            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.prose), .paragraphStyle: p])
+        let base: [NSAttributedString.Key: Any] = [
+            .foregroundColor: Theme.fg, .font: UIScale.font(UIScale.prose), .paragraphStyle: p]
+        l.attributedStringValue = tokens.map {
+            ChatTokens.attributed(text, base: base, commands: $0.commands, peers: $0.peers)
+        } ?? NSAttributedString(string: text, attributes: base)
         l.translatesAutoresizingMaskIntoConstraints = false
         queuedTag.font = UIScale.font(UIScale.caption, .medium); queuedTag.textColor = Theme.warning
         queuedTag.isHidden = true
@@ -878,6 +884,14 @@ final class UserBubble: NSView {
     required init?(coder: NSCoder) { fatalError() }
     private var bottomToText: NSLayoutConstraint!
     private var bottomToTag: NSLayoutConstraint!
+    /// 동료에게 넘긴 메시지 — 이 팬의 에이전트가 아니라 누구에게 갔는지 버블에 붙인다.
+    func setDelegated(_ who: String) {
+        queuedTag.stringValue = "→ " + who
+        queuedTag.textColor = Theme.accent
+        queuedTag.isHidden = false
+        bottomToText.isActive = false
+        bottomToTag.isActive = true
+    }
     // Mid-turn messages wait their turn: dim + a "대기 중" tag until they start (CLI-style ack).
     func setQueued(_ q: Bool) {
         queuedTag.isHidden = !q
@@ -1436,6 +1450,8 @@ final class SlashPopup: NSView {
     private(set) var selected = 0
     private var rows: [NSView] = []
     static let rowH: CGFloat = 24
+    /// 줄 앞에 붙는 글자: 명령·스킬은 "/", 동료 호출은 "@". set() 전에 정한다.
+    var prefix = "/"
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1465,6 +1481,8 @@ final class SlashPopup: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     var count: Int { items.count }
+    /// 벤치용: 지금 떠 있는 줄 이름들.
+    func debugItems() -> [String] { items.map { $0.name } }
     func current() -> SlashCommand? { items.indices.contains(selected) ? items[selected] : nil }
     func move(_ d: Int) { guard !items.isEmpty else { return }; selected = (selected + d + items.count) % items.count; restyle(); scrollToSelected() }
 
@@ -1473,7 +1491,7 @@ final class SlashPopup: NSView {
         rows.forEach { $0.removeFromSuperview() }; rows = []
         for cmd in items {
             let row = NSView(); row.wantsLayer = true; row.layer?.cornerRadius = 5
-            let name = NSTextField(labelWithString: "/" + cmd.name)
+            let name = NSTextField(labelWithString: prefix + cmd.name)
             name.font = UIScale.mono(UIScale.small, .semibold); name.textColor = Theme.fg
             name.translatesAutoresizingMaskIntoConstraints = false
             let desc = NSTextField(labelWithString: cmd.desc)
