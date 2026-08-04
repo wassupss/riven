@@ -1492,10 +1492,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // 여러 명이면 한 번에 던진다. from: chat 이라 조직도에도 보낸 사람 → 받는 사람으로
         // 위임선이 흐르고, 그룹 안에서만 이름을 찾는다.
-        chat.onAskPeers = { [weak self, weak chat] tasks, each in
+        chat.onAskPeers = { [weak self, weak chat] tasks, each, all in
             guard let self else { return }
             self.askAgentPanes(tasks, from: chat, inGroup: chat?.groupName,
-                               each: { name in each(name) }, { _ in })
+                               each: { name in each(name) }, { answers in all(answers) })
         }
         chat.onOpenAgentChat = { [weak self] name in self?.newChat(agent: name) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
@@ -2925,6 +2925,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.focusPanelContent(pane.panel)
                     let now = String(describing: type(of: self.window.firstResponder ?? NSNull()))
                     RLog.log("CARD afterSteal=\(stolen) afterActivate=\(now)")
+                }
+            }
+        }
+        // RIVEN_MENTIONSPLIT=1: 멘션마다 다른 지시가 각자에게 가는지 (문자열 분해만 검증).
+        if ProcessInfo.processInfo.environment["RIVEN_MENTIONSPLIT"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let peers = ["멤버1", "멤버2"]
+                for text in ["@멤버1 저녁메뉴 추천해줘 @멤버2 점심메뉴 추천해줘",
+                             "한국식으로 @멤버1 저녁 @멤버2 점심",
+                             "@멤버1 @멤버2 이 파일 같이 봐줘",
+                             "@멤버1"] {
+                    let tasks = ChatTokens.mentionTasks(text, peers: peers)
+                    RLog.log("SPLIT \(text) → " + (tasks.isEmpty ? "(없음)" :
+                        tasks.map { "\($0.agent)=\"\($0.message)\"" }.joined(separator: " | ")))
                 }
             }
         }

@@ -61,6 +61,45 @@ enum ChatTokens {
     }
 
     /// 보낼 때: 호출된 동료들과, @토큰을 걷어낸 나머지 메시지.
+    /// 멘션마다 **그 뒤에 붙은 말**을 따로 떼어 준다. "@멤버1 저녁 추천 @멤버2 점심 추천" 은
+    /// 두 사람에게 각각 다른 일을 시킨 것이지 같은 말을 두 번 보낸 게 아니다. 첫 멘션 앞의
+    /// 문장은 공통 지시로 보고 모두에게 붙인다.
+    /// 뒤에 붙은 말이 없는 멘션(예: "@A @B 이거 봐줘")은 공통 지시만 받는다.
+    static func mentionTasks(_ text: String, peers: [String]) -> [(agent: String, message: String)] {
+        let toks = scan(text, commands: [], peers: peers).filter { $0.kind == .mention }
+        guard !toks.isEmpty else { return [] }
+        let ns = text as NSString
+        let prefix = ns.substring(to: toks[0].range.location)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var out: [(agent: String, message: String)] = []
+        var pending: [String] = []      // 바로 뒤에 할 말이 없던 멘션들 (붙어 있는 호출)
+        func put(_ name: String, _ body: String) {
+            let full = [prefix, body].filter { !$0.isEmpty }.joined(separator: " ")
+            if let k = out.firstIndex(where: { $0.agent == name }) {
+                out[k].message = [out[k].message, full].filter { !$0.isEmpty }.joined(separator: " ")
+            } else {
+                out.append((agent: name, message: full))
+            }
+        }
+        for (i, tok) in toks.enumerated() {
+            let start = tok.range.location + tok.range.length
+            let end = i + 1 < toks.count ? toks[i + 1].range.location : ns.length
+            let own = ns.substring(with: NSRange(location: start, length: max(0, end - start)))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if own.isEmpty {
+                // "@A @B 이거 봐줘" 처럼 이름만 붙어 있으면 뒤에 오는 지시를 함께 받는다.
+                pending.append(tok.name)
+                continue
+            }
+            for name in pending { put(name, own) }
+            pending = []
+            put(tok.name, own)
+        }
+        // 끝까지 할 말이 없던 멘션은 공통 지시만이라도 받는다 (그것도 없으면 위임하지 않는다).
+        for name in pending where !prefix.isEmpty { put(name, "") }
+        return out.contains { !$0.message.isEmpty } ? out : []
+    }
+
     static func mentions(_ text: String, peers: [String]) -> (targets: [String], rest: String) {
         let toks = scan(text, commands: [], peers: peers).filter { $0.kind == .mention }
         guard !toks.isEmpty else { return ([], text) }

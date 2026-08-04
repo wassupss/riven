@@ -84,7 +84,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 팝업 줄에 붙일 동료 설명 (페르소나 · 모델, 또는 닫힘).
     var onPeerDesc: ((String) -> String)?
     /// 입력창에서 @동료를 불렀을 때. 여럿이면 동시에 보내고, `each` 는 한 명이 답할 때마다 불린다.
-    var onAskPeers: (([(agent: String, message: String)], @escaping (String) -> Void) -> Void)?
+    var onAskPeers: (([(agent: String, message: String)],
+                      _ each: @escaping (String) -> Void,
+                      _ all: @escaping ([(String, String)]) -> Void) -> Void)?
     var onOpenSubagentPane: ((_ id: String, _ view: NSView, _ title: String) -> Void)?   // place as a dock panel
     var onCloseSubagentPanes: ((_ ids: [String]) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
@@ -1513,21 +1515,33 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func delegateToMentions(_ text: String) -> Bool {
         let peers = peerNames()
         guard !peers.isEmpty else { return false }
-        let (targets, rest) = ChatTokens.mentions(text, peers: peers)
-        guard !targets.isEmpty else { return false }
-        guard !rest.isEmpty else { addSystem(t("chat.mention.empty")); return true }
+        // 멘션마다 그 뒤의 지시를 따로 준다: "@멤버1 저녁 @멤버2 점심" 은 서로 다른 두 가지 일이다.
+        let tasks = ChatTokens.mentionTasks(text, peers: peers)
+        guard !tasks.isEmpty else {
+            let (targets, rest) = ChatTokens.mentions(text, peers: peers)
+            if !targets.isEmpty, rest.isEmpty { addSystem(t("chat.mention.empty")); return true }
+            return false
+        }
         guard let onAskPeers else { return false }
+        let targets = tasks.map { $0.agent }
         // 보낸 말은 그대로 남긴다 (무엇을 시켰는지 이 대화만 봐도 알 수 있게).
         let bubble = addUser(text)
         bubble.setDelegated(targets.joined(separator: ", "))
-        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(rest)) }
-        addSystem("→ " + targets.joined(separator: ", ") + ": " + ChatPanel.shortTitle(rest))
+        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(tasks[0].message)) }
+        for task in tasks { addSystem("→ " + task.agent + ": " + ChatPanel.shortTitle(task.message)) }
         var left = targets.count
-        onAskPeers(targets.map { (agent: $0, message: rest) }, { [weak self] name in
+        onAskPeers(tasks, { [weak self] name in
             guard let self else { return }
             left -= 1
             self.addSystem(left == 0 ? "← " + name + " " + t("chat.mention.allBack")
                                      : "← " + name + " " + t("chat.mention.back", ["k": left]))
+        }, { [weak self] answers in
+            // 전원이 답하면 이 팬의 에이전트에게 넘긴다. 사람이 여러 명에게 시켜 놓고 이 팬에서
+            // 종합을 기대하는 흐름이라, 여기서 끊으면 사용자가 직접 답을 옮겨야 한다.
+            // (기다리는 동안 이 팬에 다른 지시를 하면 그 턴이 먼저 돌고 이건 뒤로 큐잉된다.)
+            guard let self, !answers.isEmpty else { return }
+            let body = answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+            self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), body)
         })
         return true
     }
