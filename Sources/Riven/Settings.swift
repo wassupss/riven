@@ -43,6 +43,15 @@ final class Settings {
         read { dict.keys.filter { $0.hasPrefix(prefix) }.sorted() }
     }
 
+    /// 키를 지운다 (그룹 삭제처럼 저장한 것도 같이 없애야 할 때).
+    func remove(_ key: String) {
+        lock.lock()
+        dict.removeValue(forKey: key)
+        lock.unlock()
+        scheduleFlush()
+        NotificationCenter.default.post(name: .rivenSettingChanged, object: key)
+    }
+
     func set(_ key: String, _ value: Any) {
         lock.lock()
         dict[key] = value

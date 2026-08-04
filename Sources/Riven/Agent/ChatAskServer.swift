@@ -61,7 +61,8 @@ final class ChatAskServer {
         - 웹페이지 화면이 필요하면 `riven_screenshot`(url?) 로 캡처합니다. 반환된 PNG 경로를 Read 로 읽어 확인하세요.
         - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
         - riven의 패널/워크스페이스를 파악·조작할 수 있습니다: `riven_panels`(현재 패널 목록), `riven_open_panel`(kind), `riven_close_panel`(id), `riven_workspaces`, `riven_open_workspace`(path).
-        - 다른 에이전트와 팀으로 일할 수 있습니다: `riven_agents` 로 동료(역할·상태)를 확인하고, `riven_ask_agent`(agent, message) 로 일을 넘긴 뒤 답을 받습니다. 여러 명에게 서로 무관한 일을 시킬 땐 `riven_ask_agents`(tasks=[{agent,message},…]) 를 한 번 호출하세요. 전원이 동시에 시작합니다 (한 명씩 부르면 순차로 끝날 때까지 기다리게 됩니다). 오래 걸릴 일은 `wait=false` 로 넘기면 즉시 반환되고, 답은 도착하는 대로 당신의 대화에 전달됩니다. 그동안 다른 일을 하세요. 새 동료가 필요하면 `riven_open_panel`("chat") 로 패널을 엽니다. 자기 자신에게는 넘길 수 없습니다.
+        - 다른 에이전트와 팀으로 일할 수 있습니다: `riven_agents` 로 동료(역할·상태)를 확인하고, `riven_ask_agent`(agent, message) 로 일을 넘긴 뒤 답을 받습니다. 여러 명에게 서로 무관한 일을 시킬 땐 `riven_ask_agents`(tasks=[{agent,message},…]) 를 한 번 호출하세요. 전원이 동시에 시작합니다 (한 명씩 부르면 순차로 끝날 때까지 기다리게 됩니다). 오래 걸릴 일은 `wait=false` 로 넘기면 즉시 반환되고, 답은 도착하는 대로 당신의 대화에 전달됩니다. 그동안 다른 일을 하세요.
+        - 그룹 인원은 `riven_group_add_agent`(group, name, persona?, model?, parent?) 로 늘리고, `riven_group_remove_agent`(group, name) 로 줄입니다. 그룹 자체는 `riven_group_delete`(group). 줄이거나 지우는 건 사용자 확인을 거쳐야 실행되며, 동의하지 않으면 그대로 유지됩니다. 새 동료가 필요하면 `riven_open_panel`("chat") 로 패널을 엽니다. 자기 자신에게는 넘길 수 없습니다.
         """
     }
 
@@ -226,6 +227,15 @@ final class ChatAskServer {
             {"name": "riven_ask_agents",
              "description": "Delegate to SEVERAL agents AT ONCE. Every task starts immediately and they run in parallel, so prefer this over calling riven_ask_agent repeatedly when the work is independent. By default it waits and returns every answer; pass wait=false to return at once and have each answer delivered into your conversation as it lands.",
              "inputSchema": {"type": "object", "properties": {"tasks": {"type": "array", "items": {"type": "object", "properties": {"agent": {"type": "string"}, "message": {"type": "string"}}, "required": ["agent", "message"]}}, "wait": {"type": "boolean"}}, "required": ["tasks"]}},
+            {"name": "riven_group_add_agent",
+             "description": "Add one more agent to an existing agent group and open its pane. Give the group name, the new agent's nickname, and optionally a persona (.claude/agents name), a model alias (opus/sonnet/haiku/fable) and who it reports to.",
+             "inputSchema": {"type": "object", "properties": {"group": {"type": "string"}, "name": {"type": "string"}, "persona": {"type": "string"}, "model": {"type": "string"}, "parent": {"type": "string"}}, "required": ["group", "name"]}},
+            {"name": "riven_group_remove_agent",
+             "description": "Remove an agent from a group: its pane is closed and it is dropped from the roster. DESTRUCTIVE - riven always asks the user to confirm first, and the tool returns whether they agreed.",
+             "inputSchema": {"type": "object", "properties": {"group": {"type": "string"}, "name": {"type": "string"}}, "required": ["group", "name"]}},
+            {"name": "riven_group_delete",
+             "description": "Delete a whole agent group: every member's turn is stopped, all its panes are closed and its saved roster is erased. DESTRUCTIVE - riven always asks the user to confirm first, and the tool returns whether they agreed.",
+             "inputSchema": {"type": "object", "properties": {"group": {"type": "string"}}, "required": ["group"]}},
             {"name": "riven_workspaces",
              "description": "List open workspaces (folders) and which one is active.",
              "inputSchema": {"type": "object", "properties": {}}},

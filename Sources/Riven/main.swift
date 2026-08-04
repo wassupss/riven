@@ -628,6 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
         }
         teamPanel.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
+        teamPanel.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
         // 팀 입력줄: 여러 명이면 한 번에 던진다 (askAgentPanes 는 전원을 같은 런루프 턴에
         // 출발시키므로 실제로 동시에 돈다). 답은 각 에이전트의 패널에 그대로 남는다.
         teamPanel.onTeamAsk = { [weak self] group, targets, message, each in
@@ -1355,6 +1356,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onAskAgents = { [weak self, weak chat] tasks, done in
             self?.askAgentPanes(tasks, from: chat, done)
         }
+        // 그룹 인원 조절 (MCP). 줄이는 쪽은 ChatPanel 이 확인 카드를 받은 뒤에만 부른다.
+        chat.onGroupAddAgent = { [weak self] group, name, persona, model, parent in
+            guard let self else { return "unavailable" }
+            guard self.liveAgentGroups().contains(where: { $0.group == group }) else {
+                return "no such group: \(group). Open groups: " + self.liveAgentGroups().map { $0.group }.joined(separator: ", ")
+            }
+            self.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
+            return "added \(name) to \(group)"
+        }
+        chat.onGroupRemoveAgent = { [weak self] group, name in
+            guard let self else { return "unavailable" }
+            self.removeAgentFromGroup(group, name)
+            return "removed \(name) from \(group)"
+        }
+        chat.onGroupDelete = { [weak self] group in self?.deleteGroup(group) ?? "unavailable" }
         chat.onOpenAgentChat = { [weak self] name in self?.newChat(agent: name) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
@@ -2874,6 +2890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.teamPanel.debugCreate()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         self.activeDock?.dumpTree("UI after")
+                        // MCP 경로: 추가 → (확인 후) 제거 → 그룹 삭제
                         // 멤버 하나를 닫았다가 조직도에서 되살린다.
                         if let victim = self.agentPanes().first(where: { $0.chat.agentRole == "멤버1" }) {
                             self.activeDock?.removePanel(victim.panel)
@@ -4143,6 +4160,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Settings.shared.set("group.\(ws.path)|\(group)", json)
         }
         refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
+    }
+
+    /// 그룹을 통째로 지운다: 진행 중인 턴을 멈추고, 모든 팬을 닫고, 저장된 명단도 지운다.
+    @discardableResult
+    private func deleteGroup(_ group: String) -> String {
+        guard let dock = activeDock, let ws = workspace else { return "unavailable" }
+        let panes = agentPanes().filter { $0.chat.groupName == group }
+        for p in panes {
+            p.chat.stopTurn()        // 돌고 있으면 먼저 멈춘다
+            p.panel.chatGroup = nil       // 닫기 훅이 명단에 되돌려 넣지 않도록
+            dock.removePanel(p.panel)     // onClose → teardown 으로 프로세스 종료
+        }
+        Settings.shared.remove("group.\(ws.path)|\(group)")
+        refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
+        return t("team.groupDeleted", ["group": group, "n": panes.count])
     }
 
     /// Jump to one agent's pane (org chart node click).

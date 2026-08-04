@@ -772,6 +772,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     var onAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> Void)?
     /// 멤버를 그룹에서 완전히 뺀다 (패널을 닫고 명단에서도 지운다).
     var onRemoveAgent: ((_ group: String, _ name: String) -> Void)?
+    /// 그룹 전체 삭제 (진행 중인 작업 중지 + 패널 닫기 + 저장분 삭제).
+    var onDeleteGroup: ((_ group: String) -> Void)?
     /// 팀 입력줄: 고른 멤버들에게 한 번에 보낸다. `each` 는 한 명이 답할 때마다 불린다.
     var onTeamAsk: ((_ group: String, _ targets: [String], _ message: String,
                      _ each: @escaping (String) -> Void) -> Void)?
@@ -789,6 +791,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     private let tabStrip = RivenTabStrip(frame: .zero)
     private let previewBtn = RivenSecondaryButton(t("team.preview"), target: nil, action: #selector(togglePreview))
     private let addToGroupBtn = RivenSecondaryButton(t("team.addToGroup"), target: nil, action: #selector(addToGroup))
+    private let deleteGroupBtn = RivenSecondaryButton(t("team.deleteGroup"), target: nil, action: #selector(deleteGroup))
     private let groupLabel = NSTextField(labelWithString: t("team.name"))
     private let groupField = RivenInput(placeholder: t("team.nameDefault"))
     private let grid = CardGrid()
@@ -900,7 +903,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         createBtn = RivenPrimaryButton(t("team.create"), target: nil, action: #selector(create))
         super.init(frame: frame)
         wantsLayer = true
-        [createBtn, previewBtn, addToGroupBtn].forEach { $0.target = self }
+        [createBtn, previewBtn, addToGroupBtn, deleteGroupBtn].forEach { $0.target = self }
         addTile.onClick = { [weak self] in self?.addAgent() }
         tabStrip.onSelect = { [weak self] i in self?.tabPicked(i) }
 
@@ -952,7 +955,10 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         barBox.translatesAutoresizingMaskIntoConstraints = false
         barRow.translatesAutoresizingMaskIntoConstraints = false
 
-        [titleLabel, hint, tabStrip, head, gridScroll, chartScroll, previewBtn, createBtn, addToGroupBtn, barBox].forEach { addSubview($0) }
+        [titleLabel, hint, tabStrip, head, gridScroll, chartScroll, previewBtn, createBtn,
+         addToGroupBtn, deleteGroupBtn, barBox].forEach { addSubview($0) }
+        deleteGroupBtn.attributedTitle = NSAttributedString(string: t("team.deleteGroup"), attributes: [
+            .foregroundColor: Theme.danger, .font: UIScale.font(UIScale.body, .medium)])
         grid.addSubview(addTile)
 
         let pad: CGFloat = 14
@@ -1001,8 +1007,11 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             barSend.widthAnchor.constraint(equalToConstant: UIMetrics.rowH),
             barSend.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
             addToGroupBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            addToGroupBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            addToGroupBtn.trailingAnchor.constraint(equalTo: deleteGroupBtn.leadingAnchor, constant: -8),
             addToGroupBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            deleteGroupBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            deleteGroupBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            deleteGroupBtn.widthAnchor.constraint(equalTo: addToGroupBtn.widthAnchor, multiplier: 0.5),
 
             createBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             createBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
@@ -1167,6 +1176,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         createBtn.isHidden = (shownGroup != nil)
         previewBtn.isHidden = (shownGroup != nil)
         addToGroupBtn.isHidden = (shownGroup == nil)   // 기존 그룹 탭에서만
+        deleteGroupBtn.isHidden = (shownGroup == nil)
         previewBtn.title = t(previewing ? "team.backToSetup" : "team.preview")
         previewBtn.applyTheme()
         chartScroll.isHidden = !showChart
@@ -1385,6 +1395,22 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
 
     @objc private func togglePreview() { previewing.toggle(); applyTab() }
+
+    /// 그룹 삭제. 되돌릴 수 없으니 먼저 확인을 받는다.
+    @objc private func deleteGroup() {
+        guard let g = shownGroup else { return }
+        let n = groups.first { $0.group == g }?.members.count ?? 0
+        let a = NSAlert()
+        a.messageText = t("team.confirmDelete", ["group": g])
+        a.informativeText = t("team.deleteDetail", ["n": n])
+        a.alertStyle = .warning
+        a.addButton(withTitle: t("team.deleteGroup"))
+        a.addButton(withTitle: t("common.cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        onDeleteGroup?(g)
+        shownGroup = nil
+        refresh()
+    }
 
     /// 기존 그룹에 멤버 추가 — 이름·페르소나·모델·보고 대상을 받아 팬을 하나 더 연다.
     @objc private func addToGroup() {

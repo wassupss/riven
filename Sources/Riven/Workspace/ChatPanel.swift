@@ -73,6 +73,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onAskAgent: ((String, String, @escaping (String) -> Void) -> Void)?  // delegate work to a peer
     /// Fan out to several peers at once; the callback fires when every one of them has answered.
     var onAskAgents: (([(agent: String, message: String)], @escaping ([(String, String)]) -> Void) -> Void)?
+    /// 그룹 인원 조절 (에이전트가 MCP 로 부른다). 줄이는 쪽은 사용자 확인을 거친 뒤에만 호출된다.
+    var onGroupAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> String)?
+    var onGroupRemoveAgent: ((_ group: String, _ name: String) -> String)?
+    var onGroupDelete: ((_ group: String) -> String)?
     var onOpenSubagentPane: ((_ id: String, _ view: NSView, _ title: String) -> Void)?   // place as a dock panel
     var onCloseSubagentPanes: ((_ ids: [String]) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
@@ -1046,6 +1050,29 @@ final class ChatPanel: NSView, Themable, Scalable {
                 if waitAll { reply(joined) } else { self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), joined) }
             }
             if !waitAll { reply(t("chat.delegated", ["a": tasks.map { $0.agent }.joined(separator: ", ")])) }
+        case "riven_group_add_agent":
+            let g = s("group"), n = s("name")
+            guard !g.isEmpty, !n.isEmpty, let add = onGroupAddAgent else {
+                reply("group and name are required"); return
+            }
+            reply(add(g, n, s("persona").isEmpty ? nil : s("persona"),
+                      s("model").isEmpty ? nil : s("model"),
+                      s("parent").isEmpty ? nil : s("parent")))
+        case "riven_group_remove_agent":
+            // 인원을 줄이는 건 사용자 확인 없이 못 한다.
+            let g = s("group"), n = s("name")
+            guard !g.isEmpty, !n.isEmpty, let remove = onGroupRemoveAgent else {
+                reply("group and name are required"); return
+            }
+            confirmDestructive(t("team.confirmRemove", ["name": n, "group": g])) { ok in
+                reply(ok ? remove(g, n) : "user declined; nothing was removed")
+            }
+        case "riven_group_delete":
+            let g = s("group")
+            guard !g.isEmpty, let del = onGroupDelete else { reply("group is required"); return }
+            confirmDestructive(t("team.confirmDelete", ["group": g])) { ok in
+                reply(ok ? del(g) : "user declined; the group is untouched")
+            }
         case "riven_workspaces":
             session?.respondTool(id, onWorkspaces?() ?? "(none)")
         case "riven_open_workspace":
@@ -1137,6 +1164,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ---- send / turn lifecycle ----
     // Interrupt the running turn (Esc / the stop button) — like the CLI's Esc.
     private var interrupted = false
+    /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
+    func stopTurn() { interruptTurn() }
+
     private func interruptTurn() {
         guard turnStart != nil else { return }
         interrupted = true                 // suppress the error line for the result WE cancelled
@@ -1419,6 +1449,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     func debugPresentChoice(_ options: [String]) {
         enqueueChoice(title: "테스트 선택", detail: "", code: nil, path: nil,
                       options: options.map { o in (o, {}) })
+    }
+
+    /// 되돌리기 어려운 작업은 대화에 확인 카드를 띄우고, 사용자가 고른 뒤에 진행한다.
+    private func confirmDestructive(_ question: String, _ done: @escaping (Bool) -> Void) {
+        enqueueChoice(title: question, detail: "", code: nil, path: nil,
+                      options: [(t("common.confirm"), { done(true) }), (t("chat.cancel"), { done(false) })])
     }
 
     /// 비동기로 넘긴 일의 답이 도착했을 때 — 대화에 넣고 모델에게도 새 턴으로 전달한다.
