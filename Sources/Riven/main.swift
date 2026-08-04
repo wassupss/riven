@@ -1834,7 +1834,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func focusPanelContent(_ p: DockPanel) {
         if p.id == "editor" { editor.focusEditor() }
         else if let tv = p.content as? TerminalView { tv.focusTerminal() }
-        else if let chat = p.content as? ChatPanel { chat.focusInput() }   // cursor → message field
+        else if let chat = p.content as? ChatPanel { chat.focusPending() }  // 카드가 있으면 카드, 없으면 입력창
         else { p.content.window?.makeFirstResponder(p.content) }
     }
     // Focus the active dock's active panel (the one the ring is on).
@@ -2627,6 +2627,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     RLog.log("STATE tabs=" + self.teamPanel.debugTabTitles().joined(separator: "|"))
                 }
                 self.activeDock?.dumpTree("STATE tree")
+            }
+        }
+        // RIVEN_FOCUSCARD=1: 선택 카드가 떠 있을 때 패널 활성화가 카드로 포커스를 주는지.
+        if ProcessInfo.processInfo.environment["RIVEN_FOCUSCARD"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let pane = self.agentPanes().first else { RLog.log("CARD no chat pane"); return }
+                pane.chat.debugPresentChoice(["A", "B"])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // 입력창으로 포커스를 뺏은 뒤 패널 활성화를 다시 태운다 (사용자가 클릭한 상황).
+                    pane.chat.focusInput(force: true)
+                    let stolen = String(describing: type(of: self.window.firstResponder ?? NSNull()))
+                    self.focusPanelContent(pane.panel)
+                    let now = String(describing: type(of: self.window.firstResponder ?? NSNull()))
+                    RLog.log("CARD afterSteal=\(stolen) afterActivate=\(now)")
+                }
             }
         }
         // RIVEN_ASKBENCH=1: 도구 응답 전달 규칙 — 정상 resolve / 만료된 id / 세션 종료 시.

@@ -454,6 +454,18 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Put the cursor in the message field. `force` overrides the guard that normally keeps an
     // open approval card focused (used right after a choice is made).
+    /// 답을 기다리는 카드가 떠 있으면 입력창이 아니라 그 카드로 포커스를 준다. 패널을 클릭해
+    /// 활성화했을 때 카드가 아니라 입력창이 잡혀서, 카드가 보이는데도 ←→/Enter 가 먹지 않던
+    /// 문제를 없앤다.
+    func focusPending() {
+        if let card = pendingCard, card.window != nil, card.acceptsFirstResponder {
+            window?.makeFirstResponder(card)
+            return
+        }
+        focusInput()
+    }
+    private weak var pendingCard: ApprovalCard?
+
     func focusInput(force: Bool = false) {
         if !force, let card = window?.firstResponder as? ApprovalCard, card.isDescendant(of: self) { return }
         window?.makeFirstResponder(input)
@@ -980,12 +992,16 @@ final class ChatPanel: NSView, Themable, Scalable {
             session?.respondTool(id, onAgentPanes?() ?? "(unavailable)")
         case "riven_ask_agent":
             let target = s("agent"), msg = s("message")
+            let wait = (args["wait"] as? Bool) ?? true
             addSystem("→ \(target): \(ChatPanel.shortTitle(msg))")
             if let onAskAgent {
                 onAskAgent(target, msg) { [weak self] answer in
-                    self?.addSystem("← \(target)")
-                    reply(answer)
+                    guard let self else { return }
+                    self.addSystem("← \(target)")
+                    // wait=false 였으면 도구 호출은 이미 끝났다 → 답을 대화로 밀어 넣는다.
+                    if wait { reply(answer) } else { self.deliverPeerAnswer(from: target, answer) }
                 }
+                if !wait { reply(t("chat.delegated", ["a": target])) }
             } else { session?.respondTool(id, "agent messaging unavailable") }
         case "riven_ask_agents":
             // 한 번에 여러 명 — 전원이 동시에 시작하고, 마지막 한 명이 끝나면 한꺼번에 돌려준다.
@@ -998,11 +1014,15 @@ final class ChatPanel: NSView, Themable, Scalable {
                                                        : "agent messaging unavailable")
                 return
             }
+            let waitAll = (args["wait"] as? Bool) ?? true
             addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", "))
             onAskAgents(tasks) { [weak self] answers in
-                self?.addSystem("← " + answers.map { $0.0 }.joined(separator: ", "))
-                reply(answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n"))
+                guard let self else { return }
+                self.addSystem("← " + answers.map { $0.0 }.joined(separator: ", "))
+                let joined = answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+                if waitAll { reply(joined) } else { self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), joined) }
             }
+            if !waitAll { reply(t("chat.delegated", ["a": tasks.map { $0.agent }.joined(separator: ", ")])) }
         case "riven_workspaces":
             session?.respondTool(id, onWorkspaces?() ?? "(none)")
         case "riven_open_workspace":
@@ -1050,6 +1070,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             guard let self else { return }
             let block = self.current ?? { let b = self.newBlock(); self.current = b; return b }()
             let card = block.addApproval(title, detail, code, path, options: wrapped)
+            self.pendingCard = card
             self.scrollSoon()
             // Focus the card FIRST so ←→/Enter drive it immediately (approval before typing).
             DispatchQueue.main.async { [weak self, weak card] in
@@ -1067,6 +1088,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         approvalQueue.removeFirst()()
     }
     private func advanceApprovals() {
+        pendingCard = nil
         if !approvalQueue.isEmpty {
             approvalQueue.removeFirst()()   // next card grabs focus itself
             return
@@ -1370,6 +1392,19 @@ final class ChatPanel: NSView, Themable, Scalable {
         let label = ChatPanel.selectableModels.first { $0.1 == (id ?? "default") }?.0 ?? "?"
         addSystem(t("chat.model.set", ["m": label]))
     }
+    /// 벤치용: 선택 카드를 하나 띄운다.
+    func debugPresentChoice(_ options: [String]) {
+        enqueueChoice(title: "테스트 선택", detail: "", code: nil, path: nil,
+                      options: options.map { o in (o, {}) })
+    }
+
+    /// 비동기로 넘긴 일의 답이 도착했을 때 — 대화에 넣고 모델에게도 새 턴으로 전달한다.
+    /// (도구 호출은 이미 끝났으므로 결과를 돌려줄 곳이 없다. 사람이 말한 것처럼 넣어 준다.)
+    func deliverPeerAnswer(from agent: String, _ answer: String) {
+        let text = t("chat.peerAnswer", ["a": agent]) + "\n\n" + answer
+        ask(text) { _ in }
+    }
+
     /// 앱이 이 팬의 대화에 한 줄 남긴다 (그룹 복구 안내 등).
     func noteSystem(_ text: String) { addSystem(text) }
     /// 조직도에서 닉네임을 바꿨을 때 — 대화에도 남겨 동료가 새 이름을 알 수 있게 한다.

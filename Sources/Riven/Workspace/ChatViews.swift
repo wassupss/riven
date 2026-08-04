@@ -972,6 +972,12 @@ final class ApprovalCard: NSView {
     }
     override var acceptsFirstResponder: Bool { !decided }
     override func becomeFirstResponder() -> Bool { restyleSel(); return true }
+    // 카드를 클릭하면 키보드 포커스도 카드로 온다. 이게 없으면 카드를 눌러도 first responder 는
+    // 입력창에 남아 ←→/Enter 가 카드를 움직이지 못한다.
+    override func mouseDown(with e: NSEvent) {
+        if acceptsFirstResponder { window?.makeFirstResponder(self) }
+        super.mouseDown(with: e)
+    }
 
     override func keyDown(with e: NSEvent) {
         switch e.keyCode {
