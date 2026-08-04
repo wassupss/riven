@@ -13,7 +13,7 @@ final class WorkspaceRail: NSView, Themable {
     private var active: URL?
     private var activeAgentId: String?            // focused agent pane (highlighted row)
     private var customNames: [URL: String] = [:]
-    private var activities: [URL: PaneActivity] = [:]
+    private var activities: [URL: AgentStatus] = [:]
     private var agents: [URL: [RailAgent]] = [:]   // agent panes per workspace (Orca-style children)
     private var shortcutLabels: [URL: NSTextField] = [:]
     private var countLabels: [URL: NSView] = [:]        // agent-count badges (hidden while ⌘ held)
@@ -24,8 +24,11 @@ final class WorkspaceRail: NSView, Themable {
         let paneId: String
         let title: String
         let subtitle: String?     // agent kind / branch, dimmed
-        let activity: PaneActivity
+        let activity: AgentStatus
         let iconSymbol: String?   // agent-type glyph (Claude=sparkles, Codex=…); nil = none
+        /// 아바타 키(역할 이름). 있으면 종류 글리프 대신 그 에이전트의 아바타를 쓴다 —
+        /// 조직도·독 탭과 같은 얼굴이라 "누가 누구인지"가 세 군데에서 같게 읽힌다.
+        var avatarKey: String? = nil
     }
 
     // Workspaces whose agent list is collapsed (hidden). Persisted so it survives restart.
@@ -67,7 +70,7 @@ final class WorkspaceRail: NSView, Themable {
     }
 
     // Workspace-level rollup (kept for callers); the per-agent rows carry the real state now.
-    func setActivity(_ url: URL, _ a: PaneActivity) {
+    func setActivity(_ url: URL, _ a: AgentStatus) {
         activities[url] = a
     }
     var onOpen: (() -> Void)?
@@ -444,14 +447,20 @@ final class WorkspaceRail: NSView, Themable {
         name.textColor = isFocused ? Theme.fg : Theme.fgDim   // theme-aware (fixed gray was invisible in light themes)
         name.lineBreakMode = .byTruncatingTail
         name.translatesAutoresizingMaskIntoConstraints = false
-        name.shimmering = (agent.activity == .busy)   // in-progress pane → title shimmers like the chat
+        name.shimmering = agent.activity.shimmers     // in-progress pane → title shimmers like the chat
 
-        // Agent-type glyph (Claude = sparkles, Codex = code) between the status and the name,
-        // for panes launched via the agent button. Hand-typed panes have no glyph.
-        let icon = agent.iconSymbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular)) }
-        let iconView = NSImageView(); iconView.image = icon
-        iconView.contentTintColor = isFocused ? Theme.accent : Theme.fgDim
+        // 아바타(있으면) 또는 에이전트 종류 글리프(Claude = sparkles, Codex = code)가 상태와
+        // 이름 사이에 온다. 아바타는 색이 이미 구워져 있으므로 tint 를 덮지 않는다.
+        let iconView = NSImageView()
+        var icon: NSImage?
+        if let key = agent.avatarKey {
+            icon = AgentAvatar.image(for: key, size: UIScale.pt(11))
+        } else {
+            icon = agent.iconSymbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 10, weight: .regular)) }
+            iconView.contentTintColor = isFocused ? Theme.accent : Theme.fgDim
+        }
+        iconView.image = icon
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         row.addSubview(dot); row.addSubview(name)
@@ -639,16 +648,18 @@ final class WSCard: NSView, NSDraggingSource {
 }
 
 // Workspace agent status indicator (radar-pulse):
-//   • idle  → a small stationary dot
-//   • busy  → an accent dot with rings that expand outward and fade, forever (a live/radar
-//             ping — clearly reads as "running")
-//   • done  → only a green checkmark that DRAWS ITSELF (strokeEnd 0→1), no dot/rings
+//   • idle    → a small stationary dot
+//   • busy    → an accent dot with rings that expand outward and fade, forever (a live/radar
+//               ping — clearly reads as "running")
+//   • waiting → 승인 대기. 경고색 점이 숨쉬듯 깜빡인다 (독 탭 점 / 조직도 칩과 같은 색).
+//               완료와 같은 초록 체크로 보이면 안 된다 — 사람이 움직여야 하는 쪽이다.
+//   • done    → only a green checkmark that DRAWS ITSELF (strokeEnd 0→1), no dot/rings
 final class StatusIndicator: NSView {
     private let core = CAShapeLayer()    // centre dot
     private let ring1 = CAShapeLayer()   // expanding rings (busy only)
     private let ring2 = CAShapeLayer()
     private let check = CAShapeLayer()    // done
-    private var current: PaneActivity?
+    private var current: AgentStatus?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -691,24 +702,34 @@ final class StatusIndicator: NSView {
         ring.add(g, forKey: "ping")
     }
 
-    func set(_ a: PaneActivity) {
+    // 무한히 도는 것(레이더 핑 / 승인 대기 숨쉬기)은 독 탭과 같은 게이트를 통과한다 —
+    // 행이 창에서 빠지거나(레일은 자주 통째로 다시 만들어진다) 창이 가려지면 멈춘다.
+    // 한 번만 그려지는 체크 표시는 게이트가 필요 없다.
+    private lazy var gate = ViewAnimationGate(view: self,
+                                              start: { [weak self] in self?.startLoop() },
+                                              stop: { [weak self] in self?.stopLoop() })
+
+    func set(_ a: AgentStatus) {
         let changed = current != a; current = a
-        func stopRings() { [ring1, ring2].forEach { $0.removeAnimation(forKey: "ping"); $0.isHidden = true } }
+        func clearCheck() { check.isHidden = true; check.removeAnimation(forKey: "draw"); check.strokeEnd = 0 }
         switch a {
         case .idle:
-            check.isHidden = true; check.removeAnimation(forKey: "draw"); check.strokeEnd = 0
-            stopRings()
+            clearCheck()
+            [ring1, ring2].forEach { $0.isHidden = true }
             core.isHidden = false; core.fillColor = Theme.fgDim.cgColor
         case .busy:
-            check.isHidden = true; check.removeAnimation(forKey: "draw"); check.strokeEnd = 0
-            core.isHidden = false; core.fillColor = Theme.accent.cgColor
-            ring1.strokeColor = Theme.accent.cgColor; ring2.strokeColor = Theme.accent.cgColor
+            clearCheck()
+            core.isHidden = false; core.fillColor = a.color.cgColor
+            ring1.strokeColor = a.color.cgColor; ring2.strokeColor = a.color.cgColor
             ring1.isHidden = false; ring2.isHidden = false
-            let now = CACurrentMediaTime()
-            ping(ring1, begin: now); ping(ring2, begin: now + 0.75)   // staggered radar
-        case .attn:
-            stopRings(); core.isHidden = true
-            check.isHidden = false; check.strokeColor = Theme.success.cgColor; check.strokeEnd = 1
+        case .waiting:
+            clearCheck()
+            [ring1, ring2].forEach { $0.isHidden = true }
+            core.isHidden = false; core.fillColor = a.color.cgColor
+        case .done:
+            [ring1, ring2].forEach { $0.isHidden = true }
+            core.isHidden = true
+            check.isHidden = false; check.strokeColor = a.color.cgColor; check.strokeEnd = 1
             if changed {
                 let draw = CABasicAnimation(keyPath: "strokeEnd")
                 draw.fromValue = 0; draw.toValue = 1; draw.duration = 0.32
@@ -716,6 +737,32 @@ final class StatusIndicator: NSView {
                 check.add(draw, forKey: "draw")
             }
         }
+        gate.isOn = (a == .busy || a == .waiting)
+        if changed { gate.restart() }      // busy ↔ waiting 은 도는 내용이 다르다
+    }
+
+    private func startLoop() {
+        switch current {
+        case .busy?:
+            let now = CACurrentMediaTime()
+            ping(ring1, begin: now); ping(ring2, begin: now + 0.75)   // staggered radar
+        case .waiting?:
+            let breath = CABasicAnimation(keyPath: "opacity")
+            breath.fromValue = 1; breath.toValue = 0.3; breath.duration = 1.1
+            breath.autoreverses = true; breath.repeatCount = .infinity
+            core.add(breath, forKey: "breath")                        // 독 탭 점과 같은 박자
+        default: break
+        }
+    }
+    private func stopLoop() {
+        [ring1, ring2].forEach { $0.removeAnimation(forKey: "ping") }
+        core.removeAnimation(forKey: "breath"); core.opacity = 1
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        gate.windowChanged()
+        if window == nil { check.removeAnimation(forKey: "draw") }
     }
 }
 
@@ -727,35 +774,7 @@ final class RailRow: NSView {
     override func mouseDown(with event: NSEvent) { onSelect?() }
 }
 
-// A label that can shimmer a bright band left→right across its glyphs (same effect as the chat
-// panel's "생각 중…" indicator), used to flag an in-progress pane in the rail. The gradient is an
-// alpha-only MASK on the label's layer, so only the text shimmers and it inherits the text color.
-final class ShimmerLabel: NSTextField {
-    private let grad = CAGradientLayer()
-    private var on = false
-    var shimmering: Bool {
-        get { on }
-        set { guard newValue != on else { return }; on = newValue; newValue ? start() : stop() }
-    }
-    private func start() {
-        wantsLayer = true
-        grad.startPoint = CGPoint(x: 0, y: 0.5); grad.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.35).cgColor   // alpha mask: only alpha matters
-        grad.colors = [dim, NSColor.white.cgColor, dim]
-        grad.locations = [0, 0.5, 1]
-        grad.frame = bounds
-        layer?.mask = grad
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4; sweep.repeatCount = .infinity
-        grad.add(sweep, forKey: "shimmer")
-    }
-    private func stop() { grad.removeAllAnimations(); layer?.mask = nil }
-    override func layout() {
-        super.layout()
-        if on { grad.frame = bounds }   // keep the mask sized to the (post-layout) label
-    }
-}
+// ShimmerLabel 은 독 탭 제목도 같은 효과를 쓰게 되면서 UI/StatusAnimation.swift 로 옮겼다.
 
 // Marker subclass so WSCard.hitTest can let the collapse chevron receive its own clicks
 // (everything else on the card routes to the card for select/drag).

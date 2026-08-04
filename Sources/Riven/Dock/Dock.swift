@@ -19,7 +19,20 @@ final class DockPanel {
     weak var group: DockGroup?
     var onClose: (() -> Void)?      // called when the tab's × is clicked
     var onActivate: (() -> Void)?   // called when this panel becomes visible
-    var badge: String?              // nil | "busy" (violet) | "attn" (amber pulse)
+    /// 이 팬의 상태 — 레일·독 탭·조직도가 함께 읽는 단 하나의 저장소 ([[AgentStatus]]).
+    /// 예전에는 badge 문자열이 저장소였는데, "attn" 하나에 승인 대기와 완료가 섞여 있어서
+    /// 자리마다 다른 색으로 갈라졌다. 문자열은 아래 badge 로 계속 읽고 쓸 수 있다.
+    var status: AgentStatus = .idle
+    /// 예전 badge 문자열 호환 (nil | "busy" | "attn"). 승인 대기는 문자열로 표현되지
+    /// 않으므로, 그 구분이 필요한 곳은 status 를 직접 본다.
+    var badge: String? {
+        get { status.badgeValue }
+        set {
+            // "attn" 을 다시 넣는 게 이미 켜져 있는 승인 대기를 완료로 덮지 않게 한다.
+            if newValue == "attn", status == .waiting { return }
+            status = AgentStatus(badge: newValue)
+        }
+    }
     var autoTitle: Bool = false     // follow the shell's OSC title (plain terminals only)
     // 이 패널이 실행한 에이전트 이름(없으면 일반 터미널). 세션 복원 때 같은 구성을
     // 다시 만들기 위해 기록해 둔다.
@@ -42,6 +55,9 @@ final class DockPanel {
     var chatGroup: String?      // agent-group name, shown in the title and kept across restarts
     var chatParent: String?     // nickname of the agent this one reports to (org chart / hierarchy)
     var chatModel: String?      // model this pane is pinned to ("opus"/"sonnet"/…), nil = 계정 기본
+    /// 이 팬의 아바타 키(역할 이름). 닉네임 → 커스텀 에이전트 순. 탭·레일·조직도가 같은
+    /// 키를 써서 같은 얼굴을 그린다. 역할이 없는 팬은 nil (예전 아이콘 그대로).
+    var avatarKey: String? { AgentAvatar.key(nickname: chatNickname, agent: chatAgent, kind: nil) }
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable

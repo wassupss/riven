@@ -226,6 +226,212 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+            // RIVEN_TEAMLIVE=1: 채팅 입력창의 @동료 → 병렬 위임 → 조직도의 흐르는 선 / 상태 칩까지
+            // 한 번에 훑는다. 애니메이션 타이머가 일이 있을 때만 돌고 끝나면 스스로 멈추는지도 본다.
+            if ProcessInfo.processInfo.environment["RIVEN_TEAMLIVE"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self else { return }
+                    self.createAgentGroup("배포팀", [
+                        (name: "리드", agent: nil, model: nil, parent: nil),
+                        (name: "구현", agent: nil, model: "sonnet", parent: 0),
+                        (name: "리뷰", agent: nil, model: "haiku", parent: 0),
+                    ])
+                    if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                    self.teamPanel.show(group: "배포팀")
+                    let lead: () -> ChatPanel? = { [weak self] in
+                        self?.agentPanes().first { $0.chat.groupName == "배포팀" && $0.chat.parentName == nil }?.chat
+                    }
+                    let log: (String) -> Void = { [weak self] tag in
+                        guard let self else { return }
+                        RLog.log("LIVE \(tag) "
+                               + "ticker=\(self.teamPanel.debugTickerRunning()) "
+                               + "flows=\(self.teamPanel.debugFlowCount()) "
+                               + "states=[\(self.teamPanel.debugStates())] "
+                               + self.teamPanel.debugVisibility())
+                    }
+                    // RIVEN_MENTIONBENCH=1: 팝업·색칠·스킬 목록을 클릭 없이 확인한다 (토큰 안 씀).
+                    if ProcessInfo.processInfo.environment["RIVEN_MENTIONBENCH"] != nil {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            guard let l = lead() else { RLog.log("MENTION no lead"); return }
+                            RLog.log("MENTION cmds " + l.debugCommands())
+                            for probe in ["@", "@구", "@리", "@없", "/", "/backup", "/deploy-check", "/nope", "/exam"] {
+                                l.debugType(probe)
+                                RLog.log("MENTION type=\(probe) popup=\(l.debugPopup()) spans=[\(l.debugSpans())]")
+                            }
+                            // 팝업에서 고르면 토큰 자리만 바뀌어야 한다 (문장 중간에서도).
+                            l.debugType("이거 @구")
+                            l.debugAcceptPopup()
+                            RLog.log("MENTION accepted=\(l.debugInput()) spans=[\(l.debugSpans())]")
+                            l.debugType("@구현 @리뷰 확인해 줘")
+                            RLog.log("MENTION multi spans=[\(l.debugSpans())]")
+                            // RIVEN_MENTIONSHOT=<path>: 팝업과 색칠을 눈으로 확인한다.
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_MENTIONSHOT"] {
+                                let snap: (String, NSView) -> Void = { tag, v in
+                                    guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: "\(shot)-\(tag).png"))
+                                    }
+                                }
+                                l.debugType("이 diff 를 @")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    snap("popup", l)
+                                    l.debugType("@구현 @리뷰 /backup 확인해 줘")
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                        snap("tokens", l)
+                                        snap("team", self.teamPanel)
+                                    }
+                                }
+                                return
+                            }
+                            l.debugType("")
+                            // 그룹이 아닌 팬에서는 @ 가 아무 뜻이 없어야 한다.
+                            self.newChat()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                guard let solo = self.agentPanes().first(where: { $0.chat.groupName == nil })?.chat
+                                else { RLog.log("MENTION solo (none open)"); return }
+                                solo.debugType("@구현 테스트")
+                                RLog.log("MENTION solo popup=\(solo.debugPopup()) spans=[\(solo.debugSpans())]")
+                            }
+                        }
+                        return
+                    }
+                    // RIVEN_TEAMSHOT=<path>: 진행 중 / 완료 직후의 조직도를 그대로 떠서 눈으로
+                    // 확인한다. 합성 위임이라 토큰을 쓰지 않고, 실제 렌더 경로는 똑같이 탄다.
+                    if let shot = ProcessInfo.processInfo.environment["RIVEN_TEAMSHOT"] {
+                        let snap: (String) -> Void = { [weak self] tag in
+                            guard let self, let v = self.teamPanel,
+                                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: "\(shot)-\(tag).png"))
+                            }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            let a = self.teamPanel.beginFlow(group: "배포팀", from: "리드", to: "구현",
+                                                             summary: "로그 파서 리팩터링")
+                            let b = self.teamPanel.beginFlow(group: "배포팀", from: nil, to: "리뷰",
+                                                             summary: "이 diff 확인")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { snap("live") }
+                            // 애니메이션이 도는 동안 CPU 를 재려고 넉넉히 살려 둔다.
+                            let hold = ProcessInfo.processInfo.environment["RIVEN_TEAMHOLD"]
+                                .flatMap(Double.init) ?? 12.0
+                            DispatchQueue.main.asyncAfter(deadline: .now() + hold) {
+                                self.teamPanel.endFlow(a, ok: true)
+                                self.teamPanel.endFlow(b, ok: false)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { snap("done") }
+                            }
+                        }
+                        return
+                    }
+                    // RIVEN_TEAMCYCLE=1: 위임 애니메이션을 15초 켜고 15초 끄기를 반복한다.
+                    // 앱의 다른 주기 작업(사용량 폴링 등)이 섞여도 켠 구간과 끈 구간의 차이로
+                    // 애니메이션 자체의 비용만 뽑아낼 수 있다.
+                    if ProcessInfo.processInfo.environment["RIVEN_TEAMCYCLE"] != nil {
+                        func cycle(_ n: Int) {
+                            guard n < 8 else { RLog.log("CYCLE end"); return }
+                            RLog.log("CYCLE \(n) on")
+                            let a = self.teamPanel.beginFlow(group: "배포팀", from: "리드", to: "구현",
+                                                             summary: "로그 파서 리팩터링")
+                            let b = self.teamPanel.beginFlow(group: "배포팀", from: "리드", to: "리뷰",
+                                                             summary: "이 diff 확인")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                                self.teamPanel.endFlow(a, ok: true); self.teamPanel.endFlow(b, ok: true)
+                                RLog.log("CYCLE \(n) off ticker=\(self.teamPanel.debugTickerRunning())")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 15) { cycle(n + 1) }
+                            }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { cycle(0) }
+                        return
+                    }
+                    // RIVEN_TEAMTOOL=1: 도구 실행 → 승인 대기까지 상태 칩이 따라오는지.
+                    // 승인 카드는 일부러 누르지 않는다 (그 상태로 멈춰 있는 걸 봐야 한다).
+                    if ProcessInfo.processInfo.environment["RIVEN_TEAMTOOL"] != nil {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.mentionFromLead("@구현 readme.md 파일 끝에 test 한 줄만 추가해.")
+                            for i in 0..<20 {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 2) { log("tool\(i)") }
+                            }
+                        }
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        log("idle")      // 아무 일도 없으면 타이머는 꺼져 있어야 한다
+                        // 팀 입력줄로 두 명에게 동시에 — 실제 UI 경로(파싱 → askAgentPanes)를 탄다.
+                        self.mentionFromLead("@구현 @리뷰 숫자 7만 답해. 설명 금지.")
+                        log("sent")
+                        for (i, at) in [0.4, 1.5, 4.0, 8.0, 16.0, 30.0].enumerated() {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + at) { log("t\(i)@\(at)s") }
+                        }
+                        // 보낸 쪽 대화에 "→ 누구에게 / ← 도착" 이 남는지 눈으로 확인.
+                        if let shot = ProcessInfo.processInfo.environment["RIVEN_MENTIONSHOT"] {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                                guard let v = lead(), let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds)
+                                else { return }
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: "\(shot)-sender.png"))
+                                }
+                            }
+                        }
+                        // 잘못된 이름은 보내지 않고 이유를 말해야 한다.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 34) {
+                            self.mentionFromLead("@없는사람 테스트")   // 동료가 아니면 평범한 메시지다
+                            log("badname")
+                        }
+                    }
+                }
+            }
+                // RIVEN_STATUSSHOT=<path>: 상태 언어를 한 화면에 세워 놓고 창을 통째로 떠서
+                // 눈으로 대조한다 — 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
+                // 레일 행 / 조직도 아바타가 서로 같은 색·의미인지. 상태를 합성해서 넣는 것이라
+                // 에이전트를 돌리지 않는다(토큰 0). 창 자체를 컴포지터에서 뜨므로 애니메이션이
+                // 실제로 걸려 있는지도 그림에 남는다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_STATUSSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.createAgentGroup("배포팀", [
+                            (name: "리드", agent: nil, model: nil, parent: nil),
+                            (name: "구현", agent: nil, model: "sonnet", parent: 0),
+                            (name: "리뷰", agent: nil, model: "haiku", parent: 0),
+                        ])
+                        if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                        self.teamPanel.show(group: "배포팀")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            // 창이 가려져 있으면 게이트가 애니메이션을 꺼 버려서(의도된 동작)
+                            // 검증 자체가 안 된다. 확인용으로 앞으로 세운다.
+                            NSApp.activate(ignoringOtherApps: true)
+                            self.window.makeKeyAndOrderFront(nil)
+                            // 팬마다 다른 상태를 심는다: 작업 중 / 승인 대기 / 완료.
+                            let seq: [AgentStatus] = [.busy, .waiting, .done]
+                            for (i, pane) in self.agentPanes().enumerated() {
+                                pane.panel.status = seq[i % seq.count]
+                            }
+                            self.refreshDockTabs(); self.refreshRailAgents()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                RLog.log("STATUSSHOT panes=\(self.agentPanes().count) "
+                                       + "live=\(ViewAnimationGate.liveCount)")
+                                self.debugWindowSnapshot(to: shot)
+                                // 0.45초 뒤 한 장 더 — 두 장의 같은 자리를 비교하면 제목이
+                                // 정말 훑리고 있는지(정지 화면이 아닌지) 숫자로 확인된다.
+                                // 렌더 트리 값도 같이 남겨서 "애니메이션은 도는데 캡처에만
+                                // 안 잡히는" 경우와 구분한다.
+                                for (i, at) in [0.0, 0.45].enumerated() {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                        let tabs = self.activeDock?.groups
+                                            .map { $0.tabBar.debugStatusReport() }
+                                            .filter { !$0.isEmpty }.joined(separator: "  ||  ") ?? ""
+                                        RLog.log("STATUSANIM t\(i) live=\(ViewAnimationGate.liveCount) \(tabs)")
+                                        if i == 1 {
+                                            self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                                of: ".png", with: "-b.png"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if let f = ProcessInfo.processInfo.environment["RIVEN_OPENFILE"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.openFile(URL(fileURLWithPath: f))
@@ -476,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.rail.setActivity(URL(fileURLWithPath: ws), a)
             self.rail.setAgents(URL(fileURLWithPath: ws), self.railAgents(for: URL(fileURLWithPath: ws)))  // refresh per-agent rows
             if self.workspace?.path == ws {   // reflect the active workspace's status in the header icon
-                self.headerIcon?.contentTintColor = a == .attn ? Theme.warning : a == .busy ? Theme.accent2 : Theme.fgDim
+                self.headerIcon?.contentTintColor = a.color   // 상태 색은 한 군데(AgentStatus)에서만 정한다
             }
         }
 
@@ -531,6 +737,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
         }
         teamPanel.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
+        teamPanel.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
+        // 팀 입력줄: 여러 명이면 한 번에 던진다 (askAgentPanes 는 전원을 같은 런루프 턴에
+        // 출발시키므로 실제로 동시에 돈다). 답은 각 에이전트의 패널에 그대로 남는다.
+        // 조직도 상태 칩이 읽는 값 — 살아 있는 팬만 훑는다 (명단/Settings 를 건드리지 않는다).
+        teamPanel.statusProvider = { [weak self] group in
+            guard let self else { return [:] }
+            var out: [String: (state: AgentRunState, since: Date?)] = [:]
+            for p in self.agentPanes() where p.chat.groupName == group {
+                out[p.chat.agentRole] = (p.chat.runState, p.chat.runStateSince)
+            }
+            return out
+        }
         changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
         changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
 
@@ -1242,6 +1460,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onAskAgents = { [weak self, weak chat] tasks, done in
             self?.askAgentPanes(tasks, from: chat, done)
         }
+        // 그룹 인원 조절 (MCP). 줄이는 쪽은 ChatPanel 이 확인 카드를 받은 뒤에만 부른다.
+        chat.onGroupAddAgent = { [weak self] group, name, persona, model, parent in
+            guard let self else { return "unavailable" }
+            guard self.liveAgentGroups().contains(where: { $0.group == group }) else {
+                return "no such group: \(group). Open groups: " + self.liveAgentGroups().map { $0.group }.joined(separator: ", ")
+            }
+            self.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
+            return "added \(name) to \(group)"
+        }
+        chat.onGroupRemoveAgent = { [weak self] group, name in
+            guard let self else { return "unavailable" }
+            self.removeAgentFromGroup(group, name)
+            return "removed \(name) from \(group)"
+        }
+        chat.onGroupDelete = { [weak self] group in self?.deleteGroup(group) ?? "unavailable" }
+        // 입력창의 @동료: 같은 그룹의 다른 팬 이름만 준다. 그룹이 아니면 빈 배열이라 @ 가
+        // 아무 뜻도 갖지 않는다. 닫힌 멤버는 프로세스가 없으므로 빼고(부를 수 없다) 보여준다.
+        chat.onPeers = { [weak self, weak chat] in
+            guard let self, let chat, let g = chat.groupName else { return [] }
+            return self.agentPanes()
+                .filter { $0.chat.groupName == g && $0.chat !== chat }
+                .map { $0.chat.agentRole }
+        }
+        chat.onPeerDesc = { [weak self, weak chat] name in
+            guard let self, let chat, let g = chat.groupName else { return "" }
+            guard let peer = self.agentPanes().first(where: { $0.chat.groupName == g && $0.chat.agentRole == name })
+            else { return "" }
+            return [peer.chat.agentPersona, peer.chat.preferredModel.map { ChatPanel.modelLabel($0) }]
+                .compactMap { $0 }.joined(separator: " · ")
+        }
+        // 여러 명이면 한 번에 던진다. from: chat 이라 조직도에도 보낸 사람 → 받는 사람으로
+        // 위임선이 흐르고, 그룹 안에서만 이름을 찾는다.
+        chat.onAskPeers = { [weak self, weak chat] tasks, each, all in
+            guard let self else { return }
+            self.askAgentPanes(tasks, from: chat, inGroup: chat?.groupName,
+                               each: { name in each(name) }, { answers in all(answers) })
+        }
         chat.onOpenAgentChat = { [weak self] name in self?.newChat(agent: name) }
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
@@ -1394,13 +1649,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             chat?.setRingState(p.badge)                          // travelling-ember ring like agents
             self.refreshDockTabs(); self.refreshRailAgents()
+            self.teamPanel.agentActivityChanged()                // 조직도 상태 칩을 깨운다
         }
         chat.onAttention = { [weak self, weak p, weak chat] attn in
             guard let self, let p else { return }
-            p.badge = attn ? "attn" : "busy"                     // still working after the prompt
+            // 승인 대기는 "완료"와 다른 상태다 — 문자열 badge 로는 둘 다 "attn" 이라 레일은
+            // 초록 체크, 탭은 액센트 점으로 갈라졌다. 상태를 직접 넣어 세 군데가 같은 색을 쓴다.
+            p.status = attn ? .waiting : .busy                   // still working after the prompt
             chat?.setRingState(p.badge)
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: attn)
             self.refreshDockTabs(); self.refreshRailAgents()
+            self.teamPanel.agentActivityChanged()                // 승인 대기 → 칩 색이 바뀐다
         }
         chat.onTitle = { [weak self, weak p] title in
             guard let self, let p else { return }
@@ -1834,7 +2093,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func focusPanelContent(_ p: DockPanel) {
         if p.id == "editor" { editor.focusEditor() }
         else if let tv = p.content as? TerminalView { tv.focusTerminal() }
-        else if let chat = p.content as? ChatPanel { chat.focusInput() }   // cursor → message field
+        else if let chat = p.content as? ChatPanel { chat.focusPending() }  // 카드가 있으면 카드, 없으면 입력창
         else { p.content.window?.makeFirstResponder(p.content) }
     }
     // Focus the active dock's active panel (the one the ring is on).
@@ -1916,12 +2175,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let hookAgent = p.sessionId.map { PaneSessionRegistry.shared.isHookBacked($0) } ?? false
                 guard p.agentName != nil || hookAgent else { continue }
                 seen.insert(p.id)
-                let act: PaneActivity = p.badge == "attn" ? .attn : (p.badge == "busy" ? .busy : .idle)
                 let title = p.title.isEmpty ? (p.agentName ?? "claude") : p.title
                 let sub = (p.agentName != nil && p.title != p.agentName) ? p.agentName : nil
                 // Glyph from the button agent name, else the hook-learned kind (hand-typed).
                 let sym = agentGlyph(kind: p.agentName) ?? agentGlyph(kind: p.hookAgentKind)
-                out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: act, iconSymbol: sym))
+                // 역할이 있는 채팅 팬만 아바타를 쓴다. 터미널 팬은 어떤 CLI 인지가 더 중요해서
+                // 종류 글리프(sparkles/code)를 그대로 둔다.
+                let avatar = p.content is ChatPanel ? p.avatarKey : nil
+                out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: p.status,
+                                 iconSymbol: sym, avatarKey: avatar))
             }
         }
         return out
@@ -1935,6 +2197,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             rail.setActiveAgent(workspace, nil)
         }
+    }
+
+    /// 디버그 전용: 창을 컴포지터에서 그대로 떠서 PNG 로 남긴다. 뷰를 다시 그리는
+    /// cacheDisplay 와 달리 지금 걸려 있는 CALayer 애니메이션(shimmer 마스크·펄스)의 한
+    /// 프레임이 그림에 남아서, 애니메이션이 실제로 붙었는지 눈으로 확인할 수 있다.
+    private func debugWindowSnapshot(to path: String) {
+        guard let win = window else { return }
+        if let img = CGWindowListCreateImage(.null, .optionIncludingWindow,
+                                             CGWindowID(win.windowNumber),
+                                             [.boundsIgnoreFraming, .bestResolution]),
+           let d = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+            RLog.log("STATUSSHOT wrote \(path)")
+            return
+        }
+        // 화면 캡처가 막혀 있으면 뷰 계층을 직접 그려서라도 남긴다 (애니메이션은 안 잡힌다).
+        guard let v = win.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+        }
+        RLog.log("STATUSSHOT fallback \(path)")
     }
 
     // Account popover from the status-bar account chip: identity + sync + sign-out, instead
@@ -2629,6 +2913,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.activeDock?.dumpTree("STATE tree")
             }
         }
+        // RIVEN_FOCUSCARD=1: 선택 카드가 떠 있을 때 패널 활성화가 카드로 포커스를 주는지.
+        if ProcessInfo.processInfo.environment["RIVEN_FOCUSCARD"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let pane = self.agentPanes().first else { RLog.log("CARD no chat pane"); return }
+                pane.chat.debugPresentChoice(["A", "B"])
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    // 입력창으로 포커스를 뺏은 뒤 패널 활성화를 다시 태운다 (사용자가 클릭한 상황).
+                    pane.chat.focusInput(force: true)
+                    let stolen = String(describing: type(of: self.window.firstResponder ?? NSNull()))
+                    self.focusPanelContent(pane.panel)
+                    let now = String(describing: type(of: self.window.firstResponder ?? NSNull()))
+                    RLog.log("CARD afterSteal=\(stolen) afterActivate=\(now)")
+                }
+            }
+        }
+        // RIVEN_MENTIONSPLIT=1: 멘션마다 다른 지시가 각자에게 가는지 (문자열 분해만 검증).
+        if ProcessInfo.processInfo.environment["RIVEN_MENTIONSPLIT"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let peers = ["멤버1", "멤버2"]
+                for text in ["@멤버1 저녁메뉴 추천해줘 @멤버2 점심메뉴 추천해줘",
+                             "한국식으로 @멤버1 저녁 @멤버2 점심",
+                             "@멤버1 @멤버2 이 파일 같이 봐줘",
+                             "@멤버1"] {
+                    let tasks = ChatTokens.mentionTasks(text, peers: peers)
+                    RLog.log("SPLIT \(text) → " + (tasks.isEmpty ? "(없음)" :
+                        tasks.map { "\($0.agent)=\"\($0.message)\"" }.joined(separator: " | ")))
+                }
+            }
+        }
         // RIVEN_ASKBENCH=1: 도구 응답 전달 규칙 — 정상 resolve / 만료된 id / 세션 종료 시.
         if ProcessInfo.processInfo.environment["RIVEN_ASKBENCH"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -2744,6 +3057,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.teamPanel.debugCreate()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         self.activeDock?.dumpTree("UI after")
+                        // MCP 경로: 추가 → (확인 후) 제거 → 그룹 삭제
                         // 멤버 하나를 닫았다가 조직도에서 되살린다.
                         if let victim = self.agentPanes().first(where: { $0.chat.agentRole == "멤버1" }) {
                             self.activeDock?.removePanel(victim.panel)
@@ -3919,7 +4233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if out[g] == nil { order.append(g) }
             out[g, default: []].append(AgentNode(name: p.chat.agentRole, persona: p.chat.agentPersona,
                                                  model: p.chat.preferredModel,
-                                                 parent: p.chat.parentName, busy: p.chat.isBusy, open: true))
+                                                 parent: p.chat.parentName, open: true))
         }
         // 닫힌 멤버를 명단에서 채운다 — 그룹 전체를 닫아도 탭과 조직도는 남는다.
         if let ws = workspace {
@@ -3929,7 +4243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     AgentNode(name: $0["name"] ?? "", persona: ($0["agent"] ?? "").isEmpty ? nil : $0["agent"],
                               model: ($0["model"] ?? "").isEmpty ? nil : $0["model"],
                               parent: ($0["parent"] ?? "").isEmpty ? nil : $0["parent"],
-                              busy: false, open: false)
+                              open: false)
                 }
                 guard !closed.isEmpty || out[g] != nil else { continue }
                 if out[g] == nil { order.append(g) }
@@ -4015,6 +4329,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
     }
 
+    /// 그룹을 통째로 지운다: 진행 중인 턴을 멈추고, 모든 팬을 닫고, 저장된 명단도 지운다.
+    @discardableResult
+    private func deleteGroup(_ group: String) -> String {
+        guard let dock = activeDock, let ws = workspace else { return "unavailable" }
+        let panes = agentPanes().filter { $0.chat.groupName == group }
+        for p in panes {
+            p.chat.stopTurn()        // 돌고 있으면 먼저 멈춘다
+            p.panel.chatGroup = nil       // 닫기 훅이 명단에 되돌려 넣지 않도록
+            dock.removePanel(p.panel)     // onClose → teardown 으로 프로세스 종료
+        }
+        Settings.shared.remove("group.\(ws.path)|\(group)")
+        refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
+        return t("team.groupDeleted", ["group": group, "n": panes.count])
+    }
+
     /// Jump to one agent's pane (org chart node click).
     private func focusAgentPane(_ group: String, _ name: String) {
         guard let dock = activeDock, let ws = workspace else { return }
@@ -4053,16 +4382,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// Fan out to several panes at once. Every ask is dispatched in the SAME runloop turn, so the
     /// peers' claude processes run concurrently; the completion fires when the last one answers.
+    /// `each` 는 한 명이 답할 때마다 그 이름으로 불린다 (팀 입력줄이 도착 순서를 보여준다).
     private func askAgentPanes(_ tasks: [(agent: String, message: String)], from sender: ChatPanel?,
+                               inGroup: String? = nil, each: ((String) -> Void)? = nil,
                                _ done: @escaping ([(String, String)]) -> Void) {
         var answers = [String?](repeating: nil, count: tasks.count)
         var left = tasks.count
         for (i, task) in tasks.enumerated() {
-            askAgentPane(task.agent, task.message, from: sender) { answer in
+            askAgentPane(task.agent, task.message, from: sender, inGroup: inGroup) { answer in
                 // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 — 잠금 없이 안전하다.
                 guard answers[i] == nil else { return }
                 answers[i] = answer
                 left -= 1
+                each?(task.agent)
                 if left == 0 { done(tasks.enumerated().map { ($1.agent, answers[$0] ?? "") }) }
             }
         }
@@ -4081,15 +4413,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// Deliver `message` to the agent named/identified by `target` and return its answer.
     /// `target` matches a pane id, an agent role, or a panel title (case-insensitive).
+    /// `inGroup` 이 있으면 그 그룹 안에서만 찾는다 (팀 입력줄). 이름은 그룹마다 따로라서,
+    /// "리드" 가 두 그룹에 있을 때 전역 검색으로 떨어지면 남의 팀에 일이 넘어간다.
     private func askAgentPane(_ target: String, _ message: String, from sender: ChatPanel?,
+                              inGroup: String? = nil,
                               _ done: @escaping (String) -> Void) {
         let q = target.trimmingCharacters(in: .whitespaces).lowercased()
         let panes = agentPanes().filter { $0.chat !== sender }      // never delegate to yourself
         // 같은 그룹 동료를 먼저 본다 — 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
         // 그때 남의 팀 사람에게 일이 넘어가면 안 된다.
-        let mates = sender?.groupName.map { g in panes.filter { $0.chat.groupName == g } } ?? []
-        let hit = mates.first { $0.chat.agentRole.lowercased() == q }
+        let mates = (inGroup ?? sender?.groupName).map { g in panes.filter { $0.chat.groupName == g } } ?? []
+        let inMates = mates.first { $0.chat.agentRole.lowercased() == q }
             ?? mates.first { ($0.chat.agentPersona ?? "").lowercased() == q }
+        let hit = inGroup != nil ? inMates
+            : inMates
             ?? panes.first { $0.chat.agentRole.lowercased() == q }
             ?? panes.first { ($0.chat.agentPersona ?? "").lowercased() == q }
             ?? panes.first { $0.panel.id.lowercased() == q }
@@ -4100,7 +4437,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         hit.panel.badge = hit.panel.badge ?? "busy"
         refreshDockTabs(); refreshRailAgents()
-        hit.chat.ask(message) { answer in done(answer) }
+        // 조직도에 흐르는 선으로 보여준다: 누가 누구에게, 무슨 일을, 얼마나 오래.
+        // sender 가 nil 이면 사용자가 팀 입력줄에서 직접 보낸 것이다.
+        let flow = teamPanel.beginFlow(group: hit.chat.groupName, from: sender?.agentRole,
+                                       to: hit.chat.agentRole, summary: ChatPanel.shortTitle(message))
+        hit.chat.ask(message) { [weak self] answer in
+            self?.teamPanel.endFlow(flow, ok: !answer.hasPrefix("agent session is not running"))
+            done(answer)
+        }
+    }
+
+    /// 벤치용: 리드 패널의 입력창에서 한 줄 보낸 것과 같은 경로.
+    private func mentionFromLead(_ text: String) {
+        agentPanes().first { $0.chat.groupName == "배포팀" && $0.chat.parentName == nil }?
+            .chat.debugSendInput(text)
     }
 
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this

@@ -73,8 +73,20 @@ final class DockTabBar: NSView {
 
     func rebuild() {
         layer?.backgroundColor = Theme.bg2.cgColor
+        guard let group else { stack.arrangedSubviews.forEach { $0.removeFromSuperview() }; return }
+        // 상태만 바뀐 흔한 경우(busy → 완료)에는 탭 뷰를 다시 만들지 않는다. 다시 만들면
+        // 제목의 shimmer 가 매번 처음부터 다시 시작해 깜빡이고, 애니메이션 레이어도 계속
+        // 새로 붙었다 떨어진다. 구성이 그대로면 제자리에서 갱신만 한다.
+        let tabs = stack.arrangedSubviews.compactMap { $0 as? DockTab }
+        if tabs.count == group.panels.count,
+           zip(tabs, group.panels).allSatisfy({ $0.panelId == $1.id }) {
+            for (i, tab) in tabs.enumerated() {
+                tab.update(active: i == group.activeIndex, groupActive: group.isActiveGroup)
+            }
+            DispatchQueue.main.async { [weak self] in self?.revealActiveTab() }
+            return
+        }
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        guard let group else { return }
         for (i, panel) in group.panels.enumerated() {
             let tab = DockTab(panel: panel, active: i == group.activeIndex, groupActive: group.isActiveGroup)
             tab.onSelect = { [weak group] in group?.select(id: panel.id) }
@@ -82,6 +94,11 @@ final class DockTabBar: NSView {
             stack.addArrangedSubview(tab)
         }
         DispatchQueue.main.async { [weak self] in self?.revealActiveTab() }
+    }
+
+    /// 디버그: 이 바의 탭들이 지금 실제로 애니메이션 중인지 (렌더 트리의 presentation 값).
+    func debugStatusReport() -> String {
+        stack.arrangedSubviews.compactMap { ($0 as? DockTab)?.debugAnim() }.joined(separator: " | ")
     }
 
     private func close(_ panel: DockPanel) {
@@ -94,13 +111,17 @@ final class DockTabBar: NSView {
 // panel move; the DockGroup under the cursor decides tab-vs-split on drop.
 final class DockTab: NSView, NSDraggingSource {
     private let panel: DockPanel
-    private let active: Bool
-    private let groupActive: Bool
+    private var active: Bool
+    private var groupActive: Bool
     override var mouseDownCanMoveWindow: Bool { false }   // tab drags rearrange panels, never move the window
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
     private var underline: NSView?
     private var closeButton: HoverX?
+    private let titleLabel = ShimmerLabel(labelWithString: "")
+    private let statusDot = StatusPulseDot(diameter: UIScale.pt(7))
+    private let iconView = NSImageView()
+    var panelId: String { panel.id }
 
     init(panel: DockPanel, active: Bool, groupActive: Bool = true) {
         self.panel = panel; self.active = active; self.groupActive = groupActive
@@ -114,24 +135,19 @@ final class DockTab: NSView, NSDraggingSource {
         widthAnchor.constraint(lessThanOrEqualToConstant: UIScale.pt(200)).isActive = true
         widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(84)).isActive = true
 
-        let icon = NSImageView()
+        let icon = iconView
         icon.image = panel.icon
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.widthAnchor.constraint(equalToConstant: panel.icon == nil ? 0 : UIScale.pt(14)).isActive = true
         icon.heightAnchor.constraint(equalToConstant: UIScale.pt(14)).isActive = true
 
-        // Activity badge dot: only "attn" (needs input) shows on the tab — the busy
-        // (running) state is already conveyed by the left workspace-rail status dot, so
-        // a second violet dot on the tab is redundant noise.
-        let showBadge = panel.badge == "attn"
-        let badge = TabBadgeDot(kind: showBadge ? panel.badge : nil)
-        badge.translatesAutoresizingMaskIntoConstraints = false
+        // 상태 점: 사람을 부르는 상태(승인 대기 / 완료)에만 뜬다. "작업 중"은 제목이
+        // 훑리는 것으로 이미 말하고 있어서 점을 겹치지 않는다 — 레일의 에이전트 행과
+        // 같은 어휘다.
+        let badge = statusDot
 
-        let title = NSTextField(labelWithString: panel.title)
+        let title = titleLabel
         title.font = UIScale.font(UIScale.body)
-        // Active tab in the focused group is full-strength; in an unfocused group it's
-        // muted; non-active tabs are dim. This is riven's focus cue (no border box).
-        title.textColor = active ? (groupActive ? Theme.fg : Theme.fgDim) : Theme.fgDim.withAlphaComponent(0.7)
         title.lineBreakMode = .byTruncatingTail
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         title.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -144,9 +160,10 @@ final class DockTab: NSView, NSDraggingSource {
         close.translatesAutoresizingMaskIntoConstraints = false
         closeButton = close
 
+        // 점은 늘 자리에 두고 상태에 따라 숨긴다 (NSStackView 는 숨은 뷰를 접는다).
+        // 상태가 바뀔 때마다 탭을 다시 만들지 않기 위한 전제다.
         var views: [NSView] = panel.icon == nil ? [] : [icon]
-        if showBadge { views.append(badge) }
-        views.append(title); views.append(close)
+        views.append(badge); views.append(title); views.append(close)
         let row = NSStackView(views: views)
         row.orientation = .horizontal; row.spacing = 6; row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -168,23 +185,54 @@ final class DockTab: NSView, NSDraggingSource {
             sep.bottomAnchor.constraint(equalTo: bottomAnchor),
             sep.widthAnchor.constraint(equalToConstant: 1)
         ])
-        if active {
-            // 2px accent underline — full accent when the group is focused, faint
-            // when it isn't (so only the focused pane shows the hot ember marker).
-            let u = NSView(); u.wantsLayer = true
-            u.layer?.backgroundColor = (groupActive ? Theme.accent : Theme.accent.withAlphaComponent(0.25)).cgColor
-            u.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(u)
-            NSLayoutConstraint.activate([
-                u.leadingAnchor.constraint(equalTo: leadingAnchor),
-                u.trailingAnchor.constraint(equalTo: trailingAnchor),
-                u.bottomAnchor.constraint(equalTo: bottomAnchor),
-                u.heightAnchor.constraint(equalToConstant: 2)
-            ])
-            underline = u
-        }
+        // 2px accent underline — full accent when the group is focused, faint
+        // when it isn't (so only the focused pane shows the hot ember marker).
+        // 탭을 다시 만들지 않고 활성 상태를 바꿀 수 있게 항상 만들어 두고 숨긴다.
+        let u = NSView(); u.wantsLayer = true
+        u.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(u)
+        NSLayoutConstraint.activate([
+            u.leadingAnchor.constraint(equalTo: leadingAnchor),
+            u.trailingAnchor.constraint(equalTo: trailingAnchor),
+            u.bottomAnchor.constraint(equalTo: bottomAnchor),
+            u.heightAnchor.constraint(equalToConstant: 2)
+        ])
+        underline = u
+        update(active: active, groupActive: groupActive)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 제자리 갱신 — 제목·상태·활성 표시만 바꾼다 (탭 뷰를 다시 만들면 shimmer 가
+    /// 매번 처음으로 되감기고 레이어가 계속 새로 붙는다).
+    func update(active: Bool, groupActive: Bool) {
+        self.active = active; self.groupActive = groupActive
+        layer?.backgroundColor = (active ? Theme.bg : NSColor.clear).cgColor
+        if titleLabel.stringValue != panel.title { titleLabel.stringValue = panel.title }
+        // Active tab in the focused group is full-strength; in an unfocused group it's
+        // muted; non-active tabs are dim. This is riven's focus cue (no border box).
+        titleLabel.textColor = active ? (groupActive ? Theme.fg : Theme.fgDim)
+                                      : Theme.fgDim.withAlphaComponent(0.7)
+        let status = panel.status
+        titleLabel.shimmering = status.shimmers
+        statusDot.set(color: status.showsTabDot ? status.color : nil, pulsing: status.pulses)
+        // 역할이 있는 에이전트 팬은 탭 아이콘도 그 에이전트의 아바타로 — 탭이 여러 개
+        // 열려 있을 때 "이 탭이 누구인지"가 제목을 읽기 전에 보인다.
+        let wanted = panel.avatarKey.flatMap { AgentAvatar.image(for: $0, size: UIScale.pt(12)) } ?? panel.icon
+        if iconView.image !== wanted { iconView.image = wanted }
+        underline?.isHidden = !active
+        underline?.layer?.backgroundColor =
+            (groupActive ? Theme.accent : Theme.accent.withAlphaComponent(0.25)).cgColor
+    }
+
+    /// 디버그: 렌더 트리에서 지금 이 탭이 어떤 상태인지. presentation() 은 화면에 실제로
+    /// 나가는 값이라, 애니메이션이 걸려만 있고 안 도는 경우를 구분할 수 있다.
+    func debugAnim() -> String {
+        let loc = (titleLabel.layer?.mask?.presentation() as? CAGradientLayer)?
+            .locations?.first?.doubleValue
+        let op = statusDot.isHidden ? nil : statusDot.layer?.presentation()?.opacity
+        return "\(panel.title)[\(panel.status)] shimmer=\(loc.map { String(format: "%.2f", $0) } ?? "-")"
+             + " dot=\(op.map { String(format: "%.2f", $0) } ?? "-")"
+    }
 
     // Right-click: rename or close the panel.
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -256,30 +304,6 @@ final class DockTab: NSView, NSDraggingSource {
         }
         return img
     }
-}
-
-// A 7px activity dot on a dock tab. busy = violet (static), attn = ember (pulsing).
-final class TabBadgeDot: NSView {
-    init(kind: String?) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        translatesAutoresizingMaskIntoConstraints = false
-        widthAnchor.constraint(equalToConstant: 7).isActive = true
-        heightAnchor.constraint(equalToConstant: 7).isActive = true
-        layer?.cornerRadius = 3.5
-        switch kind {
-        case "busy":
-            layer?.backgroundColor = Theme.accent2.cgColor
-        case "attn":
-            layer?.backgroundColor = Theme.accent.cgColor
-            let a = CABasicAnimation(keyPath: "opacity")
-            a.fromValue = 1; a.toValue = 0.3; a.duration = 1.1
-            a.autoreverses = true; a.repeatCount = .infinity
-            layer?.add(a, forKey: "pulse")
-        default: isHidden = true
-        }
-    }
-    required init?(coder: NSCoder) { fatalError() }
 }
 
 // A borderless "×" that tints on hover — the dock tab's close affordance.
