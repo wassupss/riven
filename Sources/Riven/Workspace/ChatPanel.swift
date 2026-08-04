@@ -584,6 +584,25 @@ final class ChatPanel: NSView, Themable, Scalable {
     var agentRole: String { nickname ?? agentPersona ?? "Claude" }
     var isBusy: Bool { turnStart != nil }
 
+    /// 조직도의 상태 칩이 읽는 값. busy 하나로는 "승인을 기다리며 멈춰 있음"과 "도구를 돌리는
+    /// 중"이 구분되지 않는데, 병렬로 여러 명을 돌릴 때 정작 사람이 움직여야 하는 건 전자다.
+    /// 승인 대기는 추론이 아니라 실제 권한 요청 이벤트(onPermissionRequest → 승인 카드)에서 온다.
+    var runState: AgentRunState {
+        if approvalActive { return .waiting }
+        guard turnStart != nil else { return .idle }
+        if let liveTool { return .tool(liveTool) }
+        return .thinking
+    }
+    /// 지금 상태가 시작된 시각. 승인 대기 동안 멈춘 시간은 빼서, 칩의 초가 대화 헤더의
+    /// 경과 시간과 어긋나지 않게 한다.
+    var runStateSince: Date? {
+        guard turnStart != nil, !approvalActive else { return nil }
+        return turnStart?.addingTimeInterval(pausedTotal)
+    }
+    /// 마지막으로 시작된 도구. 어시스턴트 텍스트가 다시 흐르기 시작하면 도구가 끝난 것이므로
+    /// 비운다 (도구 종료 이벤트가 따로 오지 않는다).
+    private var liveTool: String?
+
     // ---- code-block actions (called by a code block's button via enclosingChatPanel) ----
     func openCodeInEditor(_ code: String, path: String?) {
         if let path { onOpenFile?(URL(fileURLWithPath: path)); return }
@@ -818,7 +837,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     func switchSession(to sid: String) {
         guard let url = workspace, let cmd = AgentDiscovery.claudeCmd() else { return }
         session?.stop(); session = nil
-        current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll(); titleSet = false
+        current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         pendingHistory = []; loadEarlierBtn = nil
@@ -883,8 +902,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid)
             self?.restorePlanBadge(sid)
         }
-        s?.onTextDelta = { [weak self] t in self?.current?.bufferText(t); self?.turnText += t }
+        s?.onTextDelta = { [weak self] t in
+            self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
+            self?.current?.bufferText(t); self?.turnText += t
+        }
         s?.onMainTool = { [weak self] name, detail, code, path in
+            self?.liveTool = name
             self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
             // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 — 조금 기다렸다 집어서 배지로.
             if name == "ExitPlanMode" { self?.pickUpPlanFile(attempt: 0) }
@@ -1269,7 +1292,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "clear":
             stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
             pendingHistory = []; loadEarlierBtn = nil
-            current = nil; clearSubagents(); stopFlush(); turnStart = nil; queuedMessages.removeAll()
+            current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll()
             return true
         case "resume":
             let sessions = listSessions()
@@ -1436,7 +1459,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         turnText = ""
         current = newBlock()
         current?.startWorking()
-        turnStart = Date(); pausedTotal = 0; pauseStart = nil; startFlush()
+        turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil; startFlush()
         setRunning(true)
         onBusyChange?(true)
         session?.send(text)
@@ -1508,7 +1531,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         lastUsage = usage
         let block = current
         block?.finish(secs: secs, cost: cost, usage: usage, model: model)
-        turnStart = nil
+        turnStart = nil; liveTool = nil
         // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" —
         // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).
         if let error, !interrupted { addError(t("chat.error", ["e": error])) }
