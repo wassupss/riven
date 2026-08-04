@@ -108,13 +108,17 @@ final class DockTab: NSView, NSDraggingSource {
         wantsLayer = true
         layer?.backgroundColor = (active ? Theme.bg : NSColor.clear).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        heightAnchor.constraint(equalToConstant: 30).isActive = true
+        heightAnchor.constraint(equalToConstant: DockGroup.tabBarHeight).isActive = true
+        // 폭 상한이 없으면 긴 제목("배포팀 · 리드")이 줄지 않고 바 밖으로 넘쳐 잘린다.
+        // 상한을 두고 라벨의 압축 저항을 낮춰야 비로소 "…"로 잘린다.
+        widthAnchor.constraint(lessThanOrEqualToConstant: UIScale.pt(200)).isActive = true
+        widthAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(84)).isActive = true
 
         let icon = NSImageView()
         icon.image = panel.icon
         icon.translatesAutoresizingMaskIntoConstraints = false
-        icon.widthAnchor.constraint(equalToConstant: panel.icon == nil ? 0 : 14).isActive = true
-        icon.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        icon.widthAnchor.constraint(equalToConstant: panel.icon == nil ? 0 : UIScale.pt(14)).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: UIScale.pt(14)).isActive = true
 
         // Activity badge dot: only "attn" (needs input) shows on the tab — the busy
         // (running) state is already conveyed by the left workspace-rail status dot, so
@@ -129,6 +133,8 @@ final class DockTab: NSView, NSDraggingSource {
         // muted; non-active tabs are dim. This is riven's focus cue (no border box).
         title.textColor = active ? (groupActive ? Theme.fg : Theme.fgDim) : Theme.fgDim.withAlphaComponent(0.7)
         title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        title.setContentHuggingPriority(.defaultLow, for: .horizontal)
         title.translatesAutoresizingMaskIntoConstraints = false
 
         let close = HoverX()
@@ -146,8 +152,8 @@ final class DockTab: NSView, NSDraggingSource {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(11)),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(9)),
             row.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
 
@@ -283,10 +289,10 @@ final class HoverX: NSButton {
         super.init(frame: frame)
         isBordered = false; imagePosition = .imageOnly
         image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(9), weight: .semibold))
         target = self; action = #selector(fire)
-        widthAnchor.constraint(equalToConstant: 14).isActive = true
-        heightAnchor.constraint(equalToConstant: 14).isActive = true
+        widthAnchor.constraint(equalToConstant: UIScale.pt(14)).isActive = true
+        heightAnchor.constraint(equalToConstant: UIScale.pt(14)).isActive = true
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func fire() { onClick?() }

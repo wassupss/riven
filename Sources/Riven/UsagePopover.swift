@@ -119,7 +119,7 @@ enum UsageUI {
         }
 
         if let today, today.totalTokens > 0 {
-            stack.addArrangedSubview(head("오늘 사용량 — $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))"))
+            stack.addArrangedSubview(head("오늘 사용량 · $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))"))
             for m in today.perModel.prefix(6) {
                 let name = NSTextField(labelWithString: m.name)
                 name.font = UIScale.mono(UIScale.caption, .regular); name.textColor = Theme.fgDim

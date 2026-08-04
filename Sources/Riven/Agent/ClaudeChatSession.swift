@@ -65,7 +65,7 @@ final class ClaudeChatSession {
     init?(command: String, cwd: String, resume: String? = nil,
           permissionMode: String = "acceptEdits",
           allowedTools: String = "Task,Read,Grep,Glob,LS",
-          interactive: Bool = false, agentName: String? = nil) {
+          interactive: Bool = false, agentName: String? = nil, model: String? = nil) {
         self.perm = interactive ? ChatPermissionServer() : nil
         self.ask = ChatAskServer()
         proc.executableURL = URL(fileURLWithPath: command)
@@ -81,6 +81,9 @@ final class ClaudeChatSession {
         if let cfg = ask?.mcpConfigJSON() { args += ["--mcp-config", cfg] }
         if let sp = ask?.systemPrompt() { args += ["--append-system-prompt", sp] }
         if let agentName, !agentName.isEmpty { args += ["--agent", agentName] }   // run as this custom agent
+        // 팬별 모델 고정: 그룹의 에이전트마다 다른 모델을 쓸 수 있다. 기동 인자로 주는 편이
+        // set_model 컨트롤 메시지보다 확실하다 (init 전에 도착할 일이 없음).
+        if let model, !model.isEmpty, model != "default" { args += ["--model", model] }
         if let resume { args += ["--resume", resume] }
         proc.arguments = args
         proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
@@ -160,7 +163,8 @@ final class ClaudeChatSession {
     // Answer an outstanding permission request (called on the main thread from the UI).
     func respond(_ id: String, allow: Bool) { perm?.resolve(id, allow: allow) }
     // Return a riven tool's result to the agent.
-    func respondTool(_ id: String, _ result: String) { ask?.resolve(id, result: result) }
+    @discardableResult
+    func respondTool(_ id: String, _ result: String) -> Bool { ask?.resolve(id, result: result) ?? false }
 
     func stop() {
         outPipe.fileHandleForReading.readabilityHandler = nil
