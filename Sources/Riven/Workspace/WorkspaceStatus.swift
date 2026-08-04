@@ -2,8 +2,8 @@ import Foundation
 
 // Per-workspace activity rollup (riven's state/workspaceStatus.ts). Each terminal
 // pane reports busy / needs-attention; a workspace rolls up to the most urgent:
-// attn (amber, pulsing) > busy (violet) > idle (grey).
-enum PaneActivity { case idle, busy, attn }
+// needs-you > busy > idle. 상태 어휘 자체는 [[AgentStatus]] 하나로 통일돼 있다
+// (UI/AgentStatus.swift) — 여기서는 워크스페이스 단위로 접기만 한다.
 
 final class WorkspaceStatus {
     static let shared = WorkspaceStatus()
@@ -23,9 +23,9 @@ final class WorkspaceStatus {
     }
     func clearPane(ws: String, pane: String) { panes["\(ws)|\(pane)"] = nil; onChange?(ws) }
 
-    func rollup(_ ws: String) -> PaneActivity {
+    func rollup(_ ws: String) -> AgentStatus {
         let ps = panes.values.filter { $0.ws == ws }
-        if ps.contains(where: { $0.attn }) { return .attn }
+        if ps.contains(where: { $0.attn }) { return .done }
         if ps.contains(where: { $0.busy }) { return .busy }
         return .idle
     }

@@ -382,6 +382,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+                // RIVEN_STATUSSHOT=<path>: 상태 언어를 한 화면에 세워 놓고 창을 통째로 떠서
+                // 눈으로 대조한다 — 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
+                // 레일 행 / 조직도 아바타가 서로 같은 색·의미인지. 상태를 합성해서 넣는 것이라
+                // 에이전트를 돌리지 않는다(토큰 0). 창 자체를 컴포지터에서 뜨므로 애니메이션이
+                // 실제로 걸려 있는지도 그림에 남는다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_STATUSSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.createAgentGroup("배포팀", [
+                            (name: "리드", agent: nil, model: nil, parent: nil),
+                            (name: "구현", agent: nil, model: "sonnet", parent: 0),
+                            (name: "리뷰", agent: nil, model: "haiku", parent: 0),
+                        ])
+                        if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                        self.teamPanel.show(group: "배포팀")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            // 창이 가려져 있으면 게이트가 애니메이션을 꺼 버려서(의도된 동작)
+                            // 검증 자체가 안 된다. 확인용으로 앞으로 세운다.
+                            NSApp.activate(ignoringOtherApps: true)
+                            self.window.makeKeyAndOrderFront(nil)
+                            // 팬마다 다른 상태를 심는다: 작업 중 / 승인 대기 / 완료.
+                            let seq: [AgentStatus] = [.busy, .waiting, .done]
+                            for (i, pane) in self.agentPanes().enumerated() {
+                                pane.panel.status = seq[i % seq.count]
+                            }
+                            self.refreshDockTabs(); self.refreshRailAgents()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                RLog.log("STATUSSHOT panes=\(self.agentPanes().count) "
+                                       + "live=\(ViewAnimationGate.liveCount)")
+                                self.debugWindowSnapshot(to: shot)
+                                // 0.45초 뒤 한 장 더 — 두 장의 같은 자리를 비교하면 제목이
+                                // 정말 훑리고 있는지(정지 화면이 아닌지) 숫자로 확인된다.
+                                // 렌더 트리 값도 같이 남겨서 "애니메이션은 도는데 캡처에만
+                                // 안 잡히는" 경우와 구분한다.
+                                for (i, at) in [0.0, 0.45].enumerated() {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                        let tabs = self.activeDock?.groups
+                                            .map { $0.tabBar.debugStatusReport() }
+                                            .filter { !$0.isEmpty }.joined(separator: "  ||  ") ?? ""
+                                        RLog.log("STATUSANIM t\(i) live=\(ViewAnimationGate.liveCount) \(tabs)")
+                                        if i == 1 {
+                                            self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                                of: ".png", with: "-b.png"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if let f = ProcessInfo.processInfo.environment["RIVEN_OPENFILE"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.openFile(URL(fileURLWithPath: f))
@@ -632,7 +682,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.rail.setActivity(URL(fileURLWithPath: ws), a)
             self.rail.setAgents(URL(fileURLWithPath: ws), self.railAgents(for: URL(fileURLWithPath: ws)))  // refresh per-agent rows
             if self.workspace?.path == ws {   // reflect the active workspace's status in the header icon
-                self.headerIcon?.contentTintColor = a == .attn ? Theme.warning : a == .busy ? Theme.accent2 : Theme.fgDim
+                self.headerIcon?.contentTintColor = a.color   // 상태 색은 한 군데(AgentStatus)에서만 정한다
             }
         }
 
@@ -1603,7 +1653,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         chat.onAttention = { [weak self, weak p, weak chat] attn in
             guard let self, let p else { return }
-            p.badge = attn ? "attn" : "busy"                     // still working after the prompt
+            // 승인 대기는 "완료"와 다른 상태다 — 문자열 badge 로는 둘 다 "attn" 이라 레일은
+            // 초록 체크, 탭은 액센트 점으로 갈라졌다. 상태를 직접 넣어 세 군데가 같은 색을 쓴다.
+            p.status = attn ? .waiting : .busy                   // still working after the prompt
             chat?.setRingState(p.badge)
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: attn)
             self.refreshDockTabs(); self.refreshRailAgents()
@@ -2123,12 +2175,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let hookAgent = p.sessionId.map { PaneSessionRegistry.shared.isHookBacked($0) } ?? false
                 guard p.agentName != nil || hookAgent else { continue }
                 seen.insert(p.id)
-                let act: PaneActivity = p.badge == "attn" ? .attn : (p.badge == "busy" ? .busy : .idle)
                 let title = p.title.isEmpty ? (p.agentName ?? "claude") : p.title
                 let sub = (p.agentName != nil && p.title != p.agentName) ? p.agentName : nil
                 // Glyph from the button agent name, else the hook-learned kind (hand-typed).
                 let sym = agentGlyph(kind: p.agentName) ?? agentGlyph(kind: p.hookAgentKind)
-                out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: act, iconSymbol: sym))
+                // 역할이 있는 채팅 팬만 아바타를 쓴다. 터미널 팬은 어떤 CLI 인지가 더 중요해서
+                // 종류 글리프(sparkles/code)를 그대로 둔다.
+                let avatar = p.content is ChatPanel ? p.avatarKey : nil
+                out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: p.status,
+                                 iconSymbol: sym, avatarKey: avatar))
             }
         }
         return out
@@ -2142,6 +2197,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else {
             rail.setActiveAgent(workspace, nil)
         }
+    }
+
+    /// 디버그 전용: 창을 컴포지터에서 그대로 떠서 PNG 로 남긴다. 뷰를 다시 그리는
+    /// cacheDisplay 와 달리 지금 걸려 있는 CALayer 애니메이션(shimmer 마스크·펄스)의 한
+    /// 프레임이 그림에 남아서, 애니메이션이 실제로 붙었는지 눈으로 확인할 수 있다.
+    private func debugWindowSnapshot(to path: String) {
+        guard let win = window else { return }
+        if let img = CGWindowListCreateImage(.null, .optionIncludingWindow,
+                                             CGWindowID(win.windowNumber),
+                                             [.boundsIgnoreFraming, .bestResolution]),
+           let d = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+            RLog.log("STATUSSHOT wrote \(path)")
+            return
+        }
+        // 화면 캡처가 막혀 있으면 뷰 계층을 직접 그려서라도 남긴다 (애니메이션은 안 잡힌다).
+        guard let v = win.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+        }
+        RLog.log("STATUSSHOT fallback \(path)")
     }
 
     // Account popover from the status-bar account chip: identity + sync + sign-out, instead

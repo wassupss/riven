@@ -381,19 +381,13 @@ final class OrgChartView: NSView, Themable {
         box.lineWidth = inbound ? 2 : (isMain ? 1.5 : 1)
         box.stroke()
 
-        // 아바타: 이름 첫 글자. 메인은 액센트로 채운다. (이름 + 부제 두 줄의 가운데)
+        // 아바타: 이름에서 결정론적으로 뽑은 사람 글리프 + 색 ([[AgentAvatar]]). 첫 글자만
+        // 쓰던 때는 "코"로 시작하는 멤버가 여럿이면 구분이 안 됐다. 메인은 색을 꽉 채운다.
+        // 레일 행·독 탭이 같은 키로 같은 얼굴을 그린다.
         let d = UIScale.pt(26) * scale
         let av = NSRect(x: r.minX + UIScale.pt(11) * scale, y: r.minY + UIScale.pt(29) * scale - d / 2,
                         width: d, height: d)
-        (isMain ? Theme.accent.withAlphaComponent(0.85) : Theme.accent.withAlphaComponent(0.14)).setFill()
-        NSBezierPath(ovalIn: av).fill()
-        let initial = String(n.name.prefix(1)).uppercased()
-        let iAt: [NSAttributedString.Key: Any] = [
-            .font: font(UIScale.caption, .bold),
-            .foregroundColor: isMain ? ChatPanel.onColor(Theme.accent) : Theme.accent]
-        let iSz = (initial as NSString).size(withAttributes: iAt)
-        (initial as NSString).draw(at: NSPoint(x: av.midX - iSz.width / 2, y: av.midY - iSz.height / 2),
-                                   withAttributes: iAt)
+        AgentAvatar.draw(key: n.name, in: av, filled: isMain)
 
         let textX = av.maxX + UIScale.pt(9) * scale
         let textW = r.maxX - UIScale.pt(11) * scale - textX
