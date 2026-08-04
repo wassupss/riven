@@ -42,6 +42,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// the session starts (agent groups pick one per agent) and persisted with the layout.
     var preferredModel: String?
     private var commands: [SlashCommand] = []
+    /// 색칠용 조회 집합 (소문자). commands 와 함께 한 번만 만든다 — 타이핑마다 디스크를 읽지 않는다.
+    private var commandNames: Set<String> = []
     private var lastScaleFactor: CGFloat = 1
     private var pendingResume: String?                   // resume this session id on next bind
     var agentPersona: String?                            // run this pane as `claude --agent <name>`
@@ -77,6 +79,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onGroupAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> String)?
     var onGroupRemoveAgent: ((_ group: String, _ name: String) -> String)?
     var onGroupDelete: ((_ group: String) -> String)?
+    /// 같은 그룹 동료 닉네임 (자기 자신 제외). 그룹이 아니면 빈 배열 → 입력창의 @ 가 무의미해진다.
+    var onPeers: (() -> [String])?
+    /// 팝업 줄에 붙일 동료 설명 (페르소나 · 모델, 또는 닫힘).
+    var onPeerDesc: ((String) -> String)?
+    /// 입력창에서 @동료를 불렀을 때. 여럿이면 동시에 보내고, `each` 는 한 명이 답할 때마다 불린다.
+    var onAskPeers: (([(agent: String, message: String)], @escaping (String) -> Void) -> Void)?
     var onOpenSubagentPane: ((_ id: String, _ view: NSView, _ title: String) -> Void)?   // place as a dock panel
     var onCloseSubagentPanes: ((_ ids: [String]) -> Void)?
     var onShowEdit: ((URL, String, String) -> Void)?
@@ -310,6 +318,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         modePopup.addItems(withTitles: modes.map { $0.0 })
         modePopup.selectItem(at: min(sel, modes.count - 1))
         commands = workspace.map { ChatPanel.discoverCommands(cwd: $0.path) } ?? commands
+        commandNames = Set(commands.map { $0.name.lowercased() })
         styleSendButton()
     }
 
@@ -499,6 +508,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         guard !insert.isEmpty else { return false }
         input.stringValue = input.stringValue.isEmpty ? insert : input.stringValue + " " + insert
+        inputChanged()      // 프로그램이 넣은 글도 색칠을 다시 계산한다 (임시 속성이 어긋나지 않게)
         window?.makeFirstResponder(input)
         input.setSelectedRange(NSRange(location: input.string.count, length: 0))
         return true
@@ -542,6 +552,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
+        commandNames = Set(commands.map { $0.name.lowercased() })
         guard let cmd = AgentDiscovery.claudeCmd() else {
             addSystem(t("chat.noCLI"))
             return
@@ -1177,6 +1188,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
+            inputChanged()
             input.window?.makeFirstResponder(input)
         }
         currentTurnText = nil; currentTurnBubble = nil
@@ -1198,6 +1210,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             let paths = panel.urls.map { $0.path }.joined(separator: "\n")
             let cur = self.input.stringValue
             self.input.stringValue = cur.isEmpty ? paths : (cur + "\n" + paths)
+            self.inputChanged()
             self.inputScroll.invalidateIntrinsicContentSize()
             self.composer.layoutSubtreeIfNeeded()               // grow the composer now
             self.window?.makeFirstResponder(self.input)
@@ -1209,7 +1222,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         if !slash.isHidden { acceptSlash(); return }
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, session != nil else { return }
-        input.stringValue = ""; hideSlash()
+        // @동료가 있으면 이 패널의 에이전트가 아니라 그 동료들에게 간다. 그룹이 아닌 패널에서는
+        // peerNames() 가 비어 있어 여기 걸리지 않는다 (@ 는 평범한 글자).
+        if delegateToMentions(text) { input.stringValue = ""; hideSlash(); inputChanged(); return }
+        input.stringValue = ""; hideSlash(); inputChanged()
         if text.hasPrefix("/"), handleSlash(text) { return }   // riven-handled slash commands
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }   // rail/tab title
         let bubble = addUser(text)
@@ -1445,6 +1461,36 @@ final class ChatPanel: NSView, Themable, Scalable {
         let label = ChatPanel.selectableModels.first { $0.1 == (id ?? "default") }?.0 ?? "?"
         addSystem(t("chat.model.set", ["m": label]))
     }
+    /// 벤치용: 입력창에 한 줄 넣고 Enter 를 누른 것과 같은 경로 (@멘션 파싱까지 그대로 탄다).
+    func debugSendInput(_ text: String) {
+        input.stringValue = text
+        inputChanged()
+        sendFromInput()
+    }
+    /// 벤치용: 보내지 않고 입력만 (팝업·색칠 상태를 보려고).
+    func debugType(_ text: String) {
+        input.stringValue = text
+        input.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        inputChanged()
+    }
+    func debugInput() -> String { input.stringValue }
+    /// 벤치용: 팝업의 현재 줄을 고른다 (Enter 와 같은 경로).
+    func debugAcceptPopup() { acceptSlash() }
+    /// 벤치용: 입력창에서 지금 색이 붙은 조각들.
+    func debugSpans() -> String {
+        ChatTokens.scan(input.stringValue, commands: commandNames, peers: peerNames())
+            .map { "\($0.kind)=\($0.name)" }.joined(separator: ",")
+    }
+    /// 벤치용: 자동완성 팝업에 지금 뜬 줄들.
+    func debugPopup() -> String {
+        slash.isHidden ? "(hidden)" : slash.prefix + slash.debugItems().joined(separator: " " + slash.prefix)
+    }
+    /// 벤치용: 이 팬이 아는 명령/스킬 수와 스킬 몇 개.
+    func debugCommands() -> String {
+        let skills = commands.map { $0.name }.filter { $0.contains(":") }
+        return "n=\(commands.count) skills=\(skills.count) sample=\(skills.prefix(3).joined(separator: ","))"
+    }
+
     /// 벤치용: 선택 카드를 하나 띄운다.
     func debugPresentChoice(_ options: [String]) {
         enqueueChoice(title: "테스트 선택", detail: "", code: nil, path: nil,
@@ -1455,6 +1501,35 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func confirmDestructive(_ question: String, _ done: @escaping (Bool) -> Void) {
         enqueueChoice(title: question, detail: "", code: nil, path: nil,
                       options: [(t("common.confirm"), { done(true) }), (t("chat.cancel"), { done(false) })])
+    }
+
+    /// 같은 그룹 동료를 부르는 메시지를 처리한다. 부른 사람이 없으면 false (평소대로 이 팬의
+    /// 에이전트에게 간다).
+    ///
+    /// 답은 각 동료의 패널에 그대로 남는다. 여기(보낸 쪽)에는 "누구에게 보냈고 누가 돌아왔는지"만
+    /// 남긴다 — 답 본문까지 밀어 넣으면 이 팬의 에이전트가 시키지도 않은 턴을 돌게 된다.
+    /// 동료의 답을 이 에이전트에게 넘기고 싶을 때는 에이전트가 riven_ask_agent 로 부르면 된다.
+    @discardableResult
+    private func delegateToMentions(_ text: String) -> Bool {
+        let peers = peerNames()
+        guard !peers.isEmpty else { return false }
+        let (targets, rest) = ChatTokens.mentions(text, peers: peers)
+        guard !targets.isEmpty else { return false }
+        guard !rest.isEmpty else { addSystem(t("chat.mention.empty")); return true }
+        guard let onAskPeers else { return false }
+        // 보낸 말은 그대로 남긴다 (무엇을 시켰는지 이 대화만 봐도 알 수 있게).
+        let bubble = addUser(text)
+        bubble.setDelegated(targets.joined(separator: ", "))
+        if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(rest)) }
+        addSystem("→ " + targets.joined(separator: ", ") + ": " + ChatPanel.shortTitle(rest))
+        var left = targets.count
+        onAskPeers(targets.map { (agent: $0, message: rest) }, { [weak self] name in
+            guard let self else { return }
+            left -= 1
+            self.addSystem(left == 0 ? "← " + name + " " + t("chat.mention.allBack")
+                                     : "← " + name + " " + t("chat.mention.back", ["k": left]))
+        })
+        return true
     }
 
     /// 비동기로 넘긴 일의 답이 도착했을 때 — 대화에 넣고 모델에게도 새 턴으로 전달한다.
@@ -1598,7 +1673,8 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // ---- stack helpers ----
     @discardableResult private func addUser(_ text: String) -> UserBubble {
-        let v = UserBubble(text: text)
+        // 입력창에서 보던 색(명령·스킬·@동료)을 보낸 뒤에도 유지한다.
+        let v = UserBubble(text: text, tokens: .init(commands: commandNames, peers: peerNames()))
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
@@ -1658,13 +1734,85 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     @objc private func jumpToLatest() { scrollToBottom() }
 
-    // ---- slash-command autocomplete (driven by ChatInput's onTextChange/onKey) ----
+    // ---- autocomplete (driven by ChatInput's onTextChange/onKey) ----
+    // 팝업은 하나를 두 가지로 쓴다 (/명령·스킬, @동료): 조작감·모양·자리가 같아야 하는데
+    // 뷰를 둘로 나누면 그게 어긋난다.
+    private enum PopupKind { case slash, mention }
+    private var popupKind: PopupKind = .slash
+    /// @동료를 삽입할 때 갈아 끼울 범위 (@ 부터 커서까지).
+    private var mentionRange: NSRange?
+
     private func inputChanged() {
+        highlightInput()
         let s = input.stringValue
-        guard s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") else { hideSlash(); return }
-        let q = String(s.dropFirst()).lowercased()
-        let matches = commands.filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) }
-        if matches.isEmpty { hideSlash() } else { showSlash(matches) }
+        // 1) 맨 앞의 /명령 — 지금까지와 같다.
+        if s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") {
+            let q = String(s.dropFirst()).lowercased()
+            let matches = commands.filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) }
+            if matches.isEmpty { hideSlash() } else { popupKind = .slash; showSlash(matches) }
+            return
+        }
+        // 2) 커서 앞의 @동료 — 그룹에 속한 패널에서만. 그룹이 아니면 @ 는 그냥 글자다.
+        if let (range, q) = mentionQuery() {
+            let names = peerNames()
+            let matches = names.filter { q.isEmpty || $0.lowercased().hasPrefix(q) }
+            if matches.isEmpty { hideSlash(); return }
+            mentionRange = range
+            popupKind = .mention
+            showSlash(matches.map { SlashCommand(name: $0, desc: peerDesc($0)) })
+            return
+        }
+        hideSlash()
+    }
+
+    /// 커서 바로 앞의 "@…" 토큰. @ 는 단어 시작이어야 하고 그 뒤로 공백이 없어야 한다.
+    private func mentionQuery() -> (NSRange, String)? {
+        guard groupName != nil else { return nil }
+        let ns = input.stringValue as NSString
+        let caret = min(input.selectedRange().location, ns.length)
+        var i = caret - 1
+        while i >= 0 {
+            let c = ns.character(at: i)
+            if c == 32 || c == 9 || c == 10 || c == 13 { return nil }   // 공백을 먼저 만나면 토큰이 아니다
+            if c == UInt16(UnicodeScalar("@").value) {
+                // 이메일 주소 안의 @ 를 걸러낸다 (앞이 글자면 멘션이 아니다).
+                if i > 0 {
+                    let p = ns.character(at: i - 1)
+                    guard p == 32 || p == 9 || p == 10 || p == 13 else { return nil }
+                }
+                let range = NSRange(location: i, length: caret - i)
+                return (range, ns.substring(with: NSRange(location: i + 1, length: caret - i - 1)).lowercased())
+            }
+            i -= 1
+        }
+        return nil
+    }
+
+    /// 같은 그룹 동료 이름 (자기 자신 제외). 그룹이 아니면 빈 배열이라 @ 가 아무 뜻이 없다.
+    private func peerNames() -> [String] { onPeers?() ?? [] }
+    private func peerDesc(_ name: String) -> String { onPeerDesc?(name) ?? "" }
+
+    // ---- 입력창 색칠 ----
+    // 실재하는 명령/스킬과 실재하는 동료만 색이 붙는다. 임시 속성(temporary attributes)이라
+    // 텍스트 자체는 평문 그대로다 (복사·전송에 영향 없음).
+    private var lastSpans: [(NSRange, NSColor)] = []
+    private func highlightInput() {
+        guard let lm = input.layoutManager else { return }
+        let text = input.stringValue
+        let spans = ChatTokens.scan(text, commands: commandNames, peers: peerNames())
+            .map { ($0.range, ChatTokens.color($0.kind)) }
+        // 바뀐 게 없으면 아무것도 하지 않는다 (키 입력마다 레이아웃을 건드리지 않게).
+        if spans.count == lastSpans.count,
+           zip(spans, lastSpans).allSatisfy({ NSEqualRanges($0.0, $1.0) && $0.1 == $1.1 }) { return }
+        // 지웠다 다시 칠하는 범위는 "예전 것 + 새 것"의 합집합뿐이다.
+        var dirty: NSRange?
+        for (r, _) in lastSpans + spans { dirty = dirty.map { NSUnionRange($0, r) } ?? r }
+        if var d = dirty {
+            d = NSIntersectionRange(d, NSRange(location: 0, length: (text as NSString).length))
+            if d.length > 0 { lm.removeTemporaryAttribute(.foregroundColor, forCharacterRange: d) }
+        }
+        for (r, c) in spans { lm.setTemporaryAttributes([.foregroundColor: c], forCharacterRange: r) }
+        lastSpans = spans
     }
     // Shift+Tab (mode cycle) any time; when the popup is up: arrows / Enter / Esc. Return true
     // if consumed (so ChatInput doesn't also act on the key).
@@ -1684,16 +1832,31 @@ final class ChatPanel: NSView, Themable, Scalable {
         return false
     }
     private func showSlash(_ list: [SlashCommand]) {
+        slash.prefix = (popupKind == .mention) ? "@" : "/"
         slash.set(list)
         slashHeight.constant = min(CGFloat(list.count) * SlashPopup.rowH + 8, 220)
         slash.isHidden = false
     }
-    private func hideSlash() { slash.isHidden = true; slashHeight.constant = 0 }
+    private func hideSlash() { slash.isHidden = true; slashHeight.constant = 0; mentionRange = nil }
     private func acceptSlash() {
-        if let cmd = slash.current() { input.stringValue = "/" + cmd.name }   // no trailing space
-        hideSlash()
-        window?.makeFirstResponder(input)
-        input.setSelectedRange(NSRange(location: input.string.count, length: 0))
+        guard let cmd = slash.current() else { hideSlash(); return }
+        if popupKind == .mention, let r = mentionRange {
+            // 토큰 자리만 갈아 끼운다 (문장 중간에서 부를 수 있어야 한다). 뒤에 공백을 붙여
+            // 바로 이어 쓸 수 있게.
+            let ns = NSMutableString(string: input.stringValue)
+            let insert = "@" + cmd.name + " "
+            ns.replaceCharacters(in: r, with: insert)
+            input.stringValue = ns as String
+            hideSlash()
+            window?.makeFirstResponder(input)
+            input.setSelectedRange(NSRange(location: r.location + (insert as NSString).length, length: 0))
+        } else {
+            input.stringValue = "/" + cmd.name        // no trailing space
+            hideSlash()
+            window?.makeFirstResponder(input)
+            input.setSelectedRange(NSRange(location: (input.string as NSString).length, length: 0))
+        }
+        highlightInput()
     }
 
     // Claude Code's standard slash commands (for CLI-parity autocomplete) + custom commands
@@ -1732,7 +1895,108 @@ final class ChatPanel: NSView, Themable, Scalable {
                 out.append(SlashCommand(name: name, desc: describe(url)))
             }
         }
+        out.append(contentsOf: discoverSkills(cwd: cwd, existing: Set(out.map { $0.name })))
         return out
+    }
+
+    // 스킬도 `/이름` 으로 부른다 (CLI 와 같다). 세 군데를 본다:
+    //   <cwd>/.claude/skills/<name>/SKILL.md      프로젝트 스킬
+    //   ~/.claude/skills/<name>/SKILL.md          개인 스킬
+    //   설치된 플러그인의 skills/<name>/SKILL.md   → `plugin:skill`
+    // 플러그인은 캐시 디렉터리를 훑지 않고 installed_plugins.json 의 installPath 만 따라간다.
+    // 캐시에는 지운 플러그인이나 다른 버전이 남아 있어서, 그대로 훑으면 "없는 명령"이 목록에
+    // 섞인다 (실재하는 것만 색을 입힌다는 규칙이 바로 깨진다).
+    private static func discoverSkills(cwd: String, existing: Set<String>) -> [SlashCommand] {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        var out: [SlashCommand] = []
+        var seen = existing
+
+        func addSkill(_ dir: URL, name: String) {
+            let manifest = dir.appendingPathComponent("SKILL.md")
+            guard fm.fileExists(atPath: manifest.path), !seen.contains(name) else { return }
+            let meta = skillMeta(manifest)
+            guard meta.userInvocable else { return }      // 모델만 쓰는 스킬은 슬래시로 못 부른다
+            seen.insert(name)
+            // 부를 때 쓰는 이름은 디렉터리 기준이다 (플러그인 스킬은 `plugin:skill`). frontmatter
+            // 의 name 은 접두사가 없으므로 설명에만 쓴다.
+            out.append(SlashCommand(name: name, desc: meta.desc))
+        }
+        func scanSkillRoot(_ root: String, prefix: String = "") {
+            let url = URL(fileURLWithPath: root)
+            guard let kids = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey],
+                                                         options: [.skipsHiddenFiles]) else { return }
+            for kid in kids where (try? kid.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                addSkill(kid, name: prefix + kid.lastPathComponent)
+            }
+        }
+        scanSkillRoot("\(cwd)/.claude/skills")
+        scanSkillRoot("\(home)/.claude/skills")
+        for (plugin, paths) in installedPlugins(home: home) {
+            for p in paths {
+                // 한 마켓플레이스 체크아웃에는 형제 플러그인의 스킬까지 전부 들어 있다
+                // (document-skills 폴더 안에 example-skills 것도 있다). 어느 게 이 플러그인
+                // 소유인지는 marketplace.json 이 정하므로, 그게 있으면 그 목록만 쓴다.
+                if let owned = manifestSkills(installPath: p, plugin: plugin) {
+                    for dir in owned { addSkill(dir, name: "\(plugin):\(dir.lastPathComponent)") }
+                } else {
+                    scanSkillRoot("\(p)/skills", prefix: "\(plugin):")
+                }
+            }
+        }
+        return out
+    }
+
+    /// `<installPath>/.claude-plugin/marketplace.json` 에서 이 플러그인이 소유한 스킬 경로들.
+    /// 매니페스트가 없거나 skills 항목이 없으면 nil (그때는 skills/ 를 그냥 훑는다).
+    private static func manifestSkills(installPath: String, plugin: String) -> [URL]? {
+        let url = URL(fileURLWithPath: "\(installPath)/.claude-plugin/marketplace.json")
+        guard let d = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let plugins = root["plugins"] as? [[String: Any]],
+              let mine = plugins.first(where: { $0["name"] as? String == plugin }),
+              let paths = mine["skills"] as? [String] else { return nil }
+        let base = URL(fileURLWithPath: installPath)
+        return paths.map { base.appendingPathComponent($0).standardizedFileURL }
+    }
+
+    /// installed_plugins.json → ["플러그인 이름": [설치 경로…]]. 키는 "plugin@marketplace" 라
+    /// @ 앞부분만 쓴다 (슬래시로 부를 때의 이름이 `plugin:skill` 이므로).
+    private static func installedPlugins(home: String) -> [String: [String]] {
+        let url = URL(fileURLWithPath: "\(home)/.claude/plugins/installed_plugins.json")
+        guard let d = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let plugins = root["plugins"] as? [String: Any] else { return [:] }
+        var out: [String: [String]] = [:]
+        for (key, value) in plugins {
+            let name = String(key.split(separator: "@").first ?? "")
+            guard !name.isEmpty, let entries = value as? [[String: Any]] else { continue }
+            let paths = entries.compactMap { $0["installPath"] as? String }
+            if !paths.isEmpty { out[name, default: []].append(contentsOf: paths) }
+        }
+        return out
+    }
+
+    /// SKILL.md 의 frontmatter 에서 name/description 과, 슬래시로 부를 수 있는지를 읽는다.
+    /// 앞부분만 읽으면 충분하다 (스킬 본문은 길 수 있는데 frontmatter 는 맨 위 몇 줄이다).
+    private static func skillMeta(_ url: URL) -> (desc: String, userInvocable: Bool) {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return (t("chat.cmd.skill"), true) }
+        defer { try? fh.close() }
+        let head = (try? fh.read(upToCount: 4096)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        var desc = "", invocable = true
+        let lines = head.components(separatedBy: "\n")
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else {
+            return (t("chat.cmd.skill"), true)
+        }
+        let strip = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"'"))
+        for l in lines.dropFirst() {
+            if l.trimmingCharacters(in: .whitespaces) == "---" { break }
+            if l.hasPrefix("description:") { desc = String(l.dropFirst(12)).trimmingCharacters(in: strip) }
+            if l.hasPrefix("user_invocable:") {
+                invocable = String(l.dropFirst(15)).trimmingCharacters(in: strip).lowercased() != "false"
+            }
+        }
+        return (String((desc.isEmpty ? t("chat.cmd.skill") : desc).prefix(60)), invocable)
     }
     // Prefer YAML frontmatter `description` (+ `argument-hint`); else the first prose line.
     private static func describe(_ url: URL) -> String {

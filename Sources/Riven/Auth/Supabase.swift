@@ -280,12 +280,6 @@ final class SupabaseAuth {
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
     ]
-    // 이름이 고정되지 않은 키 무리(워크스페이스·그룹마다 키가 생기는 것들)는 접두사로 막는다.
-    // `local.` 은 "이 기기에서만 의미가 있다"는 표시 — 팀 입력줄 히스토리가 여기 들어간다.
-    private static let noSyncPrefixes = ["local."]
-    private static func syncable(_ key: String) -> Bool {
-        !noSync.contains(key) && !noSyncPrefixes.contains(where: key.hasPrefix)
-    }
 
     private func observeLocalChanges() {
         NotificationCenter.default.removeObserver(self, name: .rivenSettingChanged, object: nil)
@@ -317,15 +311,14 @@ final class SupabaseAuth {
 
     private func applyRemote(_ remote: [String: Any]) {
         applyingRemote = true
-        for (k, v) in remote where Self.syncable(k) { Settings.shared.set(k, v) }
+        for (k, v) in remote where !Self.noSync.contains(k) { Settings.shared.set(k, v) }
         applyingRemote = false
         NotificationCenter.default.post(name: .rivenSettingsSynced, object: nil)
     }
 
     func push() {
         guard let uid = session?.userId else { return }
-        let payload = Settings.shared.syncableSnapshot(excluding: Self.noSync,
-                                                      excludingPrefixes: Self.noSyncPrefixes)
+        let payload = Settings.shared.syncableSnapshot(excluding: Self.noSync)
         withValidToken { token in
             guard let token else { return }
             guard let u = URL(string: "\(SupabaseConfig.url)/rest/v1/user_settings") else { return }

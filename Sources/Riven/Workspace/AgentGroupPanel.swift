@@ -757,7 +757,7 @@ final class AgentEditForm: NSView, Themable {
 
 // MARK: - panel
 
-final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
+final class AgentGroupPanel: NSView, Themable, Scalable {
     /// (nickname, persona, index of the agent it reports to) — the FIRST entry is the main agent.
     var onCreate: ((_ group: String, _ members: [(name: String, agent: String?, model: String?, parent: Int?)]) -> Void)?
     /// Custom agents available for the persona picker (.claude/agents).
@@ -774,17 +774,11 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     var onRemoveAgent: ((_ group: String, _ name: String) -> Void)?
     /// 그룹 전체 삭제 (진행 중인 작업 중지 + 패널 닫기 + 저장분 삭제).
     var onDeleteGroup: ((_ group: String) -> Void)?
-    /// 팀 입력줄: 고른 멤버들에게 한 번에 보낸다. `each` 는 한 명이 답할 때마다 불린다.
-    var onTeamAsk: ((_ group: String, _ targets: [String], _ message: String,
-                     _ each: @escaping (String) -> Void) -> Void)?
     /// 그룹 멤버들의 지금 상태 (이름 → 상태 + 그 상태가 시작된 시각).
     var statusProvider: ((_ group: String) -> [String: (state: AgentRunState, since: Date?)])?
 
     private static let minAgents = 2
     private static let maxAgents = 8
-    /// 입력줄에 남길 최근 전송 기록 (Settings, 로컬 전용 키).
-    private static let historyKey = "local.team.barHistory"
-    private static let historyMax = 20
 
     private let titleLabel = NSTextField(labelWithString: t("title.team"))
     private let hint = NSTextField(labelWithString: t("team.hint"))
@@ -800,15 +794,6 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     private let chartScroll = NSScrollView()
     private let addTile = AddCard(frame: .zero)
     private let createBtn: RivenPrimaryButton
-    // ---- 팀 입력줄 (그룹 탭에서만 보인다) ----
-    private let barInput = RivenInput(placeholder: t("team.bar.placeholder"))
-    private let barSend = CircleButton()
-    private let barStatus = NSTextField(labelWithString: "")
-    private var barBox: NSStackView!
-    private var chartTopToBar: NSLayoutConstraint!
-    private var chartTopToTabs: NSLayoutConstraint!
-    private var history: [String] = []
-    private var historyAt = -1
 
     /// nil = the draft being edited; otherwise an existing group's name.
     private var shownGroup: String?
@@ -935,28 +920,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         }
         chart.onEdit = { [weak self] name in self?.editAgent(name) }
 
-        // 팀 입력줄: "@구현 @리뷰 …" 로 여러 명에게 한 번에, "/all" 로 전원에게. 지금까지는
-        // 사용자가 팀에 말하려면 리드 패널에 부탁해서 리드가 다시 위임하게 만들어야 했다.
-        barInput.delegate = self
-        barSend.isBordered = false; barSend.bezelStyle = .regularSquare
-        barSend.imagePosition = .imageOnly
-        barSend.wantsLayer = true
-        barSend.title = ""
-        barSend.target = self; barSend.action = #selector(barSendTapped)
-        barSend.toolTip = t("team.bar.send")
-        barSend.translatesAutoresizingMaskIntoConstraints = false
-        barStatus.translatesAutoresizingMaskIntoConstraints = false
-        barStatus.lineBreakMode = .byTruncatingTail
-        barStatus.isHidden = true
-        let barRow = NSStackView(views: [barInput, barSend])
-        barRow.orientation = .horizontal; barRow.spacing = UIMetrics.gap; barRow.alignment = .centerY
-        barBox = NSStackView(views: [barRow, barStatus])
-        barBox.orientation = .vertical; barBox.spacing = 5; barBox.alignment = .leading
-        barBox.translatesAutoresizingMaskIntoConstraints = false
-        barRow.translatesAutoresizingMaskIntoConstraints = false
-
         [titleLabel, hint, tabStrip, head, gridScroll, chartScroll, previewBtn, createBtn,
-         addToGroupBtn, deleteGroupBtn, barBox].forEach { addSubview($0) }
+         addToGroupBtn, deleteGroupBtn].forEach { addSubview($0) }
         deleteGroupBtn.attributedTitle = NSAttributedString(string: t("team.deleteGroup"), attributes: [
             .foregroundColor: Theme.danger, .font: UIScale.font(UIScale.body, .medium)])
         grid.addSubview(addTile)
@@ -995,17 +960,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             chart.leadingAnchor.constraint(equalTo: chartScroll.contentView.leadingAnchor),
             chartScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             chartScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            chartScroll.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 12),
             chartScroll.bottomAnchor.constraint(equalTo: addToGroupBtn.topAnchor, constant: -10),
-
-            barBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            barBox.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            barBox.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 12),
-            barInput.widthAnchor.constraint(equalTo: barBox.widthAnchor,
-                                            constant: -(UIMetrics.rowH + UIMetrics.gap)),
-            barStatus.widthAnchor.constraint(equalTo: barBox.widthAnchor),
-            // 같은 행의 입력과 높이·모양을 맞춘다 (원형 버튼 = 행 높이의 정사각형).
-            barSend.widthAnchor.constraint(equalToConstant: UIMetrics.rowH),
-            barSend.heightAnchor.constraint(equalToConstant: UIMetrics.rowH),
             addToGroupBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             addToGroupBtn.trailingAnchor.constraint(equalTo: deleteGroupBtn.leadingAnchor, constant: -8),
             addToGroupBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
@@ -1017,13 +973,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             createBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
             createBtn.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
         ])
-        // 조직도 위치는 탭에 따라 갈린다: 그룹 탭이면 입력줄 아래, 미리보기면 탭 바로 아래.
-        chartTopToBar = chartScroll.topAnchor.constraint(equalTo: barBox.bottomAnchor, constant: 10)
-        chartTopToTabs = chartScroll.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 12)
-        chartTopToBar.isActive = true
         // 기본은 메인 + 멤버 2 = 3장. 더 필요하면 "에이전트 추가"로 늘린다.
         for _ in 0..<3 { appendCard() }
-        history = (Settings.shared.object(Self.historyKey)?["items"] as? [String]) ?? []
         applyTheme(); applyScale()
         refresh()          // 탭("새 그룹" + 열려 있는 그룹)을 처음부터 채운다
         Theme.register(self); UIScale.register(self)
@@ -1039,8 +990,6 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
             self.groupLabel.stringValue = t("team.name")
             self.createBtn.title = t("team.create"); self.createBtn.applyTheme()
             self.previewBtn.title = t("team.preview"); self.previewBtn.applyTheme()
-            self.barInput.placeholderString = t("team.bar.placeholder")
-            self.barSend.toolTip = t("team.bar.send")
             self.relabel(); self.refresh()
         }
         if ProcessInfo.processInfo.environment["RIVEN_GRIDDUMP"] != nil { selfTest() }
@@ -1074,21 +1023,14 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         titleLabel.textColor = Theme.fg
         hint.textColor = Theme.fgDim
         groupLabel.textColor = Theme.fg
-        barStatus.textColor = barWarn ? Theme.warning : Theme.fgDim
-        barSend.fillColor = Theme.accent
-        barSend.image = NSImage(systemSymbolName: "paperplane.fill", accessibilityDescription: t("team.bar.send"))?
-            .withSymbolConfiguration(.init(pointSize: UIScale.pt(11), weight: .semibold))
-        barSend.contentTintColor = ChatPanel.onColor(Theme.accent)
         cards.forEach { $0.applyTheme() }
     }
     func applyScale() {
         titleLabel.font = UIScale.font(UIScale.title, .semibold)
         hint.font = UIScale.font(UIScale.small)
         groupLabel.font = UIScale.font(UIScale.body)
-        barStatus.font = UIScale.font(UIScale.caption)
         cards.forEach { $0.applyScale() }
         grid.cardH = UIScale.pt(196)
-        applyTheme()      // 원형 보내기 버튼의 아이콘 크기도 배율을 따라간다
     }
 
     /// 패널이 열릴 때마다 탭을 다시 만든다 — 첫 탭은 "새 그룹"(작성), 나머지는 지금 열려 있는
@@ -1113,13 +1055,14 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
     func debugTabTitles() -> [String] {
         tabStrip.tabs.map { tab in tab.1.map { "\(tab.0)(\($0))" } ?? tab.0 }
     }
-    /// 벤치용: 팀 입력줄에 한 줄 넣고 Enter 를 누른 것과 같은 경로.
-    func debugSendBar(_ text: String) { barInput.stringValue = text; submitBar() }
-    /// 벤치용: 입력줄 상태 문구 / 애니메이션 타이머가 도는지 / 그릴 위임 수.
-    func debugBarStatus() -> String { barStatus.isHidden ? "(hidden)" : barStatus.stringValue }
+    /// 벤치용: 애니메이션 타이머가 도는지 / 그릴 위임 수.
     func debugTickerRunning() -> Bool { tick != nil }
+    /// 벤치용: 타이머가 안 도는 이유를 가른다 (창 없음 / 숨김 / 가려짐 / 그룹 탭 아님).
+    func debugVisibility() -> String {
+        "win=\(window != nil) hidden=\(isHiddenOrHasHiddenAncestor) "
+        + "occl=\(window?.occlusionState.contains(.visible) ?? false) group=\(shownGroup ?? "-")"
+    }
     func debugFlowCount() -> Int { flows.count }
-    func debugBarVisible() -> Bool { !barBox.isHidden }
     /// 벤치용: 조직도가 지금 그리고 있는 상태 칩들.
     func debugStates() -> String {
         guard let g = shownGroup else { return "(no group)" }
@@ -1180,137 +1123,10 @@ final class AgentGroupPanel: NSView, Themable, Scalable, NSTextFieldDelegate {
         previewBtn.title = t(previewing ? "team.backToSetup" : "team.preview")
         previewBtn.applyTheme()
         chartScroll.isHidden = !showChart
-        // 입력줄은 살아 있는 그룹에서만 — 아직 만들지 않은 구성에는 보낼 상대가 없다.
-        let showBar = (shownGroup != nil)
-        barBox.isHidden = !showBar
-        chartTopToBar.isActive = showBar
-        chartTopToTabs.isActive = !showBar
-        if !showBar { setBarStatus(nil) }
         redrawChart()
         pushFlowsToChart()
         pollStates()
         updateTicker()
-    }
-
-    // MARK: - 팀 입력줄
-
-    /// 입력줄 한 줄을 (받는 사람들, 메시지)로 나눈다.
-    ///   "@구현 @리뷰 이거 봐"  → 두 명에게
-    ///   "/all 상태 한 줄"       → 열려 있는 전원에게
-    ///   "이거 봐"               → 리드에게 (그룹에 말을 걸면 보통 리드가 받는다)
-    /// 닉네임에 공백이 있을 수 있어서(예: "멤버 2") @ 뒤는 가장 길게 맞는 이름부터 본다.
-    static func parseBar(_ raw: String, members: [String], lead: String?)
-        -> (targets: [String], message: String, unknown: [String]) {
-        var words = raw.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard let first = words.first else { return ([], "", []) }
-        if first.lowercased() == "/all" || first == "/전체" {
-            return (members, words.dropFirst().joined(separator: " "), [])
-        }
-        guard first.hasPrefix("@") else {
-            return (lead.map { [$0] } ?? [], raw, [])
-        }
-        var targets: [String] = []
-        var unknown: [String] = []
-        while let head = words.first, head.hasPrefix("@") {
-            words[0] = String(head.dropFirst())
-            // 뒤 단어까지 붙여 가며 가장 긴 일치를 찾는다 ("멤버 2" 같은 이름).
-            var matched: (name: String, used: Int)?
-            for take in stride(from: min(4, words.count), through: 1, by: -1) {
-                let probe = words.prefix(take).joined(separator: " ").lowercased()
-                if let hit = members.first(where: { $0.lowercased() == probe }) {
-                    matched = (hit, take); break
-                }
-            }
-            if let m = matched {
-                if !targets.contains(m.name) { targets.append(m.name) }
-                words.removeFirst(m.used)
-            } else {
-                unknown.append(words[0])
-                words.removeFirst()
-            }
-        }
-        return (targets, words.joined(separator: " "), unknown)
-    }
-
-    @objc private func barSendTapped() { submitBar() }
-
-    /// 입력줄 키: Enter 로 보내고, ↑/↓ 로 최근 전송을 되불러온다 (셸 히스토리와 같은 몸짓).
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
-        guard control === barInput else { return false }
-        switch sel {
-        case #selector(NSResponder.insertNewline(_:)): submitBar(); return true
-        case #selector(NSResponder.moveUp(_:)):        return recallHistory(1)
-        case #selector(NSResponder.moveDown(_:)):      return recallHistory(-1)
-        default: return false
-        }
-    }
-
-    private func submitBar() {
-        guard let g = shownGroup else { return }
-        let raw = barInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return }
-        let members = groups.first { $0.group == g }?.members ?? []
-        let openNames = members.filter { $0.open }.map { $0.name }
-        let lead = members.first { $0.parent == nil && $0.open }?.name ?? openNames.first
-        let parsed = Self.parseBar(raw, members: openNames, lead: lead)
-        // 닫힌 멤버는 프로세스가 없다 — 조용히 무시하지 말고 왜 안 갔는지 말해 준다.
-        let closed = members.filter { !$0.open }.map { $0.name }
-        let namedClosed = parsed.unknown.filter { u in closed.contains { $0.lowercased() == u.lowercased() } }
-        if !namedClosed.isEmpty {
-            setBarStatus(t("team.bar.closedTarget", ["n": namedClosed.joined(separator: ", ")]), warn: true); return
-        }
-        if !parsed.unknown.isEmpty {
-            setBarStatus(t("team.bar.unknown", ["n": parsed.unknown.joined(separator: ", ")]), warn: true); return
-        }
-        guard !parsed.targets.isEmpty else { setBarStatus(t("team.bar.noTarget"), warn: true); return }
-        let message = parsed.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty else { setBarStatus(t("team.bar.noMessage"), warn: true); return }
-
-        var left = parsed.targets.count
-        var back: [String] = []
-        onTeamAsk?(g, parsed.targets, message) { [weak self] name in
-            guard let self else { return }
-            back.append(name); left -= 1
-            self.setBarStatus(left == 0 ? t("team.bar.allBack", ["n": back.joined(separator: ", ")])
-                                        : t("team.bar.back", ["n": name, "k": left]), warn: false)
-        }
-        setBarStatus(t("team.bar.sent", ["n": parsed.targets.joined(separator: ", ")]), warn: false)
-        pushHistory(raw)
-        barInput.stringValue = ""
-    }
-
-    private func setBarStatus(_ text: String?, warn: Bool = false) {
-        guard let text, !text.isEmpty else {
-            barStatus.isHidden = true; barStatus.stringValue = ""; barWarn = false; return
-        }
-        barStatus.stringValue = text
-        barWarn = warn
-        barStatus.textColor = warn ? Theme.warning : Theme.fgDim
-        barStatus.isHidden = false
-    }
-    private var barWarn = false
-
-    private func pushHistory(_ line: String) {
-        history.removeAll { $0 == line }
-        history.insert(line, at: 0)
-        if history.count > Self.historyMax { history.removeLast(history.count - Self.historyMax) }
-        historyAt = -1
-        // `local.` 로 시작하는 키는 클라우드 동기화에서 제외된다 (Supabase.noSyncPrefixes).
-        Settings.shared.set(Self.historyKey, ["items": history])
-    }
-
-    /// ↑/↓ 로 최근에 보낸 줄을 되불러온다.
-    private func recallHistory(_ delta: Int) -> Bool {
-        guard !history.isEmpty else { return false }
-        let next = historyAt + delta
-        guard next >= -1, next < history.count else { return false }
-        historyAt = next
-        barInput.stringValue = next < 0 ? "" : history[next]
-        // 캐럿은 끝으로. NSRange 는 UTF-16 오프셋이라 String.count 를 쓰면 이모지에서 어긋난다.
-        if let editor = barInput.currentEditor() {
-            editor.selectedRange = NSRange(location: (barInput.stringValue as NSString).length, length: 0)
-        }
-        return true
     }
 
     // MARK: - 라이브 위임 (위임 시작/끝을 조직도에 흘려보낸다)

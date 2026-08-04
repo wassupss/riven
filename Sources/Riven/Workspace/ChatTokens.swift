@@ -1,0 +1,103 @@
+import AppKit
+
+// 채팅 입력에서 "실제로 뜻이 있는 조각"을 찾아내는 한 곳.
+//
+// 두 군데가 같은 답을 써야 한다: 입력창의 색칠과, 보낼 때의 해석. 규칙이 갈라지면 색이 붙은
+// @동료에게 메시지가 안 가거나 그 반대가 되므로 스캐너는 하나뿐이다. CLI 가 존재하는 슬래시
+// 명령·스킬만 색을 입히는 것과 같은 원칙으로, 여기서도 "실재하는 것"만 토큰이 된다.
+enum ChatTokens {
+    enum Kind { case command, mention }
+    struct Token {
+        let range: NSRange       // UTF-16 기준 (NSAttributedString / NSTextView 와 맞춘다)
+        let kind: Kind
+        /// 매칭된 원래 이름 (동료 닉네임의 정식 표기).
+        let name: String
+    }
+
+    static func color(_ kind: Kind) -> NSColor {
+        switch kind {
+        case .command: return Theme.info       // 명령·스킬
+        case .mention: return Theme.accent     // 동료 호출 (조직도의 위임선과 같은 색)
+        }
+    }
+
+    /// 텍스트에서 색을 입힐 토큰들을 찾는다.
+    /// - commands: 실재하는 명령/스킬 이름 (소문자). 비어 있으면 명령은 칠하지 않는다.
+    /// - peers: 같은 그룹 동료 닉네임. 비어 있으면(그룹이 아니면) @ 는 평범한 글자다.
+    static func scan(_ text: String, commands: Set<String>, peers: [String]) -> [Token] {
+        var out: [Token] = []
+        let ns = text as NSString
+        // 슬래시 명령은 맨 앞에 있을 때만 (CLI 와 같다). "…에서 /tmp 를" 같은 경로는 명령이 아니다.
+        if ns.length > 0, ns.character(at: 0) == UInt16(UnicodeScalar("/").value) {
+            let end = firstBreak(ns, from: 1)
+            let name = ns.substring(with: NSRange(location: 1, length: end - 1)).lowercased()
+            if !name.isEmpty, commands.contains(name) {
+                out.append(Token(range: NSRange(location: 0, length: end), kind: .command, name: name))
+            }
+        }
+        guard !peers.isEmpty else { return out }
+        // 이름에 공백이 있을 수 있어("멤버 2") 가장 길게 맞는 것부터 본다. 이름끼리 접두사가
+        // 겹칠 때도("리뷰" / "리뷰어") 긴 쪽이 이긴다.
+        let sorted = peers.sorted { $0.count > $1.count }
+        let at = UInt16(UnicodeScalar("@").value)
+        var i = 0
+        while i < ns.length {
+            guard ns.character(at: i) == at, isWordStart(ns, i) else { i += 1; continue }
+            var matched: (String, Int)?
+            for p in sorted {
+                let pn = p as NSString
+                guard i + 1 + pn.length <= ns.length else { continue }
+                let cand = ns.substring(with: NSRange(location: i + 1, length: pn.length))
+                if cand.compare(p, options: .caseInsensitive) == .orderedSame { matched = (p, pn.length); break }
+            }
+            if let (name, len) = matched {
+                out.append(Token(range: NSRange(location: i, length: len + 1), kind: .mention, name: name))
+                i += len + 1
+            } else {
+                i += 1
+            }
+        }
+        return out
+    }
+
+    /// 보낼 때: 호출된 동료들과, @토큰을 걷어낸 나머지 메시지.
+    static func mentions(_ text: String, peers: [String]) -> (targets: [String], rest: String) {
+        let toks = scan(text, commands: [], peers: peers).filter { $0.kind == .mention }
+        guard !toks.isEmpty else { return ([], text) }
+        var targets: [String] = []
+        for t in toks where !targets.contains(t.name) { targets.append(t.name) }
+        let ns = NSMutableString(string: text)
+        for t in toks.reversed() { ns.replaceCharacters(in: t.range, with: "") }   // 뒤에서부터 지워야 오프셋이 안 밀린다
+        let rest = (ns as String)
+            .replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (targets, rest)
+    }
+
+    /// 전송된 버블에서도 같은 색을 유지하기 위한 속성 문자열.
+    static func attributed(_ text: String, base: [NSAttributedString.Key: Any],
+                           commands: Set<String>, peers: [String]) -> NSAttributedString {
+        let s = NSMutableAttributedString(string: text, attributes: base)
+        for tok in scan(text, commands: commands, peers: peers) {
+            s.addAttributes([.foregroundColor: color(tok.kind)], range: tok.range)
+        }
+        return s
+    }
+
+    /// 공백/줄바꿈이 나오는 첫 위치 (없으면 끝).
+    private static func firstBreak(_ ns: NSString, from: Int) -> Int {
+        var i = from
+        while i < ns.length {
+            let c = ns.character(at: i)
+            if c == 32 || c == 9 || c == 10 || c == 13 { return i }
+            i += 1
+        }
+        return ns.length
+    }
+    /// @ 가 단어 시작인지 (앞이 문자열 처음이거나 공백). 이메일 주소 안의 @ 를 걸러낸다.
+    private static func isWordStart(_ ns: NSString, _ i: Int) -> Bool {
+        guard i > 0 else { return true }
+        let c = ns.character(at: i - 1)
+        return c == 32 || c == 9 || c == 10 || c == 13 || c == 40 || c == 44   // 공백류, '(', ','
+    }
+}
