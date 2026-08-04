@@ -74,10 +74,14 @@ final class Settings {
 
     // A JSON-safe copy of all settings minus the given keys (used for cloud sync —
     // sensitive/local keys like the AI API key + session are excluded by the caller).
-    func syncableSnapshot(excluding: Set<String>) -> [String: Any] {
+    // `excludingPrefixes` covers key FAMILIES whose names aren't fixed (per-workspace or
+    // per-group state), which an exact-match set can't express.
+    func syncableSnapshot(excluding: Set<String>, excludingPrefixes: [String] = []) -> [String: Any] {
         read {
             var out: [String: Any] = [:]
-            for (k, v) in dict where !excluding.contains(k) { out[k] = v }
+            for (k, v) in dict where !excluding.contains(k) && !excludingPrefixes.contains(where: k.hasPrefix) {
+                out[k] = v
+            }
             return out
         }
     }
