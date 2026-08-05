@@ -217,8 +217,11 @@ enum BrowserStore {
         else { return nil }
         var c = URLComponents(url: url, resolvingAgainstBaseURL: false)
         c?.fragment = nil
+        // 끝의 / 는 떼고 본다. news.ycombinator.com 과 news.ycombinator.com/ 은 같은 페이지인데
+        // 따로 세면 기록 목록에 같은 줄이 두 번 뜬다 (실제로 그렇게 보였다).
+        if c?.path == "/" { c?.path = "" }
         var s = c?.url?.absoluteString ?? url.absoluteString
-        if s.hasSuffix("/") && (c?.path.isEmpty == false) && c?.path != "/" { s.removeLast() }
+        while s.hasSuffix("/") && s.filter({ $0 == "/" }).count > 2 { s.removeLast() }
         return s
     }
 

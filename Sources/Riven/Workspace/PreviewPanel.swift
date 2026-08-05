@@ -379,6 +379,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let urlField = NSTextField()
     private let starBtn = NSButton()          // 북마크 켜고 끄기
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
+    private var libraryPopover: NSPopover?
     private let captureBtn = NSButton()
     private let externalBtn = NSButton()
     private let inspectBtn = NSButton()
@@ -551,10 +552,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     // MARK: - tabs
 
-    private func makeConfiguration() -> WKWebViewConfiguration {
+    private func makeConfiguration(isPrivate: Bool = false) -> WKWebViewConfiguration {
         let cfg = WKWebViewConfiguration()
         cfg.processPool = Self.processPool
-        cfg.websiteDataStore = .default()          // 쿠키·로컬스토리지가 디스크에 남는다
+        // 시크릿 탭은 메모리에만 남는 저장소를 쓴다 — 탭을 닫으면 쿠키·로그인이 함께 사라진다.
+        cfg.websiteDataStore = isPrivate ? .nonPersistent() : .default()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
         // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 — WKWebView 가 AppKit 마우스
@@ -567,8 +569,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     @discardableResult
-    private func newTab(_ url: URL?, activate: Bool, configuration: WKWebViewConfiguration? = nil) -> BrowserTab {
-        let tb = BrowserTab(configuration: configuration ?? makeConfiguration())
+    private func newTab(_ url: URL?, activate: Bool, configuration: WKWebViewConfiguration? = nil,
+                        isPrivate: Bool = false) -> BrowserTab {
+        let tb = BrowserTab(configuration: configuration ?? makeConfiguration(isPrivate: isPrivate))
+        tb.isPrivate = isPrivate
         tb.web.navigationDelegate = self
         tb.web.uiDelegate = self
         tb.onChange = { [weak self] in self?.tabChanged(tb) }
@@ -592,9 +596,16 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         refreshChrome(); refreshTabStrip()
     }
 
+    /// 방금 닫은 탭들 (⌘⇧T 로 되돌린다). 실수로 닫는 일이 잦아 열 개까지 쌓아 둔다.
+    private var closedURLs: [String] = []
+
     private func closeTab(_ i: Int) {
         guard tabs.count > 1, tabs.indices.contains(i) else { return }
         let tb = tabs.remove(at: i)
+        if let u = tb.web.url?.absoluteString, !u.isEmpty, !tb.isPrivate {
+            closedURLs.append(u)
+            if closedURLs.count > 10 { closedURLs.removeFirst() }
+        }
         tb.web.stopLoading()
         tb.web.removeFromSuperview()
         if current >= tabs.count { current = tabs.count - 1 }
@@ -794,6 +805,31 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
     }
 
+    /// ⌘⇧T — 마지막으로 닫은 탭을 되살린다.
+    private func reopenClosedTab() {
+        guard let u = closedURLs.popLast(), let url = URL(string: u) else { return }
+        newTab(url, activate: true)
+    }
+
+    // MARK: - 기록·북마크 보기 (⌘Y)
+    //
+    // 모아 둔 게 있어도 볼 방법이 없으면 없는 것과 같다. 주소창 아래에 뜨는 목록과 같은
+    // 표현을 쓰되, 여기서는 지우기까지 된다.
+    private func showLibrary() {
+        let panel = LibraryView(frame: NSRect(x: 0, y: 0, width: 420, height: 360))
+        panel.onOpen = { [weak self] url in
+            self?.libraryPopover?.close()
+            if let u = URL(string: url) { self?.newTab(u, activate: true) }
+        }
+        panel.reload()
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSViewController()
+        pop.contentViewController?.view = panel
+        pop.show(relativeTo: starBtn.bounds, of: starBtn, preferredEdge: .maxY)
+        libraryPopover = pop
+    }
+
     // MARK: - 주소창 자동완성 / 북마크
 
     func controlTextDidChange(_ obj: Notification) {
@@ -879,6 +915,17 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         window?.makeFirstResponder(urlField)
         urlField.stringValue = s
         refreshSuggestions()
+    }
+    func debugShowLibrary() { suggest.hide(); showLibrary() }
+    /// 팝오버는 자기 창에 그려져 부모 창 캡처에 안 잡힌다 — 뷰를 직접 찍는다.
+    func debugLibraryShot(_ path: String) {
+        guard let v = libraryPopover?.contentViewController?.view else { return }
+        v.layoutSubtreeIfNeeded()
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+        }
     }
     func debugSuggestions() -> String {
         suggest.items.map { "\($0.kind)/\($0.title)" }.joined(separator: " | ")
@@ -1014,8 +1061,14 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f" where cmd: showFind(); return true
         case "l" where cmd: focusURL(); return true
+        case "t" where cmd && event.modifierFlags.contains(.shift): reopenClosedTab(); return true
         case "t" where cmd: newTab(nil, activate: true); return true
+        case "n" where cmd && event.modifierFlags.contains(.shift):
+            newTab(nil, activate: true, isPrivate: true)
+            setStatus(t("browser.privateTab"))
+            return true
         case "w" where cmd && tabs.count > 1: closeTab(current); return true
+        case "y" where cmd: showLibrary(); return true
         default: return super.performKeyEquivalent(with: event)
         }
     }

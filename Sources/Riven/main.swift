@@ -585,6 +585,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                     try? d.write(to: URL(fileURLWithPath: shot))
                                 }
                                 RLog.log("BRSHOT done \(p.debugSuggestions())")
+                                // 두 번째 장면: 기록·북마크 보기 (⌘Y)
+                                p.debugShowLibrary()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    guard let win = self.window,
+                                          let cv = win.contentView,
+                                          let rep2 = cv.bitmapImageRepForCachingDisplay(in: cv.bounds) else { return }
+                                    cv.cacheDisplay(in: cv.bounds, to: rep2)
+                                    if let d2 = rep2.representation(using: .png, properties: [:]) {
+                                        try? d2.write(to: URL(fileURLWithPath: shot + ".lib.png"))
+                                    }
+                                    p.debugLibraryShot(shot + ".lib2.png")
+                                    RLog.log("BRSHOT lib done")
+                                }
                             }
                         }
                     }
