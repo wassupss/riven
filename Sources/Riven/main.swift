@@ -4518,6 +4518,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Settings.shared.keys(prefix: "group.\(ws.path)|").map { String($0.dropFirst("group.\(ws.path)|".count)) }
     }
 
+    /// 심볼릭 링크와 ".." 를 모두 편 절대 경로.
+    /// resolvingSymlinksInPath 는 **존재하는** 경로만 편다(그래서 /private/tmp 를 /tmp 로 줄이는
+    /// 것도 존재할 때뿐이다). 아직 없는 파일에 그대로 쓰면 같은 폴더인데도 한쪽만 줄어들어
+    /// 비교가 깨진다. 존재하는 조상까지 올라가 편 뒤 나머지 조각을 다시 붙인다.
+    static func resolved(_ url: URL) -> URL {
+        let std = url.standardizedFileURL
+        let fm = FileManager.default
+        var trail: [String] = []
+        var cur = std
+        while !fm.fileExists(atPath: cur.path), cur.pathComponents.count > 1 {
+            trail.append(cur.lastPathComponent)
+            cur = cur.deletingLastPathComponent()
+        }
+        var out = cur.resolvingSymlinksInPath()
+        for c in trail.reversed() { out.appendPathComponent(c) }
+        return out
+    }
+    /// child 가 parent 안에 있는가 (경로 조각 단위 비교라 "/ws" 와 "/ws-evil" 을 구분한다).
+    static func isInside(_ child: URL, _ parent: URL) -> Bool {
+        let c = resolved(child).pathComponents, p = resolved(parent).pathComponents
+        return c.count > p.count && Array(c.prefix(p.count)) == p
+    }
+
     /// Groups that actually exist right now, read off the live panes — name → members with their
     /// reporting lines. Drives the panel's group chips and its org chart.
     private func liveAgentGroups() -> [(group: String, members: [AgentNode])] {
@@ -4961,8 +4984,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel)
                                           : ws.appendingPathComponent(rel)
             // 워크스페이스 밖으로는 쓰지 않는다 (../.. 로 홈 디렉터리를 건드리는 걸 막는다).
-            let destPath = dest.standardizedFileURL.path
-            guard destPath.hasPrefix(ws.standardizedFileURL.path + "/") else {
+            // 두 경로를 같은 방식으로 펴서 비교해야 한다: standardizedFileURL 은 디렉터리 쪽만
+            // /private/tmp 를 /tmp 로 줄여서, 같은 폴더인데도 접두사가 어긋났다. 또 문자열
+            // 접두사는 "/ws" 옆의 "/ws-evil" 까지 통과시키므로 경로 조각 단위로 본다.
+            let destPath = AppDelegate.resolved(dest).path
+            guard AppDelegate.isInside(dest, ws) else {
                 return "refusing to write outside the workspace: \(destPath)"
             }
             let exists = FileManager.default.fileExists(atPath: destPath)
