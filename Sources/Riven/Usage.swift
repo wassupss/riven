@@ -168,9 +168,35 @@ enum Usage {
     // Plan limits from the Claude OAuth usage API (riven's "64% · 96%" = session /
     // weekly REMAINING %). Reads the OAuth token from ~/.claude/.credentials.json.
     struct Limits { let sessionRemaining: Int?; let weeklyRemaining: Int?
-        var sessionResetsAt: String? = nil; var weeklyResetsAt: String? = nil }
+        var sessionResetsAt: String? = nil; var weeklyResetsAt: String? = nil
+        /// 이번 조회가 어떻게 됐는지. 예전에는 실패해도 빈 값만 돌려줘서, 화면은 옛 숫자를
+        /// 그대로 들고 있고 사용자에게는 "갱신이 안 된다" 로 보였다.
+        var outcome: Outcome = .ok }
+    enum Outcome: Equatable {
+        case ok
+        case noToken                 // 로그인 정보를 못 찾음
+        case unauthorized            // 토큰이 만료됐거나 거부됨
+        case rateLimited(Int?)       // 초 단위 재시도 대기
+        case failed(String)
+    }
+
+    /// 마지막으로 성공한 조회 시각 (신선도 표시용).
+    private(set) static var lastSuccess: Date?
+    /// 429 를 맞았으면 이 시각까지는 부르지 않는다.
+    private(set) static var backoffUntil: Date?
+
     static func limits(_ completion: @escaping (Limits) -> Void) {
-        guard let token = oauthToken() else { completion(Limits(sessionRemaining: nil, weeklyRemaining: nil)); return }
+        limits(retryOnAuthFail: true, completion)
+    }
+    private static func limits(retryOnAuthFail: Bool, _ completion: @escaping (Limits) -> Void) {
+        if let until = backoffUntil, until > Date() {
+            completion(Limits(sessionRemaining: nil, weeklyRemaining: nil,
+                              outcome: .rateLimited(Int(until.timeIntervalSinceNow.rounded()))))
+            return
+        }
+        guard let token = oauthToken() else {
+            completion(Limits(sessionRemaining: nil, weeklyRemaining: nil, outcome: .noToken)); return
+        }
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -180,12 +206,35 @@ enum Usage {
         // 401/403), which is why the widget was silently falling back to $cost.
         req.setValue("claude-code/2.1.69", forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 10
-        URLSession.shared.dataTask(with: req) { data, resp, _ in
-            guard let data,
-                  let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                completion(Limits(sessionRemaining: nil, weeklyRemaining: nil)); return
+        URLSession.shared.dataTask(with: req) { data, resp, err in
+            let http = resp as? HTTPURLResponse
+            if let code = http?.statusCode, code == 401 || code == 403 {
+                // 토큰은 몇 시간이면 만료되고 Claude Code 가 키체인에서 갈아 끼운다. riven 은
+                // 실행 내내 처음 읽은 값을 들고 있어서, 만료된 순간부터 조회가 조용히 실패하고
+                // 화면은 옛 숫자를 그대로 보여 줬다. 한 번은 다시 읽어서 시도한다.
+                if retryOnAuthFail {
+                    debugAuthRetries += 1
+                    invalidateToken()
+                    limits(retryOnAuthFail: false, completion)
+                } else {
+                    completion(Limits(sessionRemaining: nil, weeklyRemaining: nil, outcome: .unauthorized))
+                }
+                return
             }
+            if http?.statusCode == 429 {
+                let wait = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
+                backoffUntil = Date().addingTimeInterval(Double(wait ?? 60))
+                completion(Limits(sessionRemaining: nil, weeklyRemaining: nil, outcome: .rateLimited(wait)))
+                return
+            }
+            guard let data, http?.statusCode == 200,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                let why = err?.localizedDescription ?? "HTTP \(http?.statusCode ?? 0)"
+                completion(Limits(sessionRemaining: nil, weeklyRemaining: nil, outcome: .failed(why)))
+                return
+            }
+            backoffUntil = nil
+            lastSuccess = Date()
             // remaining = 100 - utilization (riven's remaining()).
             func remaining(_ key: String) -> Int? {
                 guard let d = obj[key] as? [String: Any],
@@ -194,7 +243,8 @@ enum Usage {
             }
             func resets(_ key: String) -> String? { (obj[key] as? [String: Any])?["resets_at"] as? String }
             completion(Limits(sessionRemaining: remaining("five_hour"), weeklyRemaining: remaining("seven_day"),
-                              sessionResetsAt: resets("five_hour"), weeklyResetsAt: resets("seven_day")))
+                              sessionResetsAt: resets("five_hour"), weeklyResetsAt: resets("seven_day"),
+                              outcome: .ok))
         }.resume()
     }
 
@@ -203,6 +253,12 @@ enum Usage {
     // again this session, whether the user allowed or denied it. (The repeated prompt
     // came from re-reading the keychain on every 60s poll.)
     private static var cachedToken: String??   // nil = not resolved; .some(nil) = tried, none
+    /// 토큰이 거부됐을 때 다시 읽게 한다. 키체인은 /usr/bin/security 로 읽어서 (요청자가
+    /// 안정적인 시스템 바이너리라) 다시 물어보는 창이 뜨지 않는다.
+    static func invalidateToken() { cachedToken = nil }
+    /// 벤치용: 만료된 토큰 상황을 만든다.
+    static var debugAuthRetries = 0
+    static func debugPoisonToken() { cachedToken = .some("sk-ant-oat01-expired-for-test") }
     private static func oauthToken() -> String? {
         if let cached = cachedToken { return cached }
         // 1) ~/.claude/.credentials.json (no prompt).

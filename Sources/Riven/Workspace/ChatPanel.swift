@@ -79,6 +79,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onGroupAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> String)?
     var onGroupRemoveAgent: ((_ group: String, _ name: String) -> String)?
     var onGroupDelete: ((_ group: String) -> String)?
+    /// 위임 대상이 지금 존재하는지 (보내기 전에 확인해 즉시 실패를 알린다).
+    var onAgentExists: ((String) -> Bool)?
     /// 같은 그룹 동료 닉네임 (자기 자신 제외). 그룹이 아니면 빈 배열 → 입력창의 @ 가 무의미해진다.
     var onPeers: (() -> [String])?
     /// 팝업 줄에 붙일 동료 설명 (페르소나 · 모델, 또는 닫힘).

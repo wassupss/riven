@@ -29,7 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var explorer: FileTreeView!
     var searchPanel: SearchPanel!
     var gitPanel: GitPanel!
-    var previewPanel: PreviewPanel!
+    /// 지금 보고 있는 워크스페이스의 브라우저 (없으면 만든다).
+    var previewPanel: PreviewPanel! { workspace.map { preview(for: $0) } }
     var apiPanel: APIClientPanel!
     var changesPanel: ChangesPanel!
     var notesPanel: NotesPanel!            // per-workspace private scratchpad
@@ -119,6 +120,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let lsp = LSPManager.shared
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        // RIVEN_BRDATA=1: 기록·북마크·자동완성 순위가 실제로 쓸 만한지.
+        if ProcessInfo.processInfo.environment["RIVEN_BRDATA"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                BrowserStore.debugReset()
+                let seed: [(String, String, Int)] = [
+                    ("https://github.com/wassupss/riven", "riven", 30),
+                    ("https://github.com/features/actions", "GitHub Actions", 2),
+                    ("https://news.ycombinator.com", "Hacker News", 12),
+                    ("https://developer.apple.com/documentation/appkit", "AppKit", 5),
+                ]
+                for (u, title, n) in seed {
+                    for _ in 0..<n { BrowserStore.recordVisit(url: URL(string: u), title: title, isPrivate: false) }
+                }
+                BrowserStore.recordVisit(url: URL(string: "https://secret.example.com"), title: "몰래", isPrivate: true)
+                BrowserStore.toggleBookmark(url: URL(string: "https://vercel.com/dashboard"), title: "Vercel")
+                for q in ["git", "riven", "hacker", "vercel", "점심 메뉴"] {
+                    let r = BrowserStore.suggest(q, openTabs: [("AppKit 문서", "https://developer.apple.com/documentation/appkit")])
+                    let shown = r.prefix(3).map { "\($0.kind)/\($0.title)" }.joined(separator: " | ")
+                    RLog.log("BRDATA \"\(q)\" → \(shown)")
+                }
+                let c = BrowserStore.debugCounts
+                RLog.log("BRDATA 기록=\(c.history)건(시크릿 제외 4 기대) 북마크=\(c.bookmarks)건")
+                RLog.log("BRDATA 북마크확인=\(BrowserStore.isBookmarked(URL(string: "https://vercel.com/dashboard")))")
+            }
+        }
         installCrashHandler()
         CrashReporter.reportPending()   // upload the previous run's crash (if any), then clear it
         maybeShowCrashReportingNotice()   // one-time opt-out disclosure
@@ -534,6 +560,163 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 — 에이전트 팬이 실제로 한 턴을 돌리는지.
+                if ProcessInfo.processInfo.environment["RIVEN_SHIPCHECK"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let chat = self.agentPanes().first?.chat else {
+                                RLog.log("SHIPCHECK 채팅 팬 없음"); RLog.log("SHIPCHECK done"); return
+                            }
+                            chat.ask("숫자 42만 답해. 설명 금지.") { answer in
+                                RLog.log("SHIPCHECK 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(80))")
+                                RLog.log("SHIPCHECK done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
+                if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        Usage.limits { first in
+                            RLog.log("USAGEFIX 1차 결과=\(first.outcome) 세션=\(first.sessionRemaining.map(String.init) ?? "-")")
+                            // 만료 상황 재현: 토큰을 못 쓰게 만들어 둔 채 부른다.
+                            Usage.debugPoisonToken()
+                            Usage.limits { second in
+                                RLog.log("USAGEFIX 만료후=\(second.outcome) 세션=\(second.sessionRemaining.map(String.init) ?? "-") 토큰재시도=\(Usage.debugAuthRetries)회")
+                                DispatchQueue.main.async {
+                                    self.lastUsageOutcome = second.outcome
+                                    RLog.log("USAGEFIX 안내문=\(self.usageFreshness())")
+                                    RLog.log("USAGEFIX done")
+                                }
+                            }
+                        }
+                    }
+                }
+                // RIVEN_BRFIX=1: 점검에서 나온 치명 항목들이 실제로 고쳐졌는지.
+                if ProcessInfo.processInfo.environment["RIVEN_BRFIX"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func step(_ at: Double, _ body: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + at, execute: body)
+                        }
+                        // 재기동 뒤 탭이 그대로 살아났는지 (RIVEN_BRFIX=restore)
+                        if ProcessInfo.processInfo.environment["RIVEN_BRFIX"] == "restore" {
+                            step(3) {
+                                RLog.log("BRFIX 복원된탭=\(p.debugTabURLs().joined(separator: " , ")) 활성=\(p.debugActiveTab())")
+                                RLog.log("BRFIX done")
+                            }
+                            return
+                        }
+                        // 0) 자체 서명 인증서
+                        if let cert = ProcessInfo.processInfo.environment["RIVEN_CERTURL"] {
+                            _ = p.agentNavigate(cert, newTab: false)
+                            step(4.5) { RLog.log("BRFIX 인증서 결과=\(p.debugError()) 주소=\(p.debugURL())") }
+                            step(5) { p.debugEval("return document.body.innerText.trim();") { r in
+                                RLog.log("BRFIX 인증서 페이지내용=\(r.prefix(40))") } }
+                            step(6) { RLog.log("BRFIX done") }
+                            return
+                        }
+                        // 1) 없는 도메인 → 오류가 화면에 남아야 한다 (예전엔 아무 표시도 없었다)
+                        _ = p.agentNavigate("https://이런도메인은없다.example.invalid", newTab: false)
+                        step(4) { RLog.log("BRFIX DNS실패 표시=\(p.debugError())") }
+                        // 2) file:// 열기
+                        step(5) { _ = p.agentNavigate("file:///private/tmp/brfix/local.html", newTab: false) }
+                        step(8) { p.debugEval("return document.body.innerText.trim();") { r in
+                            RLog.log("BRFIX file:// 내용=\(r.prefix(60))") } }
+                        // 3) 전체화면 API 존재
+                        step(9) { p.debugEval("return typeof document.documentElement.requestFullscreen;") { r in
+                            RLog.log("BRFIX 전체화면 API=\(r)") } }
+                        // 4) UA 에 Safari 토큰
+                        step(10) { p.debugEval("return navigator.userAgent;") { r in
+                            RLog.log("BRFIX UA Safari포함=\(r.contains("Safari")) / \(r.suffix(40))") } }
+                        // 5) 탭 여러 개 → 저장
+                        step(11) {
+                            _ = p.agentNavigate("https://example.com", newTab: true)
+                            _ = p.agentNavigate("https://developer.apple.com", newTab: true)
+                        }
+                        step(16) {
+                            RLog.log("BRFIX 탭들=\(p.debugTabURLs().joined(separator: " , ")) 활성=\(p.debugActiveTab())")
+                            RLog.log("BRFIX done")
+                        }
+                    }
+                }
+                // RIVEN_BRDL=<url>: 내려받기 목록·사이트별 확대·탭 메뉴가 실제로 동작하는지.
+                if let dl = ProcessInfo.processInfo.environment["RIVEN_BRDL"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        _ = p.agentNavigate(dl + "/page.html", newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            p.debugSetZoom(1.4)
+                            RLog.log("BRDL 확대 설정=\(p.debugZoom())")
+                            _ = p.agentNavigate("https://example.com", newTab: false)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                            _ = p.agentNavigate(dl + "/page.html", newTab: false)   // 돌아오면 확대가 살아 있어야
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                            RLog.log("BRDL 되돌아온 확대=\(p.debugZoom()) (1.4 기대)")
+                            RLog.log("BRDL 탭메뉴=\(p.debugTabMenu(0).joined(separator: ", "))")
+                            _ = p.agentNavigate(dl + "/big.bin", newTab: false)     // 내려받기
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 14) {
+                            RLog.log("BRDL 내려받기=\(p.debugDownloads())")
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_BRDLSHOT"] {
+                                p.debugDownloadsShot(shot)
+                            }
+                            RLog.log("BRDL done")
+                        }
+                    }
+                }
+                // RIVEN_BRSHOT=<png>: 파비콘 탭 줄과 주소창 자동완성이 실제로 어떻게 보이는지.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_BRSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        for (u, title, n) in [("https://github.com/wassupss/riven", "riven · GitHub", 30),
+                                              ("https://news.ycombinator.com", "Hacker News", 12),
+                                              ("https://developer.apple.com/documentation", "Apple Developer 문서", 5)] {
+                            for _ in 0..<n { BrowserStore.recordVisit(url: URL(string: u), title: title, isPrivate: false) }
+                        }
+                        BrowserStore.toggleBookmark(url: URL(string: "https://vercel.com/dashboard"), title: "Vercel 대시보드")
+                        _ = p.agentNavigate("https://github.com", newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            _ = p.agentNavigate("https://news.ycombinator.com", newTab: true)
+                            _ = p.agentNavigate("https://developer.apple.com/documentation", newTab: true)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                            p.debugType("ri")     // 자동완성 목록이 뜨는 상태로 찍는다
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                guard let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) else { return }
+                                p.cacheDisplay(in: p.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                                RLog.log("BRSHOT done \(p.debugSuggestions())")
+                                // 두 번째 장면: 기록·북마크 보기 (⌘Y)
+                                p.debugShowLibrary()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                    guard let win = self.window,
+                                          let cv = win.contentView,
+                                          let rep2 = cv.bitmapImageRepForCachingDisplay(in: cv.bounds) else { return }
+                                    cv.cacheDisplay(in: cv.bounds, to: rep2)
+                                    if let d2 = rep2.representation(using: .png, properties: [:]) {
+                                        try? d2.write(to: URL(fileURLWithPath: shot + ".lib.png"))
+                                    }
+                                    p.debugLibraryShot(shot + ".lib2.png")
+                                    RLog.log("BRSHOT lib done")
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_BROWSERBENCH=<url>: 브라우저 패널과 riven_browser_* 를 클릭 없이 훑는다.
                 if let target = ProcessInfo.processInfo.environment["RIVEN_BROWSERBENCH"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -934,13 +1117,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sourceControl.graph.onOpenFile = { [weak self] rel in
             guard let self, let ws = self.workspace else { return }
             self.openFile(URL(fileURLWithPath: ws.path).appendingPathComponent(rel))
-        }
-        previewPanel = PreviewPanel(frame: .zero)
-        previewPanel.onFocused = { [weak self] in self?.focusGroup(containing: self?.previewPanel) }
-        // Preview capture → type the PNG path into the running agent terminal so it can
-        // read the screenshot (riven's capture-to-Claude).
-        previewPanel.onCapture = { [weak self] path in
-            self?.deliverToAgent(" " + path + " ")   // queues + opens the picker if no agent is running
         }
         apiPanel = APIClientPanel(frame: .zero)
         changesPanel = ChangesPanel(frame: .zero)
@@ -1668,6 +1844,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil,
                                model: String? = nil) -> DockPanel {
         chatSeq += 1
+        // 이 팬이 속한 워크스페이스. MCP 로 하는 일은 전부 여기에 종속된다 — 사용자가 지금
+        // 어느 워크스페이스를 보고 있든 상관없이. 예전에는 활성 워크스페이스를 썼기 때문에
+        // 다른 워크스페이스의 에이전트가 연 페이지가 보고 있던 화면에 떴다.
+        let owner = st.url
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
         chat.agentPersona = agent
@@ -1682,7 +1862,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.surfaceAgentMarkdown(path, ws: st.url)
         }
         chat.onListAgents = { [weak self] in self?.chatAgents() ?? [] }
-        chat.onAgentPanes = { [weak self] in self?.agentPanesReport() ?? "(unavailable)" }
+        chat.onAgentPanes = { [weak self, weak chat] in self?.agentPanesReport(near: chat) ?? "(unavailable)" }
         chat.onAskAgent = { [weak self, weak chat] target, message, done in
             self?.askAgentPane(target, message, from: chat, done)
         }
@@ -1704,6 +1884,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "removed \(name) from \(group)"
         }
         chat.onGroupDelete = { [weak self] group in self?.deleteGroup(group) ?? "unavailable" }
+        chat.onAgentExists = { [weak self, weak chat] name in
+            guard let self else { return false }
+            let q = name.trimmingCharacters(in: .whitespaces).lowercased()
+            return self.agentPanes(near: chat).contains {
+                $0.chat !== chat && ($0.chat.agentRole.lowercased() == q
+                                     || ($0.chat.agentPersona ?? "").lowercased() == q
+                                     || $0.panel.id.lowercased() == q)
+            }
+        }
         // 입력창의 @동료: 같은 그룹의 다른 팬 이름만 준다. 그룹이 아니면 빈 배열이라 @ 가
         // 아무 뜻도 갖지 않는다. 닫힌 멤버는 프로세스가 없으므로 빼고(부를 수 없다) 보여준다.
         chat.onPeers = { [weak self, weak chat] in
@@ -1734,34 +1923,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // riven tools: open a URL / capture the preview panel for the agent.
         chat.onOpenBrowser = { [weak self] url in
             guard let self else { return }
-            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
-            self.previewPanel.openURLString(url)
+            self.ensureAux("preview", in: owner)
+            self.preview(for: owner).openURLString(url)
         }
         // riven_browser_*: 한 곳에서 처리하고 결과를 콜백으로 돌려준다.
         chat.onBrowser = { [weak self] verb, args, done in
-            self?.handleBrowserTool(verb, args, done)
+            self?.handleBrowserTool(verb, args, in: owner, done)
         }
-        chat.onBrowserOrigin = { [weak self] in self?.previewPanel.currentOrigin ?? "" }
+        chat.onBrowserOrigin = { [weak self] in self?.preview(for: owner).currentOrigin ?? "" }
         chat.onScreenshot = { [weak self] url, done in
             guard let self else { done(nil); return }
-            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
-            if let url { self.previewPanel.openURLString(url) }
+            self.ensureAux("preview", in: owner)
+            let p = self.preview(for: owner)
+            if let url { p.openURLString(url) }
             // give the page a moment to load before snapshotting
             DispatchQueue.main.asyncAfter(deadline: .now() + (url == nil ? 0.2 : 1.6)) {
-                self.previewPanel.capture(done)
+                p.capture(done)
             }
         }
         chat.onApiRequest = { [weak self] method, url, headers, body in
             guard let self else { return }
-            if self.auxDockPanels["api"] == nil { self.toggleDockPanel("api") }
+            self.ensureAux("api", in: owner)
             self.apiPanel.run(method: method, url: url, headers: headers, body: body)
         }
         // riven layout introspection + control for the agent.
         chat.onPanels = { [weak self] in
-            guard let self, let dock = self.activeDock else { return "(no dock)" }
+            guard let self, let dock = self.state(for: owner).dock else { return "(no dock)" }
             var out: [String] = []
             for g in dock.groups { for p in g.panels { out.append("- id=\(p.id) kind=\(self.panelKind(p)) title=\(p.title)") } }
-            return "workspace: \(self.workspace?.path ?? "?")\npanels:\n" + out.joined(separator: "\n")
+            return "workspace: \(owner.path)\npanels:\n" + out.joined(separator: "\n")
         }
         chat.onOpenPanel = { [weak self] kind in
             guard let self else { return "unavailable" }
@@ -1769,13 +1959,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case "editor": self.showEditorPane()
             case "terminal": self.newTerminal()
             case "chat": self.newChat()
-            case "search", "git", "preview", "api", "changes", "notes", "team": if self.auxDockPanels[kind] == nil { self.toggleDockPanel(kind) }
+            case "search", "git", "preview", "api", "changes", "notes", "team":
+                guard self.ensureAux(kind, in: owner) else { return "\(kind) 을(를) 열 수 없습니다" }
             default: return "unknown kind: \(kind)"
             }
             return "opened \(kind)"
         }
         chat.onClosePanel = { [weak self] pid in
-            guard let self, let dock = self.activeDock else { return "unavailable" }
+            guard let self, let dock = self.state(for: owner).dock else { return "unavailable" }
             for g in dock.groups { for p in g.panels where p.id == pid { dock.removePanel(p); self.refreshRailAgents(); return "closed \(pid)" } }
             return "no panel with id \(pid)"
         }
@@ -2192,11 +2383,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         adoptEditor(into: st)
         return st.editorPanel!
     }
-    private func sharedAuxView(_ id: String) -> NSView {
+    /// 이 워크스페이스의 브라우저. 필요할 때 만들고 그 뒤로는 이 워크스페이스에 붙어 있는다.
+    /// 하나를 돌려 쓰면 다른 워크스페이스의 에이전트가 연 페이지가 지금 보고 있는
+    /// 워크스페이스에 뜬다 (실제로 그렇게 남의 화면에 떴다).
+    func preview(for ws: URL) -> PreviewPanel {
+        let st = state(for: ws)
+        if let p = st.preview { return p }
+        let p = PreviewPanel(frame: .zero)
+        p.workspaceRoot = ws
+        p.onFocused = { [weak self, weak p] in self?.focusGroup(containing: p) }
+        // 캡처 → 그 워크스페이스에서 돌고 있는 에이전트에게 PNG 경로를 넣어 준다.
+        p.onCapture = { [weak self] path in self?.deliverToAgent(" " + path + " ") }
+        st.preview = p
+        p.restoreLastURL()
+        return p
+    }
+
+    private func sharedAuxView(_ id: String, ws: URL) -> NSView {
         switch id {
         case "search": return searchPanel
         case "git": return sourceControl
-        case "preview": return previewPanel
+        case "preview": return preview(for: ws)
         case "api": return apiPanel
         case "changes": return changesPanel
         case "notes": return notesPanel
@@ -2214,9 +2421,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "git": sourceControl.setRoot(ws)
         case "changes": changesPanel.setWorkspace(ws)
         case "notes": notesPanel.setWorkspace(ws)
-        case "preview":
-            previewPanel.workspaceRoot = ws
-            previewPanel.restoreLastURL()      // 마지막으로 보던 주소로 되돌린다
+        case "preview": break                  // 워크스페이스마다 따로라 다시 가리킬 것이 없다
         default: break
         }
     }
@@ -2935,7 +3140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // into their hosts and re-point the active map (no detach/re-insert, no tree mutation).
         auxDockPanels.removeAll()
         for (id, panel) in st.auxPanels where panel.group?.manager === dock {
-            adopt(sharedAuxView(id), into: st.auxHost(id))
+            adopt(sharedAuxView(id, ws: url), into: st.auxHost(id))
             auxDockPanels[id] = panel
             refreshAuxRoot(id, ws: url)
         }
@@ -3219,6 +3424,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     RLog.log("ORDER openTabs=" + self.state(for: ws).openTabs.map { ($0 as NSString).lastPathComponent }.joined(separator: ","))
                 }
                 self.editor.dumpTabs { RLog.log("ORDER jsTabs=" + $0) }
+            }
+        }
+        // RIVEN_WSSCOPE=1: 다른 워크스페이스의 에이전트가 MCP 로 연 브라우저가 그쪽
+        // 워크스페이스에서 열리는지 (보고 있는 화면을 건드리지 않는지).
+        if ProcessInfo.processInfo.environment["RIVEN_WSSCOPE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                // 두 워크스페이스를 한 번씩 방문해 팬을 살려 둔 뒤, wsA 로 돌아온다.
+                let other = self.workspaces.first { $0 != self.workspace }
+                if let other { self.activate(other) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    if let first = self.workspaces.first { self.activate(first) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                        self.wsScopeReport()
+                        // 껐다 켰을 때 브라우저가 제 워크스페이스에만 남아 있는지도 본다.
+                        if ProcessInfo.processInfo.environment["RIVEN_WSSCOPE"] == "restore" {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                                for ws in self.workspaces {
+                                    let st = self.state(for: ws)
+                                    let open = st.auxPanels["preview"] != nil
+                                    RLog.log("WSSCOPE 복원 \(ws.lastPathComponent): 브라우저패널=\(open) 주소=\(st.preview?.debugURL() ?? "-")")
+                                }
+                                RLog.log("WSSCOPE 복원 done")
+                            }
+                        }
+                    }
+                }
             }
         }
         // RIVEN_STATEDUMP=1: 재기동 후 복원된 그룹 상태 (그룹·닉네임·보고 라인·모델·제목).
@@ -4565,6 +4797,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // togglePanel: if open, close it; else add it to the dock (search/git open to
     // the left, preview/changes to the right of the main area). Once open, the user
     // can drag it anywhere / split / resize like any dock panel.
+    /// 그 워크스페이스에 aux 패널이 열려 있는지 (활성 여부와 무관).
+    private func auxIsOpen(_ id: String, in ws: URL) -> Bool {
+        let st = state(for: ws)
+        guard let panel = st.auxPanels[id], let dock = st.dock else { return false }
+        return panel.group?.manager === dock
+    }
+    /// 그 워크스페이스에 aux 패널을 연다. 지금 보고 있는 워크스페이스는 건드리지 않는다 —
+    /// 에이전트가 자기 워크스페이스에서 한 일이 남의 화면을 바꾸면 안 된다.
+    @discardableResult
+    private func ensureAux(_ id: String, in ws: URL) -> Bool {
+        if auxIsOpen(id, in: ws) { return true }
+        if ws == workspace { toggleDockPanel(id); return auxIsOpen(id, in: ws) }
+        guard let dock = state(for: ws).dock else { return false }
+        guard let panel = makeAuxPanel(id, for: ws) else { return false }
+        if !dock.restorePlacement(panel) {
+            dock.addPanel(panel, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
+        }
+        return true
+    }
+
     private func toggleDockPanel(_ id: String) {
         guard workspace != nil, let dock = activeDock else { return }
         if let existing = auxDockPanels[id] {
@@ -4593,17 +4845,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // aux 패널 생성만 분리 (toggleDockPanel과 레이아웃 복원이 공용): 제목·심볼·콘텐츠
     // 스위치 + onClose 핸들러 + auxDockPanels 등록까지. 독에 어디에 붙일지는 호출자가
     // 정한다 (토글은 기본 가장자리, 레이아웃 복원은 스냅샷의 자리).
-    private func makeAuxPanel(_ id: String) -> DockPanel? {
-        guard let ws = workspace else { return nil }
+    private func makeAuxPanel(_ id: String, for forced: URL? = nil) -> DockPanel? {
+        guard let ws = forced ?? workspace else { return nil }
         let title: String; let symbol: String
         let content: NSView
         switch id {
         case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
         case "preview":
-            title = t("title.preview"); symbol = "safari"; content = previewPanel
-            previewPanel.workspaceRoot = ws
-            DispatchQueue.main.async { [weak self] in self?.previewPanel.restoreLastURL() }
+            title = t("title.preview"); symbol = "safari"; content = preview(for: ws)
         case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
@@ -4619,12 +4869,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: host)
         panel.title = title
         panel.onClose = { [weak self] in
-            self?.auxDockPanels[id] = nil
+            if ws == self?.workspace { self?.auxDockPanels[id] = nil }
             st.auxPanels[id] = nil
             self?.activeDock?.savedPlacements[id] = nil   // × 로 닫음 → 자리 기록도 지움 (#4)
         }
         st.auxPanels[id] = panel
-        auxDockPanels[id] = panel
+        if ws == workspace { auxDockPanels[id] = panel }
         return panel
     }
 
@@ -4710,11 +4960,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Every chat pane is an independent agent (its own session, context and role). These two verbs
     // turn that into a TEAM: an agent can see its peers and delegate work to one, then continue with
     // the answer. Hand-offs are visible in the target's transcript, so the user can watch or step in.
+    /// 지금 워크스페이스의 채팅 팬.
     private func agentPanes() -> [(panel: DockPanel, chat: ChatPanel)] {
         guard let dock = activeDock else { return [] }
         return dock.groups.flatMap { $0.panels }.compactMap { p in
             (p.content as? ChatPanel).map { (panel: p, chat: $0) }
         }
+    }
+
+    private func wsScopeReport() {
+        let all = allAgentPanes()
+        guard let mine = all.first(where: { $0.ws == workspace }),
+              let theirs = all.first(where: { $0.ws != workspace }) else {
+            RLog.log("WSSCOPE 팬이 모자람 (\(all.map { $0.ws.lastPathComponent }))"); return
+        }
+        RLog.log("WSSCOPE 보고있는곳=\(workspace?.lastPathComponent ?? "?") 다른곳=\(theirs.ws.lastPathComponent)")
+        // 다른 워크스페이스의 에이전트가 브라우저를 연다.
+        theirs.chat.onOpenBrowser?("https://example.com")
+        // 내 워크스페이스의 에이전트도 하나 연다.
+        mine.chat.onOpenBrowser?("https://developer.apple.com")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            let here = self.state(for: mine.ws).preview?.debugURL() ?? "(없음)"
+            let there = self.state(for: theirs.ws).preview?.debugURL() ?? "(없음)"
+            RLog.log("WSSCOPE 내워크스페이스 브라우저=\(here)")
+            RLog.log("WSSCOPE 다른워크스페이스 브라우저=\(there)")
+            RLog.log("WSSCOPE 같은인스턴스=\(self.state(for: mine.ws).preview === self.state(for: theirs.ws).preview)")
+            RLog.log("WSSCOPE 동료목록(내쪽)\n\(mine.chat.onAgentPanes?() ?? "")")
+            RLog.log("WSSCOPE done")
+        }
+    }
+
+    /// 모든 워크스페이스의 채팅 팬 (지금 보고 있는 것 먼저).
+    ///
+    /// 에이전트는 사용자가 어느 워크스페이스를 보고 있든 계속 일한다. 위임 대상 찾기를
+    /// 활성 워크스페이스로만 한정하면, 다른 프로젝트로 옮겨 본 순간 같은 팀원이 "없는 이름"이
+    /// 되어 위임이 실패한다 (실제로 그렇게 실패했다).
+    private func allAgentPanes() -> [(panel: DockPanel, chat: ChatPanel, ws: URL)] {
+        var out: [(panel: DockPanel, chat: ChatPanel, ws: URL)] = []
+        var seen = Set<ObjectIdentifier>()
+        func collect(_ dock: DockManager?, _ ws: URL) {
+            guard let dock else { return }
+            for p in dock.groups.flatMap({ $0.panels }) {
+                guard let c = p.content as? ChatPanel, seen.insert(ObjectIdentifier(p)).inserted else { continue }
+                out.append((panel: p, chat: c, ws: ws))
+            }
+        }
+        if let ws = workspace { collect(activeDock, ws) }
+        for ws in workspaces where ws != workspace { collect(state(for: ws).dock, ws) }
+        return out
     }
     /// 그룹 명단을 워크스페이스에 저장한다. 패널을 닫아도 조직도에 남기고 다시 열 수 있어야
     /// 하므로, 살아 있는 팬 + 이미 저장돼 있던 멤버를 합쳐 기록한다 (닫힌 멤버는 마지막 세션
@@ -5004,8 +5298,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func agentPanesReport() -> String {
-        let panes = agentPanes()
+    /// 부른 팬과 같은 워크스페이스의 채팅 팬들. 워크스페이스가 다르면 남의 일감이다 —
+    /// 이름이 같은 "멤버1" 이 여러 프로젝트에 있을 수 있고, 남의 프로젝트에 일이 넘어가면
+    /// 그 워크스페이스의 패널까지 건드리게 된다.
+    private func agentPanes(near sender: ChatPanel?) -> [(panel: DockPanel, chat: ChatPanel, ws: URL)] {
+        let all = allAgentPanes()
+        let home = all.first { $0.chat === sender }?.ws ?? workspace
+        return all.filter { $0.ws == home }
+    }
+
+    private func agentPanesReport(near sender: ChatPanel? = nil) -> String {
+        let panes = agentPanes(near: sender)
         guard !panes.isEmpty else { return "(no agent panes open)" }
         return panes.map { p in
             let state = p.chat.isBusy ? "busy" : "idle"
@@ -5023,7 +5326,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                               inGroup: String? = nil,
                               _ done: @escaping (String) -> Void) {
         let q = target.trimmingCharacters(in: .whitespaces).lowercased()
-        let panes = agentPanes().filter { $0.chat !== sender }      // never delegate to yourself
+        let panes = agentPanes(near: sender).map { (panel: $0.panel, chat: $0.chat) }
+            .filter { $0.chat !== sender }      // never delegate to yourself
         // 같은 그룹 동료를 먼저 본다 — 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
         // 그때 남의 팀 사람에게 일이 넘어가면 안 된다.
         let mates = (inGroup ?? sender?.groupName).map { g in panes.filter { $0.chat.groupName == g } } ?? []
@@ -5036,7 +5340,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ?? panes.first { $0.panel.id.lowercased() == q }
             ?? panes.first { $0.panel.title.lowercased().contains(q) }
         guard let hit else {
-            done("no agent matched \(target). Open one with riven_open_panel(chat) or pick from:\n" + agentPanesReport())
+            done("no agent matched \(target). Open one with riven_open_panel(chat) or pick from:\n"
+                 + agentPanesReport(near: sender))
             return
         }
         hit.panel.badge = hit.panel.badge ?? "busy"
@@ -5059,14 +5364,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// riven_browser_* 의 실제 동작. WKWebView 는 메인 스레드 전용이라 여기서 한 번 더 맞춘다
     /// (도구 호출은 소켓 스레드에서 들어온다).
-    private func handleBrowserTool(_ verb: String, _ args: [String: Any], _ done: @escaping (String) -> Void) {
+    private func handleBrowserTool(_ verb: String, _ args: [String: Any], in ws: URL,
+                                   _ done: @escaping (String) -> Void) {
         func onMain(_ body: @escaping () -> Void) {
             if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
         }
         onMain { [weak self] in
             guard let self else { done("riven is shutting down"); return }
-            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
-            let p = self.previewPanel!
+            self.ensureAux("preview", in: ws)
+            let p = self.preview(for: ws)
             func str(_ k: String) -> String? { (args[k] as? String).flatMap { $0.isEmpty ? nil : $0 } }
             func num(_ k: String) -> Double? {
                 (args[k] as? NSNumber)?.doubleValue ?? (args[k] as? Double) ?? (args[k] as? Int).map(Double.init)
@@ -5147,7 +5453,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     srv.resolve(id, result: t("browser.eval.denied")); return
                 }
             }
-            handleBrowserTool(tool, args) { srv.resolve(id, result: $0) }
+            // 터미널 에이전트는 어느 팬에서 불렀는지 알 수 없다 (앱 하나에 릴레이 하나).
+            // 그래서 보고 있는 워크스페이스에서 처리한다. 팬을 구분하려면 릴레이가 cwd 를
+            // 실어 보내야 한다 — 그건 따로.
+            guard let ws = workspace else { srv.resolve(id, result: "no workspace"); return }
+            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             if auxDockPanels["api"] == nil { toggleDockPanel("api") }
@@ -5361,7 +5671,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard Date().timeIntervalSince(lastUsageRefresh) > 3 else { return }
         refreshUsage()
     }
+    /// 마지막 조회가 어떻게 끝났는지. 실패를 감추면 화면은 옛 숫자를 그대로 들고 있고
+    /// 사용자에게는 "갱신이 안 된다" 로 보인다 (실제로 그렇게 보였다).
+    private(set) var lastUsageOutcome: Usage.Outcome = .ok
     private func refreshUsage(force: Bool = false) {
+        // 사용자가 openusage 같은 걸 같이 띄워 두면 같은 엔드포인트를 함께 두드리게 된다.
+        // 우리 쪽에서 불필요하게 겹쳐 부르지 않도록 최소 간격을 둔다 (버튼은 예외).
+        if !force, Date().timeIntervalSince(lastUsageRefresh) < 20 { return }
         lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
@@ -5369,8 +5685,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // empty; upgrade to session%·weekly% if the plan-limits API resolves.
             DispatchQueue.main.async { self.lastToday = t; self.statusBar.setUsage(limits: self.lastLimits, today: t); self.updateHeaderUsage(limits: self.lastLimits, today: t); self.rebuildPinnedUsage() }
             Usage.limits { lim in
-                guard lim.sessionRemaining != nil || lim.weeklyRemaining != nil else { return }
-                DispatchQueue.main.async { self.lastLimits = lim; self.statusBar.setUsage(limits: lim, today: t); self.updateHeaderUsage(limits: lim, today: t); self.rebuildPinnedUsage() }
+                DispatchQueue.main.async {
+                    self.lastUsageOutcome = lim.outcome
+                    // 값이 왔을 때만 숫자를 갈아 끼운다. 실패했을 때는 마지막 숫자를 남겨 두되,
+                    // 언제 것인지·왜 못 갱신했는지를 팝오버와 흐린 표시로 알린다.
+                    if lim.sessionRemaining != nil || lim.weeklyRemaining != nil { self.lastLimits = lim }
+                    self.statusBar.setUsage(limits: self.lastLimits, today: t)
+                    self.updateHeaderUsage(limits: self.lastLimits, today: t)
+                    self.rebuildPinnedUsage()
+                }
             }
         }
     }
@@ -5382,15 +5705,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else if let s { headerUsage.stringValue = "\(s)%"; headerUsageItem.isHidden = false }
         else if let c = today?.totalCost, c > 0 { headerUsage.stringValue = String(format: "$%.2f", c); headerUsageItem.isHidden = false }
         else { headerUsageItem.isHidden = true }
+        // 오래된 숫자는 흐리게. 5분 넘게 갱신되지 않았으면 지금 값이 아니다.
+        // (아직 한 번도 못 불러온 상태는 흐리게 하지 않는다 — 그냥 뜨는 중이다.)
+        let stale = Usage.lastSuccess.map { Date().timeIntervalSince($0) > 300 } ?? false
+        headerUsage.alphaValue = stale ? 0.45 : 1
+        headerUsageItem.toolTip = usageFreshness()
+    }
+    /// "방금 갱신" / "12분 전 · 로그인 정보가 만료돼 갱신하지 못했습니다" 같은 한 줄.
+    func usageFreshness() -> String {
+        var when = t("usage.never")
+        if let s = Usage.lastSuccess {
+            let m = Int(Date().timeIntervalSince(s) / 60)
+            when = m < 1 ? t("usage.justNow") : t("usage.minsAgo", ["n": String(m)])
+        }
+        switch lastUsageOutcome {
+        case .ok: return when
+        case .noToken: return when + " · " + t("usage.noToken")
+        case .unauthorized: return when + " · " + t("usage.unauthorized")
+        case .rateLimited(let sec):
+            return when + " · " + t("usage.rateLimited", ["n": String(sec ?? 60)])
+        case .failed(let why): return when + " · " + t("usage.failed", ["msg": why])
+        }
     }
     @objc private func headerUsageClicked() {
         if headerUsagePopover?.isShown == true { headerUsagePopover?.close(); return }
         let pop = headerUsagePopover ?? NSPopover()
         pop.behavior = .transient
         pop.contentViewController = NSViewController()
-        pop.contentViewController?.view = UsageUI.content(limits: lastLimits, today: lastToday) { [weak self] in
-            self?.headerUsagePopover?.close(); self?.pinUsage()
-        }
+        pop.contentViewController?.view = UsageUI.content(
+            limits: lastLimits, today: lastToday, freshness: usageFreshness(),
+            onReload: { [weak self] in self?.refreshUsage(force: true) },
+            onPin: { [weak self] in self?.headerUsagePopover?.close(); self?.pinUsage() })
         headerUsagePopover = pop
         pop.show(relativeTo: headerUsageItem.bounds, of: headerUsageItem, preferredEdge: .maxY)
     }

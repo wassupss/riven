@@ -23,6 +23,10 @@ final class BrowserTab: NSObject {
     private(set) var urlString = ""
     private(set) var progress: Double = 0
     private(set) var isLoading = false
+    /// 시크릿 탭 — 방문 기록을 남기지 않는다.
+    var isPrivate = false
+    /// 이 탭의 마지막 로드 실패. 다음 탐색이 시작되면 지운다.
+    var errorText: String?
     var onChange: (() -> Void)?
     private var tokens: [NSKeyValueObservation] = []
 
@@ -32,9 +36,6 @@ final class BrowserTab: NSObject {
         web.translatesAutoresizingMaskIntoConstraints = false
         web.allowsBackForwardNavigationGestures = true       // two-finger swipe, like Safari
         web.isInspectable = true                             // right-click → 요소 정보 검사
-        // Some sites gate features on a real browser UA; the default WKWebView UA is close enough
-        // but omits a Safari token, which a few dev servers sniff for.
-        web.customUserAgent = nil
         tokens = [
             web.observe(\.title, options: [.new]) { [weak self] w, _ in
                 self?.title = w.title ?? ""; self?.onChange?()
@@ -82,10 +83,11 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onNew: (() -> Void)?
+    var onMenu: ((Int, NSEvent) -> Void)?
     private let stack = NSStackView()
     private let scroll = NSScrollView()
     private let newBtn = NSButton()
-    private var titles: [String] = []
+    private var items: [(title: String, url: String)] = []
     private var selected = 0
 
     override init(frame: NSRect) {
@@ -120,24 +122,25 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ list: [String], selected sel: Int) {
-        titles = list; selected = sel
+    func set(_ list: [(title: String, url: String)], selected sel: Int) {
+        items = list; selected = sel
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, name) in list.enumerated() {
-            stack.addArrangedSubview(makeTab(i, name, active: i == sel))
+        for (i, it) in list.enumerated() {
+            stack.addArrangedSubview(makeTab(i, it, active: i == sel))
         }
         needsDisplay = true
     }
-    private func makeTab(_ i: Int, _ name: String, active: Bool) -> NSView {
+    private func makeTab(_ i: Int, _ it: (title: String, url: String), active: Bool) -> NSView {
         let row = TabCell()
         row.index = i
         row.onPick = { [weak self] in self?.onSelect?(i) }
         row.onClose = { [weak self] in self?.onClose?(i) }
-        row.configure(name, active: active, closable: titles.count > 1)
+        row.onMenu = { [weak self] e in self?.onMenu?(i, e) }
+        row.configure(it.title, url: it.url, active: active, closable: items.count > 1)
         return row
     }
-    func applyTheme() { needsDisplay = true; set(titles, selected: selected) }
-    func applyScale() { set(titles, selected: selected) }
+    func applyTheme() { needsDisplay = true; set(items, selected: selected) }
+    func applyScale() { set(items, selected: selected) }
     @objc private func newTapped() { onNew?() }
     /// 기준선 + 활성 탭 밑줄 (RivenTabStrip 과 같은 표현).
     override func draw(_ dirty: NSRect) {
@@ -145,19 +148,24 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
-    /// 한 칸: 제목 + (마우스를 올리면) 닫기.
+    /// 한 칸: 파비콘 + 제목 + (마우스를 올리면) 닫기.
     private final class TabCell: NSView {
         var index = 0
         var onPick: (() -> Void)?
         var onClose: (() -> Void)?
+        var onMenu: ((NSEvent) -> Void)?
+        private let icon = NSImageView()
         private let label = NSTextField(labelWithString: "")
         private let close = NSButton()
         private var track: NSTrackingArea?
         private var active = false
         private var closable = false
+        private var host = ""
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
+            icon.imageScaling = .scaleProportionallyDown
+            icon.translatesAutoresizingMaskIntoConstraints = false
             label.lineBreakMode = .byTruncatingTail
             label.translatesAutoresizingMaskIntoConstraints = false
             close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: t("browser.closeTab"))
@@ -165,9 +173,13 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
             close.isBordered = false; close.isHidden = true
             close.target = self; close.action = #selector(closeTapped)
             close.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(label); addSubview(close)
+            addSubview(icon); addSubview(label); addSubview(close)
             NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                icon.heightAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
                 label.centerYAnchor.constraint(equalTo: centerYAnchor),
                 close.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
                 close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
@@ -177,13 +189,40 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
             ])
         }
         required init?(coder: NSCoder) { fatalError() }
-        func configure(_ name: String, active: Bool, closable: Bool) {
+        func configure(_ name: String, url: String, active: Bool, closable: Bool) {
             self.active = active; self.closable = closable
             label.stringValue = name
             label.font = UIScale.font(UIScale.small, active ? .semibold : .regular)
             label.textColor = active ? Theme.fg : Theme.fgDim
             close.contentTintColor = Theme.fgDim
+            setIcon(url)
             needsDisplay = true
+        }
+        /// 파비콘이 있으면 그걸, 없으면 호스트 색의 점을 보여주고 뒤늦게 도착하면 갈아 끼운다.
+        private func setIcon(_ url: String) {
+            let u = URL(string: url)
+            host = u?.host ?? ""
+            if let cached = BrowserStore.cachedIcon(host: host) { icon.image = cached; return }
+            icon.image = Self.dot(BrowserStore.fallbackColor(host: host))
+            guard let u else { return }
+            let want = host
+            BrowserStore.icon(for: u) { [weak self] img in
+                guard let self, let img, self.host == want else { return }
+                self.icon.image = img
+            }
+        }
+        private static var dots: [String: NSImage] = [:]
+        private static func dot(_ color: NSColor) -> NSImage {
+            let key = color.description
+            if let d = dots[key] { return d }
+            let size = NSSize(width: 8, height: 8)
+            let img = NSImage(size: size)
+            img.lockFocus()
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+            img.unlockFocus()
+            dots[key] = img
+            return img
         }
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -194,6 +233,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         override func mouseEntered(with e: NSEvent) { close.isHidden = !closable }
         override func mouseExited(with e: NSEvent) { close.isHidden = true }
         override func mouseDown(with e: NSEvent) { onPick?() }
+        override func rightMouseDown(with e: NSEvent) { onMenu?(e) }
         @objc private func closeTapped() { onClose?() }
         override func draw(_ dirty: NSRect) {
             if active {
@@ -204,10 +244,134 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     }
 }
 
+// MARK: - 주소창 자동완성 목록
+//
+// 주소창 아래에 떠서 기록·북마크·열린 탭·검색을 한 줄씩 보여준다. 줄 수가 여덟 이하라
+// NSTableView 대신 스택으로 둔다 (재사용 이득이 없고 코드가 절반이다).
+final class SuggestList: NSView, Themable {
+    var onPick: ((BrowserStore.Suggestion) -> Void)?
+    private let stack = NSStackView()
+    private var rows: [Row] = []
+    private(set) var items: [BrowserStore.Suggestion] = []
+    private(set) var highlighted = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+        Theme.register(self)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ list: [BrowserStore.Suggestion]) {
+        items = list
+        highlighted = 0
+        rows.forEach { $0.removeFromSuperview() }
+        rows = list.enumerated().map { i, s in
+            let r = Row()
+            r.configure(s, active: i == 0)
+            r.onPick = { [weak self] in self?.onPick?(s) }
+            r.onHover = { [weak self] in self?.highlight(i) }
+            stack.addArrangedSubview(r)
+            r.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+            return r
+        }
+        isHidden = list.isEmpty
+        applyTheme()
+    }
+    func hide() { isHidden = true; items = []; rows.forEach { $0.removeFromSuperview() }; rows = [] }
+    func move(_ delta: Int) {
+        guard !items.isEmpty else { return }
+        highlight((highlighted + delta + items.count) % items.count)
+    }
+    private func highlight(_ i: Int) {
+        highlighted = i
+        for (j, r) in rows.enumerated() { r.configure(items[j], active: j == i) }
+    }
+    var current: BrowserStore.Suggestion? { items.indices.contains(highlighted) ? items[highlighted] : nil }
+
+    func applyTheme() {
+        layer?.backgroundColor = Theme.bg2.cgColor
+        layer?.borderColor = Theme.hairline.cgColor
+        for (j, r) in rows.enumerated() { r.configure(items[j], active: j == highlighted) }
+    }
+
+    /// 한 줄: 종류 아이콘 + 제목 + 주소.
+    private final class Row: NSView {
+        var onPick: (() -> Void)?
+        var onHover: (() -> Void)?
+        private let icon = NSImageView()
+        private let title = NSTextField(labelWithString: "")
+        private let sub = NSTextField(labelWithString: "")
+        private var track: NSTrackingArea?
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            [icon, title, sub].forEach {
+                $0.translatesAutoresizingMaskIntoConstraints = false
+                addSubview($0)
+            }
+            title.lineBreakMode = .byTruncatingTail
+            sub.lineBreakMode = .byTruncatingMiddle
+            NSLayoutConstraint.activate([
+                heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
+                title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+                title.centerYAnchor.constraint(equalTo: centerYAnchor),
+                sub.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+                sub.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+                sub.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+            title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        func configure(_ s: BrowserStore.Suggestion, active: Bool) {
+            let symbol: String
+            switch s.kind {
+            case .openTab:  symbol = "macwindow"
+            case .bookmark: symbol = "star.fill"
+            case .history:  symbol = "clock"
+            case .search:   symbol = "magnifyingglass"
+            }
+            icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            icon.image?.isTemplate = true
+            icon.contentTintColor = s.kind == .bookmark ? Theme.accent : Theme.fgDim
+            title.stringValue = s.kind == .search ? t("browser.searchFor", ["q": s.title]) : s.title
+            title.font = UIScale.font(UIScale.small)
+            title.textColor = Theme.fg
+            sub.stringValue = s.kind == .search ? "" : s.url
+            sub.font = UIScale.font(UIScale.caption)
+            sub.textColor = Theme.fgDim
+            layer?.backgroundColor = active ? Theme.accent.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
+        }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let t = track { removeTrackingArea(t) }
+            let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+            addTrackingArea(t); track = t
+        }
+        override func mouseEntered(with e: NSEvent) { onHover?() }
+        override func mouseDown(with e: NSEvent) { onPick?() }
+    }
+}
+
 // MARK: - panel
 
 final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
-                          WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+                          WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate,
+                          NSTextFieldDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     var onCapture: ((String) -> Void)?   // saved PNG path → send to the running agent
 
@@ -216,6 +380,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let fwdBtn = NSButton()
     private let stopBtn = NSButton()          // 로딩 중에는 ✕, 아니면 ⟳
     private let urlField = NSTextField()
+    private let starBtn = NSButton()          // 북마크 켜고 끄기
+    private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
+    private var libraryPopover: NSPopover?
+    private let downloadBtn = NSButton()          // 받는 게 있을 때만 보인다
+    private var downloads: [DownloadItem] = []
+    private var downloadsPopover: NSPopover?
     private let captureBtn = NSButton()
     private let externalBtn = NSButton()
     private let inspectBtn = NSButton()
@@ -264,12 +434,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         icon(inspectBtn, "curlybraces", t("browser.inspect"), #selector(openInspector))
         icon(zoomOutBtn, "minus.magnifyingglass", t("browser.zoomOut"), #selector(zoomOut))
         icon(zoomInBtn, "plus.magnifyingglass", t("browser.zoomIn"), #selector(zoomIn))
+        icon(starBtn, "star", t("browser.bookmark"), #selector(toggleBookmark))
+        icon(downloadBtn, "arrow.down.circle", t("browser.downloads"), #selector(showDownloads))
+        downloadBtn.isHidden = true
 
         urlField.placeholderString = t("browser.urlPlaceholder")
         urlField.font = UIScale.font(UIScale.body)
         urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(openURL)
+        urlField.delegate = self
         urlField.translatesAutoresizingMaskIntoConstraints = false
+
+        suggest.isHidden = true
+        suggest.onPick = { [weak self] s in self?.commitSuggestion(s) }
+        suggest.translatesAutoresizingMaskIntoConstraints = false
 
         progress.wantsLayer = true
         progress.translatesAutoresizingMaskIntoConstraints = false
@@ -278,6 +456,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         tabStrip.onSelect = { [weak self] i in self?.select(i) }
         tabStrip.onClose = { [weak self] i in self?.closeTab(i) }
         tabStrip.onNew = { [weak self] in self?.newTab(nil, activate: true) }
+        tabStrip.onMenu = { [weak self] i, e in self?.showTabMenu(i, e) }
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
 
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -294,8 +473,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
         buildFindBar()
 
-        [backBtn, fwdBtn, stopBtn, urlField, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
-         externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel].forEach { addSubview($0) }
+        [backBtn, fwdBtn, stopBtn, urlField, starBtn, downloadBtn, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
+         externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel,
+         suggest].forEach { addSubview($0) }
 
         let pad: CGFloat = 8
         progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
@@ -313,7 +493,18 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             stopBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
             urlField.leadingAnchor.constraint(equalTo: stopBtn.trailingAnchor, constant: 6),
             urlField.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            urlField.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            urlField.trailingAnchor.constraint(equalTo: starBtn.leadingAnchor, constant: -4),
+            starBtn.trailingAnchor.constraint(equalTo: downloadBtn.leadingAnchor, constant: -2),
+            downloadBtn.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            downloadBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            downloadBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            starBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            starBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+
+            // 자동완성은 주소창 바로 아래에 떠서 페이지를 덮는다 (레이아웃을 밀지 않는다).
+            suggest.leadingAnchor.constraint(equalTo: urlField.leadingAnchor),
+            suggest.trailingAnchor.constraint(equalTo: urlField.trailingAnchor),
+            suggest.topAnchor.constraint(equalTo: urlField.bottomAnchor, constant: 2),
             zoomOutBtn.trailingAnchor.constraint(equalTo: zoomInBtn.leadingAnchor, constant: -2),
             zoomOutBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
             zoomOutBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
@@ -373,12 +564,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     // MARK: - tabs
 
-    private func makeConfiguration() -> WKWebViewConfiguration {
+    private func makeConfiguration(isPrivate: Bool = false) -> WKWebViewConfiguration {
         let cfg = WKWebViewConfiguration()
         cfg.processPool = Self.processPool
-        cfg.websiteDataStore = .default()          // 쿠키·로컬스토리지가 디스크에 남는다
+        // 시크릿 탭은 메모리에만 남는 저장소를 쓴다 — 탭을 닫으면 쿠키·로그인이 함께 사라진다.
+        cfg.websiteDataStore = isPrivate ? .nonPersistent() : .default()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // 동영상·지도의 전체화면 버튼. 켜지 않으면 requestFullscreen 자체가 없어서
+        // 페이지의 전체화면 버튼이 아무 반응도 하지 않는다.
+        cfg.preferences.isElementFullscreenEnabled = true
+        // 일부 사이트는 UA 에 Safari 토큰이 없으면 "지원하지 않는 브라우저" 로 막는다.
+        // UA 를 통째로 바꾸면 다른 게 깨지므로, 기본 UA 뒤에 붙는 이 값만 채운다.
+        cfg.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
         // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 — WKWebView 가 AppKit 마우스
         // 이벤트를 삼키므로 작은 스크립트가 대신 알려준다.
         cfg.userContentController.add(self, name: "prevfocus")
@@ -389,8 +587,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     @discardableResult
-    private func newTab(_ url: URL?, activate: Bool, configuration: WKWebViewConfiguration? = nil) -> BrowserTab {
-        let tb = BrowserTab(configuration: configuration ?? makeConfiguration())
+    private func newTab(_ url: URL?, activate: Bool, configuration: WKWebViewConfiguration? = nil,
+                        isPrivate: Bool = false) -> BrowserTab {
+        let tb = BrowserTab(configuration: configuration ?? makeConfiguration(isPrivate: isPrivate))
+        tb.isPrivate = isPrivate
         tb.web.navigationDelegate = self
         tb.web.uiDelegate = self
         tb.onChange = { [weak self] in self?.tabChanged(tb) }
@@ -402,7 +602,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             tb.web.topAnchor.constraint(equalTo: container.topAnchor),
             tb.web.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        if let url { tb.web.load(URLRequest(url: url)) }
+        if let url { Self.load(url, into: tb.web) }
         if activate { select(tabs.count - 1) } else { tb.web.isHidden = true; refreshTabStrip() }
         return tb
     }
@@ -414,9 +614,16 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         refreshChrome(); refreshTabStrip()
     }
 
+    /// 방금 닫은 탭들 (⌘⇧T 로 되돌린다). 실수로 닫는 일이 잦아 열 개까지 쌓아 둔다.
+    private var closedURLs: [String] = []
+
     private func closeTab(_ i: Int) {
         guard tabs.count > 1, tabs.indices.contains(i) else { return }
         let tb = tabs.remove(at: i)
+        if let u = tb.web.url?.absoluteString, !u.isEmpty, !tb.isPrivate {
+            closedURLs.append(u)
+            if closedURLs.count > 10 { closedURLs.removeFirst() }
+        }
         tb.web.stopLoading()
         tb.web.removeFromSuperview()
         if current >= tabs.count { current = tabs.count - 1 }
@@ -429,7 +636,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     private func refreshTabStrip() {
-        tabStrip.set(tabs.map { $0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle },
+        tabStrip.set(tabs.map { (title: $0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle,
+                                 url: $0.web.url?.absoluteString ?? "") },
                      selected: current)
         // 탭이 하나면 줄을 감춘다 — 좁은 패널에서 세로 공간이 아깝다.
         let h = tabs.count > 1 ? UIScale.pt(26) : 0
@@ -447,11 +655,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         fwdBtn.isEnabled = tb.web.canGoForward
         backBtn.alphaValue = tb.web.canGoBack ? 1 : 0.35
         fwdBtn.alphaValue = tb.web.canGoForward ? 1 : 0.35
+        refreshStar()
         stopBtn.image = NSImage(systemSymbolName: tb.isLoading ? "xmark" : "arrow.clockwise",
                                 accessibilityDescription: tb.isLoading ? t("browser.stop") : t("preview.reload"))
         stopBtn.image?.isTemplate = true
         stopBtn.toolTip = tb.isLoading ? t("browser.stop") : t("preview.reload")
-        emptyLabel.isHidden = !tb.urlString.isEmpty
+        // 로드 실패 메시지가 있으면 그게 먼저다. 예전에는 이 줄이 주소가 있다는 이유로
+        // 오류를 바로 지워서, 인증서 오류·DNS 실패에 아무 표시도 남지 않았다.
+        if let err = tb.errorText {
+            emptyLabel.stringValue = err
+            emptyLabel.isHidden = false
+        } else {
+            emptyLabel.stringValue = t("preview.empty")
+            emptyLabel.isHidden = !tb.urlString.isEmpty
+        }
         // 진행 막대: 로딩 중에만 보이고, 끝나면 사라진다.
         progress.isHidden = !tb.isLoading
         progressWidth.constant = tb.isLoading ? bounds.width * CGFloat(max(0.05, tb.progress)) : 0
@@ -542,6 +759,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         guard let tb = tab else { return }
         if tb.isLoading { tb.web.stopLoading() } else if !tb.urlString.isEmpty { tb.web.reload() }
     }
+    func controlTextDidEndEditing(_ obj: Notification) {
+        if (obj.object as? NSTextField) === urlField { suggest.hide() }
+    }
     @objc private func openURL() {
         guard let url = BrowserTab.resolve(urlField.stringValue) else { return }
         load(url)
@@ -549,8 +769,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private func load(_ url: URL) {
         if tabs.isEmpty { newTab(url, activate: true); return }
         emptyLabel.isHidden = true
+        tab?.errorText = nil
         tab?.web.isHidden = false
-        tab?.web.load(URLRequest(url: url))
+        Self.load(url, into: tab?.web)
+    }
+    /// file:// 은 그냥 load(URLRequest:) 로는 열리지 않는다 — WebKit 이 읽기 권한을 따로
+    /// 요구한다. dist/index.html, 커버리지 리포트, 로컬 PDF 를 열려면 이 경로가 필요하다.
+    static func load(_ url: URL, into web: WKWebView?) {
+        guard let web else { return }
+        if url.isFileURL {
+            let dir = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
+            web.loadFileURL(url, allowingReadAccessTo: dir)
+        } else {
+            web.load(URLRequest(url: url))
+        }
     }
     @objc private func openExternal() {
         guard let s = tab?.urlString, let url = URL(string: s) else { return }
@@ -567,6 +799,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private func setZoom(_ z: CGFloat) {
         guard let web = tab?.web else { return }
         web.pageZoom = min(3, max(0.4, z))
+        BrowserStore.setZoom(Double(web.pageZoom), for: web.url)   // 사이트별로 기억한다
         setStatus(t("browser.zoomAt", ["p": String(Int(web.pageZoom * 100))]))
     }
 
@@ -601,30 +834,245 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         setStatus(nil)
+        tabs.first { $0.web === webView }?.errorText = nil    // 새로 시도하니 지난 오류는 지운다
         refreshChrome()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        tabs.first { $0.web === webView }?.errorText = nil
+        let z = CGFloat(BrowserStore.zoom(for: webView.url))
+        if abs(webView.pageZoom - z) > 0.01 { webView.pageZoom = z }   // 지난번 확대를 되살린다
         refreshChrome()
         rememberURL()
+        if let tb = tabs.first(where: { $0.web === webView }) {
+            BrowserStore.recordVisit(url: webView.url, title: tb.shortTitle, isPrivate: tb.isPrivate)
+        }
+    }
+
+    /// 탭 오른쪽 클릭 — 브라우저에서 늘 하는 것들.
+    private func showTabMenu(_ i: Int, _ e: NSEvent) {
+        guard tabs.indices.contains(i) else { return }
+        let menu = NSMenu()
+        func add(_ title: String, _ enabled: Bool = true, _ body: @escaping () -> Void) {
+            let item = NSMenuItem(title: title, action: #selector(runMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            item.representedObject = body as Any
+            menu.addItem(item)
+        }
+        let tb = tabs[i]
+        add(t("browser.reloadTab")) { tb.web.reload() }
+        add(t("browser.duplicateTab")) { [weak self] in
+            if let u = tb.web.url { self?.newTab(u, activate: true) }
+        }
+        menu.addItem(.separator())
+        add(t("browser.copyAddress"), tb.web.url != nil) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(tb.web.url?.absoluteString ?? "", forType: .string)
+        }
+        add(t("browser.viewSource"), tb.web.url != nil) { [weak self] in self?.viewSource(tb) }
+        menu.addItem(.separator())
+        add(t("browser.closeTab"), tabs.count > 1) { [weak self] in self?.closeTab(i) }
+        add(t("browser.closeOthers"), tabs.count > 1) { [weak self] in
+            guard let self else { return }
+            for j in self.tabs.indices.reversed() where j != i { self.closeTab(j) }
+        }
+        add(t("browser.closeRight"), i < tabs.count - 1) { [weak self] in
+            guard let self else { return }
+            for j in self.tabs.indices.reversed() where j > i { self.closeTab(j) }
+        }
+        NSMenu.popUpContextMenu(menu, with: e, for: tabStrip)
+    }
+    @objc private func runMenuAction(_ sender: NSMenuItem) {
+        (sender.representedObject as? () -> Void)?()
+    }
+
+    /// 소스 보기 — WKWebView 에는 공개 개발자 도구 API 가 없어서, 받은 HTML 을 새 탭에
+    /// 글자 그대로 띄운다 (브라우저의 view-source: 와 같은 결과).
+    private func viewSource(_ tb: BrowserTab) {
+        guard let url = tb.web.url else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let text = String(data: data, encoding: .utf8) else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let tab = self.newTab(nil, activate: true)
+                let escaped = text
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+                let bg = Theme.isLight ? "#fff" : "#1a1c20"
+                let fg = Theme.isLight ? "#222" : "#e3e5ea"
+                tab.web.loadHTMLString(
+                    "<html><head><meta charset=\"utf-8\"><title>source: \(url.host ?? "")</title></head>"
+                    + "<body style=\"background:\(bg);color:\(fg);margin:0\">"
+                    + "<pre style=\"white-space:pre-wrap;word-break:break-all;padding:12px;"
+                    + "font:12px ui-monospace,SFMono-Regular,Menlo,monospace\">\(escaped)</pre></body></html>",
+                    baseURL: nil)
+            }
+        }.resume()
+    }
+
+    /// ⌘⇧T — 마지막으로 닫은 탭을 되살린다.
+    private func reopenClosedTab() {
+        guard let u = closedURLs.popLast(), let url = URL(string: u) else { return }
+        newTab(url, activate: true)
+    }
+
+    // MARK: - 기록·북마크 보기 (⌘Y)
+    //
+    // 모아 둔 게 있어도 볼 방법이 없으면 없는 것과 같다. 주소창 아래에 뜨는 목록과 같은
+    // 표현을 쓰되, 여기서는 지우기까지 된다.
+    private func showLibrary() {
+        let panel = LibraryView(frame: NSRect(x: 0, y: 0, width: 420, height: 360))
+        panel.onOpen = { [weak self] url in
+            self?.libraryPopover?.close()
+            if let u = URL(string: url) { self?.newTab(u, activate: true) }
+        }
+        panel.reload()
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSViewController()
+        pop.contentViewController?.view = panel
+        pop.show(relativeTo: starBtn.bounds, of: starBtn, preferredEdge: .maxY)
+        libraryPopover = pop
+    }
+
+    // MARK: - 인증서
+    //
+    // 자체 서명·만료된 인증서를 만나면 지금까지 아무 일도 일어나지 않았다 (화면은 이전
+    // 페이지 그대로, 오류 표시도 없음). 개발 서버는 자체 서명이 흔해서 그냥 막으면 못 쓴다.
+    // 그래서 한 번 물어보고, 사용자가 계속하겠다고 하면 그 호스트를 기억한다.
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        let host = challenge.protectionSpace.host
+        if Self.trustedHosts.contains(host) {
+            completionHandler(.useCredential, URLCredential(trust: trust)); return
+        }
+        // 정상 인증서면 물어볼 것도 없다.
+        var error: CFError?
+        if SecTrustEvaluateWithError(trust, &error) {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        // 테스트에서는 창을 띄우지 않고 정해진 답을 쓴다 (모달이라 벤치가 멈춘다).
+        if let auto = ProcessInfo.processInfo.environment["RIVEN_CERTAUTO"] {
+            if auto == "allow" {
+                Self.trustedHosts.insert(host)
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                declineCert(host, on: webView, completionHandler)
+            }
+            return
+        }
+        let a = NSAlert()
+        a.messageText = t("browser.certTitle", ["h": host])
+        a.informativeText = t("browser.certBody", ["msg": (error as Error?)?.localizedDescription ?? ""])
+        a.addButton(withTitle: t("browser.certProceed"))
+        a.addButton(withTitle: t("common.cancel"))
+        if a.runModal() == .alertFirstButtonReturn {
+            Self.trustedHosts.insert(host)
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            declineCert(host, on: webView, completionHandler)
+        }
+    }
+    /// 그만두기를 골랐을 때. 취소는 NSURLErrorCancelled 로 와서 오류 표시에서 걸러지므로
+    /// (그러면 화면에 아무 일도 안 일어난 것처럼 보인다) 여기서 직접 남긴다.
+    private func declineCert(_ host: String, on webView: WKWebView,
+                             _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        tabs.first { $0.web === webView }?.errorText = t("browser.certBlocked", ["h": host])
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        DispatchQueue.main.async { [weak self] in self?.refreshChrome() }
+    }
+    /// 사용자가 계속하기로 한 호스트 (이 실행 동안만 — 껐다 켜면 다시 묻는다).
+    private static var trustedHosts: Set<String> = []
+
+    // MARK: - 주소창 자동완성 / 북마크
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === urlField else { return }
+        refreshSuggestions()
+    }
+    private func refreshSuggestions() {
+        let open = tabs.enumerated().compactMap { i, t -> (title: String, url: String)? in
+            guard i != current, let u = t.web.url?.absoluteString, !u.isEmpty else { return nil }
+            return (t.shortTitle, u)
+        }
+        suggest.show(BrowserStore.suggest(urlField.stringValue, openTabs: open))
+    }
+    /// 위·아래로 고르고 Enter 로 연다. Esc 는 목록만 닫는다 (패널을 닫지 않는다).
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        guard control === urlField, !suggest.isHidden else { return false }
+        switch sel {
+        case #selector(NSResponder.moveDown(_:)):   suggest.move(1); return true
+        case #selector(NSResponder.moveUp(_:)):     suggest.move(-1); return true
+        case #selector(NSResponder.cancelOperation(_:)): suggest.hide(); return true
+        case #selector(NSResponder.insertNewline(_:)):
+            if let s = suggest.current { commitSuggestion(s); return true }
+            return false
+        default: return false
+        }
+    }
+    private func commitSuggestion(_ s: BrowserStore.Suggestion) {
+        suggest.hide()
+        if s.kind == .openTab, let i = tabs.firstIndex(where: { $0.web.url?.absoluteString == s.url }) {
+            select(i); focusWeb(); return          // 이미 열어 둔 탭이면 새로 열지 않고 그리로 간다
+        }
+        urlField.stringValue = s.url
+        if let u = URL(string: s.url) { load(u) }
+    }
+    @objc private func toggleBookmark() {
+        guard let u = tab?.web.url else { return }
+        let added = BrowserStore.toggleBookmark(url: u, title: tab?.shortTitle ?? "")
+        refreshStar()
+        setStatus(added ? t("browser.bookmarkAdded") : t("browser.bookmarkRemoved"))
+    }
+    private func refreshStar() {
+        let on = BrowserStore.isBookmarked(tab?.web.url)
+        starBtn.image = NSImage(systemSymbolName: on ? "star.fill" : "star", accessibilityDescription: t("browser.bookmark"))
+        starBtn.image?.isTemplate = true
+        starBtn.contentTintColor = on ? Theme.accent : Theme.fgDim
     }
 
     /// 마지막으로 본 주소를 워크스페이스별로 기억한다. 예전에는 아무것도 저장하지 않아서
     /// riven 을 닫았다 열면 늘 처음 상태(하드코딩된 localhost:3000)로 돌아갔다.
+    /// 열어 둔 탭 전부를 워크스페이스별로 기억한다. 예전에는 주소 하나만 남겨서, 껐다 켜면
+    /// 탭이 전부 사라지고 마지막에 보던 페이지 하나만 돌아왔다.
     private func rememberURL() {
-        guard let u = tab?.web.url, let ws = workspaceKey else { return }
-        let s = u.absoluteString
-        guard !s.isEmpty, !s.hasPrefix("about:") else { return }
-        var map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
-        guard map[ws] != s else { return }
-        map[ws] = s
-        Settings.shared.set("browserURLs", map)
+        guard let ws = workspaceKey else { return }
+        let urls = tabs.compactMap { tb -> String? in
+            guard !tb.isPrivate, let u = tb.web.url?.absoluteString,   // 시크릿 탭은 남기지 않는다
+                  !u.isEmpty, !u.hasPrefix("about:") else { return nil }
+            return u
+        }
+        guard !urls.isEmpty else { return }
+        var map = Settings.shared.object("browserTabs") as? [String: [String]] ?? [:]
+        guard map[ws] != urls else { return }
+        map[ws] = urls
+        Settings.shared.set("browserTabs", map)
+
+        // 활성 탭 번호도 (범위를 벗어나면 복원할 때 첫 탭으로 떨어진다).
+        var actives = Settings.shared.object("browserActiveTab") as? [String: Int] ?? [:]
+        if actives[ws] != current { actives[ws] = current; Settings.shared.set("browserActiveTab", actives) }
     }
-    /// 저장해 둔 주소를 되살린다 (패널이 워크스페이스에 붙을 때).
+    /// 저장해 둔 탭들을 되살린다 (패널이 워크스페이스에 붙을 때).
     func restoreLastURL() {
         guard let ws = workspaceKey, tab?.web.url == nil else { return }
-        let map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
-        guard let s = map[ws], !s.isEmpty else { return }
-        openURLString(s)
+        var urls = (Settings.shared.object("browserTabs") as? [String: [String]] ?? [:])[ws] ?? []
+        if urls.isEmpty {   // 예전 형식 (주소 하나)
+            let old = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])[ws]
+            urls = old.map { [$0] } ?? []
+        }
+        guard !urls.isEmpty else { return }
+        for (i, u) in urls.enumerated() {
+            guard let url = BrowserTab.resolve(u) else { continue }
+            if i == 0, let first = tab { Self.load(url, into: first.web) }
+            else { newTab(url, activate: false) }
+        }
+        let want = (Settings.shared.object("browserActiveTab") as? [String: Int] ?? [:])[ws] ?? 0
+        select(min(max(0, want), tabs.count - 1))
     }
     /// 어느 워크스페이스의 브라우저인지 (주소 기억의 키).
     private var workspaceKey: String? { workspaceRoot?.path }
@@ -641,22 +1089,71 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
     }
     /// 벤치용: 지금 주소.
+    /// 벤치용: 사람이 친 것처럼 주소창에 넣고 자동완성을 띄운다.
+    func debugType(_ s: String) {
+        window?.makeFirstResponder(urlField)
+        urlField.stringValue = s
+        refreshSuggestions()
+    }
+    func debugShowLibrary() { suggest.hide(); showLibrary() }
+    func debugDownloads() -> String {
+        downloads.map { "\($0.name):\($0.failed ?? ($0.done ? "done" : "\(Int($0.fraction*100))%"))" }
+            .joined(separator: " | ") + (downloadBtn.isHidden ? " [버튼 숨김]" : " [버튼 보임]")
+    }
+    func debugDownloadsShot(_ path: String) {
+        showDownloads()
+        guard let v = downloadsPopover?.contentViewController?.view else { return }
+        v.layoutSubtreeIfNeeded()
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) { try? d.write(to: URL(fileURLWithPath: path)) }
+    }
+    func debugZoom() -> CGFloat { tab?.web.pageZoom ?? 0 }
+    func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
+    func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
+    func debugActiveTab() -> Int { current }
+    func debugEval(_ js: String, _ done: @escaping (String) -> Void) { agentEval(js, done) }
+    func debugSetZoom(_ z: CGFloat) { setZoom(z) }
+    func debugTabMenu(_ i: Int) -> [String] {
+        // 메뉴를 실제로 띄우지 않고 항목만 확인한다 (팝업은 모달 루프라 벤치가 멈춘다).
+        guard tabs.indices.contains(i) else { return [] }
+        let tb = tabs[i]
+        return [t("browser.reloadTab"), t("browser.duplicateTab"), t("browser.copyAddress"),
+                t("browser.viewSource"), t("browser.closeTab"),
+                tabs.count > 1 ? t("browser.closeOthers") : "-",
+                i < tabs.count - 1 ? t("browser.closeRight") : "-"]
+            + [tb.web.url?.host ?? "?"]
+    }
+    func debugViewSource(_ i: Int) { if tabs.indices.contains(i) { viewSource(tabs[i]) } }
+    /// 팝오버는 자기 창에 그려져 부모 창 캡처에 안 잡힌다 — 뷰를 직접 찍는다.
+    func debugLibraryShot(_ path: String) {
+        guard let v = libraryPopover?.contentViewController?.view else { return }
+        v.layoutSubtreeIfNeeded()
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) {
+            try? d.write(to: URL(fileURLWithPath: path))
+        }
+    }
+    func debugSuggestions() -> String {
+        suggest.items.map { "\($0.kind)/\($0.title)" }.joined(separator: " | ")
+    }
     func debugURL() -> String { tab?.web.url?.absoluteString ?? "(없음)" }
     /// 이 패널이 붙은 워크스페이스. 주소를 워크스페이스별로 기억하려고 앱이 채워 준다.
     var workspaceRoot: URL?
-    private func showLoadError(_ error: Error) {
+    private func showLoadError(_ error: Error, on webView: WKWebView? = nil) {
         let e = error as NSError
         if e.domain == "WebKitErrorDomain" && e.code == 102 { return }   // 리다이렉트로 끊긴 것 — 실패가 아니다
         if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
-        emptyLabel.stringValue = t("preview.loadFailed", ["msg": e.localizedDescription])
-        emptyLabel.isHidden = false
+        let target = webView.flatMap { w in tabs.first { $0.web === w } } ?? tab
+        target?.errorText = t("preview.loadFailed", ["msg": e.localizedDescription])
         refreshChrome()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
+        showLoadError(error, on: webView); return
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
+        showLoadError(error, on: webView); return
     }
     /// 다운로드로 응답이 오면 WKDownload 로 넘긴다 (예전에는 아무 일도 일어나지 않았다).
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
@@ -719,8 +1216,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        // 내려받기 폴더에 못 쓰는 경우가 있다 (macOS 가 폴더 접근을 아직 허락하지 않았을 때).
+        // 그냥 실패시키면 "Cannot create file" 만 남아 왜 안 되는지 알 수 없으므로,
+        // 임시 폴더로 받아 두고 어디에 뒀는지 알려 준다.
+        // 테스트에서 받을 곳을 바꿔 끼운다 (실사용에는 이 변수가 없다).
+        let override = ProcessInfo.processInfo.environment["RIVEN_DLDIR"].map { URL(fileURLWithPath: $0) }
+        let home = override ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        var dir = home ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        var fellBack = false
+        // isWritableFile 은 POSIX 권한만 본다. macOS 가 폴더 접근을 막고 있으면 그건 통과하고
+        // 실제 쓰기에서 "Cannot create file" 로 죽는다 — 그래서 진짜로 파일을 하나 만들어 본다.
+        if forceTempDownloadDir || !Self.canWrite(dir) {
+            dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            fellBack = true
+        }
         var dest = dir.appendingPathComponent(suggestedFilename)
         var n = 1
         while FileManager.default.fileExists(atPath: dest.path) {   // 덮어쓰지 않는다
@@ -729,20 +1238,78 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             dest = dir.appendingPathComponent(ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)")
             n += 1
         }
-        downloadDest[ObjectIdentifier(download)] = dest
-        setStatus(t("browser.downloading", ["f": dest.lastPathComponent]))
+        let item = DownloadItem(name: dest.lastPathComponent, dest: dest, progress: download.progress)
+        downloadItems[ObjectIdentifier(download)] = item
+        downloads.insert(item, at: 0)
+        refreshDownloadButton()
+        setStatus(fellBack ? t("browser.downloadingTemp", ["f": dest.lastPathComponent])
+                           : t("browser.downloading", ["f": dest.lastPathComponent]))
         completionHandler(dest)
     }
     func downloadDidFinish(_ download: WKDownload) {
-        let dest = downloadDest.removeValue(forKey: ObjectIdentifier(download))
-        setStatus(t("browser.downloaded", ["f": dest?.lastPathComponent ?? ""]))
-        if let dest { NSWorkspace.shared.activateFileViewerSelecting([dest]) }
+        let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
+        item?.finish()
+        // 예전에는 다 받으면 Finder 가 앞으로 튀어나왔다 — 일하다 창이 바뀌는 건 방해라
+        // 알림만 남기고, 열지 말지는 목록에서 고르게 한다.
+        setStatus(t("browser.downloaded", ["f": item?.name ?? ""]))
+        refreshDownloadButton()
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        downloadDest.removeValue(forKey: ObjectIdentifier(download))
+        let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
+        // 파일을 못 만들어 실패했으면 임시 폴더로 한 번 더 해 본다. 내려받기 폴더에
+        // 쓸 수 있는지는 미리 알 수 없다 — 권한을 POSIX 로 물으면 된다고 나오는데 실제
+        // 쓰기에서 막히는 경우가 있어서(그럼 "Cannot create file" 만 남는다), 겪은 뒤에
+        // 옮기는 게 확실하다.
+        let createFailed = error.localizedDescription.lowercased().contains("cannot create file")
+        if createFailed, let req = download.originalRequest, !retriedDownloads.contains(req.url?.absoluteString ?? "") {
+            retriedDownloads.insert(req.url?.absoluteString ?? "")
+            downloads.removeAll { $0 === item }
+            forceTempDownloadDir = true
+            setStatus(t("browser.downloadRetryTemp"))
+            tab?.web.startDownload(using: req) { [weak self] d in
+                d.delegate = self
+            }
+            return
+        }
+        item?.fail(error.localizedDescription)
         setStatus(t("browser.downloadFailed", ["msg": error.localizedDescription]))
+        refreshDownloadButton()
     }
-    private var downloadDest: [ObjectIdentifier: URL] = [:]
+    /// 같은 주소로 무한히 다시 시도하지 않도록.
+    private var retriedDownloads: Set<String> = []
+    /// 한 번 막히면 이 세션에서는 계속 임시 폴더로 받는다.
+    private var forceTempDownloadDir = false
+    private var downloadItems: [ObjectIdentifier: DownloadItem] = [:]
+
+    private static func canWrite(_ dir: URL) -> Bool {
+        let probe = dir.appendingPathComponent(".riven-write-probe-\(getpid())")
+        guard FileManager.default.createFile(atPath: probe.path, contents: nil) else { return false }
+        try? FileManager.default.removeItem(at: probe)
+        return true
+    }
+
+    private func refreshDownloadButton() {
+        downloadBtn.isHidden = downloads.isEmpty
+        let running = downloads.contains { !$0.done && $0.failed == nil }
+        downloadBtn.contentTintColor = running ? Theme.accent : Theme.fgDim
+    }
+    @objc private func showDownloads() {
+        let v = DownloadsView(frame: NSRect(x: 0, y: 0, width: 340, height: 260))
+        v.items = downloads
+        v.onOpen = { NSWorkspace.shared.open($0.dest) }
+        v.onReveal = { NSWorkspace.shared.activateFileViewerSelecting([$0.dest]) }
+        v.onClear = { [weak self] in
+            self?.downloads.removeAll { $0.done || $0.failed != nil }
+            self?.refreshDownloadButton()
+            self?.downloadsPopover?.close()
+        }
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSViewController()
+        pop.contentViewController?.view = v
+        pop.show(relativeTo: downloadBtn.bounds, of: downloadBtn, preferredEdge: .maxY)
+        downloadsPopover = pop
+    }
 
     // MARK: - capture
 
@@ -772,8 +1339,14 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         switch event.charactersIgnoringModifiers?.lowercased() {
         case "f" where cmd: showFind(); return true
         case "l" where cmd: focusURL(); return true
+        case "t" where cmd && event.modifierFlags.contains(.shift): reopenClosedTab(); return true
         case "t" where cmd: newTab(nil, activate: true); return true
+        case "n" where cmd && event.modifierFlags.contains(.shift):
+            newTab(nil, activate: true, isPrivate: true)
+            setStatus(t("browser.privateTab"))
+            return true
         case "w" where cmd && tabs.count > 1: closeTab(current); return true
+        case "y" where cmd: showLibrary(); return true
         default: return super.performKeyEquivalent(with: event)
         }
     }
