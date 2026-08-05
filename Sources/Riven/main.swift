@@ -3182,6 +3182,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
             }
         }
+        // RIVEN_DOCBENCH=1: 문서화 도구가 워크스페이스에 파일을 만들고 그 문서를 띄우는지,
+        // 메모 미리보기에 제목이 두 번 나오지 않는지.
+        if ProcessInfo.processInfo.environment["RIVEN_DOCBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let ws = self.workspace else { return }
+                RLog.log("DOC write=" + self.runNoteTool("riven_doc_write",
+                    ["path": "docs/정리.md", "body": "# 정리 문서\n\n본문 첫 줄.\n"]))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    let f = ws.appendingPathComponent("docs/정리.md")
+                    RLog.log("DOC 파일존재=\(FileManager.default.fileExists(atPath: f.path)) "
+                           + "패널문서=\(self.notesPanel.debugCurrentPath()) "
+                           + "미리보기제목중복=\(self.notesPanel.debugPreviewHasTitleTwice())")
+                    RLog.log("DOC 덮어쓰기거부=" + self.runNoteTool("riven_doc_write",
+                        ["path": "docs/정리.md", "body": "x"]))
+                    RLog.log("DOC 밖차단=" + self.runNoteTool("riven_doc_write",
+                        ["path": "../밖.md", "body": "x"]))
+                }
+            }
+        }
         // RIVEN_MDSURFACE=1: 에이전트가 워크스페이스에 .md 를 쓰면 메모 패널이 그 문서를 띄우는지.
         if ProcessInfo.processInfo.environment["RIVEN_MDSURFACE"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -5056,6 +5075,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NoteStore.write(old + sep + s("body") + "\n", to: n.url, backup: false)   // 덧붙이기는 잃는 게 없다
             surface(n.url)
             return "appended to \"\(n.title)\" (\(n.url.path))"
+
+        case "riven_doc_write":
+            // 문서화 = 저장소에 남는 파일. 메모(스크래치)와 확실히 갈라 둔다.
+            var rel = s("path")
+            if rel.isEmpty { return "path is required" }
+            if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
+            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel) : ws.appendingPathComponent(rel)
+            guard AppDelegate.isInside(dest, ws) else {
+                return "refusing to write outside the workspace: \(AppDelegate.resolved(dest).path)"
+            }
+            let exists = FileManager.default.fileExists(atPath: dest.path)
+            if exists, (args["overwrite"] as? Bool) != true {
+                return "\(dest.path) already exists. Pass overwrite=true if you really mean to replace it."
+            }
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard NoteStore.write(s("body"), to: dest, backup: exists) else { return "could not write \(dest.path)" }
+            surface(dest)
+            return "wrote \(dest.path)"
 
         case "riven_note_save_file":
             guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }

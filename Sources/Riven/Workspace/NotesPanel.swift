@@ -269,7 +269,9 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         previewing = (i == 1)
         if previewing {
             flush()                                    // 미리보기는 지금 쓴 내용을 보여 줘야 한다
-            preview.setMarkdown(NoteStore.compose(title: titleField.stringValue, body: body.string))
+            // 제목은 위 입력줄이 이미 보여준다. 여기서 compose 로 다시 넣으면 같은 제목이
+            // H1 로 한 번 더 그려져 "제목이 두 개"처럼 보인다.
+            preview.setMarkdown(body.string)
         }
         setMode(detail: showingDetail)
     }
@@ -376,7 +378,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         body.string = text
         titleField.isEditable = true; body.isEditable = true
         savedLabel.stringValue = t("notes.savedAt", ["t": ago(n.updated)])
-        if previewing { preview.setMarkdown(NoteStore.compose(title: title, body: text)) }
+        if previewing { preview.setMarkdown(text) }
     }
     @objc private func newNote() {
         guard let ws = workspace else { return }
@@ -442,6 +444,12 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     // ---- 바깥에서 들어오는 변경 (에이전트 / 탐색기) ----
 
     /// 특정 .md 파일을 이 패널에서 연다 (탐색기의 "메모로 열기", 에이전트가 쓴 메모 보여주기).
+    /// 벤치용: 미리보기에 제목이 두 번 나오는지 (제목 필드 + 본문 H1).
+    func debugPreviewHasTitleTwice() -> Bool {
+        let title = titleField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty else { return false }
+        return preview.debugText().hasPrefix("# " + title)
+    }
     /// 벤치용: 지금 열려 있는 문서 경로.
     func debugCurrentPath() -> String { selectedURL?.lastPathComponent ?? "(없음)" }
 
@@ -471,10 +479,13 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     func noteChangedByAgent(_ url: URL) {
         agentTouched.insert(url.path)
         reload()
+        // 에이전트가 쓴 문서를 바로 펼친다. 예전에는 목록만 갱신해서 패널만 열리고
+        // 정작 무엇을 썼는지 사용자가 다시 찾아 들어가야 했다.
+        if selectedURL != url { open(url); return }
         if selectedURL == url {
             saveTimer?.invalidate(); saveTimer = nil
             loadSelectionIntoEditor()
-            if previewing { preview.setMarkdown(NoteStore.compose(title: titleField.stringValue, body: body.string)) }
+            if previewing { preview.setMarkdown(body.string) }
         }
         setMode(detail: showingDetail)   // 되돌리기 버튼 노출 갱신
     }

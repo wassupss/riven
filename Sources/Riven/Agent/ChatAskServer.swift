@@ -55,6 +55,7 @@ final class ChatAskServer {
     func systemPrompt() -> String {
         """
         이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
+        - 문서를 써 달라고 하면 `riven_doc_write`(path, body) 로 워크스페이스에 실제 .md 파일을 만듭니다. `riven_note_write` 는 저장소에 남기지 않는 작업 메모용입니다.
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
         - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
         - riven 브라우저를 직접 운전할 수 있습니다: `riven_browser_open`(url, new_tab?) 로 열고, `riven_browser_state`() 로 지금 주소·제목을 확인하고, `riven_browser_read`(selector?, html?) 로 내용을 읽고, `riven_browser_click`(selector) / `riven_browser_fill`(selector, value, submit?) 로 조작하고, 늦게 그려지는 화면은 `riven_browser_wait`(selector) 로 기다립니다. 뒤로/앞으로/새로고침은 `riven_browser_go`(action). 화면이 필요하면 `riven_screenshot`(url?) 로 캡처해 PNG 경로를 Read 로 읽으세요.
@@ -277,11 +278,14 @@ final class ChatAskServer {
              "description": "Read one note or workspace .md doc as markdown. `note` is a title, file name or absolute path (from riven_note_list).",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
             {"name": "riven_note_write",
-             "description": "Write a markdown note into riven's Notes panel so the user sees it. Creates a new note, or replaces `note` if given (the previous version is kept and the user can undo it from the panel). Use this for summaries, plans and hand-off docs instead of dumping long text into the chat.",
+             "description": "Write a SCRATCH note (riven's Notes panel, NOT a file in the repo) so the user can see it. Creates a new note, or replaces `note` if given (the previous version is kept and the user can undo it from the panel). Use this for working notes and summaries you do not want committed. If the user asks you to DOCUMENT something or to write a doc/README/spec, use riven_doc_write instead so the file lands in the repository.",
              "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}, "body": {"type": "string"}, "note": {"type": "string"}}, "required": ["title", "body"]}},
             {"name": "riven_note_append",
              "description": "Append markdown to the end of an existing note (nothing is overwritten). Good for running logs.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}, "body": {"type": "string"}}, "required": ["note", "body"]}},
+            {"name": "riven_doc_write",
+             "description": "Write a markdown DOCUMENT as a real file in the workspace (repo), e.g. docs/plan.md or README.md, and open it in riven so the user sees it. This is what to use when asked to document something. Refuses to clobber an existing file unless overwrite is true, and never writes outside the workspace.",
+             "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "body": {"type": "string"}, "overwrite": {"type": "boolean"}}, "required": ["path", "body"]}},
             {"name": "riven_note_save_file",
              "description": "Save a note as a real .md file in the workspace (e.g. docs/plan.md). Refuses to clobber an existing file unless overwrite is true.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}, "path": {"type": "string"}, "overwrite": {"type": "boolean"}}, "required": ["note", "path"]}},

@@ -44,6 +44,9 @@ final class MarkdownView: NSView, Themable, Scalable {
 
     /// 같은 내용이면 다시 그리지 않는다 — 편집 ↔ 미리보기를 오갈 때마다 뷰 수십 개를
     /// 새로 만들 이유가 없다.
+    /// 벤치용: 지금 렌더링에 들어간 원문.
+    func debugText() -> String { text }
+
     func setMarkdown(_ s: String, force: Bool = false) {
         guard force || s != text else { return }
         text = s
