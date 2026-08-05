@@ -559,6 +559,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_BRDL=<url>: 내려받기 목록·사이트별 확대·탭 메뉴가 실제로 동작하는지.
+                if let dl = ProcessInfo.processInfo.environment["RIVEN_BRDL"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        _ = p.agentNavigate(dl + "/page.html", newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            p.debugSetZoom(1.4)
+                            RLog.log("BRDL 확대 설정=\(p.debugZoom())")
+                            _ = p.agentNavigate("https://example.com", newTab: false)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                            _ = p.agentNavigate(dl + "/page.html", newTab: false)   // 돌아오면 확대가 살아 있어야
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 9) {
+                            RLog.log("BRDL 되돌아온 확대=\(p.debugZoom()) (1.4 기대)")
+                            RLog.log("BRDL 탭메뉴=\(p.debugTabMenu(0).joined(separator: ", "))")
+                            _ = p.agentNavigate(dl + "/big.bin", newTab: false)     // 내려받기
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 14) {
+                            RLog.log("BRDL 내려받기=\(p.debugDownloads())")
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_BRDLSHOT"] {
+                                p.debugDownloadsShot(shot)
+                            }
+                            RLog.log("BRDL done")
+                        }
+                    }
+                }
                 // RIVEN_BRSHOT=<png>: 파비콘 탭 줄과 주소창 자동완성이 실제로 어떻게 보이는지.
                 if let shot = ProcessInfo.processInfo.environment["RIVEN_BRSHOT"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in

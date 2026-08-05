@@ -278,6 +278,7 @@ final class SupabaseAuth {
     // Basic-auth passwords, so they stay on this device only.
     private static let noSync: Set<String> = [
         "browserURLs",      // 이 기기에서 보던 주소 (워크스페이스 경로가 들어간다)
+        "browserZooms",     // 사이트별 확대 — 어느 사이트에 갔는지가 드러난다
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
     ]

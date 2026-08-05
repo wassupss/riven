@@ -84,6 +84,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
     var onNew: (() -> Void)?
+    var onMenu: ((Int, NSEvent) -> Void)?
     private let stack = NSStackView()
     private let scroll = NSScrollView()
     private let newBtn = NSButton()
@@ -135,6 +136,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         row.index = i
         row.onPick = { [weak self] in self?.onSelect?(i) }
         row.onClose = { [weak self] in self?.onClose?(i) }
+        row.onMenu = { [weak self] e in self?.onMenu?(i, e) }
         row.configure(it.title, url: it.url, active: active, closable: items.count > 1)
         return row
     }
@@ -152,6 +154,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         var index = 0
         var onPick: (() -> Void)?
         var onClose: (() -> Void)?
+        var onMenu: ((NSEvent) -> Void)?
         private let icon = NSImageView()
         private let label = NSTextField(labelWithString: "")
         private let close = NSButton()
@@ -231,6 +234,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         override func mouseEntered(with e: NSEvent) { close.isHidden = !closable }
         override func mouseExited(with e: NSEvent) { close.isHidden = true }
         override func mouseDown(with e: NSEvent) { onPick?() }
+        override func rightMouseDown(with e: NSEvent) { onMenu?(e) }
         @objc private func closeTapped() { onClose?() }
         override func draw(_ dirty: NSRect) {
             if active {
@@ -380,6 +384,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let starBtn = NSButton()          // 북마크 켜고 끄기
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
     private var libraryPopover: NSPopover?
+    private let downloadBtn = NSButton()          // 받는 게 있을 때만 보인다
+    private var downloads: [DownloadItem] = []
+    private var downloadsPopover: NSPopover?
     private let captureBtn = NSButton()
     private let externalBtn = NSButton()
     private let inspectBtn = NSButton()
@@ -429,6 +436,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         icon(zoomOutBtn, "minus.magnifyingglass", t("browser.zoomOut"), #selector(zoomOut))
         icon(zoomInBtn, "plus.magnifyingglass", t("browser.zoomIn"), #selector(zoomIn))
         icon(starBtn, "star", t("browser.bookmark"), #selector(toggleBookmark))
+        icon(downloadBtn, "arrow.down.circle", t("browser.downloads"), #selector(showDownloads))
+        downloadBtn.isHidden = true
 
         urlField.placeholderString = t("browser.urlPlaceholder")
         urlField.font = UIScale.font(UIScale.body)
@@ -448,6 +457,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         tabStrip.onSelect = { [weak self] i in self?.select(i) }
         tabStrip.onClose = { [weak self] i in self?.closeTab(i) }
         tabStrip.onNew = { [weak self] in self?.newTab(nil, activate: true) }
+        tabStrip.onMenu = { [weak self] i, e in self?.showTabMenu(i, e) }
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
 
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -464,7 +474,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
         buildFindBar()
 
-        [backBtn, fwdBtn, stopBtn, urlField, starBtn, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
+        [backBtn, fwdBtn, stopBtn, urlField, starBtn, downloadBtn, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
          externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel,
          suggest].forEach { addSubview($0) }
 
@@ -485,7 +495,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             urlField.leadingAnchor.constraint(equalTo: stopBtn.trailingAnchor, constant: 6),
             urlField.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
             urlField.trailingAnchor.constraint(equalTo: starBtn.leadingAnchor, constant: -4),
-            starBtn.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            starBtn.trailingAnchor.constraint(equalTo: downloadBtn.leadingAnchor, constant: -2),
+            downloadBtn.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            downloadBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            downloadBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
             starBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
             starBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
 
@@ -761,6 +774,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private func setZoom(_ z: CGFloat) {
         guard let web = tab?.web else { return }
         web.pageZoom = min(3, max(0.4, z))
+        BrowserStore.setZoom(Double(web.pageZoom), for: web.url)   // 사이트별로 기억한다
         setStatus(t("browser.zoomAt", ["p": String(Int(web.pageZoom * 100))]))
     }
 
@@ -798,11 +812,76 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         refreshChrome()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let z = CGFloat(BrowserStore.zoom(for: webView.url))
+        if abs(webView.pageZoom - z) > 0.01 { webView.pageZoom = z }   // 지난번 확대를 되살린다
         refreshChrome()
         rememberURL()
         if let tb = tabs.first(where: { $0.web === webView }) {
             BrowserStore.recordVisit(url: webView.url, title: tb.shortTitle, isPrivate: tb.isPrivate)
         }
+    }
+
+    /// 탭 오른쪽 클릭 — 브라우저에서 늘 하는 것들.
+    private func showTabMenu(_ i: Int, _ e: NSEvent) {
+        guard tabs.indices.contains(i) else { return }
+        let menu = NSMenu()
+        func add(_ title: String, _ enabled: Bool = true, _ body: @escaping () -> Void) {
+            let item = NSMenuItem(title: title, action: #selector(runMenuAction(_:)), keyEquivalent: "")
+            item.target = self
+            item.isEnabled = enabled
+            item.representedObject = body as Any
+            menu.addItem(item)
+        }
+        let tb = tabs[i]
+        add(t("browser.reloadTab")) { tb.web.reload() }
+        add(t("browser.duplicateTab")) { [weak self] in
+            if let u = tb.web.url { self?.newTab(u, activate: true) }
+        }
+        menu.addItem(.separator())
+        add(t("browser.copyAddress"), tb.web.url != nil) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(tb.web.url?.absoluteString ?? "", forType: .string)
+        }
+        add(t("browser.viewSource"), tb.web.url != nil) { [weak self] in self?.viewSource(tb) }
+        menu.addItem(.separator())
+        add(t("browser.closeTab"), tabs.count > 1) { [weak self] in self?.closeTab(i) }
+        add(t("browser.closeOthers"), tabs.count > 1) { [weak self] in
+            guard let self else { return }
+            for j in self.tabs.indices.reversed() where j != i { self.closeTab(j) }
+        }
+        add(t("browser.closeRight"), i < tabs.count - 1) { [weak self] in
+            guard let self else { return }
+            for j in self.tabs.indices.reversed() where j > i { self.closeTab(j) }
+        }
+        NSMenu.popUpContextMenu(menu, with: e, for: tabStrip)
+    }
+    @objc private func runMenuAction(_ sender: NSMenuItem) {
+        (sender.representedObject as? () -> Void)?()
+    }
+
+    /// 소스 보기 — WKWebView 에는 공개 개발자 도구 API 가 없어서, 받은 HTML 을 새 탭에
+    /// 글자 그대로 띄운다 (브라우저의 view-source: 와 같은 결과).
+    private func viewSource(_ tb: BrowserTab) {
+        guard let url = tb.web.url else { return }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let text = String(data: data, encoding: .utf8) else { return }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let tab = self.newTab(nil, activate: true)
+                let escaped = text
+                    .replacingOccurrences(of: "&", with: "&amp;")
+                    .replacingOccurrences(of: "<", with: "&lt;")
+                    .replacingOccurrences(of: ">", with: "&gt;")
+                let bg = Theme.isLight ? "#fff" : "#1a1c20"
+                let fg = Theme.isLight ? "#222" : "#e3e5ea"
+                tab.web.loadHTMLString(
+                    "<html><head><meta charset=\"utf-8\"><title>source: \(url.host ?? "")</title></head>"
+                    + "<body style=\"background:\(bg);color:\(fg);margin:0\">"
+                    + "<pre style=\"white-space:pre-wrap;word-break:break-all;padding:12px;"
+                    + "font:12px ui-monospace,SFMono-Regular,Menlo,monospace\">\(escaped)</pre></body></html>",
+                    baseURL: nil)
+            }
+        }.resume()
     }
 
     /// ⌘⇧T — 마지막으로 닫은 탭을 되살린다.
@@ -917,6 +996,31 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         refreshSuggestions()
     }
     func debugShowLibrary() { suggest.hide(); showLibrary() }
+    func debugDownloads() -> String {
+        downloads.map { "\($0.name):\($0.failed ?? ($0.done ? "done" : "\(Int($0.fraction*100))%"))" }
+            .joined(separator: " | ") + (downloadBtn.isHidden ? " [버튼 숨김]" : " [버튼 보임]")
+    }
+    func debugDownloadsShot(_ path: String) {
+        showDownloads()
+        guard let v = downloadsPopover?.contentViewController?.view else { return }
+        v.layoutSubtreeIfNeeded()
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let d = rep.representation(using: .png, properties: [:]) { try? d.write(to: URL(fileURLWithPath: path)) }
+    }
+    func debugZoom() -> CGFloat { tab?.web.pageZoom ?? 0 }
+    func debugSetZoom(_ z: CGFloat) { setZoom(z) }
+    func debugTabMenu(_ i: Int) -> [String] {
+        // 메뉴를 실제로 띄우지 않고 항목만 확인한다 (팝업은 모달 루프라 벤치가 멈춘다).
+        guard tabs.indices.contains(i) else { return [] }
+        let tb = tabs[i]
+        return [t("browser.reloadTab"), t("browser.duplicateTab"), t("browser.copyAddress"),
+                t("browser.viewSource"), t("browser.closeTab"),
+                tabs.count > 1 ? t("browser.closeOthers") : "-",
+                i < tabs.count - 1 ? t("browser.closeRight") : "-"]
+            + [tb.web.url?.host ?? "?"]
+    }
+    func debugViewSource(_ i: Int) { if tabs.indices.contains(i) { viewSource(tabs[i]) } }
     /// 팝오버는 자기 창에 그려져 부모 창 캡처에 안 잡힌다 — 뷰를 직접 찍는다.
     func debugLibraryShot(_ path: String) {
         guard let v = libraryPopover?.contentViewController?.view else { return }
@@ -1008,8 +1112,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        // 내려받기 폴더에 못 쓰는 경우가 있다 (macOS 가 폴더 접근을 아직 허락하지 않았을 때).
+        // 그냥 실패시키면 "Cannot create file" 만 남아 왜 안 되는지 알 수 없으므로,
+        // 임시 폴더로 받아 두고 어디에 뒀는지 알려 준다.
+        // 테스트에서 받을 곳을 바꿔 끼운다 (실사용에는 이 변수가 없다).
+        let override = ProcessInfo.processInfo.environment["RIVEN_DLDIR"].map { URL(fileURLWithPath: $0) }
+        let home = override ?? FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        var dir = home ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        var fellBack = false
+        // isWritableFile 은 POSIX 권한만 본다. macOS 가 폴더 접근을 막고 있으면 그건 통과하고
+        // 실제 쓰기에서 "Cannot create file" 로 죽는다 — 그래서 진짜로 파일을 하나 만들어 본다.
+        if forceTempDownloadDir || !Self.canWrite(dir) {
+            dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            fellBack = true
+        }
         var dest = dir.appendingPathComponent(suggestedFilename)
         var n = 1
         while FileManager.default.fileExists(atPath: dest.path) {   // 덮어쓰지 않는다
@@ -1018,20 +1134,78 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             dest = dir.appendingPathComponent(ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)")
             n += 1
         }
-        downloadDest[ObjectIdentifier(download)] = dest
-        setStatus(t("browser.downloading", ["f": dest.lastPathComponent]))
+        let item = DownloadItem(name: dest.lastPathComponent, dest: dest, progress: download.progress)
+        downloadItems[ObjectIdentifier(download)] = item
+        downloads.insert(item, at: 0)
+        refreshDownloadButton()
+        setStatus(fellBack ? t("browser.downloadingTemp", ["f": dest.lastPathComponent])
+                           : t("browser.downloading", ["f": dest.lastPathComponent]))
         completionHandler(dest)
     }
     func downloadDidFinish(_ download: WKDownload) {
-        let dest = downloadDest.removeValue(forKey: ObjectIdentifier(download))
-        setStatus(t("browser.downloaded", ["f": dest?.lastPathComponent ?? ""]))
-        if let dest { NSWorkspace.shared.activateFileViewerSelecting([dest]) }
+        let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
+        item?.finish()
+        // 예전에는 다 받으면 Finder 가 앞으로 튀어나왔다 — 일하다 창이 바뀌는 건 방해라
+        // 알림만 남기고, 열지 말지는 목록에서 고르게 한다.
+        setStatus(t("browser.downloaded", ["f": item?.name ?? ""]))
+        refreshDownloadButton()
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        downloadDest.removeValue(forKey: ObjectIdentifier(download))
+        let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
+        // 파일을 못 만들어 실패했으면 임시 폴더로 한 번 더 해 본다. 내려받기 폴더에
+        // 쓸 수 있는지는 미리 알 수 없다 — 권한을 POSIX 로 물으면 된다고 나오는데 실제
+        // 쓰기에서 막히는 경우가 있어서(그럼 "Cannot create file" 만 남는다), 겪은 뒤에
+        // 옮기는 게 확실하다.
+        let createFailed = error.localizedDescription.lowercased().contains("cannot create file")
+        if createFailed, let req = download.originalRequest, !retriedDownloads.contains(req.url?.absoluteString ?? "") {
+            retriedDownloads.insert(req.url?.absoluteString ?? "")
+            downloads.removeAll { $0 === item }
+            forceTempDownloadDir = true
+            setStatus(t("browser.downloadRetryTemp"))
+            tab?.web.startDownload(using: req) { [weak self] d in
+                d.delegate = self
+            }
+            return
+        }
+        item?.fail(error.localizedDescription)
         setStatus(t("browser.downloadFailed", ["msg": error.localizedDescription]))
+        refreshDownloadButton()
     }
-    private var downloadDest: [ObjectIdentifier: URL] = [:]
+    /// 같은 주소로 무한히 다시 시도하지 않도록.
+    private var retriedDownloads: Set<String> = []
+    /// 한 번 막히면 이 세션에서는 계속 임시 폴더로 받는다.
+    private var forceTempDownloadDir = false
+    private var downloadItems: [ObjectIdentifier: DownloadItem] = [:]
+
+    private static func canWrite(_ dir: URL) -> Bool {
+        let probe = dir.appendingPathComponent(".riven-write-probe-\(getpid())")
+        guard FileManager.default.createFile(atPath: probe.path, contents: nil) else { return false }
+        try? FileManager.default.removeItem(at: probe)
+        return true
+    }
+
+    private func refreshDownloadButton() {
+        downloadBtn.isHidden = downloads.isEmpty
+        let running = downloads.contains { !$0.done && $0.failed == nil }
+        downloadBtn.contentTintColor = running ? Theme.accent : Theme.fgDim
+    }
+    @objc private func showDownloads() {
+        let v = DownloadsView(frame: NSRect(x: 0, y: 0, width: 340, height: 260))
+        v.items = downloads
+        v.onOpen = { NSWorkspace.shared.open($0.dest) }
+        v.onReveal = { NSWorkspace.shared.activateFileViewerSelecting([$0.dest]) }
+        v.onClear = { [weak self] in
+            self?.downloads.removeAll { $0.done || $0.failed != nil }
+            self?.refreshDownloadButton()
+            self?.downloadsPopover?.close()
+        }
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSViewController()
+        pop.contentViewController?.view = v
+        pop.show(relativeTo: downloadBtn.bounds, of: downloadBtn, preferredEdge: .maxY)
+        downloadsPopover = pop
+    }
 
     // MARK: - capture
 

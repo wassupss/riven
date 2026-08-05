@@ -225,6 +225,23 @@ enum BrowserStore {
         return s
     }
 
+    // MARK: - 사이트별 확대
+    //
+    // 글씨가 작은 사이트를 볼 때마다 다시 확대하는 건 성가시다. 호스트마다 기억해 두고
+    // 다음에 그 사이트를 열면 그대로 맞춘다 (1.0 이면 기억하지 않는다 — 기본값이니까).
+
+    private static var zooms: [String: Double] = Settings.shared.object("browserZooms") as? [String: Double] ?? [:]
+
+    static func zoom(for url: URL?) -> Double {
+        guard let h = url?.host else { return 1 }
+        return zooms[h] ?? 1
+    }
+    static func setZoom(_ z: Double, for url: URL?) {
+        guard let h = url?.host else { return }
+        if abs(z - 1) < 0.01 { zooms.removeValue(forKey: h) } else { zooms[h] = z }
+        Settings.shared.set("browserZooms", zooms)
+    }
+
     // MARK: - 파비콘
     //
     // 색 점은 임시방편이었다. 탭이 여러 개일 때 어느 사이트인지 알아보는 가장 빠른 신호는
