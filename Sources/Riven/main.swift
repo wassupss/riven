@@ -2928,6 +2928,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        // RIVEN_PERSONADUMP=1: 카드가 만들어진 뒤에 에이전트 목록이 주입되는 실제 순서를 그대로
+        // 재현해서, 패널을 열 때 목록이 카드에 실리는지 본다.
+        if ProcessInfo.processInfo.environment["RIVEN_PERSONADUMP"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                RLog.log("PERSONA 주입 전 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                self.teamPanel.agentsProvider = { ["reviewer", "tester"] }
+                RLog.log("PERSONA 주입 직후 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                self.toggleDockPanel("team")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    RLog.log("PERSONA 패널 연 뒤 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                }
+            }
+        }
         // RIVEN_TOKENSHOT=<theme>: 그 테마에서 @멘션 / 슬래시 토큰이 실제로 읽히는지 캡처.
         if let theme = ProcessInfo.processInfo.environment["RIVEN_TOKENSHOT"] {
             Theme.apply(id: theme)

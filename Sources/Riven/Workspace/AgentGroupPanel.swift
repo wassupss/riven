@@ -1030,6 +1030,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     /// 패널이 열릴 때마다 탭을 다시 만든다 — 첫 탭은 "새 그룹"(작성), 나머지는 지금 열려 있는
     /// 그룹들. 탭 하나가 곧 화면 하나라 별도의 모드 스위치가 필요 없다.
     func refresh() {
+        refreshPersonas()
         groups = groupsProvider?() ?? []
         if let g = shownGroup, !groups.contains(where: { $0.group == g }) { shownGroup = nil }
         tabStrip.tabs = [(t("team.draft"), nil)] + groups.map { ($0.group, $0.members.count) }
@@ -1038,6 +1039,21 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         applyTab()
     }
     private var groups: [(group: String, members: [AgentNode])] = []
+
+    /// 카드의 페르소나 목록을 지금 워크스페이스 기준으로 다시 채운다.
+    /// 카드는 init 에서 만들어지는데 agentsProvider 는 그 뒤에 주입되고, 워크스페이스가
+    /// 바뀌면 .claude/agents 목록 자체도 달라진다. 그래서 패널을 열 때마다 다시 읽는다
+    /// (예전에는 처음 만든 3장이 영원히 "기본" 하나만 들고 있었다).
+    private func refreshPersonas() {
+        let personas = [t("team.noPersona")] + (agentsProvider?() ?? [])
+        for c in cards {
+            let keep = c.persona.titleOfSelectedItem
+            guard c.persona.itemTitles != personas else { continue }
+            c.persona.removeAllItems()
+            c.persona.addItems(withTitles: personas)
+            if let keep, let i = personas.firstIndex(of: keep) { c.persona.selectItem(at: i) }
+        }
+    }
     /// 벤치용: [에이전트 추가] 를 n번 누른 것과 같은 경로.
     func debugAddAgents(_ n: Int) { for _ in 0..<n { addAgent() } }
     /// 벤치용: UI에서 [그룹 만들기] 를 누른 것과 같은 경로.
@@ -1045,6 +1061,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     /// 벤치용: 선택된 탭 / 조직도가 보이는지.
     func debugSelectedTab() -> String { debugTabTitles().indices.contains(tabStrip.selected) ? debugTabTitles()[tabStrip.selected] : "?" }
     func debugChartVisible() -> Bool { !chartScroll.isHidden }
+    /// 벤치용: 카드별 페르소나 드롭다운 항목.
+    func debugPersonaItems() -> [String] { cards.map { $0.persona.itemTitles.joined(separator: ",") } }
     /// 벤치용: 지금 보이는 탭 라벨.
     func debugTabTitles() -> [String] {
         tabStrip.tabs.map { tab in tab.1.map { "\(tab.0)(\($0))" } ?? tab.0 }
