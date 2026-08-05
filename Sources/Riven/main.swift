@@ -2175,6 +2175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "git": sourceControl.setRoot(ws)
         case "changes": changesPanel.setWorkspace(ws)
         case "notes": notesPanel.setWorkspace(ws)
+        case "preview":
+            previewPanel.workspaceRoot = ws
+            previewPanel.restoreLastURL()      // 마지막으로 보던 주소로 되돌린다
         default: break
         }
     }
@@ -3180,6 +3183,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.refreshUsage(force: true)    // 버튼은 언제나 즉시
                 let t3 = self.lastUsageRefresh
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
+            }
+        }
+        // RIVEN_BROWSERMEM=1: 브라우저가 마지막 주소를 기억하고 재기동 때 되살리는지.
+        if ProcessInfo.processInfo.environment["RIVEN_BROWSERMEM"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                let saved = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])
+                RLog.log("BRMEM 기동시 저장값=\(saved.values.first ?? "(없음)") 현재주소=\(self.previewPanel.debugURL())")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    RLog.log("BRMEM 3초 뒤 현재주소=\(self.previewPanel.debugURL())")
+                }
+                if saved.isEmpty {
+                    self.previewPanel.openURLString("http://127.0.0.1:8877/second.html")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        let now = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])
+                        RLog.log("BRMEM 이동 후 저장값=\(now.values.first ?? "(없음)")")
+                    }
+                }
             }
         }
         // RIVEN_FOCUSTIME=1: 조직도에서 멤버 카드를 누를 때 어디서 시간을 쓰는지.
@@ -4462,7 +4484,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch id {
         case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
-        case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
+        case "preview":
+            title = t("title.preview"); symbol = "safari"; content = previewPanel
+            previewPanel.workspaceRoot = ws
+            DispatchQueue.main.async { [weak self] in self?.previewPanel.restoreLastURL() }
         case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel

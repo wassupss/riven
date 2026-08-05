@@ -603,7 +603,35 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         setStatus(nil)
         refreshChrome()
     }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { refreshChrome() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        refreshChrome()
+        rememberURL()
+    }
+
+    /// 마지막으로 본 주소를 워크스페이스별로 기억한다. 예전에는 아무것도 저장하지 않아서
+    /// riven 을 닫았다 열면 늘 처음 상태(하드코딩된 localhost:3000)로 돌아갔다.
+    private func rememberURL() {
+        guard let u = tab?.web.url, let ws = workspaceKey else { return }
+        let s = u.absoluteString
+        guard !s.isEmpty, !s.hasPrefix("about:") else { return }
+        var map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
+        guard map[ws] != s else { return }
+        map[ws] = s
+        Settings.shared.set("browserURLs", map)
+    }
+    /// 저장해 둔 주소를 되살린다 (패널이 워크스페이스에 붙을 때).
+    func restoreLastURL() {
+        guard let ws = workspaceKey, tab?.web.url == nil else { return }
+        let map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
+        guard let s = map[ws], !s.isEmpty else { return }
+        openURLString(s)
+    }
+    /// 어느 워크스페이스의 브라우저인지 (주소 기억의 키).
+    private var workspaceKey: String? { workspaceRoot?.path }
+    /// 벤치용: 지금 주소.
+    func debugURL() -> String { tab?.web.url?.absoluteString ?? "(없음)" }
+    /// 이 패널이 붙은 워크스페이스. 주소를 워크스페이스별로 기억하려고 앱이 채워 준다.
+    var workspaceRoot: URL?
     private func showLoadError(_ error: Error) {
         let e = error as NSError
         if e.domain == "WebKitErrorDomain" && e.code == 102 { return }   // 리다이렉트로 끊긴 것 — 실패가 아니다

@@ -277,6 +277,7 @@ final class SupabaseAuth {
     // request history / saved collections / environments — those can hold Bearer tokens and
     // Basic-auth passwords, so they stay on this device only.
     private static let noSync: Set<String> = [
+        "browserURLs",      // 이 기기에서 보던 주소 (워크스페이스 경로가 들어간다)
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
     ]
