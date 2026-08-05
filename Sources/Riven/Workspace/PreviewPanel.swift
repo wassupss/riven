@@ -25,6 +25,8 @@ final class BrowserTab: NSObject {
     private(set) var isLoading = false
     /// 시크릿 탭 — 방문 기록을 남기지 않는다.
     var isPrivate = false
+    /// 이 탭의 마지막 로드 실패. 다음 탐색이 시작되면 지운다.
+    var errorText: String?
     var onChange: (() -> Void)?
     private var tokens: [NSKeyValueObservation] = []
 
@@ -34,9 +36,6 @@ final class BrowserTab: NSObject {
         web.translatesAutoresizingMaskIntoConstraints = false
         web.allowsBackForwardNavigationGestures = true       // two-finger swipe, like Safari
         web.isInspectable = true                             // right-click → 요소 정보 검사
-        // Some sites gate features on a real browser UA; the default WKWebView UA is close enough
-        // but omits a Safari token, which a few dev servers sniff for.
-        web.customUserAgent = nil
         tokens = [
             web.observe(\.title, options: [.new]) { [weak self] w, _ in
                 self?.title = w.title ?? ""; self?.onChange?()
@@ -572,6 +571,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         cfg.websiteDataStore = isPrivate ? .nonPersistent() : .default()
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
+        // 동영상·지도의 전체화면 버튼. 켜지 않으면 requestFullscreen 자체가 없어서
+        // 페이지의 전체화면 버튼이 아무 반응도 하지 않는다.
+        cfg.preferences.isElementFullscreenEnabled = true
+        // 일부 사이트는 UA 에 Safari 토큰이 없으면 "지원하지 않는 브라우저" 로 막는다.
+        // UA 를 통째로 바꾸면 다른 게 깨지므로, 기본 UA 뒤에 붙는 이 값만 채운다.
+        cfg.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
         // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 — WKWebView 가 AppKit 마우스
         // 이벤트를 삼키므로 작은 스크립트가 대신 알려준다.
         cfg.userContentController.add(self, name: "prevfocus")
@@ -597,7 +602,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             tb.web.topAnchor.constraint(equalTo: container.topAnchor),
             tb.web.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
-        if let url { tb.web.load(URLRequest(url: url)) }
+        if let url { Self.load(url, into: tb.web) }
         if activate { select(tabs.count - 1) } else { tb.web.isHidden = true; refreshTabStrip() }
         return tb
     }
@@ -655,7 +660,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
                                 accessibilityDescription: tb.isLoading ? t("browser.stop") : t("preview.reload"))
         stopBtn.image?.isTemplate = true
         stopBtn.toolTip = tb.isLoading ? t("browser.stop") : t("preview.reload")
-        emptyLabel.isHidden = !tb.urlString.isEmpty
+        // 로드 실패 메시지가 있으면 그게 먼저다. 예전에는 이 줄이 주소가 있다는 이유로
+        // 오류를 바로 지워서, 인증서 오류·DNS 실패에 아무 표시도 남지 않았다.
+        if let err = tb.errorText {
+            emptyLabel.stringValue = err
+            emptyLabel.isHidden = false
+        } else {
+            emptyLabel.stringValue = t("preview.empty")
+            emptyLabel.isHidden = !tb.urlString.isEmpty
+        }
         // 진행 막대: 로딩 중에만 보이고, 끝나면 사라진다.
         progress.isHidden = !tb.isLoading
         progressWidth.constant = tb.isLoading ? bounds.width * CGFloat(max(0.05, tb.progress)) : 0
@@ -756,8 +769,20 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private func load(_ url: URL) {
         if tabs.isEmpty { newTab(url, activate: true); return }
         emptyLabel.isHidden = true
+        tab?.errorText = nil
         tab?.web.isHidden = false
-        tab?.web.load(URLRequest(url: url))
+        Self.load(url, into: tab?.web)
+    }
+    /// file:// 은 그냥 load(URLRequest:) 로는 열리지 않는다 — WebKit 이 읽기 권한을 따로
+    /// 요구한다. dist/index.html, 커버리지 리포트, 로컬 PDF 를 열려면 이 경로가 필요하다.
+    static func load(_ url: URL, into web: WKWebView?) {
+        guard let web else { return }
+        if url.isFileURL {
+            let dir = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
+            web.loadFileURL(url, allowingReadAccessTo: dir)
+        } else {
+            web.load(URLRequest(url: url))
+        }
     }
     @objc private func openExternal() {
         guard let s = tab?.urlString, let url = URL(string: s) else { return }
@@ -809,9 +834,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         setStatus(nil)
+        tabs.first { $0.web === webView }?.errorText = nil    // 새로 시도하니 지난 오류는 지운다
         refreshChrome()
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        tabs.first { $0.web === webView }?.errorText = nil
         let z = CGFloat(BrowserStore.zoom(for: webView.url))
         if abs(webView.pageZoom - z) > 0.01 { webView.pageZoom = z }   // 지난번 확대를 되살린다
         refreshChrome()
@@ -909,6 +936,59 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         libraryPopover = pop
     }
 
+    // MARK: - 인증서
+    //
+    // 자체 서명·만료된 인증서를 만나면 지금까지 아무 일도 일어나지 않았다 (화면은 이전
+    // 페이지 그대로, 오류 표시도 없음). 개발 서버는 자체 서명이 흔해서 그냥 막으면 못 쓴다.
+    // 그래서 한 번 물어보고, 사용자가 계속하겠다고 하면 그 호스트를 기억한다.
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        let host = challenge.protectionSpace.host
+        if Self.trustedHosts.contains(host) {
+            completionHandler(.useCredential, URLCredential(trust: trust)); return
+        }
+        // 정상 인증서면 물어볼 것도 없다.
+        var error: CFError?
+        if SecTrustEvaluateWithError(trust, &error) {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        // 테스트에서는 창을 띄우지 않고 정해진 답을 쓴다 (모달이라 벤치가 멈춘다).
+        if let auto = ProcessInfo.processInfo.environment["RIVEN_CERTAUTO"] {
+            if auto == "allow" {
+                Self.trustedHosts.insert(host)
+                completionHandler(.useCredential, URLCredential(trust: trust))
+            } else {
+                declineCert(host, on: webView, completionHandler)
+            }
+            return
+        }
+        let a = NSAlert()
+        a.messageText = t("browser.certTitle", ["h": host])
+        a.informativeText = t("browser.certBody", ["msg": (error as Error?)?.localizedDescription ?? ""])
+        a.addButton(withTitle: t("browser.certProceed"))
+        a.addButton(withTitle: t("common.cancel"))
+        if a.runModal() == .alertFirstButtonReturn {
+            Self.trustedHosts.insert(host)
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            declineCert(host, on: webView, completionHandler)
+        }
+    }
+    /// 그만두기를 골랐을 때. 취소는 NSURLErrorCancelled 로 와서 오류 표시에서 걸러지므로
+    /// (그러면 화면에 아무 일도 안 일어난 것처럼 보인다) 여기서 직접 남긴다.
+    private func declineCert(_ host: String, on webView: WKWebView,
+                             _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        tabs.first { $0.web === webView }?.errorText = t("browser.certBlocked", ["h": host])
+        completionHandler(.cancelAuthenticationChallenge, nil)
+        DispatchQueue.main.async { [weak self] in self?.refreshChrome() }
+    }
+    /// 사용자가 계속하기로 한 호스트 (이 실행 동안만 — 껐다 켜면 다시 묻는다).
+    private static var trustedHosts: Set<String> = []
+
     // MARK: - 주소창 자동완성 / 북마크
 
     func controlTextDidChange(_ obj: Notification) {
@@ -958,21 +1038,41 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     /// 마지막으로 본 주소를 워크스페이스별로 기억한다. 예전에는 아무것도 저장하지 않아서
     /// riven 을 닫았다 열면 늘 처음 상태(하드코딩된 localhost:3000)로 돌아갔다.
+    /// 열어 둔 탭 전부를 워크스페이스별로 기억한다. 예전에는 주소 하나만 남겨서, 껐다 켜면
+    /// 탭이 전부 사라지고 마지막에 보던 페이지 하나만 돌아왔다.
     private func rememberURL() {
-        guard let u = tab?.web.url, let ws = workspaceKey else { return }
-        let s = u.absoluteString
-        guard !s.isEmpty, !s.hasPrefix("about:") else { return }
-        var map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
-        guard map[ws] != s else { return }
-        map[ws] = s
-        Settings.shared.set("browserURLs", map)
+        guard let ws = workspaceKey else { return }
+        let urls = tabs.compactMap { tb -> String? in
+            guard !tb.isPrivate, let u = tb.web.url?.absoluteString,   // 시크릿 탭은 남기지 않는다
+                  !u.isEmpty, !u.hasPrefix("about:") else { return nil }
+            return u
+        }
+        guard !urls.isEmpty else { return }
+        var map = Settings.shared.object("browserTabs") as? [String: [String]] ?? [:]
+        guard map[ws] != urls else { return }
+        map[ws] = urls
+        Settings.shared.set("browserTabs", map)
+
+        // 활성 탭 번호도 (범위를 벗어나면 복원할 때 첫 탭으로 떨어진다).
+        var actives = Settings.shared.object("browserActiveTab") as? [String: Int] ?? [:]
+        if actives[ws] != current { actives[ws] = current; Settings.shared.set("browserActiveTab", actives) }
     }
-    /// 저장해 둔 주소를 되살린다 (패널이 워크스페이스에 붙을 때).
+    /// 저장해 둔 탭들을 되살린다 (패널이 워크스페이스에 붙을 때).
     func restoreLastURL() {
         guard let ws = workspaceKey, tab?.web.url == nil else { return }
-        let map = Settings.shared.object("browserURLs") as? [String: String] ?? [:]
-        guard let s = map[ws], !s.isEmpty else { return }
-        openURLString(s)
+        var urls = (Settings.shared.object("browserTabs") as? [String: [String]] ?? [:])[ws] ?? []
+        if urls.isEmpty {   // 예전 형식 (주소 하나)
+            let old = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])[ws]
+            urls = old.map { [$0] } ?? []
+        }
+        guard !urls.isEmpty else { return }
+        for (i, u) in urls.enumerated() {
+            guard let url = BrowserTab.resolve(u) else { continue }
+            if i == 0, let first = tab { Self.load(url, into: first.web) }
+            else { newTab(url, activate: false) }
+        }
+        let want = (Settings.shared.object("browserActiveTab") as? [String: Int] ?? [:])[ws] ?? 0
+        select(min(max(0, want), tabs.count - 1))
     }
     /// 어느 워크스페이스의 브라우저인지 (주소 기억의 키).
     private var workspaceKey: String? { workspaceRoot?.path }
@@ -1009,6 +1109,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         if let d = rep.representation(using: .png, properties: [:]) { try? d.write(to: URL(fileURLWithPath: path)) }
     }
     func debugZoom() -> CGFloat { tab?.web.pageZoom ?? 0 }
+    func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
+    func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
+    func debugActiveTab() -> Int { current }
+    func debugEval(_ js: String, _ done: @escaping (String) -> Void) { agentEval(js, done) }
     func debugSetZoom(_ z: CGFloat) { setZoom(z) }
     func debugTabMenu(_ i: Int) -> [String] {
         // 메뉴를 실제로 띄우지 않고 항목만 확인한다 (팝업은 모달 루프라 벤치가 멈춘다).
@@ -1037,19 +1141,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     func debugURL() -> String { tab?.web.url?.absoluteString ?? "(없음)" }
     /// 이 패널이 붙은 워크스페이스. 주소를 워크스페이스별로 기억하려고 앱이 채워 준다.
     var workspaceRoot: URL?
-    private func showLoadError(_ error: Error) {
+    private func showLoadError(_ error: Error, on webView: WKWebView? = nil) {
         let e = error as NSError
         if e.domain == "WebKitErrorDomain" && e.code == 102 { return }   // 리다이렉트로 끊긴 것 — 실패가 아니다
         if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
-        emptyLabel.stringValue = t("preview.loadFailed", ["msg": e.localizedDescription])
-        emptyLabel.isHidden = false
+        let target = webView.flatMap { w in tabs.first { $0.web === w } } ?? tab
+        target?.errorText = t("preview.loadFailed", ["msg": e.localizedDescription])
         refreshChrome()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
+        showLoadError(error, on: webView); return
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
+        showLoadError(error, on: webView); return
     }
     /// 다운로드로 응답이 오면 WKDownload 로 넘긴다 (예전에는 아무 일도 일어나지 않았다).
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,

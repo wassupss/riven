@@ -560,6 +560,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_BRFIX=1: 점검에서 나온 치명 항목들이 실제로 고쳐졌는지.
+                if ProcessInfo.processInfo.environment["RIVEN_BRFIX"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func step(_ at: Double, _ body: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + at, execute: body)
+                        }
+                        // 재기동 뒤 탭이 그대로 살아났는지 (RIVEN_BRFIX=restore)
+                        if ProcessInfo.processInfo.environment["RIVEN_BRFIX"] == "restore" {
+                            step(3) {
+                                RLog.log("BRFIX 복원된탭=\(p.debugTabURLs().joined(separator: " , ")) 활성=\(p.debugActiveTab())")
+                                RLog.log("BRFIX done")
+                            }
+                            return
+                        }
+                        // 0) 자체 서명 인증서
+                        if let cert = ProcessInfo.processInfo.environment["RIVEN_CERTURL"] {
+                            _ = p.agentNavigate(cert, newTab: false)
+                            step(4.5) { RLog.log("BRFIX 인증서 결과=\(p.debugError()) 주소=\(p.debugURL())") }
+                            step(5) { p.debugEval("return document.body.innerText.trim();") { r in
+                                RLog.log("BRFIX 인증서 페이지내용=\(r.prefix(40))") } }
+                            step(6) { RLog.log("BRFIX done") }
+                            return
+                        }
+                        // 1) 없는 도메인 → 오류가 화면에 남아야 한다 (예전엔 아무 표시도 없었다)
+                        _ = p.agentNavigate("https://이런도메인은없다.example.invalid", newTab: false)
+                        step(4) { RLog.log("BRFIX DNS실패 표시=\(p.debugError())") }
+                        // 2) file:// 열기
+                        step(5) { _ = p.agentNavigate("file:///private/tmp/brfix/local.html", newTab: false) }
+                        step(8) { p.debugEval("return document.body.innerText.trim();") { r in
+                            RLog.log("BRFIX file:// 내용=\(r.prefix(60))") } }
+                        // 3) 전체화면 API 존재
+                        step(9) { p.debugEval("return typeof document.documentElement.requestFullscreen;") { r in
+                            RLog.log("BRFIX 전체화면 API=\(r)") } }
+                        // 4) UA 에 Safari 토큰
+                        step(10) { p.debugEval("return navigator.userAgent;") { r in
+                            RLog.log("BRFIX UA Safari포함=\(r.contains("Safari")) / \(r.suffix(40))") } }
+                        // 5) 탭 여러 개 → 저장
+                        step(11) {
+                            _ = p.agentNavigate("https://example.com", newTab: true)
+                            _ = p.agentNavigate("https://developer.apple.com", newTab: true)
+                        }
+                        step(16) {
+                            RLog.log("BRFIX 탭들=\(p.debugTabURLs().joined(separator: " , ")) 활성=\(p.debugActiveTab())")
+                            RLog.log("BRFIX done")
+                        }
+                    }
+                }
                 // RIVEN_BRDL=<url>: 내려받기 목록·사이트별 확대·탭 메뉴가 실제로 동작하는지.
                 if let dl = ProcessInfo.processInfo.environment["RIVEN_BRDL"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
