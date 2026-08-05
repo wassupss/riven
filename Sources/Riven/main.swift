@@ -1704,6 +1704,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "removed \(name) from \(group)"
         }
         chat.onGroupDelete = { [weak self] group in self?.deleteGroup(group) ?? "unavailable" }
+        chat.onAgentExists = { [weak self, weak chat] name in
+            guard let self else { return false }
+            let q = name.trimmingCharacters(in: .whitespaces).lowercased()
+            return self.allAgentPanes().contains {
+                $0.chat !== chat && ($0.chat.agentRole.lowercased() == q
+                                     || ($0.chat.agentPersona ?? "").lowercased() == q
+                                     || $0.panel.id.lowercased() == q)
+            }
+        }
         // 입력창의 @동료: 같은 그룹의 다른 팬 이름만 준다. 그룹이 아니면 빈 배열이라 @ 가
         // 아무 뜻도 갖지 않는다. 닫힌 멤버는 프로세스가 없으므로 빼고(부를 수 없다) 보여준다.
         chat.onPeers = { [weak self, weak chat] in
@@ -3221,6 +3230,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.editor.dumpTabs { RLog.log("ORDER jsTabs=" + $0) }
             }
         }
+        // RIVEN_XWSBENCH=1: 다른 워크스페이스의 팬도 위임 대상으로 잡히는지.
+        if ProcessInfo.processInfo.environment["RIVEN_XWSBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                guard let self else { return }
+                // 사용자의 실제 상황: 한 번 방문한 워크스페이스의 팬은 계속 살아 있고,
+                // 다른 워크스페이스로 옮겨 본 뒤에도 위임 대상이어야 한다.
+                let other = self.workspaces.first { $0 != self.workspace }
+                if let other { self.activate(other) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    if let first = self.workspaces.first { self.activate(first) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.xwsReport() }
+                }
+            }
+        }
+        if false {
+            do {
+                RLog.log("XWS 활성만=\(self.agentPanes().count)개 전체=\(self.allAgentPanes().count)개")
+                RLog.log("XWS 보고\n" + self.agentPanesReport())
+                RLog.log("XWS 다른WS팬 존재확인=\(self.agentPanes().first?.chat.onAgentExists?("멤버1") ?? false)")
+            }
+        }
         // RIVEN_STATEDUMP=1: 재기동 후 복원된 그룹 상태 (그룹·닉네임·보고 라인·모델·제목).
         if ProcessInfo.processInfo.environment["RIVEN_STATEDUMP"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -4710,11 +4740,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Every chat pane is an independent agent (its own session, context and role). These two verbs
     // turn that into a TEAM: an agent can see its peers and delegate work to one, then continue with
     // the answer. Hand-offs are visible in the target's transcript, so the user can watch or step in.
+    /// 지금 워크스페이스의 채팅 팬.
     private func agentPanes() -> [(panel: DockPanel, chat: ChatPanel)] {
         guard let dock = activeDock else { return [] }
         return dock.groups.flatMap { $0.panels }.compactMap { p in
             (p.content as? ChatPanel).map { (panel: p, chat: $0) }
         }
+    }
+
+    private func xwsReport() {
+        RLog.log("XWS 활성만=\(agentPanes().count)개 전체=\(allAgentPanes().count)개")
+        RLog.log("XWS 보고\n" + agentPanesReport())
+        RLog.log("XWS 다른WS팬 존재확인=\(agentPanes().first?.chat.onAgentExists?("멤버1") ?? false)")
+    }
+
+    /// 모든 워크스페이스의 채팅 팬 (지금 보고 있는 것 먼저).
+    ///
+    /// 에이전트는 사용자가 어느 워크스페이스를 보고 있든 계속 일한다. 위임 대상 찾기를
+    /// 활성 워크스페이스로만 한정하면, 다른 프로젝트로 옮겨 본 순간 같은 팀원이 "없는 이름"이
+    /// 되어 위임이 실패한다 (실제로 그렇게 실패했다).
+    private func allAgentPanes() -> [(panel: DockPanel, chat: ChatPanel, ws: URL)] {
+        var out: [(panel: DockPanel, chat: ChatPanel, ws: URL)] = []
+        var seen = Set<ObjectIdentifier>()
+        func collect(_ dock: DockManager?, _ ws: URL) {
+            guard let dock else { return }
+            for p in dock.groups.flatMap({ $0.panels }) {
+                guard let c = p.content as? ChatPanel, seen.insert(ObjectIdentifier(p)).inserted else { continue }
+                out.append((panel: p, chat: c, ws: ws))
+            }
+        }
+        if let ws = workspace { collect(activeDock, ws) }
+        for ws in workspaces where ws != workspace { collect(state(for: ws).dock, ws) }
+        return out
     }
     /// 그룹 명단을 워크스페이스에 저장한다. 패널을 닫아도 조직도에 남기고 다시 열 수 있어야
     /// 하므로, 살아 있는 팬 + 이미 저장돼 있던 멤버를 합쳐 기록한다 (닫힌 멤버는 마지막 세션
@@ -5005,14 +5062,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func agentPanesReport() -> String {
-        let panes = agentPanes()
+        let panes = allAgentPanes()
         guard !panes.isEmpty else { return "(no agent panes open)" }
         return panes.map { p in
             let state = p.chat.isBusy ? "busy" : "idle"
             let role = p.chat.agentPersona.map { " (\($0))" } ?? ""
             let grp = p.chat.groupName.map { "[\($0)] " } ?? ""
             let up = p.chat.parentName.map { " ← \($0)" } ?? ""   // 보고 라인 (조직도)
-            return "- \(grp)\(p.chat.agentRole)\(role)\(up)  \(state)"
+            // 다른 워크스페이스의 팬도 부를 수 있으니 어디 소속인지 밝힌다.
+            let where_ = (p.ws == workspace) ? "" : "  @\(p.ws.lastPathComponent)"
+            return "- \(grp)\(p.chat.agentRole)\(role)\(up)  \(state)\(where_)"
         }.joined(separator: "\n")
     }
     /// Deliver `message` to the agent named/identified by `target` and return its answer.
@@ -5023,7 +5082,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                               inGroup: String? = nil,
                               _ done: @escaping (String) -> Void) {
         let q = target.trimmingCharacters(in: .whitespaces).lowercased()
-        let panes = agentPanes().filter { $0.chat !== sender }      // never delegate to yourself
+        let panes = allAgentPanes().map { (panel: $0.panel, chat: $0.chat) }
+            .filter { $0.chat !== sender }      // never delegate to yourself
         // 같은 그룹 동료를 먼저 본다 — 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
         // 그때 남의 팀 사람에게 일이 넘어가면 안 된다.
         let mates = (inGroup ?? sender?.groupName).map { g in panes.filter { $0.chat.groupName == g } } ?? []
