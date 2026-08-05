@@ -432,6 +432,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_BROWSEREVAL=1: eval 은 승인 카드를 거쳐야 한다 (자동 승인되면 안 된다).
+                // 카드를 일부러 누르지 않고, 15초 뒤에도 실행되지 않았는지 확인한다.
+                if ProcessInfo.processInfo.environment["RIVEN_BROWSEREVAL"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        _ = self.previewPanel.agentNavigate("http://localhost:8731/index.html", newTab: false)
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("EVAL no chat"); return }
+                            chat.ask("riven_browser_eval 로 자바스크립트 `return document.title;` 를 실행하고 결과만 답해.") { a in
+                                RLog.log("EVAL answer → " + a.replacingOccurrences(of: "\n", with: " | ").prefix(200))
+                            }
+                            for at in [8.0, 15.0] {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    RLog.log("EVAL t\(Int(at)) busy=\(chat.isBusy) panelLog=[\(self.previewPanel.debugAgentLog())]")
+                                }
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 16) { RLog.log("EVAL done") }
+                        }
+                    }
+                }
+                // RIVEN_BROWSERAGENT=1: MCP 경로 전체(도구 정의 → ChatAskServer → 패널)를
+                // 실제 에이전트 턴으로 확인한다.
+                if ProcessInfo.processInfo.environment["RIVEN_BROWSERAGENT"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("AGENT no chat"); return }
+                            let ask = "riven_browser_open 으로 http://localhost:8731/index.html 을 열고, "
+                                    + "riven_browser_read 로 selector '#para' 를 읽어서 그 텍스트만 그대로 답해. "
+                                    + "그 다음 riven_browser_click 으로 '#btn' 을 누르고 riven_browser_read 로 "
+                                    + "'#clicked' 를 읽어 마지막 줄에 적어. 설명은 최소로."
+                            chat.ask(ask) { answer in
+                                RLog.log("AGENT answer → " + answer.replacingOccurrences(of: "\n", with: " | ").prefix(400))
+                                RLog.log("AGENT done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_BROWSERBENCH=<url>: 브라우저 패널과 riven_browser_* 를 클릭 없이 훑는다.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_BROWSERBENCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func step(_ name: String, _ at: Double, _ body: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                RLog.log("BROWSER ▶ \(name)"); body()
+                            }
+                        }
+                        func tool(_ name: String, _ at: Double,
+                                  _ body: @escaping (@escaping (String) -> Void) -> Void) {
+                            step(name, at) { body { r in RLog.log("BROWSER \(name) → \(r.prefix(220))") } }
+                        }
+                        step("open", 0) { RLog.log("BROWSER open → " + p.agentNavigate(target, newTab: false)) }
+                        step("state", 2.0) { RLog.log("BROWSER state → " + p.agentState().replacingOccurrences(of: "\n", with: " | ")) }
+                        tool("read", 2.3) { p.agentRead(selector: "#para", html: false, $0) }
+                        tool("readHtml", 2.5) { p.agentRead(selector: "#head", html: true, $0) }
+                        tool("click", 2.7) { p.agentClick("#btn", $0) }
+                        tool("clickCheck", 3.0) { p.agentRead(selector: "#clicked", html: false, $0) }
+                        tool("fill", 3.2) { p.agentFill("#q", "riven-test", submit: true, $0) }
+                        tool("fillCheck", 3.6) { p.agentRead(selector: "#out", html: false, $0) }
+                        tool("wait", 3.8) { p.agentWait("#late", timeoutMs: 5000, $0) }
+                        tool("scrollSel", 5.4) { p.agentScroll(selector: "#bottom", y: nil, $0) }
+                        tool("scrollY", 5.7) { p.agentScroll(selector: nil, y: 0, $0) }
+                        tool("eval", 5.9) { p.agentEval("return document.title + ' / ' + document.querySelectorAll('div').length;", $0) }
+                        tool("missing", 6.1) { p.agentClick("#nope", $0) }
+                        // target=_blank → 새 탭이 생겨야 한다.
+                        tool("newTabLink", 6.3) { p.agentClick("#ext", $0) }
+                        step("tabs", 7.6) { RLog.log("BROWSER tabs → " + p.agentState().replacingOccurrences(of: "\n", with: " | ")) }
+                        tool("back", 7.9) { done in done(p.agentGo("back")) }
+                        step("shot", 8.6) {
+                            guard let shot = ProcessInfo.processInfo.environment["RIVEN_BROWSERSHOT"],
+                                  let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) else { return }
+                            p.cacheDisplay(in: p.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("BROWSER done")
+                        }
+                    }
+                }
                 if let f = ProcessInfo.processInfo.environment["RIVEN_OPENFILE"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.openFile(URL(fileURLWithPath: f))
@@ -1563,6 +1647,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
             self.previewPanel.openURLString(url)
         }
+        // riven_browser_*: 한 곳에서 처리하고 결과를 콜백으로 돌려준다.
+        chat.onBrowser = { [weak self] verb, args, done in
+            self?.handleBrowserTool(verb, args, done)
+        }
+        chat.onBrowserOrigin = { [weak self] in self?.previewPanel.currentOrigin ?? "" }
         chat.onScreenshot = { [weak self] url, done in
             guard let self else { done(nil); return }
             if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
@@ -4600,6 +4689,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .chat.debugSendInput(text)
     }
 
+    /// riven_browser_* 의 실제 동작. WKWebView 는 메인 스레드 전용이라 여기서 한 번 더 맞춘다
+    /// (도구 호출은 소켓 스레드에서 들어온다).
+    private func handleBrowserTool(_ verb: String, _ args: [String: Any], _ done: @escaping (String) -> Void) {
+        func onMain(_ body: @escaping () -> Void) {
+            if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+        }
+        onMain { [weak self] in
+            guard let self else { done("riven is shutting down"); return }
+            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+            let p = self.previewPanel!
+            func str(_ k: String) -> String? { (args[k] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+            func num(_ k: String) -> Double? {
+                (args[k] as? NSNumber)?.doubleValue ?? (args[k] as? Double) ?? (args[k] as? Int).map(Double.init)
+            }
+            switch verb {
+            case "riven_browser_open":
+                done(p.agentNavigate(str("url") ?? "", newTab: (args["new_tab"] as? Bool) ?? false))
+            case "riven_browser_state":
+                done(p.agentState())
+            case "riven_browser_go":
+                done(p.agentGo(str("action") ?? ""))
+            case "riven_browser_read":
+                p.agentRead(selector: str("selector"), html: (args["html"] as? Bool) ?? false, done)
+            case "riven_browser_click":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentClick(sel, done)
+            case "riven_browser_fill":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentFill(sel, (args["value"] as? String) ?? "",
+                            submit: (args["submit"] as? Bool) ?? false, done)
+            case "riven_browser_wait":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentWait(sel, timeoutMs: Int(num("timeout_ms") ?? 5000), done)
+            case "riven_browser_scroll":
+                p.agentScroll(selector: str("selector"), y: num("y"), done)
+            case "riven_browser_eval":
+                guard let js = str("js") else { done("js is required"); return }
+                p.agentEval(js, done)
+            default:
+                done("unknown browser verb: \(verb)")
+            }
+        }
+    }
+
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
     // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
     // asks with a modal (the terminal agent is blocked waiting for the answer either way).
@@ -4633,6 +4766,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             }
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
+             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
+             "riven_browser_eval":
+            // 터미널 에이전트에는 승인 카드를 띄울 대화창이 없다. eval 만 모달로 묻는다.
+            if tool == "riven_browser_eval" {
+                let a = NSAlert()
+                a.messageText = t("browser.eval.confirm", ["o": previewPanel.currentOrigin])
+                a.informativeText = String((args["js"] as? String ?? "").prefix(400))
+                a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
+                guard a.runModal() == .alertFirstButtonReturn else {
+                    srv.resolve(id, result: t("browser.eval.denied")); return
+                }
+            }
+            handleBrowserTool(tool, args) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             if auxDockPanels["api"] == nil { toggleDockPanel("api") }

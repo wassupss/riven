@@ -57,8 +57,8 @@ final class ChatAskServer {
         이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
         - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
-        - 웹페이지를 사용자에게 보여줄 땐 `riven_open_browser`(url) 로 riven 미리보기 패널에 엽니다.
-        - 웹페이지 화면이 필요하면 `riven_screenshot`(url?) 로 캡처합니다. 반환된 PNG 경로를 Read 로 읽어 확인하세요.
+        - riven 브라우저를 직접 운전할 수 있습니다: `riven_browser_open`(url, new_tab?) 로 열고, `riven_browser_state`() 로 지금 주소·제목을 확인하고, `riven_browser_read`(selector?, html?) 로 내용을 읽고, `riven_browser_click`(selector) / `riven_browser_fill`(selector, value, submit?) 로 조작하고, 늦게 그려지는 화면은 `riven_browser_wait`(selector) 로 기다립니다. 뒤로/앞으로/새로고침은 `riven_browser_go`(action). 화면이 필요하면 `riven_screenshot`(url?) 로 캡처해 PNG 경로를 Read 로 읽으세요.
+        - 브라우저는 쿠키·세션을 유지합니다 (로그인한 페이지가 그대로 남아 있을 수 있습니다). 전용 도구로 안 되는 경우에만 `riven_browser_eval`(js) 를 쓰고, 이건 페이지마다 사용자 승인을 받습니다.
         - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
         - riven의 패널/워크스페이스를 파악·조작할 수 있습니다: `riven_panels`(현재 패널 목록), `riven_open_panel`(kind), `riven_close_panel`(id), `riven_workspaces`, `riven_open_workspace`(path).
         - 다른 에이전트와 팀으로 일할 수 있습니다: `riven_agents` 로 동료(역할·상태)를 확인하고, `riven_ask_agent`(agent, message) 로 일을 넘긴 뒤 답을 받습니다. 여러 명에게 서로 무관한 일을 시킬 땐 `riven_ask_agents`(tasks=[{agent,message},…]) 를 한 번 호출하세요. 전원이 동시에 시작합니다 (한 명씩 부르면 순차로 끝날 때까지 기다리게 됩니다). 오래 걸릴 일은 `wait=false` 로 넘기면 즉시 반환되고, 답은 도착하는 대로 당신의 대화에 전달됩니다. 그동안 다른 일을 하세요.
@@ -201,11 +201,38 @@ final class ChatAskServer {
              "description": "Open a file in riven's code editor (optionally at a line) so the user can review it with you.",
              "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "line": {"type": "number"}}, "required": ["path"]}},
             {"name": "riven_open_browser",
-             "description": "Open a URL in riven's preview browser panel so the user can see it.",
+             "description": "Open a URL in riven's browser panel so the user can see it. Same as riven_browser_open.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
             {"name": "riven_screenshot",
-             "description": "Open an optional URL in riven's preview and capture a screenshot. Returns a PNG file path; read it with the Read tool to see the page.",
+             "description": "Capture the browser panel (optionally navigating first). Returns a PNG file path; read it with the Read tool to see the page.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
+            {"name": "riven_browser_open",
+             "description": "Open a URL in riven's browser panel. Set new_tab=true to keep the current page. The panel keeps cookies/session, so a page you logged into stays logged in.",
+             "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "new_tab": {"type": "boolean"}}, "required": ["url"]}},
+            {"name": "riven_browser_state",
+             "description": "Current browser state: URL, page title, loading, back/forward availability, zoom and the open tabs. Call this after navigating to confirm where you are.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "riven_browser_go",
+             "description": "History/loading control for the browser panel. action: back | forward | reload | stop.",
+             "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}}, "required": ["action"]}},
+            {"name": "riven_browser_read",
+             "description": "Read the current page. Without a selector you get the whole page's visible text; with a CSS selector you get just that element. Set html=true for markup instead of text. Long output is truncated.",
+             "inputSchema": {"type": "object", "properties": {"selector": {"type": "string"}, "html": {"type": "boolean"}}}},
+            {"name": "riven_browser_click",
+             "description": "Click the first element matching a CSS selector in the browser panel (scrolls it into view first).",
+             "inputSchema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
+            {"name": "riven_browser_fill",
+             "description": "Type a value into an input/textarea/select matching a CSS selector, firing input+change events so frameworks notice. Set submit=true to submit the surrounding form.",
+             "inputSchema": {"type": "object", "properties": {"selector": {"type": "string"}, "value": {"type": "string"}, "submit": {"type": "boolean"}}, "required": ["selector", "value"]}},
+            {"name": "riven_browser_wait",
+             "description": "Wait until a CSS selector matches something (for pages that render after load). timeout_ms defaults to 5000, max 60000.",
+             "inputSchema": {"type": "object", "properties": {"selector": {"type": "string"}, "timeout_ms": {"type": "number"}}, "required": ["selector"]}},
+            {"name": "riven_browser_scroll",
+             "description": "Scroll the page: pass a selector to scroll that element into view, y for an absolute position, or neither to jump to the bottom.",
+             "inputSchema": {"type": "object", "properties": {"selector": {"type": "string"}, "y": {"type": "number"}}}},
+            {"name": "riven_browser_eval",
+             "description": "Run JavaScript in the current page and return its value. Prefer the specific tools above; use this only when they cannot express what you need. The user is asked to approve each page, because the browser holds real logged-in sessions.",
+             "inputSchema": {"type": "object", "properties": {"js": {"type": "string"}}, "required": ["js"]}},
             {"name": "riven_api_request",
              "description": "Run an HTTP request in riven's API-client panel (opens it, shows the response) and also return status/headers/body.",
              "inputSchema": {"type": "object", "properties": {"method": {"type": "string"}, "url": {"type": "string"}, "headers": {"type": "object"}, "body": {"type": "string"}}, "required": ["method", "url"]}},
