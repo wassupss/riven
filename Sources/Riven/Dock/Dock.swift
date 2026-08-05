@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 // A native dockview-style panel system (matches riven's dockview): panels live in
 // tabbed groups; groups are arranged in a resizable NSSplitView tree. Tabs can be
@@ -138,6 +139,16 @@ final class DockManager {
         DockManager.installClickMonitor()
     }
 
+    /// 클릭 지점이 웹뷰 안인지 (웹뷰는 포커스를 스스로 관리한다).
+    static func isInsideWebView(_ v: NSView?) -> Bool {
+        var cur: NSView? = v
+        while let c = cur {
+            if c is WKWebView { return true }
+            cur = c.superview
+        }
+        return false
+    }
+
     /// 이번 setActive가 마우스 클릭에서 왔는지 — onActivePanel 안에서만 유효.
     /// 클릭일 땐 앱이 강제 포커스를 걸지 않는다(트랜스크립트 텍스트 선택을 뺏지 않도록).
     private(set) var activationFromClick = false
@@ -158,6 +169,10 @@ final class DockManager {
                         mgr.setActive(g, fromClick: true)
                         // 클릭 지점이 스스로 포커스를 받지 못하는 곳(패널 여백·라벨 등)이면
                         // 창 포커스가 이전 패널에 남는다 → 이벤트 처리 후 확인해서 보정.
+                        // 단, 웹뷰(브라우저·에디터)는 포커스를 자기가 비동기로 가져간다. 여기서
+                        // 컨테이너를 first responder 로 만들면 그 포커스를 빼앗아 ⌘C 같은 표준
+                        // 동작이 웹뷰에 닿지 않는다 (브라우저에서 복사가 안 되던 원인).
+                        if DockManager.isInsideWebView(cur) { break }
                         DispatchQueue.main.async { [weak g] in
                             guard let g, let mgr = g.manager, mgr.activeGroup === g else { return }
                             if let fr = win.firstResponder as? NSView, fr.isDescendant(of: g) { return }

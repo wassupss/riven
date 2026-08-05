@@ -2356,6 +2356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.id == "editor" { editor.focusEditor() }
         else if let tv = p.content as? TerminalView { tv.focusTerminal() }
         else if let chat = p.content as? ChatPanel { chat.focusPending() }  // 카드가 있으면 카드, 없으면 입력창
+        else if p.id == "preview" { previewPanel.focusWeb() }               // 브라우저는 웹뷰가 포커스를 받아야 ⌘C 가 먹는다
         else { p.content.window?.makeFirstResponder(p.content) }
     }
     // Focus the active dock's active panel (the one the ring is on).
@@ -3264,6 +3265,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.refreshUsage(force: true)    // 버튼은 언제나 즉시
                 let t3 = self.lastUsageRefresh
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
+            }
+        }
+        // RIVEN_COPYTEST=1: 브라우저에서 텍스트를 골라 ⌘C 경로(responder chain)가 도는지.
+        if ProcessInfo.processInfo.environment["RIVEN_COPYTEST"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                self.previewPanel.openURLString("http://127.0.0.1:8877/")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    let pb = NSPasteboard.general
+                    pb.clearContents(); pb.setString("이전내용", forType: .string)
+                    // 사용자가 실제로 하는 순서: 페이지 클릭 → 선택 → ⌘C
+                    if let win = self.window as NSWindow?, let w = self.previewPanel.debugWebView() {
+                        let mid = w.convert(NSPoint(x: w.bounds.midX, y: w.bounds.midY), to: nil)
+                        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            if let e = NSEvent.mouseEvent(with: type, location: mid, modifierFlags: [],
+                                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                                          windowNumber: win.windowNumber, context: nil,
+                                                          eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                                NSApp.postEvent(e, atStart: false)
+                            }
+                        }
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        RLog.log("COPY 클릭후 firstResponder=\(String(describing: type(of: self.window.firstResponder ?? NSNull())))")
+                        self.previewPanel.debugSelectAll { ok in
+                            let sent = NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                let got = NSPasteboard.general.string(forType: .string) ?? "(없음)"
+                                RLog.log("COPY 선택=\(ok) sendAction=\(sent) 클립보드=\(got.prefix(40))")
+                            }
+                        }
+                    }
+                }
             }
         }
         // RIVEN_BROWSERMEM=1: 브라우저가 마지막 주소를 기억하고 재기동 때 되살리는지.

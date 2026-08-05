@@ -628,6 +628,18 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     /// 어느 워크스페이스의 브라우저인지 (주소 기억의 키).
     private var workspaceKey: String? { workspaceRoot?.path }
+    /// 이 패널이 포커스를 받으면 웹뷰가 받아야 한다 (선택·복사·키보드 스크롤).
+    func focusWeb() { if let w = tab?.web { window?.makeFirstResponder(w) } }
+
+    /// 벤치용: 현재 웹뷰.
+    func debugWebView() -> WKWebView? { tab?.web }
+    /// 벤치용: 페이지 전체를 선택하고 웹뷰에 포커스를 준다.
+    func debugSelectAll(_ done: @escaping (Bool) -> Void) {
+        guard let w = tab?.web else { done(false); return }
+        w.evaluateJavaScript("document.getSelection().selectAllChildren(document.body); document.getSelection().toString().length") { v, _ in
+            done((v as? Int ?? 0) > 0)
+        }
+    }
     /// 벤치용: 지금 주소.
     func debugURL() -> String { tab?.web.url?.absoluteString ?? "(없음)" }
     /// 이 패널이 붙은 워크스페이스. 주소를 워크스페이스별로 기억하려고 앱이 채워 준다.
