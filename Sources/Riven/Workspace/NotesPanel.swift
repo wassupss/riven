@@ -1,29 +1,17 @@
 import AppKit
 
-// Per-workspace private notes — a LIST of notes (title + body + last-saved time), not one
-// scratchpad. Each workspace gets its own list.
+// 워크스페이스별 메모 + 문서 패널.
 //
-// Storage is riven's own support dir keyed by the workspace path, NOT a file inside the
-// project: a note in the working tree would show up in git status, get committed by an
-// agent's `git add -A`, and be shared with the team. These are personal notes, so they stay
-// out of the repository entirely.
+// 메모 하나 = .md 파일 하나다 ([[NoteStore]]). 예전에는 JSON 배열 한 덩어리에 제목·본문을
+// 넣어 뒀는데, 그러면 마크다운으로 미리 보거나 다른 도구로 넘기거나 에이전트가 문서를
+// 남기는 게 전부 막힌다. 저장 위치는 예전 그대로 riven 지원 폴더다 (레포 안에 두면 git
+// status 에 뜨고 에이전트의 `git add -A` 에 딸려 들어간다).
 //
-// Saves are debounced (typing shouldn't hit the disk on every keystroke) and flushed on
-// selection change / workspace switch / app termination so nothing is lost.
-struct Note: Codable {
-    var id: String
-    var title: String
-    var body: String
-    var updated: Date
-    /// The title to show — falls back to the body's first line, then a placeholder.
-    var displayTitle: String {
-        let t0 = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !t0.isEmpty { return t0 }
-        let firstLine = body.split(separator: "\n").first.map(String.init)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return firstLine.isEmpty ? t("notes.untitled") : firstLine
-    }
-}
+// 목록은 두 갈래를 보여 준다: 개인 메모, 그리고 워크스페이스 안의 .md 문서. 둘 다 같은
+// 편집기·미리보기로 열린다.
+//
+// 저장은 디바운스(타이핑마다 디스크를 때리지 않게)하고, 선택 변경·워크스페이스 전환·앱
+// 종료 때 강제로 흘려보낸다.
 
 // A clickable list row (mirrors RailRow — NSView has no built-in click callback).
 final class NoteRow: NSView {
@@ -36,17 +24,30 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     private let addButton = NSButton(title: "+", target: nil, action: nil)
     private let deleteButton = NSButton(title: "", target: nil, action: nil)
     private let backButton = NSButton(title: "", target: nil, action: nil)   // detail → list
+    private let revealButton = NSButton(title: "", target: nil, action: nil) // Finder 에서 보기
+    private let revertButton = NSButton(title: "", target: nil, action: nil) // 에이전트 덮어쓰기 되돌리기
     private let savedLabel = NSTextField(labelWithString: "")
+    private let sourceTabs = RivenTabStrip(frame: .zero)                     // 메모 / 문서
+    private let modeTabs = RivenTabStrip(frame: .zero)                       // 편집 / 미리보기
     private let listScroll = NSScrollView()
     private let listStack = FlippedStack()
     private let titleField = NSTextField()
     private let body = NSTextView()
     private let bodyScroll = NSScrollView()
+    private let preview = MarkdownView(frame: .zero)
 
     private var workspace: URL?
-    private var notes: [Note] = []
-    private var selectedId: String?
+    private var personal: [Note] = []
+    private var docs: [Note] = []
+    private var selectedURL: URL?
     private var saveTimer: Timer?
+    /// 에이전트가 만들거나 고친 메모 — 목록과 상세에 표시했다가 사용자가 열어 보면 지운다.
+    private var agentTouched: Set<String> = []
+
+    /// 워크스페이스 문서 탭을 보고 있는지 (0 = 메모, 1 = 문서).
+    private var showingDocs = false
+    private var previewing = false
+    private var showingDetail = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -63,12 +64,17 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         addButton.toolTip = t("notes.new")
         addButton.translatesAutoresizingMaskIntoConstraints = false
 
-        deleteButton.target = self; deleteButton.action = #selector(deleteSelected)
-        deleteButton.isBordered = false; deleteButton.imagePosition = .imageOnly
-        deleteButton.image = NSImage(systemSymbolName: "trash", accessibilityDescription: t("notes.delete"))?
-            .withSymbolConfiguration(.init(pointSize: UIScale.pt(11), weight: .regular))
-        deleteButton.toolTip = t("notes.delete")
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        func iconButton(_ b: NSButton, _ symbol: String, _ tip: String, _ action: Selector) {
+            b.target = self; b.action = action
+            b.isBordered = false; b.imagePosition = .imageOnly
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+                .withSymbolConfiguration(.init(pointSize: UIScale.pt(11), weight: .regular))
+            b.toolTip = tip
+            b.translatesAutoresizingMaskIntoConstraints = false
+        }
+        iconButton(deleteButton, "trash", t("notes.delete"), #selector(deleteSelected))
+        iconButton(revealButton, "folder", t("notes.reveal"), #selector(revealSelected))
+        iconButton(revertButton, "arrow.uturn.backward", t("notes.revert"), #selector(revertSelected))
 
         backButton.target = self; backButton.action = #selector(showList)
         backButton.isBordered = false; backButton.imagePosition = .imageLeading
@@ -78,13 +84,19 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         backButton.font = UIScale.font(UIScale.small)
         backButton.translatesAutoresizingMaskIntoConstraints = false
 
+        sourceTabs.tabs = [(t("notes.tabNotes"), nil), (t("notes.tabDocs"), nil)]
+        sourceTabs.onSelect = { [weak self] i in self?.sourcePicked(i) }
+        sourceTabs.translatesAutoresizingMaskIntoConstraints = false
+        modeTabs.tabs = [(t("notes.edit"), nil), (t("notes.preview"), nil)]
+        modeTabs.onSelect = { [weak self] i in self?.modePicked(i) }
+        modeTabs.translatesAutoresizingMaskIntoConstraints = false
+
         listStack.orientation = .vertical; listStack.spacing = 0; listStack.alignment = .leading
         listStack.translatesAutoresizingMaskIntoConstraints = false
         listScroll.documentView = listStack
         listScroll.drawsBackground = false; listScroll.hasVerticalScroller = true
         listScroll.autohidesScrollers = true
         listScroll.translatesAutoresizingMaskIntoConstraints = false
-
 
         titleField.placeholderString = t("notes.titlePlaceholder")
         titleField.font = UIScale.font(UIScale.title, .semibold)
@@ -93,7 +105,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         titleField.delegate = self
         titleField.translatesAutoresizingMaskIntoConstraints = false
 
-        body.font = UIScale.font(UIScale.prose)
+        body.font = UIScale.mono(UIScale.prose)      // 마크다운 원문이므로 고정폭이 읽기 좋다
         body.isRichText = false; body.allowsUndo = true; body.drawsBackground = false
         body.delegate = self
         body.textContainerInset = NSSize(width: 8, height: 8)
@@ -104,11 +116,10 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         bodyScroll.drawsBackground = false; bodyScroll.hasVerticalScroller = true
         bodyScroll.autohidesScrollers = true
         bodyScroll.translatesAutoresizingMaskIntoConstraints = false
+        preview.translatesAutoresizingMaskIntoConstraints = false
 
-        [titleLabel, addButton, deleteButton, backButton, savedLabel, listScroll, titleField, bodyScroll].forEach { addSubview($0) }
-        // Restore the user's split (fraction of panel height); applied once we have a real height.
-        // List on top, editor below. A plain height ratio (not an NSSplitView) — deterministic and
-        // it can't ghost/flatten on relayout, the failure the sub-agent split used to hit.
+        [titleLabel, addButton, deleteButton, revealButton, revertButton, backButton, savedLabel,
+         sourceTabs, listScroll, titleField, modeTabs, bodyScroll, preview].forEach { addSubview($0) }
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             backButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
@@ -120,12 +131,22 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
             deleteButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             deleteButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             deleteButton.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            savedLabel.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -8),
+            revealButton.trailingAnchor.constraint(equalTo: deleteButton.leadingAnchor, constant: -6),
+            revealButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            revealButton.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            revertButton.trailingAnchor.constraint(equalTo: revealButton.leadingAnchor, constant: -6),
+            revertButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            revertButton.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            savedLabel.trailingAnchor.constraint(equalTo: revertButton.leadingAnchor, constant: -8),
             savedLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+
+            sourceTabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            sourceTabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            sourceTabs.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
 
             listScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             listScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            listScroll.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            listScroll.topAnchor.constraint(equalTo: sourceTabs.bottomAnchor, constant: 2),
             listScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             listStack.topAnchor.constraint(equalTo: listScroll.contentView.topAnchor),
             listStack.leadingAnchor.constraint(equalTo: listScroll.contentView.leadingAnchor),
@@ -134,18 +155,28 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             titleField.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
+            modeTabs.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            modeTabs.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            modeTabs.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 4),
             bodyScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             bodyScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bodyScroll.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 4),
-            bodyScroll.bottomAnchor.constraint(equalTo: bottomAnchor)
+            bodyScroll.topAnchor.constraint(equalTo: modeTabs.bottomAnchor, constant: 2),
+            bodyScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            preview.leadingAnchor.constraint(equalTo: leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: trailingAnchor),
+            preview.topAnchor.constraint(equalTo: modeTabs.bottomAnchor, constant: 2),
+            preview.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         applyTheme()
         setMode(detail: false)   // open on the list
         Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
-            self?.titleLabel.stringValue = t("title.notes")
-            self?.titleField.placeholderString = t("notes.titlePlaceholder")
-            self?.renderList()
+            guard let self else { return }
+            self.titleLabel.stringValue = t("title.notes")
+            self.titleField.placeholderString = t("notes.titlePlaceholder")
+            self.sourceTabs.tabs = [(t("notes.tabNotes"), nil), (t("notes.tabDocs"), nil)]
+            self.modeTabs.tabs = [(t("notes.edit"), nil), (t("notes.preview"), nil)]
+            self.renderList()
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -162,6 +193,8 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         savedLabel.textColor = Theme.fgDim
         addButton.contentTintColor = Theme.fgDim
         deleteButton.contentTintColor = Theme.fgDim
+        revealButton.contentTintColor = Theme.fgDim
+        revertButton.contentTintColor = Theme.warning
         titleField.textColor = Theme.fg
         body.textColor = Theme.fg
         body.insertionPointColor = Theme.fg
@@ -172,7 +205,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         savedLabel.font = UIScale.font(UIScale.small)
         addButton.font = UIScale.font(UIScale.title)
         titleField.font = UIScale.font(UIScale.title, .semibold)
-        body.font = UIScale.font(UIScale.prose)
+        body.font = UIScale.mono(UIScale.prose)
         renderList()
     }
 
@@ -181,51 +214,86 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         guard workspace != url else { return }
         flush()
         workspace = url
-        notes = NotesPanel.load(url)
-        selectedId = nil
+        selectedURL = nil
+        reload()
         loadSelectionIntoEditor()
         setMode(detail: false)
+    }
+
+    /// 목록을 디스크에서 다시 읽는다. 워크스페이스 문서는 훑는 비용이 있어서 문서 탭을
+    /// 보고 있을 때만 읽는다.
+    func reload() {
+        guard let ws = workspace else { personal = []; docs = []; renderList(); return }
+        personal = NoteStore.personal(ws)
+        docs = showingDocs ? NoteStore.workspaceDocs(ws) : []
         renderList()
     }
 
+    private var visibleNotes: [Note] { showingDocs ? docs : personal }
+    private var selected: Note? {
+        guard let u = selectedURL else { return nil }
+        let all = personal + docs
+        return all.first { $0.url == u } ?? (FileManager.default.fileExists(atPath: u.path)
+            ? NoteStore.note(u, scope: u.path.hasPrefix(workspace?.path ?? "\u{0}") ? .workspace : .personal)
+            : nil)
+    }
+
     // ---- master ⇄ detail ----
-    // The panel shows EITHER the list or one note, swapped by selection / the back button. A fixed
-    // top-bottom split made both halves too short in a narrow dock panel; this uses the full height.
-    private var showingDetail = false
     private func setMode(detail: Bool) {
         showingDetail = detail
         listScroll.isHidden = detail
-        titleField.isHidden = !detail; bodyScroll.isHidden = !detail
+        sourceTabs.isHidden = detail
+        titleField.isHidden = !detail
+        modeTabs.isHidden = !detail
+        bodyScroll.isHidden = !detail || previewing
+        preview.isHidden = !detail || !previewing
         backButton.isHidden = !detail
         deleteButton.isHidden = !detail
+        revealButton.isHidden = !detail
+        revertButton.isHidden = !detail || !(selected.map { NoteStore.hasBackup($0.url) } ?? false)
         addButton.isHidden = detail
         savedLabel.isHidden = !detail
-        titleLabel.stringValue = detail ? (selected?.displayTitle ?? t("title.notes")) : t("title.notes")
         titleLabel.isHidden = detail          // the back button + note title field carry the header in detail
+        titleLabel.stringValue = t("title.notes")
     }
     @objc private func showList() {
         flush()
         setMode(detail: false)
-        renderList()
+        reload()
+    }
+    private func sourcePicked(_ i: Int) {
+        showingDocs = (i == 1)
+        reload()
+    }
+    private func modePicked(_ i: Int) {
+        previewing = (i == 1)
+        if previewing {
+            flush()                                    // 미리보기는 지금 쓴 내용을 보여 줘야 한다
+            preview.setMarkdown(NoteStore.compose(title: titleField.stringValue, body: body.string))
+        }
+        setMode(detail: showingDetail)
     }
 
     // ---- list ----
     private func renderList() {
         listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let notes = visibleNotes
         guard !notes.isEmpty else {
-            let hint = NSTextField(labelWithString: t("notes.empty"))
+            let hint = NSTextField(labelWithString: showingDocs ? t("notes.noDocs") : t("notes.empty"))
             hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim
+            hint.lineBreakMode = .byWordWrapping; hint.maximumNumberOfLines = 3
             hint.translatesAutoresizingMaskIntoConstraints = false
             let c = NSView(); c.addSubview(hint)
             NSLayoutConstraint.activate([
                 hint.leadingAnchor.constraint(equalTo: c.leadingAnchor, constant: 12),
+                hint.trailingAnchor.constraint(lessThanOrEqualTo: c.trailingAnchor, constant: -12),
                 hint.topAnchor.constraint(equalTo: c.topAnchor, constant: 10),
                 hint.bottomAnchor.constraint(equalTo: c.bottomAnchor, constant: -10)])
             listStack.addArrangedSubview(c)
             c.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
             return
         }
-        for n in notes.sorted(by: { $0.updated > $1.updated }) {   // newest first
+        for n in notes {
             let row = noteRow(n)
             listStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
@@ -234,12 +302,12 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     private func noteRow(_ n: Note) -> NSView {
         let row = NoteRow()
         row.wantsLayer = true
-        let isSel = (n.id == selectedId)
+        let isSel = (n.url == selectedURL)
         row.layer?.backgroundColor = isSel ? Theme.hover.cgColor : NSColor.clear.cgColor
-        row.onSelect = { [weak self] in self?.select(n.id) }
+        row.onSelect = { [weak self] in self?.select(n.url) }
         row.translatesAutoresizingMaskIntoConstraints = false
 
-        let name = NSTextField(labelWithString: n.displayTitle)
+        let name = NSTextField(labelWithString: n.title)
         name.font = UIScale.font(UIScale.title, isSel ? .semibold : .regular)
         name.textColor = Theme.fg
         name.lineBreakMode = .byTruncatingTail
@@ -250,14 +318,32 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         time.translatesAutoresizingMaskIntoConstraints = false
 
         row.addSubview(name); row.addSubview(time)
-        NSLayoutConstraint.activate([
+        var cons: [NSLayoutConstraint] = [
             row.heightAnchor.constraint(equalToConstant: UIMetrics.rowHCompact),
-            name.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
             name.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             time.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 6),
             time.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
             time.centerYAnchor.constraint(equalTo: row.centerYAnchor)
-        ])
+        ]
+        // 에이전트가 쓴 메모에는 점을 찍는다 — 목록만 보고도 "내가 안 쓴 게 생겼다"가 보여야 한다.
+        if agentTouched.contains(n.url.path) {
+            let dot = NSView(); dot.wantsLayer = true
+            dot.layer?.backgroundColor = Theme.accent.cgColor
+            dot.layer?.cornerRadius = UIScale.pt(3)
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.toolTip = t("notes.byAgent")
+            row.addSubview(dot)
+            cons += [
+                dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 6),
+                dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                dot.widthAnchor.constraint(equalToConstant: UIScale.pt(6)),
+                dot.heightAnchor.constraint(equalToConstant: UIScale.pt(6)),
+                name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 5),
+            ]
+        } else {
+            cons.append(name.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12))
+        }
+        NSLayoutConstraint.activate(cons)
         return row
     }
     private func ago(_ date: Date) -> String {
@@ -270,43 +356,68 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     }
 
     // ---- selection / editing ----
-    private func select(_ id: String) {
+    private func select(_ url: URL) {
         flush()                       // don't lose edits to the note we're leaving
-        selectedId = id
-        loadSelectionIntoEditor()
-        setMode(detail: true)         // clicking a row opens it full-height
-        window?.makeFirstResponder(body)
-    }
-    private var selected: Note? { notes.first { $0.id == selectedId } }
-    private func loadSelectionIntoEditor() {
-        let n = selected
-        titleField.stringValue = n?.title ?? ""
-        body.string = n?.body ?? ""
-        let editable = (n != nil)
-        titleField.isEditable = editable; body.isEditable = editable
-        deleteButton.isHidden = !editable
-        savedLabel.stringValue = n.map { t("notes.savedAt", ["t": ago($0.updated)]) } ?? ""
-    }
-    @objc private func newNote() {
-        flush()
-        let n = Note(id: UUID().uuidString, title: "", body: "", updated: Date())
-        notes.append(n)
-        selectedId = n.id
+        selectedURL = url
+        agentTouched.remove(url.path)  // 열어 봤으면 "새로 생김" 표시는 지운다
         loadSelectionIntoEditor()
         setMode(detail: true)
+        if previewing { modePicked(1) } else { window?.makeFirstResponder(body) }
+    }
+    private func loadSelectionIntoEditor() {
+        guard let n = selected else {
+            titleField.stringValue = ""; body.string = ""
+            titleField.isEditable = false; body.isEditable = false
+            savedLabel.stringValue = ""
+            return
+        }
+        let (title, text) = NoteStore.split(n.read())
+        titleField.stringValue = title
+        body.string = text
+        titleField.isEditable = true; body.isEditable = true
+        savedLabel.stringValue = t("notes.savedAt", ["t": ago(n.updated)])
+        if previewing { preview.setMarkdown(NoteStore.compose(title: title, body: text)) }
+    }
+    @objc private func newNote() {
+        guard let ws = workspace else { return }
+        flush()
+        showingDocs = false; sourceTabs.select(0)
+        let n = NoteStore.create(in: ws, title: "")
+        personal.insert(n, at: 0)
+        selectedURL = n.url
+        loadSelectionIntoEditor()
+        previewing = false; modeTabs.select(0)
+        setMode(detail: true)
         window?.makeFirstResponder(titleField)
-        persist()
     }
     @objc private func deleteSelected() {
-        guard let id = selectedId else { return }
+        guard let n = selected else { return }
         saveTimer?.invalidate(); saveTimer = nil
-        notes.removeAll { $0.id == id }
-        selectedId = nil
+        // 워크스페이스 문서는 사용자의 소스 파일이다 — 패널에서 지우지 않고 목록에서만 뺀다.
+        if n.scope == .workspace {
+            selectedURL = nil
+            loadSelectionIntoEditor(); setMode(detail: false); reload()
+            return
+        }
+        NoteStore.delete(n)
+        selectedURL = nil
         loadSelectionIntoEditor()
-        persist()
-        setMode(detail: false)        // deleting returns you to the list
-        renderList()
+        setMode(detail: false)
+        reload()
     }
+    @objc private func revealSelected() {
+        guard let n = selected else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([n.url])
+    }
+    @objc private func revertSelected() {
+        guard let n = selected, NoteStore.restoreBackup(n.url) else { return }
+        saveTimer?.invalidate(); saveTimer = nil
+        loadSelectionIntoEditor()
+        if previewing { preview.setMarkdown(NoteStore.compose(title: titleField.stringValue, body: body.string)) }
+        setMode(detail: true)
+        reload()
+    }
+
     func textDidChange(_ notification: Notification) { touch() }
     func controlTextDidChange(_ obj: Notification) { touch() }
     private func touch() {
@@ -318,39 +429,50 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     /// Write pending edits to disk now (debounce cancelled). Safe when nothing changed.
     func flush() {
         saveTimer?.invalidate(); saveTimer = nil
-        guard let id = selectedId, let i = notes.firstIndex(where: { $0.id == id }) else { return }
-        let newTitle = titleField.stringValue, newBody = body.string
-        guard notes[i].title != newTitle || notes[i].body != newBody else { return }
-        notes[i].title = newTitle; notes[i].body = newBody; notes[i].updated = Date()
-        persist()
+        guard let n = selected, titleField.isEditable else { return }
+        let text = NoteStore.compose(title: titleField.stringValue, body: body.string)
+        guard text != n.read() else { return }
+        // 사람이 저장할 때는 .bak 를 남기지 않는다 (매 타이핑마다 백업이 도는 건 낭비고,
+        // 편집기에는 실행 취소가 있다). .bak 는 에이전트 덮어쓰기 전용이다.
+        NoteStore.write(text, to: n.url, backup: false)
         savedLabel.stringValue = t("notes.savedAt", ["t": t("time.now")])
-        renderList()   // title/time in the list follow the edit
-    }
-    private func persist() {
-        guard let ws = workspace else { return }
-        NotesPanel.save(notes, for: ws)
+        reload()
     }
 
-    // ---- storage (riven's support dir, keyed by workspace path) ----
-    private static func fileURL(_ ws: URL) -> URL {
-        let dir = AgentHookServer.ensureSupportDir().appendingPathComponent("notes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // Same path-encoding scheme the CLI uses for its project dirs: every non-alphanumeric → "-".
-        let enc = ws.path.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
-        return dir.appendingPathComponent("\(enc).json")
+    // ---- 바깥에서 들어오는 변경 (에이전트 / 탐색기) ----
+
+    /// 특정 .md 파일을 이 패널에서 연다 (탐색기의 "메모로 열기", 에이전트가 쓴 메모 보여주기).
+    func open(_ url: URL) {
+        flush()
+        let inWs = workspace.map { url.path.hasPrefix($0.path) } ?? false
+        if inWs != showingDocs { showingDocs = inWs; sourceTabs.select(inWs ? 1 : 0) }
+        reload()
+        select(url)
     }
-    static func load(_ ws: URL) -> [Note] {
-        guard let d = try? Data(contentsOf: fileURL(ws)) else { return [] }
-        let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
-        return (try? dec.decode([Note].self, from: d)) ?? []
+
+    /// 검증용: 편집 ↔ 미리보기 전환 (탭을 누른 것과 같은 경로).
+    func debugSetPreview(_ on: Bool) {
+        modeTabs.select(on ? 1 : 0)
+        modePicked(on ? 1 : 0)
     }
-    static func save(_ notes: [Note], for ws: URL) {
-        let url = fileURL(ws)
-        // Drop fully-empty notes so an accidental "+" doesn't leave clutter behind.
-        let keep = notes.filter { !($0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                    && $0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-        if keep.isEmpty { try? FileManager.default.removeItem(at: url); return }
-        let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601; enc.outputFormatting = [.prettyPrinted]
-        if let d = try? enc.encode(keep) { try? d.write(to: url, options: .atomic) }
+    /// 검증용: 목록으로 (뒤로 버튼과 같은 경로). docs = 워크스페이스 문서 탭.
+    func debugShowList(docs: Bool = false) {
+        showList()
+        sourceTabs.select(docs ? 1 : 0)
+        sourcePicked(docs ? 1 : 0)
+    }
+
+    /// 에이전트가 메모를 만들거나 고쳤다. 목록을 다시 읽고 표시를 남긴다.
+    /// 지금 그 메모를 열어 둔 상태면 편집기 내용도 새로 읽는다 (사용자가 보던 화면이
+    /// 디스크와 어긋나지 않게).
+    func noteChangedByAgent(_ url: URL) {
+        agentTouched.insert(url.path)
+        reload()
+        if selectedURL == url {
+            saveTimer?.invalidate(); saveTimer = nil
+            loadSelectionIntoEditor()
+            if previewing { preview.setMarkdown(NoteStore.compose(title: titleField.stringValue, body: body.string)) }
+        }
+        setMode(detail: showingDetail)   // 되돌리기 버튼 노출 갱신
     }
 }
