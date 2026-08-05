@@ -560,6 +560,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
+                if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        Usage.limits { first in
+                            RLog.log("USAGEFIX 1차 결과=\(first.outcome) 세션=\(first.sessionRemaining.map(String.init) ?? "-")")
+                            // 만료 상황 재현: 토큰을 못 쓰게 만들어 둔 채 부른다.
+                            Usage.debugPoisonToken()
+                            Usage.limits { second in
+                                RLog.log("USAGEFIX 만료후=\(second.outcome) 세션=\(second.sessionRemaining.map(String.init) ?? "-") 토큰재시도=\(Usage.debugAuthRetries)회")
+                                DispatchQueue.main.async {
+                                    self.lastUsageOutcome = second.outcome
+                                    RLog.log("USAGEFIX 안내문=\(self.usageFreshness())")
+                                    RLog.log("USAGEFIX done")
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_BRFIX=1: 점검에서 나온 치명 항목들이 실제로 고쳐졌는지.
                 if ProcessInfo.processInfo.environment["RIVEN_BRFIX"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -5636,7 +5655,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard Date().timeIntervalSince(lastUsageRefresh) > 3 else { return }
         refreshUsage()
     }
+    /// 마지막 조회가 어떻게 끝났는지. 실패를 감추면 화면은 옛 숫자를 그대로 들고 있고
+    /// 사용자에게는 "갱신이 안 된다" 로 보인다 (실제로 그렇게 보였다).
+    private(set) var lastUsageOutcome: Usage.Outcome = .ok
     private func refreshUsage(force: Bool = false) {
+        // 사용자가 openusage 같은 걸 같이 띄워 두면 같은 엔드포인트를 함께 두드리게 된다.
+        // 우리 쪽에서 불필요하게 겹쳐 부르지 않도록 최소 간격을 둔다 (버튼은 예외).
+        if !force, Date().timeIntervalSince(lastUsageRefresh) < 20 { return }
         lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
@@ -5644,8 +5669,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // empty; upgrade to session%·weekly% if the plan-limits API resolves.
             DispatchQueue.main.async { self.lastToday = t; self.statusBar.setUsage(limits: self.lastLimits, today: t); self.updateHeaderUsage(limits: self.lastLimits, today: t); self.rebuildPinnedUsage() }
             Usage.limits { lim in
-                guard lim.sessionRemaining != nil || lim.weeklyRemaining != nil else { return }
-                DispatchQueue.main.async { self.lastLimits = lim; self.statusBar.setUsage(limits: lim, today: t); self.updateHeaderUsage(limits: lim, today: t); self.rebuildPinnedUsage() }
+                DispatchQueue.main.async {
+                    self.lastUsageOutcome = lim.outcome
+                    // 값이 왔을 때만 숫자를 갈아 끼운다. 실패했을 때는 마지막 숫자를 남겨 두되,
+                    // 언제 것인지·왜 못 갱신했는지를 팝오버와 흐린 표시로 알린다.
+                    if lim.sessionRemaining != nil || lim.weeklyRemaining != nil { self.lastLimits = lim }
+                    self.statusBar.setUsage(limits: self.lastLimits, today: t)
+                    self.updateHeaderUsage(limits: self.lastLimits, today: t)
+                    self.rebuildPinnedUsage()
+                }
             }
         }
     }
@@ -5657,15 +5689,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else if let s { headerUsage.stringValue = "\(s)%"; headerUsageItem.isHidden = false }
         else if let c = today?.totalCost, c > 0 { headerUsage.stringValue = String(format: "$%.2f", c); headerUsageItem.isHidden = false }
         else { headerUsageItem.isHidden = true }
+        // 오래된 숫자는 흐리게. 5분 넘게 갱신되지 않았으면 지금 값이 아니다.
+        // (아직 한 번도 못 불러온 상태는 흐리게 하지 않는다 — 그냥 뜨는 중이다.)
+        let stale = Usage.lastSuccess.map { Date().timeIntervalSince($0) > 300 } ?? false
+        headerUsage.alphaValue = stale ? 0.45 : 1
+        headerUsageItem.toolTip = usageFreshness()
+    }
+    /// "방금 갱신" / "12분 전 · 로그인 정보가 만료돼 갱신하지 못했습니다" 같은 한 줄.
+    func usageFreshness() -> String {
+        var when = t("usage.never")
+        if let s = Usage.lastSuccess {
+            let m = Int(Date().timeIntervalSince(s) / 60)
+            when = m < 1 ? t("usage.justNow") : t("usage.minsAgo", ["n": String(m)])
+        }
+        switch lastUsageOutcome {
+        case .ok: return when
+        case .noToken: return when + " · " + t("usage.noToken")
+        case .unauthorized: return when + " · " + t("usage.unauthorized")
+        case .rateLimited(let sec):
+            return when + " · " + t("usage.rateLimited", ["n": String(sec ?? 60)])
+        case .failed(let why): return when + " · " + t("usage.failed", ["msg": why])
+        }
     }
     @objc private func headerUsageClicked() {
         if headerUsagePopover?.isShown == true { headerUsagePopover?.close(); return }
         let pop = headerUsagePopover ?? NSPopover()
         pop.behavior = .transient
         pop.contentViewController = NSViewController()
-        pop.contentViewController?.view = UsageUI.content(limits: lastLimits, today: lastToday) { [weak self] in
-            self?.headerUsagePopover?.close(); self?.pinUsage()
-        }
+        pop.contentViewController?.view = UsageUI.content(
+            limits: lastLimits, today: lastToday, freshness: usageFreshness(),
+            onReload: { [weak self] in self?.refreshUsage(force: true) },
+            onPin: { [weak self] in self?.headerUsagePopover?.close(); self?.pinUsage() })
         headerUsagePopover = pop
         pop.show(relativeTo: headerUsageItem.bounds, of: headerUsageItem, preferredEdge: .maxY)
     }

@@ -91,6 +91,7 @@ enum UsageUI {
 
     // Build the popover body. `onPin` is called when the pin button is clicked.
     static func content(limits: Usage.Limits?, today: Usage.Today?,
+                        freshness: String? = nil,
                         onReload: (() -> Void)? = nil, onPin: @escaping () -> Void) -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical; stack.spacing = 8; stack.alignment = .leading
@@ -122,7 +123,27 @@ enum UsageUI {
         (headRow.arrangedSubviews[1]).setContentHuggingPriority(.defaultLow, for: .horizontal)
         headRow.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(headRow)
+        // 언제 것인지 · 왜 못 갱신했는지. 숫자만 보여 주면 멈춰 있어도 알 수가 없다.
+        if let freshness {
+            let f = NSTextField(labelWithString: freshness)
+            f.font = UIScale.font(UIScale.caption)
+            f.textColor = freshness.contains("·") ? Theme.warning : Theme.fgDim
+            f.lineBreakMode = .byWordWrapping
+            f.maximumNumberOfLines = 2
+            f.preferredMaxLayoutWidth = 220
+            stack.addArrangedSubview(f)
+        }
 
+        // 언제 것인지 · 왜 못 갱신했는지. 숫자만 보여 주면 멈춰 있어도 알 수가 없다.
+        if let freshness {
+            let f = NSTextField(labelWithString: freshness)
+            f.font = UIScale.font(UIScale.caption)
+            f.textColor = freshness.contains("·") ? Theme.warning : Theme.fgDim
+            f.lineBreakMode = .byWordWrapping
+            f.maximumNumberOfLines = 2
+            f.preferredMaxLayoutWidth = 220
+            stack.addArrangedSubview(f)
+        }
         if let s = bar("세션 (5시간)", limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) {
             stack.addArrangedSubview(s); s.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         }
