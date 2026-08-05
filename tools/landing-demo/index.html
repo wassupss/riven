@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>riven demo frame</title>
+<style>
+  /* Tokens + metrics traced from the app, not from a screenshot:
+     Theme.swift (ember), Components.swift (UIMetrics), main.swift (chrome heights),
+     Dock/DockTabBar.swift (30px strip, active tab = bg fill + 2px accent underline),
+     StatusBar.swift (25px: folder+branch left / lang+account right). */
+  :root {
+    --bg: #101113; --bg2: #16181b; --bg3: #1e2126; --line: #26292e;
+    --fg: #e3e5ea; --dim: #868d98; --accent: #ff7847; --accent2: #a18fff;
+    --ok: #4cc38a; --warn: #e2b053; --danger: #e5534b; --info: #5eb1ef;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+    --ui: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1280px; height: 760px; overflow: hidden; background: var(--bg); }
+  body { font-family: var(--ui); color: var(--fg); font-size: 12px; -webkit-font-smoothing: antialiased; }
+  #stage { position: relative; width: 1280px; height: 760px; }
+  .abs { position: absolute; }
+  .mono { font-family: var(--mono); }
+  .dim { color: var(--dim); }
+
+  /* chrome ------------------------------------------------------------- */
+  .side { background: var(--bg2); }
+  .head { background: var(--bg2); }                       /* sidebar head + dock header, 30px */
+  .hair { background: var(--line); }
+  .sect { display: flex; align-items: center; height: 24px; padding: 0 12px; font-size: 10.5px;
+          letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
+  .status { background: var(--bg2); display: flex; align-items: center; padding: 0 12px; font-size: 11px; color: var(--dim); }
+  .status b { font-weight: 400; color: var(--fg); }
+  .gap { flex: 1; }
+
+  /* workspace rail ------------------------------------------------------ */
+  .wcard { margin: 2px 12px 0; padding: 7px 9px; border-radius: 6px; background: var(--bg3); }
+  .wcard.on { box-shadow: inset 2px 0 0 var(--accent); }
+  .wcard .nm { font-size: 12px; font-weight: 600; }
+  .wcard .pt { font-family: var(--mono); font-size: 10px; color: var(--dim); margin-top: 1px; }
+  .arow { display: flex; align-items: center; gap: 7px; height: 22px; margin: 0 12px; padding: 0 8px 0 18px;
+          border-radius: 5px; font-size: 11.5px; color: #c3c8d0; }
+  .arow.on { background: rgba(255,120,71,.12); color: var(--fg); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+
+  /* explorer ------------------------------------------------------------ */
+  .frow { display: flex; align-items: center; gap: 6px; height: 21px; padding: 0 12px; font-size: 12px; color: #c3c8d0; }
+  .frow.on { background: rgba(255,120,71,.12); color: var(--fg); }
+  .ft { font-family: var(--mono); font-size: 8.5px; width: 14px; text-align: center; flex: 0 0 auto; }
+
+  /* dock ----------------------------------------------------------------- */
+  .pane { background: var(--bg); overflow: hidden; }      /* panel content sits on bg */
+  .tabbar { background: var(--bg2); display: flex; height: 30px; }
+  .tab { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px 0 11px;
+         border-right: 1px solid var(--line); font-size: 12px; color: rgba(134,141,152,.7);
+         min-width: 84px; position: relative; }
+  .tab.on { background: var(--bg); color: var(--fg); }
+  .tab.on::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--accent); }
+  .tab .ti { font-size: 10px; color: var(--dim); }
+  .tab .x { margin-left: auto; color: #5c636d; font-size: 11px; }
+
+  /* editor ---------------------------------------------------------------- */
+  .ftabs { display: flex; height: 26px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  .ftab { display: flex; align-items: center; gap: 6px; padding: 0 10px; font-size: 11.5px; color: var(--dim); }
+  .ftab.on { background: var(--bg2); color: var(--fg); }
+  .code { font-family: var(--mono); font-size: 11.5px; line-height: 17px; white-space: pre; }
+  .ln { color: #414850; display: inline-block; width: 22px; text-align: right; margin-right: 12px; }
+  .k { color: #569cd6; } .s { color: #ce9178; } .c { color: #6a9955; } .f { color: #dcdcaa; }
+  .t { color: #4ec9b0; } .v { color: #9cdcfe; } .p { color: #d4d4d4; }
+  .addl { background: rgba(76,195,138,.10); }
+
+  /* chat ------------------------------------------------------------------ */
+  .turn { display: flex; align-items: center; gap: 8px; margin: 10px 14px 2px; font-size: 10.5px; color: var(--dim); }
+  .ubub { position: relative; margin: 8px 14px; padding: 7px 10px 7px 12px; border-radius: 8px;
+          background: rgba(255,120,71,.07); font-size: 12.5px; line-height: 1.5; overflow: hidden; }
+  .ubub::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
+  .atext { margin: 6px 14px; font-size: 12.5px; line-height: 1.55; color: #d7dbe2; }
+  .atext .b { color: var(--accent); margin-right: 7px; }
+  .tline { display: flex; align-items: center; gap: 8px; margin: 3px 14px; font-family: var(--mono);
+           font-size: 11px; color: #6f7680; white-space: nowrap; overflow: hidden; }
+  .tline .tn { color: #98a0aa; }
+  .dl { margin: 1px 14px 4px 30px; font-family: var(--mono); font-size: 10.5px; line-height: 15px;
+        white-space: nowrap; overflow: hidden; }
+  .composer { position: absolute; left: 12px; right: 12px; bottom: 12px; border-radius: 10px;
+              border: 1px solid #2f343b; background: rgba(30,33,38,.92); }
+  .cin { padding: 10px 12px 6px; font-size: 12.5px; line-height: 1.5; min-height: 34px; }
+  .cin .ph { color: #5b626c; }
+  .crow { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px; }
+  .mchip { display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px; border-radius: 999px;
+           border: 1px solid var(--line); font-size: 10.5px; color: #b9bfc8; }
+  .plus { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line); color: var(--dim);
+          display: flex; align-items: center; justify-content: center; font-size: 13px; }
+  .send { margin-left: auto; height: 24px; padding: 0 12px; border-radius: 999px; background: var(--accent);
+          color: #1c0d05; font-size: 11px; font-weight: 600; display: flex; align-items: center; }
+  .caret { display: inline-block; width: 1.5px; height: 13px; background: var(--fg); vertical-align: -2px; }
+  .wd { display: inline-flex; gap: 3px; align-items: center; }
+  .wd i { width: 4px; height: 4px; border-radius: 2px; background: var(--dim); display: block; }
+
+  /* sub-agent lanes -------------------------------------------------------- */
+  .lane { background: var(--bg); border-left: 1px solid var(--line); overflow: hidden; }
+  .lhd { display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px;
+         border-bottom: 1px solid var(--line); font-size: 11.5px; }
+  .lln { font-family: var(--mono); font-size: 10.5px; line-height: 16px; color: #838a94; padding: 0 10px; }
+
+  /* changes ---------------------------------------------------------------- */
+  .chd { display: flex; align-items: center; padding: 8px 8px 8px 12px; font-size: 12px; }
+  .chd .tt { color: var(--fg); font-weight: 500; }
+  .tbtn { font-size: 11px; margin-left: 10px; }
+  .crow2 { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; font-size: 11.5px; }
+  .path { font-family: var(--mono); font-size: 11.5px; color: #c8cdd4; }
+
+  /* agent group ------------------------------------------------------------ */
+  .strip { display: flex; height: 32px; border-bottom: 1px solid var(--line); }
+  .sitem { display: flex; align-items: center; gap: 6px; padding: 0 14px; font-size: 12px; color: var(--dim);
+           position: relative; }
+  .sitem.on { color: var(--fg); }
+  .sitem.on::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: 0; height: 2px; background: var(--accent); }
+  .node { position: absolute; border-radius: 8px; background: var(--bg3); border: 1px solid var(--line);
+          display: flex; align-items: center; gap: 9px; padding: 0 11px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .av { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        font-size: 11px; font-weight: 600; flex: 0 0 auto; }
+  .node .nn { font-size: 12px; font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node .ns { font-size: 10px; color: var(--dim); font-family: var(--mono); margin-top: 1px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .node .ed { margin-left: auto; color: #5c636d; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+// ---------------------------------------------------------------------------
+// Synthetic riven demo — one deterministic still frame per renderFrame(n).
+// The chrome mirrors the real app (see the tokens comment above); the CONTENT is
+// fabricated on purpose: no real project, code, git state, account or usage.
+// ---------------------------------------------------------------------------
+const Q = new URLSearchParams(location.search);
+const FPS = +(Q.get('fps') || 24);
+let t = +(Q.get('f') || 0) / FPS;
+
+const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+const ease = x => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const ramp = (a, b) => ease(clamp((t - a) / (b - a), 0, 1));
+const lerp = (a, b, u) => a + (b - a) * u;
+const type = (s, a, b) => s.slice(0, Math.round(s.length * clamp((t - a) / (b - a), 0, 1)));
+const blink = () => Math.floor(t * 2) % 2 === 0;
+
+const S = document.getElementById('stage');
+const px = v => Math.round(v) + 'px';
+function box(cls, x, y, w, h, css, html) {
+  const d = document.createElement('div');
+  d.className = (cls || '') + ' abs';
+  Object.assign(d.style, { left: px(x), top: px(y), width: px(w), height: px(h) }, css || {});
+  if (html != null) d.innerHTML = html;
+  S.appendChild(d);
+  return d;
+}
+const hair = (x, y, w, h) => box('hair', x, y, w, h);
+
+// ---- metrics (main.swift: statusH 25, titleH 30, sidebar 220; DockGroup tab bar 30)
+const W = 1280, H = 760, HEAD = 30, STATUS = 25, SIDE = 220;
+const DOCK = { x: SIDE + 1, y: HEAD, w: W - SIDE - 1, h: H - HEAD - STATUS };
+
+const T = {
+  chatOpen: 3.2, typeFrom: 4.5, typeTo: 6.8, send: 7.0,
+  subOpen: 11.2, changes: 15.2, agents: 19.0, end: 23.0
+};
+
+// DockTabBar: 30px strip on bg2; the active tab fills with bg (merging into the
+// panel below) and carries a 2px accent underline; every tab has a right hairline.
+const tabbar = (tabs, w) => `<div class="tabbar" style="width:${w}px">
+    ${tabs.map(([ic, title, on, closable]) => `<div class="tab${on ? ' on' : ''}">
+        <span class="ti">${ic}</span><span>${title}</span>${closable ? '<span class="x">×</span>' : ''}</div>`).join('')}
+  </div>`;
+
+function draw() {
+// ---- sidebar ---------------------------------------------------------------
+box('side', 0, 0, SIDE, H - STATUS);
+box('head', 0, 0, SIDE, HEAD, {}, `
+  <div class="abs" style="right:8px;top:0;height:30px;display:flex;align-items:center;gap:6px;
+       font-size:12px;font-weight:500;color:var(--dim)">▥ Add panel</div>`);
+hair(SIDE, 0, 1, H - STATUS);
+
+// workspace rail: the card, then one child row per agent pane (Orca-style tree)
+(() => {
+  const rows = [];
+  if (t >= T.chatOpen) rows.push(['Claude', 'chat', t < T.changes - 0.6 ? 'busy' : 'idle', true]);
+  if (t >= T.subOpen + 0.6) rows.push(['Pico', 'tests', t < T.changes - 1.4 ? 'busy' : 'done', false]);
+  if (t >= T.subOpen + 1.4) rows.push(['Wren', 'docs', t < T.changes - 0.9 ? 'busy' : 'done', false]);
+  const color = s => s === 'busy' ? 'var(--accent)' : s === 'done' ? 'var(--ok)' : '#4a5058';
+  box('', 0, HEAD, SIDE, 190, {}, `
+    <div class="sect"><span>Workspaces</span><span class="gap"></span><span style="font-size:13px">＋</span></div>
+    <div class="wcard on">
+      <div class="nm">taskflow</div>
+      <div class="pt">~/Developer/taskflow</div>
+    </div>
+    <div style="height:5px"></div>
+    ${rows.map(([n, k, st, on]) => `<div class="arow${on ? ' on' : ''}">
+        <span class="dot" style="background:${color(st)}"></span>
+        <span>${n}</span><span class="mono dim" style="font-size:10px">${k}</span>
+      </div>`).join('')}`);
+  hair(0, HEAD + 190, SIDE, 1);
+})();
+
+// explorer
+(() => {
+  const base = [
+    ['▾', '📁', 'src', 0, 0], ['▸', '📁', 'ui', 1, 0],
+    ['', 'TS', 'index.ts', 1, 0], ['', 'TS', 'persist.ts', 1, 0],
+    ['', 'TS', 'store.ts', 1, 1], ['', 'TS', 'task.ts', 1, 0], ['', 'TS', 'theme.ts', 1, 0],
+    ['', '{}', 'package.json', 0, 0], ['', 'MD', 'README.md', 0, 0]
+  ];
+  const rows = t >= T.changes
+    ? base.slice(0, 5).concat([['', 'TS', 'store.test.ts', 1, 0]], base.slice(5))
+    : base;
+  box('', 0, HEAD + 191, SIDE, H - STATUS - HEAD - 191, {}, `
+    <div class="sect"><span>Explorer</span><span class="gap"></span>
+      <span style="letter-spacing:3px;font-size:11px">⊕ ⟳ ⌄</span></div>
+    ${rows.map(([tw, ic, nm, d, sel]) => `<div class="frow${sel ? ' on' : ''}" style="padding-left:${12 + d * 12}px">
+        <span class="dim" style="width:8px;font-size:8px">${tw}</span>
+        <span class="ft" style="color:${sel ? 'var(--accent)' : ic === 'TS' ? '#5f7fa8' : ic === 'MD' ? '#7f8a97' : '#8b939d'}">${ic}</span>
+        <span>${nm}</span></div>`).join('')}`);
+})();
+
+// ---- dock header: folder LEFT · usage + gear RIGHT (main.swift dockHeader) ---
+box('head', SIDE + 1, 0, W - SIDE - 1, HEAD, {}, `
+  <div class="abs" style="left:12px;top:0;height:30px;display:flex;align-items:center;gap:6px">
+    <span class="dim" style="font-size:11px">▤</span>
+    <span style="font-size:12px;font-weight:500">taskflow</span></div>
+  <div class="abs" style="right:12px;top:0;height:30px;display:flex;align-items:center;gap:12px;color:var(--dim)">
+    <span style="display:flex;align-items:center;gap:5px;font-size:11px">◔ $12.40</span>
+    <span style="font-size:13px">⚙</span></div>`);
+hair(SIDE + 1, HEAD - 1, W - SIDE - 1, 1);
+
+// ---- status bar: folder + branch LEFT · lang + account RIGHT ----------------
+box('status', 0, H - STATUS, W, STATUS, {}, `
+  <span style="display:flex;align-items:center;gap:5px">▭ taskflow</span>
+  <span style="display:flex;align-items:center;gap:5px;margin-left:14px">⑂ <b>main</b></span>
+  <span class="gap"></span>
+  <span>EN</span>
+  <span style="display:flex;align-items:center;gap:5px;margin-left:14px">◍ demo</span>`);
+hair(0, H - STATUS, W, 1);
+
+// ---- dock geometry ----------------------------------------------------------
+const wideU = clamp(ramp(T.subOpen - 0.2, T.subOpen + 0.7) - ramp(T.agents - 0.7, T.agents), 0, 1);
+const EDX = DOCK.x + Math.round(DOCK.w * lerp(0.505, 0.70, wideU));
+const CW = EDX - DOCK.x - 1;
+const chatU = ramp(T.chatOpen, T.chatOpen + 0.7);
+const chatH = Math.round(lerp(0, DOCK.h - 190, chatU));
+const termY = DOCK.y + chatH + (chatU > 0 ? 1 : 0);
+const termH = DOCK.h - chatH - (chatU > 0 ? 1 : 0);
+
+// ---- editor group: dock tab "Code", file tabs inside ------------------------
+(() => {
+  const diff = t >= T.changes + 0.9;
+  const EW = DOCK.x + DOCK.w - EDX;
+  let n = 0, out = '';
+  const L = (html, mark) => {
+    n++;
+    out += `<div class="${mark || ''}"><span class="ln" style="${mark ? 'color:var(--ok)' : ''}">${mark ? '+' : n}</span>${html}</div>`;
+  };
+  L(`<span class="k">import</span> <span class="p">{</span> <span class="v">Task</span><span class="p">,</span> <span class="v">createTask</span> <span class="p">}</span> <span class="k">from</span> <span class="s">'./task'</span>`);
+  L('');
+  L(`<span class="c">// A minimal observable store — the whole app state.</span>`);
+  L(`<span class="k">export class</span> <span class="t">Store</span> <span class="p">{</span>`);
+  L(`  <span class="k">private</span> <span class="v">tasks</span><span class="p">:</span> <span class="t">Task</span><span class="p">[] = []</span>`);
+  L(`  <span class="k">private</span> <span class="v">listeners</span> <span class="p">=</span> <span class="k">new</span> <span class="t">Set</span><span class="p">&lt;</span><span class="t">Listener</span><span class="p">&gt;()</span>`);
+  L('');
+  L(`  <span class="f">subscribe</span><span class="p">(</span><span class="v">fn</span><span class="p">:</span> <span class="t">Listener</span><span class="p">) {</span>`);
+  L(`    <span class="k">this</span><span class="p">.</span><span class="v">listeners</span><span class="p">.</span><span class="f">add</span><span class="p">(</span><span class="v">fn</span><span class="p">)</span>`);
+  L(`    <span class="k">return</span> <span class="p">() =&gt;</span> <span class="k">this</span><span class="p">.</span><span class="v">listeners</span><span class="p">.</span><span class="f">delete</span><span class="p">(</span><span class="v">fn</span><span class="p">)</span>`);
+  L(`  <span class="p">}</span>`);
+  L('');
+  L(`  <span class="f">add</span><span class="p">(</span><span class="v">title</span><span class="p">:</span> <span class="t">string</span><span class="p">) {</span>`);
+  if (diff) {
+    L(`    <span class="k">const</span> <span class="v">o</span> <span class="p">=</span> <span class="f">createTask</span><span class="p">(</span><span class="v">title</span><span class="p">)</span>`, 'addl');
+    L(`    <span class="k">this</span><span class="p">.</span><span class="v">tasks</span> <span class="p">= [</span><span class="v">o</span><span class="p">, ...</span><span class="k">this</span><span class="p">.</span><span class="v">tasks</span><span class="p">]</span>`, 'addl');
+    L(`    <span class="k">this</span><span class="p">.</span><span class="f">emit</span><span class="p">()</span>`, 'addl');
+    L(`    <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="f">persist</span><span class="p">(</span><span class="v">o</span><span class="p">).</span><span class="f">catch</span><span class="p">(() =&gt; </span><span class="k">this</span><span class="p">.</span><span class="f">rollback</span><span class="p">(</span><span class="v">o</span><span class="p">))</span>`, 'addl');
+  } else {
+    L(`    <span class="k">this</span><span class="p">.</span><span class="v">tasks</span> <span class="p">= [</span><span class="f">createTask</span><span class="p">(</span><span class="v">title</span><span class="p">), ...</span><span class="k">this</span><span class="p">.</span><span class="v">tasks</span><span class="p">]</span>`);
+    L(`    <span class="k">this</span><span class="p">.</span><span class="f">emit</span><span class="p">()</span>`);
+  }
+  L(`  <span class="p">}</span>`);
+  L('');
+  L(`  <span class="f">all</span><span class="p">():</span> <span class="k">readonly</span> <span class="t">Task</span><span class="p">[] {</span> <span class="k">return</span> <span class="k">this</span><span class="p">.</span><span class="v">tasks</span> <span class="p">}</span>`);
+  L(`<span class="p">}</span>`);
+
+  box('pane', EDX, DOCK.y, EW, DOCK.h, {}, tabbar([['{}', 'Code', true, true]], EW) + `
+    <div class="ftabs">
+      <div class="ftab on">store.ts <span style="color:#5c636d">×</span></div>
+      <div class="ftab">task.ts <span style="color:#5c636d">×</span></div>
+      ${diff ? '<div class="ftab">store.test.ts <span style="color:#5c636d">×</span></div>' : ''}
+    </div>
+    ${diff ? `<div style="height:24px;display:flex;align-items:center;gap:10px;padding:0 12px;
+        background:var(--bg2);border-bottom:1px solid var(--line);font-size:11px">
+        <span class="mono" style="color:var(--ok)">+18</span><span class="mono" style="color:var(--danger)">−4</span>
+        <span class="dim">agent edit · optimistic add</span>
+        <span style="flex:1"></span>
+        <span class="dim">Revert hunk</span><span style="color:var(--ok)">Keep</span></div>` : ''}
+    <div class="code" style="padding:7px 10px">${out}</div>
+    <div class="abs" style="right:0;top:${diff ? 80 : 56}px;width:52px;bottom:0;opacity:.22;
+         background:repeating-linear-gradient(180deg,#5b6472 0 2px,transparent 2px 5px);
+         -webkit-mask-image:linear-gradient(90deg,transparent,#000 45%)"></div>`);
+  hair(EDX - 1, DOCK.y, 1, DOCK.h);
+})();
+
+// ---- centre group: terminal, later the Changes panel ------------------------
+(() => {
+  const chg = t >= T.changes;
+  const tabs = chg ? [['◈', 'Changes', true, true], ['▶', 'Terminal', false, true]]
+                   : [['▶', 'Terminal', true, true], ['▶', 'zsh', false, true]];
+  let body;
+  if (!chg) {
+    const tl = [
+      ['<span class="dim">Last login on ttys004</span>'],
+      ['<span style="color:var(--ok)">~/Developer/taskflow</span> <span style="color:var(--accent)">\u276f</span> npm run dev'],
+      ['<span style="color:#8b939d">  vite v6.0.1  ready in 214 ms</span>'],
+      ['<span style="color:#8b939d">  \u279c  local:  http://localhost:5173/</span>'],
+      [`<span style="color:var(--ok)">~/Developer/taskflow</span> <span style="color:var(--accent)">\u276f</span> ${blink() ? '<span class="caret"></span>' : ''}`]
+    ];
+    body = `<div class="code" style="position:absolute;left:0;right:0;bottom:8px;padding:0 12px;color:#b9bfc8;white-space:normal">`
+      + tl.map(l => `<div style="white-space:pre">${l[0]}</div>`).join('') + `</div>`;
+  } else {
+    const rows = [['src/store.ts', 'TS', '+18', '−4'], ['src/store.test.ts', 'TS', '+62', '−0'],
+                  ['README.md', 'MD', '+9', '−1']];
+    const shown = Math.min(rows.length, Math.floor((t - T.changes) / 0.3) + 1);
+    body = `<div class="chd"><span class="tt">Changes</span><span class="gap"></span>
+        <span class="tbtn" style="color:var(--ok)">Accept all</span>
+        <span class="tbtn dim">Revert all</span></div>
+      ${rows.slice(0, shown).map(([f, ic, a, d]) => `<div class="crow2">
+          <span class="ft" style="color:${ic === 'MD' ? '#7f8a97' : '#5f7fa8'}">${ic}</span>
+          <span class="path">${f}</span>
+          <span class="mono" style="color:var(--ok)">${a}</span><span class="mono" style="color:var(--danger)">${d}</span>
+          <span class="gap"></span><span class="dim" style="font-size:10.5px">just now</span></div>`).join('')}`;
+  }
+  box('pane', DOCK.x, termY, CW, termH, {}, tabbar(tabs, CW) + body);
+  if (chatU > 0) hair(DOCK.x, termY - 1, CW, 1);
+})();
+
+// ---- chat group (later: the Agent group panel) -------------------------------
+if (chatU > 0) {
+  const agents = t >= T.agents;
+  const subU = ramp(T.subOpen, T.subOpen + 0.6);
+  const laneW = Math.round(lerp(0, CW * 0.45, agents ? 0 : subU));
+  const convW = CW - laneW;
+  const tabs = [['✳', 'Claude', !agents, true], ['◔', 'Agent group', agents, true]];
+  let inner;
+
+  if (!agents) {
+    const prompt = 'Add optimistic updates to the task store, then have the team cover it with tests and docs.';
+    const typed = type(prompt, T.typeFrom, T.typeTo);
+    const sent = t >= T.send;
+    let conv = '';
+    if (sent) {
+      const running = t < T.changes - 0.6;
+      conv += `<div class="ubub">${prompt}</div>`;
+      conv += `<div class="turn">${running
+        ? `<span class="wd"><i></i><i style="opacity:.6"></i><i style="opacity:.3"></i></span> Writing · ${(t - T.send).toFixed(1)}s`
+        : `<span style="color:var(--ok)">✓</span> Done · ${(T.changes - 0.6 - T.send).toFixed(1)}s`}
+        <span class="gap"></span><span>3.4k tokens</span></div>`;
+      const a1 = type("I'll make Store.add optimistic and roll back when the write fails.", T.send + 0.5, T.send + 2.2);
+      if (a1) conv += `<div class="atext"><span class="b">●</span>${a1}</div>`;
+      if (t > T.send + 2.3) conv += `<div class="tline"><span>◇</span><span class="tn">Read</span><span>src/store.ts</span></div>`;
+      if (t > T.send + 2.9) conv += `<div class="tline"><span>◇</span><span class="tn">Edit</span><span>src/store.ts</span>
+          <span style="color:var(--ok)">+18</span><span style="color:var(--danger)">−4</span></div>
+        <div class="dl">
+          <div style="color:#a05a56">− tasks = [createTask(title), ...tasks]</div>
+          <div style="color:#5f9e7c">+ const o = createTask(title)</div>
+          <div style="color:#5f9e7c">+ return this.persist(o).catch(…)</div>
+        </div>`;
+      const a2 = type('Handing the rest to the group, in parallel —', T.send + 3.4, T.send + 4.4);
+      if (a2) conv += `<div class="atext"><span class="b">●</span>${a2}</div>`;
+      if (t > T.subOpen - 0.4) conv += `<div class="tline"><span>◇</span>
+          <span class="tn">riven_ask_agents</span><span>Pico, Wren</span>
+          <span>${t > T.changes - 1.2 ? '· 2 replies' : '· running'}</span></div>`;
+      if (t > T.changes - 0.6) conv += `<div class="atext"><span class="b" style="color:var(--ok)">●</span>3 files changed · 14 tests passing.</div>`;
+    }
+    inner = `<div class="abs" style="left:0;right:0;top:30px;bottom:${sent ? 58 : 96}px;overflow:hidden">
+        <div class="abs" style="left:0;right:0;bottom:0">${conv}</div></div>
+      ${sent
+        ? `<div class="composer"><div class="crow" style="padding:8px">
+             <span class="mchip">◔ Plan</span><span class="plus">＋</span>
+             <span class="dim" style="font-size:11px">esc to interrupt</span>
+             <span class="send" style="background:#2a2e34;color:#c3c8d0">Stop</span></div></div>`
+        : `<div class="composer">
+             <div class="cin">${typed || '<span class="ph">Message Claude…  ( / commands · Shift+Enter for newline )</span>'}${blink() ? '<span class="caret"></span>' : ''}</div>
+             <div class="crow"><span class="mchip">◔ Plan</span><span class="plus">＋</span>
+               <span class="send">Send</span></div></div>`}`;
+  } else {
+    const u = ramp(T.agents, T.agents + 0.6);
+    const CH = chatH - 30 - 32;
+    const nodeW = 168, nodeH = 58;
+    const cx = convW / 2, top = 30, childY = top + nodeH + 66, railY = childY - 28;
+    const kids = [[cx - nodeW - 16 - nodeW / 2, 'Nova', 'backend · sonnet', '#7c86e8'],
+                  [cx - nodeW / 2, 'Pico', 'tests · sonnet', '#4cc38a'],
+                  [cx + nodeW + 16 - nodeW / 2, 'Wren', 'docs · haiku', '#e2b053']];
+    inner = `
+      <div class="strip">
+        <div class="sitem">New group</div>
+        <div class="sitem on">taskflow squad <span class="mono dim" style="font-size:10px">4</span></div>
+      </div>
+      <div class="abs" style="left:0;right:0;top:62px;height:${CH}px;overflow:hidden;
+           background-image:radial-gradient(#20242a 1px, transparent 1px);background-size:16px 16px">
+        <svg class="abs" style="left:0;top:0;width:100%;height:100%">
+          <path d="M${cx} ${top + nodeH} V${railY} M${kids[0][0] + nodeW / 2} ${railY} H${kids[2][0] + nodeW / 2}
+                   ${kids.map(k => `M${k[0] + nodeW / 2} ${railY} V${childY}`).join(' ')}"
+                stroke="#39404a" stroke-width="1.5" fill="none"
+                stroke-dasharray="1400" stroke-dashoffset="${1400 * (1 - u)}"/>
+        </svg>
+        <div class="node" style="left:${cx - nodeW / 2}px;top:${top}px;width:${nodeW}px;height:${nodeH}px;opacity:${u}">
+          <span class="av" style="background:rgba(255,120,71,.16);color:var(--accent)">A</span>
+          <span style="min-width:0;overflow:hidden"><span class="nn">Atlas</span><div class="ns">MAIN · opus</div></span>
+          <span class="ed">✎</span></div>
+        ${kids.map(([x, n, s, c], i) => `<div class="node" style="left:${x}px;top:${childY}px;width:${nodeW}px;height:${nodeH}px;opacity:${clamp(u * 1.6 - i * 0.2, 0, 1)}">
+            <span class="av" style="background:${c}26;color:${c}">${n[0]}</span>
+            <span style="min-width:0;overflow:hidden"><span class="nn">${n}</span><div class="ns">${s}</div></span>
+            <span class="ed">✎</span></div>`).join('')}
+      </div>
+      <div class="abs" style="left:12px;bottom:9px;font-size:10.5px;color:var(--dim)">
+        Reports to Atlas · peers address each other by name</div>`;
+  }
+
+  box('pane', DOCK.x, DOCK.y, convW, chatH, { opacity: String(clamp(chatU * 1.4, 0, 1)) },
+      tabbar(tabs, convW) + inner);
+
+  // sub-agent lanes: equal columns in a right-side area (~45% of the chat panel)
+  if (laneW > 1) {
+    const lanes = [
+      ['Pico', 'tests', ['$ vitest run src/store.test.ts', 'added 6 cases for rollback', '✓ 14 passed (0.9s)'], '#4cc38a'],
+      ['Wren', 'docs', ['reading README.md', 'documenting optimistic add', '✓ README.md updated'], '#e2b053']
+    ];
+    const lw = Math.round(laneW / 2);
+    lanes.forEach(([nm, kind, lines, c], i) => {
+      const n = clamp(Math.floor((t - T.subOpen - 0.6 - i * 0.9) / 0.95) + 1, 0, lines.length);
+      const done = n === lines.length;
+      box('lane', DOCK.x + convW + i * lw, DOCK.y, lw, chatH, { opacity: String(subU) },
+        `<div class="lhd"><span class="dot" style="background:${done ? 'var(--ok)' : 'var(--accent)'}"></span>
+           <b style="font-weight:600">${nm}</b><span class="mono dim" style="font-size:10px">${kind}</span></div>
+         <div style="padding:6px 0">${lines.slice(0, n).map((l, j) =>
+           `<div class="lln" style="color:${j === lines.length - 1 && done ? c : '#838a94'}">${l}</div>`).join('')}</div>`);
+    });
+  }
+}
+}
+
+// One page renders every frame: the capture driver calls renderFrame(n), then shoots.
+window.renderFrame = n => { t = n / FPS; S.innerHTML = ''; draw(); return n; };
+draw();
+</script>
+</body>
+</html>

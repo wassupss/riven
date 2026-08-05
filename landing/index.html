@@ -7,8 +7,8 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="icon" href="favicon.png" sizes="48x48" type="image/png" />
 <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-<title>riven — 하나로 합친 통합 코드 에디터</title>
-<meta name="description" content="riven — 코드 에디터, 실제 터미널, 웹 프리뷰, Git, 멀티 언어 LSP를 한 앱에 통합한 데스크톱 IDE. 모든 것이 자유롭게 도킹되는 통합 개발 환경." />
+<title>riven — 에이전트를 팀처럼 굴리는 AI-first IDE</title>
+<meta name="description" content="riven — 코딩 에이전트를 팀처럼 운영하는 네이티브 macOS IDE. AI 채팅 패널, 에이전트 그룹과 조직도, 병렬 위임, 에이전트가 직접 쓰는 IDE 도구. 에디터·GPU 터미널·웹 프리뷰·Git이 모두 자유롭게 도킹됩니다." />
 <style>
   :root {
     --bg: #faf7f3;
@@ -120,7 +120,7 @@
     font-weight: 780; margin: 18px 0 0;
   }
   h1 .accent { color: var(--accent); }
-  .sub { font-size: clamp(16px, 2.3vw, 20px); color: var(--fg-soft); margin: 20px auto 0; max-width: 620px; }
+  .sub { font-size: clamp(16px, 2.3vw, 20px); color: var(--fg-soft); margin: 20px auto 0; max-width: 640px; }
   .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
   .cta .btn { padding: 12px 22px; font-size: 15px; }
   .cta-note { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 16px; }
@@ -145,7 +145,7 @@
 
   /* sections */
   section { padding: 72px 0; }
-  .section-head { max-width: 640px; margin-bottom: 44px; }
+  .section-head { max-width: 660px; margin-bottom: 44px; }
   .section-head.center { margin-left: auto; margin-right: auto; text-align: center; }
   h2 { font-size: clamp(26px, 4vw, 38px); letter-spacing: -0.02em; line-height: 1.15; margin-top: 12px; font-weight: 740; }
   .section-head p { color: var(--fg-soft); font-size: 17px; margin-top: 14px; }
@@ -183,6 +183,7 @@
   .install-box .cta { margin-top: 26px; }
   .install-meta { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 18px; }
   .install-meta code { color: var(--fg-soft); }
+  .install-note { font-size: 13px; color: var(--muted); margin-top: 10px; }
 
   /* footer */
   footer { border-top: 1px solid var(--line); padding: 34px 0; }
@@ -224,7 +225,8 @@
       riven
     </a>
     <div class="nav-spacer"></div>
-    <a class="nav-link hide-sm" href="#features"><span data-lang-en>Features</span><span data-lang-ko>기능</span></a>
+    <a class="nav-link hide-sm" href="#agents"><span data-lang-en>Agents</span><span data-lang-ko>에이전트</span></a>
+    <a class="nav-link hide-sm" href="#workbench"><span data-lang-en>Workbench</span><span data-lang-ko>워크벤치</span></a>
     <a class="nav-link hide-sm" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">GitHub</a>
     <div class="lang-toggle" role="group" aria-label="Language">
       <button id="lang-ko" type="button" onclick="setLang('ko')">KO</button>
@@ -240,14 +242,14 @@
 <a id="top"></a>
 <header class="hero">
   <div class="wrap hero-in">
-    <div class="eyebrow"><span data-lang-en>Integrated development environment</span><span data-lang-ko>통합 개발 환경</span></div>
+    <div class="eyebrow"><span data-lang-en>AI-first IDE · native macOS</span><span data-lang-ko>AI-first IDE · 네이티브 macOS</span></div>
     <h1>
-      <span data-lang-en>Editor, terminal, preview —<br><span class="accent">one integrated IDE.</span></span>
-      <span data-lang-ko>에디터·터미널·프리뷰를<br><span class="accent">하나로 합친 통합 IDE.</span></span>
+      <span data-lang-en>Run coding agents<br>like a team — <span class="accent">in one IDE.</span></span>
+      <span data-lang-ko>코딩 에이전트를 팀처럼,<br><span class="accent">하나의 IDE에서.</span></span>
     </h1>
     <p class="sub">
-      <span data-lang-en>A code editor, real terminals, web preview and Git — every tool you reach for, unified in one app. Every panel docks exactly where you want it.</span>
-      <span data-lang-ko>코드 에디터, 실제 터미널, 웹 프리뷰, Git까지 — 흩어져 있던 도구를 한 앱에 통합했습니다. 모든 패널은 원하는 자리에 자유롭게 도킹됩니다.</span>
+      <span data-lang-en>riven is a native macOS IDE built around agent orchestration. Every agent gets its own panel, a nickname and a reporting line — and they hand work to each other. Editor, GPU terminals, web preview and Git dock wherever you want them.</span>
+      <span data-lang-ko>riven은 에이전트 오케스트레이션을 중심으로 만든 네이티브 macOS IDE입니다. 에이전트마다 자기 패널·닉네임·보고 라인을 갖고 서로 일을 넘깁니다. 에디터·GPU 터미널·웹 프리뷰·Git은 원하는 자리에 도킹됩니다.</span>
     </p>
     <div class="cta">
       <a class="btn btn-primary dl-link" href="https://github.com/wassupss/riven/releases/latest" target="_blank" rel="noopener">
@@ -259,59 +261,102 @@
         <span data-lang-en>View on GitHub</span><span data-lang-ko>GitHub에서 보기</span>
       </a>
     </div>
-    <div class="cta-note"><span class="dl-name">riven-0.1.0.dmg</span> · <span data-lang-en>macOS · Apple Silicon &amp; Intel</span><span data-lang-ko>macOS · Apple Silicon &amp; Intel</span> · <span data-lang-en>Windows / Linux coming soon</span><span data-lang-ko>Windows / Linux 준비 중</span></div>
+    <div class="cta-note"><span class="dl-name">riven-0.1.48.dmg</span> · <span data-lang-en>macOS · Apple Silicon &amp; Intel</span><span data-lang-ko>macOS · Apple Silicon &amp; Intel</span> · <span data-lang-en>signed &amp; notarized</span><span data-lang-ko>서명·공증 완료</span></div>
   </div>
 
   <div class="wrap">
     <div class="shot-frame reveal">
-      <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/acme-web</span></div>
+      <div class="shot-bar"><i></i><i></i><i></i><span>riven — ~/Developer/taskflow</span></div>
       <video class="shot-media" autoplay muted loop playsinline preload="auto"
              poster="assets/riven-poster.png"
-             aria-label="riven IDE 데모: 코드 스크롤, 테마 전환, 설정·계정 동기화 패널">
-        <source src="assets/riven-demo.webm" type="video/webm" />
+             aria-label="riven demo: an agent edits the store, delegates tests and docs to two teammates in parallel, and the Changes panel reviews every edit">
         <source src="assets/riven-demo.mp4" type="video/mp4" />
       </video>
     </div>
   </div>
 </header>
 
-<section id="features">
+<section id="agents">
   <div class="wrap">
     <div class="section-head center">
-      <div class="eyebrow"><span data-lang-en>One workbench</span><span data-lang-ko>하나의 워크벤치</span></div>
-      <h2><span data-lang-en>Everything, in one integrated IDE.</span><span data-lang-ko>모든 것을, 하나의 통합 IDE에.</span></h2>
+      <div class="eyebrow"><span data-lang-en>Agent orchestration</span><span data-lang-ko>에이전트 오케스트레이션</span></div>
+      <h2><span data-lang-en>One agent is a chat. Several are a team.</span><span data-lang-ko>에이전트 하나는 채팅, 여럿은 팀.</span></h2>
+      <p><span data-lang-en>riven treats agents as first-class panels: they run side by side, know about each other, and hand work back and forth — while you watch every edit and approve every tool call.</span><span data-lang-ko>riven에서 에이전트는 일급 패널입니다. 나란히 돌아가고, 서로를 알고, 일을 주고받습니다. 그동안 모든 편집과 도구 호출은 당신 눈앞에서 승인됩니다.</span></p>
+    </div>
+
+    <div class="grid">
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 01-8 8H8l-5 3 1.6-4.4A8 8 0 1121 12z" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Native AI chat panel</span><span data-lang-ko>네이티브 AI 채팅 패널</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>Chat with Claude Code inside the IDE — signed in with your existing subscription, no extra API key. Streaming answers, tool lines with inline diffs, image paste, interrupt mid-turn, queued messages, and plan-mode results as a clickable badge.</span><span data-lang-ko>IDE 안에서 Claude Code와 대화합니다. 쓰던 구독 로그인 그대로, 별도 API 키가 필요 없습니다. 스트리밍 답변, 편집 diff가 붙는 도구 라인, 이미지 붙여넣기, 진행 중 중단, 메시지 대기열, 계획 모드 결과 배지까지.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="5" rx="1.5"/><rect x="2.5" y="16" width="6" height="5" rx="1.5"/><rect x="15.5" y="16" width="6" height="5" rx="1.5"/><path d="M12 8v4M5.5 16v-2h13v2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Agent groups &amp; org chart</span><span data-lang-ko>에이전트 그룹 &amp; 조직도</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>Give each agent a nickname, a persona, a model and someone to report to. riven lays the panes out by level and draws the reporting tree — click a node to jump to that agent, even one you closed.</span><span data-lang-ko>에이전트마다 닉네임·페르소나·모델·보고 대상을 정하면, riven이 계층대로 패널을 배치하고 보고 라인을 조직도로 그립니다. 노드를 클릭해 이동하고, 닫아둔 멤버도 클릭하면 세션째 되살아납니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h6M4 12h9M4 17h5" stroke-linecap="round"/><path d="M16 15l3 3 4-5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="18" cy="7" r="3"/></svg></div>
+        <h3><span data-lang-en>Agents that drive the IDE</span><span data-lang-ko>IDE를 직접 쓰는 에이전트</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>A built-in MCP server hands agents riven's own tools: ask you a multiple-choice question, open a file at a line, preview a page, screenshot it, fire an API request, list or switch workspaces, open and close panels. Agents you launch in a terminal get the same tools.</span><span data-lang-ko>내장 MCP 서버가 riven의 도구를 에이전트에게 넘깁니다. 사용자에게 선택지 묻기, 특정 줄로 파일 열기, 페이지 미리보기·스크린샷, API 요청 실행, 워크스페이스 목록·전환, 패널 열고 닫기. 터미널에서 직접 띄운 CLI에도 같은 도구가 붙습니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v4M12 8L6 12M12 8l6 4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="3" r="1.6"/><rect x="3" y="12" width="6" height="8" rx="1.5"/><rect x="15" y="12" width="6" height="8" rx="1.5"/></svg></div>
+        <h3><span data-lang-en>Parallel delegation</span><span data-lang-ko>병렬 위임</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>An agent can hand unrelated tasks to several teammates in one call — they all start at once and the answers come back together. Sub-agents open as their own dock panels, so you see the work as it happens.</span><span data-lang-ko>에이전트가 서로 무관한 일을 여러 동료에게 한 번에 넘깁니다. 전원이 동시에 시작하고 응답은 모아서 돌아옵니다. 서브에이전트는 각자 도크 패널로 열려 진행 상황이 그대로 보입니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l2.5 2.5L7 14M12.5 14H17" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Agent-aware terminals</span><span data-lang-ko>에이전트를 아는 터미널</span></h3>
+        <p><span data-lang-en>Claude Code, Codex, Gemini and Cursor Agent are detected wherever they're installed and open as panels. Lifecycle hooks report the real state — working, waiting for approval, done — so a pane never guesses from screen output, and each pane resumes its exact conversation on restart.</span><span data-lang-ko>Claude Code·Codex·Gemini·Cursor Agent를 설치 위치와 무관하게 찾아 패널로 엽니다. 라이프사이클 훅이 실제 상태(작업 중·승인 대기·완료)를 알려주므로 화면을 긁어 추측하지 않고, 각 패널은 재시작해도 그 대화를 그대로 이어갑니다.</span></p>
+      </div>
+      <div class="card reveal">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M6 8l-3 4 3 4M18 8l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <h3><span data-lang-en>Review every agent edit</span><span data-lang-ko>에이전트 편집 리뷰</span></h3>
+        <p><span data-lang-en>A Changes timeline lists every file an agent touched this session with +/− line counts. Click a row to open it with a multi-hunk inline diff, then accept or revert — per file, per hunk, or all at once.</span><span data-lang-ko>Changes 타임라인이 이번 세션에 에이전트가 건드린 모든 파일을 +/− 줄 수와 함께 보여줍니다. 행을 클릭하면 멀티 헝크 인라인 diff로 열리고, 파일 단위·헝크 단위·일괄로 수락하거나 되돌립니다.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="workbench" style="padding-top:0">
+  <div class="wrap">
+    <div class="section-head center">
+      <div class="eyebrow"><span data-lang-en>The workbench</span><span data-lang-ko>워크벤치</span></div>
+      <h2><span data-lang-en>A real IDE under the agents.</span><span data-lang-ko>에이전트 아래엔, 진짜 IDE.</span></h2>
+      <p><span data-lang-en>Native Swift and AppKit, GPU terminals from libghostty, the Monaco core from VS Code — no Electron shell in sight.</span><span data-lang-ko>네이티브 Swift·AppKit, libghostty의 GPU 터미널, VS Code의 Monaco 코어. Electron 껍데기는 없습니다.</span></p>
     </div>
 
     <div class="grid">
       <div class="card reveal">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 9v12"/></svg></div>
         <h3><span data-lang-en>Freely dockable panels</span><span data-lang-ko>자유 도킹 패널</span></h3>
-        <p><span data-lang-en>Explorer, editor, terminal and preview are all draggable panels — split them any way you like, or pop any panel out into its own window.</span><span data-lang-ko>탐색기·에디터·터미널·프리뷰가 모두 draggable 패널입니다. 원하는 대로 분할하고, 어떤 패널이든 별도 창으로 팝아웃할 수 있습니다.</span></p>
+        <p><span data-lang-en>Explorer, editor, terminals, chats and preview are all draggable panels — split them any way you like or pop one out into its own window. The whole layout is saved per workspace and restored on launch.</span><span data-lang-ko>탐색기·에디터·터미널·채팅·프리뷰가 모두 드래그 가능한 패널입니다. 원하는 대로 분할하고 별도 창으로 팝아웃하세요. 레이아웃 전체가 워크스페이스별로 저장되고 실행 시 복원됩니다.</span></p>
       </div>
       <div class="card reveal">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17l6-6-6-6M12 19h8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <h3><span data-lang-en>Persistent terminals</span><span data-lang-ko>영속 터미널</span></h3>
-        <p><span data-lang-en>Real PTYs live in the main process, surviving ⌘R and panel remounts, and reconnect instantly with a serialized screen snapshot.</span><span data-lang-ko>실제 PTY가 메인 프로세스에 살아 있어 ⌘R과 패널 재장착에도 살아남고, 직렬화된 화면 스냅샷으로 즉시 복원됩니다.</span></p>
+        <h3><span data-lang-en>GPU terminals</span><span data-lang-ko>GPU 터미널</span></h3>
+        <p><span data-lang-en>Real PTYs rendered by libghostty — the engine behind Ghostty. Full Korean IME, drag a file in to paste its path, and terminals survive workspace switches instead of being torn down.</span><span data-lang-ko>libghostty가 그리는 진짜 PTY — Ghostty의 그 엔진입니다. 한글 IME 완전 지원, 파일을 끌어다 놓으면 경로가 입력되고, 워크스페이스를 옮겨도 터미널은 죽지 않습니다.</span></p>
       </div>
       <div class="card reveal">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <h3><span data-lang-en>Monaco + multi-language LSP</span><span data-lang-ko>Monaco + 멀티 언어 LSP</span></h3>
-        <p><span data-lang-en>The Monaco core from VS Code. TypeScript/JS, Python, YAML and Bash work with zero setup; C/C++, Go and Rust light up automatically when on PATH.</span><span data-lang-ko>VS Code의 Monaco 코어. TypeScript/JS·Python·YAML·Bash는 무설정으로, C/C++·Go·Rust는 PATH에 있으면 자동으로 켜집니다.</span></p>
+        <h3><span data-lang-en>Monaco editor + LSP</span><span data-lang-ko>Monaco 에디터 + LSP</span></h3>
+        <p><span data-lang-en>The Monaco core from VS Code with VS Code-style split groups and Shiki syntax highlighting (tsx/jsx first-class), all bundled offline. TypeScript/JS get completion, hover, go-to-definition, references and diagnostics with zero setup.</span><span data-lang-ko>VS Code의 Monaco 코어에 VS Code식 분할 그룹, tsx/jsx까지 제대로 칠하는 Shiki 하이라이팅 — 전부 오프라인 번들입니다. TypeScript/JS는 무설정으로 자동완성·호버·정의 이동·참조·진단이 켜집니다.</span></p>
       </div>
       <div class="card reveal">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="9" r="2.5"/><path d="M6 8.5v7M8.5 6H14a3 3 0 013 3"/></svg></div>
-        <h3><span data-lang-en>Git built in</span><span data-lang-ko>Git 통합</span></h3>
-        <p><span data-lang-en>Stage, commit, push and pull, browse diffs and read inline blame — a full Git panel without leaving the editor.</span><span data-lang-ko>스테이지·커밋·push/pull·diff·인라인 blame까지 — 에디터를 벗어나지 않는 완전한 Git 패널.</span></p>
+        <h3><span data-lang-en>Git with a commit graph</span><span data-lang-ko>Git + 커밋 그래프</span></h3>
+        <p><span data-lang-en>Stage, commit, push and pull, browse diffs and read inline blame — plus a Fork-style graph with colored lanes, refs and a commit detail pane, right inside the source-control panel.</span><span data-lang-ko>스테이지·커밋·push/pull·diff·인라인 blame에 더해, 색 레인과 ref, 커밋 상세를 보여주는 Fork 스타일 그래프가 소스 컨트롤 패널 안에 있습니다.</span></p>
       </div>
       <div class="card reveal">
-        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M6 8l-3 4 3 4M18 8l3 4-3 4" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <h3><span data-lang-en>Inline edit review</span><span data-lang-ko>인라인 편집 리뷰</span></h3>
-        <p><span data-lang-en>A file watcher catches edits made outside the editor, auto-opens the file, and shows a multi-hunk inline diff against a git or cached baseline — with per-hunk revert.</span><span data-lang-ko>파일 워처가 에디터 밖에서 일어난 편집을 감지해 파일을 자동으로 열고, git 또는 캐시 기준과의 멀티 헝크 인라인 diff를 헝크 단위 되돌리기와 함께 보여줍니다.</span></p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18M8 21h8" stroke-linecap="round"/></svg></div>
+        <h3><span data-lang-en>API client &amp; web preview</span><span data-lang-ko>API 클라이언트 &amp; 웹 프리뷰</span></h3>
+        <p><span data-lang-en>Save and fire HTTP requests with headers, params and auth in a panel next to your code, and keep a live preview of your dev server beside it. Agents can drive both.</span><span data-lang-ko>헤더·파라미터·인증까지 갖춘 HTTP 요청을 코드 옆 패널에서 저장하고 실행하세요. 개발 서버 라이브 프리뷰도 나란히 둘 수 있고, 둘 다 에이전트가 직접 조작할 수 있습니다.</span></p>
       </div>
       <div class="card reveal">
-        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18" stroke-linecap="round"/><path d="M12 3c2.5 2.3 4 5.6 4 9s-1.5 6.7-4 9c-2.5-2.3-4-5.6-4-9s1.5-6.7 4-9z" stroke-linecap="round"/></svg></div>
-        <h3><span data-lang-en>Account &amp; sync</span><span data-lang-ko>계정 &amp; 동기화</span> <span class="tag">NEW</span></h3>
-        <p><span data-lang-en>Sign in with GitHub to sync your theme, fonts and keymap across machines. Secrets like API keys stay on your device and are never synced.</span><span data-lang-ko>GitHub로 로그인하면 테마·폰트·키맵이 기기 간에 동기화됩니다. API 키 같은 비밀값은 이 기기에만 저장되고 절대 동기화되지 않습니다.</span></p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h11l3 3v13a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" stroke-linejoin="round"/><path d="M8 10h8M8 14h5" stroke-linecap="round"/></svg></div>
+        <h3><span data-lang-en>Per-workspace notes</span><span data-lang-ko>워크스페이스 노트</span> <span class="tag">NEW</span></h3>
+        <p><span data-lang-en>A private notepad per project — a list of notes, autosaved. They live in riven's own storage, never in your working tree, so they never show up in git status or get swept into an agent's commit.</span><span data-lang-ko>프로젝트마다 붙는 개인 노트장. 여러 장을 목록으로 두고 자동 저장됩니다. 작업 트리가 아닌 riven 저장소에 있어서 git status에 뜨거나 에이전트 커밋에 딸려 들어가지 않습니다.</span></p>
       </div>
     </div>
   </div>
@@ -321,15 +366,18 @@
   <div class="wrap">
     <div class="section-head">
       <div class="eyebrow"><span data-lang-en>And the essentials</span><span data-lang-ko>그리고 기본기</span></div>
-      <h2><span data-lang-en>The rest of the workbench.</span><span data-lang-ko>워크벤치의 나머지.</span></h2>
+      <h2><span data-lang-en>The rest of the app.</span><span data-lang-ko>앱의 나머지.</span></h2>
     </div>
     <div class="strip">
       <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3" stroke-linecap="round"/></svg><div><b><span data-lang-en>Full-text search</span><span data-lang-ko>전체 텍스트 검색</span></b><p><span data-lang-en>Search across the whole workspace, jump straight to the line.</span><span data-lang-ko>워크스페이스 전체를 검색하고 해당 줄로 바로 이동.</span></p></div></div>
-      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18M8 21h8" stroke-linecap="round"/></svg><div><b><span data-lang-en>Web preview</span><span data-lang-ko>웹 프리뷰</span></b><p><span data-lang-en>A live preview panel with automatic dev-server port detection.</span><span data-lang-ko>개발 서버 포트를 자동 감지하는 라이브 프리뷰 패널.</span></p></div></div>
       <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l2.5 2.5L7 14M12 14h5" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b><span data-lang-en>Command palette</span><span data-lang-ko>커맨드 팔레트</span></b><p><span data-lang-en>Jump to any file or run any command from one prompt.</span><span data-lang-ko>파일 이동과 명령 실행을 한 프롬프트에서.</span></p></div></div>
       <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11h.01M11 11h.01M15 11h.01M8 14h8" stroke-linecap="round"/></svg><div><b><span data-lang-en>Custom keybindings</span><span data-lang-ko>커스텀 키바인딩</span></b><p><span data-lang-en>Rebind anything, chord shortcuts included.</span><span data-lang-ko>무엇이든 재지정, 코드(chord) 단축키까지.</span></p></div></div>
-      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor" stroke="none"/></svg><div><b><span data-lang-en>Themes &amp; fonts</span><span data-lang-ko>테마 &amp; 폰트</span></b><p><span data-lang-en>Curated themes, importable fonts for editor and terminal.</span><span data-lang-ko>엄선된 테마와 에디터·터미널용 임포트 가능한 폰트.</span></p></div></div>
-      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/></svg><div><b><span data-lang-en>Per-workspace sessions</span><span data-lang-ko>워크스페이스별 세션</span></b><p><span data-lang-en>Multiple projects at once — tabs, layout and terminals restored on restart.</span><span data-lang-ko>여러 프로젝트를 동시에 — 탭·레이아웃·터미널이 재시작 시 복원.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor" stroke="none"/></svg><div><b><span data-lang-en>Themes, fonts &amp; scale</span><span data-lang-ko>테마 · 폰트 · 배율</span></b><p><span data-lang-en>Curated themes, importable fonts, and one ⌘+/− scale for the whole app.</span><span data-lang-ko>엄선된 테마와 임포트 가능한 폰트, ⌘+/− 로 앱 전체가 함께 커지는 배율.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/></svg><div><b><span data-lang-en>Per-workspace sessions</span><span data-lang-ko>워크스페이스별 세션</span></b><p><span data-lang-en>Multiple projects at once, switching in ~20ms — tabs, layout, terminals and chats intact.</span><span data-lang-ko>여러 프로젝트를 동시에, 전환은 약 20ms — 탭·레이아웃·터미널·채팅 그대로.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18" stroke-linecap="round"/><path d="M12 3c2.5 2.3 4 5.6 4 9s-1.5 6.7-4 9c-2.5-2.3-4-5.6-4-9s1.5-6.7 4-9z" stroke-linecap="round"/></svg><div><b><span data-lang-en>Account &amp; sync</span><span data-lang-ko>계정 &amp; 동기화</span></b><p><span data-lang-en>Sign in with GitHub to sync theme, fonts and keymap. API keys never leave the device.</span><span data-lang-ko>GitHub 로그인으로 테마·폰트·키맵 동기화. API 키는 기기를 떠나지 않습니다.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l2.5-6 4 13L16 12h5" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b><span data-lang-en>Today's usage</span><span data-lang-ko>오늘 사용량</span></b><p><span data-lang-en>The status bar totals today's agent tokens and estimated cost per model.</span><span data-lang-ko>상태 표시줄이 오늘 쓴 토큰과 모델별 예상 비용을 합산해 보여줍니다.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v10m0 0l-3.5-3.5M12 14l3.5-3.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" stroke-linecap="round"/></svg><div><b><span data-lang-en>Signed, notarized, auto-updating</span><span data-lang-ko>서명·공증·자동 업데이트</span></b><p><span data-lang-en>Sparkle checks a signed appcast and installs updates on quit.</span><span data-lang-ko>Sparkle이 서명된 appcast를 확인하고 종료할 때 설치합니다.</span></p></div></div>
+      <div class="item reveal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h9M8.5 4v2M11 6c0 4-3 8-7 9M6.5 10c1 2.5 3.5 4.5 6 5.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M13 20l4-9 4 9M14.5 17h5" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b><span data-lang-en>Korean &amp; English</span><span data-lang-ko>한국어 &amp; 영어</span></b><p><span data-lang-en>The whole UI switches language live, no restart.</span><span data-lang-ko>재시작 없이 UI 전체가 즉시 바뀝니다.</span></p></div></div>
     </div>
   </div>
 </section>
@@ -338,7 +386,7 @@
   <div class="wrap">
     <div class="install-box reveal">
       <div class="eyebrow"><span data-lang-en>Get riven</span><span data-lang-ko>riven 받기</span></div>
-      <h2><span data-lang-en>One IDE. Start now.</span><span data-lang-ko>하나의 IDE. 지금 시작하세요.</span></h2>
+      <h2><span data-lang-en>Put your agents to work.</span><span data-lang-ko>에이전트를 일하게 하세요.</span></h2>
       <div class="cta">
         <a class="btn btn-primary dl-link" href="https://github.com/wassupss/riven/releases/latest" target="_blank" rel="noopener">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.4 12.9c0-2 1.6-3 1.7-3-.9-1.4-2.4-1.6-2.9-1.6-1.2-.1-2.4.7-3 .7-.6 0-1.6-.7-2.6-.7-1.3 0-2.6.8-3.2 2-1.4 2.4-.4 6 1 8 .7 1 1.4 2 2.4 2 1 0 1.3-.6 2.5-.6s1.5.6 2.5.6 1.7-1 2.3-2c.7-1.1 1-2.2 1-2.3 0 0-2-.8-2.1-3.1zM14.6 6.3c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-.9 1.5-.8 2.4.9.1 1.7-.4 2.3-1.1z"/></svg>
@@ -349,7 +397,11 @@
         </a>
       </div>
       <div class="install-meta">
-        <code class="dl-ver">v0.1.0</code> · <span data-lang-en>macOS · Apple Silicon &amp; Intel</span><span data-lang-ko>macOS · Apple Silicon &amp; Intel</span> · <span data-lang-en>Windows &amp; Linux coming soon</span><span data-lang-ko>Windows &amp; Linux 준비 중</span>
+        <code class="dl-ver">v0.1.48</code> · <span data-lang-en>macOS · Apple Silicon &amp; Intel · signed &amp; notarized</span><span data-lang-ko>macOS · Apple Silicon &amp; Intel · 서명·공증 완료</span>
+      </div>
+      <div class="install-note">
+        <span data-lang-en>The editor, terminals, Git and preview work on their own. Agent panels use the coding-CLI you already have installed — Claude Code, Codex, Gemini or Cursor Agent — with your own account.</span>
+        <span data-lang-ko>에디터·터미널·Git·프리뷰는 그 자체로 동작합니다. 에이전트 패널은 이미 설치해 둔 코딩 CLI(Claude Code · Codex · Gemini · Cursor Agent)를 당신의 계정으로 사용합니다.</span>
       </div>
     </div>
   </div>
@@ -361,7 +413,7 @@
       <img class="mark" src="favicon.svg" alt="" width="22" height="22" />
       riven
     </a>
-    <span class="mono dl-ver">v0.0.3</span>
+    <span class="mono dl-ver">v0.1.48</span>
     <div class="nav-spacer"></div>
     <span class="mono">© 2026 riven</span>
     <a class="nav-link" href="https://github.com/wassupss/riven" target="_blank" rel="noopener">GitHub</a>
