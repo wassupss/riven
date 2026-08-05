@@ -1104,6 +1104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Set once the saved sidebar geometry has been applied; before that we don't persist
     // divider drags (initial-layout resize events would otherwise overwrite saved values).
     private var sidebarLayoutRestored = false
+    var debugSidebarRestored: Bool { sidebarLayoutRestored }
 
     // The sidebar head (riven's .sidebar-head): draggable like a native titlebar
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
@@ -1653,7 +1654,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
         chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
-        chat.onEditedFile = { [weak self] path in self?.recordAgentFileEdit(workspace: st.url.path, path: path) }
+        chat.onEditedFile = { [weak self] path in
+            guard let self else { return }
+            self.recordAgentFileEdit(workspace: st.url.path, path: path)
+            // 에이전트가 마크다운을 쓰면 그 문서를 메모 패널에 띄운다. 도구로 만든 메모만
+            // 보여주고 파일로 쓴 문서는 안 보여주면, 정작 결과물을 어디서 봐야 할지 알 수 없다.
+            self.surfaceAgentMarkdown(path, ws: st.url)
+        }
         chat.onListAgents = { [weak self] in self?.chatAgents() ?? [] }
         chat.onAgentPanes = { [weak self] in self?.agentPanesReport() ?? "(unavailable)" }
         chat.onAskAgent = { [weak self, weak chat] target, message, done in
@@ -3059,12 +3066,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         var names: [String: String] = [:]
         for url in workspaces { if let n = workspaceNames[url] { names[url.absoluteString] = n } }
-        // Left fixed sidebar (workspace rail over explorer): remember the divider as a
-        // fraction of the sidebar height so the split restores at the same proportion.
-        var sidebarRail = 0.0
-        if let sv = sidebarSplit, sv.bounds.height > 1, sv.arrangedSubviews.count >= 2 {
-            sidebarRail = Double(sv.arrangedSubviews[0].frame.height / sv.bounds.height)
-        }
+        // 레일 높이는 railHeight(절대값) 하나로만 관리한다. 예전에는 여기서 비율(sidebarRail)로
+        // 한 번 더 저장하고 restoreSession 에서 나중에 복원해, 기동 초반에 복원한 railHeight 를
+        // 곧바로 덮어썼다 (483 로 맞춰둔 레일이 매번 222 쯤으로 되돌아가던 원인).
         var session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
@@ -3074,7 +3078,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "names": names,
             "layout": layouts
         ]
-        if sidebarRail > 0.05 { session["sidebarRail"] = sidebarRail }
         Settings.shared.set("session", session)
         activeDock?.dumpTree("persist")   // 레이아웃 이상 추적용 (디버그 로그에만)
     }
@@ -3177,6 +3180,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.refreshUsage(force: true)    // 버튼은 언제나 즉시
                 let t3 = self.lastUsageRefresh
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
+            }
+        }
+        // RIVEN_MDSURFACE=1: 에이전트가 워크스페이스에 .md 를 쓰면 메모 패널이 그 문서를 띄우는지.
+        if ProcessInfo.processInfo.environment["RIVEN_MDSURFACE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let ws = self.workspace else { return }
+                let f = ws.appendingPathComponent("agent-written.md")
+                try? "# 에이전트가 쓴 문서\n\n본문입니다.\n".write(to: f, atomically: true, encoding: .utf8)
+                self.surfaceAgentMarkdown(f.path, ws: ws)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    RLog.log("MDSURFACE 패널열림=\(self.auxDockPanels["notes"] != nil) "
+                           + "보이는문서=\(self.notesPanel.debugCurrentPath())")
+                    // 워크스페이스 밖 파일은 띄우지 않아야 한다.
+                    let out = URL(fileURLWithPath: "/tmp/outside-agent.md")
+                    try? "# 밖\n".write(to: out, atomically: true, encoding: .utf8)
+                    self.surfaceAgentMarkdown(out.path, ws: ws)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        RLog.log("MDSURFACE 밖의파일 뒤 보이는문서=\(self.notesPanel.debugCurrentPath())")
+                    }
+                }
+            }
+        }
+        // RIVEN_SIDEBARBENCH=1: 사이드바 분할선을 실제 마우스 이벤트로 끌어 보고, 저장까지
+        // 되는지 본다 (합성 이벤트라도 NSSplitView 의 모달 추적 루프가 그대로 처리한다).
+        if ProcessInfo.processInfo.environment["RIVEN_SIDEBARBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let win = self.window as NSWindow? else { return }
+                let before = Settings.shared.double("sidebarWidth", 220)
+                let sv = self.bodySplit!
+                let x = sv.arrangedSubviews[0].frame.maxX + sv.dividerThickness / 2
+                let y = sv.frame.midY
+                func post(_ type: NSEvent.EventType, _ pt: NSPoint) {
+                    guard let e = NSEvent.mouseEvent(with: type, location: sv.convert(pt, to: nil),
+                                                     modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: win.windowNumber, context: nil,
+                                                     eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+                    else { return }
+                    NSApp.postEvent(e, atStart: false)
+                }
+                RLog.log("SIDEBAR 드래그 시작 divider x=\(Int(x)) 저장값=\(Int(before))")
+                // 레일 분할선도 같이 끌어 본다 (여기가 이중 저장 지점).
+                if let rv = self.sidebarSplit, rv.arrangedSubviews.count >= 2 {
+                    let ry = rv.arrangedSubviews[0].frame.maxY + rv.dividerThickness / 2
+                    let rx = rv.frame.midX
+                    func rpost(_ type: NSEvent.EventType, _ pt: NSPoint) {
+                        guard let e = NSEvent.mouseEvent(with: type, location: rv.convert(pt, to: nil),
+                                                         modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: win.windowNumber, context: nil,
+                                                         eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+                        else { return }
+                        NSApp.postEvent(e, atStart: false)
+                    }
+                    rpost(.leftMouseDown, NSPoint(x: rx, y: ry))
+                    for i in 1...6 { rpost(.leftMouseDragged, NSPoint(x: rx, y: ry - CGFloat(i) * 10)) }
+                    rpost(.leftMouseUp, NSPoint(x: rx, y: ry - 60))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        RLog.log("SIDEBAR 레일 실제높이=\(Int(rv.arrangedSubviews[0].frame.height)) "
+                               + "railHeight저장=\(Int(Settings.shared.double("railHeight", 190)))")
+                    }
+                }
+                post(.leftMouseDown, NSPoint(x: x, y: y))
+                for i in 1...6 { post(.leftMouseDragged, NSPoint(x: x + CGFloat(i) * 8, y: y)) }
+                post(.leftMouseUp, NSPoint(x: x + 48, y: y))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    RLog.log("SIDEBAR 드래그 후 실제폭=\(Int(sv.arrangedSubviews[0].frame.width)) "
+                           + "저장값=\(Int(Settings.shared.double("sidebarWidth", 220))) "
+                           + "restored플래그=\(self.debugSidebarRestored)")
+                }
             }
         }
         // RIVEN_PERSONADUMP=1: 카드가 만들어진 뒤에 에이전트 목록이 주입되는 실제 순서를 그대로
@@ -3493,12 +3564,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
-        if let frac = s["sidebarRail"] as? Double, frac > 0.05, frac < 0.95 {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let sv = self.sidebarSplit, sv.bounds.height > 1 else { return }
-                sv.setPosition(CGFloat(frac) * sv.bounds.height, ofDividerAt: 0)
-            }
-        }
+        // 예전 세션에 남아 있는 sidebarRail(비율)은 무시한다. railHeight 로 이미 복원했고,
+        // 여기서 다시 손대면 사용자가 맞춰둔 높이를 창 높이에 비례한 값으로 덮어쓴다.
     }
 
     // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
@@ -4516,6 +4583,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 이 워크스페이스에 기록된 모든 그룹 이름.
     private func savedGroupNames(_ ws: URL) -> [String] {
         Settings.shared.keys(prefix: "group.\(ws.path)|").map { String($0.dropFirst("group.\(ws.path)|".count)) }
+    }
+
+    /// 에이전트가 워크스페이스 안에 쓴 .md 를 메모 패널의 문서 쪽에서 연다.
+    /// 짧은 시간에 여러 개를 쓰면 마지막 것만 띄운다 (파일마다 패널이 튀지 않게).
+    private var lastMarkdownSurface = Date.distantPast
+    private func surfaceAgentMarkdown(_ path: String, ws: URL) {
+        guard path.lowercased().hasSuffix(".md") else { return }
+        let url = URL(fileURLWithPath: path)
+        guard AppDelegate.isInside(url, ws), FileManager.default.fileExists(atPath: path) else { return }
+        guard Date().timeIntervalSince(lastMarkdownSurface) > 1.5 else { return }
+        lastMarkdownSurface = Date()
+        if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
+        notesPanel.setWorkspace(ws)
+        notesPanel.open(url)
     }
 
     /// 심볼릭 링크와 ".." 를 모두 편 절대 경로.

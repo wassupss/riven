@@ -442,6 +442,9 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     // ---- 바깥에서 들어오는 변경 (에이전트 / 탐색기) ----
 
     /// 특정 .md 파일을 이 패널에서 연다 (탐색기의 "메모로 열기", 에이전트가 쓴 메모 보여주기).
+    /// 벤치용: 지금 열려 있는 문서 경로.
+    func debugCurrentPath() -> String { selectedURL?.lastPathComponent ?? "(없음)" }
+
     func open(_ url: URL) {
         flush()
         let inWs = workspace.map { url.path.hasPrefix($0.path) } ?? false
