@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (the incoming dock's first layout), so tell the user something is happening instead of
     // freezing silently. It only helps if it actually PAINTS, which is why the heavy tail below runs
     // on the next runloop turn.
+    static let launchedAt = Date()
     private lazy var switchOverlay: NSView = {
         let v = NSView(); v.wantsLayer = true
         v.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.6).cgColor
@@ -158,6 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildLayout()
         Theme.register(self)
         window.makeKeyAndOrderFront(nil)
+        if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+            RLog.log(String(format: "BOOT 창표시 %.0fms", Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
+        }
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
@@ -712,7 +716,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // work to look like a freeze. Show the overlay FIRST and force a paint, then restore on
             // the next runloop turn so the spinner is actually on screen while it happens.
             let willRestore = (Settings.shared.object("session")?["workspaces"] as? [String])?.isEmpty == false
+            if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+                RLog.log(String(format: "BOOT 오버레이표시 %.0fms (창표시 이후 이만큼 지나서야 나온다)",
+                                Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
+            }
             if willRestore { showLoadingOverlay(t("app.restoring")) }
+            if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+                RLog.log("BOOT 오버레이 frame=\(NSStringFromRect(switchOverlay.frame)) "
+                       + "dockHost=\(NSStringFromRect(dockHost.bounds)) "
+                       + "숨김=\(switchOverlay.isHidden) 창보임=\(window.isVisible)")
+                // 복원 직전 화면을 그대로 떠서 실제로 보이는지 확인한다.
+                if let v = window.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                    v.cacheDisplay(in: v.bounds, to: rep)
+                    if let png = rep.representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: "/tmp/boot-overlay.png"))
+                    }
+                }
+            }
             DispatchQueue.main.async { self.restoreSession() }
         }
         // No auto folder-open on launch; the user opens one via + / ⌘O.
@@ -1776,7 +1796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return "not a folder: \(path)"
         }
-        chat.bind(workspace: st.url, resume: resume)
+        queueBind(chat, ws: st.url, resume: resume)
         let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
         let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: agent ?? "Claude",
                           icon: icon, content: chat, closable: true)
@@ -1922,7 +1942,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
         guard let dock = activeDock, let ws = workspace else { return }
         let p = makeChatPanel(for: state(for: ws), agent: agent)
-        dock.addPanel(p, reference: dock.activeGroup, direction: .right)
+        // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
+        // 쪼개서, 대화를 하나 더 열 때마다 화면이 반으로 갈렸다). 그룹 생성처럼 일부러
+        // 나눠야 하는 경우는 createAgentGroup 이 따로 방향을 준다.
+        let host = agentPanes().first { $0.panel.group === dock.activeGroup }?.panel.group ?? dock.activeGroup
+        dock.addPanel(p, reference: host, direction: nil)
         dock.setActive(p.group ?? dock.activeGroup!)
         p.content.window?.makeFirstResponder(p.content)
     }
@@ -1980,7 +2004,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func pickResume(_ item: NSMenuItem) {
         guard let sid = item.representedObject as? String, let dock = activeDock, let ws = workspace else { return }
         let p = makeChatPanel(for: state(for: ws), resume: sid)
-        dock.addPanel(p, reference: dock.activeGroup, direction: .right)
+        // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
+        // 쪼개서, 대화를 하나 더 열 때마다 화면이 반으로 갈렸다). 그룹 생성처럼 일부러
+        // 나눠야 하는 경우는 createAgentGroup 이 따로 방향을 준다.
+        let host = agentPanes().first { $0.panel.group === dock.activeGroup }?.panel.group ?? dock.activeGroup
+        dock.addPanel(p, reference: host, direction: nil)
         dock.setActive(p.group ?? dock.activeGroup!)
     }
     // This workspace's Claude session transcripts, newest first — with a title from the first
@@ -2081,7 +2109,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         g.select(id: p.id)
         (p.content as? TerminalView)?.focusTerminal()
     }
-    private func cycleTerminal(_ delta: Int) {         // ⌘⇧] / ⌘⇧[
+    /// ⌘⇧] / ⌘⇧[ — 지금 그룹의 패널 탭을 넘긴다. 예전에는 터미널 패널만 대상이라
+    /// 채팅·에이전트 탭 사이에서는 아무 일도 일어나지 않았다.
+    private func cycleTerminal(_ delta: Int) {
+        if let g = activeDock?.activeGroup, g.panels.count > 1 {
+            let panels = g.panels
+            let idx = panels.firstIndex { $0.id == g.activePanel?.id } ?? 0
+            let next = panels[(idx + delta + panels.count) % panels.count]
+            g.select(id: next.id)
+            focusPanelContent(next)
+            return
+        }
+        // 탭이 하나뿐인 그룹이면 예전처럼 터미널 팬들 사이를 돈다.
         let terms = terminalPanels()
         guard terms.count > 1, let cur = currentTerminalPanel(),
               let idx = terms.firstIndex(where: { $0.id == cur.id }) else { return }
@@ -2559,6 +2598,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let dock = activeDock,
                   let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }),
                   let g = panel.group else { return }
+            // 그룹만 활성화하면 그 그룹의 다른 탭이 보이는 채로 끝난다 — 누른 패널의 탭으로
+            // 실제로 넘어가야 한다 (이미 그 탭이면 select 가 값싸게 빠져나온다).
+            g.select(id: panel.id)
             dock.setActive(g)
             focusPanelContent(panel)
         }
@@ -2647,6 +2689,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // The FIRST switch to a workspace pays one-time costs (build its dock, spawn its panes) —
     // measured at ~186ms vs ~20ms for later switches, which is the "재실행 후 첫 이동이 렉" report.
     // Build those docks while the app is idle instead, one per runloop pass so the UI stays live.
+    // 채팅 팬 준비(claude 프로세스 기동 + 기록 재생)는 팬 하나에 0.2~1.2초가 든다. 복원 때
+    // 전부 한 런루프 턴에 몰아 하면 메인 스레드가 몇 초씩 멈춰 스피너도 안 돌고 커서가
+    // 비치볼이 된다. 한 턴에 하나씩 처리해 그 사이에 화면이 갱신되게 한다.
+    private var pendingBinds: [(chat: ChatPanel, ws: URL, resume: String?)] = []
+    private var bindDraining = false
+    private func queueBind(_ chat: ChatPanel, ws: URL, resume: String?) {
+        pendingBinds.append((chat, ws, resume))
+        guard !bindDraining else { return }
+        bindDraining = true
+        DispatchQueue.main.async { [weak self] in self?.drainBinds() }
+    }
+    private func drainBinds() {
+        guard !pendingBinds.isEmpty else {
+            bindDraining = false
+            hideSwitchOverlay()          // 팬까지 다 준비된 다음에 오버레이를 내린다
+            return
+        }
+        let job = pendingBinds.removeFirst()
+        let t = Date()
+        job.chat.bind(workspace: job.ws, resume: job.resume)
+        if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+            RLog.log(String(format: "BOOT   bind %.0fms (남은 %d개)",
+                            Date().timeIntervalSince(t) * 1000, pendingBinds.count))
+        }
+        DispatchQueue.main.async { [weak self] in self?.drainBinds() }
+    }
+
     private func prewarmWorkspaces(except active: URL) {
         let targets = workspaces.filter { $0 != active && state(for: $0).dock == nil }
         guard !targets.isEmpty else { return }
@@ -3092,6 +3161,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func restoreSession() {
+        if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+            RLog.log(String(format: "BOOT 복원시작 %.0fms", Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
+            DispatchQueue.main.async {
+                RLog.log(String(format: "BOOT 복원끝 %.0fms", Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
+            }
+        }
         guard let s = Settings.shared.object("session"),
               let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); return }
         let tabs = s["tabs"] as? [String: Any] ?? [:]
@@ -3121,7 +3196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         workspaces = restored
         let activeKey = s["active"] as? String
         let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
+        let tAct = Date()
         activate(active)
+        if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
+            RLog.log(String(format: "BOOT activate %.0fms (팬 %d개)",
+                            Date().timeIntervalSince(tAct) * 1000,
+                            activeDock?.groups.flatMap { $0.panels }.count ?? 0))
+        }
         prewarmWorkspaces(except: active)
         runSwitchBench()
         runResizeBench()
