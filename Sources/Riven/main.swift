@@ -1680,6 +1680,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true)
             } else {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
+                // 턴이 끝났으니 사용량을 다시 읽는다 (60초 폴링만으로는 답을 받고도 한동안
+                // 예전 수치가 그대로 남아 있었다).
+                self.refreshUsageAfterTurn()
                 // Done: if you're not watching THIS pane, raise the ember + post a banner.
                 // "Watching" = the app is frontmost AND this pane is the visible/selected one in the
                 // CURRENT workspace's dock (so clicking anywhere in it counts) — OR it holds focus.
@@ -3005,6 +3008,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let now = String(describing: type(of: self.window.firstResponder ?? NSNull()))
                     RLog.log("CARD afterSteal=\(stolen) afterActivate=\(now)")
                 }
+            }
+        }
+        // RIVEN_USAGEBENCH=1: 턴이 끝날 때 사용량이 다시 읽히는지 + 3초 합치기가 도는지.
+        if ProcessInfo.processInfo.environment["RIVEN_USAGEBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in   // 기동 시 갱신과 겹치지 않게
+                guard let self else { return }
+                let t0 = self.lastUsageRefresh
+                self.refreshUsageAfterTurn()
+                let t1 = self.lastUsageRefresh
+                self.refreshUsageAfterTurn()      // 곧바로 또 부르면 합쳐져야 한다
+                let t2 = self.lastUsageRefresh
+                self.refreshUsage(force: true)    // 버튼은 언제나 즉시
+                let t3 = self.lastUsageRefresh
+                RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
             }
         }
         // RIVEN_PERSONADUMP=1: 카드가 만들어진 뒤에 에이전트 목록이 주입되는 실제 순서를 그대로
@@ -4708,10 +4725,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.pinUsage()
             }
         }
+        statusBar.onReloadUsage = { [weak self] in self?.refreshUsage(force: true) }
         refreshUsage()
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
     }
-    private func refreshUsage() {
+    /// 턴이 끝날 때마다 부른다. 여러 팬이 거의 동시에 끝나면 API 를 그만큼 두드리게 되므로
+    /// 3초 안의 요청은 하나로 합친다 (버튼으로 부를 때는 force 로 즉시).
+    private var lastUsageRefresh = Date.distantPast
+    private func refreshUsageAfterTurn() {
+        guard Date().timeIntervalSince(lastUsageRefresh) > 3 else { return }
+        refreshUsage()
+    }
+    private func refreshUsage(force: Bool = false) {
+        lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
             // Show today's $cost right away (riven's fallback) so the widget is never

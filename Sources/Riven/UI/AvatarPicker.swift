@@ -16,8 +16,6 @@ final class AvatarPicker: NSView, Themable, Scalable {
     private let key: String
     private var override: String?
     private let preview = AvatarPreview()
-    private lazy var autoButton = RivenSecondaryButton(t("team.avatarAuto"), target: self,
-                                                       action: #selector(resetToAuto))
     private var glyphChips: [CircleButton] = []
     private var colorChips: [CircleButton] = []
 
@@ -37,7 +35,6 @@ final class AvatarPicker: NSView, Themable, Scalable {
         preview.widthAnchor.constraint(equalToConstant: UIScale.pt(26)).isActive = true
         preview.heightAnchor.constraint(equalToConstant: UIScale.pt(26)).isActive = true
 
-        autoButton.toolTip = t("team.avatarAutoHint")
 
         for i in 0..<AgentAvatar.glyphCount {
             let b = chip(UIScale.pt(16))
@@ -58,7 +55,7 @@ final class AvatarPicker: NSView, Themable, Scalable {
         glyphRow.setCustomSpacing(UIScale.pt(8), after: preview)
         let colorRow = NSStackView(views: colorChips)
         colorRow.orientation = .horizontal; colorRow.spacing = UIScale.pt(2); colorRow.alignment = .centerY
-        let rows = NSStackView(views: [glyphRow, colorRow, autoButton])
+        let rows = NSStackView(views: [glyphRow, colorRow])
         rows.orientation = .vertical; rows.spacing = UIScale.pt(6); rows.alignment = .leading
         rows.translatesAutoresizingMaskIntoConstraints = false
 
@@ -96,7 +93,6 @@ final class AvatarPicker: NSView, Themable, Scalable {
         let cur = AgentAvatar.spec(for: key, override: override)
         set(AgentAvatar.encode(glyph: cur.glyph, color: sender.tag))
     }
-    @objc private func resetToAuto() { set(nil) }
 
     private func set(_ v: String?) {
         guard v != override else { return }
@@ -128,8 +124,6 @@ final class AvatarPicker: NSView, Themable, Scalable {
             b.strokeWidth = on ? 2 : 0
         }
         // 자동으로 되돌릴 게 없으면 버튼을 흐리게 (누를 수는 있어도 바뀌는 게 없다).
-        autoButton.isEnabled = (override != nil)
-        autoButton.alphaValue = override == nil ? 0.5 : 1
     }
 
     func applyTheme() { apply() }
