@@ -35,6 +35,10 @@ final class WorkspaceState {
     /// This workspace's aux panels (search/git/preview/api/changes/notes). Each hosts an empty
     /// container; the shared panel view is moved in when this workspace is shown.
     var auxPanels: [String: DockPanel] = [:]
+    /// 이 워크스페이스의 브라우저. 하나를 워크스페이스끼리 돌려 쓰면, 다른 워크스페이스의
+    /// 에이전트가 MCP 로 페이지를 열었을 때 지금 보고 있는 워크스페이스에서 열린다 —
+    /// 실제로 그렇게 남의 화면에 페이지가 떴다. 브라우저는 워크스페이스마다 따로 둔다.
+    var preview: PreviewPanel?
     var auxHosts: [String: NSView] = [:]
     func auxHost(_ id: String) -> NSView {
         if let v = auxHosts[id] { return v }
