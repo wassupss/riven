@@ -382,6 +382,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+                // RIVEN_NOTETEST=<png>: 메모 한 바퀴. 예전 JSON 이 .md 로 이사됐는지, 목록·편집·
+                // 미리보기가 그려지는지, riven_note_* 도구가 에이전트가 부르는 그 경로 그대로
+                // 도는지(만들기 → 이어붙이기 → 덮어쓰기 → 워크스페이스 파일로 저장)를 한 번에 본다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_NOTETEST"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        RLog.log("NOTE hook fired ws=\(self?.workspace?.path ?? "-")")
+                        guard let self, let ws = self.workspace else { return }
+                        if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
+                        self.notesPanel.setWorkspace(ws)
+                        NSApp.activate(ignoringOtherApps: true)
+                        self.window.makeKeyAndOrderFront(nil)
+                        RLog.log("NOTE migrated=" + NoteStore.personal(ws).map { $0.url.lastPathComponent }
+                            .joined(separator: ","))
+                        // 에이전트가 쓰는 그 함수를 그대로 호출한다.
+                        RLog.log("NOTE write=" + self.runNoteTool("riven_note_write",
+                            ["title": "배포 체크리스트",
+                             "body": "## 준비\n\n- [x] 빌드\n- [ ] 노터라이즈\n\n| 단계 | 상태 |\n|---|---|\n| 태그 | 대기 |\n\n```sh\nswift build\n```"]))
+                        RLog.log("NOTE append=" + self.runNoteTool("riven_note_append",
+                            ["note": "배포 체크리스트", "body": "\n추가된 줄."]))
+                        RLog.log("NOTE list=\n" + self.runNoteTool("riven_note_list", [:]))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.notesPanel.open(NoteStore.find("배포 체크리스트", ws: ws)!.url)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                self.debugWindowSnapshot(to: shot)                 // 편집 화면
+                                self.notesPanel.debugSetPreview(true)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                    self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                        of: ".png", with: "-preview.png"))         // 미리보기
+                                    RLog.log("NOTE overwrite=" + self.runNoteTool("riven_note_write",
+                                        ["note": "배포 체크리스트", "title": "배포 체크리스트",
+                                         "body": "에이전트가 통째로 갈아끼운 내용."]))
+                                    RLog.log("NOTE backup=\(NoteStore.hasBackup(NoteStore.find("배포 체크리스트", ws: ws)!.url))")
+                                    RLog.log("NOTE savefile=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "docs/plan.md"]))
+                                    RLog.log("NOTE savefile2=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "docs/plan.md"]))
+                                    RLog.log("NOTE escape=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "../escaped.md"]))
+                                    RLog.log("NOTE read=" + self.runNoteTool("riven_note_read",
+                                        ["note": "배포 체크리스트"]).prefix(40))
+                                    // 목록(메모 탭 → 문서 탭)도 한 장씩. 에이전트가 쓴 메모에
+                                    // 점이 찍혔는지, 워크스페이스 .md 가 문서 탭에 뜨는지 본다.
+                                    self.notesPanel.debugShowList()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                            of: ".png", with: "-list.png"))
+                                        self.notesPanel.debugShowList(docs: true)
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                            self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                                of: ".png", with: "-docs.png"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_STATUSSHOT=<path>: 상태 언어를 한 화면에 세워 놓고 창을 통째로 떠서
                 // 눈으로 대조한다 — 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
                 // 레일 행 / 조직도 아바타가 서로 같은 색·의미인지. 상태를 합성해서 넣는 것이라
@@ -429,6 +486,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+                // RIVEN_BROWSEREVAL=1: eval 은 승인 카드를 거쳐야 한다 (자동 승인되면 안 된다).
+                // 카드를 일부러 누르지 않고, 15초 뒤에도 실행되지 않았는지 확인한다.
+                if ProcessInfo.processInfo.environment["RIVEN_BROWSEREVAL"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        _ = self.previewPanel.agentNavigate("http://localhost:8731/index.html", newTab: false)
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("EVAL no chat"); return }
+                            chat.ask("riven_browser_eval 로 자바스크립트 `return document.title;` 를 실행하고 결과만 답해.") { a in
+                                RLog.log("EVAL answer → " + a.replacingOccurrences(of: "\n", with: " | ").prefix(200))
+                            }
+                            for at in [8.0, 15.0] {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    RLog.log("EVAL t\(Int(at)) busy=\(chat.isBusy) panelLog=[\(self.previewPanel.debugAgentLog())]")
+                                }
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 16) { RLog.log("EVAL done") }
+                        }
+                    }
+                }
+                // RIVEN_BROWSERAGENT=1: MCP 경로 전체(도구 정의 → ChatAskServer → 패널)를
+                // 실제 에이전트 턴으로 확인한다.
+                if ProcessInfo.processInfo.environment["RIVEN_BROWSERAGENT"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("AGENT no chat"); return }
+                            let ask = "riven_browser_open 으로 http://localhost:8731/index.html 을 열고, "
+                                    + "riven_browser_read 로 selector '#para' 를 읽어서 그 텍스트만 그대로 답해. "
+                                    + "그 다음 riven_browser_click 으로 '#btn' 을 누르고 riven_browser_read 로 "
+                                    + "'#clicked' 를 읽어 마지막 줄에 적어. 설명은 최소로."
+                            chat.ask(ask) { answer in
+                                RLog.log("AGENT answer → " + answer.replacingOccurrences(of: "\n", with: " | ").prefix(400))
+                                RLog.log("AGENT done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_BROWSERBENCH=<url>: 브라우저 패널과 riven_browser_* 를 클릭 없이 훑는다.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_BROWSERBENCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func step(_ name: String, _ at: Double, _ body: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                RLog.log("BROWSER ▶ \(name)"); body()
+                            }
+                        }
+                        func tool(_ name: String, _ at: Double,
+                                  _ body: @escaping (@escaping (String) -> Void) -> Void) {
+                            step(name, at) { body { r in RLog.log("BROWSER \(name) → \(r.prefix(220))") } }
+                        }
+                        step("open", 0) { RLog.log("BROWSER open → " + p.agentNavigate(target, newTab: false)) }
+                        step("state", 2.0) { RLog.log("BROWSER state → " + p.agentState().replacingOccurrences(of: "\n", with: " | ")) }
+                        tool("read", 2.3) { p.agentRead(selector: "#para", html: false, $0) }
+                        tool("readHtml", 2.5) { p.agentRead(selector: "#head", html: true, $0) }
+                        tool("click", 2.7) { p.agentClick("#btn", $0) }
+                        tool("clickCheck", 3.0) { p.agentRead(selector: "#clicked", html: false, $0) }
+                        tool("fill", 3.2) { p.agentFill("#q", "riven-test", submit: true, $0) }
+                        tool("fillCheck", 3.6) { p.agentRead(selector: "#out", html: false, $0) }
+                        tool("wait", 3.8) { p.agentWait("#late", timeoutMs: 5000, $0) }
+                        tool("scrollSel", 5.4) { p.agentScroll(selector: "#bottom", y: nil, $0) }
+                        tool("scrollY", 5.7) { p.agentScroll(selector: nil, y: 0, $0) }
+                        tool("eval", 5.9) { p.agentEval("return document.title + ' / ' + document.querySelectorAll('div').length;", $0) }
+                        tool("missing", 6.1) { p.agentClick("#nope", $0) }
+                        // target=_blank → 새 탭이 생겨야 한다.
+                        tool("newTabLink", 6.3) { p.agentClick("#ext", $0) }
+                        step("tabs", 7.6) { RLog.log("BROWSER tabs → " + p.agentState().replacingOccurrences(of: "\n", with: " | ")) }
+                        tool("back", 7.9) { done in done(p.agentGo("back")) }
+                        step("shot", 8.6) {
+                            guard let shot = ProcessInfo.processInfo.environment["RIVEN_BROWSERSHOT"],
+                                  let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) else { return }
+                            p.cacheDisplay(in: p.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("BROWSER done")
                         }
                     }
                 }
@@ -742,6 +883,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         explorer = FileTreeView(frame: NSRect(x: 0, y: 0, width: 220, height: 480))
         explorer.onOpenFile = { [weak self] url in self?.openFile(url) }
+        explorer.onOpenAsNote = { [weak self] url in
+            guard let self, let ws = self.workspace else { return }
+            if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
+            self.notesPanel.setWorkspace(ws)
+            self.notesPanel.open(url)
+        }
         explorer.onChanged = { [weak self] in self?.refreshGit() }
         explorer.onFileDeleted = { [weak self] url in
             guard let self else { return }
@@ -957,6 +1104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Set once the saved sidebar geometry has been applied; before that we don't persist
     // divider drags (initial-layout resize events would otherwise overwrite saved values).
     private var sidebarLayoutRestored = false
+    var debugSidebarRestored: Bool { sidebarLayoutRestored }
 
     // The sidebar head (riven's .sidebar-head): draggable like a native titlebar
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
@@ -1506,7 +1654,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
         chat.onOpenFileAt = { [weak self] url, line in self?.openFileAt(url, line: line, column: 1) }
-        chat.onEditedFile = { [weak self] path in self?.recordAgentFileEdit(workspace: st.url.path, path: path) }
+        chat.onEditedFile = { [weak self] path in
+            guard let self else { return }
+            self.recordAgentFileEdit(workspace: st.url.path, path: path)
+            // 에이전트가 마크다운을 쓰면 그 문서를 메모 패널에 띄운다. 도구로 만든 메모만
+            // 보여주고 파일로 쓴 문서는 안 보여주면, 정작 결과물을 어디서 봐야 할지 알 수 없다.
+            self.surfaceAgentMarkdown(path, ws: st.url)
+        }
         chat.onListAgents = { [weak self] in self?.chatAgents() ?? [] }
         chat.onAgentPanes = { [weak self] in self?.agentPanesReport() ?? "(unavailable)" }
         chat.onAskAgent = { [weak self, weak chat] target, message, done in
@@ -1563,6 +1717,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
             self.previewPanel.openURLString(url)
         }
+        // riven_browser_*: 한 곳에서 처리하고 결과를 콜백으로 돌려준다.
+        chat.onBrowser = { [weak self] verb, args, done in
+            self?.handleBrowserTool(verb, args, done)
+        }
+        chat.onBrowserOrigin = { [weak self] in self?.previewPanel.currentOrigin ?? "" }
         chat.onScreenshot = { [weak self] url, done in
             guard let self else { done(nil); return }
             if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
@@ -1603,6 +1762,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onWorkspaces = { [weak self] in
             guard let self else { return "(none)" }
             return self.workspaces.map { ($0 == self.workspace ? "* " : "- ") + $0.path }.joined(separator: "\n")
+        }
+        chat.onNoteTool = { [weak self] tool, args in
+            self?.runNoteTool(tool, args) ?? "notes unavailable"
         }
         chat.onOpenWorkspace = { [weak self] path in
             guard let self else { return "unavailable" }
@@ -2013,6 +2175,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "git": sourceControl.setRoot(ws)
         case "changes": changesPanel.setWorkspace(ws)
         case "notes": notesPanel.setWorkspace(ws)
+        case "preview":
+            previewPanel.workspaceRoot = ws
+            previewPanel.restoreLastURL()      // 마지막으로 보던 주소로 되돌린다
         default: break
         }
     }
@@ -2904,12 +3069,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         var names: [String: String] = [:]
         for url in workspaces { if let n = workspaceNames[url] { names[url.absoluteString] = n } }
-        // Left fixed sidebar (workspace rail over explorer): remember the divider as a
-        // fraction of the sidebar height so the split restores at the same proportion.
-        var sidebarRail = 0.0
-        if let sv = sidebarSplit, sv.bounds.height > 1, sv.arrangedSubviews.count >= 2 {
-            sidebarRail = Double(sv.arrangedSubviews[0].frame.height / sv.bounds.height)
-        }
+        // 레일 높이는 railHeight(절대값) 하나로만 관리한다. 예전에는 여기서 비율(sidebarRail)로
+        // 한 번 더 저장하고 restoreSession 에서 나중에 복원해, 기동 초반에 복원한 railHeight 를
+        // 곧바로 덮어썼다 (483 로 맞춰둔 레일이 매번 222 쯤으로 되돌아가던 원인).
         var session: [String: Any] = [
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
@@ -2919,7 +3081,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "names": names,
             "layout": layouts
         ]
-        if sidebarRail > 0.05 { session["sidebarRail"] = sidebarRail }
         Settings.shared.set("session", session)
         activeDock?.dumpTree("persist")   // 레이아웃 이상 추적용 (디버그 로그에만)
     }
@@ -3022,6 +3183,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.refreshUsage(force: true)    // 버튼은 언제나 즉시
                 let t3 = self.lastUsageRefresh
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
+            }
+        }
+        // RIVEN_BROWSERMEM=1: 브라우저가 마지막 주소를 기억하고 재기동 때 되살리는지.
+        if ProcessInfo.processInfo.environment["RIVEN_BROWSERMEM"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                let saved = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])
+                RLog.log("BRMEM 기동시 저장값=\(saved.values.first ?? "(없음)") 현재주소=\(self.previewPanel.debugURL())")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    RLog.log("BRMEM 3초 뒤 현재주소=\(self.previewPanel.debugURL())")
+                }
+                if saved.isEmpty {
+                    self.previewPanel.openURLString("http://127.0.0.1:8877/second.html")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        let now = (Settings.shared.object("browserURLs") as? [String: String] ?? [:])
+                        RLog.log("BRMEM 이동 후 저장값=\(now.values.first ?? "(없음)")")
+                    }
+                }
+            }
+        }
+        // RIVEN_FOCUSTIME=1: 조직도에서 멤버 카드를 누를 때 어디서 시간을 쓰는지.
+        if ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.teamPanel.debugCreate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        let names = self.agentPanes().map { $0.chat.agentRole }
+                        // 무거운 대화에서 재도록 (실제 사용 상황). RIVEN_FOCUSTIME=light 면 건너뛴다.
+                        if ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != "light" {
+                            for p in self.agentPanes() { for i in 1...200 { p.chat.noteSystem("기록 줄 \(i) 입니다.") } }
+                        }
+                        RLog.log("FOCUSTIME 멤버=" + names.joined(separator: ",") + " (각 200줄)")
+                        for (i, n) in names.enumerated() {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.6) {
+                                let t = Date()
+                                self.focusAgentPane("팀", n)
+                                RLog.log("FOCUSTIME [\(n)] 호출전체=\(Int(Date().timeIntervalSince(t) * 1000))ms")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // RIVEN_DOCBENCH=1: 문서화 도구가 워크스페이스에 파일을 만들고 그 문서를 띄우는지,
+        // 메모 미리보기에 제목이 두 번 나오지 않는지.
+        if ProcessInfo.processInfo.environment["RIVEN_DOCBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let ws = self.workspace else { return }
+                RLog.log("DOC write=" + self.runNoteTool("riven_doc_write",
+                    ["path": "docs/정리.md", "body": "# 정리 문서\n\n본문 첫 줄.\n"]))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    let f = ws.appendingPathComponent("docs/정리.md")
+                    RLog.log("DOC 파일존재=\(FileManager.default.fileExists(atPath: f.path)) "
+                           + "패널문서=\(self.notesPanel.debugCurrentPath()) "
+                           + "미리보기제목중복=\(self.notesPanel.debugPreviewHasTitleTwice())")
+                    RLog.log("DOC 덮어쓰기거부=" + self.runNoteTool("riven_doc_write",
+                        ["path": "docs/정리.md", "body": "x"]))
+                    RLog.log("DOC 밖차단=" + self.runNoteTool("riven_doc_write",
+                        ["path": "../밖.md", "body": "x"]))
+                }
+            }
+        }
+        // RIVEN_MDSURFACE=1: 에이전트가 워크스페이스에 .md 를 쓰면 메모 패널이 그 문서를 띄우는지.
+        if ProcessInfo.processInfo.environment["RIVEN_MDSURFACE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let ws = self.workspace else { return }
+                let f = ws.appendingPathComponent("agent-written.md")
+                try? "# 에이전트가 쓴 문서\n\n본문입니다.\n".write(to: f, atomically: true, encoding: .utf8)
+                self.surfaceAgentMarkdown(f.path, ws: ws)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    RLog.log("MDSURFACE 패널열림=\(self.auxDockPanels["notes"] != nil) "
+                           + "보이는문서=\(self.notesPanel.debugCurrentPath())")
+                    // 워크스페이스 밖 파일은 띄우지 않아야 한다.
+                    let out = URL(fileURLWithPath: "/tmp/outside-agent.md")
+                    try? "# 밖\n".write(to: out, atomically: true, encoding: .utf8)
+                    self.surfaceAgentMarkdown(out.path, ws: ws)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        RLog.log("MDSURFACE 밖의파일 뒤 보이는문서=\(self.notesPanel.debugCurrentPath())")
+                    }
+                }
+            }
+        }
+        // RIVEN_SIDEBARBENCH=1: 사이드바 분할선을 실제 마우스 이벤트로 끌어 보고, 저장까지
+        // 되는지 본다 (합성 이벤트라도 NSSplitView 의 모달 추적 루프가 그대로 처리한다).
+        if ProcessInfo.processInfo.environment["RIVEN_SIDEBARBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let win = self.window as NSWindow? else { return }
+                let before = Settings.shared.double("sidebarWidth", 220)
+                let sv = self.bodySplit!
+                let x = sv.arrangedSubviews[0].frame.maxX + sv.dividerThickness / 2
+                let y = sv.frame.midY
+                func post(_ type: NSEvent.EventType, _ pt: NSPoint) {
+                    guard let e = NSEvent.mouseEvent(with: type, location: sv.convert(pt, to: nil),
+                                                     modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: win.windowNumber, context: nil,
+                                                     eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+                    else { return }
+                    NSApp.postEvent(e, atStart: false)
+                }
+                RLog.log("SIDEBAR 드래그 시작 divider x=\(Int(x)) 저장값=\(Int(before))")
+                // 레일 분할선도 같이 끌어 본다 (여기가 이중 저장 지점).
+                if let rv = self.sidebarSplit, rv.arrangedSubviews.count >= 2 {
+                    let ry = rv.arrangedSubviews[0].frame.maxY + rv.dividerThickness / 2
+                    let rx = rv.frame.midX
+                    func rpost(_ type: NSEvent.EventType, _ pt: NSPoint) {
+                        guard let e = NSEvent.mouseEvent(with: type, location: rv.convert(pt, to: nil),
+                                                         modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: win.windowNumber, context: nil,
+                                                         eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1)
+                        else { return }
+                        NSApp.postEvent(e, atStart: false)
+                    }
+                    rpost(.leftMouseDown, NSPoint(x: rx, y: ry))
+                    for i in 1...6 { rpost(.leftMouseDragged, NSPoint(x: rx, y: ry - CGFloat(i) * 10)) }
+                    rpost(.leftMouseUp, NSPoint(x: rx, y: ry - 60))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        RLog.log("SIDEBAR 레일 실제높이=\(Int(rv.arrangedSubviews[0].frame.height)) "
+                               + "railHeight저장=\(Int(Settings.shared.double("railHeight", 190)))")
+                    }
+                }
+                post(.leftMouseDown, NSPoint(x: x, y: y))
+                for i in 1...6 { post(.leftMouseDragged, NSPoint(x: x + CGFloat(i) * 8, y: y)) }
+                post(.leftMouseUp, NSPoint(x: x + 48, y: y))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    RLog.log("SIDEBAR 드래그 후 실제폭=\(Int(sv.arrangedSubviews[0].frame.width)) "
+                           + "저장값=\(Int(Settings.shared.double("sidebarWidth", 220))) "
+                           + "restored플래그=\(self.debugSidebarRestored)")
+                }
             }
         }
         // RIVEN_PERSONADUMP=1: 카드가 만들어진 뒤에 에이전트 목록이 주입되는 실제 순서를 그대로
@@ -3338,12 +3630,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         // Restore the left sidebar (rail/explorer) split proportion once it's laid out.
-        if let frac = s["sidebarRail"] as? Double, frac > 0.05, frac < 0.95 {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, let sv = self.sidebarSplit, sv.bounds.height > 1 else { return }
-                sv.setPosition(CGFloat(frac) * sv.bounds.height, ofDividerAt: 0)
-            }
-        }
+        // 예전 세션에 남아 있는 sidebarRail(비율)은 무시한다. railHeight 로 이미 복원했고,
+        // 여기서 다시 손대면 사용자가 맞춰둔 높이를 창 높이에 비례한 값으로 덮어쓴다.
     }
 
     // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
@@ -4196,7 +4484,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch id {
         case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
-        case "preview": title = t("title.preview"); symbol = "safari"; content = previewPanel
+        case "preview":
+            title = t("title.preview"); symbol = "safari"; content = previewPanel
+            previewPanel.workspaceRoot = ws
+            DispatchQueue.main.async { [weak self] in self?.previewPanel.restoreLastURL() }
         case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
         case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
@@ -4363,6 +4654,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Settings.shared.keys(prefix: "group.\(ws.path)|").map { String($0.dropFirst("group.\(ws.path)|".count)) }
     }
 
+    /// 에이전트가 워크스페이스 안에 쓴 .md 를 메모 패널의 문서 쪽에서 연다.
+    /// 짧은 시간에 여러 개를 쓰면 마지막 것만 띄운다 (파일마다 패널이 튀지 않게).
+    private var lastMarkdownSurface = Date.distantPast
+    private func surfaceAgentMarkdown(_ path: String, ws: URL) {
+        guard path.lowercased().hasSuffix(".md") else { return }
+        let url = URL(fileURLWithPath: path)
+        guard AppDelegate.isInside(url, ws), FileManager.default.fileExists(atPath: path) else { return }
+        guard Date().timeIntervalSince(lastMarkdownSurface) > 1.5 else { return }
+        lastMarkdownSurface = Date()
+        if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
+        notesPanel.setWorkspace(ws)
+        notesPanel.open(url)
+    }
+
+    /// 심볼릭 링크와 ".." 를 모두 편 절대 경로.
+    /// resolvingSymlinksInPath 는 **존재하는** 경로만 편다(그래서 /private/tmp 를 /tmp 로 줄이는
+    /// 것도 존재할 때뿐이다). 아직 없는 파일에 그대로 쓰면 같은 폴더인데도 한쪽만 줄어들어
+    /// 비교가 깨진다. 존재하는 조상까지 올라가 편 뒤 나머지 조각을 다시 붙인다.
+    static func resolved(_ url: URL) -> URL {
+        let std = url.standardizedFileURL
+        let fm = FileManager.default
+        var trail: [String] = []
+        var cur = std
+        while !fm.fileExists(atPath: cur.path), cur.pathComponents.count > 1 {
+            trail.append(cur.lastPathComponent)
+            cur = cur.deletingLastPathComponent()
+        }
+        var out = cur.resolvingSymlinksInPath()
+        for c in trail.reversed() { out.appendPathComponent(c) }
+        return out
+    }
+    /// child 가 parent 안에 있는가 (경로 조각 단위 비교라 "/ws" 와 "/ws-evil" 을 구분한다).
+    static func isInside(_ child: URL, _ parent: URL) -> Bool {
+        let c = resolved(child).pathComponents, p = resolved(parent).pathComponents
+        return c.count > p.count && Array(c.prefix(p.count)) == p
+    }
+
     /// Groups that actually exist right now, read off the live panes — name → members with their
     /// reporting lines. Drives the panel's group chips and its org chart.
     private func liveAgentGroups() -> [(group: String, members: [AgentNode])] {
@@ -4493,8 +4821,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Jump to one agent's pane (org chart node click).
     private func focusAgentPane(_ group: String, _ name: String) {
         guard let dock = activeDock, let ws = workspace else { return }
+        let bench = ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != nil
+        let t0 = Date()
         for p in agentPanes() where p.chat.groupName == group && p.chat.agentRole == name {
-            if let g = p.panel.group { g.select(id: p.panel.id); dock.setActive(g) }
+            let tScan = Date()
+            if let g = p.panel.group {
+                g.select(id: p.panel.id)
+                let tSelect = Date()
+                dock.setActive(g)
+                let tActive = Date()
+                if bench {
+                    func ms(_ a: Date, _ b: Date) -> Int { Int(b.timeIntervalSince(a) * 1000) }
+                    RLog.log("FOCUSTIME scan=\(ms(t0, tScan))ms select=\(ms(tScan, tSelect))ms "
+                           + "setActive=\(ms(tSelect, tActive))ms total=\(ms(t0, tActive))ms")
+                }
+            }
             return
         }
         // 닫힌 멤버 → 저장해 둔 역할·모델·세션으로 되살린다.
@@ -4600,6 +4941,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .chat.debugSendInput(text)
     }
 
+    /// riven_browser_* 의 실제 동작. WKWebView 는 메인 스레드 전용이라 여기서 한 번 더 맞춘다
+    /// (도구 호출은 소켓 스레드에서 들어온다).
+    private func handleBrowserTool(_ verb: String, _ args: [String: Any], _ done: @escaping (String) -> Void) {
+        func onMain(_ body: @escaping () -> Void) {
+            if Thread.isMainThread { body() } else { DispatchQueue.main.async(execute: body) }
+        }
+        onMain { [weak self] in
+            guard let self else { done("riven is shutting down"); return }
+            if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+            let p = self.previewPanel!
+            func str(_ k: String) -> String? { (args[k] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+            func num(_ k: String) -> Double? {
+                (args[k] as? NSNumber)?.doubleValue ?? (args[k] as? Double) ?? (args[k] as? Int).map(Double.init)
+            }
+            switch verb {
+            case "riven_browser_open":
+                done(p.agentNavigate(str("url") ?? "", newTab: (args["new_tab"] as? Bool) ?? false))
+            case "riven_browser_state":
+                done(p.agentState())
+            case "riven_browser_go":
+                done(p.agentGo(str("action") ?? ""))
+            case "riven_browser_read":
+                p.agentRead(selector: str("selector"), html: (args["html"] as? Bool) ?? false, done)
+            case "riven_browser_click":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentClick(sel, done)
+            case "riven_browser_fill":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentFill(sel, (args["value"] as? String) ?? "",
+                            submit: (args["submit"] as? Bool) ?? false, done)
+            case "riven_browser_wait":
+                guard let sel = str("selector") else { done("selector is required"); return }
+                p.agentWait(sel, timeoutMs: Int(num("timeout_ms") ?? 5000), done)
+            case "riven_browser_scroll":
+                p.agentScroll(selector: str("selector"), y: num("y"), done)
+            case "riven_browser_eval":
+                guard let js = str("js") else { done("js is required"); return }
+                p.agentEval(js, done)
+            default:
+                done("unknown browser verb: \(verb)")
+            }
+        }
+    }
+
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
     // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
     // asks with a modal (the terminal agent is blocked waiting for the answer either way).
@@ -4633,6 +5018,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             }
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
+             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
+             "riven_browser_eval":
+            // 터미널 에이전트에는 승인 카드를 띄울 대화창이 없다. eval 만 모달로 묻는다.
+            if tool == "riven_browser_eval" {
+                let a = NSAlert()
+                a.messageText = t("browser.eval.confirm", ["o": previewPanel.currentOrigin])
+                a.informativeText = String((args["js"] as? String ?? "").prefix(400))
+                a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
+                guard a.runModal() == .alertFirstButtonReturn else {
+                    srv.resolve(id, result: t("browser.eval.denied")); return
+                }
+            }
+            handleBrowserTool(tool, args) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             if auxDockPanels["api"] == nil { toggleDockPanel("api") }
@@ -4674,8 +5073,118 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let ws = uniqueWorkspaceURL(for: url); rail.addWorkspace(ws); activate(ws)
                 srv.resolve(id, result: "opened \(url.path)")
             } else { srv.resolve(id, result: "not a folder: \(s("path"))") }
+        case let n where n.hasPrefix("riven_note_"):
+            srv.resolve(id, result: runNoteTool(tool, args))
         default:
             srv.resolve(id, result: "unknown tool: \(tool)")
+        }
+    }
+
+    // MARK: - riven_note_* (메모/문서)
+
+    /// 에이전트가 메모를 읽고 쓰는 경로. 채팅 팬과 터미널 팬이 같은 구현을 쓴다.
+    ///
+    /// 되돌리기 어려운 동작을 확인 없이 하느냐: 메모 덮어쓰기는 확인 없이 하되 이전 내용을
+    /// 반드시 백업으로 남긴다. mcp__riven__* 도구는 이미 자동 승인되는 구조라 여기만 모달을
+    /// 띄우면 헤드리스 턴이 멈춰 버리고, 사용자에게는 "확인을 눌렀는지"보다 "무엇이 바뀌었고
+    /// 되돌릴 수 있는지"가 실질적인 안전장치다. 그래서 덮어쓰기 = 백업 + 패널 표시 + 되돌리기
+    /// 버튼으로 간다. 반면 워크스페이스의 실제 파일(riven_note_save_file)은 사용자의 소스라
+    /// 이미 있는 파일을 덮어쓰지 않는다 (overwrite=true 를 명시해야 한다).
+    private func runNoteTool(_ tool: String, _ args: [String: Any]) -> String {
+        func s(_ k: String) -> String { (args[k] as? String) ?? "" }
+        guard let ws = workspace else { return "no workspace is open" }
+        notesPanel.flush()          // 사용자가 쓰던 중이면 먼저 저장 (에이전트 쓰기에 묻히지 않게)
+
+        func describe(_ n: Note) -> String {
+            "- \(n.title)  [\(n.scope == .personal ? "note" : "doc")]  \(n.url.path)"
+        }
+        /// 메모가 바뀐 걸 사용자가 보게 한다: 패널을 열고, 목록을 새로 읽고, 표시를 남긴다.
+        func surface(_ url: URL) {
+            if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
+            notesPanel.setWorkspace(ws)
+            notesPanel.noteChangedByAgent(url)
+        }
+
+        switch tool {
+        case "riven_note_list":
+            let scope = s("scope").isEmpty ? "all" : s("scope")
+            var out: [String] = []
+            if scope != "docs" { out += NoteStore.personal(ws).map(describe) }
+            if scope != "notes" { out += NoteStore.workspaceDocs(ws).map(describe) }
+            return out.isEmpty ? "(no notes yet)" : out.joined(separator: "\n")
+
+        case "riven_note_read":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            return n.read()
+
+        case "riven_note_write":
+            let title = s("title"), bodyText = s("body")
+            let target = s("note")
+            if !target.isEmpty, let existing = NoteStore.find(target, ws: ws) {
+                NoteStore.write(NoteStore.compose(title: title.isEmpty ? existing.title : title,
+                                                  body: bodyText), to: existing.url)   // backup 남김
+                surface(existing.url)
+                return "replaced note \"\(existing.title)\" (\(existing.url.path)). "
+                     + "The previous version is kept; the user can undo it from the Notes panel."
+            }
+            let n = NoteStore.create(in: ws, title: title, body: bodyText)
+            surface(n.url)
+            return "created note \"\(n.title)\" (\(n.url.path))"
+
+        case "riven_note_append":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            let old = n.read()
+            let sep = old.hasSuffix("\n") || old.isEmpty ? "" : "\n"
+            NoteStore.write(old + sep + s("body") + "\n", to: n.url, backup: false)   // 덧붙이기는 잃는 게 없다
+            surface(n.url)
+            return "appended to \"\(n.title)\" (\(n.url.path))"
+
+        case "riven_doc_write":
+            // 문서화 = 저장소에 남는 파일. 메모(스크래치)와 확실히 갈라 둔다.
+            var rel = s("path")
+            if rel.isEmpty { return "path is required" }
+            if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
+            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel) : ws.appendingPathComponent(rel)
+            guard AppDelegate.isInside(dest, ws) else {
+                return "refusing to write outside the workspace: \(AppDelegate.resolved(dest).path)"
+            }
+            let exists = FileManager.default.fileExists(atPath: dest.path)
+            if exists, (args["overwrite"] as? Bool) != true {
+                return "\(dest.path) already exists. Pass overwrite=true if you really mean to replace it."
+            }
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard NoteStore.write(s("body"), to: dest, backup: exists) else { return "could not write \(dest.path)" }
+            surface(dest)
+            return "wrote \(dest.path)"
+
+        case "riven_note_save_file":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            var rel = s("path")
+            if rel.isEmpty { return "path is required" }
+            if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
+            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel)
+                                          : ws.appendingPathComponent(rel)
+            // 워크스페이스 밖으로는 쓰지 않는다 (../.. 로 홈 디렉터리를 건드리는 걸 막는다).
+            // 두 경로를 같은 방식으로 펴서 비교해야 한다: standardizedFileURL 은 디렉터리 쪽만
+            // /private/tmp 를 /tmp 로 줄여서, 같은 폴더인데도 접두사가 어긋났다. 또 문자열
+            // 접두사는 "/ws" 옆의 "/ws-evil" 까지 통과시키므로 경로 조각 단위로 본다.
+            let destPath = AppDelegate.resolved(dest).path
+            guard AppDelegate.isInside(dest, ws) else {
+                return "refusing to write outside the workspace: \(destPath)"
+            }
+            let exists = FileManager.default.fileExists(atPath: destPath)
+            if exists, (args["overwrite"] as? Bool) != true {
+                return "\(destPath) already exists. Pass overwrite=true if you really mean to replace it."
+            }
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard NoteStore.write(n.read(), to: dest, backup: exists) else { return "could not write \(destPath)" }
+            surface(dest)
+            return "saved \"\(n.title)\" to \(destPath)"
+
+        default:
+            return "unknown note tool: \(tool)"
         }
     }
 
