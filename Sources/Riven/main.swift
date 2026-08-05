@@ -3182,6 +3182,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
             }
         }
+        // RIVEN_FOCUSTIME=1: 조직도에서 멤버 카드를 누를 때 어디서 시간을 쓰는지.
+        if ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.teamPanel.debugCreate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                        let names = self.agentPanes().map { $0.chat.agentRole }
+                        // 무거운 대화에서 재도록 (실제 사용 상황). RIVEN_FOCUSTIME=light 면 건너뛴다.
+                        if ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != "light" {
+                            for p in self.agentPanes() { for i in 1...200 { p.chat.noteSystem("기록 줄 \(i) 입니다.") } }
+                        }
+                        RLog.log("FOCUSTIME 멤버=" + names.joined(separator: ",") + " (각 200줄)")
+                        for (i, n) in names.enumerated() {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.6) {
+                                let t = Date()
+                                self.focusAgentPane("팀", n)
+                                RLog.log("FOCUSTIME [\(n)] 호출전체=\(Int(Date().timeIntervalSince(t) * 1000))ms")
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // RIVEN_DOCBENCH=1: 문서화 도구가 워크스페이스에 파일을 만들고 그 문서를 띄우는지,
         // 메모 미리보기에 제목이 두 번 나오지 않는지.
         if ProcessInfo.processInfo.environment["RIVEN_DOCBENCH"] != nil {
@@ -4771,8 +4796,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Jump to one agent's pane (org chart node click).
     private func focusAgentPane(_ group: String, _ name: String) {
         guard let dock = activeDock, let ws = workspace else { return }
+        let bench = ProcessInfo.processInfo.environment["RIVEN_FOCUSTIME"] != nil
+        let t0 = Date()
         for p in agentPanes() where p.chat.groupName == group && p.chat.agentRole == name {
-            if let g = p.panel.group { g.select(id: p.panel.id); dock.setActive(g) }
+            let tScan = Date()
+            if let g = p.panel.group {
+                g.select(id: p.panel.id)
+                let tSelect = Date()
+                dock.setActive(g)
+                let tActive = Date()
+                if bench {
+                    func ms(_ a: Date, _ b: Date) -> Int { Int(b.timeIntervalSince(a) * 1000) }
+                    RLog.log("FOCUSTIME scan=\(ms(t0, tScan))ms select=\(ms(tScan, tSelect))ms "
+                           + "setActive=\(ms(tSelect, tActive))ms total=\(ms(t0, tActive))ms")
+                }
+            }
             return
         }
         // 닫힌 멤버 → 저장해 둔 역할·모델·세션으로 되살린다.

@@ -1203,11 +1203,29 @@ final class DockGroup: NSView, Scalable {
     }
     func select(id: String) {
         guard let idx = panels.firstIndex(where: { $0.id == id }) else { return }
+        // 이미 그 탭이면 화면을 다시 만들지 않는다. showActive 는 콘텐츠 뷰를 떼었다 붙이는데,
+        // 채팅처럼 무거운 뷰는 그때마다 레이아웃 엔진에 통째로 다시 편입되어 100ms 넘게 든다.
+        // (조직도에서 멤버 카드를 누를 때마다 렉이 걸리던 원인)
+        if idx == activeIndex, activePanel?.content.superview === content {
+            manager?.setActive(self)
+            return
+        }
         activeIndex = idx; showActive(); tabBar.rebuild(); manager?.setActive(self)
     }
     private func showActive() {
+        guard let p = activePanel else {
+            content.subviews.forEach { $0.removeFromSuperview() }
+            return
+        }
+        // 이미 붙어 있는 뷰라면 떼었다 붙이지 않는다 (재편입 비용이 크다). 다른 뷰만 걷어낸다.
+        if p.content.superview === content {
+            content.subviews.filter { $0 !== p.content }.forEach { $0.removeFromSuperview() }
+            if let z = dropZone { addSubview(z) }
+            needsLayout = true
+            p.onActivate?()
+            return
+        }
         content.subviews.forEach { $0.removeFromSuperview() }   // dropZone lives on the group, not content
-        guard let p = activePanel else { return }
         let v = p.content
         v.translatesAutoresizingMaskIntoConstraints = true
         v.frame = content.bounds
