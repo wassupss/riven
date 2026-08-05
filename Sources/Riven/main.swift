@@ -382,6 +382,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+                // RIVEN_NOTETEST=<png>: 메모 한 바퀴. 예전 JSON 이 .md 로 이사됐는지, 목록·편집·
+                // 미리보기가 그려지는지, riven_note_* 도구가 에이전트가 부르는 그 경로 그대로
+                // 도는지(만들기 → 이어붙이기 → 덮어쓰기 → 워크스페이스 파일로 저장)를 한 번에 본다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_NOTETEST"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                        RLog.log("NOTE hook fired ws=\(self?.workspace?.path ?? "-")")
+                        guard let self, let ws = self.workspace else { return }
+                        if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
+                        self.notesPanel.setWorkspace(ws)
+                        NSApp.activate(ignoringOtherApps: true)
+                        self.window.makeKeyAndOrderFront(nil)
+                        RLog.log("NOTE migrated=" + NoteStore.personal(ws).map { $0.url.lastPathComponent }
+                            .joined(separator: ","))
+                        // 에이전트가 쓰는 그 함수를 그대로 호출한다.
+                        RLog.log("NOTE write=" + self.runNoteTool("riven_note_write",
+                            ["title": "배포 체크리스트",
+                             "body": "## 준비\n\n- [x] 빌드\n- [ ] 노터라이즈\n\n| 단계 | 상태 |\n|---|---|\n| 태그 | 대기 |\n\n```sh\nswift build\n```"]))
+                        RLog.log("NOTE append=" + self.runNoteTool("riven_note_append",
+                            ["note": "배포 체크리스트", "body": "\n추가된 줄."]))
+                        RLog.log("NOTE list=\n" + self.runNoteTool("riven_note_list", [:]))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.notesPanel.open(NoteStore.find("배포 체크리스트", ws: ws)!.url)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                self.debugWindowSnapshot(to: shot)                 // 편집 화면
+                                self.notesPanel.debugSetPreview(true)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                    self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                        of: ".png", with: "-preview.png"))         // 미리보기
+                                    RLog.log("NOTE overwrite=" + self.runNoteTool("riven_note_write",
+                                        ["note": "배포 체크리스트", "title": "배포 체크리스트",
+                                         "body": "에이전트가 통째로 갈아끼운 내용."]))
+                                    RLog.log("NOTE backup=\(NoteStore.hasBackup(NoteStore.find("배포 체크리스트", ws: ws)!.url))")
+                                    RLog.log("NOTE savefile=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "docs/plan.md"]))
+                                    RLog.log("NOTE savefile2=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "docs/plan.md"]))
+                                    RLog.log("NOTE escape=" + self.runNoteTool("riven_note_save_file",
+                                        ["note": "배포 체크리스트", "path": "../escaped.md"]))
+                                    RLog.log("NOTE read=" + self.runNoteTool("riven_note_read",
+                                        ["note": "배포 체크리스트"]).prefix(40))
+                                    // 목록(메모 탭 → 문서 탭)도 한 장씩. 에이전트가 쓴 메모에
+                                    // 점이 찍혔는지, 워크스페이스 .md 가 문서 탭에 뜨는지 본다.
+                                    self.notesPanel.debugShowList()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                        self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                            of: ".png", with: "-list.png"))
+                                        self.notesPanel.debugShowList(docs: true)
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                            self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                                of: ".png", with: "-docs.png"))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_STATUSSHOT=<path>: 상태 언어를 한 화면에 세워 놓고 창을 통째로 떠서
                 // 눈으로 대조한다 — 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
                 // 레일 행 / 조직도 아바타가 서로 같은 색·의미인지. 상태를 합성해서 넣는 것이라
@@ -826,6 +883,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         explorer = FileTreeView(frame: NSRect(x: 0, y: 0, width: 220, height: 480))
         explorer.onOpenFile = { [weak self] url in self?.openFile(url) }
+        explorer.onOpenAsNote = { [weak self] url in
+            guard let self, let ws = self.workspace else { return }
+            if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
+            self.notesPanel.setWorkspace(ws)
+            self.notesPanel.open(url)
+        }
         explorer.onChanged = { [weak self] in self?.refreshGit() }
         explorer.onFileDeleted = { [weak self] url in
             guard let self else { return }
@@ -1692,6 +1755,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onWorkspaces = { [weak self] in
             guard let self else { return "(none)" }
             return self.workspaces.map { ($0 == self.workspace ? "* " : "- ") + $0.path }.joined(separator: "\n")
+        }
+        chat.onNoteTool = { [weak self] tool, args in
+            self?.runNoteTool(tool, args) ?? "notes unavailable"
         }
         chat.onOpenWorkspace = { [weak self] path in
             guard let self else { return "unavailable" }
@@ -4821,8 +4887,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let ws = uniqueWorkspaceURL(for: url); rail.addWorkspace(ws); activate(ws)
                 srv.resolve(id, result: "opened \(url.path)")
             } else { srv.resolve(id, result: "not a folder: \(s("path"))") }
+        case let n where n.hasPrefix("riven_note_"):
+            srv.resolve(id, result: runNoteTool(tool, args))
         default:
             srv.resolve(id, result: "unknown tool: \(tool)")
+        }
+    }
+
+    // MARK: - riven_note_* (메모/문서)
+
+    /// 에이전트가 메모를 읽고 쓰는 경로. 채팅 팬과 터미널 팬이 같은 구현을 쓴다.
+    ///
+    /// 되돌리기 어려운 동작을 확인 없이 하느냐: 메모 덮어쓰기는 확인 없이 하되 이전 내용을
+    /// 반드시 백업으로 남긴다. mcp__riven__* 도구는 이미 자동 승인되는 구조라 여기만 모달을
+    /// 띄우면 헤드리스 턴이 멈춰 버리고, 사용자에게는 "확인을 눌렀는지"보다 "무엇이 바뀌었고
+    /// 되돌릴 수 있는지"가 실질적인 안전장치다. 그래서 덮어쓰기 = 백업 + 패널 표시 + 되돌리기
+    /// 버튼으로 간다. 반면 워크스페이스의 실제 파일(riven_note_save_file)은 사용자의 소스라
+    /// 이미 있는 파일을 덮어쓰지 않는다 (overwrite=true 를 명시해야 한다).
+    private func runNoteTool(_ tool: String, _ args: [String: Any]) -> String {
+        func s(_ k: String) -> String { (args[k] as? String) ?? "" }
+        guard let ws = workspace else { return "no workspace is open" }
+        notesPanel.flush()          // 사용자가 쓰던 중이면 먼저 저장 (에이전트 쓰기에 묻히지 않게)
+
+        func describe(_ n: Note) -> String {
+            "- \(n.title)  [\(n.scope == .personal ? "note" : "doc")]  \(n.url.path)"
+        }
+        /// 메모가 바뀐 걸 사용자가 보게 한다: 패널을 열고, 목록을 새로 읽고, 표시를 남긴다.
+        func surface(_ url: URL) {
+            if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
+            notesPanel.setWorkspace(ws)
+            notesPanel.noteChangedByAgent(url)
+        }
+
+        switch tool {
+        case "riven_note_list":
+            let scope = s("scope").isEmpty ? "all" : s("scope")
+            var out: [String] = []
+            if scope != "docs" { out += NoteStore.personal(ws).map(describe) }
+            if scope != "notes" { out += NoteStore.workspaceDocs(ws).map(describe) }
+            return out.isEmpty ? "(no notes yet)" : out.joined(separator: "\n")
+
+        case "riven_note_read":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            return n.read()
+
+        case "riven_note_write":
+            let title = s("title"), bodyText = s("body")
+            let target = s("note")
+            if !target.isEmpty, let existing = NoteStore.find(target, ws: ws) {
+                NoteStore.write(NoteStore.compose(title: title.isEmpty ? existing.title : title,
+                                                  body: bodyText), to: existing.url)   // backup 남김
+                surface(existing.url)
+                return "replaced note \"\(existing.title)\" (\(existing.url.path)). "
+                     + "The previous version is kept; the user can undo it from the Notes panel."
+            }
+            let n = NoteStore.create(in: ws, title: title, body: bodyText)
+            surface(n.url)
+            return "created note \"\(n.title)\" (\(n.url.path))"
+
+        case "riven_note_append":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            let old = n.read()
+            let sep = old.hasSuffix("\n") || old.isEmpty ? "" : "\n"
+            NoteStore.write(old + sep + s("body") + "\n", to: n.url, backup: false)   // 덧붙이기는 잃는 게 없다
+            surface(n.url)
+            return "appended to \"\(n.title)\" (\(n.url.path))"
+
+        case "riven_note_save_file":
+            guard let n = NoteStore.find(s("note"), ws: ws) else { return "note not found: \(s("note"))" }
+            var rel = s("path")
+            if rel.isEmpty { return "path is required" }
+            if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
+            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel)
+                                          : ws.appendingPathComponent(rel)
+            // 워크스페이스 밖으로는 쓰지 않는다 (../.. 로 홈 디렉터리를 건드리는 걸 막는다).
+            let destPath = dest.standardizedFileURL.path
+            guard destPath.hasPrefix(ws.standardizedFileURL.path + "/") else {
+                return "refusing to write outside the workspace: \(destPath)"
+            }
+            let exists = FileManager.default.fileExists(atPath: destPath)
+            if exists, (args["overwrite"] as? Bool) != true {
+                return "\(destPath) already exists. Pass overwrite=true if you really mean to replace it."
+            }
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            guard NoteStore.write(n.read(), to: dest, backup: exists) else { return "could not write \(destPath)" }
+            surface(dest)
+            return "saved \"\(n.title)\" to \(destPath)"
+
+        default:
+            return "unknown note tool: \(tool)"
         }
     }
 

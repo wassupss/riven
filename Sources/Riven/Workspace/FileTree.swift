@@ -50,6 +50,8 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     private var root: FileNode?
     private var gitStatus: [String: Git.Status] = [:]
     var onOpenFile: ((URL) -> Void)?
+    /// .md 를 메모 패널에서 연다 (탐색기 우클릭 → 메모로 열기).
+    var onOpenAsNote: ((URL) -> Void)?
     var onChanged: (() -> Void)?                 // FS mutated → refresh git etc.
     var onFileDeleted: ((URL) -> Void)?          // close its tab if open
     var onFileRenamed: ((URL, URL) -> Void)?     // (old, new) → update open tab
@@ -358,6 +360,11 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         }
         add("새 파일", #selector(ctxNewFile(_:)))
         add("새 폴더", #selector(ctxNewFolder(_:)))
+        // .md 는 메모 패널에서 열 수 있다 (미리보기가 붙은 마크다운 편집기).
+        if let n = node, !n.isDir, n.url.pathExtension.lowercased() == "md" {
+            menu.addItem(.separator())
+            add(t("notes.openAsNote"), #selector(ctxOpenAsNote(_:)))
+        }
         if node != nil {
             menu.addItem(.separator())
             add("이름 변경", #selector(ctxRename(_:)))
@@ -456,6 +463,10 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             onFileDeleted?(node.url)
             reload(under: outline.parent(forItem: node) as? FileNode)
         } catch { NSSound.beep() }
+    }
+    @objc private func ctxOpenAsNote(_ s: NSMenuItem) {
+        guard let node = s.representedObject as? FileNode else { return }
+        onOpenAsNote?(node.url)
     }
     @objc private func ctxReveal(_ s: NSMenuItem) {
         guard let node = s.representedObject as? FileNode else { return }

@@ -987,6 +987,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onClosePanel: ((String) -> String)?
     var onWorkspaces: (() -> String)?
     var onOpenWorkspace: ((String) -> String)?
+    /// riven_note_* — 메모/문서 읽기·쓰기 (앱이 처리하고 결과 문장을 돌려준다).
+    var onNoteTool: ((_ tool: String, _ args: [String: Any]) -> String)?
 
     private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
         func s(_ k: String) -> String { args[k] as? String ?? "" }
@@ -1056,6 +1058,15 @@ final class ChatPanel: NSView, Themable, Scalable {
             onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
             addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
             apiRequest(args) { result in reply(result) }
+        case let n where n.hasPrefix("riven_note_"):
+            let result = onNoteTool?(tool, args) ?? "notes unavailable"
+            // 메모를 만들거나 고쳤으면 대화에도 한 줄 남긴다 — 패널을 안 보고 있어도
+            // "에이전트가 뭘 썼는지"가 대화에서 드러나야 한다.
+            if tool != "riven_note_list", tool != "riven_note_read" {
+                let title = (args["title"] as? String) ?? (args["note"] as? String) ?? ""
+                addSystem(t("notes.agentWrote", ["title": ChatPanel.shortTitle(title)]))
+            }
+            session?.respondTool(id, result)
         case "riven_panels":
             session?.respondTool(id, onPanels?() ?? "(no panels)")
         case "riven_open_panel":
