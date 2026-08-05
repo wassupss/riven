@@ -976,6 +976,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // ---- riven tools (MCP) ----
     var onOpenBrowser: ((String) -> Void)?
+    /// 브라우저 조작 (riven_browser_*). 결과는 콜백으로 온다 (WKWebView 는 전부 비동기).
+    var onBrowser: ((_ verb: String, _ args: [String: Any], @escaping (String) -> Void) -> Void)?
+    /// 지금 브라우저에 열려 있는 페이지의 출처 (eval 승인을 출처 단위로 기억하기 위해).
+    var onBrowserOrigin: (() -> String)?
     var onScreenshot: ((String?, @escaping (String?) -> Void) -> Void)?
     var onApiRequest: ((_ method: String, _ url: String, _ headers: String, _ body: String) -> Void)?
     var onPanels: (() -> String)?
@@ -1008,6 +1012,36 @@ final class ChatPanel: NSView, Themable, Scalable {
             onOpenBrowser?(s("url"))
             addSystem(t("chat.openedPreview", ["u": s("url")]))
             session?.respondTool(id, "opened \(s("url")) in riven preview panel")
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
+             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll":
+            guard let onBrowser else { reply("browser panel unavailable"); return }
+            addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
+            onBrowser(tool, args) { reply($0) }
+        case "riven_browser_eval":
+            // 임의 자바스크립트만 승인을 받는다. 나머지 도구는 사람이 마우스로 할 수 있는 범위
+            // 안이지만, eval 은 그 페이지에서 무엇이든 할 수 있다 — 브라우저가 로그인 세션을
+            // 그대로 들고 있으므로(쿠키 유지) 자동 승인에 맡길 수 없다.
+            guard let onBrowser else { reply("browser panel unavailable"); return }
+            let js = s("js")
+            let origin = onBrowserOrigin?() ?? ""
+            if evalAllowedOrigins.contains(origin), !origin.isEmpty {
+                addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
+                onBrowser(tool, ["js": js]) { reply($0) }
+                return
+            }
+            enqueueChoice(title: t("browser.eval.confirm", ["o": origin.isEmpty ? "?" : origin]),
+                          detail: "", code: js, path: nil, options: [
+                (t("common.confirm"), { [weak self] in
+                    self?.addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
+                    onBrowser(tool, ["js": js]) { reply($0) }
+                }),
+                (t("browser.eval.always"), { [weak self] in
+                    if !origin.isEmpty { self?.evalAllowedOrigins.insert(origin) }
+                    self?.addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
+                    onBrowser(tool, ["js": js]) { reply($0) }
+                }),
+                (t("chat.deny"), { reply(t("browser.eval.denied")) }),
+            ])
         case "riven_screenshot":
             let url = args["url"] as? String
             addSystem(t("chat.capturing"))
@@ -1506,6 +1540,24 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     /// 되돌리기 어려운 작업은 대화에 확인 카드를 띄우고, 사용자가 고른 뒤에 진행한다.
+    /// eval 을 계속 허용하기로 한 출처들 (이 대화 안에서만 기억한다).
+    private var evalAllowedOrigins: Set<String> = []
+    /// 패널에 남길 한 줄 — 무엇을 했는지 사람이 읽을 수 있게.
+    static func browserSummary(_ tool: String, _ args: [String: Any]) -> String {
+        let verb = tool.replacingOccurrences(of: "riven_browser_", with: "")
+        let detail: String
+        switch tool {
+        case "riven_browser_open":   detail = args["url"] as? String ?? ""
+        case "riven_browser_go":     detail = args["action"] as? String ?? ""
+        case "riven_browser_read", "riven_browser_click", "riven_browser_wait", "riven_browser_scroll":
+            detail = args["selector"] as? String ?? ""
+        // 채워 넣은 값은 남기지 않는다 (비밀번호·토큰일 수 있다).
+        case "riven_browser_fill":   detail = args["selector"] as? String ?? ""
+        default: detail = ""
+        }
+        return detail.isEmpty ? verb : "\(verb) \(detail)"
+    }
+
     private func confirmDestructive(_ question: String, _ done: @escaping (Bool) -> Void) {
         enqueueChoice(title: question, detail: "", code: nil, path: nil,
                       options: [(t("common.confirm"), { done(true) }), (t("chat.cancel"), { done(false) })])
