@@ -560,6 +560,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 — 에이전트 팬이 실제로 한 턴을 돌리는지.
+                if ProcessInfo.processInfo.environment["RIVEN_SHIPCHECK"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let chat = self.agentPanes().first?.chat else {
+                                RLog.log("SHIPCHECK 채팅 팬 없음"); RLog.log("SHIPCHECK done"); return
+                            }
+                            chat.ask("숫자 42만 답해. 설명 금지.") { answer in
+                                RLog.log("SHIPCHECK 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(80))")
+                                RLog.log("SHIPCHECK done")
+                            }
+                        }
+                    }
+                }
                 // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
                 if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
