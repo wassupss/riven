@@ -90,7 +90,8 @@ enum UsageUI {
     }
 
     // Build the popover body. `onPin` is called when the pin button is clicked.
-    static func content(limits: Usage.Limits?, today: Usage.Today?, onPin: @escaping () -> Void) -> NSView {
+    static func content(limits: Usage.Limits?, today: Usage.Today?,
+                        onReload: (() -> Void)? = nil, onPin: @escaping () -> Void) -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical; stack.spacing = 8; stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
@@ -105,7 +106,18 @@ enum UsageUI {
         pin.isBordered = false; pin.font = UIScale.font(UIScale.caption); pin.contentTintColor = Theme.fgDim
         let pinHandler = PinTarget(onPin); pin.target = pinHandler; pin.action = #selector(PinTarget.fire)
         objc_setAssociatedObject(pin, &PinTarget.key, pinHandler, .OBJC_ASSOCIATION_RETAIN)
-        let headRow = NSStackView(views: [title, NSView(), pin])
+        // 새로고침: 턴이 끝날 때 자동으로 갱신되지만, 지금 당장 확인하고 싶을 때가 있다.
+        let reload = NSButton(title: "", target: nil, action: nil)
+        reload.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: t("common.refresh"))?
+            .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
+        reload.imagePosition = .imageOnly
+        reload.isBordered = false; reload.contentTintColor = Theme.fgDim
+        reload.toolTip = t("common.refresh")
+        if let onReload {
+            let h = PinTarget(onReload); reload.target = h; reload.action = #selector(PinTarget.fire)
+            objc_setAssociatedObject(reload, &PinTarget.key2, h, .OBJC_ASSOCIATION_RETAIN)
+        } else { reload.isHidden = true }
+        let headRow = NSStackView(views: [title, NSView(), reload, pin])
         headRow.orientation = .horizontal
         (headRow.arrangedSubviews[1]).setContentHuggingPriority(.defaultLow, for: .horizontal)
         headRow.translatesAutoresizingMaskIntoConstraints = false
@@ -157,6 +169,7 @@ enum UsageUI {
 
 private final class PinTarget: NSObject {
     static var key = 0
+    static var key2 = 0
     private let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     @objc func fire() { action() }

@@ -512,6 +512,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Restore the previous session (open folders + tabs) on a normal launch —
         // but NOT when a debug folder is forced via RIVEN_OPEN (else both would
         // open and the restored session would clobber the forced folder).
+        // RIVEN_AVATARTEST=<png>: 아바타 고르기 한 바퀴. 첫 실행은 그룹을 만들고
+        // 편집 팝오버를 연 뒤(고르는 줄이 실제로 보이는지) 팝오버와 같은 경로로
+        // 아바타를 심는다. 같은 데이터 디렉터리로 다시 띄우면 이미 심어져 있으므로
+        // 아무것도 고르지 않고 복원된 값만 찍는다 — 재기동 후에도 남는지 확인.
+        if let shot = ProcessInfo.processInfo.environment["RIVEN_AVATARTEST"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                guard let self else { return }
+                RLog.log("AVATAR atStart=" + self.agentPanes().map {
+                    "\($0.chat.agentRole):\($0.panel.chatAvatar ?? "auto")"
+                }.joined(separator: ","))
+                if self.agentPanes().filter({ $0.chat.groupName == "배포팀" }).isEmpty {
+                    self.createAgentGroup("배포팀", [
+                        (name: "리드", agent: nil, model: nil, parent: nil),
+                        (name: "구현", agent: nil, model: "sonnet", parent: 0),
+                    ])
+                }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                self.teamPanel.show(group: "배포팀")
+                NSApp.activate(ignoringOtherApps: true)
+                self.window.makeKeyAndOrderFront(nil)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    let target = "구현"
+                    let pane = self.agentPanes().first { $0.chat.agentRole == target }
+                    let restored = pane?.panel.chatAvatar
+                    if restored == nil {
+                        // 팝오버를 열어 아바타 줄이 보이는 상태로 한 장 뜬다.
+                        self.teamPanel.debugOpenEdit(target)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            self.debugPopoverSnapshot(to: shot)
+                            // 팝오버가 저장할 때와 같은 경로로 심는다.
+                            self.editAgentPane("배포팀", target, name: target,
+                                               model: pane?.chat.preferredModel,
+                                               parent: pane?.chat.parentName, avatar: "5.3")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                                self.logAvatarState(target, tag: "set")
+                                self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                                    of: ".png", with: "-picked.png"))
+                            }
+                        }
+                    } else {
+                        self.logAvatarState(target, tag: "restored")
+                        self.debugWindowSnapshot(to: shot.replacingOccurrences(
+                            of: ".png", with: "-restored.png"))
+                        // "자동으로 되돌리기"도 같은 경로다 — 고른 값을 지우면 이름 해시로 돌아가야 한다.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                            self.editAgentPane("배포팀", target, name: target,
+                                               model: pane?.chat.preferredModel,
+                                               parent: pane?.chat.parentName, avatar: nil)
+                            self.logAvatarState(target, tag: "reset")
+                        }
+                    }
+                }
+            }
+        }
         if ProcessInfo.processInfo.environment["RIVEN_OPEN"] == nil {
             // Reopening restores workspaces, dock layouts, editor tabs and chat transcripts — enough
             // work to look like a freeze. Show the overlay FIRST and force a paint, then restore on
@@ -730,11 +784,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
         teamPanel.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
         teamPanel.onFocusAgent = { [weak self] group, name in self?.focusAgentPane(group, name) }
-        teamPanel.onEditAgent = { [weak self] group, old, name, model, parent in
-            self?.editAgentPane(group, old, name: name, model: model, parent: parent)
+        teamPanel.onEditAgent = { [weak self] group, old, name, model, parent, avatar in
+            self?.editAgentPane(group, old, name: name, model: model, parent: parent, avatar: avatar)
         }
-        teamPanel.onAddAgent = { [weak self] group, name, persona, model, parent in
-            self?.addAgentToGroup(group, name: name, persona: persona, model: model, parent: parent)
+        teamPanel.onAddAgent = { [weak self] group, name, persona, model, parent, avatar in
+            self?.addAgentToGroup(group, name: name, persona: persona, model: model,
+                                  parent: parent, avatar: avatar)
         }
         teamPanel.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
         teamPanel.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
@@ -1625,6 +1680,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true)
             } else {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
+                // 턴이 끝났으니 사용량을 다시 읽는다 (60초 폴링만으로는 답을 받고도 한동안
+                // 예전 수치가 그대로 남아 있었다).
+                self.refreshUsageAfterTurn()
                 // Done: if you're not watching THIS pane, raise the ember + post a banner.
                 // "Watching" = the app is frontmost AND this pane is the visible/selected one in the
                 // CURRENT workspace's dock (so clicking anywhere in it counts) — OR it holds focus.
@@ -2183,7 +2241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 종류 글리프(sparkles/code)를 그대로 둔다.
                 let avatar = p.content is ChatPanel ? p.avatarKey : nil
                 out.append(.init(paneId: p.id, title: title, subtitle: sub, activity: p.status,
-                                 iconSymbol: sym, avatarKey: avatar))
+                                 iconSymbol: sym, avatarKey: avatar,
+                                 avatarOverride: p.content is ChatPanel ? p.chatAvatar : nil))
             }
         }
         return out
@@ -2199,11 +2258,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// 디버그 전용: 한 멤버의 아바타가 세 군데(팬 / 명단 / 레일)에서 같은 값으로 읽히는지.
+    private func logAvatarState(_ name: String, tag: String) {
+        let pane = agentPanes().first { $0.chat.agentRole == name }
+        let saved = workspace.flatMap { ws in
+            savedRoster(ws, "배포팀").first { $0["name"] == name }?["avatar"]
+        }
+        let rail = workspace.flatMap { ws in railAgents(for: ws).first { $0.title.hasSuffix(name) } }
+        let spec = AgentAvatar.spec(for: name, override: pane?.panel.chatAvatar)
+        RLog.log("AVATAR \(tag) pane=\(pane?.panel.chatAvatar ?? "auto") roster=\(saved ?? "-") "
+               + "rail=\(rail?.avatarOverride ?? "auto") "
+               + "resolved=\(AgentAvatar.symbolName(index: spec.glyph))/\(spec.color)")
+    }
+
     /// 디버그 전용: 창을 컴포지터에서 그대로 떠서 PNG 로 남긴다. 뷰를 다시 그리는
     /// cacheDisplay 와 달리 지금 걸려 있는 CALayer 애니메이션(shimmer 마스크·펄스)의 한
     /// 프레임이 그림에 남아서, 애니메이션이 실제로 붙었는지 눈으로 확인할 수 있다.
-    private func debugWindowSnapshot(to path: String) {
-        guard let win = window else { return }
+    /// 팝오버는 별도의 창이라 메인 창만 뜨면 안 잡힌다 — 지금 떠 있는 팝오버 창을 따로 뜬다.
+    private func debugPopoverSnapshot(to path: String) {
+        guard let pop = NSApp.windows.first(where: {
+            $0.isVisible && String(describing: type(of: $0)).contains("Popover")
+        }) else { RLog.log("AVATAR no popover window"); return }
+        debugWindowSnapshot(to: path, window: pop)
+    }
+
+    private func debugWindowSnapshot(to path: String, window override: NSWindow? = nil) {
+        guard let win = override ?? window else { return }
         if let img = CGWindowListCreateImage(.null, .optionIncludingWindow,
                                              CGWindowID(win.windowNumber),
                                              [.boundsIgnoreFraming, .bestResolution]),
@@ -2548,11 +2628,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // chat panes: reuse the LIVE pane (keeps its claude process + rendered transcript)
                 // when its session id matches; otherwise resume the persisted id, else fresh.
                 if desc.hasPrefix("chat:") {
-                    // sid \t nickname \t persona \t group \t parent — 짧은(구버전) 형식도 그대로 읽힌다.
+                    // sid \t nickname \t persona \t group \t parent \t model \t avatar
+                    // — 짧은(구버전) 형식도 그대로 읽힌다.
                     let f = desc.dropFirst(5).components(separatedBy: "\t")
                     func fld(_ i: Int) -> String { i < f.count ? f[i] : "" }
                             let sid = fld(0), nick = fld(1), persona = fld(2), group = fld(3)
-                    let parent = fld(4), model = fld(5)
+                    let parent = fld(4), model = fld(5), avatar = fld(6)
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
                         return liveChats.remove(at: i)          // reuse — no respawn, no reload
                     }
@@ -2560,6 +2641,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                agent: persona.isEmpty ? nil : persona,
                                                model: model.isEmpty ? nil : model)
                     p.chatModel = model.isEmpty ? nil : model
+                    p.chatAvatar = avatar.isEmpty ? nil : avatar   // 고른 아바타는 재기동해도 그대로
                     if !nick.isEmpty {                          // restore the group role
                         p.title = group.isEmpty ? nick : "\(group) · \(nick)"
                         p.agentName = nick; p.chatNickname = nick; p.chatGroup = group.isEmpty ? nil : group
@@ -2925,6 +3007,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.focusPanelContent(pane.panel)
                     let now = String(describing: type(of: self.window.firstResponder ?? NSNull()))
                     RLog.log("CARD afterSteal=\(stolen) afterActivate=\(now)")
+                }
+            }
+        }
+        // RIVEN_USAGEBENCH=1: 턴이 끝날 때 사용량이 다시 읽히는지 + 3초 합치기가 도는지.
+        if ProcessInfo.processInfo.environment["RIVEN_USAGEBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in   // 기동 시 갱신과 겹치지 않게
+                guard let self else { return }
+                let t0 = self.lastUsageRefresh
+                self.refreshUsageAfterTurn()
+                let t1 = self.lastUsageRefresh
+                self.refreshUsageAfterTurn()      // 곧바로 또 부르면 합쳐져야 한다
+                let t2 = self.lastUsageRefresh
+                self.refreshUsage(force: true)    // 버튼은 언제나 즉시
+                let t3 = self.lastUsageRefresh
+                RLog.log("USAGE 턴종료=\(t1 > t0) 3초내중복=\(t2 == t1 ? "합쳐짐" : "또호출") 버튼=\(t3 > t2)")
+            }
+        }
+        // RIVEN_PERSONADUMP=1: 카드가 만들어진 뒤에 에이전트 목록이 주입되는 실제 순서를 그대로
+        // 재현해서, 패널을 열 때 목록이 카드에 실리는지 본다.
+        if ProcessInfo.processInfo.environment["RIVEN_PERSONADUMP"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                RLog.log("PERSONA 주입 전 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                self.teamPanel.agentsProvider = { ["reviewer", "tester"] }
+                RLog.log("PERSONA 주입 직후 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                self.toggleDockPanel("team")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    RLog.log("PERSONA 패널 연 뒤 카드=" + self.teamPanel.debugPersonaItems().joined(separator: " | "))
+                }
+            }
+        }
+        // RIVEN_TOKENSHOT=<theme>: 그 테마에서 @멘션 / 슬래시 토큰이 실제로 읽히는지 캡처.
+        if let theme = ProcessInfo.processInfo.environment["RIVEN_TOKENSHOT"] {
+            Theme.apply(id: theme)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.teamPanel.debugCreate()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if let lead = self.agentPanes().first(where: { $0.chat.parentName == nil }) {
+                            lead.chat.debugFillInput("/status @멤버1 저녁메뉴 @멤버2 점심메뉴")
+                            self.focusPanelContent(lead.panel)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            if let v = self.window.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let png = rep.representation(using: .png, properties: [:]) {
+                                    try? png.write(to: URL(fileURLWithPath: "/tmp/token-\(theme).png"))
+                                    RLog.log("TOKEN shot /tmp/token-\(theme).png")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -4186,6 +4323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "model": p.chat.preferredModel ?? "",
                 "parent": p.chat.parentName ?? "",
                 "sid": p.panel.sessionId ?? byName[p.chat.agentRole]?["sid"] ?? "",
+                // 고른 아바타. 명단에도 남겨야 팬을 닫았다 조직도에서 되살릴 때 얼굴이 유지된다.
+                "avatar": p.panel.chatAvatar ?? "",
             ]
         }
         let order = agentPanes().filter { $0.chat.groupName == group }.map { $0.chat.agentRole }
@@ -4203,7 +4342,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let name = p.chatNickname ?? p.agentName ?? ""
         guard !name.isEmpty else { return }
         let entry = ["name": name, "agent": p.chatAgent ?? "", "model": p.chatModel ?? "",
-                     "parent": p.chatParent ?? "", "sid": p.sessionId ?? ""]
+                     "parent": p.chatParent ?? "", "sid": p.sessionId ?? "",
+                     "avatar": p.chatAvatar ?? ""]
         if let i = list.firstIndex(where: { $0["name"] == name }) { list[i] = entry } else { list.append(entry) }
         if let d = try? JSONSerialization.data(withJSONObject: list),
            let json = String(data: d, encoding: .utf8) {
@@ -4233,7 +4373,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if out[g] == nil { order.append(g) }
             out[g, default: []].append(AgentNode(name: p.chat.agentRole, persona: p.chat.agentPersona,
                                                  model: p.chat.preferredModel,
-                                                 parent: p.chat.parentName, open: true))
+                                                 parent: p.chat.parentName, open: true,
+                                                 avatar: p.panel.chatAvatar))
         }
         // 닫힌 멤버를 명단에서 채운다 — 그룹 전체를 닫아도 탭과 조직도는 남는다.
         if let ws = workspace {
@@ -4243,7 +4384,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     AgentNode(name: $0["name"] ?? "", persona: ($0["agent"] ?? "").isEmpty ? nil : $0["agent"],
                               model: ($0["model"] ?? "").isEmpty ? nil : $0["model"],
                               parent: ($0["parent"] ?? "").isEmpty ? nil : $0["parent"],
-                              open: false)
+                              open: false,
+                              avatar: ($0["avatar"] ?? "").isEmpty ? nil : $0["avatar"])
                 }
                 guard !closed.isEmpty || out[g] != nil else { continue }
                 if out[g] == nil { order.append(g) }
@@ -4265,7 +4407,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Apply org-chart edits to the live pane: nickname, model, reporting line. The model change
     /// goes over the running session's control channel, so nothing restarts; every field is also
     /// written onto the DockPanel so it survives in the layout snapshot.
-    private func editAgentPane(_ group: String, _ old: String, name: String, model: String?, parent: String?) {
+    private func editAgentPane(_ group: String, _ old: String, name: String, model: String?,
+                               parent: String?, avatar: String? = nil) {
         for p in agentPanes() where p.chat.groupName == group {
             if p.chat.agentRole == old {
                 p.chat.applyNickname(name)
@@ -4273,6 +4416,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if p.chat.preferredModel != model { p.chat.applyModel(model) }
                 p.panel.chatNickname = name; p.panel.agentName = name
                 p.panel.chatParent = parent; p.panel.chatModel = model
+                p.panel.chatAvatar = avatar          // nil = 이름에서 자동 배정으로 되돌리기
                 p.panel.title = "\(group) · \(name)"
             } else if p.chat.parentName == old {
                 // 이름이 바뀌면 그를 상사로 두던 팬들의 보고 라인도 따라가야 한다.
@@ -4280,12 +4424,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         saveGroupRoster(group)
-        refreshDockTabs(); refreshRailAgents()
+        refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
     }
 
     /// 기존 그룹에 멤버를 하나 더 연다. 자리 규칙은 생성 때와 같다: 마지막 칸이 3개 미만이면
     /// 그 칸 아래로, 꽉 찼으면 오른쪽에 새 칸을 만든다.
-    private func addAgentToGroup(_ group: String, name: String, persona: String?, model: String?, parent: String?) {
+    private func addAgentToGroup(_ group: String, name: String, persona: String?, model: String?,
+                                 parent: String?, avatar: String? = nil) {
         guard let dock = activeDock, let ws = workspace else { return }
         let st = state(for: ws)
         let mates = agentPanes().filter { $0.chat.groupName == group }
@@ -4294,6 +4439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.title = "\(group) · \(uniqueName)"
         p.agentName = uniqueName; p.chatNickname = uniqueName; p.chatGroup = group
         p.chatParent = parent; p.chatModel = model; p.chatAgent = persona
+        p.chatAvatar = avatar
         let chat = p.content as? ChatPanel
         chat?.nickname = uniqueName; chat?.groupName = group; chat?.parentName = parent
         let members = mates.filter { $0.chat.parentName != nil }
@@ -4362,6 +4508,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.agentName = name; p.chatNickname = name; p.chatGroup = group
         p.chatParent = (m["parent"] ?? "").isEmpty ? nil : m["parent"]
         p.chatModel = model.isEmpty ? nil : model
+        p.chatAvatar = (m["avatar"] ?? "").isEmpty ? nil : m["avatar"]   // 되살려도 같은 얼굴
         let chat = p.content as? ChatPanel
         chat?.nickname = name; chat?.groupName = group; chat?.parentName = p.chatParent
         // 원래 자리로 되돌린다: 같은 그룹의 다른 멤버가 있으면 그 아래(같은 칸)로, 멤버가
@@ -4578,10 +4725,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.pinUsage()
             }
         }
+        statusBar.onReloadUsage = { [weak self] in self?.refreshUsage(force: true) }
         refreshUsage()
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
     }
-    private func refreshUsage() {
+    /// 턴이 끝날 때마다 부른다. 여러 팬이 거의 동시에 끝나면 API 를 그만큼 두드리게 되므로
+    /// 3초 안의 요청은 하나로 합친다 (버튼으로 부를 때는 force 로 즉시).
+    private var lastUsageRefresh = Date.distantPast
+    private func refreshUsageAfterTurn() {
+        guard Date().timeIntervalSince(lastUsageRefresh) > 3 else { return }
+        refreshUsage()
+    }
+    private func refreshUsage(force: Bool = false) {
+        lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
             // Show today's $cost right away (riven's fallback) so the widget is never

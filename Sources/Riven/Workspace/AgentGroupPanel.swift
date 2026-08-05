@@ -23,6 +23,8 @@ struct AgentNode {
     let parent: String?
     /// 지금 패널이 열려 있는지. 닫힌 멤버도 조직도에 흐리게 남겨 두고, 누르면 되살린다.
     var open: Bool = true
+    /// 사용자가 고른 아바타 ("글리프.색"). nil 이면 이름 해시 자동 배정 ([[AgentAvatar]]).
+    var avatar: String? = nil
 }
 
 // MARK: - org chart
@@ -387,7 +389,7 @@ final class OrgChartView: NSView, Themable {
         let d = UIScale.pt(26) * scale
         let av = NSRect(x: r.minX + UIScale.pt(11) * scale, y: r.minY + UIScale.pt(29) * scale - d / 2,
                         width: d, height: d)
-        AgentAvatar.draw(key: n.name, in: av, filled: isMain)
+        AgentAvatar.draw(key: n.name, override: n.avatar, in: av, filled: isMain)
 
         let textX = av.maxX + UIScale.pt(9) * scale
         let textW = r.maxX - UIScale.pt(11) * scale - textX
@@ -657,7 +659,9 @@ final class AddCard: NSView, Themable {
 /// 기동 인자라 실행 중에는 못 바꾸므로 값만 보여준다.
 final class AgentEditForm: NSView, Themable {
     /// 저장(기존 편집) 또는 추가(새 멤버). persona 는 새 멤버일 때만 의미가 있다.
-    var onSave: ((_ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> Void)?
+    /// avatar 는 사용자가 고른 아바타 ("글리프.색"), nil 이면 이름에서 자동 배정.
+    var onSave: ((_ name: String, _ persona: String?, _ model: String?, _ parent: String?,
+                  _ avatar: String?) -> Void)?
     var onCancel: (() -> Void)?
     /// 이 멤버를 그룹에서 완전히 뺀다 (패널을 닫고 명단에서도 지운다).
     var onDelete: (() -> Void)?
@@ -669,11 +673,13 @@ final class AgentEditForm: NSView, Themable {
     private let peers: [String]
     private let personas: [String]
     private let isNew: Bool
+    private let avatarPicker: AvatarPicker
 
     init(node: AgentNode, peers: [String], isMain: Bool, personas: [String] = [], isNew: Bool = false) {
         self.peers = peers
         self.personas = personas
         self.isNew = isNew
+        avatarPicker = AvatarPicker(key: node.name, value: node.avatar)
         parentSelect = RivenSelect([t("team.noParent")] + peers, compact: true)
         personaSelect = RivenSelect([t("team.noPersona")] + personas, compact: true)
         super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 0))
@@ -711,7 +717,7 @@ final class AgentEditForm: NSView, Themable {
         let buttons = NSStackView(views: buttonViews)
         buttons.orientation = .horizontal; buttons.spacing = 8; buttons.distribution = .fillEqually
 
-        var rows: [NSView] = [row(t("team.nameField"), nameField)]
+        var rows: [NSView] = [row(t("team.nameField"), nameField), row(t("team.avatar"), avatarPicker)]
         if isNew { rows.append(row(t("team.persona"), personaSelect)) }
         rows += [row(t("team.model"), modelSelect), row(t("team.reportsTo"), parentSelect), personaLabel, buttons]
         let stack = NSStackView(views: rows)
@@ -743,7 +749,8 @@ final class AgentEditForm: NSView, Themable {
         onSave?(nameField.stringValue.trimmingCharacters(in: .whitespaces),
                 (isNew && ps > 0 && ps - 1 < personas.count) ? personas[ps - 1] : nil,
                 mi > 0 ? ChatPanel.selectableModels[mi].1 : nil,
-                (parentSelect.isEnabled && pi > 0 && pi - 1 < peers.count) ? peers[pi - 1] : nil)
+                (parentSelect.isEnabled && pi > 0 && pi - 1 < peers.count) ? peers[pi - 1] : nil,
+                avatarPicker.value)
     }
     @objc private func cancelTapped() { onCancel?() }
     @objc private func deleteTapped() { onDelete?() }
@@ -760,10 +767,12 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     var groupsProvider: (() -> [(group: String, members: [AgentNode])])?
     /// Clicking a node in an existing group's chart focuses that pane.
     var onFocusAgent: ((_ group: String, _ name: String) -> Void)?
-    /// 조직도에서 고친 설정을 실제 팬에 적용한다 (이름·모델·보고 대상).
-    var onEditAgent: ((_ group: String, _ old: String, _ name: String, _ model: String?, _ parent: String?) -> Void)?
+    /// 조직도에서 고친 설정을 실제 팬에 적용한다 (이름·모델·보고 대상·아바타).
+    var onEditAgent: ((_ group: String, _ old: String, _ name: String, _ model: String?,
+                       _ parent: String?, _ avatar: String?) -> Void)?
     /// 기존 그룹에 멤버를 하나 더 만든다.
-    var onAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> Void)?
+    var onAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?,
+                      _ parent: String?, _ avatar: String?) -> Void)?
     /// 멤버를 그룹에서 완전히 뺀다 (패널을 닫고 명단에서도 지운다).
     var onRemoveAgent: ((_ group: String, _ name: String) -> Void)?
     /// 그룹 전체 삭제 (진행 중인 작업 중지 + 패널 닫기 + 저장분 삭제).
@@ -1030,6 +1039,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     /// 패널이 열릴 때마다 탭을 다시 만든다 — 첫 탭은 "새 그룹"(작성), 나머지는 지금 열려 있는
     /// 그룹들. 탭 하나가 곧 화면 하나라 별도의 모드 스위치가 필요 없다.
     func refresh() {
+        refreshPersonas()
         groups = groupsProvider?() ?? []
         if let g = shownGroup, !groups.contains(where: { $0.group == g }) { shownGroup = nil }
         tabStrip.tabs = [(t("team.draft"), nil)] + groups.map { ($0.group, $0.members.count) }
@@ -1038,13 +1048,32 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         applyTab()
     }
     private var groups: [(group: String, members: [AgentNode])] = []
+
+    /// 카드의 페르소나 목록을 지금 워크스페이스 기준으로 다시 채운다.
+    /// 카드는 init 에서 만들어지는데 agentsProvider 는 그 뒤에 주입되고, 워크스페이스가
+    /// 바뀌면 .claude/agents 목록 자체도 달라진다. 그래서 패널을 열 때마다 다시 읽는다
+    /// (예전에는 처음 만든 3장이 영원히 "기본" 하나만 들고 있었다).
+    private func refreshPersonas() {
+        let personas = [t("team.noPersona")] + (agentsProvider?() ?? [])
+        for c in cards {
+            let keep = c.persona.titleOfSelectedItem
+            guard c.persona.itemTitles != personas else { continue }
+            c.persona.removeAllItems()
+            c.persona.addItems(withTitles: personas)
+            if let keep, let i = personas.firstIndex(of: keep) { c.persona.selectItem(at: i) }
+        }
+    }
     /// 벤치용: [에이전트 추가] 를 n번 누른 것과 같은 경로.
     func debugAddAgents(_ n: Int) { for _ in 0..<n { addAgent() } }
     /// 벤치용: UI에서 [그룹 만들기] 를 누른 것과 같은 경로.
     func debugCreate() { create() }
+    /// 검증용: 그 멤버의 ✎ 편집 팝오버를 그대로 연다 (아바타 고르는 줄 포함).
+    func debugOpenEdit(_ name: String) { editAgent(name) }
     /// 벤치용: 선택된 탭 / 조직도가 보이는지.
     func debugSelectedTab() -> String { debugTabTitles().indices.contains(tabStrip.selected) ? debugTabTitles()[tabStrip.selected] : "?" }
     func debugChartVisible() -> Bool { !chartScroll.isHidden }
+    /// 벤치용: 카드별 페르소나 드롭다운 항목.
+    func debugPersonaItems() -> [String] { cards.map { $0.persona.itemTitles.joined(separator: ",") } }
     /// 벤치용: 지금 보이는 탭 라벨.
     func debugTabTitles() -> [String] {
         tabStrip.tabs.map { tab in tab.1.map { "\(tab.0)(\($0))" } ?? tab.0 }
@@ -1079,10 +1108,10 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
               let node = members.first(where: { $0.name == name }) else { return }
         let form = AgentEditForm(node: node, peers: members.map { $0.name }.filter { $0 != name },
                                  isMain: node.parent == nil)
-        form.onSave = { [weak self] newName, _, model, parent in
+        form.onSave = { [weak self] newName, _, model, parent, avatar in
             guard let self else { return }
             self.editPopover?.close(); self.editPopover = nil
-            self.onEditAgent?(g, name, newName.isEmpty ? name : newName, model, parent)
+            self.onEditAgent?(g, name, newName.isEmpty ? name : newName, model, parent, avatar)
             self.refresh()
         }
         form.onDelete = { [weak self] in
@@ -1230,10 +1259,11 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
                               parent: names.first, open: true)
         let form = AgentEditForm(node: fresh, peers: names, isMain: false,
                                  personas: agentsProvider?() ?? [], isNew: true)
-        form.onSave = { [weak self] name, persona, model, parent in
+        form.onSave = { [weak self] name, persona, model, parent, avatar in
             guard let self else { return }
             self.editPopover?.close(); self.editPopover = nil
-            self.onAddAgent?(g, name.isEmpty ? fresh.name : name, persona, model, parent ?? names.first)
+            self.onAddAgent?(g, name.isEmpty ? fresh.name : name, persona, model,
+                             parent ?? names.first, avatar)
             self.refresh()
         }
         form.onCancel = { [weak self] in self?.editPopover?.close(); self?.editPopover = nil }

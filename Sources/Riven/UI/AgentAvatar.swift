@@ -46,18 +46,53 @@ enum AgentAvatar {
         return h
     }
 
-    static func symbolName(for key: String) -> String {
-        let name = symbols[Int(hash(key) % UInt64(symbols.count))]
+    // ---- 고른 아바타 (사용자 지정) ----------------------------------------------
+    // 자동 배정은 기본값일 뿐이고, 사용자가 고르면 그게 이긴다. 저장 형식은 "글리프.색"
+    // 인덱스 두 개 ("3.7") — 심볼 이름을 그대로 넣으면 나중에 목록을 바꿀 때 저장분이
+    // 깨지고, JSON 한 칸에 들어가야 해서 짧을수록 좋다.
+    static var glyphCount: Int { symbols.count }
+    static var colorCount: Int { hues.count }
+
+    static func encode(glyph: Int, color: Int) -> String { "\(glyph).\(color)" }
+
+    /// "3.7" → (3, 7). 형식이 깨졌거나 목록 범위를 벗어나면 nil (= 자동으로 되돌아간다).
+    static func decode(_ s: String?) -> (glyph: Int, color: Int)? {
+        guard let parts = s?.split(separator: "."), parts.count == 2,
+              let g = Int(parts[0]), let c = Int(parts[1]),
+              g >= 0, g < symbols.count, c >= 0, c < hues.count else { return nil }
+        return (g, c)
+    }
+
+    /// 이름에서 자동으로 정해지는 조합 (사용자가 고르지 않았을 때).
+    static func autoSpec(for key: String) -> (glyph: Int, color: Int) {
+        (Int(hash(key) % UInt64(symbols.count)), Int(hash(key) / 8 % UInt64(hues.count)))
+    }
+
+    /// 실제로 쓸 조합. 고른 값이 있으면 그것, 없으면 이름 해시.
+    static func spec(for key: String, override: String?) -> (glyph: Int, color: Int) {
+        decode(override) ?? autoSpec(for: key)
+    }
+
+    static func symbolName(index: Int) -> String {
+        let name = symbols[min(max(index, 0), symbols.count - 1)]
         return NSImage(systemSymbolName: name, accessibilityDescription: nil) == nil ? "person.fill" : name
     }
 
-    /// 아바타 색. 색조는 이름에 고정, 채도·밝기만 테마 모드를 따른다 (밝은 테마에서
+    /// 색 팔레트의 한 칸. 색조는 고정, 채도·밝기만 테마 모드를 따른다 (밝은 테마에서
     /// 파스텔이 흰 배경에 묻히지 않도록).
-    static func color(for key: String) -> NSColor {
-        let hue = hues[Int(hash(key) / 8 % UInt64(hues.count))]   // 글리프와 다른 비트를 쓴다
+    static func color(index: Int) -> NSColor {
+        let hue = hues[min(max(index, 0), hues.count - 1)]
         return Theme.isLight
             ? NSColor(calibratedHue: hue, saturation: 0.82, brightness: 0.62, alpha: 1)
             : NSColor(calibratedHue: hue, saturation: 0.55, brightness: 0.95, alpha: 1)
+    }
+
+    static func symbolName(for key: String, override: String? = nil) -> String {
+        symbolName(index: spec(for: key, override: override).glyph)
+    }
+
+    static func color(for key: String, override: String? = nil) -> NSColor {
+        color(index: spec(for: key, override: override).color)
     }
 
     // 색까지 구워 넣은 심볼 이미지 캐시. 키에 테마 모드가 들어가므로 테마를 바꿔도
@@ -66,9 +101,10 @@ enum AgentAvatar {
 
     /// 탭·레일에 그대로 꽂을 수 있는 색 입힌 심볼 이미지. contentTintColor 를 따로
     /// 걸지 말 것 (팔레트 색이 덮인다).
-    static func image(for key: String, size: CGFloat, weight: NSFont.Weight = .semibold) -> NSImage? {
-        let sym = symbolName(for: key)
-        let tint = color(for: key)
+    static func image(for key: String, override: String? = nil, size: CGFloat,
+                      weight: NSFont.Weight = .semibold) -> NSImage? {
+        let sym = symbolName(for: key, override: override)
+        let tint = color(for: key, override: override)
         let ck = "\(sym)|\(Int(size.rounded()))|\(weight.rawValue)|\(Theme.current.mode)|\(tint.hexish)"
         if let hit = cache[ck] { return hit }
         guard let base = NSImage(systemSymbolName: sym, accessibilityDescription: key) else { return nil }
@@ -82,12 +118,12 @@ enum AgentAvatar {
 
     /// 조직도처럼 직접 그리는 곳을 위한 헬퍼 — 원형 배경 + 가운데 글리프.
     /// filled = 리드 노드(색을 꽉 채우고 글리프는 반전).
-    static func draw(key: String, in rect: NSRect, filled: Bool) {
-        let tint = color(for: key)
+    static func draw(key: String, override: String? = nil, in rect: NSRect, filled: Bool) {
+        let tint = color(for: key, override: override)
         (filled ? tint.withAlphaComponent(0.9) : tint.withAlphaComponent(0.16)).setFill()
         NSBezierPath(ovalIn: rect).fill()
         let glyphColor = filled ? ChatPanel.onColor(tint) : tint
-        let sym = symbolName(for: key)
+        let sym = symbolName(for: key, override: override)
         let cfg = NSImage.SymbolConfiguration(pointSize: rect.height * 0.58, weight: .semibold)
             .applying(NSImage.SymbolConfiguration(paletteColors: [glyphColor]))
         guard let img = NSImage(systemSymbolName: sym, accessibilityDescription: key)?

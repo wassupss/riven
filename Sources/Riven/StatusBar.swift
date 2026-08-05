@@ -148,7 +148,9 @@ final class StatusBarView: NSView, Themable {
     private var usageToday: Usage.Today?
     private var usagePopover: NSPopover?
     private var usagePinned = false
-    var onPin: (() -> Void)?   // "pin to sidebar" clicked in the popover
+    var onPin: (() -> Void)?
+    /// 사용량 팝오버의 새로고침 버튼.
+    var onReloadUsage: (() -> Void)?   // "pin to sidebar" clicked in the popover
 
     // When pinned to the sidebar, the status-bar copy hides itself (riven behaviour).
     func setUsagePinned(_ pinned: Bool) {
@@ -200,10 +202,13 @@ final class StatusBarView: NSView, Themable {
         let pop = usagePopover ?? NSPopover()
         pop.behavior = .transient
         pop.contentViewController = NSViewController()
-        pop.contentViewController?.view = UsageUI.content(limits: usageLimits, today: usageToday) { [weak self] in
-            self?.usagePopover?.close()
-            self?.onPin?()
-        }
+        pop.contentViewController?.view = UsageUI.content(
+            limits: usageLimits, today: usageToday,
+            onReload: { [weak self] in self?.onReloadUsage?() },
+            onPin: { [weak self] in
+                self?.usagePopover?.close()
+                self?.onPin?()
+            })
         usagePopover = pop
         if !pop.isShown { pop.show(relativeTo: usageItem.bounds, of: usageItem, preferredEdge: .maxY) }
     }

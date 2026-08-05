@@ -217,7 +217,9 @@ final class DockTab: NSView, NSDraggingSource {
         statusDot.set(color: status.showsTabDot ? status.color : nil, pulsing: status.pulses)
         // 역할이 있는 에이전트 팬은 탭 아이콘도 그 에이전트의 아바타로 — 탭이 여러 개
         // 열려 있을 때 "이 탭이 누구인지"가 제목을 읽기 전에 보인다.
-        let wanted = panel.avatarKey.flatMap { AgentAvatar.image(for: $0, size: UIScale.pt(12)) } ?? panel.icon
+        let wanted = panel.avatarKey.flatMap {
+            AgentAvatar.image(for: $0, override: panel.chatAvatar, size: UIScale.pt(12))
+        } ?? panel.icon
         if iconView.image !== wanted { iconView.image = wanted }
         underline?.isHidden = !active
         underline?.layer?.backgroundColor =

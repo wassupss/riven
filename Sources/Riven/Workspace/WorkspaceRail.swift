@@ -29,6 +29,8 @@ final class WorkspaceRail: NSView, Themable {
         /// 아바타 키(역할 이름). 있으면 종류 글리프 대신 그 에이전트의 아바타를 쓴다 —
         /// 조직도·독 탭과 같은 얼굴이라 "누가 누구인지"가 세 군데에서 같게 읽힌다.
         var avatarKey: String? = nil
+        /// 사용자가 고른 아바타 ("글리프.색"). nil 이면 이름 해시 자동 배정.
+        var avatarOverride: String? = nil
     }
 
     // Workspaces whose agent list is collapsed (hidden). Persisted so it survives restart.
@@ -454,7 +456,7 @@ final class WorkspaceRail: NSView, Themable {
         let iconView = NSImageView()
         var icon: NSImage?
         if let key = agent.avatarKey {
-            icon = AgentAvatar.image(for: key, size: UIScale.pt(11))
+            icon = AgentAvatar.image(for: key, override: agent.avatarOverride, size: UIScale.pt(11))
         } else {
             icon = agent.iconSymbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil)?
                 .withSymbolConfiguration(.init(pointSize: 10, weight: .regular)) }

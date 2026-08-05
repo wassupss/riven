@@ -58,6 +58,9 @@ final class DockPanel {
     /// 이 팬의 아바타 키(역할 이름). 닉네임 → 커스텀 에이전트 순. 탭·레일·조직도가 같은
     /// 키를 써서 같은 얼굴을 그린다. 역할이 없는 팬은 nil (예전 아이콘 그대로).
     var avatarKey: String? { AgentAvatar.key(nickname: chatNickname, agent: chatAgent, kind: nil) }
+    /// 사용자가 조직도에서 고른 아바타 ("글리프.색"). nil 이면 이름 해시 자동 배정.
+    /// 레이아웃 스냅샷과 그룹 명단 양쪽에 저장돼서 재기동·재개 뒤에도 같은 얼굴이 나온다.
+    var chatAvatar: String?
 
     init(id: String, title: String, icon: NSImage? = nil, content: NSView, closable: Bool = true) {
         self.id = id; self.title = title; self.icon = icon; self.content = content; self.closable = closable
@@ -923,17 +926,18 @@ final class DockManager {
             let descs = g.panels.map { p -> String in
                 // Native chat panes persist their session id so they resume on relaunch.
                 if p.id.hasPrefix("chat-") {
-                    // "chat:<sid>\t<nickname>\t<agent>\t<group>\t<parent>\t<model>" — tabs are safe
-                    // (ids/names can't contain them) and every shorter/older form still parses.
+                    // "chat:<sid>\t<nickname>\t<agent>\t<group>\t<parent>\t<model>\t<avatar>" — tabs
+                    // are safe (ids/names can't contain them) and every shorter/older form still parses.
                     // and the old "chat:<sessionId>" form still parses.
                     // Always carry the role, even before the CLI has handed us a session id — a
                     // freshly created group saved at that moment used to come back as anonymous panes.
                     let sid = p.sessionId ?? ""
                     let nick = p.chatNickname ?? "", agent = p.chatAgent ?? ""
                     let group = p.chatGroup ?? "", parent = p.chatParent ?? ""
-                    let model = p.chatModel ?? ""
-                    if sid.isEmpty && nick.isEmpty && agent.isEmpty && group.isEmpty && model.isEmpty { return "chat" }
-                    return "chat:\(sid)\t\(nick)\t\(agent)\t\(group)\t\(parent)\t\(model)"
+                    let model = p.chatModel ?? "", avatar = p.chatAvatar ?? ""
+                    if sid.isEmpty && nick.isEmpty && agent.isEmpty && group.isEmpty && model.isEmpty
+                        && avatar.isEmpty { return "chat" }
+                    return "chat:\(sid)\t\(nick)\t\(agent)\t\(group)\t\(parent)\t\(model)\t\(avatar)"
                 }
                 guard p.id.hasPrefix("term-") else { return p.id }
                 // "term:<agent>" plus, if we own a resumable session id, "\t<sessionId>".
