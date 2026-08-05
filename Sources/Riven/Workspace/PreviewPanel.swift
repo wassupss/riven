@@ -23,6 +23,8 @@ final class BrowserTab: NSObject {
     private(set) var urlString = ""
     private(set) var progress: Double = 0
     private(set) var isLoading = false
+    /// 시크릿 탭 — 방문 기록을 남기지 않는다.
+    var isPrivate = false
     var onChange: (() -> Void)?
     private var tokens: [NSKeyValueObservation] = []
 
@@ -85,7 +87,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     private let stack = NSStackView()
     private let scroll = NSScrollView()
     private let newBtn = NSButton()
-    private var titles: [String] = []
+    private var items: [(title: String, url: String)] = []
     private var selected = 0
 
     override init(frame: NSRect) {
@@ -120,24 +122,24 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(_ list: [String], selected sel: Int) {
-        titles = list; selected = sel
+    func set(_ list: [(title: String, url: String)], selected sel: Int) {
+        items = list; selected = sel
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for (i, name) in list.enumerated() {
-            stack.addArrangedSubview(makeTab(i, name, active: i == sel))
+        for (i, it) in list.enumerated() {
+            stack.addArrangedSubview(makeTab(i, it, active: i == sel))
         }
         needsDisplay = true
     }
-    private func makeTab(_ i: Int, _ name: String, active: Bool) -> NSView {
+    private func makeTab(_ i: Int, _ it: (title: String, url: String), active: Bool) -> NSView {
         let row = TabCell()
         row.index = i
         row.onPick = { [weak self] in self?.onSelect?(i) }
         row.onClose = { [weak self] in self?.onClose?(i) }
-        row.configure(name, active: active, closable: titles.count > 1)
+        row.configure(it.title, url: it.url, active: active, closable: items.count > 1)
         return row
     }
-    func applyTheme() { needsDisplay = true; set(titles, selected: selected) }
-    func applyScale() { set(titles, selected: selected) }
+    func applyTheme() { needsDisplay = true; set(items, selected: selected) }
+    func applyScale() { set(items, selected: selected) }
     @objc private func newTapped() { onNew?() }
     /// 기준선 + 활성 탭 밑줄 (RivenTabStrip 과 같은 표현).
     override func draw(_ dirty: NSRect) {
@@ -145,19 +147,23 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
-    /// 한 칸: 제목 + (마우스를 올리면) 닫기.
+    /// 한 칸: 파비콘 + 제목 + (마우스를 올리면) 닫기.
     private final class TabCell: NSView {
         var index = 0
         var onPick: (() -> Void)?
         var onClose: (() -> Void)?
+        private let icon = NSImageView()
         private let label = NSTextField(labelWithString: "")
         private let close = NSButton()
         private var track: NSTrackingArea?
         private var active = false
         private var closable = false
+        private var host = ""
         override init(frame: NSRect) {
             super.init(frame: frame)
             wantsLayer = true
+            icon.imageScaling = .scaleProportionallyDown
+            icon.translatesAutoresizingMaskIntoConstraints = false
             label.lineBreakMode = .byTruncatingTail
             label.translatesAutoresizingMaskIntoConstraints = false
             close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: t("browser.closeTab"))
@@ -165,9 +171,13 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
             close.isBordered = false; close.isHidden = true
             close.target = self; close.action = #selector(closeTapped)
             close.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(label); addSubview(close)
+            addSubview(icon); addSubview(label); addSubview(close)
             NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                icon.heightAnchor.constraint(equalToConstant: UIScale.pt(13)),
+                label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
                 label.centerYAnchor.constraint(equalTo: centerYAnchor),
                 close.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
                 close.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
@@ -177,13 +187,40 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
             ])
         }
         required init?(coder: NSCoder) { fatalError() }
-        func configure(_ name: String, active: Bool, closable: Bool) {
+        func configure(_ name: String, url: String, active: Bool, closable: Bool) {
             self.active = active; self.closable = closable
             label.stringValue = name
             label.font = UIScale.font(UIScale.small, active ? .semibold : .regular)
             label.textColor = active ? Theme.fg : Theme.fgDim
             close.contentTintColor = Theme.fgDim
+            setIcon(url)
             needsDisplay = true
+        }
+        /// 파비콘이 있으면 그걸, 없으면 호스트 색의 점을 보여주고 뒤늦게 도착하면 갈아 끼운다.
+        private func setIcon(_ url: String) {
+            let u = URL(string: url)
+            host = u?.host ?? ""
+            if let cached = BrowserStore.cachedIcon(host: host) { icon.image = cached; return }
+            icon.image = Self.dot(BrowserStore.fallbackColor(host: host))
+            guard let u else { return }
+            let want = host
+            BrowserStore.icon(for: u) { [weak self] img in
+                guard let self, let img, self.host == want else { return }
+                self.icon.image = img
+            }
+        }
+        private static var dots: [String: NSImage] = [:]
+        private static func dot(_ color: NSColor) -> NSImage {
+            let key = color.description
+            if let d = dots[key] { return d }
+            let size = NSSize(width: 8, height: 8)
+            let img = NSImage(size: size)
+            img.lockFocus()
+            color.setFill()
+            NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+            img.unlockFocus()
+            dots[key] = img
+            return img
         }
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -204,10 +241,134 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     }
 }
 
+// MARK: - 주소창 자동완성 목록
+//
+// 주소창 아래에 떠서 기록·북마크·열린 탭·검색을 한 줄씩 보여준다. 줄 수가 여덟 이하라
+// NSTableView 대신 스택으로 둔다 (재사용 이득이 없고 코드가 절반이다).
+final class SuggestList: NSView, Themable {
+    var onPick: ((BrowserStore.Suggestion) -> Void)?
+    private let stack = NSStackView()
+    private var rows: [Row] = []
+    private(set) var items: [BrowserStore.Suggestion] = []
+    private(set) var highlighted = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
+        Theme.register(self)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(_ list: [BrowserStore.Suggestion]) {
+        items = list
+        highlighted = 0
+        rows.forEach { $0.removeFromSuperview() }
+        rows = list.enumerated().map { i, s in
+            let r = Row()
+            r.configure(s, active: i == 0)
+            r.onPick = { [weak self] in self?.onPick?(s) }
+            r.onHover = { [weak self] in self?.highlight(i) }
+            stack.addArrangedSubview(r)
+            r.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
+            return r
+        }
+        isHidden = list.isEmpty
+        applyTheme()
+    }
+    func hide() { isHidden = true; items = []; rows.forEach { $0.removeFromSuperview() }; rows = [] }
+    func move(_ delta: Int) {
+        guard !items.isEmpty else { return }
+        highlight((highlighted + delta + items.count) % items.count)
+    }
+    private func highlight(_ i: Int) {
+        highlighted = i
+        for (j, r) in rows.enumerated() { r.configure(items[j], active: j == i) }
+    }
+    var current: BrowserStore.Suggestion? { items.indices.contains(highlighted) ? items[highlighted] : nil }
+
+    func applyTheme() {
+        layer?.backgroundColor = Theme.bg2.cgColor
+        layer?.borderColor = Theme.hairline.cgColor
+        for (j, r) in rows.enumerated() { r.configure(items[j], active: j == highlighted) }
+    }
+
+    /// 한 줄: 종류 아이콘 + 제목 + 주소.
+    private final class Row: NSView {
+        var onPick: (() -> Void)?
+        var onHover: (() -> Void)?
+        private let icon = NSImageView()
+        private let title = NSTextField(labelWithString: "")
+        private let sub = NSTextField(labelWithString: "")
+        private var track: NSTrackingArea?
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            wantsLayer = true
+            [icon, title, sub].forEach {
+                $0.translatesAutoresizingMaskIntoConstraints = false
+                addSubview($0)
+            }
+            title.lineBreakMode = .byTruncatingTail
+            sub.lineBreakMode = .byTruncatingMiddle
+            NSLayoutConstraint.activate([
+                heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
+                title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+                title.centerYAnchor.constraint(equalTo: centerYAnchor),
+                sub.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+                sub.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
+                sub.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+            title.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        func configure(_ s: BrowserStore.Suggestion, active: Bool) {
+            let symbol: String
+            switch s.kind {
+            case .openTab:  symbol = "macwindow"
+            case .bookmark: symbol = "star.fill"
+            case .history:  symbol = "clock"
+            case .search:   symbol = "magnifyingglass"
+            }
+            icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            icon.image?.isTemplate = true
+            icon.contentTintColor = s.kind == .bookmark ? Theme.accent : Theme.fgDim
+            title.stringValue = s.kind == .search ? t("browser.searchFor", ["q": s.title]) : s.title
+            title.font = UIScale.font(UIScale.small)
+            title.textColor = Theme.fg
+            sub.stringValue = s.kind == .search ? "" : s.url
+            sub.font = UIScale.font(UIScale.caption)
+            sub.textColor = Theme.fgDim
+            layer?.backgroundColor = active ? Theme.accent.withAlphaComponent(0.18).cgColor : NSColor.clear.cgColor
+        }
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let t = track { removeTrackingArea(t) }
+            let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
+            addTrackingArea(t); track = t
+        }
+        override func mouseEntered(with e: NSEvent) { onHover?() }
+        override func mouseDown(with e: NSEvent) { onPick?() }
+    }
+}
+
 // MARK: - panel
 
 final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
-                          WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+                          WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate,
+                          NSTextFieldDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     var onCapture: ((String) -> Void)?   // saved PNG path → send to the running agent
 
@@ -216,6 +377,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let fwdBtn = NSButton()
     private let stopBtn = NSButton()          // 로딩 중에는 ✕, 아니면 ⟳
     private let urlField = NSTextField()
+    private let starBtn = NSButton()          // 북마크 켜고 끄기
+    private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
     private let captureBtn = NSButton()
     private let externalBtn = NSButton()
     private let inspectBtn = NSButton()
@@ -264,12 +427,18 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         icon(inspectBtn, "curlybraces", t("browser.inspect"), #selector(openInspector))
         icon(zoomOutBtn, "minus.magnifyingglass", t("browser.zoomOut"), #selector(zoomOut))
         icon(zoomInBtn, "plus.magnifyingglass", t("browser.zoomIn"), #selector(zoomIn))
+        icon(starBtn, "star", t("browser.bookmark"), #selector(toggleBookmark))
 
         urlField.placeholderString = t("browser.urlPlaceholder")
         urlField.font = UIScale.font(UIScale.body)
         urlField.bezelStyle = .roundedBezel
         urlField.target = self; urlField.action = #selector(openURL)
+        urlField.delegate = self
         urlField.translatesAutoresizingMaskIntoConstraints = false
+
+        suggest.isHidden = true
+        suggest.onPick = { [weak self] s in self?.commitSuggestion(s) }
+        suggest.translatesAutoresizingMaskIntoConstraints = false
 
         progress.wantsLayer = true
         progress.translatesAutoresizingMaskIntoConstraints = false
@@ -294,8 +463,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
         buildFindBar()
 
-        [backBtn, fwdBtn, stopBtn, urlField, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
-         externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel].forEach { addSubview($0) }
+        [backBtn, fwdBtn, stopBtn, urlField, starBtn, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
+         externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel,
+         suggest].forEach { addSubview($0) }
 
         let pad: CGFloat = 8
         progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
@@ -313,7 +483,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             stopBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
             urlField.leadingAnchor.constraint(equalTo: stopBtn.trailingAnchor, constant: 6),
             urlField.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            urlField.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            urlField.trailingAnchor.constraint(equalTo: starBtn.leadingAnchor, constant: -4),
+            starBtn.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            starBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            starBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+
+            // 자동완성은 주소창 바로 아래에 떠서 페이지를 덮는다 (레이아웃을 밀지 않는다).
+            suggest.leadingAnchor.constraint(equalTo: urlField.leadingAnchor),
+            suggest.trailingAnchor.constraint(equalTo: urlField.trailingAnchor),
+            suggest.topAnchor.constraint(equalTo: urlField.bottomAnchor, constant: 2),
             zoomOutBtn.trailingAnchor.constraint(equalTo: zoomInBtn.leadingAnchor, constant: -2),
             zoomOutBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
             zoomOutBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
@@ -429,7 +607,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     private func refreshTabStrip() {
-        tabStrip.set(tabs.map { $0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle },
+        tabStrip.set(tabs.map { (title: $0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle,
+                                 url: $0.web.url?.absoluteString ?? "") },
                      selected: current)
         // 탭이 하나면 줄을 감춘다 — 좁은 패널에서 세로 공간이 아깝다.
         let h = tabs.count > 1 ? UIScale.pt(26) : 0
@@ -447,6 +626,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         fwdBtn.isEnabled = tb.web.canGoForward
         backBtn.alphaValue = tb.web.canGoBack ? 1 : 0.35
         fwdBtn.alphaValue = tb.web.canGoForward ? 1 : 0.35
+        refreshStar()
         stopBtn.image = NSImage(systemSymbolName: tb.isLoading ? "xmark" : "arrow.clockwise",
                                 accessibilityDescription: tb.isLoading ? t("browser.stop") : t("preview.reload"))
         stopBtn.image?.isTemplate = true
@@ -542,6 +722,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         guard let tb = tab else { return }
         if tb.isLoading { tb.web.stopLoading() } else if !tb.urlString.isEmpty { tb.web.reload() }
     }
+    func controlTextDidEndEditing(_ obj: Notification) {
+        if (obj.object as? NSTextField) === urlField { suggest.hide() }
+    }
     @objc private func openURL() {
         guard let url = BrowserTab.resolve(urlField.stringValue) else { return }
         load(url)
@@ -606,6 +789,56 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         refreshChrome()
         rememberURL()
+        if let tb = tabs.first(where: { $0.web === webView }) {
+            BrowserStore.recordVisit(url: webView.url, title: tb.shortTitle, isPrivate: tb.isPrivate)
+        }
+    }
+
+    // MARK: - 주소창 자동완성 / 북마크
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === urlField else { return }
+        refreshSuggestions()
+    }
+    private func refreshSuggestions() {
+        let open = tabs.enumerated().compactMap { i, t -> (title: String, url: String)? in
+            guard i != current, let u = t.web.url?.absoluteString, !u.isEmpty else { return nil }
+            return (t.shortTitle, u)
+        }
+        suggest.show(BrowserStore.suggest(urlField.stringValue, openTabs: open))
+    }
+    /// 위·아래로 고르고 Enter 로 연다. Esc 는 목록만 닫는다 (패널을 닫지 않는다).
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        guard control === urlField, !suggest.isHidden else { return false }
+        switch sel {
+        case #selector(NSResponder.moveDown(_:)):   suggest.move(1); return true
+        case #selector(NSResponder.moveUp(_:)):     suggest.move(-1); return true
+        case #selector(NSResponder.cancelOperation(_:)): suggest.hide(); return true
+        case #selector(NSResponder.insertNewline(_:)):
+            if let s = suggest.current { commitSuggestion(s); return true }
+            return false
+        default: return false
+        }
+    }
+    private func commitSuggestion(_ s: BrowserStore.Suggestion) {
+        suggest.hide()
+        if s.kind == .openTab, let i = tabs.firstIndex(where: { $0.web.url?.absoluteString == s.url }) {
+            select(i); focusWeb(); return          // 이미 열어 둔 탭이면 새로 열지 않고 그리로 간다
+        }
+        urlField.stringValue = s.url
+        if let u = URL(string: s.url) { load(u) }
+    }
+    @objc private func toggleBookmark() {
+        guard let u = tab?.web.url else { return }
+        let added = BrowserStore.toggleBookmark(url: u, title: tab?.shortTitle ?? "")
+        refreshStar()
+        setStatus(added ? t("browser.bookmarkAdded") : t("browser.bookmarkRemoved"))
+    }
+    private func refreshStar() {
+        let on = BrowserStore.isBookmarked(tab?.web.url)
+        starBtn.image = NSImage(systemSymbolName: on ? "star.fill" : "star", accessibilityDescription: t("browser.bookmark"))
+        starBtn.image?.isTemplate = true
+        starBtn.contentTintColor = on ? Theme.accent : Theme.fgDim
     }
 
     /// 마지막으로 본 주소를 워크스페이스별로 기억한다. 예전에는 아무것도 저장하지 않아서
@@ -641,6 +874,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
     }
     /// 벤치용: 지금 주소.
+    /// 벤치용: 사람이 친 것처럼 주소창에 넣고 자동완성을 띄운다.
+    func debugType(_ s: String) {
+        window?.makeFirstResponder(urlField)
+        urlField.stringValue = s
+        refreshSuggestions()
+    }
+    func debugSuggestions() -> String {
+        suggest.items.map { "\($0.kind)/\($0.title)" }.joined(separator: " | ")
+    }
     func debugURL() -> String { tab?.web.url?.absoluteString ?? "(없음)" }
     /// 이 패널이 붙은 워크스페이스. 주소를 워크스페이스별로 기억하려고 앱이 채워 준다.
     var workspaceRoot: URL?

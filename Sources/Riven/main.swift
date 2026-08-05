@@ -119,6 +119,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let lsp = LSPManager.shared
 
     func applicationDidFinishLaunching(_ n: Notification) {
+        // RIVEN_BRDATA=1: 기록·북마크·자동완성 순위가 실제로 쓸 만한지.
+        if ProcessInfo.processInfo.environment["RIVEN_BRDATA"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                BrowserStore.debugReset()
+                let seed: [(String, String, Int)] = [
+                    ("https://github.com/wassupss/riven", "riven", 30),
+                    ("https://github.com/features/actions", "GitHub Actions", 2),
+                    ("https://news.ycombinator.com", "Hacker News", 12),
+                    ("https://developer.apple.com/documentation/appkit", "AppKit", 5),
+                ]
+                for (u, title, n) in seed {
+                    for _ in 0..<n { BrowserStore.recordVisit(url: URL(string: u), title: title, isPrivate: false) }
+                }
+                BrowserStore.recordVisit(url: URL(string: "https://secret.example.com"), title: "몰래", isPrivate: true)
+                BrowserStore.toggleBookmark(url: URL(string: "https://vercel.com/dashboard"), title: "Vercel")
+                for q in ["git", "riven", "hacker", "vercel", "점심 메뉴"] {
+                    let r = BrowserStore.suggest(q, openTabs: [("AppKit 문서", "https://developer.apple.com/documentation/appkit")])
+                    let shown = r.prefix(3).map { "\($0.kind)/\($0.title)" }.joined(separator: " | ")
+                    RLog.log("BRDATA \"\(q)\" → \(shown)")
+                }
+                let c = BrowserStore.debugCounts
+                RLog.log("BRDATA 기록=\(c.history)건(시크릿 제외 4 기대) 북마크=\(c.bookmarks)건")
+                RLog.log("BRDATA 북마크확인=\(BrowserStore.isBookmarked(URL(string: "https://vercel.com/dashboard")))")
+            }
+        }
         installCrashHandler()
         CrashReporter.reportPending()   // upload the previous run's crash (if any), then clear it
         maybeShowCrashReportingNotice()   // one-time opt-out disclosure
@@ -530,6 +555,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             chat.ask(ask) { answer in
                                 RLog.log("AGENT answer → " + answer.replacingOccurrences(of: "\n", with: " | ").prefix(400))
                                 RLog.log("AGENT done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_BRSHOT=<png>: 파비콘 탭 줄과 주소창 자동완성이 실제로 어떻게 보이는지.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_BRSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        for (u, title, n) in [("https://github.com/wassupss/riven", "riven · GitHub", 30),
+                                              ("https://news.ycombinator.com", "Hacker News", 12),
+                                              ("https://developer.apple.com/documentation", "Apple Developer 문서", 5)] {
+                            for _ in 0..<n { BrowserStore.recordVisit(url: URL(string: u), title: title, isPrivate: false) }
+                        }
+                        BrowserStore.toggleBookmark(url: URL(string: "https://vercel.com/dashboard"), title: "Vercel 대시보드")
+                        _ = p.agentNavigate("https://github.com", newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            _ = p.agentNavigate("https://news.ycombinator.com", newTab: true)
+                            _ = p.agentNavigate("https://developer.apple.com/documentation", newTab: true)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                            p.debugType("ri")     // 자동완성 목록이 뜨는 상태로 찍는다
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                guard let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) else { return }
+                                p.cacheDisplay(in: p.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                                RLog.log("BRSHOT done \(p.debugSuggestions())")
                             }
                         }
                     }
