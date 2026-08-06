@@ -17,6 +17,11 @@ enum GhosttyImport {
         var foreground: String?
         var path: URL
 
+        /// 파일은 있는데 우리가 쓸 값이 하나도 없는 경우 (ghostty 를 기본값 그대로 쓰는 사람).
+        var hasNothing: Bool {
+            fontFamily == nil && fontSize == nil && theme == nil && background == nil
+        }
+
         /// 사람이 읽을 요약 — 무엇을 가져왔는지 눈으로 확인하고 되돌릴 수 있어야 한다.
         var summary: String {
             var parts: [String] = []
@@ -24,24 +29,40 @@ enum GhosttyImport {
             if let s = fontSize { parts.append("크기 \(s)") }
             if let t = theme { parts.append("테마 \(t)") }
             if theme == nil, let b = background { parts.append("배경 \(b)") }
-            return parts.isEmpty ? t("settings.ghosttyNothing") : parts.joined(separator: " · ")
+            if parts.isEmpty {
+                // 파일은 있는데 값이 없다 — "못 찾았다" 와는 다른 상황이라 그렇게 말해 준다.
+                return t("settings.ghosttyEmpty", ["p": path.lastPathComponent])
+            }
+            return parts.joined(separator: " · ")
         }
     }
 
     /// ghostty 가 설정을 두는 곳들. 먼저 찾은 것을 쓴다 (ghostty 자신의 탐색 순서와 같다).
+    ///
+    /// 파일 이름이 두 가지다: 보통은 `config` 인데, macOS 앱에서 "Open Configuration" 으로
+    /// 만들면 `config.ghostty` 가 생긴다. 처음엔 `config` 만 찾아서 "설정 파일을 찾지 못했습니다"
+    /// 가 떴다 — 실제로는 있는데 이름이 달랐다.
     static var candidatePaths: [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        var out: [URL] = []
+        var dirs: [URL] = []
         if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
-            out.append(URL(fileURLWithPath: xdg).appendingPathComponent("ghostty/config"))
+            dirs.append(URL(fileURLWithPath: xdg).appendingPathComponent("ghostty"))
         }
-        out.append(home.appendingPathComponent(".config/ghostty/config"))
-        out.append(home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty/config"))
-        return out
+        dirs.append(home.appendingPathComponent(".config/ghostty"))
+        dirs.append(home.appendingPathComponent("Library/Application Support/com.mitchellh.ghostty"))
+        return dirs.flatMap { [$0.appendingPathComponent("config"),
+                               $0.appendingPathComponent("config.ghostty")] }
     }
 
+    /// 내용이 있는 파일을 고른다. 빈 파일이 먼저 걸리면 "찾았는데 가져올 게 없다" 로 끝나서,
+    /// 뒤에 있는 진짜 설정을 놓친다 (ghostty 를 설치만 하면 빈 config.ghostty 가 생긴다).
     static func locate() -> URL? {
-        candidatePaths.first { FileManager.default.fileExists(atPath: $0.path) }
+        let fm = FileManager.default
+        let existing = candidatePaths.filter { fm.fileExists(atPath: $0.path) }
+        func size(_ u: URL) -> Int {
+            ((try? fm.attributesOfItem(atPath: u.path))?[.size] as? Int) ?? 0
+        }
+        return existing.first { size($0) > 0 } ?? existing.first
     }
 
     /// 설정 파일을 읽어 우리가 쓰는 값만 뽑는다. 파일이 없거나 못 읽으면 nil.

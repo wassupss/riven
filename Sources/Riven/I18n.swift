@@ -548,6 +548,8 @@ enum I18n {
         "settings.ghostty": ("ghostty 설정", "ghostty config"),
         "settings.fontDefault": ("기본 (시스템 고정폭)", "Default (system mono)"),
         "settings.ghosttyImport": ("ghostty 설정 가져오기", "Import from ghostty"),
+        "settings.ghosttyEmpty": ("{p} 를 찾았지만 비어 있습니다 (ghostty 에서 아직 바꾼 설정이 없습니다)",
+                                  "Found {p} but it's empty (nothing customized in ghostty yet)"),
         "settings.ghosttyNone": ("ghostty 설정 파일을 찾지 못했습니다", "No ghostty config found"),
         "settings.ghosttyNothing": ("가져올 값이 없습니다", "Nothing to import"),
         "settings.ghosttyApplied": ("가져왔습니다 — {items}", "Imported — {items}"),

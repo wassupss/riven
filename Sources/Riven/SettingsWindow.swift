@@ -438,37 +438,21 @@ final class SettingsWindow: NSPanel {
     /// ghostty 설정 가져오기 (버튼 + 상태 문구).
     private func ghosttyControls() -> (NSView, NSTextField) {
         let found = GhosttyImport.read()
+        // 가져올 게 있을 때만 버튼이 살아 있다. 파일이 없든, 있는데 비었든 결과는 같지만
+        // 문구는 달라야 한다 — 없는 걸 찾으라는 말과 바꿀 게 없다는 말은 다른 안내다.
+        let importable = found.map { !$0.hasNothing } ?? false
         let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
-                            textColor: found == nil ? Theme.fgDim : Theme.fg,
+                            textColor: importable ? Theme.fg : Theme.fgDim,
                             bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
         let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
-        btn.onClick = { [weak self] in
-            guard let f = GhosttyImport.read() else { return }
-            _ = GhosttyImport.apply(f)
-            self?.showTab(0)
+        if importable {
+            btn.onClick = { [weak self] in
+                guard let f = GhosttyImport.read() else { return }
+                _ = GhosttyImport.apply(f)
+                self?.showTab(0)
+            }
         }
         return (btn, status)
-    }
-
-    /// (예전 형태 — 더 쓰지 않는다)
-    private func ghosttyRow() -> NSView {
-        let found = GhosttyImport.read()
-        let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
-                            textColor: found == nil ? Theme.fgDim : Theme.fg,
-                            bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
-        let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
-        status.font = UIScale.font(UIScale.caption); status.textColor = Theme.fgDim
-        status.lineBreakMode = .byTruncatingMiddle
-        btn.onClick = { [weak self, weak status] in
-            guard let f = GhosttyImport.read() else { status?.stringValue = t("settings.ghosttyNone"); return }
-            let msg = GhosttyImport.apply(f)
-            status?.stringValue = msg
-            self?.showTab(0)      // 미리보기·크기 칸을 새 값으로 다시 그린다
-        }
-        let row = NSStackView(views: [btn, status])
-        row.orientation = NSUserInterfaceLayoutOrientation.horizontal
-        row.spacing = 10; row.alignment = .centerY
-        return row
     }
 
     private func fontField(_ tf: NSTextField) -> NSTextField {

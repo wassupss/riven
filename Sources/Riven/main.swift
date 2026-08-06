@@ -654,6 +654,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // RIVEN_GHOSTTY=1: ghostty 설정 읽기·적용이 실제로 되는지.
                 if ProcessInfo.processInfo.environment["RIVEN_GHOSTTY"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        for p in GhosttyImport.candidatePaths {
+                            let exists = FileManager.default.fileExists(atPath: p.path)
+                            let size = ((try? FileManager.default.attributesOfItem(atPath: p.path))?[.size] as? Int) ?? -1
+                            RLog.log("GH 후보: \(exists ? "있음(\(size)B)" : "없음  ") \(p.path)")
+                        }
                         guard let f = GhosttyImport.read() else { RLog.log("GH 설정 파일 없음"); return }
                         RLog.log("GH 찾음: \(f.path.path)")
                         RLog.log("GH 읽은 값: 글꼴=\(f.fontFamily ?? "-") 크기=\(f.fontSize.map(String.init) ?? "-")"
