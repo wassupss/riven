@@ -138,7 +138,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         row.onPick = { [weak self] in self?.onSelect?(i) }
         row.onClose = { [weak self] in self?.onClose?(i) }
         row.onMenu = { [weak self] e in self?.onMenu?(i, e) }
-        row.configure(it.title, url: it.url, active: active, closable: items.count > 1)
+        row.configure(it.title, url: it.url, active: active, closable: true)
         return row
     }
     func applyTheme() { needsDisplay = true; set(items, selected: selected) }
@@ -388,6 +388,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
                           NSTextFieldDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     var onCapture: ((String) -> Void)?   // saved PNG path → send to the running agent
+    /// 마지막 탭까지 닫혔다 → 이 패널을 닫아 달라 (독에서 빼는 건 앱이 한다).
+    var onRequestClose: (() -> Void)?
 
     // ---- chrome ----
     private let backBtn = NSButton()
@@ -664,7 +666,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private var closedURLs: [String] = []
 
     private func closeTab(_ i: Int) {
-        guard tabs.count > 1, tabs.indices.contains(i) else { return }
+        guard tabs.indices.contains(i) else { return }
+        if tabs.count == 1 {
+            rememberURL()          // 마지막으로 보던 탭은 남겨 둔다 (다시 열면 그대로)
+            onRequestClose?()
+            return
+        }
         let tb = tabs.remove(at: i)
         if let u = tb.web.url?.absoluteString, !u.isEmpty, !tb.isPrivate {
             closedURLs.append(u)
@@ -1213,6 +1220,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
+    /// ⌘W (메뉴에서 들어온다 — 메뉴 단축키가 뷰보다 먼저 잡힌다).
+    func closeActiveTab() { closeTab(current) }
+
+    /// 벤치용: ⌘W 를 누른 것과 같은 경로.
+    func debugCommandW() { closeActiveTab() }
     func debugActiveTab() -> Int { current }
     func debugEval(_ js: String, _ done: @escaping (String) -> Void) { agentEval(js, done) }
     func debugSetZoom(_ z: CGFloat) { setZoom(z) }
@@ -1493,7 +1505,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             newTab(nil, activate: true, isPrivate: true)
             setStatus(t("browser.privateTab"))
             return true
-        case "w" where cmd && tabs.count > 1: closeTab(current); return true
+        // ⌘W: 브라우저 탭을 닫는다. 마지막 탭이면 패널이 닫힌다 — 브라우저에서 마지막
+        // 탭을 닫으면 창이 닫히는 것과 같다. 예전에는 탭이 하나면 아무 일도 없었다.
+        case "w" where cmd: closeTab(current); return true
         case "y" where cmd: showLibrary(); return true
         default: return super.performKeyEquivalent(with: event)
         }

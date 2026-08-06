@@ -650,6 +650,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CLOSEW=1: ⌘W 가 탭을 닫고, 마지막 탭이면 패널까지 닫는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CLOSEW"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate("https://example.com", newTab: false)
+                        _ = p.agentNavigate("https://example.org", newTab: true)
+                        func open() -> Bool { self.states[ws]?.auxPanels["preview"] != nil }
+                        func focusBrowser() {
+                            guard let panel = self.states[ws]?.auxPanels["preview"], let g = panel.group else { return }
+                            g.select(id: panel.id); self.states[ws]?.dock?.setActive(g)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            focusBrowser()
+                            RLog.log("CLOSEW 시작 탭=\(p.debugTabURLs().count)개 패널열림=\(open()) 활성=\(self.states[ws]?.dock?.activeGroup?.activePanel?.id ?? "-")")
+                            self.debugCloseTabMenu()   // 실제 ⌘W 메뉴 경로
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                RLog.log("CLOSEW ⌘W 1회 → 탭=\(p.debugTabURLs().count)개 패널열림=\(open())")
+                                self.debugCloseTabMenu()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    RLog.log("CLOSEW ⌘W 2회(마지막 탭) → 패널열림=\(open()) (거짓이어야 정상)")
+                                    // 다시 열면 마지막 주소가 살아 있어야 한다.
+                                    self.ensureAux("preview", in: ws)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                        RLog.log("CLOSEW 다시 열기 → 탭=\(self.preview(for: ws).debugTabURLs())")
+                                        RLog.log("CLOSEW done")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SUBBENCH=1: 서브에이전트가 도구를 돌린 뒤 그 팬에 결과가 오는지.
                 if ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -2680,6 +2713,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.onFocused = { [weak self, weak p] in self?.focusGroup(containing: p) }
         // 캡처 → 그 워크스페이스에서 돌고 있는 에이전트에게 PNG 경로를 넣어 준다.
         p.onCapture = { [weak self] path in self?.deliverToAgent(" " + path + " ") }
+        // 마지막 탭을 닫으면 이 워크스페이스의 브라우저 패널도 닫는다 (× 를 누른 것과 같다).
+        p.onRequestClose = { [weak self] in
+            guard let self, let st = self.states[ws],
+                  let panel = st.auxPanels["preview"], let dock = st.dock else { return }
+            dock.removePanel(panel)
+        }
         st.preview = p
         p.restoreLastURL()
         return p
@@ -5056,6 +5095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ⌘W acts on the FOCUSED panel (riven's sendToFocused → activePanel): if the
     // terminal holds focus, close that terminal dock panel; otherwise close the
     // active editor tab.
+    func debugCloseTabMenu() { closeTabMenu() }
     @objc private func closeTabMenu() {
         // A modal/aux window (settings / palette / quick panel) takes ⌘W first.
         if let kw = NSApp.keyWindow, kw !== window { kw.performClose(nil); return }
@@ -5065,6 +5105,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let tv = window?.firstResponder as? TerminalView,
            let p = currentTerminalPanel(), p.content === tv {
             activeDock?.removePanel(p); return
+        }
+        // 브라우저가 활성이면 ⌘W 는 먼저 브라우저 탭을 닫는다 — 브라우저에서 늘 그렇다.
+        // 마지막 탭이었으면 브라우저가 스스로 패널 닫기를 요청한다 (onRequestClose).
+        // (패널의 content 는 호스트 컨테이너라 타입으로 못 알아본다 — id 로 본다.)
+        if let panel = activeDock?.activeGroup?.activePanel, panel.id == "preview",
+           let ws = workspace {
+            preview(for: ws).closeActiveTab()
+            return
         }
         // Otherwise act on the active dock panel (riven's sendToFocused → activePanel).
         if let panel = activeDock?.activeGroup?.activePanel {
