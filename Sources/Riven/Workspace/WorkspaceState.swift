@@ -39,6 +39,13 @@ final class WorkspaceState {
     /// 에이전트가 MCP 로 페이지를 열었을 때 지금 보고 있는 워크스페이스에서 열린다 —
     /// 실제로 그렇게 남의 화면에 페이지가 떴다. 브라우저는 워크스페이스마다 따로 둔다.
     var preview: PreviewPanel?
+    /// 이 워크스페이스의 메모/문서 패널. 브라우저와 같은 이유로 워크스페이스마다 따로 둔다 —
+    /// 하나를 돌려 쓰면 다른 워크스페이스의 에이전트가 쓴 문서가 지금 보고 있는 쪽에 떴다.
+    var notes: NotesPanel?
+    /// API 패널과 에이전트 그룹 패널도 워크스페이스마다. 요청 기록도 그룹 명단도 그
+    /// 프로젝트의 것이라, 하나를 돌려 쓰면 남의 워크스페이스 내용이 보인다.
+    var api: APIClientPanel?
+    var team: AgentGroupPanel?
     var auxHosts: [String: NSView] = [:]
     func auxHost(_ id: String) -> NSView {
         if let v = auxHosts[id] { return v }

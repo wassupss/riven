@@ -31,10 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var gitPanel: GitPanel!
     /// 지금 보고 있는 워크스페이스의 브라우저 (없으면 만든다).
     var previewPanel: PreviewPanel! { workspace.map { preview(for: $0) } }
-    var apiPanel: APIClientPanel!
+    var apiPanel: APIClientPanel! { workspace.map { api(for: $0) } }
     var changesPanel: ChangesPanel!
-    var notesPanel: NotesPanel!            // per-workspace private scratchpad
-    var teamPanel: AgentGroupPanel!        // orchestration: set up a group of agents
+    /// 지금 보고 있는 워크스페이스의 메모 패널 (없으면 만든다).
+    var notesPanel: NotesPanel! { workspace.map { notes(for: $0) } }
+    var teamPanel: AgentGroupPanel! { workspace.map { team(for: $0) } }
     private var chatSeq = 0                  // multi-instance chat panes: one session per pane
     var sourceControl: SourceControlView!   // git panel = commit graph + working changes
     var sidebarLower: NSView!
@@ -1209,35 +1210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, let ws = self.workspace else { return }
             self.openFile(URL(fileURLWithPath: ws.path).appendingPathComponent(rel))
         }
-        apiPanel = APIClientPanel(frame: .zero)
         changesPanel = ChangesPanel(frame: .zero)
-        notesPanel = NotesPanel(frame: .zero)
-        teamPanel = AgentGroupPanel(frame: .zero)
-        teamPanel.agentsProvider = { [weak self] in self?.chatAgents() ?? [] }
-        teamPanel.onCreate = { [weak self] group, specs in self?.createAgentGroup(group, specs) }
-        // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
-        teamPanel.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
-        teamPanel.onFocusAgent = { [weak self] group, name in self?.focusAgentPane(group, name) }
-        teamPanel.onEditAgent = { [weak self] group, old, name, model, parent, avatar in
-            self?.editAgentPane(group, old, name: name, model: model, parent: parent, avatar: avatar)
-        }
-        teamPanel.onAddAgent = { [weak self] group, name, persona, model, parent, avatar in
-            self?.addAgentToGroup(group, name: name, persona: persona, model: model,
-                                  parent: parent, avatar: avatar)
-        }
-        teamPanel.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
-        teamPanel.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
-        // 팀 입력줄: 여러 명이면 한 번에 던진다 (askAgentPanes 는 전원을 같은 런루프 턴에
-        // 출발시키므로 실제로 동시에 돈다). 답은 각 에이전트의 패널에 그대로 남는다.
-        // 조직도 상태 칩이 읽는 값 — 살아 있는 팬만 훑는다 (명단/Settings 를 건드리지 않는다).
-        teamPanel.statusProvider = { [weak self] group in
-            guard let self else { return [:] }
-            var out: [String: (state: AgentRunState, since: Date?)] = [:]
-            for p in self.agentPanes() where p.chat.groupName == group {
-                out[p.chat.agentRole] = (p.chat.runState, p.chat.runStateSince)
-            }
-            return out
-        }
         changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
         changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
 
@@ -2035,7 +2008,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onApiRequest = { [weak self] method, url, headers, body in
             guard let self else { return }
             self.ensureAux("api", in: owner)
-            self.apiPanel.run(method: method, url: url, headers: headers, body: body)
+            self.api(for: owner).run(method: method, url: url, headers: headers, body: body)
         }
         // riven layout introspection + control for the agent.
         chat.onPanels = { [weak self] in
@@ -2066,7 +2039,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return self.workspaces.map { ($0 == self.workspace ? "* " : "- ") + $0.path }.joined(separator: "\n")
         }
         chat.onNoteTool = { [weak self] tool, args in
-            self?.runNoteTool(tool, args) ?? "notes unavailable"
+            self?.runNoteTool(tool, args, in: owner) ?? "notes unavailable"
         }
         chat.onOpenWorkspace = { [weak self] path in
             guard let self else { return "unavailable" }
@@ -2214,11 +2187,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content is ChatPanel { return "chat" }
         if p.content === sourceControl { return "git" }
         if p.content === searchPanel { return "search" }
-        if p.content === previewPanel { return "preview" }
-        if p.content === apiPanel { return "api" }
+        // 워크스페이스마다 인스턴스가 따로라 종류로 본다 (=== 로 비교하면 다른 워크스페이스의
+        // 패널이 "panel" 로 떨어져, 목록·복원에서 정체를 잃는다).
+        if p.content is PreviewPanel { return "preview" }
+        if p.content is APIClientPanel { return "api" }
         if p.content === changesPanel { return "changes" }
-        if p.content === notesPanel { return "notes" }
-        if p.content === teamPanel { return "team" }
+        if p.content is NotesPanel { return "notes" }
+        if p.content is AgentGroupPanel { return "team" }
         return "panel"
     }
     private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
@@ -2477,6 +2452,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 이 워크스페이스의 브라우저. 필요할 때 만들고 그 뒤로는 이 워크스페이스에 붙어 있는다.
     /// 하나를 돌려 쓰면 다른 워크스페이스의 에이전트가 연 페이지가 지금 보고 있는
     /// 워크스페이스에 뜬다 (실제로 그렇게 남의 화면에 떴다).
+    /// 이 워크스페이스의 API 패널. 요청 기록이 그 프로젝트의 것이라 따로 둔다.
+    func api(for ws: URL) -> APIClientPanel {
+        let st = state(for: ws)
+        if let a = st.api { return a }
+        let a = APIClientPanel(frame: .zero)
+        st.api = a
+        return a
+    }
+
+    /// 이 워크스페이스의 에이전트 그룹 패널.
+    func team(for ws: URL) -> AgentGroupPanel {
+        let st = state(for: ws)
+        if let t = st.team { return t }
+        let p = AgentGroupPanel(frame: .zero)
+        p.agentsProvider = { [weak self] in self?.chatAgents() ?? [] }
+        p.onCreate = { [weak self] group, specs in self?.createAgentGroup(group, specs) }
+        // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
+        p.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
+        p.onFocusAgent = { [weak self] group, name in self?.focusAgentPane(group, name) }
+        p.onEditAgent = { [weak self] group, old, name, model, parent, avatar in
+            self?.editAgentPane(group, old, name: name, model: model, parent: parent, avatar: avatar)
+        }
+        p.onAddAgent = { [weak self] group, name, persona, model, parent, avatar in
+            self?.addAgentToGroup(group, name: name, persona: persona, model: model,
+                                  parent: parent, avatar: avatar)
+        }
+        p.onRemoveAgent = { [weak self] group, name in self?.removeAgentFromGroup(group, name) }
+        p.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
+        // 팀 입력줄: 여러 명이면 한 번에 던진다 (askAgentPanes 는 전원을 같은 런루프 턴에
+        // 출발시키므로 실제로 동시에 돈다). 답은 각 에이전트의 패널에 그대로 남는다.
+        // 조직도 상태 칩이 읽는 값 — 살아 있는 팬만 훑는다 (명단/Settings 를 건드리지 않는다).
+        p.statusProvider = { [weak self] group in
+            guard let self else { return [:] }
+            var out: [String: (state: AgentRunState, since: Date?)] = [:]
+            for p in self.agentPanes() where p.chat.groupName == group {
+                out[p.chat.agentRole] = (p.chat.runState, p.chat.runStateSince)
+            }
+            return out
+        }
+        st.team = p
+        return p
+    }
+
+    /// 이 워크스페이스의 메모 패널. 브라우저와 같은 이유로 워크스페이스마다 따로 둔다.
+    func notes(for ws: URL) -> NotesPanel {
+        let st = state(for: ws)
+        if let n = st.notes { return n }
+        let n = NotesPanel(frame: .zero)
+        n.setWorkspace(ws)
+        st.notes = n
+        return n
+    }
+
     func preview(for ws: URL) -> PreviewPanel {
         let st = state(for: ws)
         if let p = st.preview { return p }
@@ -2495,10 +2523,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "search": return searchPanel
         case "git": return sourceControl
         case "preview": return preview(for: ws)
-        case "api": return apiPanel
+        case "api": return api(for: ws)
         case "changes": return changesPanel
-        case "notes": return notesPanel
-        case "team": return teamPanel
+        case "notes": return notes(for: ws)
+        case "team": return team(for: ws)
         // 여기 빠진 id는 빈 NSView가 호스트에 덮여 패널이 통째로 클릭 불능이 된다
         // (team이 빠져 있어 에이전트 그룹의 모든 클릭이 먹혔다). 새 aux 패널을 추가하면
         // makeAuxPanel과 여기 둘 다 등록할 것.
@@ -2511,7 +2539,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "search": searchPanel.setRoot(ws)
         case "git": sourceControl.setRoot(ws)
         case "changes": changesPanel.setWorkspace(ws)
-        case "notes": notesPanel.setWorkspace(ws)
+        case "notes": break                    // 워크스페이스마다 따로라 다시 가리킬 것이 없다
         case "preview": break                  // 워크스페이스마다 따로라 다시 가리킬 것이 없다
         default: break
         }
@@ -3252,7 +3280,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, self.workspace == url else { return }   // bailed if switched again
             self.explorer.setRoot(url)
             self.searchPanel.setRoot(url); self.gitPanel.setRoot(url); self.changesPanel.setWorkspace(url)
-            self.notesPanel.setWorkspace(url)   // flushes the previous workspace's note first
+            // 워크스페이스마다 패널이 따로라 다시 가리킬 필요가 없다. 떠나는 쪽 저장만.
+            self.workspace.map { self.state(for: $0).notes?.flush() }
             self.refreshRailAgents()   // this workspace's agent rows
             self.hideSwitchOverlay()
             self.refreshGit()
@@ -3541,6 +3570,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             }
                         }
                     }
+                }
+            }
+        }
+        // RIVEN_CLOSEBENCH=1: 패널을 닫을 때 걸리는 시간을 단계별로.
+        if ProcessInfo.processInfo.environment["RIVEN_CLOSEBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self, let dock = self.activeDock else { return }
+                // HEAVY=1 이면 이미 복원된 무거운 채팅 탭들로만 잰다 (실사용에 가깝다).
+                if ProcessInfo.processInfo.environment["RIVEN_CLOSEHEAVY"] == nil {
+                    for id in ["preview", "notes", "team", "api", "changes"] where self.auxDockPanels[id] == nil {
+                        self.toggleDockPanel(id)
+                    }
+                    self.newChat(); self.newChat()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                    RLog.log("CLOSE 패널 수=\(dock.groups.flatMap { $0.panels }.count)")
+                    // 실사용처럼: 탭들을 한 번씩 둘러본 뒤에 닫는다 (본 탭은 이미 붙어 있다).
+                    if ProcessInfo.processInfo.environment["RIVEN_CLOSEVISITED"] != nil {
+                        for g in dock.groups {
+                            for p in g.panels { g.select(id: p.id) }
+                            if let first = g.panels.first { g.select(id: first.id) }
+                        }
+                        RLog.log("CLOSE 탭 한 번씩 둘러봄")
+                    }
+                    var delay = 0.0
+                    let ids = ProcessInfo.processInfo.environment["RIVEN_CLOSEHEAVY"] != nil
+                        ? dock.groups.flatMap { $0.panels }.filter { $0.content is ChatPanel }.map { $0.id }
+                        : ["changes", "api", "team", "notes", "preview"]
+                    for id in ids {
+                        delay += 1.2
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            guard let p = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == id })
+                            else { return }
+                            dock.removePanel(p)
+                        }
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1.5) { RLog.log("CLOSE done") }
+                }
+            }
+        }
+        // RIVEN_NOTEBENCH=1: 메모 패널이 목록을 읽고 그리는 데 드는 시간.
+        if ProcessInfo.processInfo.environment["RIVEN_NOTEBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, let ws = self.workspace else { return }
+                if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
+                let n = self.notes(for: ws)
+                func time(_ label: String, _ body: () -> Void) {
+                    let s0 = DispatchTime.now(); body()
+                    let ms = Double(DispatchTime.now().uptimeNanoseconds - s0.uptimeNanoseconds) / 1e6
+                    RLog.log(String(format: "NOTE %@ %.1fms", label, ms))
+                }
+                time("첫 reload(메모만)") { n.reload() }
+                time("두번째 reload") { n.reload() }
+                n.debugShowList(docs: true)
+                time("문서탭 reload(레포 훑기)") { n.reload() }
+                time("문서탭 두번째") { n.reload() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    RLog.log("NOTE 훑기 끝난 뒤 문서 수=\(n.debugDocCount()) 훑는중=\(n.scanningDocs)")
+                    time("문서탭 세번째(캐시)") { n.reload() }
+                    RLog.log("NOTE done")
                 }
             }
         }
@@ -4959,10 +5048,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
         case "preview":
             title = t("title.preview"); symbol = "safari"; content = preview(for: ws)
-        case "api":     title = t("title.api"); symbol = "network"; content = apiPanel
+        case "api":     title = t("title.api"); symbol = "network"; content = api(for: ws)
         case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
-        case "notes":   title = t("title.notes"); symbol = "note.text"; notesPanel.setWorkspace(ws); content = notesPanel
-        case "team":    title = t("title.team"); symbol = "person.3"; content = teamPanel
+        case "notes":   title = t("title.notes"); symbol = "note.text"; content = notes(for: ws)
+        case "team":    title = t("title.team"); symbol = "person.3"; content = team(for: ws)
         default: return nil
         }
         // Per-workspace panel hosting the SHARED view (same pattern as the editor): the dock tree
@@ -5074,6 +5163,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func wsScopeReport() {
+        // 메모/문서도 브라우저와 같아야 한다: 다른 워크스페이스의 에이전트가 쓴 문서가
+        // 지금 보고 있는 워크스페이스에 뜨면 안 된다.
+        if let mineWS = workspace,
+           let theirs = allAgentPanes().first(where: { $0.ws != mineWS }) {
+            _ = theirs.chat.onNoteTool?("riven_doc_write",
+                                        ["path": "docs/저쪽메모.md", "body": "# 저쪽\n다른 워크스페이스 문서"])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                let here = FileManager.default.fileExists(atPath: mineWS.appendingPathComponent("docs/저쪽메모.md").path)
+                let there = FileManager.default.fileExists(atPath: theirs.ws.appendingPathComponent("docs/저쪽메모.md").path)
+                RLog.log("WSSCOPE 문서: 내쪽에 생김=\(here) 저쪽에 생김=\(there)")
+                RLog.log("WSSCOPE 메모패널 같은인스턴스=\(self.state(for: mineWS).notes === self.state(for: theirs.ws).notes)")
+            }
+        }
         let all = allAgentPanes()
         guard let mine = all.first(where: { $0.ws == workspace }),
               let theirs = all.first(where: { $0.ws != workspace }) else {
@@ -5573,8 +5676,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
-            if let ws = owner { ensureAux("api", in: ws) }
-            apiPanel.run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            ensureAux("api", in: ws)
+            api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
             srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
         case "riven_panels":
             guard let ws = owner, let dock = state(for: ws).dock else { srv.resolve(id, result: "(no dock)"); return }
@@ -5629,19 +5733,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 되돌릴 수 있는지"가 실질적인 안전장치다. 그래서 덮어쓰기 = 백업 + 패널 표시 + 되돌리기
     /// 버튼으로 간다. 반면 워크스페이스의 실제 파일(riven_note_save_file)은 사용자의 소스라
     /// 이미 있는 파일을 덮어쓰지 않는다 (overwrite=true 를 명시해야 한다).
-    private func runNoteTool(_ tool: String, _ args: [String: Any]) -> String {
+    private func runNoteTool(_ tool: String, _ args: [String: Any], in owner: URL? = nil) -> String {
         func s(_ k: String) -> String { (args[k] as? String) ?? "" }
-        guard let ws = workspace else { return "no workspace is open" }
-        notesPanel.flush()          // 사용자가 쓰던 중이면 먼저 저장 (에이전트 쓰기에 묻히지 않게)
+        // 부른 쪽의 워크스페이스. 메모·문서는 그 프로젝트의 것이라, 사용자가 지금 다른
+        // 워크스페이스를 보고 있다고 해서 거기에 쓰이면 안 된다 (브라우저와 같은 문제였다).
+        guard let ws = owner ?? workspace else { return "no workspace is open" }
+        notes(for: ws).flush()      // 사용자가 쓰던 중이면 먼저 저장 (에이전트 쓰기에 묻히지 않게)
 
         func describe(_ n: Note) -> String {
             "- \(n.title)  [\(n.scope == .personal ? "note" : "doc")]  \(n.url.path)"
         }
         /// 메모가 바뀐 걸 사용자가 보게 한다: 패널을 열고, 목록을 새로 읽고, 표시를 남긴다.
         func surface(_ url: URL) {
-            if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
-            notesPanel.setWorkspace(ws)
-            notesPanel.noteChangedByAgent(url)
+            ensureAux("notes", in: ws)
+            notes(for: ws).noteChangedByAgent(url)
         }
 
         switch tool {

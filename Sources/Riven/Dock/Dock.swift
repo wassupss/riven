@@ -571,22 +571,37 @@ final class DockManager {
     }
 
     func removePanel(_ panel: DockPanel) {
+        let t0 = DispatchTime.now()
+        defer {
+            if DockManager.closeBench {
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1e6
+                RLog.log(String(format: "CLOSE 총 %.1fms (%@)", ms, panel.id))
+            }
+        }
         let g = panel.group
         // If closing this empties its group (the group will be removed), focus the
         // ADJACENT pane — the previous sibling, else the next — not `groups.first`.
         // e.g. ⌘D ×N then ⌘W should land on the pane opened just before, not pane 1.
         let focusAfter: DockGroup? = (g?.panels.count == 1) ? adjacentGroup(to: g!) : nil
-        g?.remove(panel, dispose: true)
+        func phase(_ name: String, _ body: () -> Void) {
+            guard DockManager.closeBench else { body(); return }
+            let s = DispatchTime.now(); body()
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - s.uptimeNanoseconds) / 1e6
+            RLog.log(String(format: "CLOSE   %@ %.1fms", name, ms))
+        }
+        phase("remove") { g?.remove(panel, dispose: true) }
         // 형제 크기를 재기 전에 프레임을 확정한다 — 확정 전 값(0)으로 비례 재분배하면
         // 닫은 자리가 공백으로 남는다 (move/moveToRoot에서 고친 것과 같은 원인).
-        container.layoutSubtreeIfNeeded()
-        cleanupEmpty(g)
+        phase("layout") { container.layoutSubtreeIfNeeded() }
+        phase("cleanupEmpty") { cleanupEmpty(g) }
         normalizeTree()   // 닫기 후 빈 그룹·0폭 팬이 남지 않게 정리 (#3)
-        refreshEmpty()
-        if let t = focusAfter, t.isDescendant(of: container), !t.panels.isEmpty {
-            setActive(t)
-        } else {
-            focusSurvivor()   // fallback: don't leave the app focus-less
+        phase("refreshEmpty") { refreshEmpty() }
+        phase("focus") {
+            if let t = focusAfter, t.isDescendant(of: container), !t.panels.isEmpty {
+                setActive(t)
+            } else {
+                focusSurvivor()   // fallback: don't leave the app focus-less
+            }
         }
     }
 
@@ -611,7 +626,15 @@ final class DockManager {
     // 닫기/분리 뒤의 안전망 (#3): cleanupEmpty는 방금 비워진 그룹만 국소적으로
     // 정리하므로, 트리 어딘가에 남은 빈 그룹(내용 없는 블록)과 0폭으로 짜부라진
     // 팬(비례 재분배는 0을 0으로 유지한다)을 전체 스윕으로 마저 고친다.
+    static let closeBench = ProcessInfo.processInfo.environment["RIVEN_CLOSEBENCH"] != nil
     func normalizeTree() {
+        let n0 = DispatchTime.now()
+        defer {
+            if DockManager.closeBench {
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - n0.uptimeNanoseconds) / 1e6
+                RLog.log(String(format: "CLOSE   normalizeTree %.1fms", ms))
+            }
+        }
         container.layoutSubtreeIfNeeded()   // 크기를 재기 전에 프레임 확정
         var again = true
         while again {
@@ -698,7 +721,19 @@ final class DockManager {
         for c in sv.arrangedSubviews { c.layoutSubtreeIfNeeded(); fillGaps(c) }
     }
     // 현재 트리 상태를 디버그 로그로 남긴다 (레이아웃 이상 재발 시 원인 추적용).
+    /// 레이아웃 이상을 쫓을 때만 켠다. 예전에는 패널을 닫거나 옮길 때마다 트리 전체를
+    /// 문자열로 만들어 로그 파일에 적었다 — 눈에 보이는 값은 없고 비용만 있었다.
+    static let treeDump = ProcessInfo.processInfo.environment["RIVEN_DOCKDUMP"] != nil
+
     func dumpTree(_ label: String) {
+        guard DockManager.treeDump || DockManager.closeBench else { return }
+        let d0 = DispatchTime.now()
+        defer {
+            if DockManager.closeBench {
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - d0.uptimeNanoseconds) / 1e6
+                RLog.log(String(format: "CLOSE     dumpTree %.1fms", ms))
+            }
+        }
         func walk(_ v: NSView, _ d: Int) -> String {
             let pad = String(repeating: "  ", count: d)
             if let sv = v as? NSSplitView {
@@ -1180,7 +1215,9 @@ final class DockGroup: NSView, Scalable {
         let b = bounds
         tabBar.frame = NSRect(x: 0, y: b.height - DockGroup.tabBarHeight, width: b.width, height: DockGroup.tabBarHeight)
         content.frame = NSRect(x: 0, y: 0, width: b.width, height: max(0, b.height - DockGroup.tabBarHeight))
-        activePanel?.content.frame = content.bounds
+        // 숨겨 둔 팬도 같은 크기로 맞춰 둔다. 다시 보일 때 크기가 어긋난 채 한 프레임
+        // 그려지지 않도록 (붙여 둔 채 숨기는 구조라 레이아웃이 자동으로 따라오지 않는다).
+        for p in panels where p.content.superview === content { p.content.frame = content.bounds }
         dropZone?.frame = b
         borderOverlay.frame = b
     }
@@ -1205,12 +1242,31 @@ final class DockGroup: NSView, Scalable {
     }
     func remove(_ panel: DockPanel, dispose: Bool) {
         guard let idx = panels.firstIndex(where: { $0.id == panel.id }) else { return }
+        let wasActive = idx == activeIndex
+        func step(_ name: String, _ body: () -> Void) {
+            guard DockManager.closeBench else { body(); return }
+            let s = DispatchTime.now(); body()
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - s.uptimeNanoseconds) / 1e6
+            RLog.log(String(format: "CLOSE     remove.%@ %.1fms", name, ms))
+        }
         panels.remove(at: idx)
-        panel.content.removeFromSuperview()
+        // 닫힌 뷰는 감추기만 하고 실제로 떼는 건 다음 런루프로 미룬다. 떼는 순간 레이아웃
+        // 엔진이 그 무거운 서브트리를 통째로 정리하느라 20~30ms 를 먹는데, 그 값을 클릭한
+        // 순간에 치를 이유가 없다 (화면에는 이미 사라진 뒤다).
+        step("detachView") {
+            panel.content.isHidden = true
+            let v = panel.content
+            DispatchQueue.main.async { v.removeFromSuperview() }
+        }
         if panel.group === self { panel.group = nil }
-        if dispose { panel.onClose?() }
+        step("onClose") { if dispose { panel.onClose?() } }
+        let before = activeIndex
         activeIndex = min(activeIndex, panels.count - 1)
-        showActive(); tabBar.rebuild()
+        // 보이던 탭을 닫았을 때만 다시 그린다. showActive 는 콘텐츠 뷰를 떼었다 붙이는데,
+        // 채팅 기록이나 웹뷰가 든 팬은 그 재편입이 비싸다 — 뒤쪽 탭을 닫았을 뿐인데도
+        // 매번 그 값을 치르고 있었다 (조직도 클릭 렉과 같은 원인).
+        step("showActive") { if wasActive || activeIndex != before { showActive() } }
+        step("tabBar") { tabBar.rebuild() }
         // 비어버린 그룹은 곧 트리에서 제거된다 — 여기서 활성으로 잡으면 호출자가 이웃으로
         // 포커스를 넘기기 전에 활성 링이 죽은 그룹에 묶인다. 남은 탭이 있을 때만 활성화.
         if !panels.isEmpty { manager?.setActive(self) }
@@ -1227,29 +1283,38 @@ final class DockGroup: NSView, Scalable {
         }
         activeIndex = idx; showActive(); tabBar.rebuild(); manager?.setActive(self)
     }
+    // 탭을 바꾸거나 닫을 때마다 콘텐츠 뷰를 떼었다 붙이면, 채팅 기록처럼 무거운 팬은 그
+    // 재편입에만 70~100ms 가 든다 (탭 하나 닫는데 눈에 보이는 멈춤이 생긴다). 한 번 보여 준
+    // 뷰는 계속 붙여 두고 보이기만 바꾼다 — 두 번째부터는 공짜다.
+    // 아직 한 번도 안 보여 준 팬은 붙이지 않는다 (복원 직후 무거운 팬 여러 개를 한꺼번에
+    // 붙이면 그만큼 기동이 느려진다).
     private func showActive() {
-        guard let p = activePanel else {
-            content.subviews.forEach { $0.removeFromSuperview() }
-            return
+        // 이 그룹에서 빠져나간 뷰만 걷어낸다.
+        let live = Set(panels.map { ObjectIdentifier($0.content) })
+        for v in content.subviews where !live.contains(ObjectIdentifier(v)) && !(v is DockDropZone) {
+            v.removeFromSuperview()
         }
-        // 이미 붙어 있는 뷰라면 떼었다 붙이지 않는다 (재편입 비용이 크다). 다른 뷰만 걷어낸다.
-        if p.content.superview === content {
-            content.subviews.filter { $0 !== p.content }.forEach { $0.removeFromSuperview() }
-            if let z = dropZone { addSubview(z) }
-            needsLayout = true
-            p.onActivate?()
-            return
+        guard let p = activePanel else { return }
+        if p.content.superview !== content {
+            let v = p.content
+            v.translatesAutoresizingMaskIntoConstraints = true
+            v.frame = content.bounds
+            v.autoresizingMask = [.width, .height]
+            content.addSubview(v)
         }
-        content.subviews.forEach { $0.removeFromSuperview() }   // dropZone lives on the group, not content
-        let v = p.content
-        v.translatesAutoresizingMaskIntoConstraints = true
-        v.frame = content.bounds
-        v.autoresizingMask = [.width, .height]
-        content.addSubview(v)
+        for other in panels where other !== p && other.content.superview === content {
+            other.content.isHidden = true
+        }
+        p.content.isHidden = false
         // Keep the drop zone (if a drag is in progress) above the freshly shown content.
         if let z = dropZone { addSubview(z) }
         needsLayout = true          // frame the new content on the next layout pass
-        p.onActivate?()
+        if DockManager.closeBench {
+            let s0 = DispatchTime.now(); p.onActivate?()
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - s0.uptimeNanoseconds) / 1e6
+            RLog.log(String(format: "CLOSE       onActivate %.1fms attached=%@", ms,
+                            p.content.superview === content ? "예" : "아니오"))
+        } else { p.onActivate?() }
     }
 }
 

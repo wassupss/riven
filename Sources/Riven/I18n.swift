@@ -91,6 +91,7 @@ enum I18n {
         "notes.edit": ("편집", "Edit"),
         "notes.preview": ("미리보기", "Preview"),
         "notes.previewEmpty": ("내용이 비어 있습니다.", "Nothing to preview yet."),
+        "notes.scanning": ("문서를 찾는 중…", "Looking for docs…"),
         "notes.noDocs": ("이 워크스페이스에 .md 파일이 없습니다.", "No .md files in this workspace."),
         "notes.reveal": ("Finder에서 보기", "Show in Finder"),
         "notes.revert": ("에이전트가 덮어쓰기 전으로 되돌리기", "Undo the agent's overwrite"),
