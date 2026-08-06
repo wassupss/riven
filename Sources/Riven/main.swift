@@ -5304,6 +5304,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // ---- global UI zoom (⌘+ / ⌘- / ⌘0) — scales the WHOLE UI (editor + terminals +
     // all AppKit chrome), matching riven's browser page-zoom, via UIScale. ----
+    /// 설정 화면에서도 같은 경로를 쓴다 (메뉴·단축키와 결과가 달라지면 안 된다).
+    func zoomFromSettings(_ delta: Int) {
+        if delta == 0 { applyZoom(UIScale.reset(), delta: 0) }
+        else { applyZoom(UIScale.step(delta), delta: delta) }
+    }
     @objc private func zoomInMenu() { applyZoom(UIScale.step(+1), delta: +1) }
     @objc private func zoomOutMenu() { applyZoom(UIScale.step(-1), delta: -1) }
     @objc private func zoomResetMenu() { applyZoom(UIScale.reset(), delta: 0) }

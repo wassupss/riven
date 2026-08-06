@@ -522,6 +522,10 @@ enum I18n {
         "changes.empty2": ("에이전트 편집 내역이 없습니다", "No agent edits yet"),
         // settings sections
         "settings.editor": ("에디터", "Editor"), "settings.terminal": ("터미널", "Terminal"),
+        "about.currentVersion": ("현재 v{v}", "Currently v{v}"),
+        "settings.uiScale": ("전체 크기", "Interface size"),
+        "settings.uiScaleDesc": ("⌘+ · ⌘− 와 같습니다. 가운데를 누르면 100%. 껐다 켜면 100% 로 돌아갑니다.",
+                                 "Same as ⌘+ / ⌘−. Click the middle to reset. Back to 100% on relaunch."),
         "settings.aiComplete": ("AI 자동완성", "AI completion"),
         "settings.aiCompleteDesc": ("에디터에서 ^Space 로 부릅니다", "Call it with ^Space in the editor"),
         "settings.agentNative": ("에이전트를 네이티브 UI 로", "Agents in the native UI"),

@@ -209,6 +209,16 @@ final class SettingsWindow: NSPanel {
         langSeg.selectedSegment = (I18n.current == .en) ? 1 : 0
         addRow("언어 / Language", desc: t("settings.languageDesc"), langSeg)
 
+        // 전체 크기 (⌘+ / ⌘- / ⌘0 과 같은 것). 단축키를 모르면 조절할 방법이 없었다.
+        let zoomSeg = NSSegmentedControl(labels: ["−", "\(Int(UIScale.factor * 100))%", "+"],
+                                         trackingMode: .momentary,
+                                         target: self, action: #selector(changeZoom(_:)))
+        zoomSeg.setWidth(34, forSegment: 0)
+        zoomSeg.setWidth(56, forSegment: 1)
+        zoomSeg.setWidth(34, forSegment: 2)
+        zoomSegment = zoomSeg
+        addRow(t("settings.uiScale"), desc: t("settings.uiScaleDesc"), zoomSeg)
+
         // 테마는 이름만 늘어놓으면 뭘 고르는지 모른다 — 색 점이 붙은 격자로 보여 준다.
         swatches = []
         let grid = NSGridView()
@@ -360,6 +370,17 @@ final class SettingsWindow: NSPanel {
             return f.isFixedPitch
         }.sorted()
     }()
+
+    private weak var zoomSegment: NSSegmentedControl?
+    @objc private func changeZoom(_ seg: NSSegmentedControl) {
+        let app = NSApp.delegate as? AppDelegate
+        switch seg.selectedSegment {
+        case 0: app?.zoomFromSettings(-1)
+        case 2: app?.zoomFromSettings(+1)
+        default: app?.zoomFromSettings(0)      // 가운데(현재 %)를 누르면 100% 로
+        }
+        seg.setLabel("\(Int(UIScale.factor * 100))%", forSegment: 1)
+    }
 
     private var ghosttyStatusLabel: NSTextField?
     /// ghostty 설정 가져오기 (버튼 + 상태 문구).
@@ -684,27 +705,12 @@ final class SettingsWindow: NSPanel {
             }
         }
         addSection(t("account.title"))
-        let note = NSTextField(labelWithString:
-            "riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
-        note.font = UIScale.font(UIScale.body); note.textColor = Theme.fgDim
-        note.lineBreakMode = .byWordWrapping; note.maximumNumberOfLines = 4
-        note.preferredMaxLayoutWidth = 500
-        note.translatesAutoresizingMaskIntoConstraints = false
-        note.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        content.addArrangedSubview(note)
-        content.addArrangedSubview(spacer(6))
+        addNote("riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
 
         if !SupabaseConfig.isConfigured {
-            addSection(t("settings.status"))
-            let status = NSTextField(labelWithString:
-                "Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.")
-            status.font = UIScale.font(UIScale.small); status.textColor = Theme.warning
-            status.lineBreakMode = .byWordWrapping; status.maximumNumberOfLines = 3
-            status.preferredMaxLayoutWidth = 500
-            content.addArrangedSubview(status)
-            let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
-            sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
-            content.addArrangedSubview(sync)
+            addNote("Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.",
+                    color: Theme.warning)
+            addNote("API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
             return
         }
 
@@ -787,10 +793,13 @@ final class SettingsWindow: NSPanel {
         addSection(t("about.update"))
         // 탭을 다시 그릴 때도 실제 진행 상태를 따른다 (창을 닫았다 열면 "확인 중…"이 남던 문제).
         updateStatusLabel = NSTextField(labelWithString: Updater.shared.isChecking ? t("about.checking") : t("about.checkHint"))
-        updateStatusLabel.font = UIScale.font(UIScale.body); updateStatusLabel.textColor = Theme.fgDim
-        content.addArrangedSubview(updateStatusLabel)
-        content.addArrangedSubview(spacer(4))
-        content.addArrangedSubview(primaryButton(t("about.check"), #selector(checkUpdate)))
+        updateStatusLabel.font = UIScale.font(UIScale.small); updateStatusLabel.textColor = Theme.fgDim
+        updateStatusLabel.lineBreakMode = .byWordWrapping
+        updateStatusLabel.maximumNumberOfLines = 2
+        // 줄 이름과 버튼 글자가 같으면("업데이트 확인" ×2) 읽는 사람이 두 번 읽게 된다.
+        addRow(t("about.currentVersion", ["v": ver]), desc: nil,
+               primaryButton(t("about.check"), #selector(checkUpdate)))
+        addWideRow(updateStatusLabel)
 
         content.addArrangedSubview(spacer(8))
         addSection(t("about.links"))
@@ -863,6 +872,19 @@ final class SettingsWindow: NSPanel {
     private func addRow(_ label: String, desc: String? = nil, _ control: NSView) {
         currentCard?.addRow(label: label, desc: desc, control: control)
     }
+    /// 카드 안의 설명 문단 (문장이 주인인 섹션 — 계정·정보).
+    private func addNote(_ text: String, color: NSColor? = nil) {
+        let l = NSTextField(labelWithString: text)
+        l.font = UIScale.font(UIScale.small)
+        l.textColor = color ?? Theme.fgDim
+        l.lineBreakMode = .byWordWrapping
+        l.maximumNumberOfLines = 5
+        l.preferredMaxLayoutWidth = 540
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.widthAnchor.constraint(lessThanOrEqualToConstant: 540).isActive = true
+        addWideRow(l)
+    }
+
     /// 카드 폭을 통째로 쓰는 줄 (테마 격자·미리보기처럼 이름/컨트롤로 나뉘지 않는 것).
     private func addWideRow(_ view: NSView) {
         currentCard?.addWide(view)
