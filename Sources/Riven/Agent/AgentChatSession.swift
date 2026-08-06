@@ -53,7 +53,10 @@ enum ChatAgentKind: String {
     case codex
 
     var displayName: String { self == .claude ? "Claude Code" : "Codex" }
-    var symbol: String { self == .claude ? "asterisk" : "chevron.left.forwardslash.chevron.right" }
+    /// 브랜드가 읽히는 글리프. Claude 의 asterisk 가 Anthropic 마크로 읽히는 것과 같은
+    /// 자리다 — camera.aperture 는 6방향 회전 대칭 매듭이라 OpenAI 마크와 인상이 같고,
+    /// 11pt(탭·레일 실제 크기)에서도 뭉개지지 않는다. `</>` 는 "코드" 일 뿐 Codex 가 아니었다.
+    var symbol: String { self == .claude ? "asterisk" : "camera.aperture" }
 }
 
 extension ClaudeChatSession: AgentChatSession {}

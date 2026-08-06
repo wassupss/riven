@@ -1994,7 +1994,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func agentGlyph(kind: String?) -> String? {
         switch kind?.lowercased() {
         case "claude", "claude code": return "asterisk"
-        case "codex": return "chevron.left.forwardslash.chevron.right"
+        case "codex": return "camera.aperture"
         default: return nil
         }
     }

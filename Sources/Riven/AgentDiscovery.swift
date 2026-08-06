@@ -28,7 +28,7 @@ enum AgentDiscovery {
 
     private static let candidates: [(name: String, cmd: String, symbol: String, session: String?, resume: String?)] = [
         ("Claude Code", "claude", "asterisk", "--session-id", "--resume"),
-        ("Codex", "codex", "chevron.left.forwardslash.chevron.right", nil, nil),
+        ("Codex", "codex", "camera.aperture", nil, nil),
         ("Aider", "aider", "pencil.and.outline", nil, nil),
         ("Gemini", "gemini", "diamond", nil, nil),
         ("opencode", "opencode", "curlybraces", nil, nil),
