@@ -650,6 +650,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CHIPBENCH=1: 그룹 조직도의 상태 칩이 실제로 따라오는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CHIPBENCH"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.createAgentGroup("상태팀", [(name: "리드", agent: nil, model: nil, parent: nil),
+                                                        (name: "멤버1", agent: nil, model: nil, parent: 0)])
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                            if self.auxDockPanels["team"] == nil { self.toggleDockPanel("team") }
+                            guard let ws = self.workspace else { return }
+                            let team = self.team(for: ws)
+                            team.show(group: "상태팀")
+                            guard let member = self.agentPanes().first(where: { $0.chat.agentRole == "멤버1" })
+                            else { RLog.log("CHIP 멤버 없음"); return }
+                            func snap(_ l: String) {
+                                RLog.log("CHIP \(l): 팬=\(member.chat.runState) 칩=[\(team.debugStates())] 타이머=\(team.debugTickerRunning())")
+                            }
+                            snap("시작 전")
+                            member.chat.ask("1부터 5까지 세어. 다른 말 금지.") { _ in }
+                            for (i, at) in [0.5, 2.0, 4.0, 8.0, 14.0].enumerated() {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    snap("샘플 \(i + 1)")
+                                    if i == 4 { RLog.log("CHIP done") }
+                                }
+                            }
+                        }
+                    }
+                }
+                // RIVEN_STATEBENCH=1: 에이전트가 도는 동안 상태가 세 곳(팬·독 탭·레일)에
+                // 제때 반영되는지. "돌고 있는데 안 도는 것처럼 보인다" 를 쫓기 위한 것.
+                if ProcessInfo.processInfo.environment["RIVEN_STATEBENCH"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let ws = self.workspace,
+                                  let pane = self.agentPanes().first else { RLog.log("STATE 팬 없음"); return }
+                            func snap(_ label: String) {
+                                let railRows = self.railAgents(for: ws)
+                                let railState = railRows.first.map { "\($0.activity)" } ?? "-"
+                                RLog.log("STATE \(label): 팬=\(pane.chat.runState) 배지=\(pane.panel.badge ?? "-")"
+                                         + " 상태=\(pane.panel.status)"
+                                         + " 레일=\(railState)")
+                            }
+                            snap("시작 전")
+                            pane.chat.ask("1부터 5까지 한 줄에 하나씩 세어. 다른 말은 하지 마.") { _ in
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    snap("답 온 뒤")
+                                    RLog.log("STATE done")
+                                }
+                            }
+                            for (i, at) in [0.4, 1.5, 3.0, 6.0].enumerated() {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) { snap("도는 중 \(i + 1)") }
+                            }
+                            // 대기열: 도는 중에 하나 더 넣으면 그 사이에도 계속 busy 여야 한다.
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                pane.chat.ask("6부터 8까지 세어. 다른 말 금지.") { _ in
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { snap("두 번째 답 뒤") }
+                                }
+                            }
+                            for (i, at) in [8.0, 10.0, 12.0, 15.0, 18.0].enumerated() {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) { snap("대기열 \(i + 1)") }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_EXPIRE=1: 선택지가 만료됐을 때 카드가 그 자리에서 만료로 바뀌는지.
                 if ProcessInfo.processInfo.environment["RIVEN_EXPIRE"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -2134,7 +2199,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             chat?.setRingState(p.badge)                          // travelling-ember ring like agents
             self.refreshDockTabs(); self.refreshRailAgents()
-            self.teamPanel.agentActivityChanged()                // 조직도 상태 칩을 깨운다
+            // 이 팬이 속한 워크스페이스의 조직도를 깨운다. teamPanel 은 "지금 보고 있는"
+            // 워크스페이스의 것이라, 다른 워크스페이스의 팬이 돌기 시작하면 엉뚱한 조직도를
+            // 깨우고 (없으면 새로 만들기까지) 정작 그 팬의 칩은 idle 로 남았다.
+            self.state(for: URL(fileURLWithPath: wsPath)).team?.agentActivityChanged()
         }
         chat.onAttention = { [weak self, weak p, weak chat] attn in
             guard let self, let p else { return }
@@ -2144,7 +2212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             chat?.setRingState(p.badge)
             WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, attn: attn)
             self.refreshDockTabs(); self.refreshRailAgents()
-            self.teamPanel.agentActivityChanged()                // 승인 대기 → 칩 색이 바뀐다
+            self.state(for: URL(fileURLWithPath: wsPath)).team?.agentActivityChanged()   // 승인 대기 → 칩 색
         }
         chat.onTitle = { [weak self, weak p] title in
             guard let self, let p else { return }
@@ -5325,6 +5393,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func wsScopeReport() {
+        // 다른 워크스페이스의 팬이 돌기 시작해도, 보고 있는 워크스페이스에 조직도가
+        // 새로 생기면 안 된다 (예전에는 teamPanel 이 "지금 보는 곳" 을 가리켜 그랬다).
+        if let mineWS = workspace, let theirs = allAgentPanes().first(where: { $0.ws != mineWS }) {
+            let hadTeamHere = state(for: mineWS).team != nil
+            theirs.chat.ask("1만 답해. 다른 말 금지.") { _ in }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                RLog.log("WSSCOPE 저쪽 팬 상태=\(theirs.chat.runState)")
+                RLog.log("WSSCOPE 내쪽 조직도 생김=\(!hadTeamHere && self.state(for: mineWS).team != nil) (거짓이어야 정상)")
+            }
+        }
         // 메모/문서도 브라우저와 같아야 한다: 다른 워크스페이스의 에이전트가 쓴 문서가
         // 지금 보고 있는 워크스페이스에 뜨면 안 된다.
         if let mineWS = workspace,
