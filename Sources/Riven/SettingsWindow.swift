@@ -11,6 +11,10 @@ final class SettingsWindow: NSPanel {
     private let scroll = NSScrollView()
     private let content = FlippedStack()
     private var activeTab = 0
+    private var steppers: [String: NSStepper] = [:]
+    private var fontPickers: [String: NSPopUpButton] = [:]
+    private let editorPreview = NSTextField(labelWithString: "")
+    private let terminalPreview = NSTextField(labelWithString: "")
     private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
@@ -219,7 +223,10 @@ final class SettingsWindow: NSPanel {
 
         addSection(t("settings.editor"))
         editorSize.stringValue = String(s.int("editorFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(editorSize)))
+        content.addArrangedSubview(setRow(t("settings.fontSize"), sizeControl(editorSize, key: "editorFontSize")))
+        content.addArrangedSubview(setRow(t("settings.fontFamily"),
+                                          fontMenu(key: "editorFontFamily", preview: editorPreview)))
+        content.addArrangedSubview(editorPreview)
         formatOnSave.title = t("settings.formatOnSave")
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
         formatOnSave.target = self; formatOnSave.action = #selector(saveFormatOnSave)
@@ -229,7 +236,12 @@ final class SettingsWindow: NSPanel {
 
         addSection(t("settings.terminal"))
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(terminalSize)))
+        content.addArrangedSubview(setRow(t("settings.fontSize"), sizeControl(terminalSize, key: "terminalFontSize")))
+        content.addArrangedSubview(setRow(t("settings.fontFamily"),
+                                          fontMenu(key: "terminalFontFamily", preview: terminalPreview)))
+        content.addArrangedSubview(terminalPreview)
+        // 이미 ghostty 를 쓰던 사람은 글꼴·크기를 이미 맞춰 뒀다. 다시 고르게 하지 않는다.
+        content.addArrangedSubview(ghosttyRow())
 
         addSection(t("settings.notifications"))
         notify.title = t("settings.notifyDesc")
@@ -279,6 +291,95 @@ final class SettingsWindow: NSPanel {
     // 폰트 크기 입력칸 — 엔터를 치거나 포커스를 잃는 순간 바로 저장 + 적용된다.
     // (예전에는 "저장" 버튼을 눌러야 값이 들어갔고, 그마저도 읽는 쪽이 없어 재시작해도
     //  반영되지 않았다.)
+    // 크기: 숫자칸 + 스테퍼. 숫자만 있으면 몇까지 되는지도 모르고 한 칸씩 올리기도 번거롭다.
+    private func sizeControl(_ tf: NSTextField, key: String) -> NSView {
+        let f = fontField(tf)
+        f.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        let stepper = NSStepper()
+        stepper.minValue = 8; stepper.maxValue = 32; stepper.increment = 1
+        stepper.integerValue = Settings.shared.int(key, 13)
+        stepper.valueWraps = false
+        stepper.target = self; stepper.action = #selector(stepperChanged(_:))
+        stepper.identifier = NSUserInterfaceItemIdentifier(key)
+        stepper.translatesAutoresizingMaskIntoConstraints = false
+        steppers[key] = stepper
+        let hint = NSTextField(labelWithString: "8–32")
+        hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
+        let row = NSStackView(views: [f, stepper, hint])
+        row.orientation = .horizontal; row.spacing = 6; row.alignment = .centerY
+        return row
+    }
+    @objc private func stepperChanged(_ s: NSStepper) {
+        guard let key = s.identifier?.rawValue else { return }
+        let field = key == "editorFontSize" ? editorSize : terminalSize
+        field.stringValue = String(s.integerValue)
+        saveFonts()
+    }
+
+    /// 글꼴 고르기. 목록은 고정폭 글꼴만 — 에디터·터미널에 비고정폭을 고르면 칸이 어긋난다.
+    private func fontMenu(key: String, preview: NSTextField) -> NSView {
+        let pop = NSPopUpButton()
+        pop.translatesAutoresizingMaskIntoConstraints = false
+        pop.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        let current = Settings.shared.string(key, "")
+        pop.addItem(withTitle: t("settings.fontDefault"))
+        pop.menu?.addItem(.separator())
+        for name in SettingsWindow.monoFonts { pop.addItem(withTitle: name) }
+        pop.selectItem(withTitle: current.isEmpty ? t("settings.fontDefault") : current)
+        pop.target = self; pop.action = #selector(fontPicked(_:))
+        pop.identifier = NSUserInterfaceItemIdentifier(key)
+        fontPickers[key] = pop
+        updatePreview(preview, key: key)
+        return pop
+    }
+    @objc private func fontPicked(_ p: NSPopUpButton) {
+        guard let key = p.identifier?.rawValue else { return }
+        let name = p.titleOfSelectedItem ?? ""
+        Settings.shared.set(key, name == t("settings.fontDefault") ? "" : name)
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+        updatePreview(key == "editorFontSize" || key == "editorFontFamily" ? editorPreview : terminalPreview, key: key)
+    }
+    /// 고른 글꼴·크기가 실제로 어떻게 보이는지 그 자리에서 보여 준다.
+    private func updatePreview(_ label: NSTextField, key: String) {
+        let isEditor = key.hasPrefix("editor")
+        let size = CGFloat(Settings.shared.int(isEditor ? "editorFontSize" : "terminalFontSize", 13))
+        let family = Settings.shared.string(isEditor ? "editorFontFamily" : "terminalFontFamily", "")
+        label.font = (family.isEmpty ? nil : NSFont(name: family, size: size))
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        label.stringValue = "riven — let x = 1; 한글 0O l1 {}"
+        label.textColor = Theme.fg
+        label.lineBreakMode = .byTruncatingTail
+    }
+    /// 시스템에 깔린 고정폭 글꼴 (한 번만 훑는다 — 폰트 목록 조회는 느리다).
+    static let monoFonts: [String] = {
+        let all = NSFontManager.shared.availableFontFamilies
+        return all.filter { fam in
+            guard let f = NSFont(name: fam, size: 12) else { return false }
+            return f.isFixedPitch
+        }.sorted()
+    }()
+
+    /// ghostty 설정 가져오기 한 줄.
+    private func ghosttyRow() -> NSView {
+        let found = GhosttyImport.read()
+        let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
+                            textColor: found == nil ? Theme.fgDim : Theme.fg,
+                            bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
+        let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
+        status.font = UIScale.font(UIScale.caption); status.textColor = Theme.fgDim
+        status.lineBreakMode = .byTruncatingMiddle
+        btn.onClick = { [weak self, weak status] in
+            guard let f = GhosttyImport.read() else { status?.stringValue = t("settings.ghosttyNone"); return }
+            let msg = GhosttyImport.apply(f)
+            status?.stringValue = msg
+            self?.showTab(0)      // 미리보기·크기 칸을 새 값으로 다시 그린다
+        }
+        let row = NSStackView(views: [btn, status])
+        row.orientation = NSUserInterfaceLayoutOrientation.horizontal
+        row.spacing = 10; row.alignment = .centerY
+        return row
+    }
+
     private func fontField(_ tf: NSTextField) -> NSTextField {
         let f = field(tf, width: 72)
         f.target = self; f.action = #selector(saveFonts)
@@ -296,6 +397,10 @@ final class SettingsWindow: NSPanel {
         editorSize.stringValue = String(ed); terminalSize.stringValue = String(tm)
         Settings.shared.set("editorFontSize", ed)
         Settings.shared.set("terminalFontSize", tm)
+        steppers["editorFontSize"]?.integerValue = ed
+        steppers["terminalFontSize"]?.integerValue = tm
+        updatePreview(editorPreview, key: "editorFontFamily")
+        updatePreview(terminalPreview, key: "terminalFontFamily")
         // 에디터(Monaco)와 터미널(ghostty)이 각자 구독해서 즉시 반영한다.
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }

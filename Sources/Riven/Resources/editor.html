@@ -834,6 +834,13 @@ window.rivenSetFontSize = function (size) {
   groups.forEach(g => g.ed.updateOptions({ fontSize: size }));
   document.documentElement.style.setProperty('--riven-font-size', size + 'px');  // peek/references list
 };
+// 설정에서 고른 글꼴까지 반영 (이름만 주면 monospace 로 폴백).
+window.rivenSetFont = function (size, family) {
+  const stack = family ? '"' + family + '", Menlo, Monaco, monospace' : 'Menlo, Monaco, monospace';
+  groups.forEach(g => g.ed.updateOptions({ fontSize: size, fontFamily: stack }));
+  document.documentElement.style.setProperty('--riven-font-size', size + 'px');
+  document.documentElement.style.setProperty('--riven-font-family', stack);
+};
 window.rivenOpen = function (path, content) {
   // If already open in some group, reveal there; else open in the active group.
   const owner = groups.find(g => g.tabs.includes(path));

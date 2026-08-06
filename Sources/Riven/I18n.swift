@@ -522,6 +522,12 @@ enum I18n {
         "changes.empty2": ("에이전트 편집 내역이 없습니다", "No agent edits yet"),
         // settings sections
         "settings.editor": ("에디터", "Editor"), "settings.terminal": ("터미널", "Terminal"),
+        "settings.fontFamily": ("글꼴", "Font"),
+        "settings.fontDefault": ("기본 (시스템 고정폭)", "Default (system mono)"),
+        "settings.ghosttyImport": ("ghostty 설정 가져오기", "Import from ghostty"),
+        "settings.ghosttyNone": ("ghostty 설정 파일을 찾지 못했습니다", "No ghostty config found"),
+        "settings.ghosttyNothing": ("가져올 값이 없습니다", "Nothing to import"),
+        "settings.ghosttyApplied": ("가져왔습니다 — {items}", "Imported — {items}"),
         "settings.fontSize": ("폰트 크기", "Font size"),
         "settings.colorTheme": ("색상 테마", "Color theme"),
         "settings.notifications": ("알림", "Notifications"),

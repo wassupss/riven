@@ -44,6 +44,7 @@ final class GhosttyApp {
         selection-background = #34363b
         selection-foreground = \(hex(t.fg))
         font-size = \(UIScale.terminalFontSize)
+        \(GhosttyApp.fontFamilyLine)
         desktop-notifications = true
         bell-features = system,audio,attention,title
         shell-integration = detect
@@ -55,6 +56,12 @@ final class GhosttyApp {
         }
         ghostty_config_finalize(cfg)
         return cfg
+    }
+
+    /// 설정에서 고른 터미널 글꼴 (없으면 ghostty 기본을 그대로 둔다).
+    static var fontFamilyLine: String {
+        let f = Settings.shared.string("terminalFontFamily", "")
+        return f.isEmpty ? "" : "font-family = \(f)"
     }
 
     // Live-apply the current theme's colors to the app + every open surface (riven's

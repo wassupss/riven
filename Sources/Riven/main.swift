@@ -651,6 +651,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_GHOSTTY=1: ghostty 설정 읽기·적용이 실제로 되는지.
+                if ProcessInfo.processInfo.environment["RIVEN_GHOSTTY"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        guard let f = GhosttyImport.read() else { RLog.log("GH 설정 파일 없음"); return }
+                        RLog.log("GH 찾음: \(f.path.path)")
+                        RLog.log("GH 읽은 값: 글꼴=\(f.fontFamily ?? "-") 크기=\(f.fontSize.map(String.init) ?? "-")"
+                                 + " 테마=\(f.theme ?? "-") 배경=\(f.background ?? "-")")
+                        RLog.log("GH 요약: \(f.summary)")
+                        RLog.log("GH 적용: \(GhosttyImport.apply(f))")
+                        RLog.log("GH 적용 후 설정: 글꼴=\(Settings.shared.string("terminalFontFamily", "-"))"
+                                 + " 크기=\(Settings.shared.int("terminalFontSize", 0))")
+                        RLog.log("GH 터미널 설정줄: \(GhosttyApp.fontFamilyLine)")
+                        RLog.log("GH done")
+                    }
+                }
                 // RIVEN_SEARCH=<질의>: 주소창에 검색어를 쳤을 때 어디로 가는지.
                 if let q = ProcessInfo.processInfo.environment["RIVEN_SEARCH"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -1273,6 +1288,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.settingsMenu()
                     if let t = ProcessInfo.processInfo.environment["RIVEN_SETTINGS_TAB"].flatMap(Int.init) {
                         self.settingsWin?.openTab(t)
+                    }
+                    if let shot = ProcessInfo.processInfo.environment["RIVEN_SETTINGSSHOT"] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            guard let v = self.settingsWin?.contentView,
+                                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("SETSHOT done \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                        }
                     }
                 }
                 // Reveal a sidebar panel for capture (RIVEN_PANEL=search|git).
