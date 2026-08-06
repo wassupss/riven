@@ -19,7 +19,7 @@ import Foundation
 //
 // 함정 하나: turn/start 의 `input` 은 배열이다. 맵으로 주면
 // "invalid type: map, expected a sequence" 로 조용히 턴이 시작되지 않는다.
-final class CodexChatSession {
+final class CodexChatSession: AgentChatSession {
     private let proc = Process()
     private let inPipe = Pipe()
     private let outPipe = Pipe()
@@ -38,6 +38,12 @@ final class CodexChatSession {
 
     private(set) var threadId: String?
     private(set) var model: String?
+    /// [[AgentChatSession]] 이 부르는 이름. Codex 에서는 thread id 가 그 자리다.
+    var sessionId: String? { threadId }
+    /// Codex 는 도구 목록을 init 에서 주지 않는다 — 상태 줄은 비워 둔다.
+    var toolList: [String] { [] }
+    var mcpServers: [(name: String, status: String)] { mcpStatus }
+    private var mcpStatus: [(name: String, status: String)] = []
     /// 아직 답하지 않은 승인 요청: riven 이 만든 id → (JSON-RPC 요청 id, 어떤 종류인지).
     private var pendingApprovals: [String: (rpcId: Any, kind: String)] = [:]
     private var nextId = 0
@@ -137,6 +143,23 @@ final class CodexChatSession {
         guard proc.isRunning else { return }
         proc.terminate()
     }
+
+    /// 모델 바꾸기는 다음 스레드부터 적용된다 — app-server 에는 진행 중 스레드의 모델을
+    /// 갈아 끼우는 요청이 없다 (Claude 의 set_model 컨트롤 메시지와 다르다).
+    func setModel(_ model: String) { self.model = model }
+    /// Codex 의 권한은 승인 요청 단위로 오간다 — 모드 개념이 따로 없다.
+    func setPermissionMode(_ mode: String) {}
+    /// riven MCP 도구는 아직 Codex 쪽에 연결하지 않았다.
+    @discardableResult func respondTool(_ id: String, _ result: String) -> Bool { false }
+
+    // Claude 에만 있는 신호들 — 프로토콜을 만족시키되 아무도 부르지 않는다.
+    var onSubagentStart: ((String, String, String) -> Void)?
+    var onSubagentText: ((String, String) -> Void)?
+    var onSubagentTool: ((String, String, String, String?, String?) -> Void)?
+    var onSubagentToolResult: ((String, String, Bool) -> Void)?
+    var onSubagentDone: ((String, String) -> Void)?
+    var onToolRequest: ((String, String, [String: Any]) -> Void)?
+    var onAskExpired: ((String, String) -> Void)?
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
@@ -248,6 +271,11 @@ final class CodexChatSession {
             let msg = (params["error"] as? [String: Any])?["message"] as? String
             DispatchQueue.main.async { [weak self] in
                 self?.onTurnDone?(nil, self?.threadId, nil, msg ?? t("chat.codex.turnFailed"))
+            }
+        case "mcpServer/startupStatus/updated":
+            if let name = params["name"] as? String, let st = params["status"] as? String {
+                mcpStatus.removeAll { $0.name == name }
+                mcpStatus.append((name: name, status: st))
             }
         case "thread/tokenUsage/updated":
             if let tu = (params["tokenUsage"] as? [String: Any])?["total"] as? [String: Any] {

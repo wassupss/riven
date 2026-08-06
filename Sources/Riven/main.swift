@@ -1027,6 +1027,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CODEXPANE=1: Codex 를 네이티브 챗 "패널" 로 열어 한 턴 도는지 (배선 전체).
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXPANE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat(kind: .codex)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let pane = self.agentPanes().first(where: { $0.chat.agentKind == .codex }) else {
+                                RLog.log("CXPANE Codex 팬 없음"); RLog.log("CXPANE done"); return
+                            }
+                            RLog.log("CXPANE 팬 제목=\(pane.panel.title) 종류=\(pane.panel.chatKind.rawValue)")
+                            pane.chat.ask("숫자 42만 답해. 설명 금지.") { answer in
+                                RLog.log("CXPANE 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(60))")
+                                RLog.log("CXPANE 세션=\(pane.panel.sessionId?.prefix(8) ?? "-")")
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_CODEXPANESHOT"],
+                                   let v = self.window?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                RLog.log("CXPANE done")
+                            }
+                        }
+                    }
+                }
                 // RIVEN_CODEXCHAT=1: 네이티브 챗용 Codex 세션(app-server)이 실제로 한 턴을 도는지.
                 if ProcessInfo.processInfo.environment["RIVEN_CODEXCHAT"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -2323,7 +2349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // A new pane = a new independent agent session (the model the user asked for). Resume
     // reopens a past session id in a fresh pane.
     private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil,
-                               model: String? = nil) -> DockPanel {
+                               model: String? = nil, kind: ChatAgentKind = .claude) -> DockPanel {
         chatSeq += 1
         // 이 팬이 속한 워크스페이스. MCP 로 하는 일은 전부 여기에 종속된다 — 사용자가 지금
         // 어느 워크스페이스를 보고 있든 상관없이. 예전에는 활성 워크스페이스를 썼기 때문에
@@ -2331,6 +2357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let owner = st.url
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
+        chat.agentKind = kind              // 어느 CLI 로 굴릴지 — 세션을 만들기 전에 정해져 있어야 한다
         chat.agentPersona = agent
         chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
@@ -2469,10 +2496,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "not a folder: \(path)"
         }
         queueBind(chat, ws: st.url, resume: resume)
-        let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
-        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: agent ?? "Claude",
+        // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 — 같은 워크스페이스에 Claude 챗과
+        // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
+        let icon = NSImage(systemSymbolName: kind == .codex ? kind.symbol : "bubble.left.and.text.bubble.right",
+                           accessibilityDescription: nil)
+        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)",
+                          title: agent ?? (kind == .codex ? "Codex" : "Claude"),
                           icon: icon, content: chat, closable: true)
-        p.agentName = agent ?? "Claude Code"                     // → appears in the workspace rail
+        p.chatKind = kind
+        p.agentName = agent ?? kind.displayName                  // → appears in the workspace rail
         p.chatAgent = agent                                      // persisted so a restore keeps the role
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
@@ -2616,9 +2648,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content is AgentGroupPanel { return "team" }
         return "panel"
     }
-    private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
+    private func newChat(agent: String? = nil, kind: ChatAgentKind = .claude) {   // 새 에이전트 대화 팬
         guard let dock = activeDock, let ws = workspace else { return }
-        let p = makeChatPanel(for: state(for: ws), agent: agent)
+        let p = makeChatPanel(for: state(for: ws), agent: agent, kind: kind)
         // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
         // 쪼개서, 대화를 하나 더 열 때마다 화면이 반으로 갈렸다). 그룹 생성처럼 일부러
         // 나눠야 하는 경우는 createAgentGroup 이 따로 방향을 준다.
@@ -3704,12 +3736,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     func fld(_ i: Int) -> String { i < f.count ? f[i] : "" }
                             let sid = fld(0), nick = fld(1), persona = fld(2), group = fld(3)
                     let parent = fld(4), model = fld(5), avatar = fld(6)
+                    let kind = ChatAgentKind(rawValue: fld(7)) ?? .claude   // 빈 칸 = 예전 스냅샷 = claude
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
                         return liveChats.remove(at: i)          // reuse — no respawn, no reload
                     }
                     let p = self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid,
                                                agent: persona.isEmpty ? nil : persona,
-                                               model: model.isEmpty ? nil : model)
+                                               model: model.isEmpty ? nil : model, kind: kind)
                     p.chatModel = model.isEmpty ? nil : model
                     p.chatAvatar = avatar.isEmpty ? nil : avatar   // 고른 아바타는 재기동해도 그대로
                     if !nick.isEmpty {                          // restore the group role
@@ -5352,16 +5385,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var actions: [QuickAction] = [
             QuickAction(title: t("menu.newTerminal"), hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
         ]
-        // Installed AI agents (scanned from PATH) — riven's AgentPicker entries. A setting
-        // ("agentUI": "native" | "cli") decides whether Claude opens as the native chat panel
-        // or the raw CLI in a terminal. Claude Code supports native; others (Codex) → CLI.
+        // 설치된 AI 에이전트. "agentUI" 설정이 네이티브 챗 팬으로 열지, 터미널에 CLI 를
+        // 그대로 띄울지 정한다. Codex 도 이제 네이티브다 — app-server 로 몰기 때문에
+        // 스트리밍·승인 카드·변경사항 연동이 Claude 와 같은 자리에서 돈다.
         let nativeUI = Settings.shared.string("agentUI", "native") == "native"
+        let nativeKinds: [String: ChatAgentKind] = ["Claude Code": .claude, "Codex": .codex]
         for a in AgentDiscovery.available() {
-            let native = nativeUI && a.name == "Claude Code"
+            let kind = nativeUI ? nativeKinds[a.name] : nil
             actions.append(QuickAction(title: a.name,
-                                       hint: native ? "네이티브 UI" : t("agent.label"),
+                                       hint: kind != nil ? "네이티브 UI" : t("agent.label"),
                                        symbol: a.symbol) { [weak self] in
-                if native { self?.newChat() } else { self?.launchAgent(a) }
+                if let kind { self?.newChat(kind: kind) } else { self?.launchAgent(a) }
             })
         }
         actions.append(contentsOf: [

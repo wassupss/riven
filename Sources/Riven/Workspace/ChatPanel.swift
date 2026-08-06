@@ -31,7 +31,15 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var stackWidth: NSLayoutConstraint!        // transcript width = clip width
     private var frozenWidth: NSLayoutConstraint?       // pinned while a divider is being dragged
 
-    private var session: ClaudeChatSession?
+    private var session: AgentChatSession?
+    /// 이 챗을 굴리는 CLI. 페인마다 다르다 (같은 워크스페이스에 Claude 챗과 Codex 챗이 함께 뜬다).
+    var agentKind: ChatAgentKind = .claude {
+        didSet {
+            // Codex 에는 권한 "모드" 가 없다 — 승인은 요청이 올 때마다 카드로 묻는다.
+            // 아무 일도 안 하는 드롭다운을 남겨 두면 눌러 보고 고장으로 읽는다.
+            modePopup.isHidden = agentKind == .codex
+        }
+    }
     private var workspace: URL?
     private var current: TurnBlock?
     private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
@@ -560,13 +568,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         commandNames = Set(commands.map { $0.name.lowercased() })
-        guard let cmd = AgentDiscovery.claudeCmd() else {
+        guard let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else {
             addSystem(t("chat.noCLI"))
             return
         }
         // The CLI updates itself on the user's own schedule (riven never changes that setting), but
         // riven parses its stream format — so tell the user WHEN it changed, once per new version.
-        if let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
+        if agentKind == .claude,
+           let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
             addSystem(t("chat.cliChanged", ["prev": prev, "now": now]))
         }
         let resume = pendingResume; pendingResume = nil
@@ -729,6 +738,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     private func refreshAITitle(attempt: Int = 0) {
+        guard agentKind == .claude else { return }      // 제목 요약도 Claude 트랜스크립트에서 읽는다
         guard let cwd = workspace?.path, let sid = sessionId else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let found = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid)
@@ -753,6 +763,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Render the resumed session's prior turns so the conversation is visible (the CLI restores
     // context but doesn't re-emit past messages, so the panel would otherwise look empty).
     private func loadHistory(cwd: String, sessionId: String) {
+        // Claude 의 트랜스크립트 형식(~/.claude/projects/…jsonl)만 읽는다. Codex 는 자기
+        // 스레드를 app-server 로 되살리므로(thread/resume) 여기서 다시 그릴 필요가 없다.
+        guard agentKind == .claude else { return }
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
@@ -917,9 +930,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func startSession(cmd: String, cwd: String, resume: String?) {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
-        let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
-            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
-            agentName: agentPersona, model: preferredModel)
+        // 어느 CLI 든 패널이 기대하는 것은 [[AgentChatSession]] 하나뿐이다.
+        let s: AgentChatSession? = agentKind == .codex
+            ? CodexChatSession(command: cmd, cwd: cwd, resume: resume, model: preferredModel)
+            : ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
+                permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
+                agentName: agentPersona, model: preferredModel)
         s?.onInit = { [weak self] sid, model in
             self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid)
             self?.restorePlanBadge(sid)
