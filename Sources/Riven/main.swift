@@ -791,6 +791,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 if let d = rep.representation(using: .png, properties: [:]) {
                                     try? d.write(to: URL(fileURLWithPath: shot))
                                 }
+                                RLog.log("BRSHOT 배치 \(p.debugFrames())")
+                                RLog.log("BRSHOT 메뉴=\(p.debugMenu())")
+                                // 웹 내용은 cacheDisplay 로 안 잡힌다 (원격 레이어) — 스냅샷으로 확인.
+                                p.capture { path in RLog.log("BRSHOT 페이지스냅=\(path ?? "실패")") }
                                 RLog.log("BRSHOT done \(p.debugSuggestions())")
                                 // 두 번째 장면: 기록·북마크 보기 (⌘Y)
                                 p.debugShowLibrary()

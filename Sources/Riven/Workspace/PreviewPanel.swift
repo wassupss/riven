@@ -144,10 +144,12 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
     func applyTheme() { needsDisplay = true; set(items, selected: selected) }
     func applyScale() { set(items, selected: selected) }
     @objc private func newTapped() { onNew?() }
-    /// 기준선 + 활성 탭 밑줄 (RivenTabStrip 과 같은 표현).
+    /// 탭 줄은 툴바보다 한 톤 어둡다 (크롬·엣지와 같은 층 구분). 아래 기준선 한 줄.
     override func draw(_ dirty: NSRect) {
+        Theme.bg3.setFill()
+        bounds.fill()
         Theme.hairline.setFill()
-        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
 
     /// 한 칸: 파비콘 + 제목 + (마우스를 올리면) 닫기.
@@ -382,19 +384,17 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let fwdBtn = NSButton()
     private let stopBtn = NSButton()          // 로딩 중에는 ✕, 아니면 ⟳
     private let urlField = NSTextField()
+    private let addressBar = NSView()         // 주소창 알약 (안에 입력칸 + 별)
     private let starBtn = NSButton()          // 북마크 켜고 끄기
+    private let menuBtn = NSButton()          // ⋮ — 자주 안 쓰는 것들은 여기로
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
     private var libraryPopover: NSPopover?
     private let downloadBtn = NSButton()          // 받는 게 있을 때만 보인다
     private var downloads: [DownloadItem] = []
     private var downloadsPopover: NSPopover?
-    private let captureBtn = NSButton()
-    private let externalBtn = NSButton()
-    private let inspectBtn = NSButton()
-    private let zoomOutBtn = NSButton()
-    private let zoomInBtn = NSButton()
     private let progress = NSView()
     private var progressWidth: NSLayoutConstraint!
+    private var downloadWidth: NSLayoutConstraint!
     private let tabStrip = BrowserTabStrip(frame: .zero)
     private var tabStripHeight: NSLayoutConstraint!
     private let emptyLabel = NSTextField(labelWithString: t("preview.empty"))
@@ -458,18 +458,17 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         icon(backBtn, "chevron.left", t("browser.back"), #selector(goBack))
         icon(fwdBtn, "chevron.right", t("browser.forward"), #selector(goForward))
         icon(stopBtn, "arrow.clockwise", t("preview.reload"), #selector(reloadOrStop))
-        icon(captureBtn, "camera", t("preview.captureTitle"), #selector(captureNow))
-        icon(externalBtn, "arrow.up.forward.app", t("preview.openExternal"), #selector(openExternal))
-        icon(inspectBtn, "curlybraces", t("browser.inspect"), #selector(openInspector))
-        icon(zoomOutBtn, "minus.magnifyingglass", t("browser.zoomOut"), #selector(zoomOut))
-        icon(zoomInBtn, "plus.magnifyingglass", t("browser.zoomIn"), #selector(zoomIn))
         icon(starBtn, "star", t("browser.bookmark"), #selector(toggleBookmark))
         icon(downloadBtn, "arrow.down.circle", t("browser.downloads"), #selector(showDownloads))
         downloadBtn.isHidden = true
+        icon(menuBtn, "ellipsis", t("browser.more"), #selector(showMenu))
 
         urlField.placeholderString = t("browser.urlPlaceholder")
-        urlField.font = UIScale.font(UIScale.body)
-        urlField.bezelStyle = .roundedBezel
+        urlField.font = UIScale.font(UIScale.small)
+        // 테두리는 알약(addressBar)이 그린다 — 입력칸에 또 테두리가 있으면 이중으로 보인다.
+        urlField.isBordered = false
+        urlField.drawsBackground = false
+        urlField.focusRingType = .none
         urlField.target = self; urlField.action = #selector(openURL)
         urlField.delegate = self
         urlField.translatesAutoresizingMaskIntoConstraints = false
@@ -502,67 +501,73 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
         buildFindBar()
 
-        [backBtn, fwdBtn, stopBtn, urlField, starBtn, downloadBtn, zoomOutBtn, zoomInBtn, captureBtn, inspectBtn,
-         externalBtn, progress, tabStrip, findBar, container, emptyLabel, statusLabel,
+        addressBar.wantsLayer = true
+        addressBar.translatesAutoresizingMaskIntoConstraints = false
+        addressBar.addSubview(urlField)
+        addressBar.addSubview(starBtn)
+        [backBtn, fwdBtn, stopBtn, addressBar, downloadBtn, menuBtn,
+         progress, tabStrip, findBar, container, emptyLabel, statusLabel,
          suggest].forEach { addSubview($0) }
 
         let pad: CGFloat = 8
         progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
-        tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: 0)
+        tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
+        // 숨겨도 자리는 남는다 — 폭까지 0 으로 접어야 주소창이 그만큼 넓어진다.
+        downloadWidth = downloadBtn.widthAnchor.constraint(equalToConstant: 0)
+        // 크롬·브레이브·엣지와 같은 순서: 탭 줄이 맨 위, 그 아래에 이동 버튼 + 주소창.
+        // 예전에는 주소창이 위, 탭이 아래여서 브라우저를 쓰던 감각과 어긋났다.
+        // 오른쪽에 아이콘을 다 늘어놓지도 않는다 — 캡처·검사·확대·외부 열기는 ⋮ 안으로.
         NSLayoutConstraint.activate([
+            tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tabStrip.topAnchor.constraint(equalTo: topAnchor),
+            tabStripHeight,
+
             backBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            backBtn.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-            backBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            backBtn.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 6),
+            backBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(22)),
+            backBtn.heightAnchor.constraint(equalToConstant: UIScale.pt(22)),
             fwdBtn.leadingAnchor.constraint(equalTo: backBtn.trailingAnchor, constant: 2),
             fwdBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            fwdBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            fwdBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(22)),
             stopBtn.leadingAnchor.constraint(equalTo: fwdBtn.trailingAnchor, constant: 2),
             stopBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            stopBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            urlField.leadingAnchor.constraint(equalTo: stopBtn.trailingAnchor, constant: 6),
-            urlField.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            stopBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(22)),
+
+            // 주소창은 한 덩어리: 안쪽 오른쪽 끝에 별이 들어간다 (크롬과 같은 자리).
+            addressBar.leadingAnchor.constraint(equalTo: stopBtn.trailingAnchor, constant: 6),
+            addressBar.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            addressBar.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
+            addressBar.trailingAnchor.constraint(equalTo: downloadBtn.leadingAnchor, constant: -4),
+            urlField.leadingAnchor.constraint(equalTo: addressBar.leadingAnchor, constant: 9),
+            urlField.centerYAnchor.constraint(equalTo: addressBar.centerYAnchor),
             urlField.trailingAnchor.constraint(equalTo: starBtn.leadingAnchor, constant: -4),
-            starBtn.trailingAnchor.constraint(equalTo: downloadBtn.leadingAnchor, constant: -2),
-            downloadBtn.trailingAnchor.constraint(equalTo: zoomOutBtn.leadingAnchor, constant: -6),
+            starBtn.trailingAnchor.constraint(equalTo: addressBar.trailingAnchor, constant: -6),
+            starBtn.centerYAnchor.constraint(equalTo: addressBar.centerYAnchor),
+            starBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(16)),
+
+            // 받는 중일 때만 나타난다 (크롬의 내려받기 표시와 같은 자리).
+            downloadBtn.trailingAnchor.constraint(equalTo: menuBtn.leadingAnchor, constant: -2),
             downloadBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            downloadBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            starBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            starBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            downloadWidth,
+            menuBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            menuBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
+            menuBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(22)),
 
             // 자동완성은 주소창 바로 아래에 떠서 페이지를 덮는다 (레이아웃을 밀지 않는다).
-            suggest.leadingAnchor.constraint(equalTo: urlField.leadingAnchor),
-            suggest.trailingAnchor.constraint(equalTo: urlField.trailingAnchor),
-            suggest.topAnchor.constraint(equalTo: urlField.bottomAnchor, constant: 2),
-            zoomOutBtn.trailingAnchor.constraint(equalTo: zoomInBtn.leadingAnchor, constant: -2),
-            zoomOutBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            zoomOutBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            zoomInBtn.trailingAnchor.constraint(equalTo: captureBtn.leadingAnchor, constant: -4),
-            zoomInBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            zoomInBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            captureBtn.trailingAnchor.constraint(equalTo: inspectBtn.leadingAnchor, constant: -4),
-            captureBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            captureBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            inspectBtn.trailingAnchor.constraint(equalTo: externalBtn.leadingAnchor, constant: -4),
-            inspectBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            inspectBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
-            externalBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            externalBtn.centerYAnchor.constraint(equalTo: backBtn.centerYAnchor),
-            externalBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            suggest.leadingAnchor.constraint(equalTo: addressBar.leadingAnchor),
+            suggest.trailingAnchor.constraint(equalTo: addressBar.trailingAnchor),
+            suggest.topAnchor.constraint(equalTo: addressBar.bottomAnchor, constant: 2),
 
             progress.leadingAnchor.constraint(equalTo: leadingAnchor),
-            progress.topAnchor.constraint(equalTo: urlField.bottomAnchor, constant: 6),
+            progress.topAnchor.constraint(equalTo: backBtn.bottomAnchor, constant: 6),
             progress.heightAnchor.constraint(equalToConstant: 2),
             progressWidth,
 
-            tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
-            tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
-            tabStrip.topAnchor.constraint(equalTo: progress.bottomAnchor),
-            tabStripHeight,
-
             findBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             findBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            findBar.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
+            findBar.topAnchor.constraint(equalTo: progress.bottomAnchor),
 
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
             container.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -671,10 +676,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
                                         + ($0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle),
                                  url: $0.web.url?.absoluteString ?? "") },
                      selected: current)
-        // 탭이 하나면 줄을 감춘다 — 좁은 패널에서 세로 공간이 아깝다.
-        let h = tabs.count > 1 ? UIScale.pt(26) : 0
+        // 탭 줄은 늘 보인다 (크롬·엣지처럼). 하나일 때만 감추면 탭이 생길 때마다 아래
+        // 내용이 밀려 내려가 화면이 덜컹거린다.
+        let h = UIScale.pt(30)
         if tabStripHeight.constant != h { tabStripHeight.constant = h }
-        tabStrip.isHidden = tabs.count <= 1
+        tabStrip.isHidden = false
     }
 
     /// 주소창·버튼·진행 막대를 현재 탭 상태에 맞춘다. KVO 로만 불린다 (폴링 타이머 없음).
@@ -712,9 +718,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     private func relabel() {
         backBtn.toolTip = t("browser.back"); fwdBtn.toolTip = t("browser.forward")
-        externalBtn.toolTip = t("preview.openExternal"); inspectBtn.toolTip = t("browser.inspect")
-        zoomInBtn.toolTip = t("browser.zoomIn"); zoomOutBtn.toolTip = t("browser.zoomOut")
-        captureBtn.toolTip = t("preview.captureTitle")
+        menuBtn.toolTip = t("browser.more")
         urlField.placeholderString = t("browser.urlPlaceholder")
         if tab?.urlString.isEmpty != false { emptyLabel.stringValue = t("preview.empty") }
         refreshChrome(); refreshTabStrip()
@@ -792,7 +796,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         if tb.isLoading { tb.web.stopLoading() } else if !tb.urlString.isEmpty { tb.web.reload() }
     }
     func controlTextDidEndEditing(_ obj: Notification) {
-        if (obj.object as? NSTextField) === urlField { suggest.hide() }
+        if (obj.object as? NSTextField) === urlField { suggest.hide(); styleAddressBar() }
     }
     @objc private func openURL() {
         guard let url = BrowserTab.resolve(urlField.stringValue) else { return }
@@ -1058,6 +1062,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         guard (obj.object as? NSTextField) === urlField else { return }
         refreshSuggestions()
     }
+    func controlTextDidBeginEditing(_ obj: Notification) {
+        if (obj.object as? NSTextField) === urlField { styleAddressBar() }
+    }
     private func refreshSuggestions() {
         let open = tabs.enumerated().compactMap { i, t -> (title: String, url: String)? in
             guard i != current, let u = t.web.url?.absoluteString, !u.isEmpty else { return nil }
@@ -1144,6 +1151,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     /// 어느 워크스페이스의 브라우저인지 (주소 기억의 키).
     private var workspaceKey: String? { workspaceRoot?.path }
+    /// 주소창 알약. 포커스가 가면 테두리를 강조한다 (크롬처럼).
+    private func styleAddressBar() {
+        addressBar.layer?.cornerRadius = UIScale.pt(13)
+        let focused = window?.firstResponder === urlField.currentEditor()
+        addressBar.layer?.backgroundColor = Theme.bg2.cgColor
+        addressBar.layer?.borderWidth = 1
+        addressBar.layer?.borderColor = (focused ? Theme.accent : Theme.hairline).cgColor
+    }
+
     /// 이 패널이 포커스를 받으면 웹뷰가 받아야 한다 (선택·복사·키보드 스크롤).
     func focusWeb() { if let w = tab?.web { window?.makeFirstResponder(w) } }
 
@@ -1177,6 +1193,14 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         if let d = rep.representation(using: .png, properties: [:]) { try? d.write(to: URL(fileURLWithPath: path)) }
     }
     func debugZoom() -> CGFloat { tab?.web.pageZoom ?? 0 }
+    func debugFrames() -> String {
+        let w = tab?.web
+        return "패널=\(Int(bounds.width))x\(Int(bounds.height))"
+            + " 탭줄=\(Int(tabStrip.frame.height))"
+            + " 주소=\(Int(addressBar.frame.minY))~\(Int(addressBar.frame.maxY))"
+            + " 컨테이너=\(Int(container.frame.minY))~\(Int(container.frame.maxY))"
+            + " 웹뷰=\(w.map { "\(Int($0.frame.width))x\(Int($0.frame.height)) 숨김=\($0.isHidden)" } ?? "없음")"
+    }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
     func debugActiveTab() -> Int { current }
@@ -1358,9 +1382,55 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     private func refreshDownloadButton() {
         downloadBtn.isHidden = downloads.isEmpty
+        downloadWidth.constant = downloads.isEmpty ? 0 : UIScale.pt(22)
         let running = downloads.contains { !$0.done && $0.failed == nil }
         downloadBtn.contentTintColor = running ? Theme.accent : Theme.fgDim
     }
+    /// ⋮ — 브라우저마다 있는 그 메뉴. 늘 쓰는 것(뒤로·앞으로·새로고침·주소·별)만 밖에 두고
+    /// 나머지는 여기 넣는다. 아이콘을 여섯 개씩 늘어놓으면 무엇이 중요한지 알 수 없다.
+    @objc private func showMenu() {
+        let menu = buildMenu()
+        let p = NSPoint(x: 0, y: menuBtn.bounds.height + 4)
+        menu.popUp(positioning: nil, at: p, in: menuBtn)
+    }
+    private func buildMenu() -> NSMenu {
+        let menu = NSMenu()
+        func add(_ title: String, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command,
+                 _ enabled: Bool = true, _ body: @escaping () -> Void) {
+            let item = NSMenuItem(title: title, action: #selector(runMenuAction(_:)), keyEquivalent: key)
+            item.keyEquivalentModifierMask = mods
+            item.target = self
+            item.isEnabled = enabled
+            item.representedObject = body as Any
+            menu.addItem(item)
+        }
+        add(t("browser.newTab"), "t") { [weak self] in self?.newTab(nil, activate: true) }
+        add(t("browser.privateTabMenu"), "n", [.command, .shift]) { [weak self] in
+            self?.newTab(nil, activate: true, isPrivate: true)
+            self?.setStatus(t("browser.privateTab"))
+        }
+        menu.addItem(.separator())
+        add(t("browser.history") + " · " + t("browser.bookmarks"), "y") { [weak self] in self?.showLibrary() }
+        add(t("browser.downloads"), "", [], !downloads.isEmpty) { [weak self] in self?.showDownloads() }
+        add(t("browser.find"), "f") { [weak self] in self?.showFind() }
+        menu.addItem(.separator())
+        add(t("browser.zoomIn"), "+") { [weak self] in self?.zoomIn() }
+        add(t("browser.zoomOut"), "-") { [weak self] in self?.zoomOut() }
+        add(t("browser.zoomReset"), "0") { [weak self] in self?.resetZoom() }
+        menu.addItem(.separator())
+        add(t("preview.captureTitle"), "", []) { [weak self] in self?.captureNow() }
+        add(t("browser.viewSource"), "", [], tab != nil) { [weak self] in
+            if let tb = self?.tab { self?.viewSource(tb) }
+        }
+        add(t("browser.inspect"), "", []) { [weak self] in self?.openInspector() }
+        add(t("preview.openExternal"), "", [], tab?.web.url != nil) { [weak self] in self?.openExternal() }
+        return menu
+    }
+    func debugMenu() -> String {
+        buildMenu().items.map { $0.isSeparatorItem ? "—" : ($0.title + ($0.isEnabled ? "" : "(꺼짐)")) }
+            .joined(separator: " / ")
+    }
+
     @objc private func showDownloads() {
         let v = DownloadsView(frame: NSRect(x: 0, y: 0, width: 340, height: 260))
         v.items = downloads
@@ -1591,6 +1661,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     func applyTheme() {
+        styleAddressBar()
         layer?.backgroundColor = Theme.bg2.cgColor
         urlField.textColor = Theme.fg
         findField.textColor = Theme.fg
@@ -1598,8 +1669,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         statusLabel.textColor = Theme.fgDim
         progress.layer?.backgroundColor = Theme.accent.cgColor
         findBar.layer?.backgroundColor = Theme.bg3.cgColor
-        [backBtn, fwdBtn, stopBtn, captureBtn, externalBtn, inspectBtn, zoomInBtn, zoomOutBtn,
+        [backBtn, fwdBtn, stopBtn, menuBtn, downloadBtn,
          findPrev, findNext, findDone].forEach { $0.contentTintColor = Theme.fgDim }
+        urlField.textColor = Theme.fg
     }
     func applyScale() {
         urlField.font = UIScale.font(UIScale.body)
