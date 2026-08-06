@@ -697,6 +697,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 try? d.write(to: URL(fileURLWithPath: shot))
                             }
                             RLog.log("GITSHOT done \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                            RLog.log("GITSHOT 변경사항=\(Int(v.changes.frame.minY))~\(Int(v.changes.frame.maxY))"
+                                     + " 그래프=\(Int(v.graph.frame.minY))~\(Int(v.graph.frame.maxY))")
+                            RLog.log("GITSHOT 그래프안: " + v.graph.debugFrames())
                         }
                     }
                 }

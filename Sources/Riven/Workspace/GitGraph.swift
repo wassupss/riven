@@ -197,7 +197,7 @@ final class GitGraphView: NSView, Themable, Scalable {
 
         listScroll.translatesAutoresizingMaskIntoConstraints = false
         detail.translatesAutoresizingMaskIntoConstraints = false
-        let divider = NSBox(); divider.boxType = .separator
+        let divider = self.detailDivider; divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
         // header (top) · graph list (flexible) · thin divider · commit detail (fixed)
         addSubview(header); addSubview(listScroll); addSubview(divider); addSubview(detail)
@@ -208,7 +208,7 @@ final class GitGraphView: NSView, Themable, Scalable {
             listScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
             listScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             listScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            listScroll.bottomAnchor.constraint(equalTo: divider.topAnchor),
+            // (좁을 때는 아래 compact 제약으로 갈아 끼운다)
             divider.leadingAnchor.constraint(equalTo: leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: trailingAnchor),
             divider.bottomAnchor.constraint(equalTo: detail.topAnchor),
@@ -221,21 +221,44 @@ final class GitGraphView: NSView, Themable, Scalable {
         // keeps it usable; the graph list takes whatever height is left.
         let detailH = detail.heightAnchor.constraint(equalToConstant: 210); detailH.priority = .defaultHigh
         self.detailHeight = detailH
-        NSLayoutConstraint.activate([
+        // 상세를 "높이 0" 으로만 접으면 안 된다 — 안쪽 최소 크기가 이겨서 92pt 짜리 빈 띠가
+        // 바닥에 남는다 (소스 컨트롤 아래 여백의 정체였다). 아예 배치에서 빼고, 목록이
+        // 바닥까지 내려오게 한다.
+        detailShown = [
+            listScroll.bottomAnchor.constraint(equalTo: divider.topAnchor),
             detailH,
             detail.heightAnchor.constraint(lessThanOrEqualToConstant: 210),
-        ])
+        ]
+        detailHiddenC = [
+            listScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(detailShown)
         listScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         listScroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         Theme.register(self); UIScale.register(self)
     }
+    private let detailDivider = NSBox()
     private var detailHeight: NSLayoutConstraint!
+    private var detailShown: [NSLayoutConstraint] = []
+    private var detailHiddenC: [NSLayoutConstraint] = []
     private var compact = false
+    private func showDetailPane(_ show: Bool) {
+        detail.isHidden = !show
+        detailDivider.isHidden = !show
+        NSLayoutConstraint.deactivate(show ? detailHiddenC : detailShown)
+        NSLayoutConstraint.activate(show ? detailShown : detailHiddenC)
+        needsLayout = true
+    }
     /// 좁은 배치에서는 커밋 상세를 접는다 — 목록이 먼저다. 줄을 고르면 그때 펼친다.
+    func debugFrames() -> String {
+        "그래프뷰=\(Int(bounds.height)) 목록스크롤=\(Int(listScroll.frame.minY))~\(Int(listScroll.frame.maxY))"
+            + " 목록내용=\(Int((listScroll.documentView?.frame.height) ?? 0))"
+            + " 상세=\(Int(detail.frame.minY))~\(Int(detail.frame.maxY)) 숨김=\(detail.isHidden)"
+            + " 상세높이제약=\(Int(detailHeight?.constant ?? -1))"
+    }
     func setCompact(_ compact: Bool) {
         self.compact = compact
-        detailHeight?.constant = compact ? 0 : 210
-        detail.isHidden = compact
+        showDetailPane(!compact)
     }
 
     required init?(coder: NSCoder) { fatalError() }
