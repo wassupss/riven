@@ -650,6 +650,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_SYMLINK=<경로>: 심볼릭 링크로 걸린 폴더가 탐색기에서 폴더로 보이고
+                // 안까지 읽히는지 (.claude/skills 를 공용 폴더로 링크해 둔 구성).
+                if let target = ProcessInfo.processInfo.environment["RIVEN_SYMLINK"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        let ex = self.explorer(for: ws)
+                        let root = FileNode.make(URL(fileURLWithPath: target))
+                        RLog.log("SYM 대상=\(target) 폴더로 인식=\(root.isDir) 링크=\(root.isLink)")
+                        let kids = root.loadChildren()
+                        RLog.log("SYM 안의 항목 \(kids.count)개: " + kids.prefix(6).map {
+                            "\($0.name)\($0.isDir ? "/" : "")\($0.isLink ? "(링크)" : "")"
+                        }.joined(separator: ", "))
+                        // 링크된 하위 폴더도 열리는지
+                        if let linked = kids.first(where: { $0.isLink && $0.isDir }) {
+                            let inner = linked.loadChildren()
+                            RLog.log("SYM 링크폴더 '\(linked.name)' 안 \(inner.count)개: "
+                                     + inner.prefix(5).map { $0.name }.joined(separator: ", "))
+                        } else {
+                            RLog.log("SYM 링크된 하위 폴더 없음")
+                        }
+                        _ = ex
+                        RLog.log("SYM done")
+                    }
+                }
                 // RIVEN_CHIPBENCH=1: 그룹 조직도의 상태 칩이 실제로 따라오는지.
                 if ProcessInfo.processInfo.environment["RIVEN_CHIPBENCH"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
