@@ -14,7 +14,7 @@ import Foundation
 // Verified 2026-07-29: --mcp-config loads the stdio server headless and the agent calls tools.
 final class ChatAskServer {
     // (id, tool, args) delivered on an internal queue; return via resolve(id:result:).
-    var onTool: ((_ id: String, _ tool: String, _ args: [String: Any]) -> Void)?
+    var onTool: ((_ id: String, _ tool: String, _ args: [String: Any], _ cwd: String?) -> Void)?
 
     let path: String
     private let serverPath: String
@@ -24,7 +24,12 @@ final class ChatAskServer {
     private let clientQueue = DispatchQueue(label: "com.riven.chat.tools.client", attributes: .concurrent)
     private let lock = NSLock()
     private var pending: [String: (String) -> Void] = [:]   // id → resolver(result string)
-    private static let timeout: TimeInterval = 600
+    // 사람이 자리를 비우는 시간까지 기다린다. 10분이면 점심 한 번에 선택지가 죽어 버렸고,
+    // 그동안 CLI 는 어차피 답을 기다리며 서 있을 뿐이라 길게 잡아도 손해가 없다.
+    private static let timeout: TimeInterval = 1800
+    /// 기다리던 요청이 사라졌을 때 (시간 초과·세션 종료). 화면의 선택 카드를 그때 바로
+    /// 만료 표시로 바꾸기 위한 것 — 예전에는 사용자가 눌러 보고 나서야 알 수 있었다.
+    var onExpire: ((_ id: String, _ reason: String) -> Void)?
 
     init?() {
         let dir = AgentHookServer.ensureSupportDir()
@@ -106,7 +111,12 @@ final class ChatAskServer {
         unlink(path)
         lock.lock(); let rest = pending; pending.removeAll(); lock.unlock()
         // 빈 문자열로 풀면 에이전트에겐 "(no result)" 로 보여 실패 이유를 알 수 없다.
+        if !rest.isEmpty { RLog.log("ASK 세션이 끝나 기다리던 요청 \(rest.count)건을 접었습니다") }
         rest.values.forEach { $0("riven: request cancelled (the pane's session ended)") }
+        let ids = Array(rest.keys)
+        DispatchQueue.main.async { [weak self] in
+            ids.forEach { self?.onExpire?($0, t("chat.expired.session")) }
+        }
     }
 
     // ---- socket (same POSIX bind/listen as ChatPermissionServer) ----
@@ -152,10 +162,14 @@ final class ChatAskServer {
         let sem = DispatchSemaphore(value: 0)
         var result = ""
         lock.lock(); pending[id] = { r in result = r; sem.signal() }; lock.unlock()
-        onTool?(id, tool, args)
+        onTool?(id, tool, args, o["cwd"] as? String)
         if sem.wait(timeout: .now() + Self.timeout) == .timedOut {
             lock.lock(); pending.removeValue(forKey: id); lock.unlock()
             result = "riven: timed out waiting for the user (no answer in \(Int(Self.timeout))s)"
+            RLog.log("ASK 시간 초과로 요청을 접었습니다 (\(Int(Self.timeout))초) tool=\(tool)")
+            DispatchQueue.main.async { [weak self] in
+                self?.onExpire?(id, t("chat.expired.timeout", ["m": String(Int(Self.timeout) / 60)]))
+            }
         }
         _ = writeStr(client, result)
     }
@@ -175,10 +189,15 @@ final class ChatAskServer {
         return true
     }
 
+    /// 벤치용: 릴레이를 거치지 않고 같은 경로로 도구를 부른다.
+    func debugTool(tool: String, args: [String: Any], cwd: String) {
+        onTool?(UUID().uuidString, tool, args, cwd)
+    }
+
     private func writeServer() -> Bool {
         let py = #"""
         #!/usr/bin/env python3
-        import sys, json, socket, threading
+        import sys, json, socket, threading, os
         SOCK = sys.argv[1]
         _out = threading.Lock()
         def send(m):
@@ -187,7 +206,9 @@ final class ChatAskServer {
         def call(tool, args):
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.connect(SOCK)
-            s.sendall((json.dumps({"tool": tool, "args": args}) + "\n").encode())
+            # 어느 워크스페이스에서 부른 것인지. riven 은 이 값으로 그 프로젝트의 패널을
+            # 찾는다 — 사용자가 지금 다른 워크스페이스를 보고 있어도 남의 화면을 건드리지 않게.
+            s.sendall((json.dumps({"tool": tool, "args": args, "cwd": os.getcwd()}) + "\n").encode())
             s.shutdown(socket.SHUT_WR)
             buf = b""
             while True:
@@ -209,8 +230,11 @@ final class ChatAskServer {
              "description": "Capture the browser panel (optionally navigating first). Returns a PNG file path; read it with the Read tool to see the page.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
             {"name": "riven_browser_open",
-             "description": "Open a URL in riven's browser panel. Set new_tab=true to keep the current page. The panel keeps cookies/session, so a page you logged into stays logged in.",
-             "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "new_tab": {"type": "boolean"}}, "required": ["url"]}},
+             "description": "Open a URL in riven's browser panel. Set new_tab=true to keep the current page. The panel keeps cookies/session, so a page you logged into stays logged in. Pass profile (e.g. \"A\") to use a SEPARATE login — that lets you be signed into the same site as two different accounts at once; a profile always opens a new tab.",
+             "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "new_tab": {"type": "boolean"}, "profile": {"type": "string"}}, "required": ["url"]}},
+            {"name": "riven_browser_tab",
+             "description": "Switch to or close a browser tab by index (see the tabs list in riven_browser_state). action: select | close.",
+             "inputSchema": {"type": "object", "properties": {"action": {"type": "string"}, "index": {"type": "number"}}, "required": ["action"]}},
             {"name": "riven_browser_state",
              "description": "Current browser state: URL, page title, loading, back/forward availability, zoom and the open tabs. Call this after navigating to confirm where you are.",
              "inputSchema": {"type": "object", "properties": {}}},

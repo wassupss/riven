@@ -82,6 +82,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key>
   <array><string>en</string><string>ko</string></array>
+  <!-- 브라우저 패널이 카메라·마이크를 쓰는 페이지(화상회의·녹음 도구)를 열 수 있어야 한다.
+       이 문구가 없으면 macOS 가 권한 요청 자체를 거부해서 navigator.mediaDevices 가 없다. -->
+  <key>NSCameraUsageDescription</key>
+  <string>브라우저 패널에서 연 사이트가 카메라를 요청할 때 씁니다.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>브라우저 패널에서 연 사이트가 마이크를 요청할 때 씁니다.</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <!-- Allow plain-HTTP ONLY for local/dev servers (localhost, 127.0.0.1, ::1, *.local)

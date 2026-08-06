@@ -4,9 +4,28 @@ import AppKit
 final class FileNode {
     let url: URL
     let isDir: Bool
+    /// 심볼릭 링크인가. 링크는 두 가지가 어긋난다:
+    ///  · isDirectory 는 링크 자신을 가리켜 false 로 나온다 → 폴더가 파일로 보였다.
+    ///  · 링크 경로로 contentsOfDirectory 를 부르면 0개가 나온다 → 열어도 비어 있었다.
+    /// (.claude/skills 를 공용 폴더로 링크해 두는 구성에서 그대로 겪는다.)
+    let isLink: Bool
     var children: [FileNode]?   // lazily loaded for dirs
     var isPlaceholder = false   // the transient "new file/folder" inline-edit row
-    init(url: URL, isDir: Bool) { self.url = url; self.isDir = isDir }
+    init(url: URL, isDir: Bool, isLink: Bool = false) {
+        self.url = url; self.isDir = isDir; self.isLink = isLink
+    }
+
+    /// 링크면 가리키는 곳이 폴더인지까지 보고 판단한다.
+    static func make(_ url: URL) -> FileNode {
+        let v = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        let link = v?.isSymbolicLink ?? false
+        var dir = v?.isDirectory ?? false
+        if link {
+            dir = (try? url.resolvingSymlinksInPath()
+                .resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+        }
+        return FileNode(url: url, isDir: dir, isLink: link)
+    }
 
     var name: String { url.lastPathComponent }
 
@@ -28,11 +47,13 @@ final class FileNode {
         // do NOT pass .skipsHiddenFiles; the noise dirs that shouldn't appear (.git,
         // node_modules, .venv, .next, .cache, .DS_Store, …) are filtered by `ignored` below,
         // so removing the flag surfaces useful dotfiles without also showing that churn.
-        let items = (try? fm.contentsOfDirectory(at: url,
-            includingPropertiesForKeys: [.isDirectoryKey], options: [])) ?? []
+        // 링크는 가리키는 곳에서 읽는다 — 링크 경로로 물으면 빈 목록이 온다.
+        let listURL = isLink ? url.resolvingSymlinksInPath() : url
+        let items = (try? fm.contentsOfDirectory(at: listURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [])) ?? []
         let nodes = items
             .filter { !FileNode.ignored.contains($0.lastPathComponent) }
-            .map { FileNode(url: $0, isDir: (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false) }
+            .map { FileNode.make($0) }
             .sorted { a, b in
                 if a.isDir != b.isDir { return a.isDir }
                 return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
@@ -546,6 +567,9 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             : nil
         cell.chevron.contentTintColor = Theme.fgDim
         cell.icon.image = FileIcon.image(name: node.name, isDir: node.isDir, open: expanded)
+        // 링크는 링크라고 보이게 한다 — 실제 파일이 어디 있는지 알 수 있어야 한다.
+        cell.icon.toolTip = node.isLink ? node.url.resolvingSymlinksInPath().path : nil
+        cell.linkBadge.isHidden = !node.isLink
         cell.label.stringValue = node.name
 
         // Git working-tree decoration (matches riven Explorer): colour the label + a
@@ -609,6 +633,8 @@ final class ExplorerCell: NSView {
     let label = NSTextField(labelWithString: "")
     let field = NSTextField()          // inline-edit input (hidden except while creating/renaming)
     let badge = NSTextField(labelWithString: "")   // git status letter (M/A/U/D/R/!)
+    /// 심볼릭 링크 표시 (아이콘 위 작은 화살표). 링크인지 모르고 지우거나 옮기면 곤란하다.
+    let linkBadge = NSImageView()
     override init(frame: NSRect) {
         super.init(frame: frame)
         chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -625,7 +651,18 @@ final class ExplorerCell: NSView {
         field.font = UIScale.font(UIScale.body); field.isBezeled = true; field.bezelStyle = .squareBezel
         field.focusRingType = .none; field.isHidden = true
         field.translatesAutoresizingMaskIntoConstraints = false
+        linkBadge.image = NSImage(systemSymbolName: "arrow.up.forward", accessibilityDescription: "symlink")
+        linkBadge.image?.isTemplate = true
+        linkBadge.symbolConfiguration = .init(pointSize: 7, weight: .bold)
+        linkBadge.contentTintColor = Theme.accent2
+        linkBadge.isHidden = true
+        linkBadge.translatesAutoresizingMaskIntoConstraints = false
         addSubview(chevron); addSubview(icon); addSubview(label); addSubview(badge); addSubview(field)
+        addSubview(linkBadge)
+        NSLayoutConstraint.activate([
+            linkBadge.trailingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 2),
+            linkBadge.bottomAnchor.constraint(equalTo: icon.bottomAnchor, constant: 2),
+        ])
         NSLayoutConstraint.activate([
             chevron.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 0),
             chevron.centerYAnchor.constraint(equalTo: centerYAnchor),

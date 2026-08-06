@@ -1019,6 +1019,23 @@ final class ApprovalCard: NSView {
         layer?.borderColor = Theme.success.withAlphaComponent(0.4).cgColor
         options[i].1()
     }
+    func debugStatus() -> String {
+        (statusLabel.isHidden ? "(표시 없음)" : statusLabel.stringValue)
+            + " 버튼보임=\(buttons.contains { !$0.isHidden })"
+    }
+    /// 답을 받을 수 없게 됐다 (시간 초과·세션 종료). 버튼을 걷고 이유를 남긴다 —
+    /// 예전에는 카드가 그대로 눌리는 것처럼 보였고, 눌러 봐야 실패를 알 수 있었다.
+    func expire(_ reason: String) {
+        guard !decided else { return }
+        decided = true
+        buttons.forEach { $0.isHidden = true }; hint.isHidden = true
+        statusLabel.isHidden = false
+        statusLabel.stringValue = "⏱ " + t("chat.expired.badge") + " · " + reason
+        statusLabel.textColor = Theme.warning
+        layer?.borderColor = Theme.warning.withAlphaComponent(0.35).cgColor
+        alphaValue = 0.7
+    }
+
     /// Close the card without running an option (Esc / 취소).
     func dismiss(_ label: String) {
         guard !decided else { return }
@@ -1418,6 +1435,19 @@ final class SubagentPane: NSView {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
         add(ChatText.proseMarkdown(t))
+    }
+    /// 도구가 돌고 난 출력. 길면 앞부분만 — 서브 팬은 진행을 보는 곳이지 로그 뷰어가 아니다.
+    func addToolResult(_ text: String, isError: Bool) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let shown = t.count > 1200 ? String(t.prefix(1200)) + "\n…" : t
+        let label = NSTextField(labelWithString: shown)
+        label.font = UIScale.mono(UIScale.caption)
+        label.textColor = isError ? Theme.danger : Theme.fgDim
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 12
+        label.translatesAutoresizingMaskIntoConstraints = false
+        add(label)
     }
     func finish(_ result: String) {
         guard !done else { return }

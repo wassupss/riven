@@ -1009,10 +1009,17 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     /// 창에서 떨어지면(워크스페이스 전환·패널 닫기) 타이머가 남아 돌지 않게 한다.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window != nil { pollStates() }
         updateTicker()
     }
     override func viewDidHide() { super.viewDidHide(); updateTicker() }
-    override func viewDidUnhide() { super.viewDidUnhide(); updateTicker() }
+    /// 다시 보이게 되면 상태부터 읽는다. 타이머만 켜면 anyLive 가 예전 값이라, 그 사이에
+    /// 돌기 시작한 에이전트가 계속 idle 로 보인다 (칩이 멈춰 있는 것처럼 보이던 원인).
+    override func viewDidUnhide() {
+        super.viewDidUnhide()
+        pollStates()
+        updateTicker()
+    }
 
     private var langObserver: NSObjectProtocol?
     deinit {
@@ -1182,6 +1189,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     func agentActivityChanged() {
         guard shownGroup != nil else { return }
         anyLive = true          // 다음 폴링이 사실을 확인한다
+        pollStates()            // 지금 바로 한 번 읽는다 — 첫 틱까지 기다리면 그동안 idle 로 보인다
         updateTicker()
     }
 

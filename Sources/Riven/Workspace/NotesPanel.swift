@@ -220,13 +220,40 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         setMode(detail: false)
     }
 
-    /// 목록을 디스크에서 다시 읽는다. 워크스페이스 문서는 훑는 비용이 있어서 문서 탭을
-    /// 보고 있을 때만 읽는다.
-    func reload() {
+    /// 목록을 디스크에서 다시 읽는다.
+    ///
+    /// 개인 메모는 폴더 하나라 바로 읽는다 (1ms 미만). 워크스페이스 문서 훑기는 트리가
+    /// 크면 수백 ms 가 걸려서 (여러 워크트리가 있는 폴더에서 229ms 를 쟀다) 메인 스레드에서
+    /// 하면 패널을 열거나 에이전트가 문서를 쓸 때마다 화면이 멈춘다. 백그라운드에서 읽고
+    /// 도착하면 그린다. 그동안은 직전 목록을 그대로 두고 "찾는 중" 만 알린다.
+    func reload(force: Bool = false) {
         guard let ws = workspace else { personal = []; docs = []; renderList(); return }
         personal = NoteStore.personal(ws)
-        docs = showingDocs ? NoteStore.workspaceDocs(ws) : []
         renderList()
+        guard showingDocs else { return }
+        // 방금 훑었으면 다시 훑지 않는다. 목록을 여러 번 새로 그리는 경로가 많다
+        // (패널 열기 → 탭 전환 → 에이전트 쓰기 알림이 잇달아 온다).
+        if !force, let at = lastDocScan, Date().timeIntervalSince(at) < 3, !docs.isEmpty { return }
+        scanDocs(ws)
+    }
+    private var lastDocScan: Date?
+    private var docScanToken = 0
+    private(set) var scanningDocs = false
+    private func scanDocs(_ ws: URL) {
+        docScanToken += 1
+        let token = docScanToken
+        scanningDocs = true
+        if docs.isEmpty { renderList() }        // "찾는 중" 을 보여 준다
+        DispatchQueue.global(qos: .userInitiated).async {
+            let found = NoteStore.workspaceDocs(ws)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.docScanToken == token, self.workspace == ws else { return }
+                self.docs = found
+                self.scanningDocs = false
+                self.lastDocScan = Date()
+                if self.showingDocs { self.renderList() }
+            }
+        }
     }
 
     private var visibleNotes: [Note] { showingDocs ? docs : personal }
@@ -277,11 +304,22 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     }
 
     // ---- list ----
+    /// 마지막으로 그린 목록의 지문. 같은 목록을 또 그리지 않기 위한 것 — 문서 100여 개면
+    /// 줄을 새로 만드는 데만 40ms 가 든다. 목록을 새로 그리는 경로가 여럿이라 (패널 열기,
+    /// 탭 전환, 에이전트 알림, 저장) 그때마다 값을 치르고 있었다.
+    private var renderedKey = ""
+
     private func renderList() {
-        listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         let notes = visibleNotes
+        let key = "\(showingDocs)|\(scanningDocs)|" + notes.map { "\($0.url.path)\t\($0.title)\t\($0.updated.timeIntervalSince1970)" }
+            .joined(separator: "\n")
+        guard key != renderedKey else { return }
+        renderedKey = key
+        listStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard !notes.isEmpty else {
-            let hint = NSTextField(labelWithString: showingDocs ? t("notes.noDocs") : t("notes.empty"))
+            let hint = NSTextField(labelWithString: showingDocs
+                                   ? (scanningDocs ? t("notes.scanning") : t("notes.noDocs"))
+                                   : t("notes.empty"))
             hint.font = UIScale.font(UIScale.body); hint.textColor = Theme.fgDim
             hint.lineBreakMode = .byWordWrapping; hint.maximumNumberOfLines = 3
             hint.translatesAutoresizingMaskIntoConstraints = false
@@ -476,9 +514,10 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     /// 에이전트가 메모를 만들거나 고쳤다. 목록을 다시 읽고 표시를 남긴다.
     /// 지금 그 메모를 열어 둔 상태면 편집기 내용도 새로 읽는다 (사용자가 보던 화면이
     /// 디스크와 어긋나지 않게).
+    func debugDocCount() -> Int { docs.count }
     func noteChangedByAgent(_ url: URL) {
         agentTouched.insert(url.path)
-        reload()
+        reload(force: true)      // 방금 쓴 문서가 목록에 바로 보여야 한다
         // 에이전트가 쓴 문서를 바로 펼친다. 예전에는 목록만 갱신해서 패널만 열리고
         // 정작 무엇을 썼는지 사용자가 다시 찾아 들어가야 했다.
         if selectedURL != url { open(url); return }
