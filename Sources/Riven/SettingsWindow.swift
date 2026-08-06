@@ -532,27 +532,25 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(primaryButton(t("settings.saveAI"), #selector(saveAIAll)))
 
         // Snippets — prefix expands to body (${1} tab stops) via Monaco completion.
+        // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
+        // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
         addSection(t("settings.snippets"))
-        let hint = NSTextField(labelWithString: t("settings.snippetsHint"))
-        hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
-        hint.lineBreakMode = .byWordWrapping; hint.preferredMaxLayoutWidth = 500
-        content.addArrangedSubview(hint)
         let snips = (Settings.shared.object("snippets") as? [String: String]) ?? [:]
-        for (prefix, body) in snips.sorted(by: { $0.key < $1.key }) {
-            let l = NSTextField(labelWithString: "\(prefix)  →  \(body.replacingOccurrences(of: "\n", with: "⏎"))")
-            l.font = UIScale.mono(UIScale.small, .regular); l.textColor = Theme.fgDim
-            l.lineBreakMode = .byTruncatingTail
-            let del = PadButton(title: "삭제", font: UIScale.font(UIScale.small), textColor: Theme.danger,
-                                bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
-            del.onClick = { [weak self] in self?.deleteSnippet(prefix) }
-            let sp = NSView(); sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let row = NSStackView(views: [l, sp, del]); row.orientation = .horizontal; row.alignment = .centerY
-            row.widthAnchor.constraint(equalToConstant: 500).isActive = true
-            content.addArrangedSubview(row)
+        if snips.isEmpty {
+            let empty = NSTextField(labelWithString: t("settings.snippetsEmpty"))
+            empty.font = UIScale.font(UIScale.small); empty.textColor = Theme.fgDim
+            addWideRow(empty)
         }
-        content.addArrangedSubview(setRow(t("settings.snippetPrefix"), field(snippetPrefix, width: 120)))
-        content.addArrangedSubview(setRow(t("settings.snippetBody"), field(snippetBody)))
-        content.addArrangedSubview(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
+        for (prefix, body) in snips.sorted(by: { $0.key < $1.key }) {
+            let del = PadButton(title: t("common.delete"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fgDim, bg: Theme.hover, border: Theme.edge,
+                                radius: 5, hPad: 8, height: 22)
+            del.onClick = { [weak self] in self?.deleteSnippet(prefix) }
+            addRow(prefix, desc: body.replacingOccurrences(of: "\n", with: " ⏎ "), del)
+        }
+        addRow(t("settings.snippetPrefix"), desc: t("settings.snippetsHint"), field(snippetPrefix, width: 140))
+        addRow(t("settings.snippetBody"), desc: nil, field(snippetBody, width: 260))
+        addWideRow(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
     }
     private let snippetPrefix = NSTextField()
     private let snippetBody = NSTextField()
@@ -603,18 +601,25 @@ final class SettingsWindow: NSPanel {
             row.addArrangedSubview(b)
         }
         content.addArrangedSubview(row)
-        content.addArrangedSubview(spacer(6))
+        content.addArrangedSubview(spacer(8))
 
         let hint = NSTextField(labelWithString: "칩을 클릭하고 원하는 키를 누르세요. Esc로 취소.")
         hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
-        content.addArrangedSubview(spacer(4))
-        switch kbSubtab {
-        case 0:                                                         // 에디터 (preset + per-command)
-            buildEditorKeys()
-            for a in Keys.byCat("editor") { content.addArrangedSubview(kbRecordRow(a)) }
-        case 1: for a in Keys.byCat("terminal") { content.addArrangedSubview(kbRecordRow(a)) }  // 터미널
-        default: for a in Keys.byCat("riven") { content.addArrangedSubview(kbRecordRow(a)) }    // 리븐 기본
+        content.addArrangedSubview(spacer(10))
+
+        // 키 목록은 카드 안에. 예전에는 줄이 바로 이어 붙어 (28pt, 구분선 없음) 빽빽했다.
+        if kbSubtab == 0 { buildEditorKeys() }
+        addSection(t("settings.keysSection"))
+        let actions: [Keys.Action] = kbSubtab == 0 ? Keys.byCat("editor")
+                                   : kbSubtab == 1 ? Keys.byCat("terminal") : Keys.byCat("riven")
+        for a in actions {
+            let chip = PadButton(title: Keys.display(Keys.effective(a.id)),
+                                 font: UIScale.mono(UIScale.small, .medium),
+                                 textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
+                                 radius: 5, hPad: 8, height: 24)
+            chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            addRow(a.label, desc: nil, chip)
         }
     }
 
@@ -831,7 +836,7 @@ final class SettingsWindow: NSPanel {
     private func buildAbout() {
         content.addArrangedSubview(spacer(6))
         let name = NSTextField(labelWithString: "riven")
-        name.font = UIScale.font(22, .semibold); name.textColor = Theme.fg
+        name.font = UIScale.font(20, .semibold); name.textColor = Theme.fg
         content.addArrangedSubview(name)
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
         let verL = NSTextField(labelWithString: "v\(ver)")
@@ -853,7 +858,6 @@ final class SettingsWindow: NSPanel {
                primaryButton(t("about.check"), #selector(checkUpdate)))
         addWideRow(updateStatusLabel)
 
-        content.addArrangedSubview(spacer(8))
         addSection(t("about.links"))
         let landing = secondaryButton(t("about.landing"), symbol: "safari") {
             if let u = URL(string: "https://riven-sandy.vercel.app/") { NSWorkspace.shared.open(u) }
@@ -861,8 +865,9 @@ final class SettingsWindow: NSPanel {
         let gh = secondaryButton(t("about.github"), symbol: "chevron.left.forwardslash.chevron.right") {
             if let u = URL(string: "https://github.com/wassupss/riven") { NSWorkspace.shared.open(u) }
         }
-        let row = NSStackView(views: [landing, gh]); row.orientation = .horizontal; row.spacing = 8
-        content.addArrangedSubview(row)
+        // 버튼만 덩그러니 놓여 있었다. 다른 탭과 같은 카드 줄로.
+        addRow(t("about.homepage"), desc: "riven-sandy.vercel.app", landing)
+        addRow(t("about.source"), desc: "github.com/wassupss/riven", gh)
     }
     // A dark, theme-aware secondary button (void state is NOT white).
     private func secondaryButton(_ title: String, symbol: String? = nil, _ handler: @escaping () -> Void) -> PadButton {

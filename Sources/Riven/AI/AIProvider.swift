@@ -32,6 +32,9 @@ final class AIProvider {
     // Complete at the cursor. prefix = code before, suffix = code after.
     func complete(prefix: String, suffix: String, _ cb: @escaping (String?) -> Void) {
         let c = config()
+        // 설정의 "AI 자동완성 켜기" 를 실제로 본다. 예전에는 이 값을 읽어 두고 아무 데서도
+        // 쓰지 않아서, 꺼 놔도 요청이 나갔다 (켠 적 없는 사람의 코드가 로컬 모델로 갔다).
+        guard c.enabled else { cb(nil); return }
         guard let req = buildRequest(c, prefix: prefix, suffix: suffix) else { cb(nil); return }
         var request = req.0; let extract = req.1
         request.timeoutInterval = 8

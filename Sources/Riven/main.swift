@@ -651,6 +651,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_AICHECK=1: AI 자동완성이 설정을 따르는지 (꺼져 있으면 요청이 나가면 안 된다).
+                if ProcessInfo.processInfo.environment["RIVEN_AICHECK"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        Settings.shared.set("aiComplete", false)
+                        AIProvider.shared.complete(prefix: "let x = ", suffix: "") { r in
+                            RLog.log("AI 꺼짐 → 결과=\(r == nil ? "요청 안 함" : "요청 나감(문제)")")
+                            Settings.shared.set("aiComplete", true)
+                            Settings.shared.set("aiCompleteEndpoint", "http://127.0.0.1:9")   // 없는 서버
+                            AIProvider.shared.complete(prefix: "let x = ", suffix: "") { r2 in
+                                RLog.log("AI 켜짐 → 결과=\(r2 ?? "(응답 없음 — 서버 없음이라 정상)")")
+                                RLog.log("AI done")
+                            }
+                        }
+                    }
+                }
                 // RIVEN_GHOSTTY=1: ghostty 설정 읽기·적용이 실제로 되는지.
                 if ProcessInfo.processInfo.environment["RIVEN_GHOSTTY"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
