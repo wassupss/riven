@@ -666,6 +666,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         RLog.log("GH done")
                     }
                 }
+                // RIVEN_INSPSURFACE=<url>: 인스펙터를 패널 안에 붙일 수 있는지 확인.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_INSPSURFACE"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            p.debugOpenDevTools()
+                            RLog.log("INSP 열기 시도 → " + p.debugInspectorState())
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                RLog.log("INSP 3초 뒤 " + p.debugConsoleState())
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_INSPSHOT"],
+                                   let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) {
+                                    p.cacheDisplay(in: p.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                            }
+                            RLog.log("INSP done")
+                        }
+                    }
+                }
                 // RIVEN_CHATSHOT=<png>: 채팅 팬을 실제 대화로 채우고 그 모습을 찍는다.
                 // 답을 기다리지 않고 정해진 시각에 찍는다 — 스트리밍 중간 모습도 봐야 한다.
                 if let shot = ProcessInfo.processInfo.environment["RIVEN_CHATSHOT"] {

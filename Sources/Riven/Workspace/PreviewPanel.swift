@@ -1,4 +1,5 @@
 import AppKit
+import ObjectiveC
 import WebKit
 
 // riven's browser panel.
@@ -397,7 +398,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let starBtn = NSButton()          // 북마크 켜고 끄기
     private let menuBtn = NSButton()          // ⋮ — 자주 안 쓰는 것들은 여기로
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
-    private let console = BrowserConsole(frame: .zero)   // 개발자 도구 (콘솔)
+    private let console = BrowserConsole(frame: .zero)   // riven 콘솔 서랍 (⌥⌘C)
+    /// Safari Web Inspector 를 담는 자리. 인스펙터는 원래 따로 뜨는 창이지만, 그 웹뷰를
+    /// 꺼내 여기에 붙이면 패널 안에서 쓸 수 있다 (요소·네트워크·소스·콘솔 전부 그대로).
+    private let inspectorHost = NSView()
+    private var inspectorHeight: NSLayoutConstraint!
+    private weak var embeddedInspector: NSView?
     private var consoleHeight: NSLayoutConstraint!
     private var libraryPopover: NSPopover?
     private let downloadBtn = NSButton()          // 받는 게 있을 때만 보인다
@@ -518,7 +524,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         addressBar.addSubview(starBtn)
         [backBtn, fwdBtn, stopBtn, addressBar, downloadBtn, menuBtn,
          progress, tabStrip, findBar, container, emptyLabel, statusLabel,
-         suggest, console].forEach { addSubview($0) }
+         suggest, console, inspectorHost].forEach { addSubview($0) }
+        inspectorHost.translatesAutoresizingMaskIntoConstraints = false
+        inspectorHost.wantsLayer = true
+        inspectorHost.isHidden = true
         console.translatesAutoresizingMaskIntoConstraints = false
         console.isHidden = true
         console.onClose = { [weak self] in self?.toggleConsole(false) }
@@ -529,6 +538,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
         consoleHeight = console.heightAnchor.constraint(equalToConstant: 0)
+        inspectorHeight = inspectorHost.heightAnchor.constraint(equalToConstant: 0)
         // 숨겨도 자리는 남는다 — 폭까지 0 으로 접어야 주소창이 그만큼 넓어진다.
         downloadWidth = downloadBtn.widthAnchor.constraint(equalToConstant: 0)
         // 크롬·브레이브·엣지와 같은 순서: 탭 줄이 맨 위, 그 아래에 이동 버튼 + 주소창.
@@ -591,8 +601,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             container.bottomAnchor.constraint(equalTo: console.topAnchor),
             console.leadingAnchor.constraint(equalTo: leadingAnchor),
             console.trailingAnchor.constraint(equalTo: trailingAnchor),
-            console.bottomAnchor.constraint(equalTo: statusLabel.topAnchor),
+            console.bottomAnchor.constraint(equalTo: inspectorHost.topAnchor),
             consoleHeight,
+            inspectorHost.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inspectorHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+            inspectorHost.bottomAnchor.constraint(equalTo: statusLabel.topAnchor),
+            inspectorHeight,
 
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
@@ -911,8 +925,53 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     ///  · 합성 우클릭으로 페이지 메뉴 띄우기 — 메뉴가 떴다가 바로 닫혀 화면이 깜빡였다
     ///    (짝이 되는 rightMouseUp 이 없으면 WebKit 이 트래킹을 접는다).
     /// 그래서 여기서는 아무 것도 흉내내지 않고, 여는 방법만 한 줄로 알려 준다.
+    /// 개발자 도구 (⌥⌘I) — Safari Web Inspector 를 이 패널 안에 붙여서 연다.
+    ///
+    /// 인스펙터는 원래 따로 뜨는 창이고 여는 공개 API 도 없다. 다만 _WKInspector 가
+    /// inspectorWebView 를 들고 있어서, connect 한 뒤 그 뷰를 꺼내 우리 자리에 옮겨 붙이면
+    /// 패널 안에서 그대로 쓸 수 있다 (요소·네트워크·소스·콘솔 전부). SPI 라 없어질 수 있으니
+    /// 못 꺼내면 riven 콘솔 서랍으로 물러난다.
     @objc private func openInspector() {
-        setStatus(t("browser.inspectHint"))
+        if inspectorHeight.constant > 0 { closeInspector(); return }
+        guard let web = tab?.web else { return }
+        let sel = NSSelectorFromString("_inspector")
+        guard web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? else {
+            toggleConsole(true); setStatus(t("browser.inspectHint")); return
+        }
+        _ = ins.perform(NSSelectorFromString("connect"))
+        _ = ins.perform(NSSelectorFromString("show"))
+        let vsel = NSSelectorFromString("inspectorWebView")
+        guard ins.responds(to: vsel),
+              let v = ins.perform(vsel)?.takeUnretainedValue() as? NSView else {
+            toggleConsole(true); setStatus(t("browser.inspectHint")); return
+        }
+        embeddedInspector = v
+        v.removeFromSuperview()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        inspectorHost.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: inspectorHost.leadingAnchor),
+            v.trailingAnchor.constraint(equalTo: inspectorHost.trailingAnchor),
+            v.topAnchor.constraint(equalTo: inspectorHost.topAnchor),
+            v.bottomAnchor.constraint(equalTo: inspectorHost.bottomAnchor),
+        ])
+        toggleConsole(false)
+        inspectorHost.isHidden = false
+        inspectorHeight.constant = max(UIScale.pt(260), bounds.height * 0.45)
+        needsLayout = true
+    }
+    private func closeInspector() {
+        embeddedInspector?.removeFromSuperview()
+        embeddedInspector = nil
+        inspectorHeight.constant = 0
+        inspectorHost.isHidden = true
+        if let web = tab?.web {
+            let sel = NSSelectorFromString("_inspector")
+            if web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? {
+                _ = ins.perform(NSSelectorFromString("hide"))
+            }
+        }
+        focusWeb()
     }
 
     /// 콘솔만 빠르게 (riven 안에 붙는 가벼운 서랍). 페이지 오류를 흘려보며 작업할 때 쓴다.
@@ -1315,6 +1374,36 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             + " 웹뷰=\(w.map { "\(Int($0.frame.width))x\(Int($0.frame.height)) 숨김=\($0.isHidden)" } ?? "없음")"
     }
     func debugConsole() -> BrowserConsole { console }
+    func debugInspectorState() -> String {
+        "인스펙터높이=\(Int(inspectorHeight.constant)) 숨김=\(inspectorHost.isHidden)"
+            + " 붙은뷰=\(embeddedInspector.map { "\(type(of: $0))" } ?? "없음")"
+            + " 크기=\(Int(inspectorHost.frame.width))x\(Int(inspectorHost.frame.height))"
+    }
+
+    /// 인스펙터를 패널 안에 붙일 수 있는지 (SPI 표면 확인용).
+    func debugInspectorSurface() -> String {
+        guard let web = tab?.web else { return "웹뷰 없음" }
+        var out: [String] = []
+        let sel = NSSelectorFromString("_inspector")
+        guard web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? else {
+            return "_inspector 없음"
+        }
+        out.append("클래스=\(type(of: ins))")
+        for name in ["attach", "detach", "attachWindow", "setAttached:", "isAttached",
+                     "showConsole", "showResources", "inspectorWebView", "attachmentView",
+                     "attachBottom", "attachRight", "close", "isVisible", "show"] {
+            if ins.responds(to: NSSelectorFromString(name)) { out.append("있음:\(name)") }
+        }
+        // 클래스에 어떤 메서드가 있는지 통째로 (앞부분만)
+        var count: UInt32 = 0
+        if let list = class_copyMethodList(object_getClass(ins), &count) {
+            var names: [String] = []
+            for i in 0..<Int(count) { names.append(NSStringFromSelector(method_getName(list[i]))) }
+            free(list)
+            out.append("메서드 \(count)개: " + names.sorted().prefix(28).joined(separator: ", "))
+        }
+        return out.joined(separator: " | ")
+    }
     func debugOpenDevTools() { openInspector() }
     func debugToggleConsole(_ open: Bool) { toggleConsole(open) }
     func debugOpenInspectorMenu() { openInspector() }
