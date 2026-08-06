@@ -898,11 +898,25 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 여는 공개 API 는 없다 — isInspectable 을 켜면 페이지 오른쪽 클릭 → "요소 정보 검사"
     /// 로 열 수 있고, 메뉴·단축키로 열려면 _WKInspector 를 거쳐야 한다. 언젠가 사라질 수 있는
     /// 길이라, 안 되면 조용히 실패하지 않고 오른쪽 클릭으로 열라고 알려 준다.
+    /// 개발자 도구 = Safari Web Inspector (요소·네트워크·소스·콘솔). 네이티브 앱이 쓸 수 있는
+    /// 진짜 개발자 도구다.
+    ///
+    /// 여는 공개 API 는 없어서 _WKInspector 를 거친다. 예전에는 이걸 부르면 앱이 그 자리에서
+    /// 죽었는데 — 원인은 이 코드가 아니라 서명이었다. 인스펙터는 JIT 로 도는데 하드닝 런타임에
+    /// allow-jit 이 없어서 그 순간 프로세스가 끝났다 (페이지 자체는 별도 프로세스라 멀쩡했다).
+    /// 권한을 주고 나니 그대로 열린다. 비공개 길이라 없어질 수 있으므로, 못 열면 우클릭
+    /// 안내와 콘솔 서랍으로 물러난다.
     @objc private func openInspector() {
-        // 여는 공개 API 가 없다. _WKInspector.show() 로 여는 비공개 길이 있긴 한데, 실제로
-        // 불러 보니 (디버그 바이너리·패키징한 앱 둘 다) 프로세스가 그 자리에서 죽었다 —
-        // 눌렀을 때 앱이 꺼지는 기능을 둘 수는 없다. 지원되는 길은 페이지 오른쪽 클릭의
-        // "요소 정보 검사" 뿐이라 그쪽으로 안내하고, 콘솔 서랍을 같이 연다.
+        guard let web = tab?.web else { return }
+        let sel = NSSelectorFromString("_inspector")
+        if web.isInspectable, web.responds(to: sel),
+           let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? {
+            let show = NSSelectorFromString("show")
+            if ins.responds(to: show) {
+                _ = ins.perform(show)
+                return
+            }
+        }
         setStatus(t("browser.inspectHint"))
         toggleConsole(true)
     }

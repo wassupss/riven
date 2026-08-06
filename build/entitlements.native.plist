@@ -8,5 +8,10 @@
        any dylibs Metal/WebKit pull in, mirroring Ghostty's own release build. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
+  <!-- Web Inspector (Safari 개발자 도구)를 열면 앱이 그 자리에서 죽었다. 인스펙터는 자기
+       UI 와 평가 엔진을 JIT 로 돌리는데, 하드닝 런타임에서 이 권한이 없으면 그 순간
+       프로세스가 끝난다. 페이지 자체는 별도 WebContent 프로세스라 지금까지 멀쩡했다. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
 </dict>
 </plist>
