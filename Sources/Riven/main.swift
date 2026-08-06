@@ -64,10 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // riven's own tools for the CLI running in TERMINAL panes (the native chat has a per-session
     // server). One app-level instance: these tools act on the app (open a file/panel/workspace,
     // run a request, ask the user), not on a particular chat.
+    var terminalToolsForDebug: ChatAskServer? { terminalTools }
     private lazy var terminalTools: ChatAskServer? = {
         guard let srv = ChatAskServer() else { return nil }
-        srv.onTool = { [weak self] id, tool, args in
-            DispatchQueue.main.async { self?.handleTerminalTool(id, tool, args, srv) }
+        srv.onTool = { [weak self] id, tool, args, cwd in
+            DispatchQueue.main.async { self?.handleTerminalTool(id, tool, args, srv, cwd: cwd) }
         }
         return srv
     }()
@@ -560,6 +561,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_PROFILE=<url>: 프로필이 로그인(쿠키)을 정말로 갈라 놓는지.
+                if let base = ProcessInfo.processInfo.environment["RIVEN_PROFILE"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func at(_ d: Double, _ b: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + d, execute: b)
+                        }
+                        _ = p.agentNavigate(base, newTab: false)                       // 기본 계정: 쿠키 발급
+                        at(2.5) { _ = p.agentGo("reload") }                            // 다시 오면 같은 쿠키여야
+                        at(5) { p.debugEval("return document.body.innerText;") { r in
+                            RLog.log("PROFILE 기본(재방문)=\(r.trimmingCharacters(in: .whitespacesAndNewlines))") } }
+                        at(6) { _ = p.agentNavigate(base, newTab: true, profile: "A") } // 계정 A: 새 쿠키여야
+                        at(8.5) { _ = p.agentGo("reload") }
+                        at(11) { p.debugEval("return document.body.innerText;") { r in
+                            RLog.log("PROFILE A(재방문)=\(r.trimmingCharacters(in: .whitespacesAndNewlines))") } }
+                        at(12) { RLog.log("PROFILE 상태\n" + p.agentState()) ; RLog.log("PROFILE done") }
+                    }
+                }
+                // RIVEN_PROFILE2=1: 재기동 뒤 복원된 탭이 각자 계정을 유지하는지.
+                if ProcessInfo.processInfo.environment["RIVEN_PROFILE2"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self else { return }
+                        if self.auxDockPanels["preview"] == nil { self.toggleDockPanel("preview") }
+                        let p = self.previewPanel!
+                        func at(_ d: Double, _ b: @escaping () -> Void) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + d, execute: b)
+                        }
+                        at(3) { RLog.log("PROFILE 복원상태\n" + p.agentState()) }
+                        at(4) { _ = p.agentTab("select", index: 0) }
+                        at(6) { p.debugEval("return document.body.innerText;") { r in
+                            RLog.log("PROFILE 복원 기본=\(r.trimmingCharacters(in: .whitespacesAndNewlines))") } }
+                        at(7) { _ = p.agentTab("select", index: 1) }
+                        at(9) { p.debugEval("return document.body.innerText;") { r in
+                            RLog.log("PROFILE 복원 A=\(r.trimmingCharacters(in: .whitespacesAndNewlines))")
+                            RLog.log("PROFILE done") } }
+                    }
+                }
+                // RIVEN_CWDSCOPE=1: 터미널 CLI 가 부른 riven 도구가 그 CLI 의 폴더가 속한
+                // 워크스페이스에서 처리되는지 (보고 있는 워크스페이스가 아니라).
+                if ProcessInfo.processInfo.environment["RIVEN_CWDSCOPE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self else { return }
+                        // 벤치용 두 번째 워크스페이스를 연다 (RIVEN_OPEN 은 하나만 준다).
+                        if let extra = ProcessInfo.processInfo.environment["RIVEN_CWDSCOPE2"] {
+                            self.activate(URL(fileURLWithPath: extra))
+                        }
+                        let other = self.workspaces.first { $0 != self.workspace }
+                        if let other { self.activate(other) }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            if let first = self.workspaces.first { self.activate(first) }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                RLog.log("CWD 워크스페이스들=\(self.workspaces.map { $0.lastPathComponent })")
+                                guard let there = self.workspaces.first(where: { $0 != self.workspace }) else {
+                                    RLog.log("CWD 다른 워크스페이스 없음"); return
+                                }
+                                guard let srv = self.terminalToolsForDebug else {
+                                    RLog.log("CWD 터미널 도구 서버 없음"); return
+                                }
+                                RLog.log("CWD 보고있는곳=\(self.workspace?.lastPathComponent ?? "?")")
+                                // 다른 워크스페이스의 하위 폴더에서 부른 것처럼 흉내낸다.
+                                let sub = there.appendingPathComponent("sub").path
+                                try? FileManager.default.createDirectory(atPath: sub, withIntermediateDirectories: true)
+                                RLog.log("CWD 매칭=\(self.workspaceContaining(sub)?.lastPathComponent ?? "없음") (하위폴더로 찾기)")
+                                srv.debugTool(tool: "riven_open_browser", args: ["url": "https://example.com"], cwd: sub)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    RLog.log("CWD 저쪽 브라우저=\(self.state(for: there).preview?.debugURL() ?? "(없음)")")
+                                    RLog.log("CWD 이쪽 브라우저=\(self.workspace.flatMap { self.state(for: $0).preview?.debugURL() } ?? "(없음)")")
+                                    // 탭 도구
+                                    if let ws = self.workspace {
+                                        self.ensureAux("preview", in: ws)
+                                        let p = self.preview(for: ws)
+                                        _ = p.agentNavigate("https://example.org", newTab: false)
+                                        _ = p.agentNavigate("https://developer.apple.com", newTab: true)
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                            RLog.log("CWD 탭선택=\(p.agentTab("select", index: 0))")
+                                            RLog.log("CWD 탭닫기=\(p.agentTab("close", index: 1))")
+                                            RLog.log("CWD 마지막탭닫기=\(p.agentTab("close", index: 0))")
+                                            RLog.log("CWD done")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 — 에이전트 팬이 실제로 한 턴을 돌리는지.
                 if ProcessInfo.processInfo.environment["RIVEN_SHIPCHECK"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -618,7 +706,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             step(4.5) { RLog.log("BRFIX 인증서 결과=\(p.debugError()) 주소=\(p.debugURL())") }
                             step(5) { p.debugEval("return document.body.innerText.trim();") { r in
                                 RLog.log("BRFIX 인증서 페이지내용=\(r.prefix(40))") } }
-                            step(6) { RLog.log("BRFIX done") }
+                            // 카메라·마이크: Info.plist 문구가 있어야 mediaDevices 가 생긴다.
+                            step(6) { p.debugEval("return typeof navigator.mediaDevices + '/' + typeof (navigator.mediaDevices||{}).getUserMedia;") { r in
+                                RLog.log("BRFIX 미디어장치=\(r)") } }
+                            step(7) { RLog.log("BRFIX done") }
                             return
                         }
                         // 1) 없는 도메인 → 오류가 화면에 남아야 한다 (예전엔 아무 표시도 없었다)
@@ -3724,7 +3815,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 guard let srv = ChatAskServer() else { RLog.log("ASK server unavailable"); return }
                 var got: String?
-                srv.onTool = { id, _, _ in
+                srv.onTool = { id, _, _, _ in
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         RLog.log("ASK resolve(live)=\(srv.resolve(id, result: "선택 A"))")
                         RLog.log("ASK resolve(stale)=\(srv.resolve(id, result: "늦은 클릭"))")
@@ -4798,6 +4889,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // the left, preview/changes to the right of the main area). Once open, the user
     // can drag it anywhere / split / resize like any dock panel.
     /// 그 워크스페이스에 aux 패널이 열려 있는지 (활성 여부와 무관).
+    /// 이 경로를 품고 있는 워크스페이스. 하위 폴더에서 CLI 를 띄우는 일이 흔하므로
+    /// 가장 깊이 맞는 것을 고른다 (레포 안에 레포를 열어 둔 경우).
+    func workspaceContaining(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        let p = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        var best: URL?
+        for ws in workspaces {
+            let root = ws.standardizedFileURL.resolvingSymlinksInPath().path
+            guard p == root || p.hasPrefix(root + "/") else { continue }
+            if best == nil || root.count > best!.path.count { best = ws }
+        }
+        return best
+    }
+
     private func auxIsOpen(_ id: String, in ws: URL) -> Bool {
         let st = state(for: ws)
         guard let panel = st.auxPanels[id], let dock = st.dock else { return false }
@@ -5379,11 +5484,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             switch verb {
             case "riven_browser_open":
-                done(p.agentNavigate(str("url") ?? "", newTab: (args["new_tab"] as? Bool) ?? false))
+                done(p.agentNavigate(str("url") ?? "", newTab: (args["new_tab"] as? Bool) ?? false,
+                                     profile: str("profile") ?? ""))
             case "riven_browser_state":
                 done(p.agentState())
             case "riven_browser_go":
                 done(p.agentGo(str("action") ?? ""))
+            case "riven_browser_tab":
+                done(p.agentTab(str("action") ?? "", index: num("index").map { Int($0) }))
             case "riven_browser_read":
                 p.agentRead(selector: str("selector"), html: (args["html"] as? Bool) ?? false, done)
             case "riven_browser_click":
@@ -5410,8 +5518,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
     // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
     // asks with a modal (the terminal agent is blocked waiting for the answer either way).
-    private func handleTerminalTool(_ id: String, _ tool: String, _ args: [String: Any], _ srv: ChatAskServer) {
+    private func handleTerminalTool(_ id: String, _ tool: String, _ args: [String: Any],
+                                    _ srv: ChatAskServer, cwd: String? = nil) {
         func s(_ k: String) -> String { args[k] as? String ?? "" }
+        // 부른 CLI 의 작업 폴더로 워크스페이스를 정한다. 릴레이가 이 값을 실어 보내므로,
+        // 사용자가 지금 다른 워크스페이스를 보고 있어도 그쪽 화면을 건드리지 않는다.
+        let owner = workspaceContaining(cwd) ?? workspace
         switch tool {
         case "ask_user":
             let opts = args["options"] as? [String] ?? []
@@ -5428,46 +5540,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openFileAt(URL(fileURLWithPath: p), line: line, column: 1)
             srv.resolve(id, result: "opened \(p) in riven editor")
         case "riven_open_browser":
-            if auxDockPanels["preview"] == nil { toggleDockPanel("preview") }
-            previewPanel.openURLString(s("url"))
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            ensureAux("preview", in: ws)
+            preview(for: ws).openURLString(s("url"))
             srv.resolve(id, result: "opened \(s("url")) in riven preview panel")
         case "riven_screenshot":
-            if auxDockPanels["preview"] == nil { toggleDockPanel("preview") }
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            ensureAux("preview", in: ws)
+            let p = preview(for: ws)
             let u = args["url"] as? String
-            if let u { previewPanel.openURLString(u) }
+            if let u { p.openURLString(u) }
             DispatchQueue.main.asyncAfter(deadline: .now() + (u == nil ? 0.2 : 1.6)) {
-                self.previewPanel.capture { path in
+                p.capture { path in
                     srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             }
         case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
+             "riven_browser_tab",
              "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
              "riven_browser_eval":
             // 터미널 에이전트에는 승인 카드를 띄울 대화창이 없다. eval 만 모달로 묻는다.
             if tool == "riven_browser_eval" {
                 let a = NSAlert()
-                a.messageText = t("browser.eval.confirm", ["o": previewPanel.currentOrigin])
+                a.messageText = t("browser.eval.confirm", ["o": owner.map { preview(for: $0).currentOrigin } ?? ""])
                 a.informativeText = String((args["js"] as? String ?? "").prefix(400))
                 a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
                 guard a.runModal() == .alertFirstButtonReturn else {
                     srv.resolve(id, result: t("browser.eval.denied")); return
                 }
             }
-            // 터미널 에이전트는 어느 팬에서 불렀는지 알 수 없다 (앱 하나에 릴레이 하나).
-            // 그래서 보고 있는 워크스페이스에서 처리한다. 팬을 구분하려면 릴레이가 cwd 를
-            // 실어 보내야 한다 — 그건 따로.
-            guard let ws = workspace else { srv.resolve(id, result: "no workspace"); return }
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
-            if auxDockPanels["api"] == nil { toggleDockPanel("api") }
+            if let ws = owner { ensureAux("api", in: ws) }
             apiPanel.run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
             srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
         case "riven_panels":
-            guard let dock = activeDock else { srv.resolve(id, result: "(no dock)"); return }
+            guard let ws = owner, let dock = state(for: ws).dock else { srv.resolve(id, result: "(no dock)"); return }
             var out: [String] = []
             for g in dock.groups { for p in g.panels { out.append("- id=\(p.id) kind=\(panelKind(p)) title=\(p.title)") } }
-            srv.resolve(id, result: "workspace: \(workspace?.path ?? "?")\npanels:\n" + out.joined(separator: "\n"))
+            srv.resolve(id, result: "workspace: \(ws.path)\npanels:\n" + out.joined(separator: "\n"))
         case "riven_open_panel":
             let kind = s("kind")
             switch kind {

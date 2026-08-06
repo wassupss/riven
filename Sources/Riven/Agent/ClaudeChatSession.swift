@@ -99,7 +99,7 @@ final class ClaudeChatSession {
             let path = self.toolPath(name, input)
             DispatchQueue.main.async { self.onPermissionRequest?(id, name, d, code, path) }
         }
-        ask?.onTool = { [weak self] id, tool, args in
+        ask?.onTool = { [weak self] id, tool, args, _ in
             DispatchQueue.main.async { self?.onToolRequest?(id, tool, args) }
         }
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in

@@ -27,6 +27,8 @@ final class BrowserTab: NSObject {
     var isPrivate = false
     /// 이 탭의 마지막 로드 실패. 다음 탐색이 시작되면 지운다.
     var errorText: String?
+    /// 어떤 프로필(로그인 묶음)로 여는지. 빈 문자열이면 기본.
+    var profile = ""
     var onChange: (() -> Void)?
     private var tokens: [NSKeyValueObservation] = []
 
@@ -414,6 +416,33 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 모든 탭이 같은 쿠키·세션을 쓰고 앱을 껐다 켜도 로그인이 유지된다 (기본 데이터 저장소).
     private static let processPool = WKProcessPool()
 
+    // 프로필 — 같은 사이트에 계정 두 개로 동시에 들어가야 할 때가 있다 (회사 계정과 개인
+    // 계정, 관리자와 일반 사용자). 저장소가 하나뿐이면 한쪽이 다른 쪽을 밀어낸다.
+    // 이름마다 따로 저장소를 두고, 껐다 켜도 유지된다 (시크릿 탭은 메모리에만 남는 별개).
+    private static var profileStores: [String: WKWebsiteDataStore] = [:]
+    static func store(profile: String) -> WKWebsiteDataStore {
+        guard !profile.isEmpty else { return .default() }
+        if let s = profileStores[profile] { return s }
+        // 이름 → 안정적인 UUID. 같은 이름이면 껐다 켜도 같은 저장소로 돌아온다.
+        var h1: UInt64 = 0xcbf29ce484222325, h2: UInt64 = 0x9e3779b97f4a7c15
+        for b in profile.utf8 {
+            h1 = (h1 ^ UInt64(b)) &* 0x100000001b3
+            h2 = (h2 &+ UInt64(b)) &* 0x9e3779b97f4a7c15
+        }
+        var bytes = [UInt8]()
+        for shift in stride(from: 56, through: 0, by: -8) { bytes.append(UInt8((h1 >> UInt64(shift)) & 0xff)) }
+        for shift in stride(from: 56, through: 0, by: -8) { bytes.append(UInt8((h2 >> UInt64(shift)) & 0xff)) }
+        let uuid = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                               bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+        let s: WKWebsiteDataStore
+        if #available(macOS 14.0, *) { s = WKWebsiteDataStore(forIdentifier: uuid) }
+        else { s = .nonPersistent() }      // 예전 macOS 에서는 유지되지 않는다 (창을 닫으면 사라짐)
+        profileStores[profile] = s
+        return s
+    }
+    /// 이 브라우저에서 쓰인 프로필 이름들 (기본은 빈 문자열).
+    private var knownProfiles: [String] { Array(Set(tabs.map { $0.profile })).sorted() }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -564,11 +593,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     // MARK: - tabs
 
-    private func makeConfiguration(isPrivate: Bool = false) -> WKWebViewConfiguration {
+    private func makeConfiguration(isPrivate: Bool = false, profile: String = "") -> WKWebViewConfiguration {
         let cfg = WKWebViewConfiguration()
         cfg.processPool = Self.processPool
         // 시크릿 탭은 메모리에만 남는 저장소를 쓴다 — 탭을 닫으면 쿠키·로그인이 함께 사라진다.
-        cfg.websiteDataStore = isPrivate ? .nonPersistent() : .default()
+        // 프로필을 주면 그 이름의 저장소를 쓴다 (같은 사이트에 계정 두 개로 동시에 들어가기).
+        cfg.websiteDataStore = isPrivate ? .nonPersistent() : Self.store(profile: profile)
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
         cfg.preferences.javaScriptCanOpenWindowsAutomatically = true
         // 동영상·지도의 전체화면 버튼. 켜지 않으면 requestFullscreen 자체가 없어서
@@ -588,9 +618,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     @discardableResult
     private func newTab(_ url: URL?, activate: Bool, configuration: WKWebViewConfiguration? = nil,
-                        isPrivate: Bool = false) -> BrowserTab {
-        let tb = BrowserTab(configuration: configuration ?? makeConfiguration(isPrivate: isPrivate))
+                        isPrivate: Bool = false, profile: String = "") -> BrowserTab {
+        let tb = BrowserTab(configuration: configuration ?? makeConfiguration(isPrivate: isPrivate, profile: profile))
         tb.isPrivate = isPrivate
+        tb.profile = profile
         tb.web.navigationDelegate = self
         tb.web.uiDelegate = self
         tb.onChange = { [weak self] in self?.tabChanged(tb) }
@@ -636,7 +667,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     private func refreshTabStrip() {
-        tabStrip.set(tabs.map { (title: $0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle,
+        tabStrip.set(tabs.map { (title: ($0.profile.isEmpty ? "" : "[\($0.profile)] ")
+                                        + ($0.shortTitle.isEmpty ? t("browser.newTabTitle") : $0.shortTitle),
                                  url: $0.web.url?.absoluteString ?? "") },
                      selected: current)
         // 탭이 하나면 줄을 감춘다 — 좁은 패널에서 세로 공간이 아깝다.
@@ -861,6 +893,9 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
         let tb = tabs[i]
         add(t("browser.reloadTab")) { tb.web.reload() }
+        add(t("browser.newPrivateTab")) { [weak self] in
+            self?.newTab(tb.web.url, activate: true, isPrivate: true)
+        }
         add(t("browser.duplicateTab")) { [weak self] in
             if let u = tb.web.url { self?.newTab(u, activate: true) }
         }
@@ -870,6 +905,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             NSPasteboard.general.setString(tb.web.url?.absoluteString ?? "", forType: .string)
         }
         add(t("browser.viewSource"), tb.web.url != nil) { [weak self] in self?.viewSource(tb) }
+        menu.addItem(.separator())
+        // 프로필: 같은 사이트를 다른 계정으로 하나 더 연다.
+        let profiles = ["", "A", "B", "C"]
+        for name in profiles where name != tb.profile {
+            let label = name.isEmpty ? t("browser.profileDefault") : t("browser.profileNamed", ["n": name])
+            add(t("browser.openInProfile", ["p": label]), tb.web.url != nil) { [weak self] in
+                if let u = tb.web.url { self?.newTab(u, activate: true, profile: name) }
+            }
+        }
         menu.addItem(.separator())
         add(t("browser.closeTab"), tabs.count > 1) { [weak self] in self?.closeTab(i) }
         add(t("browser.closeOthers"), tabs.count > 1) { [weak self] in
@@ -934,6 +978,25 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         pop.contentViewController?.view = panel
         pop.show(relativeTo: starBtn.bounds, of: starBtn, preferredEdge: .maxY)
         libraryPopover = pop
+    }
+
+    /// 페이지가 카메라·마이크를 요청할 때. 어느 사이트가 무엇을 달라는지 밝히고 묻는다
+    /// (WKWebView 는 기본이 거부라, 이걸 넣지 않으면 화상회의 페이지가 그냥 안 된다).
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        let host = origin.host.isEmpty ? t("browser.thisPage") : origin.host
+        let what: String
+        switch type {
+        case .camera: what = t("browser.camera")
+        case .microphone: what = t("browser.microphone")
+        default: what = t("browser.cameraAndMic")
+        }
+        let a = NSAlert()
+        a.messageText = t("browser.mediaAsk", ["h": host, "w": what])
+        a.addButton(withTitle: t("browser.allow"))
+        a.addButton(withTitle: t("common.cancel"))
+        decisionHandler(a.runModal() == .alertFirstButtonReturn ? .grant : .deny)
     }
 
     // MARK: - 인증서
@@ -1042,10 +1105,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 탭이 전부 사라지고 마지막에 보던 페이지 하나만 돌아왔다.
     private func rememberURL() {
         guard let ws = workspaceKey else { return }
+        // "프로필\t주소" 로 적는다. 주소만 남기면 껐다 켰을 때 계정 A 로 보던 탭이
+        // 기본 계정으로 돌아와, 같은 사이트에 두 계정으로 들어가 있던 상태가 무너진다.
         let urls = tabs.compactMap { tb -> String? in
             guard !tb.isPrivate, let u = tb.web.url?.absoluteString,   // 시크릿 탭은 남기지 않는다
                   !u.isEmpty, !u.hasPrefix("about:") else { return nil }
-            return u
+            return tb.profile.isEmpty ? u : tb.profile + "\t" + u
         }
         guard !urls.isEmpty else { return }
         var map = Settings.shared.object("browserTabs") as? [String: [String]] ?? [:]
@@ -1066,10 +1131,13 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             urls = old.map { [$0] } ?? []
         }
         guard !urls.isEmpty else { return }
-        for (i, u) in urls.enumerated() {
-            guard let url = BrowserTab.resolve(u) else { continue }
-            if i == 0, let first = tab { Self.load(url, into: first.web) }
-            else { newTab(url, activate: false) }
+        for (i, raw) in urls.enumerated() {
+            let parts = raw.split(separator: "\t", maxSplits: 1).map(String.init)
+            let profile = parts.count == 2 ? parts[0] : ""
+            guard let url = BrowserTab.resolve(parts.last ?? raw) else { continue }
+            // 첫 탭도 프로필이 있으면 새로 만들어야 한다 (이미 만들어진 탭은 기본 저장소다).
+            if i == 0, profile.isEmpty, let first = tab { Self.load(url, into: first.web) }
+            else { newTab(url, activate: false, profile: profile) }
         }
         let want = (Settings.shared.object("browserActiveTab") as? [String: Int] ?? [:])[ws] ?? 0
         select(min(max(0, want), tabs.count - 1))
@@ -1387,9 +1455,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         s.count <= limit ? s : String(s.prefix(limit)) + "\n…(truncated, \(s.count) chars total)"
     }
 
-    func agentNavigate(_ urlString: String, newTab wantsNew: Bool) -> String {
+    func agentNavigate(_ urlString: String, newTab wantsNew: Bool, profile: String = "") -> String {
         guard let url = BrowserTab.resolve(urlString) else { return "invalid url: \(urlString)" }
-        if wantsNew { newTab(url, activate: true) } else { urlField.stringValue = url.absoluteString; load(url) }
+        // 프로필을 주면 언제나 새 탭이다 — 로그인 묶음이 다르니 지금 탭을 재사용할 수 없다.
+        if wantsNew || !profile.isEmpty { newTab(url, activate: true, profile: profile) }
+        else { urlField.stringValue = url.absoluteString; load(url) }
         note(t("browser.agent.navigate", ["u": url.absoluteString]))
         return "navigating to \(url.absoluteString)"
     }
@@ -1403,10 +1473,31 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         if tabs.count > 1 {
             out.append("tabs:")
             for (i, other) in tabs.enumerated() {
-                out.append("  [\(i)]\(i == current ? "*" : " ") \(other.title) \(other.urlString)")
+                let tag = other.isPrivate ? " (private)" : (other.profile.isEmpty ? "" : " (profile \(other.profile))")
+                out.append("  [\(i)]\(i == current ? "*" : " ") \(other.title) \(other.urlString)\(tag)")
             }
         }
         return out.joined(separator: "\n")
+    }
+    /// 탭 고르기·닫기. 여러 페이지를 오가며 확인할 때 이게 없으면 매번 새로 열어야 했다.
+    func agentTab(_ action: String, index: Int?) -> String {
+        switch action.lowercased() {
+        case "select":
+            guard let i = index, tabs.indices.contains(i) else { return "no tab at index \(index.map(String.init) ?? "-")" }
+            select(i)
+            note(t("browser.agent.tabSelect", ["n": String(i)]))
+            return "switched to tab \(i): \(tabs[i].urlString)"
+        case "close":
+            let i = index ?? current
+            guard tabs.indices.contains(i) else { return "no tab at index \(i)" }
+            guard tabs.count > 1 else { return "cannot close the last tab" }
+            let gone = tabs[i].urlString
+            closeTab(i)
+            note(t("browser.agent.tabClose", ["n": String(i)]))
+            return "closed tab \(i) (\(gone)); now on tab \(current)"
+        default:
+            return "unknown tab action: \(action) (use select or close)"
+        }
     }
     func agentGo(_ action: String) -> String {
         guard let tb = tab else { return "no tab" }

@@ -1017,7 +1017,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             addSystem(t("chat.openedPreview", ["u": s("url")]))
             session?.respondTool(id, "opened \(s("url")) in riven preview panel")
         case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
-             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll":
+             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
+             "riven_browser_tab":
             guard let onBrowser else { reply("browser panel unavailable"); return }
             addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
             onBrowser(tool, args) { reply($0) }
@@ -1562,6 +1563,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         switch tool {
         case "riven_browser_open":   detail = args["url"] as? String ?? ""
         case "riven_browser_go":     detail = args["action"] as? String ?? ""
+        case "riven_browser_tab":
+            let idx = (args["index"] as? NSNumber).map { " \($0)" } ?? ""
+            detail = (args["action"] as? String ?? "") + idx
         case "riven_browser_read", "riven_browser_click", "riven_browser_wait", "riven_browser_scroll":
             detail = args["selector"] as? String ?? ""
         // 채워 넣은 값은 남기지 않는다 (비밀번호·토큰일 수 있다).
