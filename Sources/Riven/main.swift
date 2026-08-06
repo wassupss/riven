@@ -1027,6 +1027,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CODEXCHAT=1: 네이티브 챗용 Codex 세션(app-server)이 실제로 한 턴을 도는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXCHAT"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                        guard let self, let cmd = AgentDiscovery.codexCmd() else {
+                            RLog.log("CXCHAT codex 없음"); RLog.log("CXCHAT done"); return
+                        }
+                        let ws = self.workspace?.path ?? NSTemporaryDirectory()
+                        guard let s = CodexChatSession(command: cmd, cwd: ws) else {
+                            RLog.log("CXCHAT 세션 시작 실패"); RLog.log("CXCHAT done"); return
+                        }
+                        self.codexChatBench = s
+                        var text = ""
+                        s.onInit = { tid, model in
+                            RLog.log("CXCHAT init thread=\(tid.prefix(8)) model=\(model ?? "-")")
+                            s.send("숫자 42만 답해. 설명 금지.")
+                        }
+                        s.onTextDelta = { text += $0 }
+                        s.onMainTool = { n, d, _, _ in RLog.log("CXCHAT 도구 \(n) \(d.prefix(40))") }
+                        s.onPermissionRequest = { id, n, d, _, _ in
+                            RLog.log("CXCHAT 승인요청 \(n) \(d.prefix(40)) → 허용")
+                            s.respond(id, allow: true)
+                        }
+                        s.onTurnDone = { _, sid, usage, err in
+                            RLog.log("CXCHAT 답=\(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))"
+                                     + " 세션=\(sid?.prefix(8) ?? "-")"
+                                     + " 토큰=\(usage?.newTokens ?? -1) 오류=\(err ?? "-")")
+                            RLog.log("CXCHAT done")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                            if !text.isEmpty || true { RLog.log("CXCHAT 시간초과 확인용 텍스트=\(text.prefix(40))") }
+                        }
+                    }
+                }
                 // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
                 if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1887,6 +1920,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // record shell-driven edits (sed / redirects the agent runs via Bash) ONLY while a
     // turn is active, so a `git checkout` or build run OUTSIDE a turn no longer pollutes
     // the Changes panel — the coarse "ever had an agent session" gate did.
+    /// 벤치가 붙잡아 두는 Codex 챗 세션 (놓으면 프로세스가 바로 죽는다).
+    private var codexChatBench: CodexChatSession?
     private var turnActiveWorkspaces: Set<String> = []
 
     // Change-tracking half of the hook stream. Edit/Write/MultiEdit give a precise,

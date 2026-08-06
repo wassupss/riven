@@ -575,6 +575,8 @@ enum I18n {
         "account.continueGithub": ("GitHub로 계속", "Continue with GitHub"),
         "settings.saveFonts": ("폰트 크기 적용", "Apply font size"),
         "settings.saveAI": ("AI 설정 저장", "Save AI settings"),
+        "chat.codex.fileChange": ("파일을 고치려 합니다", "Wants to change files"),
+        "chat.codex.turnFailed": ("턴이 실패했습니다", "The turn failed"),
         "settings.cliSection": ("설치된 에이전트 CLI", "Installed agent CLIs"),
         "settings.cliFound": ("설치됨", "Installed"),
         "settings.cliNone": ("설치된 에이전트 CLI 를 찾지 못했습니다. claude / codex 를 설치하면 여기에 나타납니다.",
