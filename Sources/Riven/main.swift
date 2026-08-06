@@ -650,6 +650,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_EXPIRE=1: 선택지가 만료됐을 때 카드가 그 자리에서 만료로 바뀌는지.
+                if ProcessInfo.processInfo.environment["RIVEN_EXPIRE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("EXPIRE 팬 없음"); return }
+                            chat.ask("ask_user 로 '점심 뭐 먹지?' 를 묻고 선택지는 김밥, 국수 두 개만 줘. 다른 말은 하지 마.") { _ in }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                                RLog.log("EXPIRE 물어본 직후 \(chat.debugAskState()) 카드=\(chat.debugCardStatus())")
+                                chat.debugExpireAll(t("chat.expired.session"))
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                    RLog.log("EXPIRE 만료 처리 뒤 카드=\(chat.debugCardStatus())")
+                                    RLog.log("EXPIRE done")
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 — 에이전트 팬이 실제로 한 턴을 돌리는지.
                 if ProcessInfo.processInfo.environment["RIVEN_SHIPCHECK"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in

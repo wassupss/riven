@@ -99,6 +99,7 @@ final class ClaudeChatSession {
             let path = self.toolPath(name, input)
             DispatchQueue.main.async { self.onPermissionRequest?(id, name, d, code, path) }
         }
+        ask?.onExpire = { [weak self] id, reason in self?.onAskExpired?(id, reason) }
         ask?.onTool = { [weak self] id, tool, args, _ in
             DispatchQueue.main.async { self?.onToolRequest?(id, tool, args) }
         }
@@ -165,6 +166,8 @@ final class ClaudeChatSession {
     // Return a riven tool's result to the agent.
     @discardableResult
     func respondTool(_ id: String, _ result: String) -> Bool { ask?.resolve(id, result: result) ?? false }
+    /// 기다리던 도구 요청이 사라졌다 (시간 초과·세션 종료).
+    var onAskExpired: ((_ id: String, _ reason: String) -> Void)?
 
     func stop() {
         outPipe.fileHandleForReading.readabilityHandler = nil

@@ -482,6 +482,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         focusInput()
     }
     private weak var pendingCard: ApprovalCard?
+    /// 도구 요청 id → 그 질문을 그린 카드. 요청이 만료되면 그 카드를 바로 만료 표시로 바꾼다.
+    private var cardsByRequest: [String: WeakCard] = [:]
+    final class WeakCard { weak var card: ApprovalCard?; init(_ c: ApprovalCard?) { card = c } }
 
     func focusInput(force: Bool = false) {
         if !force, let card = window?.firstResponder as? ApprovalCard, card.isDescendant(of: self) { return }
@@ -948,6 +951,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
         s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
+        s?.onAskExpired = { [weak self] id, reason in self?.markRequestExpired(id, reason) }
         session = s
         if s == nil { addSystem(t("chat.sessionStartFailed")) }
     }
@@ -1167,7 +1171,27 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func presentAsk(_ id: String, _ question: String, _ options: [String],
                             _ reply: @escaping (String) -> Void) {
         let opts: [(String, () -> Void)] = options.map { opt in (opt, { reply(opt) }) }
+        pendingRequestId = id
         enqueueChoice(title: question, detail: "", code: nil, path: nil, options: opts)
+        pendingRequestId = nil
+    }
+    /// 지금 카드를 만드는 중인 도구 요청 id (enqueueChoice 로 넘기기 위한 것).
+    private var pendingRequestId: String?
+
+    func debugAskState() -> String {
+        "카드수=\(cardsByRequest.count) 대기중=\(pendingCard != nil)"
+    }
+    func debugExpireAll(_ reason: String) {
+        for (id, _) in cardsByRequest { markRequestExpired(id, reason) }
+    }
+    private weak var debugLastCard: ApprovalCard?
+    func debugCardStatus() -> String { debugLastCard?.debugStatus() ?? "(카드 없음)" }
+
+    /// 기다리던 요청이 사라졌다 — 그 질문 카드를 만료로 표시한다.
+    func markRequestExpired(_ id: String, _ reason: String) {
+        guard let card = cardsByRequest.removeValue(forKey: id)?.card else { return }
+        card.expire(reason)
+        if card === pendingCard { advanceApprovals() }   // 다음 카드로 넘어간다 (멈춰 있지 않게)
     }
 
     // Serialize prompts: enqueue a card; only one is shown at a time so focus is unambiguous.
@@ -1182,6 +1206,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             let block = self.current ?? { let b = self.newBlock(); self.current = b; return b }()
             let card = block.addApproval(title, detail, code, path, options: wrapped)
             self.pendingCard = card
+            if let rid = self.pendingRequestId { self.cardsByRequest[rid] = WeakCard(card) }
+            self.debugLastCard = card
             self.scrollSoon()
             // Focus the card FIRST so ←→/Enter drive it immediately (approval before typing).
             DispatchQueue.main.async { [weak self, weak card] in
