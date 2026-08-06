@@ -499,39 +499,13 @@ final class SettingsWindow: NSPanel {
     // ---- AI tab ----
     private func buildAI() {
         let s = Settings.shared
-        addSection(t("settings.aiSection"))
-        aiEnable.title = ""
-        aiEnable.state = s.bool("aiComplete", false) ? .on : .off
-        aiEnable.target = self; aiEnable.action = #selector(saveAI)
-        aiEnable.contentTintColor = Theme.fg
-        addRow(t("settings.aiComplete"), desc: t("settings.aiCompleteDesc"), aiEnable)
-
+        addSection(t("settings.agentSection"))
         agentNative.title = ""
         agentNative.state = s.string("agentUI", "native") == "native" ? .on : .off
         agentNative.target = self; agentNative.action = #selector(saveAgentUI)
         agentNative.contentTintColor = Theme.fg
         addRow(t("settings.agentNative"), desc: t("settings.agentNativeDesc"), agentNative)
 
-        provider.removeAllItems()
-        let providers = ["ollama", "openai", "anthropic", "gemini", "deepseek", "mistral", "groq", "openrouter", "custom"]
-        provider.addItems(withTitles: providers)
-        provider.selectItem(withTitle: s.string("aiProvider", "ollama"))
-        provider.target = self; provider.action = #selector(saveAI)
-        provider.translatesAutoresizingMaskIntoConstraints = false
-        provider.widthAnchor.constraint(equalToConstant: 160).isActive = true
-        addRow("제공자", desc: nil, provider)
-
-        model.stringValue = s.string("aiCompleteModel", "qwen2.5-coder:1.5b")
-        addRow("모델", desc: nil, field(model, width: 260))
-        endpoint.stringValue = s.string("aiCompleteEndpoint", "http://localhost:11434")
-        addRow("엔드포인트", desc: nil, field(endpoint, width: 260))
-        apiKey.stringValue = s.string("aiApiKey", "")
-        addRow("API 키", desc: t("settings.apiKeyDesc"), field(apiKey, width: 260))
-
-        content.addArrangedSubview(spacer(10))
-        content.addArrangedSubview(primaryButton(t("settings.saveAI"), #selector(saveAIAll)))
-
-        // Snippets — prefix expands to body (${1} tab stops) via Monaco completion.
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
         // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
         addSection(t("settings.snippets"))
@@ -572,14 +546,9 @@ final class SettingsWindow: NSPanel {
         showTab(1)
     }
     @objc private func saveAI() {
-        Settings.shared.set("aiComplete", aiEnable.state == .on)
-        Settings.shared.set("aiProvider", provider.titleOfSelectedItem ?? "ollama")
     }
     @objc private func saveAIAll() {
         saveAI()
-        Settings.shared.set("aiCompleteModel", model.stringValue)
-        Settings.shared.set("aiCompleteEndpoint", endpoint.stringValue)
-        Settings.shared.set("aiApiKey", apiKey.stringValue)
     }
 
     // ---- Keybindings tab — three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
@@ -834,18 +803,42 @@ final class SettingsWindow: NSPanel {
 
     // ---- About tab — version + update check (riven's AboutTab/electron-updater) ----
     private func buildAbout() {
-        content.addArrangedSubview(spacer(6))
-        let name = NSTextField(labelWithString: "riven")
-        name.font = UIScale.font(20, .semibold); name.textColor = Theme.fg
-        content.addArrangedSubview(name)
+        // 앱 정보는 아이콘 · 이름 · 버전이 한 덩어리로 보여야 한다. 예전에는 작은 글자 세 줄이
+        // 왼쪽 위에 그냥 쌓여 있어서 만들다 만 화면처럼 보였다 (애플의 "이 Mac에 관하여" 처럼).
         let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
-        let verL = NSTextField(labelWithString: "v\(ver)")
-        verL.font = UIScale.mono(UIScale.body, .regular); verL.textColor = Theme.fgDim
-        content.addArrangedSubview(verL)
+        let hero = NSView()
+        hero.translatesAutoresizingMaskIntoConstraints = false
+        let icon = NSImageView()
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let name = NSTextField(labelWithString: "riven")
+        name.font = UIScale.font(22, .semibold); name.textColor = Theme.fg
+        name.translatesAutoresizingMaskIntoConstraints = false
+        let verL = NSTextField(labelWithString: "버전 \(ver)")
+        verL.font = UIScale.font(UIScale.small); verL.textColor = Theme.fgDim
+        verL.translatesAutoresizingMaskIntoConstraints = false
         let tag = NSTextField(labelWithString: t("about.tagline"))
-        tag.font = UIScale.font(UIScale.body); tag.textColor = Theme.fgDim
-        content.addArrangedSubview(tag)
-        content.addArrangedSubview(spacer(8))
+        tag.font = UIScale.font(UIScale.small); tag.textColor = Theme.fgDim
+        tag.translatesAutoresizingMaskIntoConstraints = false
+        hero.addSubview(icon); hero.addSubview(name); hero.addSubview(verL); hero.addSubview(tag)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: hero.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: hero.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 56),
+            icon.heightAnchor.constraint(equalToConstant: 56),
+            name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            name.topAnchor.constraint(equalTo: hero.topAnchor, constant: 2),
+            verL.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            verL.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
+            tag.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            tag.topAnchor.constraint(equalTo: verL.bottomAnchor, constant: 2),
+            tag.bottomAnchor.constraint(lessThanOrEqualTo: hero.bottomAnchor),
+            hero.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+        ])
+        content.addArrangedSubview(hero)
+        hero.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 2).isActive = true
+        content.addArrangedSubview(spacer(6))
 
         addSection(t("about.update"))
         // 탭을 다시 그릴 때도 실제 진행 상태를 따른다 (창을 닫았다 열면 "확인 중…"이 남던 문제).
@@ -854,9 +847,10 @@ final class SettingsWindow: NSPanel {
         updateStatusLabel.lineBreakMode = .byWordWrapping
         updateStatusLabel.maximumNumberOfLines = 2
         // 줄 이름과 버튼 글자가 같으면("업데이트 확인" ×2) 읽는 사람이 두 번 읽게 된다.
-        addRow(t("about.currentVersion", ["v": ver]), desc: nil,
+        addRow(t("about.checkTitle"), desc: t("about.checkHint"),
                primaryButton(t("about.check"), #selector(checkUpdate)))
-        addWideRow(updateStatusLabel)
+        // 상태 문구는 확인을 누른 뒤에만 (평소엔 빈 줄이 하나 더 생길 뿐이다).
+        updateStatusLabel.isHidden = updateStatusLabel.stringValue.isEmpty
 
         addSection(t("about.links"))
         let landing = secondaryButton(t("about.landing"), symbol: "safari") {

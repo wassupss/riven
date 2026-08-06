@@ -528,6 +528,8 @@ enum I18n {
         "settings.uiScaleDesc": ("⌘+ · ⌘− 와 같습니다. 가운데를 누르면 100%. 껐다 켜면 100% 로 돌아갑니다.",
                                  "Same as ⌘+ / ⌘−. Click the middle to reset. Back to 100% on relaunch."),
         "settings.snippetsEmpty": ("아직 등록한 스니펫이 없습니다", "No snippets yet"),
+        "about.checkTitle": ("업데이트", "Updates"),
+        "settings.agentSection": ("에이전트", "Agents"),
         "settings.keysSection": ("키 목록", "Shortcuts"),
         "about.homepage": ("홈페이지", "Homepage"),
         "about.source": ("소스 코드", "Source code"),
@@ -577,7 +579,7 @@ enum I18n {
         "settings.addSnippet": ("+ 스니펫 추가", "+ Add snippet"),
         // settings tabs
         "settings.title": ("설정", "Settings"), "settings.tab.general": ("일반", "General"),
-        "settings.tab.ai": ("AI", "AI"), "settings.tab.keys": ("단축키", "Shortcuts"),
+        "settings.tab.ai": ("에이전트", "Agents"), "settings.tab.keys": ("단축키", "Shortcuts"),
         "settings.tab.account": ("계정", "Account"), "settings.tab.about": ("정보", "About"),
         "settings.language": ("언어", "Language"), "settings.theme": ("테마", "Theme"),
         // workspace activity + rail

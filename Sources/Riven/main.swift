@@ -651,21 +651,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
-                // RIVEN_AICHECK=1: AI 자동완성이 설정을 따르는지 (꺼져 있으면 요청이 나가면 안 된다).
-                if ProcessInfo.processInfo.environment["RIVEN_AICHECK"] != nil {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        Settings.shared.set("aiComplete", false)
-                        AIProvider.shared.complete(prefix: "let x = ", suffix: "") { r in
-                            RLog.log("AI 꺼짐 → 결과=\(r == nil ? "요청 안 함" : "요청 나감(문제)")")
-                            Settings.shared.set("aiComplete", true)
-                            Settings.shared.set("aiCompleteEndpoint", "http://127.0.0.1:9")   // 없는 서버
-                            AIProvider.shared.complete(prefix: "let x = ", suffix: "") { r2 in
-                                RLog.log("AI 켜짐 → 결과=\(r2 ?? "(응답 없음 — 서버 없음이라 정상)")")
-                                RLog.log("AI done")
-                            }
-                        }
-                    }
-                }
                 // RIVEN_GHOSTTY=1: ghostty 설정 읽기·적용이 실제로 되는지.
                 if ProcessInfo.processInfo.environment["RIVEN_GHOSTTY"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -1191,7 +1176,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                         // DEBUG: auto-trigger AI completion to verify the flow.
                         if ProcessInfo.processInfo.environment["RIVEN_AITEST"] != nil {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.editor.triggerAI() }
                         }
                         // DEBUG: exercise the exact ⌘S path (saveMenu → tabBar.active →
                         // requestSave) with format-on-save on, to verify prettier/eslint run.
@@ -3005,11 +2989,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, let ws = self.workspace else { return }
             self.lsp.client(languageId: self.langId(path), rootPath: ws.path)?
                 .didChange(uri: "file://\(path)", version: version, text: text)
-        }
-        ed.onAI = { [weak ed] prefix, suffix in
-            AIProvider.shared.complete(prefix: prefix, suffix: suffix) { text in
-                DispatchQueue.main.async { ed?.suggest(text ?? "") }
-            }
         }
         ed.setFormatOnSave(Settings.shared.bool("formatOnSave", false))
         ed.setEditorKeymap(Settings.shared.string("editorKeymap", "vscode"))
@@ -5292,7 +5271,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Command(title: t("menu.save"), hint: "⌘S") { [weak self] in if let p = self?.tabBar.active { self?.editor.requestSave(path: p) } },
             Command(title: t("menu.newTerminal"), hint: "⌘T") { [weak self] in self?.newTerminal() },
             Command(title: t("menu.toggleSidebar"), hint: "⌘B") { [weak self] in self?.toggleSidebar() },
-            Command(title: t("cmd.aiComplete"), hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
             Command(title: t("cmd.gitGraph"), hint: "⌘⇧G") { [weak self] in self?.toggleDockPanel("git") },
             Command(title: t("cmd.apiPanel"), hint: "") { [weak self] in self?.toggleDockPanel("api") },
             Command(title: t("cmd.distributeEvenly"), hint: "⌥⌘=") { [weak self] in self?.activeDock?.distributeEvenly() },
@@ -5471,7 +5449,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
             if e.modifierFlags.contains(.control), e.charactersIgnoringModifiers == " " {
-                self.editor.triggerAI()   // gathers cursor context → onAI → provider
                 return nil
             }
             if e.modifierFlags.contains(.command),

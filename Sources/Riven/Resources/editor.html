@@ -132,7 +132,6 @@ const savedVersion = {};  // path -> alternativeVersionId at last save
 const lastDirty = {};     // path -> last known dirty state (skip redundant DOM/native work)
 let currentPath = null;
 let currentTheme = 'dark-plus';          // VSCode Dark+ (set live by native)
-let pendingGhost = null;                 // { line, text } for AI ghost completion
 const agentDecos = {};                   // path -> decoration ids
 const blameData = {};                    // path -> { line: "author, time · summary" }
 let blameDeco = null;
@@ -793,17 +792,6 @@ require(['vs/editor/editor.main'], async function () {
     if (currentPath) updateHunkNav(currentPath);
   };
 
-  // ---- AI inline completion (ghost text) — riven signature feature ----
-  // Native asks for a suggestion; we stash it and Monaco renders it as ghost
-  // text via the inline-completions provider. Tab accepts (Monaco built-in).
-  monaco.languages.registerInlineCompletionsProvider({ pattern: '**' }, {
-    provideInlineCompletions: (model, position) => {
-      if (!pendingGhost || pendingGhost.line !== position.lineNumber) return { items: [] };
-      return { items: [{ insertText: pendingGhost.text,
-        range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] };
-    },
-    freeInlineCompletions: () => {}
-  });
   post({ type: 'ready' });
 });
 
@@ -1014,23 +1002,6 @@ window.rivenSetFormatOnSave = function (on) { window.rivenFormatOnSave = !!on; }
 window.rivenRequestSave = function (path) {
   if (models[path]) post({ type: 'save', path, content: models[path].getValue() });
 };
-// AI ghost completion: gather the code around the cursor and ask native.
-window.rivenTriggerAI = function () {
-  const model = editor.getModel(); if (!model) return;
-  const pos = editor.getPosition();
-  const before = model.getValueInRange(new monaco.Range(1, 1, pos.lineNumber, pos.column));
-  const last = model.getLineCount();
-  const after = model.getValueInRange(new monaco.Range(pos.lineNumber, pos.column, last, model.getLineMaxColumn(last)));
-  post({ type: 'ai', prefix: before.slice(-2000), suffix: after.slice(0, 1000) });
-};
-// Native returns the completion text → render as ghost (Tab accepts).
-window.rivenSuggest = function (text) {
-  if (!text) return;
-  const pos = editor.getPosition();
-  pendingGhost = { line: pos.lineNumber, text };
-  editor.trigger('ai', 'editor.action.inlineSuggest.trigger', {});
-};
-window.rivenClearSuggest = function () { pendingGhost = null; };
 // ---- Agent diff review (riven's MonacoEditorPane) ----
 // Given before/after text, compute hunks and render: green added lines, RED deleted
 // lines as view-zones above each hunk, a glyph-margin ↩ revert per hunk, and a

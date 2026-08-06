@@ -12,7 +12,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     var onDirty: ((String, Bool) -> Void)?
     var onLSP: ((_ id: Int, _ method: String, _ path: String, _ params: [String: Any]) -> Void)?
     var onLSPSync: ((_ path: String, _ version: Int, _ text: String) -> Void)?
-    var onAI: ((_ prefix: String, _ suffix: String) -> Void)?
     var onFocused: (() -> Void)?   // Monaco gained focus → activate the editor's dock group
     var onAgentRevert: ((_ path: String, _ newAfter: String) -> Void)?  // hunk reverted in the editor
     var onSendToAgent: ((_ file: String, _ start: Int, _ end: Int, _ text: String) -> Void)?  // ⌘L
@@ -240,14 +239,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func requestSave(path: String) {
         web.evaluateJavaScript("window.rivenRequestSave(\(jsString(path)))", completionHandler: nil)
     }
-    // Trigger AI completion: gather cursor context in Monaco (→ onAI).
-    func triggerAI() {
-        web.evaluateJavaScript("window.rivenTriggerAI()", completionHandler: nil)
-    }
-    // AI ghost completion at the cursor (Tab accepts).
-    func suggest(_ text: String) {
-        web.evaluateJavaScript("window.rivenSuggest(\(jsString(text)))", completionHandler: nil)
-    }
     // Agent diff review: pass before/after so Monaco computes hunks itself (green
     // added lines, red deleted view-zones, per-hunk revert). riven's MonacoEditorPane.
     func agentDiff(path: String, before: String, after: String) {
@@ -309,10 +300,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         case "lspSync":
             if let path = body["path"] as? String, let v = body["version"] as? Int, let text = body["text"] as? String {
                 onLSPSync?(path, v, text)
-            }
-        case "ai":
-            if let prefix = body["prefix"] as? String, let suffix = body["suffix"] as? String {
-                onAI?(prefix, suffix)
             }
         case "focus":
             onFocused?()
