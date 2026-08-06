@@ -134,16 +134,6 @@ enum UsageUI {
             stack.addArrangedSubview(f)
         }
 
-        // 언제 것인지 · 왜 못 갱신했는지. 숫자만 보여 주면 멈춰 있어도 알 수가 없다.
-        if let freshness {
-            let f = NSTextField(labelWithString: freshness)
-            f.font = UIScale.font(UIScale.caption)
-            f.textColor = freshness.contains("·") ? Theme.warning : Theme.fgDim
-            f.lineBreakMode = .byWordWrapping
-            f.maximumNumberOfLines = 2
-            f.preferredMaxLayoutWidth = 220
-            stack.addArrangedSubview(f)
-        }
         if let s = bar("세션 (5시간)", limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) {
             stack.addArrangedSubview(s); s.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         }
