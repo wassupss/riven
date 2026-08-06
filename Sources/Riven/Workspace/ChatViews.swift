@@ -416,6 +416,36 @@ final class CodeCarrier: NSView {
 }
 
 enum ChatText {
+    /// 한 줄 명령: 상자 하나에 코드와 작은 버튼만. 짧은 명령까지 머리글 달린 카드로 그리면
+    /// 대화가 상자 더미가 된다.
+    static func compactCode(_ code: String, path: String?) -> NSView {
+        let box = CodeCarrier()
+        box.carriedCode = code
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.bg3.cgColor
+        box.layer?.cornerRadius = 6
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let l = NSTextField(labelWithString: code)
+        l.font = UIScale.mono(UIScale.small)
+        l.textColor = Theme.fg
+        l.lineBreakMode = .byTruncatingTail
+        l.translatesAutoresizingMaskIntoConstraints = false
+        let btn = ClosureButton(title: t("chat.openInEditor")) { [weak box] in
+            box?.enclosingChatPanel?.openCodeInEditor(code, path: path)
+        }
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(l); box.addSubview(btn)
+        NSLayoutConstraint.activate([
+            l.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
+            l.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            l.trailingAnchor.constraint(lessThanOrEqualTo: btn.leadingAnchor, constant: -8),
+            btn.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+            btn.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(30)),
+        ])
+        return box
+    }
+
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
     // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
     // emphasis was indistinguishable.
@@ -512,6 +542,10 @@ enum ChatText {
         return row
     }
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
+        // 한 줄짜리 짧은 명령까지 머리글 달린 코드 카드로 그리면 대화가 상자 더미가 된다.
+        // 그런 건 한 줄로 눕히고, 여러 줄·긴 코드만 카드로 세운다.
+        let oneLiner = !code.contains("\n") && code.count <= 110 && !diff
+        if oneLiner { return compactCode(code, path: path) }
         let box = CodeCarrier()
         box.carriedCode = code
         box.wantsLayer = true
@@ -845,8 +879,11 @@ final class UserBubble: NSView {
         wantsLayer = true
         let card = NSView()
         card.wantsLayer = true
-        card.layer?.backgroundColor = Theme.hover.cgColor
-        card.layer?.cornerRadius = 8
+        // 옅은 회색 + 얇은 선만으로는 어시스턴트 글과 구분되지 않았다. 또렷한 배경을 준다.
+        card.layer?.backgroundColor = Theme.bg3.cgColor
+        card.layer?.cornerRadius = 10
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = Theme.edge.cgColor
         card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
         card.translatesAutoresizingMaskIntoConstraints = false
         bar.wantsLayer = true
@@ -950,7 +987,7 @@ final class ApprovalCard: NSView {
         hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
         hint.translatesAutoresizingMaskIntoConstraints = false
 
-        let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 8
+        let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 6
         col.translatesAutoresizingMaskIntoConstraints = false
         col.addArrangedSubview(titleL)
         // 설명이 코드와 같은 말이면 한 번만 보여 준다 (Bash 승인에서 명령이 두 줄로 겹쳤다).
@@ -958,13 +995,30 @@ final class ApprovalCard: NSView {
         let detailText = detail.trimmingCharacters(in: .whitespacesAndNewlines)
         if !detailText.isEmpty, detailText != codeText { col.addArrangedSubview(sub) }
         if let code, !code.isEmpty {
-            // 승인 카드의 코드는 diff 가 아니다 — diff:true 를 주면 "DIFF" 라벨이 붙었다.
-            let cb = ChatText.codeBlock(code, diff: false, path: path)
-            // 카드 안에 또 테두리 있는 상자를 넣으면 테두리가 겹쳐 지저분해진다. 배경만 남긴다.
-            cb.layer?.borderWidth = 0
-            cb.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.5).cgColor
-            col.addArrangedSubview(cb)
-            cb.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
+            // 승인은 "이걸 실행할까요?" 를 묻는 자리다. 전문을 다 펼칠 필요가 없어서 한 줄로
+            // 줄여 보여 주고(넘치면 …), 자세히 볼 사람은 에디터에서 연다. 예전에는 코드 상자가
+            // 카드 높이의 절반을 먹었다.
+            let oneLine = code.split(separator: "\n").first.map(String.init) ?? code
+            let more = code.contains("\n")
+            let cmd = NSTextField(labelWithString: oneLine + (more ? " …" : ""))
+            cmd.font = UIScale.mono(UIScale.small)
+            cmd.textColor = Theme.fg
+            cmd.lineBreakMode = .byTruncatingTail
+            cmd.translatesAutoresizingMaskIntoConstraints = false
+            let box = NSView()
+            box.wantsLayer = true
+            box.layer?.cornerRadius = 6
+            box.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.55).cgColor
+            box.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(cmd)
+            NSLayoutConstraint.activate([
+                cmd.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
+                cmd.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+                cmd.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
+                cmd.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5),
+            ])
+            col.addArrangedSubview(box)
+            box.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         }
         // Long/many options stack vertically (like the CLI's list); few short ones sit in a row.
         let vert = options.count > 3 || options.contains { $0.0.count > 24 }
