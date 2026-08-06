@@ -666,6 +666,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         RLog.log("GH done")
                     }
                 }
+                // RIVEN_CHATSHOT=<png>: 채팅 팬을 실제 대화로 채우고 그 모습을 찍는다.
+                // 답을 기다리지 않고 정해진 시각에 찍는다 — 스트리밍 중간 모습도 봐야 한다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_CHATSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let pane = self.agentPanes().first else { RLog.log("CHATSHOT 팬 없음"); return }
+                            RLog.log("CHATSHOT 팬 준비됨")
+                            pane.chat.ask("riven 브라우저의 탭 복원 방식을 세 줄로 설명하고, "
+                                          + "작은 표 하나와 짧은 swift 코드 블록을 포함해 줘.") { _ in }
+                            for (i, at) in [12.0, 30.0, 50.0].enumerated() {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    let v = pane.chat
+                                    guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    let path = i == 0 ? shot : shot.replacingOccurrences(of: ".png", with: "-\(i).png")
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: path))
+                                    }
+                                    RLog.log("CHATSHOT \(Int(at))초 → \(path) (\(Int(v.bounds.width))x\(Int(v.bounds.height)))")
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SEARCH=<질의>: 주소창에 검색어를 쳤을 때 어디로 가는지.
                 if let q = ProcessInfo.processInfo.environment["RIVEN_SEARCH"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in

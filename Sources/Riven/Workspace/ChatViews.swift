@@ -410,6 +410,11 @@ final class CircleButton: NSButton {
 }
 
 // MARK: - shared text rendering (markdown prose + ``` code blocks, diff coloring)
+/// 자기가 담고 있는 코드를 기억하는 상자 — 승인 카드가 같은 내용을 다시 그릴 때 중복을 걷어낸다.
+final class CodeCarrier: NSView {
+    var carriedCode: String?
+}
+
 enum ChatText {
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
     // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
@@ -507,7 +512,8 @@ enum ChatText {
         return row
     }
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
-        let box = NSView()
+        let box = CodeCarrier()
+        box.carriedCode = code
         box.wantsLayer = true
         box.layer?.backgroundColor = Theme.bg3.cgColor          // distinct code surface (like the CLI)
         box.layer?.cornerRadius = 8; box.layer?.borderWidth = 1
@@ -516,7 +522,7 @@ enum ChatText {
 
         // Header: language label (left) + action button (right), separated from the code.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
-        let langL = NSTextField(labelWithString: (lang?.isEmpty == false ? lang! : (diff ? "diff" : "code")).uppercased())
+        let langL = NSTextField(labelWithString: lang?.isEmpty == false ? lang!.lowercased() : (diff ? "diff" : ""))
         langL.font = UIScale.mono(UIScale.caption, .semibold)
         langL.textColor = Theme.fgDim.withAlphaComponent(0.8)
         langL.translatesAutoresizingMaskIntoConstraints = false
@@ -945,9 +951,13 @@ final class ApprovalCard: NSView {
         let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 8
         col.translatesAutoresizingMaskIntoConstraints = false
         col.addArrangedSubview(titleL)
-        if !detail.isEmpty { col.addArrangedSubview(sub) }
+        // 설명이 코드와 같은 말이면 한 번만 보여 준다 (Bash 승인에서 명령이 두 줄로 겹쳤다).
+        let codeText = (code ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let detailText = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detailText.isEmpty, detailText != codeText { col.addArrangedSubview(sub) }
         if let code, !code.isEmpty {
-            let cb = ChatText.codeBlock(code, diff: true, path: path)
+            // 승인 카드의 코드는 diff 가 아니다 — diff:true 를 주면 "DIFF" 라벨이 붙었다.
+            let cb = ChatText.codeBlock(code, diff: false, path: path)
             col.addArrangedSubview(cb)
             cb.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         }
@@ -1227,9 +1237,21 @@ final class TurnBlock: NSView {
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
                      options: [(String, () -> Void)]) -> ApprovalCard {
         closeText()
+        // 바로 위에 같은 명령을 보여 준 도구 줄이 있으면 그걸 걷는다. 카드가 같은 내용을
+        // 다시 담고 있어서, 화면에는 같은 명령이 두 번·"에디터에서 보기" 버튼도 두 번 나왔다.
+        if let code, !code.isEmpty { dropDuplicateToolBlock(code) }
         let card = ApprovalCard(title: title, detail: detail, code: code, path: path, options: options)
         add(card)
         return card
+    }
+    /// 방금 그린 도구 줄이 같은 코드를 담고 있으면 지운다 (승인 카드가 그 자리를 대신한다).
+    private func dropDuplicateToolBlock(_ code: String) {
+        let tail = content.arrangedSubviews.suffix(3)
+        for v in tail where (v as? CodeCarrier)?.carriedCode == code {
+            v.removeFromSuperview()
+            if let line = content.arrangedSubviews.last as? ToolLine { line.removeFromSuperview() }
+            return
+        }
     }
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }

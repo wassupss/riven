@@ -209,7 +209,7 @@ enum I18n {
         "chat.other": ("기타(직접 입력)", "Other (type it)"),
         "chat.cardHintCancel": ("←/→ 선택 · Enter 결정 · Esc 취소", "←/→ choose · Enter confirm · Esc cancel"),
         // ---- native chat panel ----
-        "chat.placeholder": ("Claude에게 메시지…  ( / 명령 · Shift+Enter 줄바꿈 )",
+        "chat.placeholder": ("메시지를 입력하세요  ·  / 명령",
                              "Message Claude…  ( / commands · Shift+Enter for newline )"),
         "chat.send": ("보내기", "Send"), "chat.stop": ("중단", "Stop"),
         "chat.attach": ("첨부", "Attach"), "chat.attachFile": ("파일 첨부", "Attach file"),
