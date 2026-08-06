@@ -650,6 +650,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_DEVTOOLS=<url>: 콘솔이 페이지 출력·오류를 잡고, 그 페이지에서 코드를
+                // 실행하고, 캐시 지우기·강제 새로고침이 도는지.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_DEVTOOLS"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        p.debugToggleConsole(true)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            let lines = p.debugConsole().debugLines()
+                            RLog.log("DEV 콘솔 \(lines.count)줄")
+                            for l in lines.prefix(8) { RLog.log("DEV   | " + l.replacingOccurrences(of: "\n", with: " ").prefix(90)) }
+                            p.debugConsole().debugRun("window.__mark + 1")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                let after = p.debugConsole().debugLines()
+                                RLog.log("DEV 실행 결과=\(after.suffix(2).joined(separator: " / "))")
+                                p.hardReload()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    RLog.log("DEV 강제 새로고침 뒤 콘솔=\(p.debugConsole().debugLines().count)줄")
+                                    p.clearCache()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        if let shot = ProcessInfo.processInfo.environment["RIVEN_DEVSHOT"],
+                                           let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) {
+                                            p.cacheDisplay(in: p.bounds, to: rep)
+                                            if let d = rep.representation(using: .png, properties: [:]) {
+                                                try? d.write(to: URL(fileURLWithPath: shot))
+                                            }
+                                        }
+                                        RLog.log("DEV done")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_CLOSEW=1: ⌘W 가 탭을 닫고, 마지막 탭이면 패널까지 닫는지.
                 if ProcessInfo.processInfo.environment["RIVEN_CLOSEW"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
