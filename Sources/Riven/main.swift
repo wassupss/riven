@@ -651,6 +651,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_SEARCH=<질의>: 주소창에 검색어를 쳤을 때 어디로 가는지.
+                if let q = ProcessInfo.processInfo.environment["RIVEN_SEARCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        RLog.log("SEARCH 해석: \(q) → \(BrowserTab.resolve(q)?.absoluteString ?? "실패")")
+                        RLog.log("SEARCH 자동완성 마지막줄: \(BrowserStore.suggest(q).last.map { "\($0.kind) \($0.url)" } ?? "없음")")
+                        _ = p.agentNavigate(q, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            RLog.log("SEARCH 실제 이동: \(p.debugURL())")
+                            RLog.log("SEARCH done")
+                        }
+                    }
+                }
+                // RIVEN_CONBENCH=<url>: 콘솔 서랍이 열린 뒤 상태가 흔들리는지 (비었다/깜빡인다).
+                if let target = ProcessInfo.processInfo.environment["RIVEN_CONBENCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            p.debugToggleConsole(true)
+                            for at in [0.2, 1.0, 2.0, 3.0, 5.0, 8.0] {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    RLog.log("CON +\(at)초 " + p.debugConsoleState())
+                                }
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 9) { RLog.log("CON done") }
+                        }
+                    }
+                }
                 // RIVEN_GITSHOT=<png>: 소스 컨트롤 패널 현재 모습.
                 if let shot = ProcessInfo.processInfo.environment["RIVEN_GITSHOT"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in

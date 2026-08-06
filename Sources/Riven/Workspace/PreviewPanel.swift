@@ -64,10 +64,7 @@ final class BrowserTab: NSObject {
         if s.contains("://") { return URL(string: s) }
         if s.hasPrefix("localhost") || s.hasPrefix("127.0.0.1") { return URL(string: "http://" + s) }
         // 공백이 있거나 점이 없으면 주소가 아니라 검색어다.
-        if s.contains(" ") || !s.contains(".") {
-            let q = s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
-            return URL(string: "https://duckduckgo.com/?q=\(q)")
-        }
+        if s.contains(" ") || !s.contains(".") { return URL(string: BrowserStore.searchURL(s)) }
         return URL(string: "https://" + s)
     }
     /// 짧은 탭 제목 (제목이 아직 없으면 호스트).
@@ -907,14 +904,31 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 그래서 여기서는 확실히 되는 것만 한다: riven 안의 콘솔 서랍을 열고, 전체 도구를 여는
     /// 방법을 알려 준다.
     @objc private func openInspector() {
-        toggleConsole(true)
+        // WebKit 의 페이지 메뉴를 그 자리에 띄운다 — 거기 "요소 정보 검사" 가 있고, 그게
+        // Safari Web Inspector 를 여는 유일하게 동작하는 길이다 (프로그램으로 직접 여는
+        // 비공개 API 는 창이 안 뜬다). 사용자는 한 번 더 고르기만 하면 된다.
+        guard let web = tab?.web, let win = window else { return }
+        let mid = NSPoint(x: web.bounds.midX, y: web.bounds.midY)
+        let inWin = web.convert(mid, to: nil)
+        guard let down = NSEvent.mouseEvent(with: .rightMouseDown, location: inWin, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: win.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1) else {
+            toggleConsole(true); return
+        }
+        window?.makeFirstResponder(web)
+        web.rightMouseDown(with: down)
         setStatus(t("browser.inspectHint"))
     }
 
     /// 콘솔만 빠르게 (riven 안에 붙는 가벼운 서랍). 페이지 오류를 흘려보며 작업할 때 쓴다.
     @objc private func toggleConsoleDrawer() { toggleConsole(!consoleOpen) }
+    static let consoleBench = ProcessInfo.processInfo.environment["RIVEN_CONBENCH"] != nil
     private var consoleOpen: Bool { consoleHeight.constant > 0 }
     private func toggleConsole(_ open: Bool) {
+        if PreviewPanel.consoleBench {
+            RLog.log("CON toggle(\(open)) 이전높이=\(Int(consoleHeight.constant)) 줄=\(console.debugLines().count)")
+        }
         consoleHeight.constant = open ? UIScale.pt(180) : 0
         console.isHidden = !open
         if open {
@@ -1309,6 +1323,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     func debugConsole() -> BrowserConsole { console }
     func debugOpenDevTools() { openInspector() }
     func debugToggleConsole(_ open: Bool) { toggleConsole(open) }
+    func debugOpenInspectorMenu() { openInspector() }
+    func debugConsoleState() -> String {
+        "높이=\(Int(consoleHeight.constant)) 숨김=\(console.isHidden) 줄=\(console.debugLines().count)"
+            + " 프레임=\(Int(console.frame.height)) 컨테이너바닥=\(Int(container.frame.minY))"
+    }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
     /// ⌘W (메뉴에서 들어온다 — 메뉴 단축키가 뷰보다 먼저 잡힌다).
