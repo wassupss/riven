@@ -575,6 +575,8 @@ enum I18n {
         "account.continueGithub": ("GitHub로 계속", "Continue with GitHub"),
         "settings.saveFonts": ("폰트 크기 적용", "Apply font size"),
         "settings.saveAI": ("AI 설정 저장", "Save AI settings"),
+        "chat.codex.network": ("네트워크 접근", "network access"),
+        "chat.codex.permissions": ("워크스페이스 밖 권한", "permissions outside the workspace"),
         "chat.codex.fileChange": ("파일을 고치려 합니다", "Wants to change files"),
         "chat.codex.turnFailed": ("턴이 실패했습니다", "The turn failed"),
         "settings.cliSection": ("설치된 에이전트 CLI", "Installed agent CLIs"),

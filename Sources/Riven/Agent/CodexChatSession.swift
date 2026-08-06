@@ -45,16 +45,47 @@ final class CodexChatSession: AgentChatSession {
     var mcpServers: [(name: String, status: String)] { mcpStatus }
     private var mcpStatus: [(name: String, status: String)] = []
     /// 아직 답하지 않은 승인 요청: riven 이 만든 id → (JSON-RPC 요청 id, 어떤 종류인지).
-    private var pendingApprovals: [String: (rpcId: Any, kind: String)] = [:]
+    private var pendingApprovals: [String: (rpcId: Any, kind: String, params: [String: Any])] = [:]
     private var nextId = 0
     private let cwd: String
     private let resumeThread: String?
     private var started = false
 
-    init?(command: String, cwd: String, resume: String? = nil, model: String? = nil) {
+    // riven 의 승인 모드를 Codex 의 (승인 정책, 샌드박스) 짝으로 옮긴 것.
+    //
+    // 처음엔 "Codex 에는 모드가 없다" 고 보고 드롭다운을 감췄는데 틀렸다. Codex 도
+    // approvalPolicy(untrusted/on-request/never)와 sandbox(read-only/workspace-write)를
+    // 가지고, 둘 다 턴마다 덮어쓸 수 있다 — Claude 의 set_permission_mode 와 같은 자리다.
+    //
+    // danger-full-access 로는 절대 올라가지 않는다. "자동" 은 승인을 묻지 않겠다는 뜻이지
+    // 워크스페이스 밖을 마음대로 쓰겠다는 뜻이 아니다.
+    private var approvalPolicy = "on-request"
+    private var sandboxMode = "workspace-write"
+    private func applyMode(_ mode: String) {
+        switch mode {
+        case "plan":                                  // 계획: 읽기만, 실행은 전부 물어본다
+            approvalPolicy = "untrusted"; sandboxMode = "read-only"
+        case "auto":                                  // 자동: 묻지 않되 워크스페이스 안에서만
+            approvalPolicy = "never"; sandboxMode = "workspace-write"
+        default:                                      // 승인 요청
+            approvalPolicy = "on-request"; sandboxMode = "workspace-write"
+        }
+    }
+    /// turn/start 의 sandboxPolicy 는 문자열이 아니라 객체다 (thread/start 의 sandbox 와 다름).
+    private var sandboxPolicyObject: [String: Any] {
+        switch sandboxMode {
+        case "read-only": return ["type": "readOnly"]
+        case "danger-full-access": return ["type": "dangerFullAccess"]
+        default: return ["type": "workspaceWrite"]
+        }
+    }
+
+    init?(command: String, cwd: String, resume: String? = nil, model: String? = nil,
+          permissionMode: String = "default") {
         self.cwd = cwd
         self.resumeThread = resume
         self.model = model
+        applyMode(permissionMode)
         proc.executableURL = URL(fileURLWithPath: command)
         proc.arguments = ["app-server"]
         proc.currentDirectoryURL = URL(fileURLWithPath: cwd)
@@ -98,7 +129,9 @@ final class CodexChatSession: AgentChatSession {
     }
 
     private func startThread() {
-        var params: [String: Any] = ["cwd": cwd]
+        var params: [String: Any] = ["cwd": cwd,
+                                     "approvalPolicy": approvalPolicy,
+                                     "sandbox": sandboxMode]
         if let m = model, !m.isEmpty, m != "default" { params["model"] = m }
         request("thread/start", params) { [weak self] result, _ in self?.adoptThread(result) }
     }
@@ -122,9 +155,13 @@ final class CodexChatSession: AgentChatSession {
 
     func send(_ text: String) {
         guard let tid = threadId, started else { queued.append(text); return }
+        // 승인 정책·샌드박스를 턴마다 실어 보낸다. 그래야 도는 도중에 모드를 바꿔도
+        // 다음 턴부터 바로 먹는다 (Claude 의 라이브 모드 전환과 같은 체감).
         request("turn/start", ["threadId": tid,
                                // 배열이어야 한다 — 맵이면 턴이 시작조차 되지 않는다.
-                               "input": [["type": "text", "text": text]]]) { _, _ in }
+                               "input": [["type": "text", "text": text]],
+                               "approvalPolicy": approvalPolicy,
+                               "sandboxPolicy": sandboxPolicyObject]) { _, _ in }
     }
 
     func interrupt() {
@@ -135,8 +172,37 @@ final class CodexChatSession: AgentChatSession {
     /// 승인 카드의 답. Codex 는 종류마다 응답 모양이 달라서 여기서 갈라 준다.
     func respond(_ id: String, allow: Bool) {
         guard let p = pendingApprovals.removeValue(forKey: id) else { return }
-        let decision = allow ? "accept" : "decline"
-        respondRPC(p.rpcId, ["decision": decision])
+        if p.kind == "permissions/requestApproval" {
+            // 허용은 "요청한 프로파일을 그대로 돌려주기", 거절은 빈 프로파일이다.
+            // 범위는 turn — 한 번 허용했다고 세션 내내 열어 두지 않는다.
+            let granted = allow ? (p.params["permissions"] as? [String: Any] ?? [:]) : [:]
+            respondRPC(p.rpcId, ["permissions": granted, "scope": "turn"])
+            return
+        }
+        respondRPC(p.rpcId, ["decision": allow ? "accept" : "decline"])
+    }
+
+    /// 요청된 권한을 한 줄로. 카드에 "무엇을 열어 달라는지" 가 보여야 판단할 수 있다.
+    private func permissionSummary(_ want: [String: Any]) -> String {
+        var parts: [String] = []
+        if let fs = want["fileSystem"] as? [String: Any],
+           let entries = fs["entries"] as? [[String: Any]] {
+            for e in entries.prefix(3) {
+                let access = e["access"] as? String ?? "?"
+                let path = (e["path"] as? [String: Any])?["path"] as? String ?? "?"
+                parts.append("\(path) (\(access))")
+            }
+            if entries.count > 3 { parts.append("+\(entries.count - 3)") }
+        }
+        if let net = want["network"] as? [String: Any], net["enabled"] as? Bool == true {
+            parts.append(t("chat.codex.network"))
+        }
+        return parts.isEmpty ? t("chat.codex.permissions") : parts.joined(separator: ", ")
+    }
+    private func firstPath(_ want: [String: Any]) -> String? {
+        guard let fs = want["fileSystem"] as? [String: Any],
+              let entries = fs["entries"] as? [[String: Any]] else { return nil }
+        return (entries.first?["path"] as? [String: Any])?["path"] as? String
     }
 
     func stop() {
@@ -147,8 +213,8 @@ final class CodexChatSession: AgentChatSession {
     /// 모델 바꾸기는 다음 스레드부터 적용된다 — app-server 에는 진행 중 스레드의 모델을
     /// 갈아 끼우는 요청이 없다 (Claude 의 set_model 컨트롤 메시지와 다르다).
     func setModel(_ model: String) { self.model = model }
-    /// Codex 의 권한은 승인 요청 단위로 오간다 — 모드 개념이 따로 없다.
-    func setPermissionMode(_ mode: String) {}
+    /// 다음 턴부터 적용된다 (turn/start 가 정책을 함께 싣는다).
+    func setPermissionMode(_ mode: String) { applyMode(mode) }
     /// riven MCP 도구는 아직 Codex 쪽에 연결하지 않았다.
     @discardableResult func respondTool(_ id: String, _ result: String) -> Bool { false }
 
@@ -228,25 +294,36 @@ final class CodexChatSession: AgentChatSession {
 
     private func handleServerRequest(_ method: String, _ params: [String: Any], rpcId: Any) {
         let key = UUID().uuidString
-        switch method {
+        // 실제 메서드에는 `item/` 접두사가 붙어 온다 (item/commandExecution/requestApproval).
+        // 접두사 없는 이름으로 매칭했다가 전부 default 로 빠졌고, default 는 빈 응답 —
+        // 즉 거절이었다. 사용자에겐 묻지도 않고 거부된 것처럼 보였다. 접미사로 맞춘다.
+        switch method.hasPrefix("item/") ? String(method.dropFirst(5)) : method {
         case "commandExecution/requestApproval":
             let cmd = commandText(params)
-            pendingApprovals[key] = (rpcId, method)
+            pendingApprovals[key] = (rpcId, method, params)
             let reason = params["reason"] as? String ?? ""
             DispatchQueue.main.async { [weak self] in
                 self?.onPermissionRequest?(key, "Bash", reason.isEmpty ? cmd : reason, cmd, nil)
             }
         case "fileChange/requestApproval":
-            pendingApprovals[key] = (rpcId, method)
+            pendingApprovals[key] = (rpcId, method, params)
             let root = params["grantRoot"] as? String
             let reason = params["reason"] as? String ?? t("chat.codex.fileChange")
             DispatchQueue.main.async { [weak self] in
                 self?.onPermissionRequest?(key, "Edit", reason, nil, root)
             }
         case "permissions/requestApproval":
-            // 권한 프로파일 승인은 모양이 다르다(허용할 권한 집합을 돌려줘야 한다). 아직
-            // 카드로 표현하지 않으므로 거절해 둔다 — 답을 안 하면 턴이 영영 멈춘다.
-            respondRPC(rpcId, ["permissions": [:], "scope": "turn"])
+            // 샌드박스 밖으로 나가려 할 때 온다 — 워크스페이스 밖 파일을 쓰거나 네트워크를
+            // 열 때. 처음엔 "카드로 못 그리니 거절" 로 두었는데, 그게 가장 흔한 승인이었다:
+            // 사용자에겐 묻지도 않고 거부된 것처럼 보였다.
+            pendingApprovals[key] = (rpcId, method, params)
+            let want = params["permissions"] as? [String: Any] ?? [:]
+            let reason = params["reason"] as? String
+            let detail = reason ?? permissionSummary(want)
+            let path = firstPath(want)
+            DispatchQueue.main.async { [weak self] in
+                self?.onPermissionRequest?(key, "Permissions", detail, nil, path)
+            }
         default:
             // 모르는 요청도 반드시 답한다. 침묵은 곧 멈춘 턴이다.
             respondRPC(rpcId, [:])
@@ -256,7 +333,8 @@ final class CodexChatSession: AgentChatSession {
     private func handleNotification(_ method: String, _ params: [String: Any]) {
         switch method {
         case "item/agentMessage/delta":
-            if let delta = params["delta"] as? String, !delta.isEmpty {
+            if let itemId = params["itemId"] as? String, let delta = params["delta"] as? String, !delta.isEmpty {
+                emitted[itemId, default: ""] += delta
                 DispatchQueue.main.async { [weak self] in self?.onTextDelta?(delta) }
             }
         case "item/started", "item/completed":
@@ -288,11 +366,23 @@ final class CodexChatSession: AgentChatSession {
         }
     }
     private var tokenUsage: ChatUsage?
+    /// 메시지 항목별로 델타를 통해 이미 흘려보낸 글자 (완성본이 왔을 때 중복을 막는다).
+    private var emitted: [String: String] = [:]
 
     /// 도구 하나가 시작/끝났다 → 챗의 도구 줄로.
     private func handleItem(_ item: [String: Any], completed: Bool) {
         guard let type = item["type"] as? String else { return }
         switch type {
+        case "agentMessage":
+            // 델타 없이 완성본만 오는 턴이 있다 (도구를 쓴 뒤의 짧은 마무리 말이 그랬다).
+            // 델타만 보고 있으면 그런 답은 통째로 사라진다 — 실제로 파일은 만들어졌는데
+            // 챗에는 아무 말도 남지 않았다. 이미 흘려보낸 만큼을 빼고 나머지를 채운다.
+            guard completed, let id = item["id"] as? String, let text = item["text"] as? String else { return }
+            let already = emitted[id] ?? ""
+            emitted[id] = nil
+            guard text.count > already.count else { return }
+            let rest = String(text.dropFirst(already.count))
+            DispatchQueue.main.async { [weak self] in self?.onTextDelta?(rest) }
         case "commandExecution":
             guard !completed else { return }        // 시작할 때 한 번만 줄을 만든다
             let cmd = (item["command"] as? String) ?? (item["parsedCmd"] as? String) ?? ""

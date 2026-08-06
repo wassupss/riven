@@ -33,13 +33,9 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private var session: AgentChatSession?
     /// 이 챗을 굴리는 CLI. 페인마다 다르다 (같은 워크스페이스에 Claude 챗과 Codex 챗이 함께 뜬다).
-    var agentKind: ChatAgentKind = .claude {
-        didSet {
-            // Codex 에는 권한 "모드" 가 없다 — 승인은 요청이 올 때마다 카드로 묻는다.
-            // 아무 일도 안 하는 드롭다운을 남겨 두면 눌러 보고 고장으로 읽는다.
-            modePopup.isHidden = agentKind == .codex
-        }
-    }
+    var agentKind: ChatAgentKind = .claude
+    /// 벤치용: 승인 카드가 실제로 떴는지 확인한다.
+    var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
     private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
@@ -932,7 +928,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
         // 어느 CLI 든 패널이 기대하는 것은 [[AgentChatSession]] 하나뿐이다.
         let s: AgentChatSession? = agentKind == .codex
-            ? CodexChatSession(command: cmd, cwd: cwd, resume: resume, model: preferredModel)
+            ? CodexChatSession(command: cmd, cwd: cwd, resume: resume, model: preferredModel,
+                               permissionMode: modes[modeIndex].1)
             : ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
                 permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
                 agentName: agentPersona, model: preferredModel)
@@ -995,6 +992,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // ---- permission / choice cards (per-mode policy, applied live) ----
     private func requestPermission(_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) {
+        debugOnApproval?(name, detail)
         // riven's own tools run in-app (choice card / preview / api) — never gate them.
         if name.hasPrefix("mcp__riven__") { session?.respond(id, allow: true); return }
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
@@ -1281,7 +1279,9 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // Live mode switch: no restart, so an in-flight turn keeps running.
     @objc private func modeChanged() {
-        session?.setPermissionMode(cliMode)
+        // riven 의 모드 이름을 그대로 넘긴다 — "auto" 를 여기서 "default" 로 뭉개면
+        // Codex 쪽에서 "자동" 과 "승인 요청" 을 구분할 수 없다. 옮기는 일은 세션이 한다.
+        session?.setPermissionMode(modes[modeIndex].1)
         Settings.shared.set("chatPermMode", modeIndex)   // persist so it survives reopen/relaunch
         addSystem(t("chat.mode.now", ["m": modes[modeIndex].0]))
     }

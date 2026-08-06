@@ -1037,7 +1037,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 RLog.log("CXPANE Codex 팬 없음"); RLog.log("CXPANE done"); return
                             }
                             RLog.log("CXPANE 팬 제목=\(pane.panel.title) 종류=\(pane.panel.chatKind.rawValue)")
-                            pane.chat.ask("숫자 42만 답해. 설명 금지.") { answer in
+                            pane.chat.debugOnApproval = { name, detail in
+                                RLog.log("CXPANE 승인카드 \(name) · \(detail.prefix(60))")
+                            }
+                            let prompt = ProcessInfo.processInfo.environment["RIVEN_CODEXPROMPT"]
+                                ?? "숫자 42만 답해. 설명 금지."
+                            pane.chat.ask(prompt) { answer in
                                 RLog.log("CXPANE 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(60))")
                                 RLog.log("CXPANE 세션=\(pane.panel.sessionId?.prefix(8) ?? "-")")
                                 if let shot = ProcessInfo.processInfo.environment["RIVEN_CODEXPANESHOT"],
