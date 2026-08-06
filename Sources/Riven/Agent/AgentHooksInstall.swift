@@ -34,7 +34,11 @@ enum AgentHooksInstall {
         Hook(event: "SubagentStop", matcher: nil),
         Hook(event: "PostToolUse", matcher: "Edit|Write|MultiEdit"),
     ]
-    /// Codex documents a smaller set — no Notification / StopFailure.
+    /// Codex's event set, VERIFIED against codex-cli 0.146.1 on 2026-08-06 by running
+    /// `codex exec` with a probe hook on each name and reading what actually fired.
+    /// It has no Notification / StopFailure. PostToolUse exists but Codex's tool names
+    /// are its own (apply_patch / shell, not Edit|Write|MultiEdit), so the Changes-panel
+    /// matcher would never hit — that's left out rather than shipped as a dead matcher.
     private static let codexHookSpecs: [Hook] = [
         Hook(event: "SessionStart", matcher: nil),
         Hook(event: "UserPromptSubmit", matcher: nil),
@@ -94,23 +98,35 @@ enum AgentHooksInstall {
     }
 
     // ---- Codex -------------------------------------------------------------
-    // UNVERIFIED. Codex is not installed on the machine this was developed on, so the
-    // shape below follows the published config reference but has NOT been exercised
-    // end to end. It is therefore gated behind a setting that defaults to OFF — an
-    // unrecognized `-c` key would make the agent fail to launch, and breaking a pane
-    // is a far worse failure than losing status badges on it.
+    // VERIFIED on 2026-08-06 against codex-cli 0.146.1. What the first pass got wrong:
     //
-    // To validate on a machine with Codex:
-    //   1. codex -c features.hooks=true -c 'hooks.Stop=[{hooks=[{type="command",command="/bin/echo hi"}]}]'
-    //   2. confirm it starts and the hook runs on turn end
-    //   3. flip `codexHooks` on by default and delete this notice
-    static var codexEnabled: Bool { Settings.shared.bool("codexHooks", false) }
+    //   • The `-c hooks.<Event>=[…]` shape and the event names were right, and Codex
+    //     accepts them without complaint. But the hooks NEVER RAN. Codex will not run a
+    //     hook it has not been TRUSTED to run (a `trusted_hash` it keeps in `hooks.state`).
+    //   • `-c bypass_hook_trust=true` does nothing; the CLI flag is
+    //     `--dangerously-bypass-hook-trust`.
+    //
+    // The trust flag looks like the fix and is the opposite of one. Verified in riven's
+    // own terminal: WITH the flag, Codex prints "hooks may run without review", skips the
+    // review screen — and the hooks still show Active=0 and never fire. WITHOUT it, Codex
+    // opens "Hooks need review · 6 hooks are new or changed" listing exactly riven's six,
+    // and trusting them there is what turns them on. So riven does NOT pass the flag; a
+    // toggle for it would have been a switch that promises status and delivers silence.
+    //
+    // What that means for the user: the FIRST Codex tab shows Codex's own review screen
+    // (press t to trust all). That is Codex asking, not riven — riven only supplies the
+    // hook set, and the answer is remembered per hook set, so it is asked once.
+    //
+    // The delivery chain past that point is verified end to end: Codex ran the real
+    // `riven-hook` helper and riven's socket received well-formed envelopes for
+    // SessionStart and Stop, carrying session_id / cwd / last_assistant_message.
+    static var codexEnabled: Bool { Settings.shared.bool("codexHooks", true) }
 
     /// Extra argv for a Codex launch. Empty when disabled or unavailable, so the
     /// caller can always splice the result in unconditionally.
     static func codexLaunchOverrides() -> [String] {
         guard codexEnabled, let helper = helperPath else { return [] }
-        var argv = ["-c", "features.hooks=true"]
+        var argv: [String] = ["-c", "features.hooks=true"]
         for h in codexHookSpecs {
             // Inline TOML value; the command string is single-quoted for the shell that
             // ultimately runs the launch line, and TOML-quoted inside it.

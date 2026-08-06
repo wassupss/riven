@@ -490,6 +490,23 @@ final class SettingsWindow: NSPanel {
         agentNative.contentTintColor = Theme.fg
         addRow(t("settings.agentNative"), desc: t("settings.agentNativeDesc"), agentNative)
 
+        // 설치된 CLI 를 그대로 보여 준다. 예전에는 못 찾으면 채팅 안에 "CLI 없음" 한 줄이
+        // 뜰 뿐이라, 어디를 고쳐야 하는지 알 수 없었다.
+        addSection(t("settings.cliSection"))
+        for a in AgentDiscovery.available() {
+            let ver = a.name == "Claude Code" ? AgentDiscovery.claudeVersion() : nil
+            addRow(a.name, desc: a.cmd, statusChip(ver.map { "v\($0)" } ?? t("settings.cliFound"), ok: true))
+        }
+        if AgentDiscovery.available().isEmpty {
+            addNote(t("settings.cliNone"))
+        }
+
+        // Codex 는 처음 보는 훅을 실행하기 전에 자기 화면에서 한 번 물어본다. 그걸 모르면
+        // "왜 Codex 만 상태가 안 뜨지" 가 되므로, 설정에서 미리 알려 준다.
+        if AgentDiscovery.codexCmd() != nil {
+            addNote(t("settings.codexHooksNote"))
+        }
+
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
         // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
         addSection(t("settings.snippets"))
@@ -918,6 +935,28 @@ final class SettingsWindow: NSPanel {
         l.translatesAutoresizingMaskIntoConstraints = false
         l.widthAnchor.constraint(lessThanOrEqualToConstant: 540).isActive = true
         addWideRow(l)
+    }
+
+    /// 값이 아니라 상태를 보여 주는 자리 (설치된 CLI 의 버전처럼 읽기 전용인 것).
+    /// 컨트롤처럼 보이면 누를 수 있다고 오해하니, 알약 모양 라벨로 둔다.
+    private func statusChip(_ text: String, ok: Bool) -> NSView {
+        let l = NSTextField(labelWithString: text)
+        l.font = UIScale.font(UIScale.caption, .medium)
+        l.textColor = ok ? Theme.success : Theme.fgDim
+        l.translatesAutoresizingMaskIntoConstraints = false
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.hover.cgColor
+        box.layer?.cornerRadius = 5
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(l)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            l.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
+            l.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+            l.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        return box
     }
 
     /// 카드 폭을 통째로 쓰는 줄 (테마 격자·미리보기처럼 이름/컨트롤로 나뉘지 않는 것).

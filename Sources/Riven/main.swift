@@ -982,6 +982,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CODEXCHECK=1: Codex 페인이 실제로 훅을 흘려보내는지 (배지·상태의 근거).
+                // riven 의 터미널(libghostty) 안에서 돌려야 의미가 있다 — pty 밖에서 codex TUI 는
+                // 터미널 질의 응답을 기다리다 아무것도 그리지 않는다.
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXCHECK"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        guard let codex = AgentDiscovery.available().first(where: { $0.name == "Codex" }) else {
+                            RLog.log("CODEX 설치 안 됨"); RLog.log("CODEX done"); return
+                        }
+                        RLog.log("CODEX 훅인자=\(AgentHooksInstall.codexLaunchOverrides().count)개")
+                        self.launchAgent(codex)
+                        // TUI 가 뜰 시간을 준 뒤 한 턴 돌린다. 페인은 이름으로 찾는다 —
+                        // currentTerminalPanel() 은 먼저 있던 빈 터미널을 가리킬 수 있다.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                            let tv = self.activeDock?.groups.flatMap { $0.panels }
+                                .first { $0.agentName == "Codex" }?.content as? TerminalView
+                            RLog.log("CODEX 입력대상=\(tv == nil ? "없음" : "찾음")")
+                            // Codex 는 처음 보는 훅을 그냥 실행하지 않는다 — "Hooks need review" 를
+                            // 띄우고 고르게 한다. 2번(Trust all and continue)을 골라야 그 다음이 있다.
+                            // "Hooks need review" → Enter 로 목록을 열고, 거기서 t (trust all).
+                            tv?.sendEnter()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { tv?.sendText("t") }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                                tv?.sendText("숫자 42만 답해. 설명 금지.")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { tv?.sendEnter() }
+                            }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                            let sessions = PaneSessionRegistry.shared.sessions(inWorkspace: self.workspace?.path ?? "")
+                            for s in sessions {
+                                RLog.log("CODEX 페인 \(s.prefix(8)) 훅수신=\(PaneSessionRegistry.shared.isHookBacked(s))"
+                                         + " codex세션=\(CodexSessions.sessionId(forPane: s)?.prefix(8) ?? "-")")
+                            }
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_CODEXSHOT"],
+                               let v = self.window?.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                            }
+                            RLog.log("CODEX done")
+                        }
+                    }
+                }
                 // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
                 if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1764,6 +1809,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 fi
                 command "${RIVEN_REAL_CLAUDE:-claude}" "${rv[@]}" "$@"
               }
+              # riven: 손으로 친 `codex` 도 상태 훅을 달고, 이 페인의 대화를 이어 간다.
+              # Codex 는 세션 id 를 골라 줄 수 없어 방향이 반대다 — 지난 실행의 SessionStart
+              # 훅이 적어 둔 id 를 읽어 `resume` 로 되돌아간다 (파일이 없으면 새 대화).
+              codex() {
+                local -a rv
+                case " $* " in
+                  (*" resume "*|*" fork "*|*" exec "*|*" -h "*|*" --help "*) ;;
+                  (*)
+                    if [ -n "$RIVEN_CODEX_SESSION_FILE" ] && [ -s "$RIVEN_CODEX_SESSION_FILE" ]; then
+                      rv+=(resume "$(cat "$RIVEN_CODEX_SESSION_FILE")")
+                    fi
+                    # 훅 설정은 riven 이 통째로 만들어 넘긴다 (사용자의 ~/.codex 는 건드리지 않는다).
+                    if [ -n "$RIVEN_CODEX_HOOK_ARGS" ]; then
+                      local -a ha; eval "ha=($RIVEN_CODEX_HOOK_ARGS)"; rv+=("${ha[@]}")
+                    fi
+                    ;;
+                esac
+                command "${RIVEN_REAL_CODEX:-codex}" "${rv[@]}" "$@"
+              }
             fi
             export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
             """,
@@ -1830,6 +1894,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // FSEvents. Turn boundaries drive the FSEvents backstop gate above.
     private func routeAgentEvent(_ event: AgentEvent) {
         guard let pane = PaneSessionRegistry.shared.pane(for: event.pane) else { return }
+        // Codex 는 세션 id 를 riven 이 정해 줄 수 없다 (`--session-id` 가 없다). 대신 여기서
+        // 받아 적어 두면 다음 실행 때 `codex resume <id>` 로 같은 대화가 이어진다.
+        if event.agent == "codex", event.kind == .sessionStart, let sid = event.sessionId {
+            CodexSessions.record(pane: event.pane, sessionId: sid)
+        }
         switch event.kind {
         case .userPromptSubmit:
             turnActiveWorkspaces.insert(pane.workspace)
@@ -1948,6 +2017,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "RIVEN_HOOK_SOCKET": AgentHookServer.socketPath,
         ]
         if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
+        // 셸 심이 손으로 친 `codex` 에도 같은 것을 붙일 수 있도록.
+        if let codex = AgentDiscovery.codexCmd() { env["RIVEN_REAL_CODEX"] = codex }
+        if let f = CodexSessions.path(forPane: paneSession) { env["RIVEN_CODEX_SESSION_FILE"] = f }
+        let codexHookArgs = AgentHooksInstall.codexLaunchOverrides()
+        if !codexHookArgs.isEmpty {
+            env["RIVEN_CODEX_HOOK_ARGS"] = codexHookArgs.map(shellQuote).joined(separator: " ")
+        }
         if let srv = terminalTools, let cfg = srv.mcpConfigPath() {
             env["RIVEN_MCP_CONFIG"] = cfg
             env["RIVEN_MCP_PROMPT"] = srv.systemPrompt()
@@ -1974,8 +2050,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 cmd = "\(cmd ?? "claude") --mcp-config \(shellQuote(cfg)) --append-system-prompt \(shellQuote(srv.systemPrompt()))"
             }
         } else if agent?.name == "Codex" {
-            let overrides = AgentHooksInstall.codexLaunchOverrides()
-            if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
+            // `resume <id>` 는 서브커맨드라 반드시 옵션보다 앞에 온다. 이전 실행에서 받아 적은
+            // 세션이 있으면 그 대화로 돌아가고, 없으면 새로 시작한다.
+            var argv = [cmd ?? "codex"]
+            if let sid = CodexSessions.sessionId(forPane: paneSession) {
+                argv += ["resume", sid]
+                RLog.log("agent launch: Codex resume \(sid)")
+            }
+            argv += AgentHooksInstall.codexLaunchOverrides().map(shellQuote)
+            cmd = argv.joined(separator: " ")
         }
         // Reap an orphaned agent from a previous riven still holding this session id before
         // relaunching. claude ignores SIGHUP, so quitting riven leaves it running instead of
@@ -2031,6 +2114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
             PaneSessionRegistry.shared.unregister(session: paneSession)
             AgentActivity.shared.forget(pane: paneSession)
+            // 닫은 대화는 닫힌 채로 둔다 — 새 페인이 남의 옛 Codex 대화를 이어받으면 안 된다.
+            CodexSessions.forget(pane: paneSession)
         }
         // A bell or desktop-notification means the agent FINISHED a turn / needs input
         // (riven's pty:bell + pty:done). This is the authoritative "done" signal —
