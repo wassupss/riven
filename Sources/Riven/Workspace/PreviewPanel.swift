@@ -932,34 +932,36 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 패널 안에서 그대로 쓸 수 있다 (요소·네트워크·소스·콘솔 전부). SPI 라 없어질 수 있으니
     /// 못 꺼내면 riven 콘솔 서랍으로 물러난다.
     @objc private func openInspector() {
-        if inspectorHeight.constant > 0 { closeInspector(); return }
         guard let web = tab?.web else { return }
         let sel = NSSelectorFromString("_inspector")
         guard web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? else {
             toggleConsole(true); setStatus(t("browser.inspectHint")); return
         }
-        _ = ins.perform(NSSelectorFromString("connect"))
-        _ = ins.perform(NSSelectorFromString("show"))
-        let vsel = NSSelectorFromString("inspectorWebView")
-        guard ins.responds(to: vsel),
-              let v = ins.perform(vsel)?.takeUnretainedValue() as? NSView else {
-            toggleConsole(true); setStatus(t("browser.inspectHint")); return
+        func visible() -> Bool {
+            let v = NSSelectorFromString("isVisible")
+            guard ins.responds(to: v) else { return false }
+            // BOOL 은 perform 으로 못 읽는다 — 값을 직접 꺼낸다.
+            typealias BoolFn = @convention(c) (AnyObject, Selector) -> Bool
+            let imp = class_getMethodImplementation(object_getClass(ins), v)
+            return imp.map { unsafeBitCast($0, to: BoolFn.self)(ins, v) } ?? false
         }
-        embeddedInspector = v
-        v.removeFromSuperview()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        inspectorHost.addSubview(v)
-        NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: inspectorHost.leadingAnchor),
-            v.trailingAnchor.constraint(equalTo: inspectorHost.trailingAnchor),
-            v.topAnchor.constraint(equalTo: inspectorHost.topAnchor),
-            v.bottomAnchor.constraint(equalTo: inspectorHost.bottomAnchor),
-        ])
-        toggleConsole(false)
-        inspectorHost.isHidden = false
-        inspectorHeight.constant = max(UIScale.pt(260), bounds.height * 0.45)
-        needsLayout = true
+        if visible() {                                   // 열려 있으면 닫는다
+            _ = ins.perform(NSSelectorFromString("hide"))
+            inspectorHeight.constant = 0
+            inspectorHost.isHidden = true
+            focusWeb()
+            return
+        }
+        _ = ins.perform(NSSelectorFromString("connect"))
+        // WebKit 자신의 도킹. 뷰를 우리가 뜯어 옮기면 인스펙터가 곧 스스로 접혀 빈 칸만 남았다
+        // (실제로 그렇게 사라졌다). attach 는 WebKit 이 자기 창 아래에 붙이는 정식 경로다.
+        if ins.responds(to: NSSelectorFromString("attach")) {
+            _ = ins.perform(NSSelectorFromString("attach"))
+        }
+        _ = ins.perform(NSSelectorFromString("show"))
+        setStatus(t("browser.inspectorOpened"))
     }
+
     private func closeInspector() {
         embeddedInspector?.removeFromSuperview()
         embeddedInspector = nil

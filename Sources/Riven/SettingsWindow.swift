@@ -144,8 +144,11 @@ final class SettingsWindow: NSPanel {
             sideHair.widthAnchor.constraint(equalToConstant: 1),
 
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            // 카드가 사이드바·창 가장자리에 딱 붙지 않도록 스크롤 뷰 자체를 안쪽으로 넣는다.
+            // 스택의 폭 제약이나 edgeInsets 를 건드리면 서로 싸워서 화면이 통째로 비어 버린다
+            // (하얗게·까맣게 두 번 겪었다). 이 방법은 안쪽 레이아웃을 전혀 건드리지 않는다.
+            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 18),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),

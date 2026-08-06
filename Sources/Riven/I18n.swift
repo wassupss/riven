@@ -357,6 +357,7 @@ enum I18n {
         "browser.closeTab": ("탭 닫기", "Close tab"),
         "browser.urlPlaceholder": ("주소 또는 검색어", "Address or search"),
         "browser.findNone": ("「{q}」 를 찾지 못했습니다", "No match for \u{201C}{q}\u{201D}"),
+        "browser.inspectorOpened": ("개발자 도구를 열었습니다", "Opened developer tools"),
         "browser.inspect": ("개발자 도구 (요소 정보 검사)", "Developer tools (Inspect Element)"),
         "browser.inspectHint": ("메뉴에서 「요소 정보 검사」 를 고르면 Safari Web Inspector 가 열립니다.",
                                 "Right-click the page and choose Inspect Element."),
