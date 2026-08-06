@@ -26,18 +26,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     var window: NSWindow!
     var rail: WorkspaceRail!
-    var explorer: FileTreeView!
-    var searchPanel: SearchPanel!
-    var gitPanel: GitPanel!
+    var explorer: FileTreeView! { workspace.map { explorer(for: $0) } }
+    private let explorerHost = NSView()
+    var searchPanel: SearchPanel! { workspace.map { search(for: $0) } }
+    var gitPanel: GitPanel! { workspace.map { git(for: $0).changes } }
     /// 지금 보고 있는 워크스페이스의 브라우저 (없으면 만든다).
     var previewPanel: PreviewPanel! { workspace.map { preview(for: $0) } }
     var apiPanel: APIClientPanel! { workspace.map { api(for: $0) } }
-    var changesPanel: ChangesPanel!
+    var changesPanel: ChangesPanel! { workspace.map { changes(for: $0) } }
     /// 지금 보고 있는 워크스페이스의 메모 패널 (없으면 만든다).
     var notesPanel: NotesPanel! { workspace.map { notes(for: $0) } }
     var teamPanel: AgentGroupPanel! { workspace.map { team(for: $0) } }
     private var chatSeq = 0                  // multi-instance chat panes: one session per pane
-    var sourceControl: SourceControlView!   // git panel = commit graph + working changes
+    var sourceControl: SourceControlView! { workspace.map { git(for: $0) } }
     var sidebarLower: NSView!
     var editor: EditorView!
     var tabBar: TabBar!
@@ -1180,46 +1181,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        explorer = FileTreeView(frame: NSRect(x: 0, y: 0, width: 220, height: 480))
-        explorer.onOpenFile = { [weak self] url in self?.openFile(url) }
-        explorer.onOpenAsNote = { [weak self] url in
-            guard let self, let ws = self.workspace else { return }
-            if self.auxDockPanels["notes"] == nil { self.toggleDockPanel("notes") }
-            self.notesPanel.setWorkspace(ws)
-            self.notesPanel.open(url)
-        }
-        explorer.onChanged = { [weak self] in self?.refreshGit() }
-        explorer.onFileDeleted = { [weak self] url in
-            guard let self else { return }
-            if self.tabBar.tabs.contains(url.path) { self.closeTab(url.path) }
-        }
-        explorer.onFileRenamed = { [weak self] old, new in
-            guard let self else { return }
-            if self.tabBar.tabs.contains(old.path) {
-                self.closeTab(old.path)
-                self.openFile(new)
-            }
-        }
-
-        // The auxiliary panels (search/git/preview/changes) are dock panels now —
-        // created here, added to the dock grid on demand (⌘⇧F/G/V/C).
-        searchPanel = SearchPanel(frame: .zero)
-        searchPanel.onOpen = { [weak self] path, line, col in
-            self?.openFileAt(URL(fileURLWithPath: path), line: line, column: col)
-        }
-        gitPanel = GitPanel(frame: .zero)
-        gitPanel.onOpenDiff = { [weak self] rel in self?.openGitDiff(rel) }
-        sourceControl = SourceControlView(changes: gitPanel)
-        sourceControl.graph.onOpenFile = { [weak self] rel in
-            guard let self, let ws = self.workspace else { return }
-            self.openFile(URL(fileURLWithPath: ws.path).appendingPathComponent(rel))
-        }
-        changesPanel = ChangesPanel(frame: .zero)
-        changesPanel.onOpen = { [weak self] path in self?.openAgentEdit(path) }
-        changesPanel.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
 
         sidebarSplitV.addArrangedSubview(rail)
-        sidebarSplitV.addArrangedSubview(explorer)
+        // 탐색기는 워크스페이스마다 다른 인스턴스라, 사이드바에는 빈 자리만 두고
+        // 활성 워크스페이스의 것을 끼운다 (에디터를 옮겨 붙이는 방식과 같다).
+        explorerHost.autoresizingMask = [.width, .height]
+        sidebarSplitV.addArrangedSubview(explorerHost)
         sidebarSplitV.autoresizingMask = [.width, .height]
         sidebarContainer.addSubview(sidebarSplitV)   // fills below the head
         // Sidebar head (riven's .sidebar-head): the macOS traffic lights on the left,
@@ -1874,7 +1841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Open the Changes panel (240px, right) WITHOUT stealing keyboard focus from the
     // terminal (riven's ensureChanges → restore prev active panel).
     private func ensureChangesPanel() {
-        if auxDockPanels["changes"] != nil { changesPanel.refresh(); return }
+        if auxDockPanels["changes"] != nil { changesPanel?.refresh(); return }
         let prevResponder = window?.firstResponder
         toggleDockPanel("changes")
         if let prev = prevResponder { window?.makeFirstResponder(prev) }
@@ -2189,13 +2156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.id == "editor" { return "editor" }
         if p.content is TerminalView { return p.agentName != nil ? "agent" : "terminal" }
         if p.content is ChatPanel { return "chat" }
-        if p.content === sourceControl { return "git" }
-        if p.content === searchPanel { return "search" }
+        if p.content is SourceControlView { return "git" }
+        if p.content is SearchPanel { return "search" }
         // 워크스페이스마다 인스턴스가 따로라 종류로 본다 (=== 로 비교하면 다른 워크스페이스의
         // 패널이 "panel" 로 떨어져, 목록·복원에서 정체를 잃는다).
         if p.content is PreviewPanel { return "preview" }
         if p.content is APIClientPanel { return "api" }
-        if p.content === changesPanel { return "changes" }
+        if p.content is ChangesPanel { return "changes" }
         if p.content is NotesPanel { return "notes" }
         if p.content is AgentGroupPanel { return "team" }
         return "panel"
@@ -2499,6 +2466,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return p
     }
 
+    /// 이 워크스페이스의 탐색기. 사이드바에 늘 보이는 뷰라, 그 워크스페이스를 한 번이라도
+    /// 연 뒤에만 만든다. 펼쳐 둔 폴더와 스크롤 위치가 워크스페이스마다 유지된다.
+    func explorer(for ws: URL) -> FileTreeView {
+        let st = state(for: ws)
+        if let e = st.explorer { return e }
+        let e = FileTreeView(frame: NSRect(x: 0, y: 0, width: 220, height: 480))
+        e.onOpenFile = { [weak self] url in self?.openFile(url) }
+        e.onOpenAsNote = { [weak self] url in
+            guard let self else { return }
+            self.ensureAux("notes", in: ws)
+            self.notes(for: ws).open(url)
+        }
+        e.onChanged = { [weak self] in self?.refreshGit() }
+        e.onFileDeleted = { [weak self] url in
+            guard let self else { return }
+            if self.tabBar.tabs.contains(url.path) { self.closeTab(url.path) }
+        }
+        e.onFileRenamed = { [weak self] old, new in
+            guard let self else { return }
+            if self.tabBar.tabs.contains(old.path) {
+                self.closeTab(old.path)
+                self.openFile(new)
+            }
+        }
+        e.setRoot(ws)
+        st.explorer = e
+        return e
+    }
+
+    /// 검색 패널 (워크스페이스마다). 검색어와 결과가 그대로 남는다.
+    func search(for ws: URL) -> SearchPanel {
+        let st = state(for: ws)
+        if let p = st.search { return p }
+        let p = SearchPanel(frame: .zero)
+        p.onOpen = { [weak self] path, line, col in
+            self?.openFileAt(URL(fileURLWithPath: path), line: line, column: col)
+        }
+        p.setRoot(ws)
+        st.search = p
+        return p
+    }
+
+    /// 소스 컨트롤 (워크스페이스마다). 고른 diff 와 그래프 위치가 유지된다.
+    func git(for ws: URL) -> SourceControlView {
+        let st = state(for: ws)
+        if let g = st.git { return g }
+        let changes = GitPanel(frame: .zero)
+        changes.onOpenDiff = { [weak self] rel in self?.openGitDiff(rel) }
+        let g = SourceControlView(changes: changes)
+        g.graph.onOpenFile = { [weak self] rel in
+            self?.openFile(URL(fileURLWithPath: ws.path).appendingPathComponent(rel))
+        }
+        g.setRoot(ws)
+        st.git = g
+        return g
+    }
+
+    /// 에이전트 변경 사항 (워크스페이스마다).
+    func changes(for ws: URL) -> ChangesPanel {
+        let st = state(for: ws)
+        if let c = st.changes { return c }
+        let c = ChangesPanel(frame: .zero)
+        c.onOpen = { [weak self] path in self?.openAgentEdit(path) }
+        c.onReverted = { [weak self] path in self?.reloadIfOpen(path) }
+        c.setWorkspace(ws)
+        st.changes = c
+        return c
+    }
+
     /// 이 워크스페이스의 메모 패널. 브라우저와 같은 이유로 워크스페이스마다 따로 둔다.
     func notes(for ws: URL) -> NotesPanel {
         let st = state(for: ws)
@@ -2524,11 +2560,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func sharedAuxView(_ id: String, ws: URL) -> NSView {
         switch id {
-        case "search": return searchPanel
-        case "git": return sourceControl
+        case "search": return search(for: ws)
+        case "git": return git(for: ws)
         case "preview": return preview(for: ws)
         case "api": return api(for: ws)
-        case "changes": return changesPanel
+        case "changes": return changes(for: ws)
         case "notes": return notes(for: ws)
         case "team": return team(for: ws)
         // 여기 빠진 id는 빈 NSView가 호스트에 덮여 패널이 통째로 클릭 불능이 된다
@@ -2540,9 +2576,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Point a shared aux panel at this workspace (they hold per-workspace roots).
     private func refreshAuxRoot(_ id: String, ws: URL) {
         switch id {
-        case "search": searchPanel.setRoot(ws)
-        case "git": sourceControl.setRoot(ws)
-        case "changes": changesPanel.setWorkspace(ws)
+        case "search": break
+        case "git": break
+        case "changes": break
         case "notes": break                    // 워크스페이스마다 따로라 다시 가리킬 것이 없다
         case "preview": break                  // 워크스페이스마다 따로라 다시 가리킬 것이 없다
         default: break
@@ -2738,6 +2774,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             n += 1
         }
         return canon
+    }
+
+    /// 패널을 그대로 들고 있을 워크스페이스 수. 워크스페이스마다 패널을 따로 두면 편한
+    /// 대신, 여러 곳을 오갈수록 메모리가 쌓인다 (12곳에 전부 열어 보니 199MB → 536MB 였다).
+    /// 최근에 본 몇 곳만 남기고 나머지는 놓아준다 — 돌아가면 그 자리에 다시 만들어진다.
+    private static let warmWorkspaces = Int(ProcessInfo.processInfo.environment["RIVEN_WARMWS"] ?? "") ?? 3
+
+    /// 오래 안 본 워크스페이스의 패널을 놓아준다.
+    private func trimColdWorkspaces() {
+        let live = states.filter { $0.key != workspace && $0.value.hasPanels }
+        guard live.count > Self.warmWorkspaces else { return }
+        let cold = live.sorted { $0.value.lastUsed > $1.value.lastUsed }.dropFirst(Self.warmWorkspaces)
+        for (url, st) in cold {
+            st.releasePanels()
+            RLog.log("workspace: released panels for \(url.lastPathComponent) (cold)")
+        }
     }
 
     private func state(for url: URL) -> WorkspaceState {
@@ -3091,6 +3143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         suppressAutoFocus = true   // don't let restored panels (editor/aux) steal focus; applied at the end
         if !workspaces.contains(url) { workspaces.append(url) }
         let st = state(for: url)
+        st.lastUsed = Date()
 
         // Snapshot the OUTgoing workspace's FULL dock layout (split tree + pane sizes% +
         // panel types, incl. editor/aux still in place) so returning restores it EXACTLY —
@@ -3282,8 +3335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // a workspace switch, and running it in the same frame is what made the switch feel janky.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.workspace == url else { return }   // bailed if switched again
-            self.explorer.setRoot(url)
-            self.searchPanel.setRoot(url); self.gitPanel.setRoot(url); self.changesPanel.setWorkspace(url)
+            // 각 패널이 워크스페이스마다 따로라 루트를 다시 가리킬 것이 없다. 탐색기만
+            // 사이드바 자리에 끼운다. 아직 안 만든 패널은 여기서도 만들지 않는다 —
+            // 워크스페이스를 스무 개 열어 두고 훑기만 해도 그만큼 만들어지면 안 된다.
+            self.adopt(self.explorer(for: url), into: self.explorerHost)
+            self.trimColdWorkspaces()   // 오래 안 본 곳의 패널은 여기서 놓아준다
             // 워크스페이스마다 패널이 따로라 다시 가리킬 필요가 없다. 떠나는 쪽 저장만.
             self.workspace.map { self.state(for: $0).notes?.flush() }
             self.refreshRailAgents()   // this workspace's agent rows
@@ -3341,7 +3397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             self.explorerRefreshTimer?.invalidate()
             self.explorerRefreshTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
-                self?.explorer.refreshTree()
+                self?.explorer?.refreshTree()
             }
         }
     }
@@ -3375,7 +3431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 workspace = nil; activeDock = nil
                 editorDockPanel = nil; auxDockPanels.removeAll()
                 editor.showEmpty(); tabBar.closeAll()
-                explorer.clear()                 // no workspace → empty the file tree too
+                explorerHost.subviews.forEach { $0.removeFromSuperview() }   // 워크스페이스 없음 → 트리도 비운다
                 statusBar.setWorkspaceName(nil); statusBar.setBranch(nil); window.title = "riven"
             }
         }
@@ -3611,6 +3667,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay + 1.5) { RLog.log("CLOSE done") }
+                }
+            }
+        }
+        // RIVEN_WSMANY=<n>: 워크스페이스를 여러 개 오갈 때 메모리가 어떻게 되는지.
+        // 패널을 워크스페이스마다 두기로 했으니, 많이 열어도 문제가 없어야 한다.
+        if let nStr = ProcessInfo.processInfo.environment["RIVEN_WSMANY"], let n = Int(nStr) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                func rss() -> Int {
+                    var info = mach_task_basic_info()
+                    var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size) / 4
+                    let kr = withUnsafeMutablePointer(to: &info) {
+                        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                            task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count)
+                        }
+                    }
+                    return kr == KERN_SUCCESS ? Int(info.resident_size) / 1_048_576 : -1
+                }
+                RLog.log("WSMANY 시작 RSS=\(rss())MB")
+                var dirs: [URL] = []
+                for i in 0..<n {
+                    let d = URL(fileURLWithPath: "/private/tmp/wsmany/ws\(i)")
+                    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+                    dirs.append(d)
+                }
+                var step = 0.0
+                // 1) 그냥 훑기 — 패널을 열지 않고 워크스페이스만 오간다.
+                for d in dirs {
+                    step += 0.6
+                    DispatchQueue.main.asyncAfter(deadline: .now() + step) { self.activate(d) }
+                }
+                step += 1.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                    RLog.log("WSMANY \(n)곳 훑은 뒤 RSS=\(rss())MB (탐색기만 생김)")
+                }
+                // 2) 각 워크스페이스에서 패널을 전부 열어 본다 — 최악의 경우.
+                for d in dirs {
+                    step += 1.2
+                    DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                        self.activate(d)
+                        for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
+                            self.ensureAux(id, in: d)
+                        }
+                    }
+                }
+                step += 3
+                DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                    let warm = self.workspaces.filter { self.states[$0]?.hasPanels == true }
+                    RLog.log("WSMANY \(n)곳에 패널 전부 연 뒤 RSS=\(rss())MB 패널유지=\(warm.count)곳")
+                }
+                // 계속 오가도 늘지 않는지 (한 바퀴 더).
+                for d in dirs {
+                    step += 0.8
+                    DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                        self.activate(d)
+                        for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
+                            self.ensureAux(id, in: d)
+                        }
+                    }
+                }
+                step += 3
+                DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                    let warm = self.workspaces.filter { self.states[$0]?.hasPanels == true }
+                    RLog.log("WSMANY 한 바퀴 더 돈 뒤 RSS=\(rss())MB 패널유지=\(warm.count)곳")
+                }
+                // 놓아준 워크스페이스로 돌아가면 패널이 제자리에 되살아나야 한다.
+                step += 1.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                    let cold = dirs.first!
+                    RLog.log("WSMANY 돌아가기 전 ws0 패널유지=\(self.states[cold]?.hasPanels ?? false)")
+                    self.activate(cold)
+                }
+                step += 2.5
+                DispatchQueue.main.asyncAfter(deadline: .now() + step) {
+                    let cold = dirs.first!
+                    let st = self.states[cold]
+                    let inDock = (st?.dock?.groups.flatMap { $0.panels }.map { $0.id }) ?? []
+                    let shown = ["preview", "notes", "team", "api", "search", "git", "changes"].filter { id in
+                        guard let host = st?.auxHosts[id] else { return false }
+                        return !host.subviews.isEmpty
+                    }
+                    RLog.log("WSMANY 돌아온 뒤 독패널=\(inDock.sorted()) 내용복구=\(shown.sorted())")
+                    RLog.log("WSMANY done")
                 }
             }
         }
@@ -4216,8 +4355,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async {
                 self.statusBar.setBranch(branch)
                 self.rail.setBranch(ws, branch)
-                self.explorer.setGitStatus(status)
-                self.gitPanel.refresh()   // keep the Source Control panel live
+                self.state(for: ws).explorer?.setGitStatus(status)
+                self.state(for: ws).git?.changes.refresh()   // 열어 둔 소스 컨트롤만 갱신
             }
         }
     }
@@ -4249,7 +4388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let ws = workspace else { RLog.log("openFile: no workspace!"); return }
         let st = state(for: ws)
         let path = url.path
-        explorer.reveal(url)   // keep the explorer selection on the active file
+        explorer?.reveal(url)   // keep the explorer selection on the active file
         if st.openTabs.contains(path) {
             st.activeTab = path
             showEditorPane()
@@ -4367,7 +4506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tabBar.setActive(path)
         showTabContent(path)
         statusBar.setFileInfo(fileInfo(path))
-        explorer.reveal(URL(fileURLWithPath: path))   // explorer follows the active tab
+        explorer?.reveal(URL(fileURLWithPath: path))   // explorer follows the active tab
     }
 
     // Show a tab in the editor. Passes the real disk content so a model that was
@@ -5048,12 +5187,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let title: String; let symbol: String
         let content: NSView
         switch id {
-        case "search":  title = t("title.search"); symbol = "magnifyingglass"; searchPanel.setRoot(ws); content = searchPanel
-        case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; sourceControl.setRoot(ws); content = sourceControl
+        case "search":  title = t("title.search"); symbol = "magnifyingglass"; content = search(for: ws)
+        case "git":     title = t("title.git"); symbol = "arrow.triangle.branch"; content = git(for: ws)
         case "preview":
             title = t("title.preview"); symbol = "safari"; content = preview(for: ws)
         case "api":     title = t("title.api"); symbol = "network"; content = api(for: ws)
-        case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; changesPanel.setWorkspace(ws); content = changesPanel
+        case "changes": title = t("title.changes"); symbol = "clock.arrow.circlepath"; content = changes(for: ws)
         case "notes":   title = t("title.notes"); symbol = "note.text"; content = notes(for: ws)
         case "team":    title = t("title.team"); symbol = "person.3"; content = team(for: ws)
         default: return nil
