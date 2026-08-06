@@ -934,10 +934,31 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 — 조금 기다렸다 집어서 배지로.
             if name == "ExitPlanMode" { self?.pickUpPlanFile(attempt: 0) }
         }
-        s?.onSubagentStart = { [weak self] id, type, desc in self?.addSubagentPane(id, type: type, desc: desc) }
-        s?.onSubagentTool = { [weak self] pid, name, detail, code, path in self?.subToPane[pid]?.addTool(name, detail, code, path) }
-        s?.onSubagentText = { [weak self] pid, text in self?.subToPane[pid]?.addText(text) }
-        s?.onSubagentDone = { [weak self] id, result in self?.subToPane[id]?.finish(result) }
+        s?.onSubagentStart = { [weak self] id, type, desc in
+            if ChatPanel.subBench { RLog.log("SUB 시작 id=\(id.suffix(8)) type=\(type) desc=\(desc.prefix(40))") }
+            self?.addSubagentPane(id, type: type, desc: desc)
+        }
+        s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
+            if ChatPanel.subBench {
+                RLog.log("SUB 도구 pid=\(pid.suffix(8)) \(name) \(detail.prefix(40)) 팬있음=\(self?.subToPane[pid] != nil)")
+            }
+            self?.subToPane[pid]?.addTool(name, detail, code, path)
+        }
+        s?.onSubagentText = { [weak self] pid, text in
+            if ChatPanel.subBench { RLog.log("SUB 텍스트 pid=\(pid.suffix(8)) \(text.count)자 팬있음=\(self?.subToPane[pid] != nil)") }
+            self?.subToPane[pid]?.addText(text)
+        }
+        s?.onSubagentToolResult = { [weak self] pid, text, isErr in
+            if ChatPanel.subBench { RLog.log("SUB 도구결과 pid=\(pid.suffix(8)) \(text.count)자 오류=\(isErr)") }
+            self?.subToPane[pid]?.addToolResult(text, isError: isErr)
+        }
+        s?.onSubagentDone = { [weak self] id, result in
+            if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self?.subToPane[id] != nil)") }
+            self?.subToPane[id]?.finish(result)
+            // 메인 대화에도 흔적을 남긴다. 서브의 결과는 옆 패널에만 들어가서, 이쪽만 보고
+            // 있으면 아무 일도 안 일어난 것처럼 보였다 (사용자가 다시 물어보게 되던 지점).
+            self?.noteSubagentFinished(id)
+        }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
         s?.onExit = { [weak self] code in
@@ -963,6 +984,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
         // choice regardless of the current permission mode.
         if name == "ExitPlanMode" {
+            pendingRequestId = id
+            defer { pendingRequestId = nil }
             enqueueChoice(title: t("chat.planProceed"), detail: "", code: code, path: nil, options: [
                 (t("chat.planGo"), { [weak self] in self?.session?.respond(id, allow: true) }),
                 (t("chat.planRevise"), { [weak self] in self?.session?.respond(id, allow: false) })
@@ -974,8 +997,11 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.modePopup.selectItem(at: 2); self?.modeChanged(); self?.session?.respond(id, allow: true) })
         let deny: (String, () -> Void) = (t("chat.deny"), { [weak self] in self?.session?.respond(id, allow: false) })
         switch modeIndex {
-        case 1:  enqueueChoice(title: t("chat.permReq", ["name": name]), detail: detail, code: code, path: path,   // 승인 요청
-                               options: [approve, alwaysAuto, deny])
+        case 1:
+            pendingRequestId = id                            // 만료되면 이 카드를 바로 표시한다
+            enqueueChoice(title: t("chat.permReq", ["name": name]), detail: detail, code: code, path: path,
+                          options: [approve, alwaysAuto, deny])
+            pendingRequestId = nil
         case 2:  session?.respond(id, allow: true)          // 자동 실행 — everything (main + sub)
         default: session?.respond(id, allow: false)         // 계획 — no edits expected
         }
@@ -1720,7 +1746,18 @@ final class ChatPanel: NSView, Themable, Scalable {
     // resizes / moves / tabs exactly like every other panel — instead of the old fixed left/right
     // split that couldn't be positioned. This panel only owns the SubagentPane VIEW; the dock owns
     // its placement.
+    static let subBench = ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil
+    /// 서브에이전트 이름 (완료 알림 문구에 쓴다).
+    private var subNames: [String: String] = [:]
+
+    private func noteSubagentFinished(_ id: String) {
+        let name = subNames[id] ?? "sub-agent"
+        addSystem(t("chat.subagentDone", ["n": name]))
+    }
+
     private func addSubagentPane(_ id: String, type: String, desc: String) {
+        subNames[id] = type.isEmpty ? "sub-agent" : type
+        addSystem(t("chat.subagentStart", ["n": subNames[id] ?? "", "d": desc]))
         let pane = SubagentPane(type: type, desc: desc)
         pane.onClose = { [weak self] in self?.subToPane[id] = nil; self?.onCloseSubagentPanes?([id]) }
         subToPane[id] = pane

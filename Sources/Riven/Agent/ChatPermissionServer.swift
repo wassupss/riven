@@ -27,7 +27,11 @@ final class ChatPermissionServer {
     // Risky built-ins + ALL MCP tools (so user-configured MCP servers go through riven's
     // approval policy too). riven's own ask_user is auto-allowed in requestPermission.
     private static let gated = "Edit|Write|MultiEdit|NotebookEdit|Bash|WebFetch|WebSearch|ExitPlanMode|mcp__.*"
-    private static let decisionTimeout: TimeInterval = 300
+    // 사람이 자리를 비우는 시간까지 기다린다. 5분이면 잠깐 회의만 다녀와도 조용히 거부되고,
+    // 그동안 CLI 는 답을 기다리며 서 있을 뿐이라 길게 잡아도 손해가 없다.
+    private static let decisionTimeout: TimeInterval = 1800
+    /// 기다리던 승인 요청이 사라졌다 (시간 초과·세션 종료). 카드를 그때 바로 만료로 바꾸기 위한 것.
+    var onExpire: ((_ id: String, _ reason: String) -> Void)?
 
     init?() {
         let dir = AgentHookServer.ensureSupportDir()
@@ -59,7 +63,12 @@ final class ChatPermissionServer {
         unlink(path)
         // Fail-safe: unblock any relays still waiting (deny) so `claude` isn't wedged.
         lock.lock(); let rest = pending; pending.removeAll(); lock.unlock()
+        if !rest.isEmpty { RLog.log("PERM 세션이 끝나 대기 중이던 승인 \(rest.count)건을 거부했습니다") }
         rest.values.forEach { $0(false) }
+        let ids = Array(rest.keys)
+        DispatchQueue.main.async { [weak self] in
+            ids.forEach { self?.onExpire?($0, t("chat.expired.session")) }
+        }
     }
 
     // ---- socket setup (mirrors AgentHookServer's POSIX bind/listen) ----
@@ -122,6 +131,10 @@ final class ChatPermissionServer {
         if sem.wait(timeout: .now() + Self.decisionTimeout) == .timedOut {
             lock.lock(); pending.removeValue(forKey: id); lock.unlock()
             allowed = false
+            RLog.log("PERM 시간 초과로 거부했습니다 (\(Int(Self.decisionTimeout))초) tool=\(name)")
+            DispatchQueue.main.async { [weak self] in
+                self?.onExpire?(id, t("chat.expired.permTimeout", ["m": String(Int(Self.decisionTimeout) / 60)]))
+            }
         }
         _ = writeStr(client, Self.decisionJSON(allow: allowed))
     }

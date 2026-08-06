@@ -650,6 +650,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_SUBBENCH=1: 서브에이전트가 도구를 돌린 뒤 그 팬에 결과가 오는지.
+                if ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let chat = self.agentPanes().first?.chat else { RLog.log("SUB 팬 없음"); return }
+                            chat.ask("Task 도구로 general-purpose 서브에이전트를 하나 띄워서, "
+                                     + "Bash 로 `echo hello-riven-sub` 를 실행하고 그 출력만 그대로 보고하게 해. "
+                                     + "너는 서브에이전트가 보고한 문자열만 한 줄로 답해.") { answer in
+                                RLog.log("SUB 메인 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(120))")
+                                RLog.log("SUB done")
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SYMLINK=<경로>: 심볼릭 링크로 걸린 폴더가 탐색기에서 폴더로 보이고
                 // 안까지 읽히는지 (.claude/skills 를 공용 폴더로 링크해 둔 구성).
                 if let target = ProcessInfo.processInfo.environment["RIVEN_SYMLINK"] {

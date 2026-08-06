@@ -46,6 +46,10 @@ final class ClaudeChatSession {
     var onSubagentText: ((_ parentId: String, _ text: String) -> Void)?
     var onSubagentTool: ((_ parentId: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentDone: ((_ id: String, _ result: String) -> Void)?
+    /// 서브에이전트가 돌린 도구의 결과. 예전에는 이 이벤트를 아무 데도 보내지 않아서,
+    /// 서브 팬에는 "Bash <명령>" 만 뜨고 출력이 영영 안 나왔다 — 오래 걸리는 명령일수록
+    /// 죽은 것처럼 보였다 (사용자가 다시 물어보게 되는 지점).
+    var onSubagentToolResult: ((_ parentId: String, _ text: String, _ isError: Bool) -> Void)?
     var onFileEdited: ((_ path: String) -> Void)?   // a main-thread edit landed → feed the Changes panel
     var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?, _ error: String?) -> Void)?
     var onExit: ((_ code: Int32) -> Void)?
@@ -100,6 +104,7 @@ final class ClaudeChatSession {
             DispatchQueue.main.async { self.onPermissionRequest?(id, name, d, code, path) }
         }
         ask?.onExpire = { [weak self] id, reason in self?.onAskExpired?(id, reason) }
+        perm?.onExpire = { [weak self] id, reason in self?.onAskExpired?(id, reason) }
         ask?.onTool = { [weak self] id, tool, args, _ in
             DispatchQueue.main.async { self?.onToolRequest?(id, tool, args) }
         }
@@ -243,7 +248,15 @@ final class ClaudeChatSession {
                     let isErr = (block["is_error"] as? Bool) ?? false
                     if !isErr { main { self.onFileEdited?(path) } }
                 }
-                guard agentToolIds.contains(tid) else { continue }
+                if !agentToolIds.contains(tid) {
+                    // 서브에이전트가 돌린 도구의 결과 (parent = 그 서브에이전트의 Task id).
+                    if let parent {
+                        let text = resultText(block["content"])
+                        let isErr = (block["is_error"] as? Bool) ?? false
+                        main { self.onSubagentToolResult?(parent, text, isErr) }
+                    }
+                    continue
+                }
                 let text = resultText(block["content"])
                 main { self.onSubagentDone?(tid, text) }
             }

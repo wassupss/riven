@@ -1436,6 +1436,19 @@ final class SubagentPane: NSView {
         guard !t.isEmpty else { return }
         add(ChatText.proseMarkdown(t))
     }
+    /// 도구가 돌고 난 출력. 길면 앞부분만 — 서브 팬은 진행을 보는 곳이지 로그 뷰어가 아니다.
+    func addToolResult(_ text: String, isError: Bool) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let shown = t.count > 1200 ? String(t.prefix(1200)) + "\n…" : t
+        let label = NSTextField(labelWithString: shown)
+        label.font = UIScale.mono(UIScale.caption)
+        label.textColor = isError ? Theme.danger : Theme.fgDim
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 12
+        label.translatesAutoresizingMaskIntoConstraints = false
+        add(label)
+    }
     func finish(_ result: String) {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil)
