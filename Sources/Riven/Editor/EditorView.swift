@@ -12,7 +12,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     var onDirty: ((String, Bool) -> Void)?
     var onLSP: ((_ id: Int, _ method: String, _ path: String, _ params: [String: Any]) -> Void)?
     var onLSPSync: ((_ path: String, _ version: Int, _ text: String) -> Void)?
-    var onAI: ((_ prefix: String, _ suffix: String) -> Void)?
     var onFocused: (() -> Void)?   // Monaco gained focus → activate the editor's dock group
     var onAgentRevert: ((_ path: String, _ newAfter: String) -> Void)?  // hunk reverted in the editor
     var onSendToAgent: ((_ file: String, _ start: Int, _ end: Int, _ text: String) -> Void)?  // ⌘L
@@ -114,7 +113,13 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var fontSize = UIScale.editorFontSize
     func setFontSize(_ size: Int) {
         fontSize = size
-        web.evaluateJavaScript("window.rivenSetFontSize && window.rivenSetFontSize(\(size))", completionHandler: nil)
+        // 글꼴 이름도 함께 넘긴다. 설정에서 고른 글꼴이 저장만 되고 에디터에는 반영되지 않으면
+        // 고른 사람 입장에서는 안 먹는 설정이다.
+        let family = Settings.shared.string("editorFontFamily", "")
+        let js = family.isEmpty
+            ? "window.rivenSetFontSize && window.rivenSetFontSize(\(size))"
+            : "window.rivenSetFont && window.rivenSetFont(\(size), \(jsString(family)))"
+        web.evaluateJavaScript(js, completionHandler: nil)
     }
     // 설정 → 일반 → 에디터 폰트 크기 변경을 즉시 반영 (재시작 불필요).
     private func observeFontSize() {
@@ -234,14 +239,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func requestSave(path: String) {
         web.evaluateJavaScript("window.rivenRequestSave(\(jsString(path)))", completionHandler: nil)
     }
-    // Trigger AI completion: gather cursor context in Monaco (→ onAI).
-    func triggerAI() {
-        web.evaluateJavaScript("window.rivenTriggerAI()", completionHandler: nil)
-    }
-    // AI ghost completion at the cursor (Tab accepts).
-    func suggest(_ text: String) {
-        web.evaluateJavaScript("window.rivenSuggest(\(jsString(text)))", completionHandler: nil)
-    }
     // Agent diff review: pass before/after so Monaco computes hunks itself (green
     // added lines, red deleted view-zones, per-hunk revert). riven's MonacoEditorPane.
     func agentDiff(path: String, before: String, after: String) {
@@ -303,10 +300,6 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         case "lspSync":
             if let path = body["path"] as? String, let v = body["version"] as? Int, let text = body["text"] as? String {
                 onLSPSync?(path, v, text)
-            }
-        case "ai":
-            if let prefix = body["prefix"] as? String, let suffix = body["suffix"] as? String {
-                onAI?(prefix, suffix)
             }
         case "focus":
             onFocused?()

@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var rail: WorkspaceRail!
     var explorer: FileTreeView! { workspace.map { explorer(for: $0) } }
     private let explorerHost = NSView()
+    func debugExplorerHost() -> NSView { explorerHost }
     var searchPanel: SearchPanel! { workspace.map { search(for: $0) } }
     var gitPanel: GitPanel! { workspace.map { git(for: $0).changes } }
     /// 지금 보고 있는 워크스페이스의 브라우저 (없으면 만든다).
@@ -650,6 +651,197 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_GHOSTTY=1: ghostty 설정 읽기·적용이 실제로 되는지.
+                if ProcessInfo.processInfo.environment["RIVEN_GHOSTTY"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        for p in GhosttyImport.candidatePaths {
+                            let exists = FileManager.default.fileExists(atPath: p.path)
+                            let size = ((try? FileManager.default.attributesOfItem(atPath: p.path))?[.size] as? Int) ?? -1
+                            RLog.log("GH 후보: \(exists ? "있음(\(size)B)" : "없음  ") \(p.path)")
+                        }
+                        guard let f = GhosttyImport.read() else { RLog.log("GH 설정 파일 없음"); return }
+                        RLog.log("GH 찾음: \(f.path.path)")
+                        RLog.log("GH 읽은 값: 글꼴=\(f.fontFamily ?? "-") 크기=\(f.fontSize.map(String.init) ?? "-")"
+                                 + " 테마=\(f.theme ?? "-") 배경=\(f.background ?? "-")")
+                        RLog.log("GH 요약: \(f.summary)")
+                        RLog.log("GH 적용: \(GhosttyImport.apply(f))")
+                        RLog.log("GH 적용 후 설정: 글꼴=\(Settings.shared.string("terminalFontFamily", "-"))"
+                                 + " 크기=\(Settings.shared.int("terminalFontSize", 0))")
+                        RLog.log("GH 터미널 설정줄: \(GhosttyApp.fontFamilyLine)")
+                        RLog.log("GH done")
+                    }
+                }
+                // RIVEN_INSPSURFACE=<url>: 인스펙터를 패널 안에 붙일 수 있는지 확인.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_INSPSURFACE"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            p.debugOpenDevTools()
+                            RLog.log("INSP 열기 시도 → " + p.debugInspectorState())
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                RLog.log("INSP 3초 뒤 " + p.debugConsoleState())
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_INSPSHOT"],
+                                   let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) {
+                                    p.cacheDisplay(in: p.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                            }
+                            RLog.log("INSP done")
+                        }
+                    }
+                }
+                // RIVEN_CHATSHOT=<png>: 채팅 팬을 실제 대화로 채우고 그 모습을 찍는다.
+                // 답을 기다리지 않고 정해진 시각에 찍는다 — 스트리밍 중간 모습도 봐야 한다.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_CHATSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let pane = self.agentPanes().first else { RLog.log("CHATSHOT 팬 없음"); return }
+                            RLog.log("CHATSHOT 팬 준비됨")
+                            pane.chat.ask("riven 브라우저의 탭 복원 방식을 세 줄로 설명하고, "
+                                          + "작은 표 하나와 짧은 swift 코드 블록을 포함해 줘.") { _ in }
+                            for (i, at) in [12.0, 30.0, 50.0].enumerated() {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    let v = pane.chat
+                                    guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    let path = i == 0 ? shot : shot.replacingOccurrences(of: ".png", with: "-\(i).png")
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: path))
+                                    }
+                                    RLog.log("CHATSHOT \(Int(at))초 → \(path) (\(Int(v.bounds.width))x\(Int(v.bounds.height)))")
+                                }
+                            }
+                        }
+                    }
+                }
+                // RIVEN_SEARCH=<질의>: 주소창에 검색어를 쳤을 때 어디로 가는지.
+                if let q = ProcessInfo.processInfo.environment["RIVEN_SEARCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        RLog.log("SEARCH 해석: \(q) → \(BrowserTab.resolve(q)?.absoluteString ?? "실패")")
+                        RLog.log("SEARCH 자동완성 마지막줄: \(BrowserStore.suggest(q).last.map { "\($0.kind) \($0.url)" } ?? "없음")")
+                        _ = p.agentNavigate(q, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            RLog.log("SEARCH 실제 이동: \(p.debugURL())")
+                            RLog.log("SEARCH done")
+                        }
+                    }
+                }
+                // RIVEN_CONBENCH=<url>: 콘솔 서랍이 열린 뒤 상태가 흔들리는지 (비었다/깜빡인다).
+                if let target = ProcessInfo.processInfo.environment["RIVEN_CONBENCH"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            p.debugToggleConsole(true)
+                            for at in [0.2, 1.0, 2.0, 3.0, 5.0, 8.0] {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + at) {
+                                    RLog.log("CON +\(at)초 " + p.debugConsoleState())
+                                }
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 9) { RLog.log("CON done") }
+                        }
+                    }
+                }
+                // RIVEN_GITSHOT=<png>: 소스 컨트롤 패널 현재 모습.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_GITSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("git", in: ws)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            let v = self.git(for: ws)
+                            guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("GITSHOT done \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                            RLog.log("GITSHOT 변경사항=\(Int(v.changes.frame.minY))~\(Int(v.changes.frame.maxY))"
+                                     + " 그래프=\(Int(v.graph.frame.minY))~\(Int(v.graph.frame.maxY))")
+                            RLog.log("GITSHOT 그래프안: " + v.graph.debugFrames())
+                        }
+                    }
+                }
+                // RIVEN_DEVTOOLS=<url>: 콘솔이 페이지 출력·오류를 잡고, 그 페이지에서 코드를
+                // 실행하고, 캐시 지우기·강제 새로고침이 도는지.
+                if let target = ProcessInfo.processInfo.environment["RIVEN_DEVTOOLS"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        p.debugToggleConsole(true)
+                        _ = p.agentNavigate(target, newTab: false)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            let lines = p.debugConsole().debugLines()
+                            RLog.log("DEV 콘솔 \(lines.count)줄")
+                            for l in lines.prefix(8) { RLog.log("DEV   | " + l.replacingOccurrences(of: "\n", with: " ").prefix(90)) }
+                            p.debugConsole().debugRun("window.__mark + 1")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                let after = p.debugConsole().debugLines()
+                                RLog.log("DEV 실행 결과=\(after.suffix(2).joined(separator: " / "))")
+                                p.hardReload()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    RLog.log("DEV 강제 새로고침 뒤 콘솔=\(p.debugConsole().debugLines().count)줄")
+                                    p.clearCache()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                        if let shot = ProcessInfo.processInfo.environment["RIVEN_DEVSHOT"],
+                                           let rep = p.bitmapImageRepForCachingDisplay(in: p.bounds) {
+                                            p.cacheDisplay(in: p.bounds, to: rep)
+                                            if let d = rep.representation(using: .png, properties: [:]) {
+                                                try? d.write(to: URL(fileURLWithPath: shot))
+                                            }
+                                        }
+                                        RLog.log("DEV done")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // RIVEN_CLOSEW=1: ⌘W 가 탭을 닫고, 마지막 탭이면 패널까지 닫는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CLOSEW"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("preview", in: ws)
+                        let p = self.preview(for: ws)
+                        _ = p.agentNavigate("https://example.com", newTab: false)
+                        _ = p.agentNavigate("https://example.org", newTab: true)
+                        func open() -> Bool { self.states[ws]?.auxPanels["preview"] != nil }
+                        func focusBrowser() {
+                            guard let panel = self.states[ws]?.auxPanels["preview"], let g = panel.group else { return }
+                            g.select(id: panel.id); self.states[ws]?.dock?.setActive(g)
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            focusBrowser()
+                            RLog.log("CLOSEW 시작 탭=\(p.debugTabURLs().count)개 패널열림=\(open()) 활성=\(self.states[ws]?.dock?.activeGroup?.activePanel?.id ?? "-")")
+                            self.debugCloseTabMenu()   // 실제 ⌘W 메뉴 경로
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                RLog.log("CLOSEW ⌘W 1회 → 탭=\(p.debugTabURLs().count)개 패널열림=\(open())")
+                                self.debugCloseTabMenu()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    RLog.log("CLOSEW ⌘W 2회(마지막 탭) → 패널열림=\(open()) (거짓이어야 정상)")
+                                    // 다시 열면 마지막 주소가 살아 있어야 한다.
+                                    self.ensureAux("preview", in: ws)
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                        RLog.log("CLOSEW 다시 열기 → 탭=\(self.preview(for: ws).debugTabURLs())")
+                                        RLog.log("CLOSEW done")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // RIVEN_SUBBENCH=1: 서브에이전트가 도구를 돌린 뒤 그 팬에 결과가 오는지.
                 if ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -989,7 +1181,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                         // DEBUG: auto-trigger AI completion to verify the flow.
                         if ProcessInfo.processInfo.environment["RIVEN_AITEST"] != nil {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.editor.triggerAI() }
                         }
                         // DEBUG: exercise the exact ⌘S path (saveMenu → tabBar.active →
                         // requestSave) with format-on-save on, to verify prettier/eslint run.
@@ -1151,6 +1342,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.settingsMenu()
                     if let t = ProcessInfo.processInfo.environment["RIVEN_SETTINGS_TAB"].flatMap(Int.init) {
                         self.settingsWin?.openTab(t)
+                    }
+                    if let shot = ProcessInfo.processInfo.environment["RIVEN_SETTINGSSHOT"] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            guard let v = self.settingsWin?.contentView,
+                                  let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("SETSHOT done \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                        }
                     }
                 }
                 // Reveal a sidebar panel for capture (RIVEN_PANEL=search|git).
@@ -2680,6 +2882,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.onFocused = { [weak self, weak p] in self?.focusGroup(containing: p) }
         // 캡처 → 그 워크스페이스에서 돌고 있는 에이전트에게 PNG 경로를 넣어 준다.
         p.onCapture = { [weak self] path in self?.deliverToAgent(" " + path + " ") }
+        // 마지막 탭을 닫으면 이 워크스페이스의 브라우저 패널도 닫는다 (× 를 누른 것과 같다).
+        p.onRequestClose = { [weak self] in
+            guard let self, let st = self.states[ws],
+                  let panel = st.auxPanels["preview"], let dock = st.dock else { return }
+            dock.removePanel(panel)
+        }
         st.preview = p
         p.restoreLastURL()
         return p
@@ -2713,6 +2921,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// Move a shared panel view into a workspace's host container (one view; cheap).
     private func adopt(_ view: NSView, into host: NSView) {
+        // 호스트에는 하나만 있어야 한다. 예전 것을 안 걷으면 뷰가 쌓이고, 나중에 붙은 것이
+        // 위를 덮는다 — 워크스페이스를 오갈 때 남의 탐색기가 그대로 보이던 원인이다
+        // (돌아왔을 때는 이미 붙어 있어 early return 에 걸려 아무 일도 하지 않았다).
+        for v in host.subviews where v !== view { v.removeFromSuperview() }
         guard view.superview !== host else { return }
         view.removeFromSuperview()
         view.frame = host.bounds
@@ -2782,11 +2994,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, let ws = self.workspace else { return }
             self.lsp.client(languageId: self.langId(path), rootPath: ws.path)?
                 .didChange(uri: "file://\(path)", version: version, text: text)
-        }
-        ed.onAI = { [weak ed] prefix, suffix in
-            AIProvider.shared.complete(prefix: prefix, suffix: suffix) { text in
-                DispatchQueue.main.async { ed?.suggest(text ?? "") }
-            }
         }
         ed.setFormatOnSave(Settings.shared.bool("formatOnSave", false))
         ed.setEditorKeymap(Settings.shared.string("editorKeymap", "vscode"))
@@ -3878,6 +4085,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     RLog.log("WSMANY 돌아온 뒤 독패널=\(inDock.sorted()) 내용복구=\(shown.sorted())")
                     RLog.log("WSMANY done")
                 }
+            }
+        }
+        // RIVEN_EXBENCH=1: 워크스페이스를 오갈 때 탐색기가 그 워크스페이스 것으로 바뀌는지.
+        if ProcessInfo.processInfo.environment["RIVEN_EXBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                for i in 0..<2 {
+                    let d = URL(fileURLWithPath: "/private/tmp/exws/ws\(i)")
+                    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+                    try? "hello".write(to: d.appendingPathComponent("only-in-ws\(i).txt"), atomically: true, encoding: .utf8)
+                }
+                func report(_ label: String) {
+                    let host = self.debugExplorerHost()
+                    let shown = host.subviews.compactMap { ($0 as? FileTreeView)?.debugRoot() }
+                    RLog.log("EX \(label): 활성=\(self.workspace?.lastPathComponent ?? "-") "
+                             + "호스트안=\(host.subviews.count)개 뿌리=\(shown) "
+                             + "보이는것=\((host.subviews.last as? FileTreeView)?.debugRoot() ?? "없음")")
+                }
+                var t = 0.0
+                for i in [0, 1, 0, 1] {
+                    t += 2.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                        self.activate(URL(fileURLWithPath: "/private/tmp/exws/ws\(i)"))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { report("ws\(i) 로 이동") }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + t + 2) { RLog.log("EX done") }
             }
         }
         // RIVEN_NOTEBENCH=1: 메모 패널이 목록을 읽고 그리는 데 드는 시간.
@@ -5042,7 +5276,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Command(title: t("menu.save"), hint: "⌘S") { [weak self] in if let p = self?.tabBar.active { self?.editor.requestSave(path: p) } },
             Command(title: t("menu.newTerminal"), hint: "⌘T") { [weak self] in self?.newTerminal() },
             Command(title: t("menu.toggleSidebar"), hint: "⌘B") { [weak self] in self?.toggleSidebar() },
-            Command(title: t("cmd.aiComplete"), hint: "⌃Space") { [weak self] in self?.editor.triggerAI() },
             Command(title: t("cmd.gitGraph"), hint: "⌘⇧G") { [weak self] in self?.toggleDockPanel("git") },
             Command(title: t("cmd.apiPanel"), hint: "") { [weak self] in self?.toggleDockPanel("api") },
             Command(title: t("cmd.distributeEvenly"), hint: "⌥⌘=") { [weak self] in self?.activeDock?.distributeEvenly() },
@@ -5056,6 +5289,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ⌘W acts on the FOCUSED panel (riven's sendToFocused → activePanel): if the
     // terminal holds focus, close that terminal dock panel; otherwise close the
     // active editor tab.
+    func debugCloseTabMenu() { closeTabMenu() }
     @objc private func closeTabMenu() {
         // A modal/aux window (settings / palette / quick panel) takes ⌘W first.
         if let kw = NSApp.keyWindow, kw !== window { kw.performClose(nil); return }
@@ -5065,6 +5299,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let tv = window?.firstResponder as? TerminalView,
            let p = currentTerminalPanel(), p.content === tv {
             activeDock?.removePanel(p); return
+        }
+        // 브라우저가 활성이면 ⌘W 는 먼저 브라우저 탭을 닫는다 — 브라우저에서 늘 그렇다.
+        // 마지막 탭이었으면 브라우저가 스스로 패널 닫기를 요청한다 (onRequestClose).
+        // (패널의 content 는 호스트 컨테이너라 타입으로 못 알아본다 — id 로 본다.)
+        if let panel = activeDock?.activeGroup?.activePanel, panel.id == "preview",
+           let ws = workspace {
+            preview(for: ws).closeActiveTab()
+            return
         }
         // Otherwise act on the active dock panel (riven's sendToFocused → activePanel).
         if let panel = activeDock?.activeGroup?.activePanel {
@@ -5110,6 +5352,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // ---- global UI zoom (⌘+ / ⌘- / ⌘0) — scales the WHOLE UI (editor + terminals +
     // all AppKit chrome), matching riven's browser page-zoom, via UIScale. ----
+    /// 설정 화면에서도 같은 경로를 쓴다 (메뉴·단축키와 결과가 달라지면 안 된다).
+    func zoomFromSettings(_ delta: Int) {
+        if delta == 0 { applyZoom(UIScale.reset(), delta: 0) }
+        else { applyZoom(UIScale.step(delta), delta: delta) }
+    }
     @objc private func zoomInMenu() { applyZoom(UIScale.step(+1), delta: +1) }
     @objc private func zoomOutMenu() { applyZoom(UIScale.step(-1), delta: -1) }
     @objc private func zoomResetMenu() { applyZoom(UIScale.reset(), delta: 0) }
@@ -5207,7 +5454,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             guard let self else { return e }
             if e.modifierFlags.contains(.control), e.charactersIgnoringModifiers == " " {
-                self.editor.triggerAI()   // gathers cursor context → onAI → provider
                 return nil
             }
             if e.modifierFlags.contains(.command),
@@ -5433,6 +5679,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func wsScopeReport() {
+        // 파일 감시 경로: 다른 워크스페이스에서 .md 가 생겨도 지금 보는 쪽에 뜨면 안 된다.
+        if let mineWS = workspace, let theirs = workspaces.first(where: { $0 != mineWS }) {
+            let f = theirs.appendingPathComponent("에이전트문서.md")
+            try? "# 저쪽 문서\n".write(to: f, atomically: true, encoding: .utf8)
+            surfaceAgentMarkdown(f.path, ws: theirs)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                RLog.log("WSSCOPE md: 내쪽 메모패널=\(self.states[mineWS]?.auxPanels["notes"] != nil) (거짓이어야 정상)"
+                         + " 저쪽 메모패널=\(self.states[theirs]?.auxPanels["notes"] != nil) (참이어야 정상)"
+                         + " 저쪽에 뜬 문서=\(self.states[theirs]?.notes?.debugCurrentPath() ?? "없음")")
+            }
+        }
         // 다른 워크스페이스의 팬이 돌기 시작해도, 보고 있는 워크스페이스에 조직도가
         // 새로 생기면 안 된다 (예전에는 teamPanel 이 "지금 보는 곳" 을 가리켜 그랬다).
         if let mineWS = workspace, let theirs = allAgentPanes().first(where: { $0.ws != mineWS }) {
@@ -5562,9 +5820,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard AppDelegate.isInside(url, ws), FileManager.default.fileExists(atPath: path) else { return }
         guard Date().timeIntervalSince(lastMarkdownSurface) > 1.5 else { return }
         lastMarkdownSurface = Date()
-        if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
-        notesPanel.setWorkspace(ws)
-        notesPanel.open(url)
+        // 그 문서가 속한 워크스페이스에 연다. 예전에는 ws 를 인자로 받고도 무시한 채
+        // "지금 보고 있는" 워크스페이스에 메모 패널을 열고 거기에 남의 문서를 띄웠다 —
+        // 에이전트에게 시켜 놓고 다른 워크스페이스로 옮기면 그대로 겪는다.
+        ensureAux("notes", in: ws)
+        notes(for: ws).open(url)
     }
 
     /// 심볼릭 링크와 ".." 를 모두 편 절대 경로.

@@ -11,6 +11,10 @@ final class SettingsWindow: NSPanel {
     private let scroll = NSScrollView()
     private let content = FlippedStack()
     private var activeTab = 0
+    private var steppers: [String: NSStepper] = [:]
+    private var fontPickers: [String: NSPopUpButton] = [:]
+    private let editorPreview = NSTextField(labelWithString: "")
+    private let terminalPreview = NSTextField(labelWithString: "")
     private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
@@ -40,7 +44,7 @@ final class SettingsWindow: NSPanel {
     private let hair = NSView()
 
     init() {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         title = t("settings.title")
         backgroundColor = Theme.bg2
@@ -64,7 +68,7 @@ final class SettingsWindow: NSPanel {
         // Header: "설정" title (left) + Close (right) over the tab bar.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = NSTextField(labelWithString: t("settings.title"))
-        titleLabel.font = UIScale.font(UIScale.title, .semibold)
+        titleLabel.font = UIScale.font(UIScale.small, .semibold)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = titleLabel
@@ -79,53 +83,72 @@ final class SettingsWindow: NSPanel {
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
             closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -14),
-            closeBtn.topAnchor.constraint(equalTo: header.topAnchor, constant: 12),
+            closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             closeBtn.heightAnchor.constraint(equalToConstant: 22),
             closeBtn.widthAnchor.constraint(equalToConstant: 44)
         ])
 
-        // Tab bar (underline-active), aligned with the content padding.
-        let tabStack = NSStackView()
-        tabStack.orientation = .horizontal; tabStack.spacing = 4
-        tabStack.translatesAutoresizingMaskIntoConstraints = false
+        // 왼쪽 목록 + 오른쪽 내용 (macOS 설정 방식). 위쪽 탭 줄은 항목이 늘어날수록 좁아지고,
+        // 넓은 창에서 오른쪽이 통째로 비어 "동떨어져" 보였다. 목록을 왼쪽에 세우면 지금 어디에
+        // 있는지가 늘 보이고, 오른쪽은 내용에 온전히 쓴다.
+        let sidebar = NSView()
+        sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        let navStack = NSStackView()
+        navStack.orientation = .vertical; navStack.alignment = .leading; navStack.spacing = 2
+        navStack.translatesAutoresizingMaskIntoConstraints = false
         for (i, label) in tabs.enumerated() {
-            let b = makeTab(label, i)
-            tabButtons.append(b); tabStack.addArrangedSubview(b)
+            let b = makeNavItem(label, symbol: SettingsWindow.tabSymbols[i], index: i)
+            tabButtons.append(b)
+            navStack.addArrangedSubview(b)
+            b.widthAnchor.constraint(equalTo: navStack.widthAnchor).isActive = true
         }
-        hair.wantsLayer = true; hair.layer?.backgroundColor = Theme.hairline.cgColor
-        hair.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(tabStack); header.addSubview(hair)
+        sidebar.addSubview(navStack)
+        let sideHair = NSView()
+        sideHair.wantsLayer = true; sideHair.layer?.backgroundColor = Theme.hairline.cgColor
+        sideHair.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sideHair)
 
         // Scrollable content.
-        content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
-        // Reliable inner padding (the documentView leading constraint is ignored by
-        // the scroll view, so pad via the stack's own insets instead).
-        content.edgeInsets = NSEdgeInsets(top: 14, left: 20, bottom: 20, right: 20)
+        content.orientation = .vertical; content.alignment = .leading; content.spacing = 0
+        content.edgeInsets = NSEdgeInsets(top: 12, left: 0, bottom: 24, right: 0)
         content.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = content
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
-        root.addSubview(header); root.addSubview(scroll)
+        root.addSubview(header); root.addSubview(sidebar); root.addSubview(scroll)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: root.topAnchor),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: 78),
-            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),  // no traffic lights now
-            titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 14),
-            tabStack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
-            tabStack.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-            hair.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            hair.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            hair.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-            hair.heightAnchor.constraint(equalToConstant: 1),
+            // 제목 줄은 창을 끄는 버튼 자리만큼만. "설정" 이라는 글자 하나가 44pt 를 통째로
+            // 먹고 있었다 — 그만큼 내용이 아래로 밀렸다.
+            header.heightAnchor.constraint(equalToConstant: 34),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+
+            sidebar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 168),
+            navStack.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 10),
+            navStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 8),
+            navStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -8),
+            sideHair.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            sideHair.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            sideHair.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            sideHair.widthAnchor.constraint(equalToConstant: 1),
+
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            // 카드가 사이드바·창 가장자리에 딱 붙지 않도록 스크롤 뷰 자체를 안쪽으로 넣는다.
+            // 스택의 폭 제약이나 edgeInsets 를 건드리면 서로 싸워서 화면이 통째로 비어 버린다
+            // (하얗게·까맣게 두 번 겪었다). 이 방법은 안쪽 레이아웃을 전혀 건드리지 않는다.
+            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 18),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
@@ -144,6 +167,47 @@ final class SettingsWindow: NSPanel {
             self.showTab(self.activeTab)
         }
     }
+
+    static let tabSymbols = ["gearshape", "sparkles", "keyboard", "person.crop.circle", "info.circle"]
+
+    /// 왼쪽 목록 한 줄. 선택되면 알약 배경 — 지금 어디에 있는지가 늘 보인다.
+    private func makeNavItem(_ title: String, symbol: String, index: Int) -> NSButton {
+        // 버튼의 image+title 을 그대로 쓰면 아이콘 글리프 폭에 따라 글자 시작점이 달라진다
+        // (keyboard 는 넓고 info.circle 은 좁아서 "단축키" 만 밀려 보였다).
+        // 아이콘은 고정 폭 칸에 넣고, 글자는 늘 같은 x 에서 시작하게 한다.
+        let b = NSButton(title: "", target: self, action: #selector(tabClicked(_:)))
+        b.tag = index
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 6
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.heightAnchor.constraint(equalToConstant: UIScale.pt(30)).isActive = true
+
+        let icon = NSImageView()
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        icon.image?.isTemplate = true
+        icon.symbolConfiguration = .init(pointSize: UIScale.small, weight: .regular)
+        icon.imageScaling = .scaleProportionallyDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        let label = NSTextField(labelWithString: title)
+        label.font = UIScale.font(UIScale.body)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        b.addSubview(icon); b.addSubview(label)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: b.leadingAnchor, constant: 10),
+            icon.centerYAnchor.constraint(equalTo: b.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 18),      // 고정 칸
+            icon.heightAnchor.constraint(equalToConstant: 16),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: b.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: b.trailingAnchor, constant: -8),
+        ])
+        navIcons[index] = icon
+        navLabels[index] = label
+        return b
+    }
+    private var navIcons: [Int: NSImageView] = [:]
+    private var navLabels: [Int: NSTextField] = [:]
 
     private func makeTab(_ t: String, _ i: Int) -> NSButton {
         let b = NSButton(title: t, target: self, action: #selector(tabClicked(_:)))
@@ -164,26 +228,18 @@ final class SettingsWindow: NSPanel {
 
     // ---- tabs ----
     @objc private func tabClicked(_ s: NSButton) { showTab(s.tag) }
+    private func styleNav() {
+        for (i, b) in tabButtons.enumerated() {
+            let on = i == activeTab
+            b.layer?.backgroundColor = (on ? Theme.accentMuted : NSColor.clear).cgColor
+            navIcons[i]?.contentTintColor = on ? Theme.accent : Theme.fgDim
+            navLabels[i]?.textColor = on ? Theme.fg : Theme.fgDim
+            navLabels[i]?.font = UIScale.font(UIScale.body, on ? .semibold : .regular)
+        }
+    }
     private func showTab(_ i: Int) {
         activeTab = i
-        // Underline pinned to the active tab's own bottom (no fragile frame math), so
-        // it's always exactly under the text and flush with the tab-bar hairline.
-        for (j, b) in tabButtons.enumerated() {
-            b.contentTintColor = j == i ? Theme.fg : Theme.fgDim
-            b.subviews.filter { $0.identifier == tabUnderlineID }.forEach { $0.removeFromSuperview() }
-            if j == i {
-                let u = NSView(); u.identifier = tabUnderlineID; u.wantsLayer = true
-                u.layer?.backgroundColor = Theme.accent.cgColor
-                u.translatesAutoresizingMaskIntoConstraints = false
-                b.addSubview(u)
-                NSLayoutConstraint.activate([
-                    u.leadingAnchor.constraint(equalTo: b.leadingAnchor, constant: 2),
-                    u.trailingAnchor.constraint(equalTo: b.trailingAnchor, constant: -2),
-                    u.bottomAnchor.constraint(equalTo: b.bottomAnchor),
-                    u.heightAnchor.constraint(equalToConstant: 2)
-                ])
-            }
-        }
+        styleNav()
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         switch i {
         case 0: buildGeneral()
@@ -198,56 +254,76 @@ final class SettingsWindow: NSPanel {
     // ---- General tab ----
     private func buildGeneral() {
         let s = Settings.shared
-        addSection("언어 / Language")
+
+        addSection(t("settings.appearance"))
         let langSeg = NSSegmentedControl(labels: ["한국어", "English"], trackingMode: .selectOne,
                                          target: self, action: #selector(changeLanguage(_:)))
         langSeg.selectedSegment = (I18n.current == .en) ? 1 : 0
-        content.addArrangedSubview(langSeg)
-        content.addArrangedSubview(spacer(10))
+        addRow("언어 / Language", desc: t("settings.languageDesc"), langSeg)
 
-        addSection(t("settings.colorTheme"))
-        // Wrapping rows of theme swatch pills.
+        // 전체 크기 (⌘+ / ⌘- / ⌘0 과 같은 것). 단축키를 모르면 조절할 방법이 없었다.
+        let zoomSeg = NSSegmentedControl(labels: ["−", "\(Int(UIScale.factor * 100))%", "+"],
+                                         trackingMode: .momentary,
+                                         target: self, action: #selector(changeZoom(_:)))
+        zoomSeg.setWidth(34, forSegment: 0)
+        zoomSeg.setWidth(56, forSegment: 1)
+        zoomSeg.setWidth(34, forSegment: 2)
+        zoomSegment = zoomSeg
+        addRow(t("settings.uiScale"), desc: t("settings.uiScaleDesc"), zoomSeg)
+
+        // 테마는 이름만 늘어놓으면 뭘 고르는지 모른다 — 색 점이 붙은 격자로 보여 준다.
         swatches = []
-        var rowStack = newWrapRow()
-        content.addArrangedSubview(rowStack)
-        var count = 0
+        let grid = NSGridView()
+        grid.rowSpacing = 6; grid.columnSpacing = 6
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        var row: [NSView] = []
         for def in Theme.all {
-            if count == 3 { rowStack = newWrapRow(); content.addArrangedSubview(rowStack); count = 0 }
-            let pill = themeSwatch(def)
-            swatches.append(pill); rowStack.addArrangedSubview(pill); count += 1
+            row.append(themeSwatch(def))
+            if row.count == 3 { grid.addRow(with: row); row = [] }
         }
+        if !row.isEmpty {
+            while row.count < 3 { row.append(NSView()) }
+            grid.addRow(with: row)
+        }
+        for c in 0..<3 { grid.column(at: c).xPlacement = .fill }
+        addWideRow(grid)
 
         addSection(t("settings.editor"))
         editorSize.stringValue = String(s.int("editorFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(editorSize)))
-        formatOnSave.title = t("settings.formatOnSave")
+        addRow(t("settings.fontSize"), desc: nil, sizeControl(editorSize, key: "editorFontSize"))
+        addRow(t("settings.fontFamily"), desc: t("settings.fontFamilyDesc"),
+               fontMenu(key: "editorFontFamily", preview: editorPreview))
+        addWideRow(editorPreview)
+        formatOnSave.title = ""
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
         formatOnSave.target = self; formatOnSave.action = #selector(saveFormatOnSave)
         formatOnSave.contentTintColor = Theme.fg
-        formatOnSave.font = UIScale.font(UIScale.title)
-        content.addArrangedSubview(formatOnSave)
+        addRow(t("settings.formatOnSave"), desc: t("settings.formatOnSaveDesc"), formatOnSave)
 
         addSection(t("settings.terminal"))
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
-        content.addArrangedSubview(setRow(t("settings.fontSize"), fontField(terminalSize)))
+        addRow(t("settings.fontSize"), desc: nil, sizeControl(terminalSize, key: "terminalFontSize"))
+        addRow(t("settings.fontFamily"), desc: nil, fontMenu(key: "terminalFontFamily", preview: terminalPreview))
+        addWideRow(terminalPreview)
+        // 이미 ghostty 를 쓰던 사람은 글꼴·크기를 이미 맞춰 뒀다. 다시 고르게 하지 않는다.
+        let (ghosttyBtn, ghosttyStatus) = ghosttyControls()
+        addRow(t("settings.ghostty"), desc: ghosttyStatus.stringValue, ghosttyBtn)
+        ghosttyStatusLabel = ghosttyStatus
 
         addSection(t("settings.notifications"))
-        notify.title = t("settings.notifyDesc")
+        notify.title = ""
         notify.state = s.bool("notifications", true) ? .on : .off
         notify.target = self; notify.action = #selector(saveNotify)
         notify.contentTintColor = Theme.fg
-        notify.font = UIScale.font(UIScale.title)
-        content.addArrangedSubview(notify)
+        addRow(t("settings.notifyTitle"), desc: t("settings.notifyDesc"), notify)
 
-        crashReports.title = t("settings.crashReports")
+        crashReports.title = ""
         crashReports.state = s.bool("crashReporting", true) ? .on : .off
         crashReports.target = self; crashReports.action = #selector(saveCrashReports)
-        crashReports.contentTintColor = Theme.fg; crashReports.font = UIScale.font(UIScale.title)
-        content.addArrangedSubview(crashReports)
+        crashReports.contentTintColor = Theme.fg
+        addRow(t("settings.crashTitle"), desc: t("settings.crashReports"), crashReports)
 
-        content.addArrangedSubview(spacer(10))
-        let saveBtn = primaryButton(t("settings.saveFonts"), #selector(saveFonts))
-        content.addArrangedSubview(saveBtn)
+        content.addArrangedSubview(spacer(12))
     }
     private func newWrapRow() -> NSStackView {
         let r = NSStackView(); r.orientation = .horizontal; r.spacing = 8; r.alignment = .centerY
@@ -279,6 +355,106 @@ final class SettingsWindow: NSPanel {
     // 폰트 크기 입력칸 — 엔터를 치거나 포커스를 잃는 순간 바로 저장 + 적용된다.
     // (예전에는 "저장" 버튼을 눌러야 값이 들어갔고, 그마저도 읽는 쪽이 없어 재시작해도
     //  반영되지 않았다.)
+    // 크기: 숫자칸 + 스테퍼. 숫자만 있으면 몇까지 되는지도 모르고 한 칸씩 올리기도 번거롭다.
+    private func sizeControl(_ tf: NSTextField, key: String) -> NSView {
+        let f = fontField(tf)
+        f.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        let stepper = NSStepper()
+        stepper.minValue = 8; stepper.maxValue = 32; stepper.increment = 1
+        stepper.integerValue = Settings.shared.int(key, 13)
+        stepper.valueWraps = false
+        stepper.target = self; stepper.action = #selector(stepperChanged(_:))
+        stepper.identifier = NSUserInterfaceItemIdentifier(key)
+        stepper.translatesAutoresizingMaskIntoConstraints = false
+        steppers[key] = stepper
+        let hint = NSTextField(labelWithString: "8–32")
+        hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
+        let row = NSStackView(views: [f, stepper, hint])
+        row.orientation = .horizontal; row.spacing = 6; row.alignment = .centerY
+        return row
+    }
+    @objc private func stepperChanged(_ s: NSStepper) {
+        guard let key = s.identifier?.rawValue else { return }
+        let field = key == "editorFontSize" ? editorSize : terminalSize
+        field.stringValue = String(s.integerValue)
+        saveFonts()
+    }
+
+    /// 글꼴 고르기. 목록은 고정폭 글꼴만 — 에디터·터미널에 비고정폭을 고르면 칸이 어긋난다.
+    private func fontMenu(key: String, preview: NSTextField) -> NSView {
+        let pop = NSPopUpButton()
+        pop.translatesAutoresizingMaskIntoConstraints = false
+        pop.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        let current = Settings.shared.string(key, "")
+        pop.addItem(withTitle: t("settings.fontDefault"))
+        pop.menu?.addItem(.separator())
+        for name in SettingsWindow.monoFonts { pop.addItem(withTitle: name) }
+        pop.selectItem(withTitle: current.isEmpty ? t("settings.fontDefault") : current)
+        pop.target = self; pop.action = #selector(fontPicked(_:))
+        pop.identifier = NSUserInterfaceItemIdentifier(key)
+        fontPickers[key] = pop
+        updatePreview(preview, key: key)
+        return pop
+    }
+    @objc private func fontPicked(_ p: NSPopUpButton) {
+        guard let key = p.identifier?.rawValue else { return }
+        let name = p.titleOfSelectedItem ?? ""
+        Settings.shared.set(key, name == t("settings.fontDefault") ? "" : name)
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+        updatePreview(key == "editorFontSize" || key == "editorFontFamily" ? editorPreview : terminalPreview, key: key)
+    }
+    /// 고른 글꼴·크기가 실제로 어떻게 보이는지 그 자리에서 보여 준다.
+    private func updatePreview(_ label: NSTextField, key: String) {
+        let isEditor = key.hasPrefix("editor")
+        let size = CGFloat(Settings.shared.int(isEditor ? "editorFontSize" : "terminalFontSize", 13))
+        let family = Settings.shared.string(isEditor ? "editorFontFamily" : "terminalFontFamily", "")
+        label.font = (family.isEmpty ? nil : NSFont(name: family, size: size))
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        label.stringValue = "riven — let x = 1; 한글 0O l1 {}"
+        label.textColor = Theme.fg
+        label.lineBreakMode = .byTruncatingTail
+    }
+    /// 시스템에 깔린 고정폭 글꼴 (한 번만 훑는다 — 폰트 목록 조회는 느리다).
+    static let monoFonts: [String] = {
+        let all = NSFontManager.shared.availableFontFamilies
+        return all.filter { fam in
+            guard let f = NSFont(name: fam, size: 12) else { return false }
+            return f.isFixedPitch
+        }.sorted()
+    }()
+
+    private weak var zoomSegment: NSSegmentedControl?
+    @objc private func changeZoom(_ seg: NSSegmentedControl) {
+        let app = NSApp.delegate as? AppDelegate
+        switch seg.selectedSegment {
+        case 0: app?.zoomFromSettings(-1)
+        case 2: app?.zoomFromSettings(+1)
+        default: app?.zoomFromSettings(0)      // 가운데(현재 %)를 누르면 100% 로
+        }
+        seg.setLabel("\(Int(UIScale.factor * 100))%", forSegment: 1)
+    }
+
+    private var ghosttyStatusLabel: NSTextField?
+    /// ghostty 설정 가져오기 (버튼 + 상태 문구).
+    private func ghosttyControls() -> (NSView, NSTextField) {
+        let found = GhosttyImport.read()
+        // 가져올 게 있을 때만 버튼이 살아 있다. 파일이 없든, 있는데 비었든 결과는 같지만
+        // 문구는 달라야 한다 — 없는 걸 찾으라는 말과 바꿀 게 없다는 말은 다른 안내다.
+        let importable = found.map { !$0.hasNothing } ?? false
+        let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
+                            textColor: importable ? Theme.fg : Theme.fgDim,
+                            bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
+        let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
+        if importable {
+            btn.onClick = { [weak self] in
+                guard let f = GhosttyImport.read() else { return }
+                _ = GhosttyImport.apply(f)
+                self?.showTab(0)
+            }
+        }
+        return (btn, status)
+    }
+
     private func fontField(_ tf: NSTextField) -> NSTextField {
         let f = field(tf, width: 72)
         f.target = self; f.action = #selector(saveFonts)
@@ -296,6 +472,10 @@ final class SettingsWindow: NSPanel {
         editorSize.stringValue = String(ed); terminalSize.stringValue = String(tm)
         Settings.shared.set("editorFontSize", ed)
         Settings.shared.set("terminalFontSize", tm)
+        steppers["editorFontSize"]?.integerValue = ed
+        steppers["terminalFontSize"]?.integerValue = tm
+        updatePreview(editorPreview, key: "editorFontFamily")
+        updatePreview(terminalPreview, key: "terminalFontFamily")
         // 에디터(Monaco)와 터미널(ghostty)이 각자 구독해서 즉시 반영한다.
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }
@@ -303,59 +483,32 @@ final class SettingsWindow: NSPanel {
     // ---- AI tab ----
     private func buildAI() {
         let s = Settings.shared
-        addSection(t("settings.aiSection"))
-        aiEnable.state = s.bool("aiComplete", false) ? .on : .off
-        aiEnable.target = self; aiEnable.action = #selector(saveAI)
-        aiEnable.contentTintColor = Theme.fg
-        aiEnable.font = UIScale.font(UIScale.title)
-        content.addArrangedSubview(aiEnable)
-
+        addSection(t("settings.agentSection"))
+        agentNative.title = ""
         agentNative.state = s.string("agentUI", "native") == "native" ? .on : .off
         agentNative.target = self; agentNative.action = #selector(saveAgentUI)
         agentNative.contentTintColor = Theme.fg
-        agentNative.font = UIScale.font(UIScale.title)
-        content.addArrangedSubview(agentNative)
+        addRow(t("settings.agentNative"), desc: t("settings.agentNativeDesc"), agentNative)
 
-        provider.removeAllItems()
-        let providers = ["ollama", "openai", "anthropic", "gemini", "deepseek", "mistral", "groq", "openrouter", "custom"]
-        provider.addItems(withTitles: providers)
-        provider.selectItem(withTitle: s.string("aiProvider", "ollama"))
-        provider.target = self; provider.action = #selector(saveAI)
-        provider.translatesAutoresizingMaskIntoConstraints = false
-        content.addArrangedSubview(setRow("제공자", provider))
-
-        model.stringValue = s.string("aiCompleteModel", "qwen2.5-coder:1.5b")
-        content.addArrangedSubview(setRow("모델", field(model)))
-        endpoint.stringValue = s.string("aiCompleteEndpoint", "http://localhost:11434")
-        content.addArrangedSubview(setRow("엔드포인트", field(endpoint)))
-        apiKey.stringValue = s.string("aiApiKey", "")
-        content.addArrangedSubview(setRow("API 키", field(apiKey)))
-
-        content.addArrangedSubview(spacer(10))
-        content.addArrangedSubview(primaryButton(t("settings.saveAI"), #selector(saveAIAll)))
-
-        // Snippets — prefix expands to body (${1} tab stops) via Monaco completion.
+        // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
+        // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
         addSection(t("settings.snippets"))
-        let hint = NSTextField(labelWithString: t("settings.snippetsHint"))
-        hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
-        hint.lineBreakMode = .byWordWrapping; hint.preferredMaxLayoutWidth = 500
-        content.addArrangedSubview(hint)
         let snips = (Settings.shared.object("snippets") as? [String: String]) ?? [:]
-        for (prefix, body) in snips.sorted(by: { $0.key < $1.key }) {
-            let l = NSTextField(labelWithString: "\(prefix)  →  \(body.replacingOccurrences(of: "\n", with: "⏎"))")
-            l.font = UIScale.mono(UIScale.small, .regular); l.textColor = Theme.fgDim
-            l.lineBreakMode = .byTruncatingTail
-            let del = PadButton(title: "삭제", font: UIScale.font(UIScale.small), textColor: Theme.danger,
-                                bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
-            del.onClick = { [weak self] in self?.deleteSnippet(prefix) }
-            let sp = NSView(); sp.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let row = NSStackView(views: [l, sp, del]); row.orientation = .horizontal; row.alignment = .centerY
-            row.widthAnchor.constraint(equalToConstant: 500).isActive = true
-            content.addArrangedSubview(row)
+        if snips.isEmpty {
+            let empty = NSTextField(labelWithString: t("settings.snippetsEmpty"))
+            empty.font = UIScale.font(UIScale.small); empty.textColor = Theme.fgDim
+            addWideRow(empty)
         }
-        content.addArrangedSubview(setRow(t("settings.snippetPrefix"), field(snippetPrefix, width: 120)))
-        content.addArrangedSubview(setRow(t("settings.snippetBody"), field(snippetBody)))
-        content.addArrangedSubview(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
+        for (prefix, body) in snips.sorted(by: { $0.key < $1.key }) {
+            let del = PadButton(title: t("common.delete"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fgDim, bg: Theme.hover, border: Theme.edge,
+                                radius: 5, hPad: 8, height: 22)
+            del.onClick = { [weak self] in self?.deleteSnippet(prefix) }
+            addRow(prefix, desc: body.replacingOccurrences(of: "\n", with: " ⏎ "), del)
+        }
+        addRow(t("settings.snippetPrefix"), desc: t("settings.snippetsHint"), field(snippetPrefix, width: 140))
+        addRow(t("settings.snippetBody"), desc: nil, field(snippetBody, width: 260))
+        addWideRow(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
     }
     private let snippetPrefix = NSTextField()
     private let snippetBody = NSTextField()
@@ -377,14 +530,9 @@ final class SettingsWindow: NSPanel {
         showTab(1)
     }
     @objc private func saveAI() {
-        Settings.shared.set("aiComplete", aiEnable.state == .on)
-        Settings.shared.set("aiProvider", provider.titleOfSelectedItem ?? "ollama")
     }
     @objc private func saveAIAll() {
         saveAI()
-        Settings.shared.set("aiCompleteModel", model.stringValue)
-        Settings.shared.set("aiCompleteEndpoint", endpoint.stringValue)
-        Settings.shared.set("aiApiKey", apiKey.stringValue)
     }
 
     // ---- Keybindings tab — three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
@@ -406,18 +554,25 @@ final class SettingsWindow: NSPanel {
             row.addArrangedSubview(b)
         }
         content.addArrangedSubview(row)
-        content.addArrangedSubview(spacer(6))
+        content.addArrangedSubview(spacer(8))
 
         let hint = NSTextField(labelWithString: "칩을 클릭하고 원하는 키를 누르세요. Esc로 취소.")
         hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
-        content.addArrangedSubview(spacer(4))
-        switch kbSubtab {
-        case 0:                                                         // 에디터 (preset + per-command)
-            buildEditorKeys()
-            for a in Keys.byCat("editor") { content.addArrangedSubview(kbRecordRow(a)) }
-        case 1: for a in Keys.byCat("terminal") { content.addArrangedSubview(kbRecordRow(a)) }  // 터미널
-        default: for a in Keys.byCat("riven") { content.addArrangedSubview(kbRecordRow(a)) }    // 리븐 기본
+        content.addArrangedSubview(spacer(10))
+
+        // 키 목록은 카드 안에. 예전에는 줄이 바로 이어 붙어 (28pt, 구분선 없음) 빽빽했다.
+        if kbSubtab == 0 { buildEditorKeys() }
+        addSection(t("settings.keysSection"))
+        let actions: [Keys.Action] = kbSubtab == 0 ? Keys.byCat("editor")
+                                   : kbSubtab == 1 ? Keys.byCat("terminal") : Keys.byCat("riven")
+        for a in actions {
+            let chip = PadButton(title: Keys.display(Keys.effective(a.id)),
+                                 font: UIScale.mono(UIScale.small, .medium),
+                                 textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
+                                 radius: 5, hPad: 8, height: 24)
+            chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            addRow(a.label, desc: nil, chip)
         }
     }
 
@@ -560,27 +715,12 @@ final class SettingsWindow: NSPanel {
             }
         }
         addSection(t("account.title"))
-        let note = NSTextField(labelWithString:
-            "riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
-        note.font = UIScale.font(UIScale.body); note.textColor = Theme.fgDim
-        note.lineBreakMode = .byWordWrapping; note.maximumNumberOfLines = 4
-        note.preferredMaxLayoutWidth = 500
-        note.translatesAutoresizingMaskIntoConstraints = false
-        note.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        content.addArrangedSubview(note)
-        content.addArrangedSubview(spacer(6))
+        addNote("riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
 
         if !SupabaseConfig.isConfigured {
-            addSection(t("settings.status"))
-            let status = NSTextField(labelWithString:
-                "Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.")
-            status.font = UIScale.font(UIScale.small); status.textColor = Theme.warning
-            status.lineBreakMode = .byWordWrapping; status.maximumNumberOfLines = 3
-            status.preferredMaxLayoutWidth = 500
-            content.addArrangedSubview(status)
-            let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
-            sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
-            content.addArrangedSubview(sync)
+            addNote("Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.",
+                    color: Theme.warning)
+            addNote("API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
             return
         }
 
@@ -647,28 +787,55 @@ final class SettingsWindow: NSPanel {
 
     // ---- About tab — version + update check (riven's AboutTab/electron-updater) ----
     private func buildAbout() {
-        content.addArrangedSubview(spacer(6))
+        // 앱 정보는 아이콘 · 이름 · 버전이 한 덩어리로 보여야 한다. 예전에는 작은 글자 세 줄이
+        // 왼쪽 위에 그냥 쌓여 있어서 만들다 만 화면처럼 보였다 (애플의 "이 Mac에 관하여" 처럼).
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
+        let hero = NSView()
+        hero.translatesAutoresizingMaskIntoConstraints = false
+        let icon = NSImageView()
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
         let name = NSTextField(labelWithString: "riven")
         name.font = UIScale.font(22, .semibold); name.textColor = Theme.fg
-        content.addArrangedSubview(name)
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.1"
-        let verL = NSTextField(labelWithString: "v\(ver)")
-        verL.font = UIScale.mono(UIScale.body, .regular); verL.textColor = Theme.fgDim
-        content.addArrangedSubview(verL)
+        name.translatesAutoresizingMaskIntoConstraints = false
+        let verL = NSTextField(labelWithString: "버전 \(ver)")
+        verL.font = UIScale.font(UIScale.small); verL.textColor = Theme.fgDim
+        verL.translatesAutoresizingMaskIntoConstraints = false
         let tag = NSTextField(labelWithString: t("about.tagline"))
-        tag.font = UIScale.font(UIScale.body); tag.textColor = Theme.fgDim
-        content.addArrangedSubview(tag)
-        content.addArrangedSubview(spacer(8))
+        tag.font = UIScale.font(UIScale.small); tag.textColor = Theme.fgDim
+        tag.translatesAutoresizingMaskIntoConstraints = false
+        hero.addSubview(icon); hero.addSubview(name); hero.addSubview(verL); hero.addSubview(tag)
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: hero.leadingAnchor),
+            icon.centerYAnchor.constraint(equalTo: hero.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 56),
+            icon.heightAnchor.constraint(equalToConstant: 56),
+            name.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            name.topAnchor.constraint(equalTo: hero.topAnchor, constant: 2),
+            verL.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            verL.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 3),
+            tag.leadingAnchor.constraint(equalTo: name.leadingAnchor),
+            tag.topAnchor.constraint(equalTo: verL.bottomAnchor, constant: 2),
+            tag.bottomAnchor.constraint(lessThanOrEqualTo: hero.bottomAnchor),
+            hero.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+        ])
+        content.addArrangedSubview(hero)
+        hero.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 2).isActive = true
+        content.addArrangedSubview(spacer(6))
 
         addSection(t("about.update"))
         // 탭을 다시 그릴 때도 실제 진행 상태를 따른다 (창을 닫았다 열면 "확인 중…"이 남던 문제).
         updateStatusLabel = NSTextField(labelWithString: Updater.shared.isChecking ? t("about.checking") : t("about.checkHint"))
-        updateStatusLabel.font = UIScale.font(UIScale.body); updateStatusLabel.textColor = Theme.fgDim
-        content.addArrangedSubview(updateStatusLabel)
-        content.addArrangedSubview(spacer(4))
-        content.addArrangedSubview(primaryButton(t("about.check"), #selector(checkUpdate)))
+        updateStatusLabel.font = UIScale.font(UIScale.small); updateStatusLabel.textColor = Theme.fgDim
+        updateStatusLabel.lineBreakMode = .byWordWrapping
+        updateStatusLabel.maximumNumberOfLines = 2
+        // 줄 이름과 버튼 글자가 같으면("업데이트 확인" ×2) 읽는 사람이 두 번 읽게 된다.
+        addRow(t("about.checkTitle"), desc: t("about.checkHint"),
+               primaryButton(t("about.check"), #selector(checkUpdate)))
+        // 상태 문구는 확인을 누른 뒤에만 (평소엔 빈 줄이 하나 더 생길 뿐이다).
+        updateStatusLabel.isHidden = updateStatusLabel.stringValue.isEmpty
 
-        content.addArrangedSubview(spacer(8))
         addSection(t("about.links"))
         let landing = secondaryButton(t("about.landing"), symbol: "safari") {
             if let u = URL(string: "https://riven-sandy.vercel.app/") { NSWorkspace.shared.open(u) }
@@ -676,8 +843,9 @@ final class SettingsWindow: NSPanel {
         let gh = secondaryButton(t("about.github"), symbol: "chevron.left.forwardslash.chevron.right") {
             if let u = URL(string: "https://github.com/wassupss/riven") { NSWorkspace.shared.open(u) }
         }
-        let row = NSStackView(views: [landing, gh]); row.orientation = .horizontal; row.spacing = 8
-        content.addArrangedSubview(row)
+        // 버튼만 덩그러니 놓여 있었다. 다른 탭과 같은 카드 줄로.
+        addRow(t("about.homepage"), desc: "riven-sandy.vercel.app", landing)
+        addRow(t("about.source"), desc: "github.com/wassupss/riven", gh)
     }
     // A dark, theme-aware secondary button (void state is NOT white).
     private func secondaryButton(_ title: String, symbol: String? = nil, _ handler: @escaping () -> Void) -> PadButton {
@@ -721,9 +889,40 @@ final class SettingsWindow: NSPanel {
     }
 
     // ---- shared builders ----
+    /// 섹션 = 제목 + 카드 하나. 카드에 줄을 담고 줄 사이에 옅은 구분선을 둔다.
+    ///
+    /// 예전에는 컨트롤들이 배경 위에 그냥 떠 있었다 — 어디까지가 한 묶음인지 눈으로 알 수
+    /// 없으니 "동떨어져" 보인다. 묶음을 그려 주는 것만으로 절반은 해결된다.
+    private var currentCard: SettingsCard?
     private func addSection(_ t: String) {
-        content.addArrangedSubview(spacer(8))
+        content.addArrangedSubview(spacer(currentCard == nil ? 0 : 18))   // 섹션 사이
         content.addArrangedSubview(sectionLabel(t))
+        content.addArrangedSubview(spacer(6))                             // 제목 ↔ 카드
+        let card = SettingsCard()
+        currentCard = card
+        content.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+    }
+    /// 지금 카드에 줄 하나. 왼쪽에 이름(+ 한 줄 설명), 오른쪽 끝에 컨트롤.
+    private func addRow(_ label: String, desc: String? = nil, _ control: NSView) {
+        currentCard?.addRow(label: label, desc: desc, control: control)
+    }
+    /// 카드 안의 설명 문단 (문장이 주인인 섹션 — 계정·정보).
+    private func addNote(_ text: String, color: NSColor? = nil) {
+        let l = NSTextField(labelWithString: text)
+        l.font = UIScale.font(UIScale.small)
+        l.textColor = color ?? Theme.fgDim
+        l.lineBreakMode = .byWordWrapping
+        l.maximumNumberOfLines = 5
+        l.preferredMaxLayoutWidth = 540
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.widthAnchor.constraint(lessThanOrEqualToConstant: 540).isActive = true
+        addWideRow(l)
+    }
+
+    /// 카드 폭을 통째로 쓰는 줄 (테마 격자·미리보기처럼 이름/컨트롤로 나뉘지 않는 것).
+    private func addWideRow(_ view: NSView) {
+        currentCard?.addWide(view)
     }
     private func sectionLabel(_ t: String) -> NSView {
         let l = NSTextField(labelWithString: t)
@@ -804,4 +1003,105 @@ private final class ClickBox: NSView {
     required init?(coder: NSCoder) { fatalError() }
     override func mouseDown(with event: NSEvent) { action() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+}
+
+// 설정 카드: 둥근 배경 + 줄 사이 구분선. 설정 화면이 "묶음"으로 읽히게 하는 그릇이다.
+final class SettingsCard: NSView, Themable {
+    private let stack = NSStackView()
+    private var rows: [NSView] = []
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        stack.orientation = .vertical
+        stack.spacing = 0
+        stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        Theme.register(self)
+        applyTheme()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func addRow(label: String, desc: String?, control: NSView) {
+        if !rows.isEmpty { addSeparator() }
+        let name = NSTextField(labelWithString: label)
+        name.font = UIScale.font(UIScale.body)
+        name.textColor = Theme.fg
+        name.translatesAutoresizingMaskIntoConstraints = false
+        let left = NSStackView(views: [name])
+        left.orientation = .vertical; left.alignment = .leading; left.spacing = 1
+        if let desc, !desc.isEmpty {
+            let d = NSTextField(labelWithString: desc)
+            d.font = UIScale.font(UIScale.caption)
+            d.textColor = Theme.fgDim
+            d.lineBreakMode = .byWordWrapping
+            d.maximumNumberOfLines = 2
+            left.addArrangedSubview(d)
+        }
+        left.translatesAutoresizingMaskIntoConstraints = false
+        control.translatesAutoresizingMaskIntoConstraints = false
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(left); row.addSubview(control)
+        NSLayoutConstraint.activate([
+            left.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            left.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            left.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -12),
+            // 컨트롤은 오른쪽 끝에 맞춘다 — 줄마다 제각각이면 눈이 기댈 선이 없다.
+            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(38)),
+            // 세로 여백은 줄 높이를 키우는 대신 안쪽 여백으로 준다. 최소 높이를 44 로 올렸더니
+            // 컨트롤 높이와 충돌해 제약이 풀리고 내용이 통째로 사라졌다 (하얀 화면).
+            left.topAnchor.constraint(greaterThanOrEqualTo: row.topAnchor, constant: 9),
+            left.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -9),
+        ])
+        add(row)
+    }
+
+    func addWide(_ view: NSView) {
+        if !rows.isEmpty { addSeparator() }
+        view.translatesAutoresizingMaskIntoConstraints = false
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16),
+            view.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
+            view.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -12),
+        ])
+        add(row)
+    }
+
+    private func add(_ row: NSView) {
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        rows.append(row)
+    }
+    private func addSeparator() {
+        let line = NSView()
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.hairline.cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(line)
+        NSLayoutConstraint.activate([
+            line.heightAnchor.constraint(equalToConstant: 1),
+            line.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    func applyTheme() {
+        layer?.cornerRadius = UIScale.pt(8)
+        layer?.backgroundColor = Theme.bg3.cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = Theme.hairline.cgColor
+    }
 }

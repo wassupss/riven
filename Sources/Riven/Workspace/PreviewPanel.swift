@@ -1,4 +1,5 @@
 import AppKit
+import ObjectiveC
 import WebKit
 
 // riven's browser panel.
@@ -64,10 +65,7 @@ final class BrowserTab: NSObject {
         if s.contains("://") { return URL(string: s) }
         if s.hasPrefix("localhost") || s.hasPrefix("127.0.0.1") { return URL(string: "http://" + s) }
         // 공백이 있거나 점이 없으면 주소가 아니라 검색어다.
-        if s.contains(" ") || !s.contains(".") {
-            let q = s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
-            return URL(string: "https://duckduckgo.com/?q=\(q)")
-        }
+        if s.contains(" ") || !s.contains(".") { return URL(string: BrowserStore.searchURL(s)) }
         return URL(string: "https://" + s)
     }
     /// 짧은 탭 제목 (제목이 아직 없으면 호스트).
@@ -138,7 +136,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         row.onPick = { [weak self] in self?.onSelect?(i) }
         row.onClose = { [weak self] in self?.onClose?(i) }
         row.onMenu = { [weak self] e in self?.onMenu?(i, e) }
-        row.configure(it.title, url: it.url, active: active, closable: items.count > 1)
+        row.configure(it.title, url: it.url, active: active, closable: true)
         return row
     }
     func applyTheme() { needsDisplay = true; set(items, selected: selected) }
@@ -388,6 +386,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
                           NSTextFieldDelegate {
     var onFocused: (() -> Void)?   // page interaction → activate this dock group
     var onCapture: ((String) -> Void)?   // saved PNG path → send to the running agent
+    /// 마지막 탭까지 닫혔다 → 이 패널을 닫아 달라 (독에서 빼는 건 앱이 한다).
+    var onRequestClose: (() -> Void)?
 
     // ---- chrome ----
     private let backBtn = NSButton()
@@ -398,6 +398,13 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let starBtn = NSButton()          // 북마크 켜고 끄기
     private let menuBtn = NSButton()          // ⋮ — 자주 안 쓰는 것들은 여기로
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
+    private let console = BrowserConsole(frame: .zero)   // riven 콘솔 서랍 (⌥⌘C)
+    /// Safari Web Inspector 를 담는 자리. 인스펙터는 원래 따로 뜨는 창이지만, 그 웹뷰를
+    /// 꺼내 여기에 붙이면 패널 안에서 쓸 수 있다 (요소·네트워크·소스·콘솔 전부 그대로).
+    private let inspectorHost = NSView()
+    private var inspectorHeight: NSLayoutConstraint!
+    private weak var embeddedInspector: NSView?
+    private var consoleHeight: NSLayoutConstraint!
     private var libraryPopover: NSPopover?
     private let downloadBtn = NSButton()          // 받는 게 있을 때만 보인다
     private var downloads: [DownloadItem] = []
@@ -517,12 +524,21 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         addressBar.addSubview(starBtn)
         [backBtn, fwdBtn, stopBtn, addressBar, downloadBtn, menuBtn,
          progress, tabStrip, findBar, container, emptyLabel, statusLabel,
-         suggest].forEach { addSubview($0) }
+         suggest, console, inspectorHost].forEach { addSubview($0) }
+        inspectorHost.translatesAutoresizingMaskIntoConstraints = false
+        inspectorHost.wantsLayer = true
+        inspectorHost.isHidden = true
+        console.translatesAutoresizingMaskIntoConstraints = false
+        console.isHidden = true
+        console.onClose = { [weak self] in self?.toggleConsole(false) }
+        console.onEval = { [weak self] js, done in self?.agentEval(js, done) }
 
         let pad: CGFloat = 8
         progressWidth = progress.widthAnchor.constraint(equalToConstant: 0)
         tabStripHeight = tabStrip.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
+        consoleHeight = console.heightAnchor.constraint(equalToConstant: 0)
+        inspectorHeight = inspectorHost.heightAnchor.constraint(equalToConstant: 0)
         // 숨겨도 자리는 남는다 — 폭까지 0 으로 접어야 주소창이 그만큼 넓어진다.
         downloadWidth = downloadBtn.widthAnchor.constraint(equalToConstant: 0)
         // 크롬·브레이브·엣지와 같은 순서: 탭 줄이 맨 위, 그 아래에 이동 버튼 + 주소창.
@@ -582,7 +598,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
             container.trailingAnchor.constraint(equalTo: trailingAnchor),
             container.topAnchor.constraint(equalTo: findBar.bottomAnchor),
-            container.bottomAnchor.constraint(equalTo: statusLabel.topAnchor),
+            container.bottomAnchor.constraint(equalTo: console.topAnchor),
+            console.leadingAnchor.constraint(equalTo: leadingAnchor),
+            console.trailingAnchor.constraint(equalTo: trailingAnchor),
+            console.bottomAnchor.constraint(equalTo: inspectorHost.topAnchor),
+            consoleHeight,
+            inspectorHost.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inspectorHost.trailingAnchor.constraint(equalTo: trailingAnchor),
+            inspectorHost.bottomAnchor.constraint(equalTo: statusLabel.topAnchor),
+            inspectorHeight,
 
             statusLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             statusLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
@@ -625,6 +649,10 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 — WKWebView 가 AppKit 마우스
         // 이벤트를 삼키므로 작은 스크립트가 대신 알려준다.
         cfg.userContentController.add(self, name: "prevfocus")
+        // 콘솔: 페이지의 console 출력·오류를 riven 으로 보낸다.
+        cfg.userContentController.add(self, name: "rivenconsole")
+        cfg.userContentController.addUserScript(WKUserScript(
+            source: BrowserConsole.hookScript, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         cfg.userContentController.addUserScript(WKUserScript(
             source: "document.addEventListener('mousedown',function(){window.webkit.messageHandlers.prevfocus.postMessage(1)},true);",
             injectionTime: .atDocumentStart, forMainFrameOnly: false))
@@ -664,7 +692,12 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private var closedURLs: [String] = []
 
     private func closeTab(_ i: Int) {
-        guard tabs.count > 1, tabs.indices.contains(i) else { return }
+        guard tabs.indices.contains(i) else { return }
+        if tabs.count == 1 {
+            rememberURL()          // 마지막으로 보던 탭은 남겨 둔다 (다시 열면 그대로)
+            onRequestClose?()
+            return
+        }
         let tb = tabs.remove(at: i)
         if let u = tb.web.url?.absoluteString, !u.isEmpty, !tb.isPrivate {
             closedURLs.append(u)
@@ -801,6 +834,40 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     @objc private func goBack() { tab?.web.goBack() }
     @objc private func goForward() { tab?.web.goForward() }
+    /// ⌘⇧R — 캐시를 무시하고 다시 받는다. 개발 중에 바뀐 자산이 안 보일 때 쓰는 그 키다.
+    func hardReload() {
+        guard let web = tab?.web else { return }
+        web.reloadFromOrigin()
+        setStatus(t("browser.hardReloaded"))
+    }
+
+    /// 이 프로필의 캐시를 지운다 (쿠키·로그인은 그대로).
+    func clearCache() {
+        let types: Set<String> = [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache,
+                                  WKWebsiteDataTypeOfflineWebApplicationCache]
+        let store = tab?.web.configuration.websiteDataStore ?? .default()
+        store.removeData(ofTypes: types, modifiedSince: .distantPast) { [weak self] in
+            self?.setStatus(t("browser.cacheCleared"))
+            self?.tab?.web.reloadFromOrigin()
+        }
+    }
+
+    /// 쿠키·로컬 저장소까지 — 이 프로필에서 로그아웃된다. 되돌릴 수 없어 먼저 묻는다.
+    func clearSiteData() {
+        let a = NSAlert()
+        a.messageText = t("browser.clearDataConfirm")
+        a.informativeText = t("browser.clearDataDetail")
+        a.addButton(withTitle: t("browser.clearDataGo"))
+        a.addButton(withTitle: t("common.cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        let store = tab?.web.configuration.websiteDataStore ?? .default()
+        store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+                         modifiedSince: .distantPast) { [weak self] in
+            self?.setStatus(t("browser.dataCleared"))
+            self?.tab?.web.reload()
+        }
+    }
+
     @objc private func reloadOrStop() {
         guard let tb = tab else { return }
         if tb.isLoading { tb.web.stopLoading() } else if !tb.urlString.isEmpty { tb.web.reload() }
@@ -836,8 +903,95 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     /// 개발자 도구. WKWebView 에 공개 API 가 없어 비공개 인스펙터를 호출하는 대신, 사용자가
     /// 쓰는 경로(우클릭 → 요소 정보 검사)를 안내한다. isInspectable 은 켜져 있다.
+    /// 개발자 도구 = Safari Web Inspector. 요소·네트워크·소스·콘솔이 다 들어 있는 그 도구다
+    /// (WKWebView 를 쓰는 네이티브 앱이 쓸 수 있는 진짜 개발자 도구).
+    ///
+    /// 여는 공개 API 는 없다 — isInspectable 을 켜면 페이지 오른쪽 클릭 → "요소 정보 검사"
+    /// 로 열 수 있고, 메뉴·단축키로 열려면 _WKInspector 를 거쳐야 한다. 언젠가 사라질 수 있는
+    /// 길이라, 안 되면 조용히 실패하지 않고 오른쪽 클릭으로 열라고 알려 준다.
+    /// 개발자 도구.
+    ///
+    /// Safari Web Inspector 를 쓰려면 페이지에서 오른쪽 클릭 → "요소 정보 검사" 다 (isInspectable
+    /// 이 켜져 있어 요소·네트워크·소스·콘솔이 그대로 열린다). 메뉴·단축키로 여는 공개 API 는
+    /// 없고, _WKInspector 로 여는 비공개 길은 실제로 해 보니 창이 뜨지 않았다 — 게다가 예전에는
+    /// 그 호출이 앱을 죽였다 (하드닝 런타임에 allow-jit 이 없어서. 그건 별도로 고쳤다).
+    /// 그래서 여기서는 확실히 되는 것만 한다: riven 안의 콘솔 서랍을 열고, 전체 도구를 여는
+    /// 방법을 알려 준다.
+    /// 개발자 도구. Safari Web Inspector 는 페이지에서 오른쪽 클릭 → "요소 정보 검사" 로 연다.
+    ///
+    /// 프로그램으로 여는 길을 두 번 시도했고 둘 다 실패했다:
+    ///  · _WKInspector.show() — 창이 뜨지 않는다 (예전에는 앱까지 죽였다. 그건 서명 문제라
+    ///    allow-jit 으로 고쳤지만, 죽지 않을 뿐 열리지도 않는다).
+    ///  · 합성 우클릭으로 페이지 메뉴 띄우기 — 메뉴가 떴다가 바로 닫혀 화면이 깜빡였다
+    ///    (짝이 되는 rightMouseUp 이 없으면 WebKit 이 트래킹을 접는다).
+    /// 그래서 여기서는 아무 것도 흉내내지 않고, 여는 방법만 한 줄로 알려 준다.
+    /// 개발자 도구 (⌥⌘I) — Safari Web Inspector 를 이 패널 안에 붙여서 연다.
+    ///
+    /// 인스펙터는 원래 따로 뜨는 창이고 여는 공개 API 도 없다. 다만 _WKInspector 가
+    /// inspectorWebView 를 들고 있어서, connect 한 뒤 그 뷰를 꺼내 우리 자리에 옮겨 붙이면
+    /// 패널 안에서 그대로 쓸 수 있다 (요소·네트워크·소스·콘솔 전부). SPI 라 없어질 수 있으니
+    /// 못 꺼내면 riven 콘솔 서랍으로 물러난다.
     @objc private func openInspector() {
-        setStatus(t("browser.inspectHint"))
+        guard let web = tab?.web else { return }
+        let sel = NSSelectorFromString("_inspector")
+        guard web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? else {
+            toggleConsole(true); setStatus(t("browser.inspectHint")); return
+        }
+        func visible() -> Bool {
+            let v = NSSelectorFromString("isVisible")
+            guard ins.responds(to: v) else { return false }
+            // BOOL 은 perform 으로 못 읽는다 — 값을 직접 꺼낸다.
+            typealias BoolFn = @convention(c) (AnyObject, Selector) -> Bool
+            let imp = class_getMethodImplementation(object_getClass(ins), v)
+            return imp.map { unsafeBitCast($0, to: BoolFn.self)(ins, v) } ?? false
+        }
+        if visible() {                                   // 열려 있으면 닫는다
+            _ = ins.perform(NSSelectorFromString("hide"))
+            inspectorHeight.constant = 0
+            inspectorHost.isHidden = true
+            focusWeb()
+            return
+        }
+        _ = ins.perform(NSSelectorFromString("connect"))
+        // WebKit 자신의 도킹. 뷰를 우리가 뜯어 옮기면 인스펙터가 곧 스스로 접혀 빈 칸만 남았다
+        // (실제로 그렇게 사라졌다). attach 는 WebKit 이 자기 창 아래에 붙이는 정식 경로다.
+        if ins.responds(to: NSSelectorFromString("attach")) {
+            _ = ins.perform(NSSelectorFromString("attach"))
+        }
+        _ = ins.perform(NSSelectorFromString("show"))
+        setStatus(t("browser.inspectorOpened"))
+    }
+
+    private func closeInspector() {
+        embeddedInspector?.removeFromSuperview()
+        embeddedInspector = nil
+        inspectorHeight.constant = 0
+        inspectorHost.isHidden = true
+        if let web = tab?.web {
+            let sel = NSSelectorFromString("_inspector")
+            if web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? {
+                _ = ins.perform(NSSelectorFromString("hide"))
+            }
+        }
+        focusWeb()
+    }
+
+    /// 콘솔만 빠르게 (riven 안에 붙는 가벼운 서랍). 페이지 오류를 흘려보며 작업할 때 쓴다.
+    @objc private func toggleConsoleDrawer() { toggleConsole(!consoleOpen) }
+    static let consoleBench = ProcessInfo.processInfo.environment["RIVEN_CONBENCH"] != nil
+    private var consoleOpen: Bool { consoleHeight.constant > 0 }
+    private func toggleConsole(_ open: Bool) {
+        if PreviewPanel.consoleBench {
+            RLog.log("CON toggle(\(open)) 이전높이=\(Int(consoleHeight.constant)) 줄=\(console.debugLines().count)")
+        }
+        consoleHeight.constant = open ? UIScale.pt(180) : 0
+        console.isHidden = !open
+        if open {
+            console.applyTheme()
+            console.focusInput()
+        } else {
+            focusWeb()
+        }
     }
     @objc private func zoomIn() { setZoom((tab?.web.pageZoom ?? 1) + 0.1) }
     @objc private func zoomOut() { setZoom((tab?.web.pageZoom ?? 1) - 0.1) }
@@ -876,9 +1030,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     // MARK: - navigation delegate
 
     func userContentController(_ u: WKUserContentController, didReceive m: WKScriptMessage) {
-        if m.name == "prevfocus" { onFocused?() }
+        if m.name == "prevfocus" { onFocused?(); return }
+        guard m.name == "rivenconsole", let d = m.body as? [String: Any],
+              let text = d["text"] as? String else { return }
+        let level: BrowserConsole.Level
+        switch d["level"] as? String {
+        case "error": level = .error
+        case "warn": level = .warn
+        default: level = .log
+        }
+        console.add(level, text)
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if webView === tab?.web, consoleOpen { console.pageChanged(webView.url?.absoluteString ?? "") }
         setStatus(nil)
         tabs.first { $0.web === webView }?.errorText = nil    // 새로 시도하니 지난 오류는 지운다
         refreshChrome()
@@ -1211,8 +1375,51 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             + " 컨테이너=\(Int(container.frame.minY))~\(Int(container.frame.maxY))"
             + " 웹뷰=\(w.map { "\(Int($0.frame.width))x\(Int($0.frame.height)) 숨김=\($0.isHidden)" } ?? "없음")"
     }
+    func debugConsole() -> BrowserConsole { console }
+    func debugInspectorState() -> String {
+        "인스펙터높이=\(Int(inspectorHeight.constant)) 숨김=\(inspectorHost.isHidden)"
+            + " 붙은뷰=\(embeddedInspector.map { "\(type(of: $0))" } ?? "없음")"
+            + " 크기=\(Int(inspectorHost.frame.width))x\(Int(inspectorHost.frame.height))"
+    }
+
+    /// 인스펙터를 패널 안에 붙일 수 있는지 (SPI 표면 확인용).
+    func debugInspectorSurface() -> String {
+        guard let web = tab?.web else { return "웹뷰 없음" }
+        var out: [String] = []
+        let sel = NSSelectorFromString("_inspector")
+        guard web.responds(to: sel), let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? else {
+            return "_inspector 없음"
+        }
+        out.append("클래스=\(type(of: ins))")
+        for name in ["attach", "detach", "attachWindow", "setAttached:", "isAttached",
+                     "showConsole", "showResources", "inspectorWebView", "attachmentView",
+                     "attachBottom", "attachRight", "close", "isVisible", "show"] {
+            if ins.responds(to: NSSelectorFromString(name)) { out.append("있음:\(name)") }
+        }
+        // 클래스에 어떤 메서드가 있는지 통째로 (앞부분만)
+        var count: UInt32 = 0
+        if let list = class_copyMethodList(object_getClass(ins), &count) {
+            var names: [String] = []
+            for i in 0..<Int(count) { names.append(NSStringFromSelector(method_getName(list[i]))) }
+            free(list)
+            out.append("메서드 \(count)개: " + names.sorted().prefix(28).joined(separator: ", "))
+        }
+        return out.joined(separator: " | ")
+    }
+    func debugOpenDevTools() { openInspector() }
+    func debugToggleConsole(_ open: Bool) { toggleConsole(open) }
+    func debugOpenInspectorMenu() { openInspector() }
+    func debugConsoleState() -> String {
+        "높이=\(Int(consoleHeight.constant)) 숨김=\(console.isHidden) 줄=\(console.debugLines().count)"
+            + " 프레임=\(Int(console.frame.height)) 컨테이너바닥=\(Int(container.frame.minY))"
+    }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
+    /// ⌘W (메뉴에서 들어온다 — 메뉴 단축키가 뷰보다 먼저 잡힌다).
+    func closeActiveTab() { closeTab(current) }
+
+    /// 벤치용: ⌘W 를 누른 것과 같은 경로.
+    func debugCommandW() { closeActiveTab() }
     func debugActiveTab() -> Int { current }
     func debugEval(_ js: String, _ done: @escaping (String) -> Void) { agentEval(js, done) }
     func debugSetZoom(_ z: CGFloat) { setZoom(z) }
@@ -1424,6 +1631,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         add(t("browser.downloads"), "", [], !downloads.isEmpty) { [weak self] in self?.showDownloads() }
         add(t("browser.find"), "f") { [weak self] in self?.showFind() }
         menu.addItem(.separator())
+        add(t("preview.reload"), "r") { [weak self] in self?.tab?.web.reload() }
+        add(t("browser.hardReload"), "r", [.command, .shift]) { [weak self] in self?.hardReload() }
+        add(t("browser.clearCache"), "", []) { [weak self] in self?.clearCache() }
+        add(t("browser.clearData"), "", []) { [weak self] in self?.clearSiteData() }
+        menu.addItem(.separator())
         add(t("browser.zoomIn"), "+") { [weak self] in self?.zoomIn() }
         add(t("browser.zoomOut"), "-") { [weak self] in self?.zoomOut() }
         add(t("browser.zoomReset"), "0") { [weak self] in self?.resetZoom() }
@@ -1432,7 +1644,8 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         add(t("browser.viewSource"), "", [], tab != nil) { [weak self] in
             if let tb = self?.tab { self?.viewSource(tb) }
         }
-        add(t("browser.inspect"), "", []) { [weak self] in self?.openInspector() }
+        add(t("browser.inspect"), "i", [.command, .option]) { [weak self] in self?.openInspector() }
+        add(t("browser.consoleDrawer"), "c", [.command, .option]) { [weak self] in self?.toggleConsoleDrawer() }
         add(t("preview.openExternal"), "", [], tab?.web.url != nil) { [weak self] in self?.openExternal() }
         return menu
     }
@@ -1484,7 +1697,21 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         guard let win = window, let fr = win.firstResponder as? NSView, fr.isDescendant(of: self) || fr === self
         else { return super.performKeyEquivalent(with: event) }
         let cmd = event.modifierFlags.contains(.command)
+        let shift = event.modifierFlags.contains(.shift)
+        let opt = event.modifierFlags.contains(.option)
         switch event.charactersIgnoringModifiers?.lowercased() {
+        // 브라우저에서 손에 익은 키들.
+        case "r" where cmd && shift: hardReload(); return true          // 캐시 무시하고 새로고침
+        case "r" where cmd: tab?.web.reload(); return true
+        case "[" where cmd, "\u{1c}" where cmd:                         // ⌘[ · ⌘←
+            if tab?.web.canGoBack == true { tab?.web.goBack() }
+            return true
+        case "]" where cmd, "\u{1d}" where cmd:                         // ⌘] · ⌘→
+            if tab?.web.canGoForward == true { tab?.web.goForward() }
+            return true
+        case "i" where cmd && opt: openInspector(); return true         // 개발자 도구 (Web Inspector)
+        case "c" where cmd && opt: toggleConsoleDrawer(); return true   // riven 콘솔 서랍
+        case "." where cmd: tab?.web.stopLoading(); return true         // 멈춤
         case "f" where cmd: showFind(); return true
         case "l" where cmd: focusURL(); return true
         case "t" where cmd && event.modifierFlags.contains(.shift): reopenClosedTab(); return true
@@ -1493,9 +1720,23 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             newTab(nil, activate: true, isPrivate: true)
             setStatus(t("browser.privateTab"))
             return true
-        case "w" where cmd && tabs.count > 1: closeTab(current); return true
+        // ⌘W: 브라우저 탭을 닫는다. 마지막 탭이면 패널이 닫힌다 — 브라우저에서 마지막
+        // 탭을 닫으면 창이 닫히는 것과 같다. 예전에는 탭이 하나면 아무 일도 없었다.
+        case "w" where cmd: closeTab(current); return true
         case "y" where cmd: showLibrary(); return true
-        default: return super.performKeyEquivalent(with: event)
+        default:
+            // ⌘1..⌘8 → 그 번호의 탭, ⌘9 → 마지막 탭 (크롬과 같다). 터미널은 ⌃1..9 라 겹치지 않는다.
+            if cmd, let ch = event.charactersIgnoringModifiers, ch.count == 1,
+               let n = Int(ch), n >= 1, n <= 9, !tabs.isEmpty {
+                select(n == 9 ? tabs.count - 1 : min(n - 1, tabs.count - 1))
+                return true
+            }
+            // ⌥⌘→ / ⌥⌘← → 다음·이전 탭
+            if cmd, opt, let ch = event.charactersIgnoringModifiers, tabs.count > 1 {
+                if ch == "\u{1d}" { select((current + 1) % tabs.count); return true }
+                if ch == "\u{1c}" { select((current - 1 + tabs.count) % tabs.count); return true }
+            }
+            return super.performKeyEquivalent(with: event)
         }
     }
     override func cancelOperation(_ sender: Any?) {

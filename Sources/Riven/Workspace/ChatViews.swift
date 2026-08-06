@@ -410,7 +410,42 @@ final class CircleButton: NSButton {
 }
 
 // MARK: - shared text rendering (markdown prose + ``` code blocks, diff coloring)
+/// 자기가 담고 있는 코드를 기억하는 상자 — 승인 카드가 같은 내용을 다시 그릴 때 중복을 걷어낸다.
+final class CodeCarrier: NSView {
+    var carriedCode: String?
+}
+
 enum ChatText {
+    /// 한 줄 명령: 상자 하나에 코드와 작은 버튼만. 짧은 명령까지 머리글 달린 카드로 그리면
+    /// 대화가 상자 더미가 된다.
+    static func compactCode(_ code: String, path: String?) -> NSView {
+        let box = CodeCarrier()
+        box.carriedCode = code
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.bg3.cgColor
+        box.layer?.cornerRadius = 6
+        box.translatesAutoresizingMaskIntoConstraints = false
+        let l = NSTextField(labelWithString: code)
+        l.font = UIScale.mono(UIScale.small)
+        l.textColor = Theme.fg
+        l.lineBreakMode = .byTruncatingTail
+        l.translatesAutoresizingMaskIntoConstraints = false
+        let btn = ClosureButton(title: t("chat.openInEditor")) { [weak box] in
+            box?.enclosingChatPanel?.openCodeInEditor(code, path: path)
+        }
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(l); box.addSubview(btn)
+        NSLayoutConstraint.activate([
+            l.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 10),
+            l.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            l.trailingAnchor.constraint(lessThanOrEqualTo: btn.leadingAnchor, constant: -8),
+            btn.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+            btn.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(30)),
+        ])
+        return box
+    }
+
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
     // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
     // emphasis was indistinguishable.
@@ -507,7 +542,12 @@ enum ChatText {
         return row
     }
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
-        let box = NSView()
+        // 한 줄짜리 짧은 명령까지 머리글 달린 코드 카드로 그리면 대화가 상자 더미가 된다.
+        // 그런 건 한 줄로 눕히고, 여러 줄·긴 코드만 카드로 세운다.
+        let oneLiner = !code.contains("\n") && code.count <= 110 && !diff
+        if oneLiner { return compactCode(code, path: path) }
+        let box = CodeCarrier()
+        box.carriedCode = code
         box.wantsLayer = true
         box.layer?.backgroundColor = Theme.bg3.cgColor          // distinct code surface (like the CLI)
         box.layer?.cornerRadius = 8; box.layer?.borderWidth = 1
@@ -516,7 +556,7 @@ enum ChatText {
 
         // Header: language label (left) + action button (right), separated from the code.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
-        let langL = NSTextField(labelWithString: (lang?.isEmpty == false ? lang! : (diff ? "diff" : "code")).uppercased())
+        let langL = NSTextField(labelWithString: lang?.isEmpty == false ? lang!.lowercased() : (diff ? "diff" : ""))
         langL.font = UIScale.mono(UIScale.caption, .semibold)
         langL.textColor = Theme.fgDim.withAlphaComponent(0.8)
         langL.translatesAutoresizingMaskIntoConstraints = false
@@ -826,6 +866,8 @@ enum ChatText {
 
 // MARK: - user message (LEFT-aligned) — an accent bar + quiet tint, like the CLI's "> "
 // prompt line: instantly reads as "you said this" without a loud bordered box.
+/// 사용자가 보낸 말. 왼쪽 얇은 선 하나로는 어시스턴트 글과 구분되지 않아서, 옅은 배경과
+/// 둥근 모서리를 준다 (읽는 사람은 "누가 한 말인지" 를 색·모양으로 먼저 읽는다).
 final class UserBubble: NSView {
     private let bar = NSView()
     private let queuedTag = NSTextField(labelWithString: t("chat.queuedTag"))
@@ -837,8 +879,11 @@ final class UserBubble: NSView {
         wantsLayer = true
         let card = NSView()
         card.wantsLayer = true
-        card.layer?.backgroundColor = Theme.hover.cgColor
-        card.layer?.cornerRadius = 8
+        // 옅은 회색 + 얇은 선만으로는 어시스턴트 글과 구분되지 않았다. 또렷한 배경을 준다.
+        card.layer?.backgroundColor = Theme.bg3.cgColor
+        card.layer?.cornerRadius = 10
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = Theme.edge.cgColor
         card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
         card.translatesAutoresizingMaskIntoConstraints = false
         bar.wantsLayer = true
@@ -942,14 +987,38 @@ final class ApprovalCard: NSView {
         hint.font = UIScale.font(UIScale.caption); hint.textColor = Theme.fgDim
         hint.translatesAutoresizingMaskIntoConstraints = false
 
-        let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 8
+        let col = NSStackView(); col.orientation = .vertical; col.alignment = .leading; col.spacing = 6
         col.translatesAutoresizingMaskIntoConstraints = false
         col.addArrangedSubview(titleL)
-        if !detail.isEmpty { col.addArrangedSubview(sub) }
+        // 설명이 코드와 같은 말이면 한 번만 보여 준다 (Bash 승인에서 명령이 두 줄로 겹쳤다).
+        let codeText = (code ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let detailText = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !detailText.isEmpty, detailText != codeText { col.addArrangedSubview(sub) }
         if let code, !code.isEmpty {
-            let cb = ChatText.codeBlock(code, diff: true, path: path)
-            col.addArrangedSubview(cb)
-            cb.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
+            // 승인은 "이걸 실행할까요?" 를 묻는 자리다. 전문을 다 펼칠 필요가 없어서 한 줄로
+            // 줄여 보여 주고(넘치면 …), 자세히 볼 사람은 에디터에서 연다. 예전에는 코드 상자가
+            // 카드 높이의 절반을 먹었다.
+            let oneLine = code.split(separator: "\n").first.map(String.init) ?? code
+            let more = code.contains("\n")
+            let cmd = NSTextField(labelWithString: oneLine + (more ? " …" : ""))
+            cmd.font = UIScale.mono(UIScale.small)
+            cmd.textColor = Theme.fg
+            cmd.lineBreakMode = .byTruncatingTail
+            cmd.translatesAutoresizingMaskIntoConstraints = false
+            let box = NSView()
+            box.wantsLayer = true
+            box.layer?.cornerRadius = 6
+            box.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.55).cgColor
+            box.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(cmd)
+            NSLayoutConstraint.activate([
+                cmd.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
+                cmd.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -8),
+                cmd.topAnchor.constraint(equalTo: box.topAnchor, constant: 5),
+                cmd.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -5),
+            ])
+            col.addArrangedSubview(box)
+            box.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         }
         // Long/many options stack vertically (like the CLI's list); few short ones sit in a row.
         let vert = options.count > 3 || options.contains { $0.0.count > 24 }
@@ -1227,9 +1296,21 @@ final class TurnBlock: NSView {
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
                      options: [(String, () -> Void)]) -> ApprovalCard {
         closeText()
+        // 바로 위에 같은 명령을 보여 준 도구 줄이 있으면 그걸 걷는다. 카드가 같은 내용을
+        // 다시 담고 있어서, 화면에는 같은 명령이 두 번·"에디터에서 보기" 버튼도 두 번 나왔다.
+        if let code, !code.isEmpty { dropDuplicateToolBlock(code) }
         let card = ApprovalCard(title: title, detail: detail, code: code, path: path, options: options)
         add(card)
         return card
+    }
+    /// 방금 그린 도구 줄이 같은 코드를 담고 있으면 지운다 (승인 카드가 그 자리를 대신한다).
+    private func dropDuplicateToolBlock(_ code: String) {
+        let tail = content.arrangedSubviews.suffix(3)
+        for v in tail where (v as? CodeCarrier)?.carriedCode == code {
+            v.removeFromSuperview()
+            if let line = content.arrangedSubviews.last as? ToolLine { line.removeFromSuperview() }
+            return
+        }
     }
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }

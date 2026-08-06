@@ -102,7 +102,9 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
             commitScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             commitScroll.topAnchor.constraint(equalTo: branchLabel.bottomAnchor, constant: 8),
             commitScroll.heightAnchor.constraint(equalToConstant: 48),
-            commitBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            commitBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            commitBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            commitBtn.heightAnchor.constraint(equalToConstant: UIScale.pt(26)),
             commitBtn.topAnchor.constraint(equalTo: commitScroll.bottomAnchor, constant: 6),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -253,7 +255,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         }
     }
     private func styleCommitButton() {
-        commitBtn.layer?.cornerRadius = 6
+        commitBtn.layer?.cornerRadius = UIScale.pt(6)
         commitBtn.contentTintColor = commitBtn.isEnabled ? Theme.bg : Theme.fgDim
         commitBtn.layer?.backgroundColor = (commitBtn.isEnabled ? Theme.accent : Theme.bg3).cgColor
         commitBtn.alphaValue = commitBtn.isEnabled ? 1 : 0.5
@@ -290,7 +292,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         ])
         if let (t, sel) = action {
             let b = NSButton(title: t, target: self, action: sel)
-            b.isBordered = false; b.font = UIScale.font(UIScale.caption); b.contentTintColor = Theme.accent
+            b.isBordered = false; b.font = UIScale.font(UIScale.caption); b.contentTintColor = Theme.fgDim
             b.translatesAutoresizingMaskIntoConstraints = false
             c.addSubview(b)
             NSLayoutConstraint.activate([
@@ -341,8 +343,10 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         if staged {
             actBtn("minus", t("git.unstage"), Theme.fgDim) { [weak self] in self?.unstage(f.path) }
         } else {
-            actBtn("plus", t("git.stage"), Theme.fgDim) { [weak self] in self?.stage(f.path) }
-            actBtn("trash", t("git.discard"), Theme.danger) { [weak self] in self?.discard(f) }
+            // 되돌릴 수 없는 "버리기" 가 눈에 제일 띄면 안 된다 — 늘 빨갛게 두면 그게 기본
+            // 동작처럼 읽힌다. 평소엔 흐리고, 스테이지(+)를 먼저 두고, 확인 창은 그대로다.
+            actBtn("trash", t("git.discard"), Theme.fgDim) { [weak self] in self?.discard(f) }
+            actBtn("plus", t("git.stage"), Theme.accent) { [weak self] in self?.stage(f.path) }
         }
         NSLayoutConstraint.activate([
             badge.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 10),

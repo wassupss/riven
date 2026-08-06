@@ -206,9 +206,12 @@ enum BrowserStore {
         if s.hasPrefix("localhost") || s.hasPrefix("127.0.0.1") || s.contains("://") { return true }
         return s.contains(".")
     }
+    /// 주소창에 친 게 주소가 아니면 여기로 보낸다. 기본은 구글 — 평소 쓰는 검색이 나와야지,
+    /// 주소창에 검색어를 쳤는데 낯선 엔진이 뜨면 그 자체가 걸림돌이다.
     static func searchURL(_ q: String) -> String {
         let e = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
-        return "https://duckduckgo.com/?q=\(e)"
+        let template = Settings.shared.string("browserSearch", "https://www.google.com/search?q={q}")
+        return template.replacingOccurrences(of: "{q}", with: e)
     }
 
     /// 자동완성·기록의 키. 조각(#...)은 떼고 끝의 / 는 통일한다.
