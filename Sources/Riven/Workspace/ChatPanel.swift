@@ -118,7 +118,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         layer?.backgroundColor = Theme.bg.cgColor
 
         stack.orientation = .vertical; stack.spacing = 16; stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 14, right: 18)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false

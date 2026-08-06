@@ -832,6 +832,8 @@ enum ChatText {
 
 // MARK: - user message (LEFT-aligned) — an accent bar + quiet tint, like the CLI's "> "
 // prompt line: instantly reads as "you said this" without a loud bordered box.
+/// 사용자가 보낸 말. 왼쪽 얇은 선 하나로는 어시스턴트 글과 구분되지 않아서, 옅은 배경과
+/// 둥근 모서리를 준다 (읽는 사람은 "누가 한 말인지" 를 색·모양으로 먼저 읽는다).
 final class UserBubble: NSView {
     private let bar = NSView()
     private let queuedTag = NSTextField(labelWithString: t("chat.queuedTag"))
@@ -958,6 +960,9 @@ final class ApprovalCard: NSView {
         if let code, !code.isEmpty {
             // 승인 카드의 코드는 diff 가 아니다 — diff:true 를 주면 "DIFF" 라벨이 붙었다.
             let cb = ChatText.codeBlock(code, diff: false, path: path)
+            // 카드 안에 또 테두리 있는 상자를 넣으면 테두리가 겹쳐 지저분해진다. 배경만 남긴다.
+            cb.layer?.borderWidth = 0
+            cb.layer?.backgroundColor = Theme.bg.withAlphaComponent(0.5).cgColor
             col.addArrangedSubview(cb)
             cb.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         }
