@@ -898,28 +898,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 여는 공개 API 는 없다 — isInspectable 을 켜면 페이지 오른쪽 클릭 → "요소 정보 검사"
     /// 로 열 수 있고, 메뉴·단축키로 열려면 _WKInspector 를 거쳐야 한다. 언젠가 사라질 수 있는
     /// 길이라, 안 되면 조용히 실패하지 않고 오른쪽 클릭으로 열라고 알려 준다.
-    /// 개발자 도구 = Safari Web Inspector (요소·네트워크·소스·콘솔). 네이티브 앱이 쓸 수 있는
-    /// 진짜 개발자 도구다.
+    /// 개발자 도구.
     ///
-    /// 여는 공개 API 는 없어서 _WKInspector 를 거친다. 예전에는 이걸 부르면 앱이 그 자리에서
-    /// 죽었는데 — 원인은 이 코드가 아니라 서명이었다. 인스펙터는 JIT 로 도는데 하드닝 런타임에
-    /// allow-jit 이 없어서 그 순간 프로세스가 끝났다 (페이지 자체는 별도 프로세스라 멀쩡했다).
-    /// 권한을 주고 나니 그대로 열린다. 비공개 길이라 없어질 수 있으므로, 못 열면 우클릭
-    /// 안내와 콘솔 서랍으로 물러난다.
+    /// Safari Web Inspector 를 쓰려면 페이지에서 오른쪽 클릭 → "요소 정보 검사" 다 (isInspectable
+    /// 이 켜져 있어 요소·네트워크·소스·콘솔이 그대로 열린다). 메뉴·단축키로 여는 공개 API 는
+    /// 없고, _WKInspector 로 여는 비공개 길은 실제로 해 보니 창이 뜨지 않았다 — 게다가 예전에는
+    /// 그 호출이 앱을 죽였다 (하드닝 런타임에 allow-jit 이 없어서. 그건 별도로 고쳤다).
+    /// 그래서 여기서는 확실히 되는 것만 한다: riven 안의 콘솔 서랍을 열고, 전체 도구를 여는
+    /// 방법을 알려 준다.
     @objc private func openInspector() {
-        guard let web = tab?.web else { return }
-        let sel = NSSelectorFromString("_inspector")
-        if web.isInspectable, web.responds(to: sel),
-           let ins = web.perform(sel)?.takeUnretainedValue() as AnyObject? {
-            let show = NSSelectorFromString("show")
-            if ins.responds(to: show) {
-                _ = ins.perform(show)
-                return
-            }
-        }
-        setStatus(t("browser.inspectHint"))
         toggleConsole(true)
+        setStatus(t("browser.inspectHint"))
     }
+
     /// 콘솔만 빠르게 (riven 안에 붙는 가벼운 서랍). 페이지 오류를 흘려보며 작업할 때 쓴다.
     @objc private func toggleConsoleDrawer() { toggleConsole(!consoleOpen) }
     private var consoleOpen: Bool { consoleHeight.constant > 0 }
@@ -1316,6 +1307,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             + " 웹뷰=\(w.map { "\(Int($0.frame.width))x\(Int($0.frame.height)) 숨김=\($0.isHidden)" } ?? "없음")"
     }
     func debugConsole() -> BrowserConsole { console }
+    func debugOpenDevTools() { openInspector() }
     func debugToggleConsole(_ open: Bool) { toggleConsole(open) }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }

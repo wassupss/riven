@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var rail: WorkspaceRail!
     var explorer: FileTreeView! { workspace.map { explorer(for: $0) } }
     private let explorerHost = NSView()
+    func debugExplorerHost() -> NSView { explorerHost }
     var searchPanel: SearchPanel! { workspace.map { search(for: $0) } }
     var gitPanel: GitPanel! { workspace.map { git(for: $0).changes } }
     /// 지금 보고 있는 워크스페이스의 브라우저 (없으면 만든다).
@@ -2788,6 +2789,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// Move a shared panel view into a workspace's host container (one view; cheap).
     private func adopt(_ view: NSView, into host: NSView) {
+        // 호스트에는 하나만 있어야 한다. 예전 것을 안 걷으면 뷰가 쌓이고, 나중에 붙은 것이
+        // 위를 덮는다 — 워크스페이스를 오갈 때 남의 탐색기가 그대로 보이던 원인이다
+        // (돌아왔을 때는 이미 붙어 있어 early return 에 걸려 아무 일도 하지 않았다).
+        for v in host.subviews where v !== view { v.removeFromSuperview() }
         guard view.superview !== host else { return }
         view.removeFromSuperview()
         view.frame = host.bounds
@@ -3953,6 +3958,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     RLog.log("WSMANY 돌아온 뒤 독패널=\(inDock.sorted()) 내용복구=\(shown.sorted())")
                     RLog.log("WSMANY done")
                 }
+            }
+        }
+        // RIVEN_EXBENCH=1: 워크스페이스를 오갈 때 탐색기가 그 워크스페이스 것으로 바뀌는지.
+        if ProcessInfo.processInfo.environment["RIVEN_EXBENCH"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                for i in 0..<2 {
+                    let d = URL(fileURLWithPath: "/private/tmp/exws/ws\(i)")
+                    try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+                    try? "hello".write(to: d.appendingPathComponent("only-in-ws\(i).txt"), atomically: true, encoding: .utf8)
+                }
+                func report(_ label: String) {
+                    let host = self.debugExplorerHost()
+                    let shown = host.subviews.compactMap { ($0 as? FileTreeView)?.debugRoot() }
+                    RLog.log("EX \(label): 활성=\(self.workspace?.lastPathComponent ?? "-") "
+                             + "호스트안=\(host.subviews.count)개 뿌리=\(shown) "
+                             + "보이는것=\((host.subviews.last as? FileTreeView)?.debugRoot() ?? "없음")")
+                }
+                var t = 0.0
+                for i in [0, 1, 0, 1] {
+                    t += 2.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                        self.activate(URL(fileURLWithPath: "/private/tmp/exws/ws\(i)"))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { report("ws\(i) 로 이동") }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + t + 2) { RLog.log("EX done") }
             }
         }
         // RIVEN_NOTEBENCH=1: 메모 패널이 목록을 읽고 그리는 데 드는 시간.

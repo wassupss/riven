@@ -276,6 +276,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         outline.reloadData()
     }
 
+    func debugRoot() -> String { root?.url.lastPathComponent ?? "없음" }
     func setRoot(_ url: URL) {
         root = FileNode(url: url, isDir: true)
         workspaceKey = url.path
