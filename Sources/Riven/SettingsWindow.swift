@@ -68,7 +68,7 @@ final class SettingsWindow: NSPanel {
         // Header: "설정" title (left) + Close (right) over the tab bar.
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = NSTextField(labelWithString: t("settings.title"))
-        titleLabel.font = UIScale.font(UIScale.title, .semibold)
+        titleLabel.font = UIScale.font(UIScale.small, .semibold)
         titleLabel.textColor = Theme.fg
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = titleLabel
@@ -83,7 +83,7 @@ final class SettingsWindow: NSPanel {
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
             closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -14),
-            closeBtn.topAnchor.constraint(equalTo: header.topAnchor, constant: 12),
+            closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             closeBtn.heightAnchor.constraint(equalToConstant: 22),
             closeBtn.widthAnchor.constraint(equalToConstant: 44)
         ])
@@ -125,8 +125,10 @@ final class SettingsWindow: NSPanel {
             header.topAnchor.constraint(equalTo: root.topAnchor),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
+            // 제목 줄은 창을 끄는 버튼 자리만큼만. "설정" 이라는 글자 하나가 44pt 를 통째로
+            // 먹고 있었다 — 그만큼 내용이 아래로 밀렸다.
+            header.heightAnchor.constraint(equalToConstant: 34),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
 
             sidebar.topAnchor.constraint(equalTo: header.bottomAnchor),
@@ -887,9 +889,9 @@ final class SettingsWindow: NSPanel {
     /// 없으니 "동떨어져" 보인다. 묶음을 그려 주는 것만으로 절반은 해결된다.
     private var currentCard: SettingsCard?
     private func addSection(_ t: String) {
-        content.addArrangedSubview(spacer(10))
+        content.addArrangedSubview(spacer(currentCard == nil ? 2 : 16))
         content.addArrangedSubview(sectionLabel(t))
-        content.addArrangedSubview(spacer(2))
+        content.addArrangedSubview(spacer(6))
         let card = SettingsCard()
         currentCard = card
         content.addArrangedSubview(card)
@@ -1043,15 +1045,17 @@ final class SettingsCard: NSView, Themable {
         row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(left); row.addSubview(control)
         NSLayoutConstraint.activate([
-            left.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            left.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             left.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             left.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -12),
             // 컨트롤은 오른쪽 끝에 맞춘다 — 줄마다 제각각이면 눈이 기댈 선이 없다.
-            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(38)),
-            left.topAnchor.constraint(greaterThanOrEqualTo: row.topAnchor, constant: 7),
-            left.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -7),
+            // 세로 여백은 줄 높이를 키우는 대신 안쪽 여백으로 준다. 최소 높이를 44 로 올렸더니
+            // 컨트롤 높이와 충돌해 제약이 풀리고 내용이 통째로 사라졌다 (하얀 화면).
+            left.topAnchor.constraint(greaterThanOrEqualTo: row.topAnchor, constant: 9),
+            left.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -9),
         ])
         add(row)
     }
@@ -1063,10 +1067,10 @@ final class SettingsCard: NSView, Themable {
         row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(view)
         NSLayoutConstraint.activate([
-            view.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-            view.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -12),
-            view.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
-            view.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
+            view.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            view.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16),
+            view.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
+            view.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -12),
         ])
         add(row)
     }
