@@ -903,21 +903,15 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 그 호출이 앱을 죽였다 (하드닝 런타임에 allow-jit 이 없어서. 그건 별도로 고쳤다).
     /// 그래서 여기서는 확실히 되는 것만 한다: riven 안의 콘솔 서랍을 열고, 전체 도구를 여는
     /// 방법을 알려 준다.
+    /// 개발자 도구. Safari Web Inspector 는 페이지에서 오른쪽 클릭 → "요소 정보 검사" 로 연다.
+    ///
+    /// 프로그램으로 여는 길을 두 번 시도했고 둘 다 실패했다:
+    ///  · _WKInspector.show() — 창이 뜨지 않는다 (예전에는 앱까지 죽였다. 그건 서명 문제라
+    ///    allow-jit 으로 고쳤지만, 죽지 않을 뿐 열리지도 않는다).
+    ///  · 합성 우클릭으로 페이지 메뉴 띄우기 — 메뉴가 떴다가 바로 닫혀 화면이 깜빡였다
+    ///    (짝이 되는 rightMouseUp 이 없으면 WebKit 이 트래킹을 접는다).
+    /// 그래서 여기서는 아무 것도 흉내내지 않고, 여는 방법만 한 줄로 알려 준다.
     @objc private func openInspector() {
-        // WebKit 의 페이지 메뉴를 그 자리에 띄운다 — 거기 "요소 정보 검사" 가 있고, 그게
-        // Safari Web Inspector 를 여는 유일하게 동작하는 길이다 (프로그램으로 직접 여는
-        // 비공개 API 는 창이 안 뜬다). 사용자는 한 번 더 고르기만 하면 된다.
-        guard let web = tab?.web, let win = window else { return }
-        let mid = NSPoint(x: web.bounds.midX, y: web.bounds.midY)
-        let inWin = web.convert(mid, to: nil)
-        guard let down = NSEvent.mouseEvent(with: .rightMouseDown, location: inWin, modifierFlags: [],
-                                            timestamp: ProcessInfo.processInfo.systemUptime,
-                                            windowNumber: win.windowNumber, context: nil,
-                                            eventNumber: 0, clickCount: 1, pressure: 1) else {
-            toggleConsole(true); return
-        }
-        window?.makeFirstResponder(web)
-        web.rightMouseDown(with: down)
         setStatus(t("browser.inspectHint"))
     }
 

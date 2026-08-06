@@ -88,47 +88,61 @@ final class SettingsWindow: NSPanel {
             closeBtn.widthAnchor.constraint(equalToConstant: 44)
         ])
 
-        // Tab bar (underline-active), aligned with the content padding.
-        let tabStack = NSStackView()
-        tabStack.orientation = .horizontal; tabStack.spacing = 4
-        tabStack.translatesAutoresizingMaskIntoConstraints = false
+        // 왼쪽 목록 + 오른쪽 내용 (macOS 설정 방식). 위쪽 탭 줄은 항목이 늘어날수록 좁아지고,
+        // 넓은 창에서 오른쪽이 통째로 비어 "동떨어져" 보였다. 목록을 왼쪽에 세우면 지금 어디에
+        // 있는지가 늘 보이고, 오른쪽은 내용에 온전히 쓴다.
+        let sidebar = NSView()
+        sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        let navStack = NSStackView()
+        navStack.orientation = .vertical; navStack.alignment = .leading; navStack.spacing = 2
+        navStack.translatesAutoresizingMaskIntoConstraints = false
         for (i, label) in tabs.enumerated() {
-            let b = makeTab(label, i)
-            tabButtons.append(b); tabStack.addArrangedSubview(b)
+            let b = makeNavItem(label, symbol: SettingsWindow.tabSymbols[i], index: i)
+            tabButtons.append(b)
+            navStack.addArrangedSubview(b)
+            b.widthAnchor.constraint(equalTo: navStack.widthAnchor).isActive = true
         }
-        hair.wantsLayer = true; hair.layer?.backgroundColor = Theme.hairline.cgColor
-        hair.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(tabStack); header.addSubview(hair)
+        sidebar.addSubview(navStack)
+        let sideHair = NSView()
+        sideHair.wantsLayer = true; sideHair.layer?.backgroundColor = Theme.hairline.cgColor
+        sideHair.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sideHair)
 
         // Scrollable content.
         content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
-        // Reliable inner padding (the documentView leading constraint is ignored by
-        // the scroll view, so pad via the stack's own insets instead).
-        content.edgeInsets = NSEdgeInsets(top: 14, left: 20, bottom: 20, right: 20)
+        content.edgeInsets = NSEdgeInsets(top: 18, left: 22, bottom: 24, right: 22)
         content.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = content
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.automaticallyAdjustsContentInsets = false
-        scroll.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
 
-        root.addSubview(header); root.addSubview(scroll)
+        root.addSubview(header); root.addSubview(sidebar); root.addSubview(scroll)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: root.topAnchor),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: 78),
-            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 16),  // no traffic lights now
-            titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 14),
-            tabStack.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
-            tabStack.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-            hair.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            hair.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            hair.bottomAnchor.constraint(equalTo: header.bottomAnchor),
-            hair.heightAnchor.constraint(equalToConstant: 1),
+            header.heightAnchor.constraint(equalToConstant: 44),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 18),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+
+            sidebar.topAnchor.constraint(equalTo: header.bottomAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 168),
+            navStack.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 10),
+            navStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 8),
+            navStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -8),
+            sideHair.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            sideHair.topAnchor.constraint(equalTo: sidebar.topAnchor),
+            sideHair.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
+            sideHair.widthAnchor.constraint(equalToConstant: 1),
+
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
@@ -147,6 +161,25 @@ final class SettingsWindow: NSPanel {
             for (i, b) in self.tabButtons.enumerated() where i < labels.count { b.title = labels[i] }
             self.showTab(self.activeTab)
         }
+    }
+
+    static let tabSymbols = ["gearshape", "sparkles", "keyboard", "person.crop.circle", "info.circle"]
+
+    /// 왼쪽 목록 한 줄. 선택되면 알약 배경 — 지금 어디에 있는지가 늘 보인다.
+    private func makeNavItem(_ title: String, symbol: String, index: Int) -> NSButton {
+        let b = NSButton(title: "  " + title, target: self, action: #selector(tabClicked(_:)))
+        b.tag = index
+        b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        b.image?.isTemplate = true
+        b.imagePosition = .imageLeading
+        b.alignment = .left
+        b.isBordered = false
+        b.font = UIScale.font(UIScale.body)
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 6
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.heightAnchor.constraint(equalToConstant: UIScale.pt(30)).isActive = true
+        return b
     }
 
     private func makeTab(_ t: String, _ i: Int) -> NSButton {
@@ -168,26 +201,20 @@ final class SettingsWindow: NSPanel {
 
     // ---- tabs ----
     @objc private func tabClicked(_ s: NSButton) { showTab(s.tag) }
+    private func styleNav() {
+        for (i, b) in tabButtons.enumerated() {
+            let on = i == activeTab
+            b.layer?.backgroundColor = (on ? Theme.accentMuted : NSColor.clear).cgColor
+            b.contentTintColor = on ? Theme.accent : Theme.fgDim
+            b.attributedTitle = NSAttributedString(string: b.title, attributes: [
+                .foregroundColor: on ? Theme.fg : Theme.fgDim,
+                .font: UIScale.font(UIScale.body, on ? .semibold : .regular),
+            ])
+        }
+    }
     private func showTab(_ i: Int) {
         activeTab = i
-        // Underline pinned to the active tab's own bottom (no fragile frame math), so
-        // it's always exactly under the text and flush with the tab-bar hairline.
-        for (j, b) in tabButtons.enumerated() {
-            b.contentTintColor = j == i ? Theme.fg : Theme.fgDim
-            b.subviews.filter { $0.identifier == tabUnderlineID }.forEach { $0.removeFromSuperview() }
-            if j == i {
-                let u = NSView(); u.identifier = tabUnderlineID; u.wantsLayer = true
-                u.layer?.backgroundColor = Theme.accent.cgColor
-                u.translatesAutoresizingMaskIntoConstraints = false
-                b.addSubview(u)
-                NSLayoutConstraint.activate([
-                    u.leadingAnchor.constraint(equalTo: b.leadingAnchor, constant: 2),
-                    u.trailingAnchor.constraint(equalTo: b.trailingAnchor, constant: -2),
-                    u.bottomAnchor.constraint(equalTo: b.bottomAnchor),
-                    u.heightAnchor.constraint(equalToConstant: 2)
-                ])
-            }
-        }
+        styleNav()
         content.arrangedSubviews.forEach { $0.removeFromSuperview() }
         switch i {
         case 0: buildGeneral()
