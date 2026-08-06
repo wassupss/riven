@@ -234,16 +234,26 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
             let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
             addTrackingArea(t); track = t
         }
-        override func mouseEntered(with e: NSEvent) { close.isHidden = !closable }
-        override func mouseExited(with e: NSEvent) { close.isHidden = true }
+        private var hot = false
+        override func mouseEntered(with e: NSEvent) {
+            close.isHidden = !closable; hot = true; needsDisplay = true
+        }
+        override func mouseExited(with e: NSEvent) {
+            close.isHidden = true; hot = false; needsDisplay = true
+        }
         override func mouseDown(with e: NSEvent) { onPick?() }
         override func rightMouseDown(with e: NSEvent) { onMenu?(e) }
         @objc private func closeTapped() { onClose?() }
         override func draw(_ dirty: NSRect) {
-            if active {
-                Theme.accent.setFill()
-                NSRect(x: 0, y: bounds.height - 2, width: bounds.width, height: 2).fill()
+            // 활성 표시는 아래에 긋는다 — riven 의 패널 탭(RivenTabStrip·독 탭)이 아래에
+            // 긋는데 브라우저 탭만 위에 그어서, 같은 화면에 두 규칙이 섞여 보였다.
+            if hot && !active {
+                Theme.fgDim.withAlphaComponent(0.07).setFill()
+                NSRect(x: 0, y: 1, width: bounds.width, height: bounds.height - 1).fill()
             }
+            guard active else { return }
+            Theme.accent.setFill()
+            NSRect(x: 0, y: 0, width: bounds.width, height: 2).fill()
         }
     }
 }
