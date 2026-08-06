@@ -5601,6 +5601,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func wsScopeReport() {
+        // 파일 감시 경로: 다른 워크스페이스에서 .md 가 생겨도 지금 보는 쪽에 뜨면 안 된다.
+        if let mineWS = workspace, let theirs = workspaces.first(where: { $0 != mineWS }) {
+            let f = theirs.appendingPathComponent("에이전트문서.md")
+            try? "# 저쪽 문서\n".write(to: f, atomically: true, encoding: .utf8)
+            surfaceAgentMarkdown(f.path, ws: theirs)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                RLog.log("WSSCOPE md: 내쪽 메모패널=\(self.states[mineWS]?.auxPanels["notes"] != nil) (거짓이어야 정상)"
+                         + " 저쪽 메모패널=\(self.states[theirs]?.auxPanels["notes"] != nil) (참이어야 정상)"
+                         + " 저쪽에 뜬 문서=\(self.states[theirs]?.notes?.debugCurrentPath() ?? "없음")")
+            }
+        }
         // 다른 워크스페이스의 팬이 돌기 시작해도, 보고 있는 워크스페이스에 조직도가
         // 새로 생기면 안 된다 (예전에는 teamPanel 이 "지금 보는 곳" 을 가리켜 그랬다).
         if let mineWS = workspace, let theirs = allAgentPanes().first(where: { $0.ws != mineWS }) {
@@ -5730,9 +5742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard AppDelegate.isInside(url, ws), FileManager.default.fileExists(atPath: path) else { return }
         guard Date().timeIntervalSince(lastMarkdownSurface) > 1.5 else { return }
         lastMarkdownSurface = Date()
-        if auxDockPanels["notes"] == nil { toggleDockPanel("notes") }
-        notesPanel.setWorkspace(ws)
-        notesPanel.open(url)
+        // 그 문서가 속한 워크스페이스에 연다. 예전에는 ws 를 인자로 받고도 무시한 채
+        // "지금 보고 있는" 워크스페이스에 메모 패널을 열고 거기에 남의 문서를 띄웠다 —
+        // 에이전트에게 시켜 놓고 다른 워크스페이스로 옮기면 그대로 겪는다.
+        ensureAux("notes", in: ws)
+        notes(for: ws).open(url)
     }
 
     /// 심볼릭 링크와 ".." 를 모두 편 절대 경로.
