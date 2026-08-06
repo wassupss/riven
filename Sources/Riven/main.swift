@@ -651,6 +651,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_GITSHOT=<png>: 소스 컨트롤 패널 현재 모습.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_GITSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        self.ensureAux("git", in: ws)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                            let v = self.git(for: ws)
+                            guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: shot))
+                            }
+                            RLog.log("GITSHOT done \(Int(v.bounds.width))x\(Int(v.bounds.height))")
+                        }
+                    }
+                }
                 // RIVEN_DEVTOOLS=<url>: 콘솔이 페이지 출력·오류를 잡고, 그 페이지에서 코드를
                 // 실행하고, 캐시 지우기·강제 새로고침이 도는지.
                 if let target = ProcessInfo.processInfo.environment["RIVEN_DEVTOOLS"] {

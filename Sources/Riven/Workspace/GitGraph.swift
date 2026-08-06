@@ -78,37 +78,78 @@ enum GraphLayout {
 final class SourceControlView: NSView {
     let graph = GitGraphView(frame: .zero)
     let changes: GitPanel
+    private let divider = NSBox()
+    private var wide: [NSLayoutConstraint] = []
+    private var narrow: [NSLayoutConstraint] = []
+    private var isWide: Bool?
+
     init(changes: GitPanel) {
         self.changes = changes
         super.init(frame: .zero)
         graph.translatesAutoresizingMaskIntoConstraints = false
         changes.translatesAutoresizingMaskIntoConstraints = false
-        let divider = NSBox(); divider.boxType = .separator
+        divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
         addSubview(graph); addSubview(divider); addSubview(changes)
-        NSLayoutConstraint.activate([
-            graph.topAnchor.constraint(equalTo: topAnchor), graph.bottomAnchor.constraint(equalTo: bottomAnchor),
-            graph.leadingAnchor.constraint(equalTo: leadingAnchor),
-            graph.trailingAnchor.constraint(equalTo: divider.leadingAnchor),
-            divider.topAnchor.constraint(equalTo: topAnchor), divider.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+        // 넓을 때: 변경 사항 | 그래프 를 나란히.
+        let prefWidth = changes.widthAnchor.constraint(equalToConstant: 320)
+        prefWidth.priority = .defaultHigh
+        wide = [
+            changes.topAnchor.constraint(equalTo: topAnchor),
+            changes.bottomAnchor.constraint(equalTo: bottomAnchor),
+            changes.leadingAnchor.constraint(equalTo: leadingAnchor),
+            changes.trailingAnchor.constraint(equalTo: divider.leadingAnchor),
+            divider.topAnchor.constraint(equalTo: topAnchor),
+            divider.bottomAnchor.constraint(equalTo: bottomAnchor),
             divider.widthAnchor.constraint(equalToConstant: 1),
-            divider.trailingAnchor.constraint(equalTo: changes.leadingAnchor),
-            changes.topAnchor.constraint(equalTo: topAnchor), changes.bottomAnchor.constraint(equalTo: bottomAnchor),
-            changes.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
-        // Changes sidebar: prefers 320 but yields down to 200 as the panel narrows, so a
-        // narrow Source Control panel shrinks the sidebar instead of starving the graph to
-        // a negative width (the old required 320 broke the layout below ~321px). The graph
-        // keeps a small required minimum so it never fully collapses.
-        let prefWidth = changes.widthAnchor.constraint(equalToConstant: 320); prefWidth.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            changes.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
-            changes.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            divider.trailingAnchor.constraint(equalTo: graph.leadingAnchor),
+            graph.topAnchor.constraint(equalTo: topAnchor),
+            graph.bottomAnchor.constraint(equalTo: bottomAnchor),
+            graph.trailingAnchor.constraint(equalTo: trailingAnchor),
+            changes.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            changes.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
             prefWidth,
-            graph.widthAnchor.constraint(greaterThanOrEqualToConstant: 90),
-        ])
+        ]
+        // 좁을 때: 위아래로 쌓는다. 나란히 두면 그래프가 90~200px 로 눌려 커밋 메시지가
+        // 두 글자로 잘렸다 — 목록이라기보다 얼룩이었다. 폭을 통째로 쓰게 한다.
+        // 위가 변경 사항(지금 손대는 것), 아래가 히스토리.
+        // 변경 사항은 필요한 만큼만 (최대 45%). 파일 두 개뿐인데 화면 절반을 비워 두고
+        // 히스토리를 아래로 밀어내면 둘 다 답답하다.
+        let changesHeight = changes.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.45)
+        changesHeight.priority = .defaultLow
+        narrow = [
+            changes.topAnchor.constraint(equalTo: topAnchor),
+            changes.leadingAnchor.constraint(equalTo: leadingAnchor),
+            changes.trailingAnchor.constraint(equalTo: trailingAnchor),
+            changes.bottomAnchor.constraint(equalTo: divider.topAnchor),
+            changesHeight,
+            changes.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            changes.heightAnchor.constraint(lessThanOrEqualTo: heightAnchor, multiplier: 0.45),
+            divider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            divider.heightAnchor.constraint(equalToConstant: 1),
+            divider.bottomAnchor.constraint(equalTo: graph.topAnchor),
+            graph.leadingAnchor.constraint(equalTo: leadingAnchor),
+            graph.trailingAnchor.constraint(equalTo: trailingAnchor),
+            graph.bottomAnchor.constraint(equalTo: bottomAnchor),
+            graph.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
+        ]
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 폭에 따라 배치를 바꾼다. 사이드 패널만 한 너비에서 두 열을 우기면 둘 다 못 읽는다.
+    override func layout() {
+        let want = bounds.width >= 620
+        if isWide != want {
+            isWide = want
+            NSLayoutConstraint.deactivate(want ? narrow : wide)
+            NSLayoutConstraint.activate(want ? wide : narrow)
+            graph.setCompact(!want)
+        }
+        super.layout()
+    }
+
     func setRoot(_ url: URL?) { graph.setRoot(url); if let url { changes.setRoot(url) } }
 }
 
@@ -179,15 +220,24 @@ final class GitGraphView: NSView, Themable, Scalable {
         // when the panel is short, so the bottom never gets clipped off. A required min
         // keeps it usable; the graph list takes whatever height is left.
         let detailH = detail.heightAnchor.constraint(equalToConstant: 210); detailH.priority = .defaultHigh
+        self.detailHeight = detailH
         NSLayoutConstraint.activate([
             detailH,
             detail.heightAnchor.constraint(lessThanOrEqualToConstant: 210),
-            detail.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
         ])
         listScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         listScroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         Theme.register(self); UIScale.register(self)
     }
+    private var detailHeight: NSLayoutConstraint!
+    private var compact = false
+    /// 좁은 배치에서는 커밋 상세를 접는다 — 목록이 먼저다. 줄을 고르면 그때 펼친다.
+    func setCompact(_ compact: Bool) {
+        self.compact = compact
+        detailHeight?.constant = compact ? 0 : 210
+        detail.isHidden = compact
+    }
+
     required init?(coder: NSCoder) { fatalError() }
 
     func applyScale() {
