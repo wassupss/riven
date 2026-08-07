@@ -52,6 +52,21 @@ final class Settings {
         NotificationCenter.default.post(name: .rivenSettingChanged, object: key)
     }
 
+    /// 설정만 기본값으로. 세션(열린 탭·대화)·설치 식별자처럼 "설정" 이 아닌 것은 남긴다 —
+    /// "설정 초기화" 로 작업까지 날리면 그건 초기화가 아니라 사고다.
+    func resetPreferences() {
+        let keep: Set<String> = ["session", "installId", "crashNoticeShown",
+                                 "browserTabs", "browserZooms", "browserActiveTab",
+                                 "api.environments", "api.activeEnv",
+                                 "sidebarWidth", "railHeight", "railCollapsed"]
+        lock.lock()
+        let doomed = dict.keys.filter { !keep.contains($0) }
+        for k in doomed { dict.removeValue(forKey: k) }
+        lock.unlock()
+        scheduleFlush()
+        for k in doomed { NotificationCenter.default.post(name: .rivenSettingChanged, object: k) }
+    }
+
     func set(_ key: String, _ value: Any) {
         lock.lock()
         dict[key] = value

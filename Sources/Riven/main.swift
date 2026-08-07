@@ -2693,7 +2693,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func newChat(agent: String? = nil, kind: ChatAgentKind = .claude) {   // 새 에이전트 대화 팬
         guard let dock = activeDock, let ws = workspace else { return }
-        let p = makeChatPanel(for: state(for: ws), agent: agent, kind: kind)
+        // 설정에서 고른 기본 모델로 시작한다. 예전에는 페인마다 ⌥메뉴로 고를 수는 있어도
+        // 저장되지 않아서, 새 대화는 늘 계정 기본 모델이었다.
+        let def = Settings.shared.string("defaultModel", "default")
+        let p = makeChatPanel(for: state(for: ws), agent: agent,
+                              model: def == "default" ? nil : def, kind: kind)
         // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
         // 쪼개서, 대화를 하나 더 열 때마다 화면이 반으로 갈렸다). 그룹 생성처럼 일부러
         // 나눠야 하는 경우는 createAgentGroup 이 따로 방향을 준다.

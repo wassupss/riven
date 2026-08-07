@@ -35,6 +35,11 @@ final class SettingsWindow: NSPanel {
     private let notify = NSButton(checkboxWithTitle: "데스크톱 알림 사용 (에이전트 완료 · 터미널 벨)", target: nil, action: nil)
     private let crashReports = NSButton(checkboxWithTitle: "크래시 리포트 전송 (익명)", target: nil, action: nil)
     private let formatOnSave = NSButton(checkboxWithTitle: "저장 시 자동 포맷", target: nil, action: nil)
+    private let autoUpdate = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let tabSizeField = NSTextField()
+    private let wordWrap = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let minimap = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let ligatures = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let agentNative = NSButton(checkboxWithTitle: "AI 에이전트를 네이티브 UI로 열기 (⌘O, 끄면 CLI 터미널)", target: nil, action: nil)
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
@@ -300,6 +305,18 @@ final class SettingsWindow: NSPanel {
         formatOnSave.contentTintColor = Theme.fg
         addRow(t("settings.formatOnSave"), desc: t("settings.formatOnSaveDesc"), formatOnSave)
 
+        // 여기까지가 예전에 고를 수 있던 전부였다. 탭 크기·줄바꿈·미니맵·합자는 editor.html
+        // 에 못 박혀 있어서, VS Code 에서 가장 자주 만지는 네 가지를 riven 에서는 아예
+        // 바꿀 수 없었다.
+        addRow(t("settings.tabSize"), desc: t("settings.tabSizeDesc"),
+               stepperControl(tabSizeField, key: "editorTabSize", min: 1, max: 8, def: 2, hint: "1–8"))
+        addRow(t("settings.wordWrap"), desc: t("settings.wordWrapDesc"),
+               editorToggle(wordWrap, key: "editorWordWrap", def: false))
+        addRow(t("settings.minimap"), desc: t("settings.minimapDesc"),
+               editorToggle(minimap, key: "editorMinimap", def: true))
+        addRow(t("settings.ligatures"), desc: t("settings.ligaturesDesc"),
+               editorToggle(ligatures, key: "editorLigatures", def: false))
+
         addSection(t("settings.terminal"))
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
         addRow(t("settings.fontSize"), desc: nil, sizeControl(terminalSize, key: "terminalFontSize"))
@@ -309,6 +326,11 @@ final class SettingsWindow: NSPanel {
         let (ghosttyBtn, ghosttyStatus) = ghosttyControls()
         addRow(t("settings.ghostty"), desc: ghosttyStatus.stringValue, ghosttyBtn)
         ghosttyStatusLabel = ghosttyStatus
+
+        // 브라우저 기본 검색. BrowserStore 가 읽던 키인데 UI 가 없어서, 구글 말고 다른 걸
+        // 쓰려면 settings.json 을 손으로 고쳐야 했다.
+        addSection(t("settings.browser"))
+        addRow(t("settings.searchEngine"), desc: t("settings.searchEngineDesc"), searchEngineMenu())
 
         addSection(t("settings.notifications"))
         notify.title = ""
@@ -507,6 +529,13 @@ final class SettingsWindow: NSPanel {
             addNote(t("settings.codexHooksNote"))
         }
 
+        // 새 대화가 어디서 시작하는지. 모델은 페인마다 ⌥메뉴로 고를 수 있었지만 저장되지
+        // 않아서 새 대화는 늘 "기본" 이었고, 권한 모드는 채팅 패널 안에만 있어서 설정에서는
+        // 보이지 않았다.
+        addSection(t("settings.agentDefaults"))
+        addRow(t("settings.defaultModel"), desc: t("settings.defaultModelDesc"), defaultModelMenu())
+        addRow(t("settings.defaultPermMode"), desc: t("settings.defaultPermModeDesc"), defaultModeMenu())
+
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
         // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
         addSection(t("settings.snippets"))
@@ -589,7 +618,17 @@ final class SettingsWindow: NSPanel {
                                  textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
                                  radius: 5, hPad: 8, height: 24)
             chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
-            addRow(a.label, desc: nil, chip)
+            // 바꾼 키는 눈에 띄어야 되돌릴 생각도 든다. 기본값 그대로면 표시하지 않는다.
+            let changed = Keys.overrides[a.id] != nil
+            if changed { chip.identifierString = "changed" }
+            addRow(a.label, desc: changed ? t("settings.keyChanged") : nil, chip)
+        }
+        // 바꾼 키가 하나라도 있을 때만 되돌리기를 보여 준다 — 누를 일이 없는 버튼은 잡음이다.
+        if actions.contains(where: { Keys.overrides[$0.id] != nil }) {
+            addWideRow(secondaryButton(t("settings.keysReset"), symbol: "arrow.counterclockwise") { [weak self] in
+                for a in actions { Keys.reset(a.id) }
+                self?.showTab(2)
+            })
         }
     }
 
@@ -732,25 +771,27 @@ final class SettingsWindow: NSPanel {
             }
         }
         addSection(t("account.title"))
-        addNote("riven 계정에 로그인하면 테마·폰트·키맵 등 설정이 클라우드에 저장되어 기기 간에 동기화됩니다. (GitHub OAuth · Supabase)")
+        addNote(t("account.intro"))
 
-        if !SupabaseConfig.isConfigured {
-            addNote("Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.",
-                    color: Theme.warning)
-            addNote("API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
+        // RIVEN_ACCOUNTUI=1: 백엔드가 없는 빌드에서도 로그인 줄의 배치를 볼 수 있게 (검증용).
+        // 이 탭이 카드 밖에 떠 있던 문제는 구성된 빌드에서만 보였기 때문에 오래 지나쳤다.
+        let forceUI = ProcessInfo.processInfo.environment["RIVEN_ACCOUNTUI"] != nil
+        if !SupabaseConfig.isConfigured && !forceUI {
+            addNote(t("account.noBackend"), color: Theme.warning)
+            addNote(t("account.secretsLocal"))
             return
         }
 
+        // 로그인 상태·버튼은 다른 탭과 같은 카드 줄에 둔다. 예전에는 content 에 직접 쌓아서
+        // 이 탭만 카드 밖에 맨몸으로 떠 있었다 — 정보 탭 버튼이 맨몸이라 지적받은 것과 같은
+        // 문제인데, 디버그 빌드는 Supabase 미구성이라 위에서 return 해 눈에 띄지 않았다.
         if SupabaseAuth.shared.isSignedIn {
-            let who = NSTextField(labelWithString: "✓ \(SupabaseAuth.shared.email ?? "로그인됨") · 설정이 이 계정에 동기화됩니다.")
-            who.font = UIScale.font(UIScale.body); who.textColor = Theme.success
-            who.lineBreakMode = .byTruncatingMiddle; who.preferredMaxLayoutWidth = 500
-            content.addArrangedSubview(who)
-            content.addArrangedSubview(spacer(6))
-            let out = accountButton(icon: "rectangle.portrait.and.arrow.right", title: "로그아웃", tint: Theme.fgDim) {
+            let out = accountButton(icon: "rectangle.portrait.and.arrow.right",
+                                    title: t("account.signOut"), tint: Theme.fgDim) {
                 SupabaseAuth.shared.signOut()
             }
-            content.addArrangedSubview(NSStackView(views: [out]))
+            addRow(SupabaseAuth.shared.email ?? t("account.signedIn"),
+                   desc: t("account.syncing"), out)
         } else {
             let btn = accountButton(icon: "person.crop.circle.badge.checkmark",
                                     title: t("account.continueGithub"), tint: Theme.fg) { [weak self] in
@@ -763,17 +804,12 @@ final class SettingsWindow: NSPanel {
                     }
                 }
             }
-            content.addArrangedSubview(NSStackView(views: [btn]))
+            addRow(t("account.signIn"), desc: t("account.signInDesc"), btn)
             if let msg = accountError {
-                let e = NSTextField(labelWithString: "로그인 실패: \(msg)")
-                e.font = UIScale.font(UIScale.small); e.textColor = Theme.danger
-                e.lineBreakMode = .byWordWrapping; e.maximumNumberOfLines = 3; e.preferredMaxLayoutWidth = 500
-                content.addArrangedSubview(e)
+                addNote(t("account.signInFailed", ["msg": msg]), color: Theme.danger)
             }
         }
-        let sync = NSTextField(labelWithString: "API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.")
-        sync.font = UIScale.font(UIScale.small); sync.textColor = Theme.fgDim
-        content.addArrangedSubview(spacer(4)); content.addArrangedSubview(sync)
+        addNote(t("account.secretsLocal"))
     }
 
     // A rounded icon+label button (NSButton's built-in image/title spacing overflowed).
@@ -852,6 +888,23 @@ final class SettingsWindow: NSPanel {
                primaryButton(t("about.check"), #selector(checkUpdate)))
         // 상태 문구는 확인을 누른 뒤에만 (평소엔 빈 줄이 하나 더 생길 뿐이다).
         updateStatusLabel.isHidden = updateStatusLabel.stringValue.isEmpty
+
+        autoUpdate.title = ""
+        autoUpdate.state = Settings.shared.bool("autoUpdate", true) ? .on : .off
+        autoUpdate.contentTintColor = Theme.fg
+        autoUpdate.target = self; autoUpdate.action = #selector(saveAutoUpdate)
+        addRow(t("about.autoUpdate"), desc: t("about.autoUpdateDesc"), autoUpdate)
+
+        // 설정이 꼬였을 때 손 쓸 방법이 없었다. 파일을 직접 열어 보는 길과, 되돌리는 길.
+        addSection(t("settings.maintenance"))
+        addRow(t("settings.openSettingsFile"), desc: AppPaths.support("settings.json").path,
+               secondaryButton(t("settings.reveal"), symbol: "folder") {
+                   NSWorkspace.shared.activateFileViewerSelecting([AppPaths.support("settings.json")])
+               })
+        addRow(t("settings.resetAll"), desc: t("settings.resetAllDesc"),
+               secondaryButton(t("settings.reset"), symbol: "arrow.counterclockwise") { [weak self] in
+                   self?.confirmResetAll()
+               })
 
         addSection(t("about.links"))
         let landing = secondaryButton(t("about.landing"), symbol: "safari") {
@@ -935,6 +988,151 @@ final class SettingsWindow: NSPanel {
         l.translatesAutoresizingMaskIntoConstraints = false
         l.widthAnchor.constraint(lessThanOrEqualToConstant: 540).isActive = true
         addWideRow(l)
+    }
+
+
+    // ---- 새로 노출한 설정들 ---------------------------------------------------
+
+    /// 브라우저 기본 검색. 흔한 것 셋 + 직접 입력 ({q} 자리에 검색어가 들어간다).
+    private static let searchEngines: [(String, String)] = [
+        ("Google", "https://www.google.com/search?q={q}"),
+        ("DuckDuckGo", "https://duckduckgo.com/?q={q}"),
+        ("Bing", "https://www.bing.com/search?q={q}"),
+        ("Naver", "https://search.naver.com/search.naver?query={q}"),
+    ]
+    private func searchEngineMenu() -> NSView {
+        let cur = Settings.shared.string("browserSearch", SettingsWindow.searchEngines[0].1)
+        let pop = NSPopUpButton(frame: .zero, pullsDown: false)
+        pop.addItems(withTitles: SettingsWindow.searchEngines.map { $0.0 } + [t("settings.custom")])
+        let idx = SettingsWindow.searchEngines.firstIndex { $0.1 == cur }
+        pop.selectItem(at: idx ?? SettingsWindow.searchEngines.count)
+        pop.font = UIScale.font(UIScale.small)
+        pop.target = self; pop.action = #selector(searchEngineChanged(_:))
+        pop.translatesAutoresizingMaskIntoConstraints = false
+        // 직접 입력일 때만 주소 칸을 보여 준다 — 늘 띄워 두면 고르는 줄이 두 줄이 된다.
+        searchCustom.stringValue = idx == nil ? cur : ""
+        searchCustom.isHidden = idx != nil
+        searchCustom.target = self; searchCustom.action = #selector(searchCustomChanged)
+        let f = field(searchCustom, width: 220)
+        f.isHidden = idx != nil
+        searchCustomBox = f
+        let row = NSStackView(views: [pop, f])
+        row.orientation = .horizontal; row.spacing = 8; row.alignment = .centerY
+        return row
+    }
+    @objc private func searchEngineChanged(_ sender: NSPopUpButton) {
+        let i = sender.indexOfSelectedItem
+        if i < SettingsWindow.searchEngines.count {
+            Settings.shared.set("browserSearch", SettingsWindow.searchEngines[i].1)
+            searchCustomBox?.isHidden = true
+        } else {
+            searchCustomBox?.isHidden = false
+            makeFirstResponder(searchCustom)
+        }
+    }
+    @objc private func searchCustomChanged() {
+        let v = searchCustom.stringValue.trimmingCharacters(in: .whitespaces)
+        // {q} 가 없으면 검색이 아니라 그냥 그 주소로 가 버린다 — 저장하지 않는다.
+        guard v.contains("{q}") else { return }
+        Settings.shared.set("browserSearch", v)
+    }
+
+    /// 새 대화가 쓸 기본 모델. 페인마다 ⌥메뉴로 바꾸는 건 그대로 둔다.
+    private func defaultModelMenu() -> NSView {
+        let models = ChatPanel.selectableModels
+        let cur = Settings.shared.string("defaultModel", "default")
+        let pop = NSPopUpButton(frame: .zero, pullsDown: false)
+        pop.addItems(withTitles: models.map { $0.0 })
+        pop.selectItem(at: models.firstIndex { $0.1 == cur } ?? 0)
+        pop.font = UIScale.font(UIScale.small)
+        pop.target = self; pop.action = #selector(defaultModelChanged(_:))
+        return pop
+    }
+    @objc private func defaultModelChanged(_ sender: NSPopUpButton) {
+        let models = ChatPanel.selectableModels
+        let i = max(0, min(models.count - 1, sender.indexOfSelectedItem))
+        Settings.shared.set("defaultModel", models[i].1)
+    }
+
+    /// 새 대화가 시작할 승인 모드. 채팅 패널의 드롭다운과 같은 키를 쓴다.
+    private func defaultModeMenu() -> NSView {
+        let names = [t("chat.mode.plan"), t("chat.mode.ask"), t("chat.mode.auto")]
+        let pop = NSPopUpButton(frame: .zero, pullsDown: false)
+        pop.addItems(withTitles: names)
+        pop.selectItem(at: max(0, min(names.count - 1, Settings.shared.int("chatPermMode", 1))))
+        pop.font = UIScale.font(UIScale.small)
+        pop.target = self; pop.action = #selector(defaultModeChanged(_:))
+        return pop
+    }
+    @objc private func defaultModeChanged(_ sender: NSPopUpButton) {
+        Settings.shared.set("chatPermMode", sender.indexOfSelectedItem)
+    }
+
+    @objc private func saveAutoUpdate() {
+        Settings.shared.set("autoUpdate", autoUpdate.state == .on)
+        Updater.shared.setAutomaticChecks(autoUpdate.state == .on)
+    }
+
+    /// 되돌리기는 되돌릴 수 없는 일이라 반드시 한 번 묻는다. 테마·글꼴 같은 것만 지우고
+    /// 세션(열린 탭·대화)은 건드리지 않는다 — "설정 초기화" 로 작업까지 날리면 사고다.
+    private func confirmResetAll() {
+        let a = NSAlert()
+        a.messageText = t("settings.resetAll")
+        a.informativeText = t("settings.resetConfirm")
+        a.alertStyle = .warning
+        a.addButton(withTitle: t("settings.reset"))
+        a.addButton(withTitle: t("common.cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        Settings.shared.resetPreferences()
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+        Theme.apply(id: Settings.shared.string("theme", "ember"))
+        showTab(activeTab)
+    }
+    private let searchCustom = NSTextField()
+    private var searchCustomBox: NSView?
+
+    /// 에디터 동작 토글. 저장하고 곧바로 에디터에 밀어 넣는다 — 재시작해야 먹는 설정은
+    /// 고른 사람 입장에서 안 먹는 설정과 구분되지 않는다.
+    private func editorToggle(_ b: NSButton, key: String, def: Bool) -> NSButton {
+        b.title = ""
+        b.state = Settings.shared.bool(key, def) ? .on : .off
+        b.contentTintColor = Theme.fg
+        b.target = self; b.action = #selector(editorToggleChanged(_:))
+        b.identifier = NSUserInterfaceItemIdentifier(key)
+        return b
+    }
+    @objc private func editorToggleChanged(_ sender: NSButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        Settings.shared.set(key, sender.state == .on)
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+    }
+
+    /// 숫자 + 스테퍼 한 줄 (폰트 크기 칸과 같은 모양 — 같은 행에서 모양이 다르면 눈에 걸린다).
+    private func stepperControl(_ field: NSTextField, key: String, min lo: Int, max hi: Int,
+                                def: Int, hint: String) -> NSView {
+        let cur = Swift.max(lo, Swift.min(hi, Settings.shared.int(key, def)))
+        field.stringValue = String(cur)
+        field.identifier = NSUserInterfaceItemIdentifier(key)
+        let tf = self.fontField(field)
+        tf.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        let stepper = NSStepper()
+        stepper.minValue = Double(lo); stepper.maxValue = Double(hi); stepper.increment = 1
+        stepper.integerValue = cur
+        stepper.valueWraps = false
+        stepper.target = self; stepper.action = #selector(numberStepperChanged(_:))
+        stepper.identifier = NSUserInterfaceItemIdentifier(key)
+        stepper.translatesAutoresizingMaskIntoConstraints = false
+        let h = NSTextField(labelWithString: hint)
+        h.font = UIScale.font(UIScale.caption); h.textColor = Theme.fgDim
+        let row = NSStackView(views: [tf, stepper, h])
+        row.orientation = .horizontal; row.spacing = 6; row.alignment = .centerY
+        return row
+    }
+    @objc private func numberStepperChanged(_ sender: NSStepper) {
+        guard let key = sender.identifier?.rawValue else { return }
+        Settings.shared.set(key, sender.integerValue)
+        if key == "editorTabSize" { tabSizeField.stringValue = String(sender.integerValue) }
+        NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }
 
     /// 값이 아니라 상태를 보여 주는 자리 (설치된 CLI 의 버전처럼 읽기 전용인 것).

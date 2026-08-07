@@ -121,10 +121,24 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             : "window.rivenSetFont && window.rivenSetFont(\(size), \(jsString(family)))"
         web.evaluateJavaScript(js, completionHandler: nil)
     }
+    /// 탭 크기·미니맵·줄바꿈·합자. 설정에서 바꾸면 재시작 없이 바로 먹는다.
+    func applyEditorOptions() {
+        let s = Settings.shared
+        let js = """
+        window.rivenSetEditorOptions && window.rivenSetEditorOptions({ \
+          tabSize: \(max(1, min(8, s.int("editorTabSize", 2)))), \
+          minimap: \(s.bool("editorMinimap", true)), \
+          wordWrap: \(s.bool("editorWordWrap", false)), \
+          ligatures: \(s.bool("editorLigatures", false)) })
+        """
+        web.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     // 설정 → 일반 → 에디터 폰트 크기 변경을 즉시 반영 (재시작 불필요).
     private func observeFontSize() {
         NotificationCenter.default.addObserver(forName: .rivenFontSizeChanged, object: nil, queue: .main) { [weak self] _ in
             self?.setFontSize(UIScale.editorFontSize)
+            self?.applyEditorOptions()      // 같은 알림으로 나머지 에디터 설정도 함께 반영
         }
     }
     // Toggle format-on-save (riven's formatOnSave setting). Stashed so it survives a
@@ -266,6 +280,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             ready = true
             setEditorTheme(shiki: Theme.current.shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2)
             setFontSize(fontSize)
+            applyEditorOptions()          // 탭 크기·미니맵·줄바꿈·합자 (웹뷰 리로드에도 다시 적용)
             setFormatOnSave(formatOnSave)
             setEditorKeymap(editorKeymap)
             setEditorKeys(editorKeys)
