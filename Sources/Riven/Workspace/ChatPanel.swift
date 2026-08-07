@@ -31,7 +31,11 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var stackWidth: NSLayoutConstraint!        // transcript width = clip width
     private var frozenWidth: NSLayoutConstraint?       // pinned while a divider is being dragged
 
-    private var session: ClaudeChatSession?
+    private var session: AgentChatSession?
+    /// 이 챗을 굴리는 CLI. 페인마다 다르다 (같은 워크스페이스에 Claude 챗과 Codex 챗이 함께 뜬다).
+    var agentKind: ChatAgentKind = .claude
+    /// 벤치용: 승인 카드가 실제로 떴는지 확인한다.
+    var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
     private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
@@ -560,13 +564,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         commandNames = Set(commands.map { $0.name.lowercased() })
-        guard let cmd = AgentDiscovery.claudeCmd() else {
+        guard let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else {
             addSystem(t("chat.noCLI"))
             return
         }
         // The CLI updates itself on the user's own schedule (riven never changes that setting), but
         // riven parses its stream format — so tell the user WHEN it changed, once per new version.
-        if let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
+        if agentKind == .claude,
+           let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
             addSystem(t("chat.cliChanged", ["prev": prev, "now": now]))
         }
         let resume = pendingResume; pendingResume = nil
@@ -729,6 +734,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     private func refreshAITitle(attempt: Int = 0) {
+        guard agentKind == .claude else { return }      // 제목 요약도 Claude 트랜스크립트에서 읽는다
         guard let cwd = workspace?.path, let sid = sessionId else { return }
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let found = ChatPanel.latestAITitle(cwd: cwd, sessionId: sid)
@@ -753,6 +759,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Render the resumed session's prior turns so the conversation is visible (the CLI restores
     // context but doesn't re-emit past messages, so the panel would otherwise look empty).
     private func loadHistory(cwd: String, sessionId: String) {
+        // Claude 의 트랜스크립트 형식(~/.claude/projects/…jsonl)만 읽는다. Codex 는 자기
+        // 스레드를 app-server 로 되살리므로(thread/resume) 여기서 다시 그릴 필요가 없다.
+        guard agentKind == .claude else { return }
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
@@ -917,9 +926,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func startSession(cmd: String, cwd: String, resume: String?) {
         // Always install the approval hook; gate the risky tools through it (safe read-only
         // tools auto-run). riven's per-mode policy in requestPermission() decides allow/prompt.
-        let s = ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
-            permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
-            agentName: agentPersona, model: preferredModel)
+        // 어느 CLI 든 패널이 기대하는 것은 [[AgentChatSession]] 하나뿐이다.
+        let s: AgentChatSession? = agentKind == .codex
+            ? CodexChatSession(command: cmd, cwd: cwd, resume: resume, model: preferredModel,
+                               permissionMode: modes[modeIndex].1)
+            : ClaudeChatSession(command: cmd, cwd: cwd, resume: resume,
+                permissionMode: cliMode, allowedTools: "Read,Grep,Glob,LS,Task,TodoWrite", interactive: true,
+                agentName: agentPersona, model: preferredModel)
         s?.onInit = { [weak self] sid, model in
             self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid)
             self?.restorePlanBadge(sid)
@@ -979,6 +992,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // ---- permission / choice cards (per-mode policy, applied live) ----
     private func requestPermission(_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) {
+        debugOnApproval?(name, detail)
         // riven's own tools run in-app (choice card / preview / api) — never gate them.
         if name.hasPrefix("mcp__riven__") { session?.respond(id, allow: true); return }
         // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
@@ -1265,7 +1279,9 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // Live mode switch: no restart, so an in-flight turn keeps running.
     @objc private func modeChanged() {
-        session?.setPermissionMode(cliMode)
+        // riven 의 모드 이름을 그대로 넘긴다 — "auto" 를 여기서 "default" 로 뭉개면
+        // Codex 쪽에서 "자동" 과 "승인 요청" 을 구분할 수 없다. 옮기는 일은 세션이 한다.
+        session?.setPermissionMode(modes[modeIndex].1)
         Settings.shared.set("chatPermMode", modeIndex)   // persist so it survives reopen/relaunch
         addSystem(t("chat.mode.now", ["m": modes[modeIndex].0]))
     }

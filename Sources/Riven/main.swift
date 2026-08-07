@@ -982,6 +982,153 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CODEXCHECK=1: Codex 페인이 실제로 훅을 흘려보내는지 (배지·상태의 근거).
+                // riven 의 터미널(libghostty) 안에서 돌려야 의미가 있다 — pty 밖에서 codex TUI 는
+                // 터미널 질의 응답을 기다리다 아무것도 그리지 않는다.
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXCHECK"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        guard let codex = AgentDiscovery.available().first(where: { $0.name == "Codex" }) else {
+                            RLog.log("CODEX 설치 안 됨"); RLog.log("CODEX done"); return
+                        }
+                        RLog.log("CODEX 훅인자=\(AgentHooksInstall.codexLaunchOverrides().count)개")
+                        self.launchAgent(codex)
+                        // TUI 가 뜰 시간을 준 뒤 한 턴 돌린다. 페인은 이름으로 찾는다 —
+                        // currentTerminalPanel() 은 먼저 있던 빈 터미널을 가리킬 수 있다.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                            let tv = self.activeDock?.groups.flatMap { $0.panels }
+                                .first { $0.agentName == "Codex" }?.content as? TerminalView
+                            RLog.log("CODEX 입력대상=\(tv == nil ? "없음" : "찾음")")
+                            // Codex 는 처음 보는 훅을 그냥 실행하지 않는다 — "Hooks need review" 를
+                            // 띄우고 고르게 한다. 2번(Trust all and continue)을 골라야 그 다음이 있다.
+                            // "Hooks need review" → Enter 로 목록을 열고, 거기서 t (trust all).
+                            tv?.sendEnter()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { tv?.sendText("t") }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                                tv?.sendText("숫자 42만 답해. 설명 금지.")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { tv?.sendEnter() }
+                            }
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                            let sessions = PaneSessionRegistry.shared.sessions(inWorkspace: self.workspace?.path ?? "")
+                            for s in sessions {
+                                RLog.log("CODEX 페인 \(s.prefix(8)) 훅수신=\(PaneSessionRegistry.shared.isHookBacked(s))"
+                                         + " codex세션=\(CodexSessions.sessionId(forPane: s)?.prefix(8) ?? "-")")
+                            }
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_CODEXSHOT"],
+                               let v = self.window?.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                            }
+                            RLog.log("CODEX done")
+                        }
+                    }
+                }
+                // RIVEN_CXUSAGE=1: Codex 사용량을 자기 로그에서 제대로 읽어 오는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CXUSAGE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        let r = CodexUsage.scan()
+                        RLog.log("CXUSAGE 오늘 토큰=\(r.today.totalTokens) 턴=\(r.today.turns)")
+                        if let l = r.limits {
+                            RLog.log("CXUSAGE 남은=\(l.remainingPercent)% 창=\(CodexUsage.windowLabel(l.windowMinutes))"
+                                     + " 리셋=\(l.resetsAt.map { ISO8601DateFormatter().string(from: $0) } ?? "-")"
+                                     + " 플랜=\(l.planType ?? "-")")
+                        } else {
+                            RLog.log("CXUSAGE 한도 없음 (오늘 Codex 를 안 썼거나 로그가 없다)")
+                        }
+                        RLog.log("CXUSAGE done")
+                    }
+                }
+                // RIVEN_CODEXPANE=1: Codex 를 네이티브 챗 "패널" 로 열어 한 턴 도는지 (배선 전체).
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXPANE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        guard let self else { return }
+                        self.newChat(kind: .codex)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            guard let pane = self.agentPanes().first(where: { $0.chat.agentKind == .codex }) else {
+                                RLog.log("CXPANE Codex 팬 없음"); RLog.log("CXPANE done"); return
+                            }
+                            RLog.log("CXPANE 팬 제목=\(pane.panel.title) 종류=\(pane.panel.chatKind.rawValue)")
+                            pane.chat.debugOnApproval = { name, detail in
+                                RLog.log("CXPANE 승인카드 \(name) · \(detail.prefix(60))")
+                            }
+                            let prompt = ProcessInfo.processInfo.environment["RIVEN_CODEXPROMPT"]
+                                ?? "숫자 42만 답해. 설명 금지."
+                            pane.chat.ask(prompt) { answer in
+                                RLog.log("CXPANE 답=\(answer.replacingOccurrences(of: "\n", with: " ").prefix(60))")
+                                RLog.log("CXPANE 세션=\(pane.panel.sessionId?.prefix(8) ?? "-")")
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_CODEXPANESHOT"],
+                                   let v = self.window?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                // 사용량 팝오버를 그려서 눈으로 확인한다 (새 섹션이 붙는 자리).
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_USAGESHOT"] {
+                                    let cx = CodexUsage.scan()
+                                    self.lastCodexLimits = cx.limits; self.lastCodexToday = cx.today
+                                    let v = UsageUI.content(limits: self.lastLimits, today: self.lastToday,
+                                                            freshness: self.usageFreshness(),
+                                                            codexLimits: cx.limits, codexToday: cx.today,
+                                                            onReload: {}, onPin: {})
+                                    v.layoutSubtreeIfNeeded()
+                                    v.setFrameSize(v.fittingSize)
+                                    v.wantsLayer = true
+                                    v.layer?.backgroundColor = Theme.bg2.cgColor
+                                    if let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                        v.cacheDisplay(in: v.bounds, to: rep)
+                                        if let d = rep.representation(using: .png, properties: [:]) {
+                                            try? d.write(to: URL(fileURLWithPath: shot))
+                                        }
+                                    }
+                                }
+                                let r2 = CodexUsage.scan()
+                                RLog.log("CXPANE 사용량 토큰=\(r2.today.totalTokens) 턴=\(r2.today.turns)"
+                                         + " 남은=\(r2.limits.map { "\($0.remainingPercent)%" } ?? "-")"
+                                         + " 창=\(r2.limits.map { CodexUsage.windowLabel($0.windowMinutes) } ?? "-")")
+                                RLog.log("CXPANE done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_CODEXCHAT=1: 네이티브 챗용 Codex 세션(app-server)이 실제로 한 턴을 도는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CODEXCHAT"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                        guard let self, let cmd = AgentDiscovery.codexCmd() else {
+                            RLog.log("CXCHAT codex 없음"); RLog.log("CXCHAT done"); return
+                        }
+                        let ws = self.workspace?.path ?? NSTemporaryDirectory()
+                        guard let s = CodexChatSession(command: cmd, cwd: ws) else {
+                            RLog.log("CXCHAT 세션 시작 실패"); RLog.log("CXCHAT done"); return
+                        }
+                        self.codexChatBench = s
+                        var text = ""
+                        s.onInit = { tid, model in
+                            RLog.log("CXCHAT init thread=\(tid.prefix(8)) model=\(model ?? "-")")
+                            s.send("숫자 42만 답해. 설명 금지.")
+                        }
+                        s.onTextDelta = { text += $0 }
+                        s.onMainTool = { n, d, _, _ in RLog.log("CXCHAT 도구 \(n) \(d.prefix(40))") }
+                        s.onPermissionRequest = { id, n, d, _, _ in
+                            RLog.log("CXCHAT 승인요청 \(n) \(d.prefix(40)) → 허용")
+                            s.respond(id, allow: true)
+                        }
+                        s.onTurnDone = { _, sid, usage, err in
+                            RLog.log("CXCHAT 답=\(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))"
+                                     + " 세션=\(sid?.prefix(8) ?? "-")"
+                                     + " 토큰=\(usage?.newTokens ?? -1) 오류=\(err ?? "-")")
+                            RLog.log("CXCHAT done")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+                            if !text.isEmpty || true { RLog.log("CXCHAT 시간초과 확인용 텍스트=\(text.prefix(40))") }
+                        }
+                    }
+                }
                 // RIVEN_USAGEFIX=1: 토큰이 만료됐을 때 갱신이 되살아나는지, 실패가 보이는지.
                 if ProcessInfo.processInfo.environment["RIVEN_USAGEFIX"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1764,6 +1911,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 fi
                 command "${RIVEN_REAL_CLAUDE:-claude}" "${rv[@]}" "$@"
               }
+              # riven: 손으로 친 `codex` 도 상태 훅을 달고, 이 페인의 대화를 이어 간다.
+              # Codex 는 세션 id 를 골라 줄 수 없어 방향이 반대다 — 지난 실행의 SessionStart
+              # 훅이 적어 둔 id 를 읽어 `resume` 로 되돌아간다 (파일이 없으면 새 대화).
+              codex() {
+                local -a rv
+                case " $* " in
+                  (*" resume "*|*" fork "*|*" exec "*|*" -h "*|*" --help "*) ;;
+                  (*)
+                    if [ -n "$RIVEN_CODEX_SESSION_FILE" ] && [ -s "$RIVEN_CODEX_SESSION_FILE" ]; then
+                      rv+=(resume "$(cat "$RIVEN_CODEX_SESSION_FILE")")
+                    fi
+                    # 훅 설정은 riven 이 통째로 만들어 넘긴다 (사용자의 ~/.codex 는 건드리지 않는다).
+                    if [ -n "$RIVEN_CODEX_HOOK_ARGS" ]; then
+                      local -a ha; eval "ha=($RIVEN_CODEX_HOOK_ARGS)"; rv+=("${ha[@]}")
+                    fi
+                    ;;
+                esac
+                command "${RIVEN_REAL_CODEX:-codex}" "${rv[@]}" "$@"
+              }
             fi
             export ZDOTDIR="$HOME"   # restore so .zlogin / nested references use the user's dir
             """,
@@ -1823,6 +1989,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // record shell-driven edits (sed / redirects the agent runs via Bash) ONLY while a
     // turn is active, so a `git checkout` or build run OUTSIDE a turn no longer pollutes
     // the Changes panel — the coarse "ever had an agent session" gate did.
+    /// 벤치가 붙잡아 두는 Codex 챗 세션 (놓으면 프로세스가 바로 죽는다).
+    private var codexChatBench: CodexChatSession?
     private var turnActiveWorkspaces: Set<String> = []
 
     // Change-tracking half of the hook stream. Edit/Write/MultiEdit give a precise,
@@ -1830,6 +1998,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // FSEvents. Turn boundaries drive the FSEvents backstop gate above.
     private func routeAgentEvent(_ event: AgentEvent) {
         guard let pane = PaneSessionRegistry.shared.pane(for: event.pane) else { return }
+        // Codex 는 세션 id 를 riven 이 정해 줄 수 없다 (`--session-id` 가 없다). 대신 여기서
+        // 받아 적어 두면 다음 실행 때 `codex resume <id>` 로 같은 대화가 이어진다.
+        if event.agent == "codex", event.kind == .sessionStart, let sid = event.sessionId {
+            CodexSessions.record(pane: event.pane, sessionId: sid)
+        }
         switch event.kind {
         case .userPromptSubmit:
             turnActiveWorkspaces.insert(pane.workspace)
@@ -1859,7 +2032,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func agentGlyph(kind: String?) -> String? {
         switch kind?.lowercased() {
         case "claude", "claude code": return "asterisk"
-        case "codex": return "chevron.left.forwardslash.chevron.right"
+        case "codex": return "camera.aperture"
         default: return nil
         }
     }
@@ -1948,6 +2121,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "RIVEN_HOOK_SOCKET": AgentHookServer.socketPath,
         ]
         if let claude = AgentDiscovery.claudeCmd() { env["RIVEN_REAL_CLAUDE"] = claude }
+        // 셸 심이 손으로 친 `codex` 에도 같은 것을 붙일 수 있도록.
+        if let codex = AgentDiscovery.codexCmd() { env["RIVEN_REAL_CODEX"] = codex }
+        if let f = CodexSessions.path(forPane: paneSession) { env["RIVEN_CODEX_SESSION_FILE"] = f }
+        let codexHookArgs = AgentHooksInstall.codexLaunchOverrides()
+        if !codexHookArgs.isEmpty {
+            env["RIVEN_CODEX_HOOK_ARGS"] = codexHookArgs.map(shellQuote).joined(separator: " ")
+        }
         if let srv = terminalTools, let cfg = srv.mcpConfigPath() {
             env["RIVEN_MCP_CONFIG"] = cfg
             env["RIVEN_MCP_PROMPT"] = srv.systemPrompt()
@@ -1974,8 +2154,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 cmd = "\(cmd ?? "claude") --mcp-config \(shellQuote(cfg)) --append-system-prompt \(shellQuote(srv.systemPrompt()))"
             }
         } else if agent?.name == "Codex" {
-            let overrides = AgentHooksInstall.codexLaunchOverrides()
-            if !overrides.isEmpty { cmd = ([cmd ?? "codex"] + overrides.map(shellQuote)).joined(separator: " ") }
+            // `resume <id>` 는 서브커맨드라 반드시 옵션보다 앞에 온다. 이전 실행에서 받아 적은
+            // 세션이 있으면 그 대화로 돌아가고, 없으면 새로 시작한다.
+            var argv = [cmd ?? "codex"]
+            if let sid = CodexSessions.sessionId(forPane: paneSession) {
+                argv += ["resume", sid]
+                RLog.log("agent launch: Codex resume \(sid)")
+            }
+            argv += AgentHooksInstall.codexLaunchOverrides().map(shellQuote)
+            cmd = argv.joined(separator: " ")
         }
         // Reap an orphaned agent from a previous riven still holding this session id before
         // relaunching. claude ignores SIGHUP, so quitting riven leaves it running instead of
@@ -2031,6 +2218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
             PaneSessionRegistry.shared.unregister(session: paneSession)
             AgentActivity.shared.forget(pane: paneSession)
+            // 닫은 대화는 닫힌 채로 둔다 — 새 페인이 남의 옛 Codex 대화를 이어받으면 안 된다.
+            CodexSessions.forget(pane: paneSession)
         }
         // A bell or desktop-notification means the agent FINISHED a turn / needs input
         // (riven's pty:bell + pty:done). This is the authoritative "done" signal —
@@ -2203,7 +2392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // A new pane = a new independent agent session (the model the user asked for). Resume
     // reopens a past session id in a fresh pane.
     private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil,
-                               model: String? = nil) -> DockPanel {
+                               model: String? = nil, kind: ChatAgentKind = .claude) -> DockPanel {
         chatSeq += 1
         // 이 팬이 속한 워크스페이스. MCP 로 하는 일은 전부 여기에 종속된다 — 사용자가 지금
         // 어느 워크스페이스를 보고 있든 상관없이. 예전에는 활성 워크스페이스를 썼기 때문에
@@ -2211,6 +2400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let owner = st.url
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
+        chat.agentKind = kind              // 어느 CLI 로 굴릴지 — 세션을 만들기 전에 정해져 있어야 한다
         chat.agentPersona = agent
         chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
@@ -2349,10 +2539,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "not a folder: \(path)"
         }
         queueBind(chat, ws: st.url, resume: resume)
-        let icon = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
-        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)", title: agent ?? "Claude",
+        // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 — 같은 워크스페이스에 Claude 챗과
+        // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
+        let icon = NSImage(systemSymbolName: kind == .codex ? kind.symbol : "bubble.left.and.text.bubble.right",
+                           accessibilityDescription: nil)
+        let p = DockPanel(id: "chat-\(abs(st.url.path.hashValue))-\(chatSeq)",
+                          title: agent ?? (kind == .codex ? "Codex" : "Claude"),
                           icon: icon, content: chat, closable: true)
-        p.agentName = agent ?? "Claude Code"                     // → appears in the workspace rail
+        p.chatKind = kind
+        p.agentName = agent ?? kind.displayName                  // → appears in the workspace rail
         p.chatAgent = agent                                      // persisted so a restore keeps the role
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
@@ -2496,9 +2691,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if p.content is AgentGroupPanel { return "team" }
         return "panel"
     }
-    private func newChat(agent: String? = nil) {       // opens a new agent session pane (optionally a custom --agent)
+    private func newChat(agent: String? = nil, kind: ChatAgentKind = .claude) {   // 새 에이전트 대화 팬
         guard let dock = activeDock, let ws = workspace else { return }
-        let p = makeChatPanel(for: state(for: ws), agent: agent)
+        // 설정에서 고른 기본 모델로 시작한다. 예전에는 페인마다 ⌥메뉴로 고를 수는 있어도
+        // 저장되지 않아서, 새 대화는 늘 계정 기본 모델이었다.
+        let def = Settings.shared.string("defaultModel", "default")
+        let p = makeChatPanel(for: state(for: ws), agent: agent,
+                              model: def == "default" ? nil : def, kind: kind)
         // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
         // 쪼개서, 대화를 하나 더 열 때마다 화면이 반으로 갈렸다). 그룹 생성처럼 일부러
         // 나눠야 하는 경우는 createAgentGroup 이 따로 방향을 준다.
@@ -3584,12 +3783,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     func fld(_ i: Int) -> String { i < f.count ? f[i] : "" }
                             let sid = fld(0), nick = fld(1), persona = fld(2), group = fld(3)
                     let parent = fld(4), model = fld(5), avatar = fld(6)
+                    let kind = ChatAgentKind(rawValue: fld(7)) ?? .claude   // 빈 칸 = 예전 스냅샷 = claude
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
                         return liveChats.remove(at: i)          // reuse — no respawn, no reload
                     }
                     let p = self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid,
                                                agent: persona.isEmpty ? nil : persona,
-                                               model: model.isEmpty ? nil : model)
+                                               model: model.isEmpty ? nil : model, kind: kind)
                     p.chatModel = model.isEmpty ? nil : model
                     p.chatAvatar = avatar.isEmpty ? nil : avatar   // 고른 아바타는 재기동해도 그대로
                     if !nick.isEmpty {                          // restore the group role
@@ -5232,16 +5432,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var actions: [QuickAction] = [
             QuickAction(title: t("menu.newTerminal"), hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
         ]
-        // Installed AI agents (scanned from PATH) — riven's AgentPicker entries. A setting
-        // ("agentUI": "native" | "cli") decides whether Claude opens as the native chat panel
-        // or the raw CLI in a terminal. Claude Code supports native; others (Codex) → CLI.
+        // 설치된 AI 에이전트. "agentUI" 설정이 네이티브 챗 팬으로 열지, 터미널에 CLI 를
+        // 그대로 띄울지 정한다. Codex 도 이제 네이티브다 — app-server 로 몰기 때문에
+        // 스트리밍·승인 카드·변경사항 연동이 Claude 와 같은 자리에서 돈다.
         let nativeUI = Settings.shared.string("agentUI", "native") == "native"
+        let nativeKinds: [String: ChatAgentKind] = ["Claude Code": .claude, "Codex": .codex]
         for a in AgentDiscovery.available() {
-            let native = nativeUI && a.name == "Claude Code"
+            let kind = nativeUI ? nativeKinds[a.name] : nil
             actions.append(QuickAction(title: a.name,
-                                       hint: native ? "네이티브 UI" : t("agent.label"),
+                                       hint: kind != nil ? "네이티브 UI" : t("agent.label"),
                                        symbol: a.symbol) { [weak self] in
-                if native { self?.newChat() } else { self?.launchAgent(a) }
+                if let kind { self?.newChat(kind: kind) } else { self?.launchAgent(a) }
             })
         }
         actions.append(contentsOf: [
@@ -6433,6 +6634,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 마지막 조회가 어떻게 끝났는지. 실패를 감추면 화면은 옛 숫자를 그대로 들고 있고
     /// 사용자에게는 "갱신이 안 된다" 로 보인다 (실제로 그렇게 보였다).
     private(set) var lastUsageOutcome: Usage.Outcome = .ok
+    /// Codex 쪽 최신값 (없으면 Codex 를 안 쓰는 사람이다 — 화면에 내보내지 않는다).
+    private var lastCodexLimits: CodexUsage.Limits?
+    private var lastCodexToday = CodexUsage.Today()
     private func refreshUsage(force: Bool = false) {
         // 사용자가 openusage 같은 걸 같이 띄워 두면 같은 엔드포인트를 함께 두드리게 된다.
         // 우리 쪽에서 불필요하게 겹쳐 부르지 않도록 최소 간격을 둔다 (버튼은 예외).
@@ -6440,6 +6644,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
+            let cx = CodexUsage.scan()
+            DispatchQueue.main.async { self.lastCodexToday = cx.today; self.lastCodexLimits = cx.limits }
             // Show today's $cost right away (riven's fallback) so the widget is never
             // empty; upgrade to session%·weekly% if the plan-limits API resolves.
             DispatchQueue.main.async { self.lastToday = t; self.statusBar.setUsage(limits: self.lastLimits, today: t); self.updateHeaderUsage(limits: self.lastLimits, today: t); self.rebuildPinnedUsage() }
@@ -6457,11 +6663,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Header usage widget: session% · weekly% (remaining), else today's $cost.
+    // 헤더 사용량: Claude 는 세션%·주간%, Codex 는 창 하나. 둘 다 "남은" 비율이다.
+    //
+    // 한 줄에 나란히 놓기 때문에 방향이 같아야 한다 — Codex 는 "쓴 %" 로 주는 것을
+    // [[CodexUsage]] 가 뒤집어 둔다. 안 그러면 "12%" 가 넉넉하다는 뜻인지 얼마 안 남았다는
+    // 뜻인지 화면에서 구분되지 않는다.
+    //
+    // 안 쓰는 CLI 는 아예 내보내지 않는다. Claude 만 쓰는 사람 헤더에 죽은 눈금이 남으면
+    // 그건 정보가 아니라 잡음이다.
     private func updateHeaderUsage(limits: Usage.Limits?, today: Usage.Today?) {
+        var parts: [String] = []
         let s = limits?.sessionRemaining, w = limits?.weeklyRemaining
-        if let s, let w { headerUsage.stringValue = "\(s)% · \(w)%"; headerUsageItem.isHidden = false }
-        else if let s { headerUsage.stringValue = "\(s)%"; headerUsageItem.isHidden = false }
+        if let s, let w { parts.append("\(s)% · \(w)%") }
+        else if let s { parts.append("\(s)%") }
+        if let cx = lastCodexLimits { parts.append("◎ \(cx.remainingPercent)%") }
+        if !parts.isEmpty {
+            // Claude 쪽 숫자가 있을 때만 앞에 표식을 단다 — 하나뿐이면 표식이 군더더기다.
+            if parts.count > 1, s != nil { parts[0] = "✳ " + parts[0] }
+            headerUsage.stringValue = parts.joined(separator: "   ")
+            headerUsageItem.isHidden = false
+        }
         else if let c = today?.totalCost, c > 0 { headerUsage.stringValue = String(format: "$%.2f", c); headerUsageItem.isHidden = false }
         else { headerUsageItem.isHidden = true }
         // 오래된 숫자는 흐리게. 5분 넘게 갱신되지 않았으면 지금 값이 아니다.
@@ -6493,6 +6714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pop.contentViewController = NSViewController()
         pop.contentViewController?.view = UsageUI.content(
             limits: lastLimits, today: lastToday, freshness: usageFreshness(),
+            codexLimits: lastCodexLimits, codexToday: lastCodexToday,
             onReload: { [weak self] in self?.refreshUsage(force: true) },
             onPin: { [weak self] in self?.headerUsagePopover?.close(); self?.pinUsage() })
         headerUsagePopover = pop
@@ -6551,7 +6773,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         unpin.imagePosition = .imageLeading; unpin.isBordered = false
         unpin.font = UIScale.font(UIScale.caption); unpin.contentTintColor = Theme.fgDim
         unpin.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(unpin)
-        let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday) { }
+        let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday,
+                                            codexLimits: lastCodexLimits) { }
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([

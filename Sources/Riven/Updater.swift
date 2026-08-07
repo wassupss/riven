@@ -34,6 +34,17 @@ final class Updater: NSObject {
         I18n.applyProcessLanguage(I18n.current)
         guard configured, controller == nil else { return }
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        // 사용자가 꺼 뒀으면 그대로 둔다. Info.plist 값은 첫 실행 기본값일 뿐이라, 이 줄이
+        // 없으면 설정에서 끈 다음 재시작할 때마다 다시 켜졌다.
+        controller?.updater.automaticallyChecksForUpdates = Settings.shared.bool("autoUpdate", true)
+    }
+
+    /// 자동 확인 켜기/끄기. Info.plist 의 SUEnableAutomaticChecks 는 첫 실행 기본값일 뿐이라,
+    /// 사용자가 끌 방법이 없었다 (설정 어디에도 없었다).
+    func setAutomaticChecks(_ on: Bool) {
+        guard configured else { return }
+        if controller == nil { start() }
+        controller?.updater.automaticallyChecksForUpdates = on
     }
 
     // Silent probe: checks the feed with NO UI and fires updater(_:didFindValidUpdate:) if a

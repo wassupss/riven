@@ -136,6 +136,9 @@ final class ClaudeChatSession {
     // stream-json control channel, so an in-flight turn keeps running.
     private var ctrlSeq = 0
     func setPermissionMode(_ mode: String) {
+        // riven 의 "auto" 는 CLI 의 모드가 아니라 riven 쪽 정책이다 (requestPermission 이
+        // 자동 허용한다). CLI 에는 그대로 보내면 거절당하므로 default 로 옮긴다.
+        let mode = mode == "auto" ? "default" : mode
         ctrlSeq += 1
         writeLine(["type": "control_request", "request_id": "m\(ctrlSeq)",
                    "request": ["subtype": "set_permission_mode", "mode": mode]])

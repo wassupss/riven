@@ -56,6 +56,8 @@ final class DockPanel {
     var chatGroup: String?      // agent-group name, shown in the title and kept across restarts
     var chatParent: String?     // nickname of the agent this one reports to (org chart / hierarchy)
     var chatModel: String?      // model this pane is pinned to ("opus"/"sonnet"/…), nil = 계정 기본
+    /// 이 챗을 굴리는 CLI. 스냅샷에 적히므로 재기동해도 Codex 챗은 Codex 로 돌아온다.
+    var chatKind: ChatAgentKind = .claude
     /// 이 팬의 아바타 키(역할 이름). 닉네임 → 커스텀 에이전트 순. 탭·레일·조직도가 같은
     /// 키를 써서 같은 얼굴을 그린다. 역할이 없는 팬은 nil (예전 아이콘 그대로).
     var avatarKey: String? { AgentAvatar.key(nickname: chatNickname, agent: chatAgent, kind: nil) }
@@ -985,9 +987,12 @@ final class DockManager {
                     let nick = p.chatNickname ?? "", agent = p.chatAgent ?? ""
                     let group = p.chatGroup ?? "", parent = p.chatParent ?? ""
                     let model = p.chatModel ?? "", avatar = p.chatAvatar ?? ""
+                    // 여덟 번째 칸: 어느 CLI 인가. Claude 는 빈 칸으로 둬서 예전 스냅샷과
+                    // 바이트가 같게 유지된다 (읽는 쪽에서 빈 칸 = claude).
+                    let kind = p.chatKind == .claude ? "" : p.chatKind.rawValue
                     if sid.isEmpty && nick.isEmpty && agent.isEmpty && group.isEmpty && model.isEmpty
-                        && avatar.isEmpty { return "chat" }
-                    return "chat:\(sid)\t\(nick)\t\(agent)\t\(group)\t\(parent)\t\(model)\t\(avatar)"
+                        && avatar.isEmpty && kind.isEmpty { return "chat" }
+                    return "chat:\(sid)\t\(nick)\t\(agent)\t\(group)\t\(parent)\t\(model)\t\(avatar)\t\(kind)"
                 }
                 guard p.id.hasPrefix("term-") else { return p.id }
                 // "term:<agent>" plus, if we own a resumable session id, "\t<sessionId>".

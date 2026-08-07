@@ -127,6 +127,10 @@
 // inlined — no CDN). window.rivenInitShiki(monaco) takes over Monaco's registry.
 let editor = null;
 let shikiReady = false;
+// 에디터 동작 설정. 기본값은 예전 하드코딩 그대로 — 아무것도 안 고른 사람의 화면이
+// 바뀌면 안 된다. 네이티브가 rivenSetEditorOptions 로 실제 값을 넣어 준다. 새 그룹이
+// 생길 때 create() 가 이 값을 읽으므로, 분할한 에디터에도 같은 설정이 적용된다.
+let rivenEditorOpts = { tabSize: 2, minimap: true, wordWrap: false, ligatures: false };
 const models = {};        // path -> monaco model
 const savedVersion = {};  // path -> alternativeVersionId at last save
 const lastDirty = {};     // path -> last known dirty state (skip redundant DOM/native work)
@@ -288,8 +292,13 @@ function createGroup() {
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
-    minimap: { enabled: true }, automaticLayout: true, scrollBeyondLastLine: false,
-    glyphMargin: true, tabSize: 2, renderWhitespace: 'selection',
+    // 이 넷은 설정에서 온다 (기본값은 예전 하드코딩과 같다 — 아무것도 안 고른 사람의
+    // 화면이 바뀌면 안 된다). rivenSetEditorOptions 로 나중에 갈아 끼운다.
+    minimap: { enabled: rivenEditorOpts.minimap }, automaticLayout: true, scrollBeyondLastLine: false,
+    glyphMargin: true, tabSize: rivenEditorOpts.tabSize,
+    wordWrap: rivenEditorOpts.wordWrap ? 'on' : 'off',
+    fontLigatures: rivenEditorOpts.ligatures,
+    renderWhitespace: 'selection',
     inlineSuggest: { enabled: true }, model: null,
     // These dispatch to Monaco's editorWorkerService, which can't run in a background
     // worker here (the file:// page has a null origin, so WKWebView won't spawn the
@@ -818,6 +827,16 @@ window.rivenSetTheme = function (name, bg, accent, accent2) {
   try { if (shikiReady && window.monaco) monaco.editor.setTheme(name); } catch (e) {}
 };
 window.addEventListener('resize', () => groups.forEach(g => { if (g.active && isImage(g.active)) layoutImage(g); }));
+// 에디터 동작 설정. 네이티브가 시작할 때 한 번, 설정을 바꿀 때마다 다시 부른다.
+window.rivenSetEditorOptions = function (o) {
+  rivenEditorOpts = Object.assign(rivenEditorOpts, o || {});
+  groups.forEach(g => g.ed.updateOptions({
+    tabSize: rivenEditorOpts.tabSize,
+    minimap: { enabled: rivenEditorOpts.minimap },
+    wordWrap: rivenEditorOpts.wordWrap ? 'on' : 'off',
+    fontLigatures: rivenEditorOpts.ligatures,
+  }));
+};
 window.rivenSetFontSize = function (size) {
   groups.forEach(g => g.ed.updateOptions({ fontSize: size }));
   document.documentElement.style.setProperty('--riven-font-size', size + 'px');  // peek/references list

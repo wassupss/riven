@@ -72,7 +72,8 @@ enum Keys {
         byCat(cat).first { $0.id != id && effective($0.id) == chord }
     }
 
-    private static var overrides: [String: String] {
+    /// 사용자가 바꾼 키만. 설정 화면이 "기본값에서 바뀜" 을 표시하려면 알아야 한다.
+    static var overrides: [String: String] {
         get { (Settings.shared.object("keybindings") as? [String: String]) ?? [:] }
     }
     static func effective(_ id: String) -> String {
