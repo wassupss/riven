@@ -14,6 +14,9 @@ extension Notification.Name {
     static let rivenSnippetsChanged = Notification.Name("rivenSnippetsChanged")
     // 에디터/터미널 폰트 크기 설정이 바뀜 → 각 뷰가 즉시 반영 (재시작 불필요).
     static let rivenFontSizeChanged = Notification.Name("rivenFontSizeChanged")
+    /// 사용량을 남은 %/쓴 % 중 어느 쪽으로 보여 줄지 바뀌었다. 헤더·팝오버·고정 스트립이
+    /// 함께 다시 그려져야 한다 — 한 곳만 바뀌면 화면 안에서 방향이 갈린다.
+    static let rivenUsageModeChanged = Notification.Name("rivenUsageModeChanged")
     // Divider drag begin/end. NSSplitView's mouseDown runs a modal tracking loop for the whole
     // drag, so these bracket it exactly — unlike viewWillStartLiveResize, which isn't guaranteed
     // for divider tracking. Panes with expensive layout (the chat transcript) freeze on begin.
@@ -262,6 +265,11 @@ enum I18n {
         "chat.usage.recentShort": ("최근 턴 ↑{in} ↓{out}", "Last turn ↑{in} ↓{out}"),
         "chat.usage.none": ("아직 사용량 정보가 없습니다.", "No usage data yet."),
         "chat.tokens": ("↑{in} ↓{out} 토큰", "↑{in} ↓{out} tokens"),
+        "chat.usage.plan": ("플랜", "Plan"),
+        "chat.usage.todayCodex": ("오늘", "Today"),
+        "chat.status.agent": ("에이전트", "Agent"),
+        "chat.quota.sessionLabel": ("세션", "Session"),
+        "chat.quota.weekLabel": ("주간", "Weekly"),
         "chat.quota.session": ("세션 {n}%", "Session {n}%"),
         "chat.quota.week": ("주간 {n}%", "Weekly {n}%"),
         "chat.thinkFor": ("생각 {d}", "Thought {d}"), "chat.writeFor": ("작성 {d}", "Wrote {d}"),
@@ -364,9 +372,22 @@ enum I18n {
         "browser.zoomIn": ("확대", "Zoom in"),
         "browser.zoomOut": ("축소", "Zoom out"),
         "browser.bookmark": ("북마크", "Bookmark"),
+        "usage.clickToToggle": ("눌러서 남은 % ↔ 쓴 % 전환", "Click to switch remaining ↔ used"),
+        "usage.todayHead": ("오늘", "Today"),
+        "usage.session5h": ("세션 (5시간)", "Session (5h)"),
+        "usage.weekly7d": ("주간 (7일)", "Weekly (7d)"),
+        "usage.left": ("남은 비율", "remaining"),
+        "usage.used": ("쓴 비율", "used"),
+        "settings.usage": ("사용량", "Usage"),
+        "settings.usageMode": ("사용량 표시", "Usage display"),
+        "settings.usageModeDesc": ("눈금을 남은 쪽으로 읽을지, 쓴 쪽으로 읽을지",
+                                   "Read the meters as remaining, or as used"),
+        "settings.usageLeft": ("남은 %", "Remaining"),
+        "settings.usageUsed": ("쓴 %", "Used"),
         "usage.window.days": ("{n}일", "{n}d"),
         "usage.window.hours": ("{n}시간", "{n}h"),
         "usage.window.mins": ("{n}분", "{n}m"),
+        "usage.titleFor": ("{cli} · {m}", "{cli} · {m}"),
         "usage.codexTitle": ("남은 한도 (Codex)", "Remaining (Codex)"),
         "usage.codexWindow": ("{w} 창", "{w} window"),
         "usage.todayCodex": ("Codex · {tok} · {n}턴", "Codex · {tok} · {n} turns"),

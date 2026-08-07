@@ -220,6 +220,9 @@ final class WorkspaceRail: NSView, Themable {
 
     /// Debug: the rail's own ordering (the ⌘N chip numbers come from this).
     func orderDump() -> String { workspaces.map { $0.lastPathComponent }.joined(separator: ",") }
+    /// 벤치용: 지금 그려진 카드 수.
+    func debugCardCount() -> Int { workspaces.count }
+
     func addWorkspace(_ url: URL) {
         if !workspaces.contains(url) { workspaces.append(url) }
         active = url

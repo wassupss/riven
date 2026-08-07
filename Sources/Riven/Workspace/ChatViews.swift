@@ -1332,12 +1332,12 @@ final class TurnBlock: NSView {
     }
     // Append the OVERALL plan-quota usage (fetched async) — this is the account's 5-hour /
     // weekly window utilization, not this turn's share (the API gives no absolute budget).
-    func setQuota(sessionUsed: Int?, weeklyUsed: Int?) {
-        var q: [String] = []
-        if let s = sessionUsed { q.append(t("chat.quota.session", ["n": s])) }
-        if let w = weeklyUsed { q.append(t("chat.quota.week", ["n": w])) }
-        guard !q.isEmpty else { return }
-        let quota = t("chat.plan") + q.joined(separator: " · ")
+    /// 턴 아래의 "플랜 …" 줄. 창의 이름과 숫자를 그대로 받는다 — 예전에는 세션/주간
+    /// 두 칸이 못 박혀 있어서, Codex 페인에서도 Claude 의 5시간·7일 숫자가 나왔다.
+    /// CLI 마다 창이 다르므로(Claude 5시간+7일, Codex 30일) 칸 수를 정하는 건 부르는 쪽이다.
+    func setQuota(_ entries: [(label: String, value: Int)]) {
+        guard !entries.isEmpty else { return }
+        let quota = t("chat.plan") + entries.map { "\($0.label) \($0.value)%" }.joined(separator: " · ")
         tokenLabel.stringValue = tokenBase.isEmpty ? quota : tokenBase + "  ·  " + quota
     }
 }
