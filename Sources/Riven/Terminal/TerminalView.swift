@@ -351,7 +351,9 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var needsDraw = true
     func setNeedsDraw() { needsDraw = true }
     private func drawIfNeeded() {
-        guard let s = surface else { return }
+        // Only draw a surface that is in a window and has a real drawable. A draw on a
+        // window-less / zero-size surface is what raced during restore (see setupDisplayLink).
+        guard let s = surface, window != nil, bounds.width > 1, bounds.height > 1 else { return }
         ghostty_surface_draw(s)
     }
     // After a keystroke the echo returns from the PTY a moment later; force a few draws so
@@ -375,13 +377,20 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private func setupDisplayLink() {
         CVDisplayLinkCreateWithActiveCGDisplays(&link)
         guard let link else { return }
+        // NOTE: the link is NOT started here. It starts in viewDidMoveToWindow once the view
+        // is actually in a window. Starting it in init let the display-link thread call
+        // ghostty_surface_draw on a surface whose view had no window and a zero-size Metal
+        // drawable — harmless most of the time, but during session restore many surfaces are
+        // created in a burst and a draw landing on a half-set-up / just-freed surface fatally
+        // crashed libghostty (the same fragility noted at sendText: "recreating the surface
+        // crashes libghostty"). Restore reorder in 0.1.57 made that race far more likely.
         CVDisplayLinkSetOutputCallback(link, { (_, _, _, _, _, ctx) -> CVReturn in
             let view = Unmanaged<TerminalView>.fromOpaque(ctx!).takeUnretainedValue()
             view.frameTick &+= 1
             if view.fullRate || view.frameTick & 1 == 0 { DispatchQueue.main.async { view.drawIfNeeded() } }
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
-        CVDisplayLinkStart(link)
+        // Intentionally not started here — see the note above. viewDidMoveToWindow starts it.
     }
 
     override func setFrameSize(_ newSize: NSSize) {

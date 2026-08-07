@@ -12,6 +12,64 @@ let rivenCrashPath: String = {
     return p
 }()
 
+// ---- Boot breadcrumb (crash diagnostics) --------------------------------------------------
+// v0.1.57 crash-looped on some machines during session restore, and the deaths left NO
+// artifact — no crash.txt, no .ghosttycrash, no OS corpse (a silent exit()/kill, not a
+// signal). To make the NEXT such death diagnosable, each restore milestone is written here
+// immediately (atomic write = durable) and the file is deleted only once boot completes.
+// So an orphaned boot.step on the next launch means "the previous boot died at THIS step",
+// which reportBootFailure() folds into crash.txt for the existing Supabase upload. This
+// captures every death mode, including SIGKILL where no handler runs.
+let rivenBootPath: String = AppPaths.supportDir.appendingPathComponent("boot.step").path
+private var rivenBootDone = false
+func rivenBootStep(_ s: String) {
+    guard !rivenBootDone else { return }
+    try? Data("\(s)\n".utf8).write(to: URL(fileURLWithPath: rivenBootPath), options: .atomic)
+}
+func rivenBootComplete() {
+    guard !rivenBootDone else { return }
+    rivenBootDone = true
+    try? FileManager.default.removeItem(atPath: rivenBootPath)
+}
+
+// Call ONCE at the very start of launch, before CrashReporter.reportPending(): if boot.step
+// survived from the previous run, that run died mid-boot. Fold it into crash.txt so the
+// existing uploader ships it. A real crash (crash.txt already populated by the signal/exception
+// handler) is preserved — we only append the last boot step to it; otherwise crash.txt was
+// empty (the silent-death case) and we write a standalone boot-failure record.
+func reportBootFailureIfAny() {
+    guard let step = try? String(contentsOfFile: rivenBootPath, encoding: .utf8),
+          !step.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    defer { try? FileManager.default.removeItem(atPath: rivenBootPath) }
+    let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    let existing = (try? String(contentsOfFile: rivenCrashPath, encoding: .utf8)) ?? ""
+    let stepLine = step.trimmingCharacters(in: .whitespacesAndNewlines)
+    if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // Silent death — no signal/exception was caught. This is the case that had no artifact.
+        try? "v\(ver) BOOT-INCOMPLETE (silent exit during launch)\nlast step: \(stepLine)\n"
+            .write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
+    } else {
+        try? (existing + "\nBOOT-INCOMPLETE last step: \(stepLine)\n")
+            .write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
+    }
+    RLog.log("boot: previous launch died mid-boot at \"\(stepLine)\" — folded into crash report")
+}
+
+// exit() during boot leaves nothing behind on its own. This @convention(c) handler (no
+// captures — only globals) records a stack the moment such an exit happens, so a stray
+// exit()/return-before-ready is diagnosable and not just a blank boot.step. (SIGKILL skips
+// atexit, but the orphaned boot.step still flags that run via reportBootFailureIfAny.)
+func installBootExitGuard() {
+    atexit {
+        guard !rivenBootDone else { return }
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let step = (try? String(contentsOfFile: rivenBootPath, encoding: .utf8)) ?? "?"
+        let stack = Thread.callStackSymbols.joined(separator: "\n")
+        try? "v\(ver) EXIT during boot\nlast step: \(step.trimmingCharacters(in: .whitespacesAndNewlines))\n\(stack)\n"
+            .write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
+    }
+}
+
 // riven native shell — Phase 1 core loop:
 //   explorer (file tree) | Monaco editor (WKWebView) | libghostty terminal
 // Open a folder → browse files → click to open in Monaco → ⌘S saves to disk.
@@ -150,7 +208,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         installCrashHandler()
+        installBootExitGuard()          // capture a stray exit() during launch (diagnostics)
+        reportBootFailureIfAny()        // if the previous launch died mid-boot, fold it into crash.txt
         CrashReporter.reportPending()   // upload the previous run's crash (if any), then clear it
+        rivenBootStep("didFinishLaunching")
         maybeShowCrashReportingNotice()   // one-time opt-out disclosure
         setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
         startAgentHooks()  // agent lifecycle events → pane busy/attn (replaces viewport polling)
@@ -1700,8 +1761,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
+            rivenBootStep("restore:dispatch")
             DispatchQueue.main.async {
                 self.restoreSession()
+                // Restore's synchronous work is done. Any death after this settle window is
+                // no longer a boot-time crash, so clear the breadcrumb once we've stayed up a
+                // few seconds past restore (covers the deferred pinned-usage / release-notes
+                // tails that some crashes landed in).
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) { rivenBootComplete() }
                 // 복원이 자리를 잡은 뒤에 띄운다. 복원 중에 창을 올리면 그 위로 세션이
                 // 그려지면서 깜빡이고, 첫인상이 "업데이트하면 화면이 튄다" 가 된다.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
@@ -4414,7 +4481,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         guard let s = Settings.shared.object("session"),
-              let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); return }
+              let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); rivenBootComplete(); return }
+        rivenBootStep("restore:begin \(keys.count)ws")
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
         let colors = s["colors"] as? [String: String] ?? [:]
@@ -4465,13 +4533,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let activeCanon = activeKey.map { AppDelegate.canonicalWorkspaceURL($0).absoluteString }
         let active = restored.first { $0.absoluteString == activeCanon } ?? restored.first!
         let tAct = Date()
+        rivenBootStep("restore:activate")
         activate(active)
         if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
             RLog.log(String(format: "BOOT activate %.0fms (팬 %d개)",
                             Date().timeIntervalSince(tAct) * 1000,
                             activeDock?.groups.flatMap { $0.panels }.count ?? 0))
         }
+        rivenBootStep("restore:prewarm")
         prewarmWorkspaces(except: active)
+        rivenBootStep("restore:panes-built")
         runSwitchBench()
         runResizeBench()
         // RIVEN_ORDERDUMP=1: log the app's workspace order, the rail's order and the editor's tab
@@ -7014,6 +7085,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.pinnedUsage == nil else { return }
                 RLog.log("usage: restoring pinned state")
+                rivenBootStep("usage:pin")
                 self.pinUsage()
             }
         }
