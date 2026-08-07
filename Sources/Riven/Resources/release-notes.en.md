@@ -1,29 +1,32 @@
-## Codex as a native chat
+## PDF and spreadsheets open in tabs
 
-Pick Codex in ⌘O and you get the **native chat**, not a terminal. Streaming, approval cards, the Changes panel and token counts all work the same as they do for Claude.
+`.pdf`, `.xlsx`, `.csv` and `.tsv` open as tabs from the explorer. Tabs, closing and splitting work the same as any other file.
 
-- **Approval modes** apply to Codex too (Plan / Ask / Auto)
-- Conversations **survive a restart**
-- Tab and sidebar icons tell the two CLIs apart at a glance
+- PDFs keep page navigation, zoom, search and text selection
+- Spreadsheets show **dates, thousands separators, percentages, merged cells, column widths and bold** (read-only)
+- Large images open now too (anything over 10MB used to be refused)
 
-## Usage, per CLI
+## Drop files onto the explorer to import them
 
-The usage meter now shows Claude and Codex **separately**. It used to count only Claude, so Codex work never moved the needle.
-
-- Choose **remaining % or used %** (Settings → General → Usage, or click a bar)
-- Pinning it to the sidebar keeps the two apart as well
+Dragging from Finder **copies** into that folder. If the name is taken it becomes `name 2.txt` — nothing is overwritten.
 
 ## Fixed
 
-- **The same folder could split into two workspace cards.** It happened on long-lived sessions, and the two cards opened different panels. This launch merges them automatically — your open tabs are kept
-- Restarting could open a different workspace than the one you were in
-- In a Codex chat, `/cost`, `/status` and the session list showed **Claude account** data
-- The usage freshness line was printed twice
+- **Sidebar resizing.** The sidebar grew with the window, and clicking the divider snapped it narrower. The 1pt divider was also nearly impossible to grab
+- **The same folder could split into two workspace cards** (fixed in v0.1.56 — they merge automatically on launch)
+- **Places that ignored a theme change** — the top strip, the sidebar header, the settings sidebar, the pinned usage panel, the update pill
+- **Plain terminals looked permanently "busy"**
+- **Commit details were cut off with blank space below**
+- In a Codex chat, `/cost`, `/status` and the session list showed Claude account data
 
 ## Settings
 
-- Editor: **tab size, word wrap, minimap, font ligatures**
-- Browser **search engine**
-- **Default model and approval mode** for new conversations
-- **Turn off auto-update**, reveal the settings file, reset settings, restore shortcuts
-- The list of installed agent CLIs (path and version)
+- Changing a setting now shows **"✓ Saved"**
+- **Default model per CLI** (Claude / Codex)
+- **17 browser shortcuts** are listed in the shortcuts screen
+- Read usage as **remaining % or used %** (clicking a bar switches too)
+- Cloud sync now happens once, on quit
+
+## Also
+
+This screen appears the first time you launch after an update. You can reopen it any time from Settings → About.
