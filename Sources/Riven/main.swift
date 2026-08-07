@@ -1083,6 +1083,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_GITFRAMES=1: 소스 컨트롤 아래 여백의 정체를 프레임 숫자로.
+                if ProcessInfo.processInfo.environment["RIVEN_GITFRAMES"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let ws = self.workspace, let win = self.window else { return }
+                        // 사용자가 본 화면은 2열(넓은 배치)이다. 창을 넓혀 같은 조건으로 만든다.
+                        var f = win.frame; f.size.width = 1800; f.size.height = 1100
+                        win.setFrame(f, display: true)
+                        self.toggleDockPanel("git")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            let sc = self.git(for: ws)
+                            sc.layoutSubtreeIfNeeded()
+                            // 맨 위 커밋을 골라 상세를 채운다 (본문이 긴 커밋이라 잘림이 드러난다).
+                            sc.debugSelectFirstCommit()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            sc.layoutSubtreeIfNeeded()
+                            RLog.log("GITFRAMES " + sc.debugFrames())
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_GITSHOT2"],
+                               let v = self.window?.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                            }
+                            RLog.log("GITFRAMES done")
+                            }
+
+                        }
+                    }
+                }
                 // RIVEN_THEMESHOT=<prefix>: 어두운 테마에서 한 장, 밝은 테마로 바꾼 뒤 한 장.
                 // 바뀌지 않은 영역이 곧 "테마를 따라가지 않는 곳" 이다.
                 if let prefix = ProcessInfo.processInfo.environment["RIVEN_THEMESHOT"] {
