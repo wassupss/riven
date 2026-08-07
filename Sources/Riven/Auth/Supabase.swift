@@ -280,6 +280,13 @@ final class SupabaseAuth {
         "browserTabs", "browserActiveTab",   // 이 기기에서 열어 둔 탭
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
+        // The local-change stamp is bookkeeping, never uploaded — AND it must be here or
+        // localChanged() recurses into itself: set(any syncable key) → .rivenSettingChanged →
+        // localChanged → set(localStampKey) → .rivenSettingChanged → localChanged → … until the
+        // stack overflows. That was the v0.1.57 launch crash: while signed in, the first
+        // syncable set() (pinned usage restoring "usagePinned") triggered the loop. It only bit
+        // release builds because sync is configured there (signed in); local dev builds aren't.
+        localStampKey,
     ]
 
     private func observeLocalChanges() {
