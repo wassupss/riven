@@ -135,8 +135,11 @@ jobs:
           generate_release_notes: true
 
       # ---- Sparkle auto-update: sign the dmg + refresh the appcast feed ----
+      # Pre-release tags (a hyphen in the version, e.g. v0.1.58-rc1) build a notarized dmg +
+      # GitHub Release for verification but do NOT touch the appcast — so a build can be tested
+      # on a real machine before every user is offered it. A plain tag (v0.1.58) publishes.
       - name: Sign update + generate appcast
-        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' && !contains(github.ref_name, '-') }}
         env:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
@@ -165,7 +168,7 @@ jobs:
           cat appcast.xml
 
       - name: Publish appcast feed
-        if: ${{ env.HAS_SPARKLE_KEY == 'true' }}
+        if: ${{ env.HAS_SPARKLE_KEY == 'true' && !contains(github.ref_name, '-') }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: appcast
