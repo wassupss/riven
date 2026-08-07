@@ -5348,7 +5348,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showEditorPane()
             tabBar.open(path)
             editor.openSheet(path: path, sheets: sheets.map {
-                ["name": $0.name, "rows": $0.rows, "totalRows": $0.totalRows]
+                ["name": $0.name, "rows": $0.rows, "totalRows": $0.totalRows,
+                 "bold": $0.bold, "nums": $0.nums,
+                 "merges": $0.merges, "colWidths": $0.colWidths]
             })
             statusBar.setFileInfo(fileInfo(path))
             persistSession()
