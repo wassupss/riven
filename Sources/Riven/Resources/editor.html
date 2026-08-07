@@ -65,6 +65,25 @@
   .epdf { position: absolute; inset: 30px 0 0 0; display: none; }
   .epdf.on { display: block; }
   .epdf embed { width: 100%; height: 100%; border: 0; }
+  /* 표 뷰어. 격자는 읽기 위한 것이라 선을 옅게 두고 머리행만 고정한다. */
+  .esheet { position: absolute; inset: 30px 0 0 0; display: none; flex-direction: column;
+            background: var(--bg, #16181c); color: var(--fg, #e6e8ea); }
+  .esheet.on { display: flex; }
+  .esheet .stabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 4px 8px 0 8px; overflow-x: auto; }
+  .esheet .stabs button { background: transparent; border: 0; color: var(--fg-dim, #8b8f96);
+    font: inherit; font-size: 11.5px; padding: 4px 10px; border-radius: 5px 5px 0 0; cursor: pointer; }
+  .esheet .stabs button.on { background: var(--bg2, #1d2025); color: var(--fg, #e6e8ea); }
+  .esheet .sbody { flex: 1 1 auto; overflow: auto; }
+  .esheet table { border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .esheet th, .esheet td { border: 1px solid rgba(128,128,128,.22); padding: 2px 8px;
+    white-space: pre; max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  .esheet th { position: sticky; top: 0; background: var(--bg, #1d2025);
+    color: var(--fg-dim, #8b8f96); font-weight: 600; text-align: left; z-index: 1;
+    box-shadow: inset 0 -1px 0 rgba(128,128,128,.3); }
+  .esheet td.rownum { position: sticky; left: 0; background: var(--bg, #1d2025);
+    color: var(--fg-dim, #8b8f96); text-align: right; }
+  .esheet .snote { flex: 0 0 auto; padding: 4px 10px; font-size: 11px;
+    color: var(--fg-dim, #8b8f96); }
   .eimage img { image-rendering: -webkit-optimize-contrast; cursor: zoom-in; }
   .eimage.actual img { cursor: zoom-out; }
   .eimage .meta { position: absolute; right: 10px; bottom: 8px; font: 11px -apple-system;
@@ -291,7 +310,11 @@ function createGroup() {
   // 우리가 할 일은 자리를 내주는 것뿐이라, 뷰어를 직접 만들지 않는다.
   const pdfEl = document.createElement('div'); pdfEl.className = 'epdf';
   pdfEl.innerHTML = '<embed type="application/pdf">';
-  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(pdfEl); el.appendChild(dropEl);
+  // 표(.xlsx/.csv/.tsv) — 값만 읽어 온 것을 격자로 그린다. 읽기 전용이다.
+  const sheetEl = document.createElement('div'); sheetEl.className = 'esheet';
+  sheetEl.innerHTML = '<div class="stabs"></div><div class="sbody"></div><div class="snote"></div>';
+  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(pdfEl);
+  el.appendChild(sheetEl); el.appendChild(dropEl);
   // A plain mouse wheel only produces a vertical delta; map it to horizontal scroll so
   // the tab strip's overflow is reachable without a trackpad (native dock tabs do this too).
   tabsEl.addEventListener('wheel', (e) => {
@@ -318,7 +341,7 @@ function createGroup() {
     occurrencesHighlight: 'off', selectionHighlight: false,
     wordBasedSuggestions: 'off', links: false, codeLens: false
   });
-  const g = { idx: groups.length, el, tabsEl, monEl, imgEl, pdfEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
+  const g = { idx: groups.length, el, tabsEl, monEl, imgEl, pdfEl, sheetEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
   // 클릭으로 Fit ↔ 100% 토글 (VS Code와 동일)
   imgEl.addEventListener('click', () => { imgEl.classList.toggle('actual'); layoutImage(g); });
   g.node = { type: 'leaf', g };
@@ -517,9 +540,55 @@ function layoutImage(g) {
 // 그룹이 이미지 탭을 보여줄지 Monaco를 보여줄지 전환.
 const pdfSrc = {};
 function isPDF(path) { return Object.prototype.hasOwnProperty.call(pdfSrc, path); }
+const sheetData = {};   // path -> {sheets:[{name,rows,totalRows}], active:0, note:""}
+function isSheet(path) { return Object.prototype.hasOwnProperty.call(sheetData, path); }
+
+// 표를 그린다. 열 머리는 A,B,C…(엑셀과 같은 이름)로 두고, 첫 칸에 행 번호를 둔다 —
+// 원본과 같은 좌표로 읽히지 않으면 표를 보는 의미가 없다.
+function renderSheet(g) {
+  const path = g.active, d = sheetData[path];
+  if (!d) return;
+  const tabs = g.sheetEl.querySelector('.stabs');
+  const body = g.sheetEl.querySelector('.sbody');
+  const note = g.sheetEl.querySelector('.snote');
+  tabs.innerHTML = '';
+  d.sheets.forEach((sh, i) => {
+    const b = document.createElement('button');
+    b.textContent = sh.name; if (i === d.active) b.className = 'on';
+    b.onclick = () => { d.active = i; renderSheet(g); };
+    tabs.appendChild(b);
+  });
+  tabs.style.display = d.sheets.length > 1 ? '' : 'none';
+  const sh = d.sheets[d.active] || { rows: [], totalRows: 0 };
+  const cols = sh.rows.reduce((m, r) => Math.max(m, r.length), 0);
+  let html = '<table><thead><tr><th></th>';
+  for (let c = 0; c < cols; c++) html += '<th>' + colName(c) + '</th>';
+  html += '</tr></thead><tbody>';
+  for (let r = 0; r < sh.rows.length; r++) {
+    html += '<tr><td class="rownum">' + (r + 1) + '</td>';
+    for (let c = 0; c < cols; c++) html += '<td>' + esc(sh.rows[r][c] || '') + '</td>';
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  body.innerHTML = html;
+  body.scrollTop = 0; body.scrollLeft = 0;
+  const shown = sh.rows.length;
+  note.textContent = shown < sh.totalRows
+    ? T('sheet.truncated', '처음 ' + shown + '행만 보여 줍니다 (전체 ' + sh.totalRows + '행)')
+    : shown + T('sheet.rows', '행') + ' · ' + cols + T('sheet.cols', '열');
+}
+function colName(n) { let s = ''; n++; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; } return s; }
+function esc(v) { return String(v).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 
 function applyImageMode(g) {
   const path = g.active;
+  if (path && isSheet(path)) {
+    g.sheetEl.classList.add('on'); g.pdfEl.classList.remove('on'); g.imgEl.classList.remove('on');
+    g.monEl.style.display = 'none';
+    renderSheet(g);
+    return;
+  }
+  g.sheetEl.classList.remove('on');
   if (path && isPDF(path)) {
     const emb = g.pdfEl.querySelector('embed');
     if (emb.getAttribute('src') !== pdfSrc[path]) emb.src = pdfSrc[path];
@@ -542,6 +611,17 @@ function applyImageMode(g) {
   }
 }
 
+window.rivenOpenSheet = function (path, payload) {
+  sheetData[path] = { sheets: payload.sheets || [], active: 0 };
+  document.getElementById('empty').style.display = 'none';
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  if (!g.tabs.includes(path)) g.tabs.push(path);
+  g.active = path;
+  g.ed.setModel(null);
+  renderTabs(g);
+  setActiveGroup(groups.indexOf(g));
+  applyImageMode(g);
+};
 window.rivenOpenPDF = function (path, src) {
   pdfSrc[path] = src;
   document.getElementById('empty').style.display = 'none';
@@ -852,6 +932,12 @@ window.rivenSetTheme = function (name, bg, accent, accent2) {
       const r = parseInt(m.slice(0,2),16), g = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
       const lum = 0.299*r + 0.587*g + 0.114*b;
       document.documentElement.style.setProperty('--seam', lum < 128 ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.14)');
+      // 표 뷰어처럼 Monaco 밖에서 그리는 것들이 쓸 글자색. 예전에는 --bg 만 넘겨서,
+      // 밝은 테마에서 어두운 글자를 그대로 들고 있었다 (배경에 묻혔다).
+      const dark = lum < 128;
+      document.documentElement.style.setProperty('--fg', dark ? '#e6e8ea' : '#1b1e22');
+      document.documentElement.style.setProperty('--fg-dim', dark ? 'rgba(230,232,234,.62)' : 'rgba(27,30,34,.60)');
+      document.documentElement.style.setProperty('--bg2', dark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.045)');
     }
   }
   try { if (shikiReady && window.monaco) monaco.editor.setTheme(name); } catch (e) {}

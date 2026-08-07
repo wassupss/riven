@@ -5300,7 +5300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // thread or balloon memory as a data: URL. Refuse with a clear message.
         // 이미지는 Monaco 를 안 거치므로 훨씬 넉넉한 상한을 쓴다.
         // 뷰어로 그리는 것(이미지·PDF)은 Monaco 를 거치지 않으므로 상한이 다르다.
-        let isViewerFile = Self.imageMIME(path) != nil || Self.isPDF(path)
+        let isViewerFile = Self.imageMIME(path) != nil || Self.isPDF(path) || Spreadsheet.isSpreadsheet(path)
         let cap = isViewerFile ? Self.maxImageFileSize : Self.maxEditorFileSize
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
            let size = attrs[.size] as? Int, size > cap {
@@ -5319,6 +5319,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
         // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
         // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
+        // 표는 값만 읽어 격자로 그린다 (읽기 전용). 파싱은 Swift 에서 하고 웹뷰는 그리기만 한다.
+        if Spreadsheet.isSpreadsheet(path) {
+            guard let sheets = Spreadsheet.read(url), !sheets.isEmpty else {
+                RLog.log("openFile: cannot read spreadsheet \(path)")
+                let a = NSAlert(); a.messageText = t("sheet.cannotRead")
+                a.informativeText = url.lastPathComponent; a.alertStyle = .warning; a.runModal()
+                return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openSheet(path: path, sheets: sheets.map {
+                ["name": $0.name, "rows": $0.rows, "totalRows": $0.totalRows]
+            })
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
+            return
+        }
         // PDF 는 웹뷰가 자기 뷰어로 그린다 (페이지 넘김·확대·검색·텍스트 선택이 딸려 온다).
         if Self.isPDF(path) {
             guard let data = try? Data(contentsOf: url) else {
