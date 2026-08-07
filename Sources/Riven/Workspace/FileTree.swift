@@ -95,6 +95,9 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         outline.backgroundColor = Theme.bg2
         outline.dataSource = self
         outline.delegate = self
+        // 파일을 끌어다 놓으면 그 폴더로 들여온다. 탐색기에 떨어뜨리는 건 누구나 해 보는
+        // 동작인데 아무 반응이 없으면 "안 되는 앱" 으로 읽힌다.
+        outline.registerForDraggedTypes([.fileURL])
         outline.target = self
         outline.action = #selector(clicked)
         outline.onMenu = { [weak self] row in self?.contextMenu(row: row) }
@@ -252,6 +255,88 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         (creatingParent ?? root)?.children?.removeAll { $0 === placeholder }
         editingField = nil
     }
+    // MARK: - 파일 들여오기 (Finder / 다른 앱에서 끌어다 놓기)
+
+    /// 어디에 떨어뜨렸든 "폴더" 로 바꾼다. 파일 줄 위에 놓으면 그 파일이 있는 폴더로 —
+    /// 파일 안에 파일을 넣을 수는 없는데 거절만 하면 왜 안 되는지 알 수 없다.
+    private func dropFolder(for item: Any?) -> FileNode? {
+        guard let node = item as? FileNode else { return root }
+        if node.isDir { return node }
+        return outline.parent(forItem: node) as? FileNode ?? root
+    }
+
+    func outlineView(_ ov: NSOutlineView, validateDrop info: NSDraggingInfo,
+                     proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        guard info.draggingPasteboard.canReadObject(forClasses: [NSURL.self], options: nil),
+              let target = dropFolder(for: item) else { return [] }
+        // 폴더 줄 자체를 강조한다 (줄 사이가 아니라). 어디로 들어갈지가 보여야 한다.
+        ov.setDropItem(target === root ? nil : target, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        return .copy
+    }
+
+    func outlineView(_ ov: NSOutlineView, acceptDrop info: NSDraggingInfo,
+                     item: Any?, childIndex index: Int) -> Bool {
+        guard let target = dropFolder(for: item),
+              let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
+              !urls.isEmpty else { return false }
+        let fm = FileManager.default
+        var landed: [URL] = []
+        for src in urls {
+            // 옮기지 않고 **복사**한다. 원본이 사라지는 건 되돌리기 어렵고, 대개는 어딘가에
+            // 있는 파일을 프로젝트로 들여오려는 것이다 (VS Code 도 복사한다).
+            guard src.standardizedFileURL != target.url.standardizedFileURL else { continue }
+            // 같은 폴더 안으로 떨어뜨린 경우도 그냥 넘긴다 (자기 자신을 복사할 일은 없다).
+            if src.deletingLastPathComponent().standardizedFileURL == target.url.standardizedFileURL { continue }
+            let dest = Self.uniqueDestination(in: target.url, name: src.lastPathComponent)
+            do { try fm.copyItem(at: src, to: dest); landed.append(dest) }
+            catch {
+                RLog.log("explorer drop: 복사 실패 \(src.lastPathComponent) — \(error.localizedDescription)")
+                let a = NSAlert()
+                a.messageText = t("explorer.dropFailed")
+                a.informativeText = "\(src.lastPathComponent)\n\(error.localizedDescription)"
+                a.alertStyle = .warning
+                a.runModal()
+            }
+        }
+        guard !landed.isEmpty else { return false }
+        reloadContainer(target === root ? nil : target)
+        // 들여온 것을 골라 준다 — 어디에 들어갔는지 눈으로 확인되지 않으면 다시 찾아야 한다.
+        if let first = landed.first { reveal(first) }
+        RLog.log("explorer drop: \(landed.count)개 들여옴 → \(target.url.lastPathComponent)")
+        return true
+    }
+
+    /// 벤치용: 드롭 수신 경로를 그대로 탄다 (드래그 이벤트는 합성할 수 없다).
+    @discardableResult
+    func debugDrop(_ urls: [URL]) -> Bool {
+        guard let target = root else { return false }
+        let fm = FileManager.default
+        var landed: [URL] = []
+        for src in urls {
+            let dest = Self.uniqueDestination(in: target.url, name: src.lastPathComponent)
+            if (try? fm.copyItem(at: src, to: dest)) != nil { landed.append(dest) }
+        }
+        guard !landed.isEmpty else { return false }
+        reloadContainer(nil)
+        return true
+    }
+
+    /// 같은 이름이 있으면 "이름 2.txt" 처럼 비켜 간다. 말없이 덮어쓰는 것이 최악이다.
+    static func uniqueDestination(in folder: URL, name: String) -> URL {
+        let fm = FileManager.default
+        var dest = folder.appendingPathComponent(name)
+        guard fm.fileExists(atPath: dest.path) else { return dest }
+        let ns = name as NSString
+        let base = ns.deletingPathExtension, ext = ns.pathExtension
+        var n = 2
+        repeat {
+            let candidate = ext.isEmpty ? "\(base) \(n)" : "\(base) \(n).\(ext)"
+            dest = folder.appendingPathComponent(candidate)
+            n += 1
+        } while fm.fileExists(atPath: dest.path) && n < 1000
+        return dest
+    }
+
     private func reloadContainer(_ parent: FileNode?) {
         if let parent { parent.children = nil; outline.reloadItem(parent, reloadChildren: true); outline.expandItem(parent) }
         else { root?.children = nil; outline.reloadData() }

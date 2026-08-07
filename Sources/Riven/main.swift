@@ -1083,6 +1083,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_DROPTEST=1: 탐색기에 파일을 떨어뜨렸을 때 실제로 들여오는지.
+                // (드래그 자체는 합성할 수 없으므로 받는 쪽 경로를 그대로 부른다.)
+                if ProcessInfo.processInfo.environment["RIVEN_DROPTEST"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        let src = URL(fileURLWithPath: "/private/tmp/droptest/outside.txt")
+                        let ex = self.explorer(for: ws)
+                        for i in 1...2 {   // 두 번 넣어 이름 충돌 처리까지 본다
+                            let ok = ex.debugDrop([src])
+                            RLog.log("DROPTEST \(i)회차 성공=\(ok)")
+                        }
+                        let files = (try? FileManager.default.contentsOfDirectory(atPath: ws.path)) ?? []
+                        RLog.log("DROPTEST 워크스페이스 내용=\(files.sorted())")
+                        RLog.log("DROPTEST done")
+                    }
+                }
                 // RIVEN_GITFRAMES=1: 소스 컨트롤 아래 여백의 정체를 프레임 숫자로.
                 if ProcessInfo.processInfo.environment["RIVEN_GITFRAMES"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
