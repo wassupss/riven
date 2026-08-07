@@ -574,6 +574,8 @@ enum I18n {
         "settings.crashTitle": ("크래시 리포트", "Crash reports"),
         "settings.appearance": ("모양", "Appearance"),
         "settings.languageDesc": ("메뉴·패널·안내 문구의 언어", "Language for menus, panels and messages"),
+        "settings.fontPreview": ("글꼴 미리보기", "Font preview"),
+        "settings.fontPreviewHint": ("고른 글꼴·크기로 그린 예시", "Sample in the chosen font and size"),
         "settings.fontFamily": ("글꼴", "Font"),
         "settings.fontFamilyDesc": ("고정폭 글꼴만 보여 줍니다", "Only fixed-width fonts are listed"),
         "settings.formatOnSaveDesc": ("저장할 때 포매터를 돌립니다", "Run the formatter when you save"),

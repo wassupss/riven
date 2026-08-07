@@ -330,6 +330,8 @@ final class SettingsWindow: NSPanel {
         addRow(t("settings.fontSize"), desc: nil, sizeControl(editorSize, key: "editorFontSize"))
         addRow(t("settings.fontFamily"), desc: t("settings.fontFamilyDesc"),
                fontMenu(key: "editorFontFamily", preview: editorPreview))
+        // 미리보기 줄에 이름이 없으면 "왜 여기 코드 한 줄이 있지" 로 읽힌다 (버그로 보인다).
+        addRow(t("settings.fontPreview"), desc: nil, previewChip())
         addWideRow(editorPreview)
         formatOnSave.title = ""
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
@@ -353,6 +355,7 @@ final class SettingsWindow: NSPanel {
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
         addRow(t("settings.fontSize"), desc: nil, sizeControl(terminalSize, key: "terminalFontSize"))
         addRow(t("settings.fontFamily"), desc: nil, fontMenu(key: "terminalFontFamily", preview: terminalPreview))
+        addRow(t("settings.fontPreview"), desc: nil, previewChip())
         addWideRow(terminalPreview)
         // 이미 ghostty 를 쓰던 사람은 글꼴·크기를 이미 맞춰 뒀다. 다시 고르게 하지 않는다.
         let (ghosttyBtn, ghosttyStatus) = ghosttyControls()
@@ -1233,6 +1236,14 @@ final class SettingsWindow: NSPanel {
                 self.savedLabel.animator().alphaValue = 0
             }
         }
+    }
+
+    /// 미리보기 줄의 오른쪽 표식. 고를 것이 없는 줄이라 컨트롤 대신 조용한 라벨을 둔다.
+    private func previewChip() -> NSView {
+        let l = NSTextField(labelWithString: t("settings.fontPreviewHint"))
+        l.font = UIScale.font(UIScale.caption)
+        l.textColor = Theme.fgDim
+        return l
     }
 
     /// 값이 아니라 상태를 보여 주는 자리 (설치된 CLI 의 버전처럼 읽기 전용인 것).

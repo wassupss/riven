@@ -1125,6 +1125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 try? d.write(to: URL(fileURLWithPath: prefix + name + ".png"))
                             }
                         }
+                        // 사용량을 사이드바에 고정해 둔다 (제보된 부분이라 비교에 꼭 넣는다).
+                        Settings.shared.set("usagePinned", true)
+                        self.pinUsage()
+                        self.statusBar.setUpdateAvailable("0.1.99")   // 업데이트 알약도 보이게
                         // 패널을 두루 열어 둔다 — 안 열린 패널은 비교에 잡히지 않는다.
                         for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
                             self.toggleDockPanel(id)
@@ -5270,7 +5274,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // thread and freezes the app: opening it looks like "nothing happens". Refuse past a
     // cap, matching how VSCode guards large files. Applies to both text and image opens
     // (an image is base64'd into a data: URL, ~1.33× its bytes in memory).
-    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB
+    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB — 텍스트(Monaco)용
+    /// 이미지는 Monaco 를 거치지 않고 뷰어로 그린다. 텍스트용 상한(10MB)을 그대로 씌우면
+    /// 평범한 사진 한 장도 "너무 큽니다" 로 거절당했다 — 카메라 원본이 그 정도는 넘는다.
+    /// data: URL 로 넘기느라 메모리를 base64 만큼 더 쓰는 건 사실이라 상한을 아주 없애지는
+    /// 않고, 사람이 실제로 여는 이미지가 다 들어오는 선으로 크게 잡는다.
+    private static let maxImageFileSize = 256 * 1024 * 1024   // 256 MB
 
     private func openFile(_ url: URL) {
         RLog.log("openFile \(url.lastPathComponent) ws=\(workspace?.lastPathComponent ?? "nil")")
@@ -5289,14 +5298,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // Size guard (before any read): a huge file would freeze Monaco on the main
         // thread or balloon memory as a data: URL. Refuse with a clear message.
+        // 이미지는 Monaco 를 안 거치므로 훨씬 넉넉한 상한을 쓴다.
+        let isImageFile = Self.imageMIME(path) != nil
+        let cap = isImageFile ? Self.maxImageFileSize : Self.maxEditorFileSize
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attrs[.size] as? Int, size > Self.maxEditorFileSize {
+           let size = attrs[.size] as? Int, size > cap {
             let a = NSAlert()
             a.messageText = t("editor.tooLarge")
             a.informativeText = t("editor.tooLargeBody", [
                 "name": url.lastPathComponent,
                 "size": ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file),
-                "limit": ByteCountFormatter.string(fromByteCount: Int64(Self.maxEditorFileSize), countStyle: .file)])
+                "limit": ByteCountFormatter.string(fromByteCount: Int64(cap), countStyle: .file)])
             a.alertStyle = .warning
             a.runModal()
             RLog.log("openFile: refused \(path) — \(size) bytes > cap")
@@ -7177,6 +7189,8 @@ extension AppDelegate: Themable {
         sidebarContainer?.layer?.backgroundColor = Theme.bg2.cgColor
         headerStrip?.layer?.backgroundColor = Theme.bg2.cgColor
         sidebarHeadStrip?.layer?.backgroundColor = Theme.bg2.cgColor
+        // 사이드바에 고정한 사용량 칸은 만들 때 색을 구워 넣는다 — 통째로 다시 만든다.
+        rebuildPinnedUsage()
         sidebarHeadButton?.contentTintColor = Theme.fgDim
         headerHairline?.layer?.backgroundColor = Theme.hairline.cgColor
         headerLabel?.textColor = Theme.fg

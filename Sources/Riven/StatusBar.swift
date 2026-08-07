@@ -231,5 +231,14 @@ final class StatusBarView: NSView, Themable {
         langLabel.textColor = Theme.fgDim
         settings.contentTintColor = Theme.fgDim
         settings.image = symbol("gearshape", 13)
+        // 아래 줄들이 빠져 있었다 — 업데이트 알약과 사용량·계정 칸이 밝은 테마에서도
+        // 어두운 색 글자를 그대로 들고 있었다. 아이콘은 색만 바꿔서는 안 되고 다시
+        // 만들어야 한다 (심볼 이미지는 만들 때의 tint 를 굽는다).
+        updateButton.contentTintColor = Theme.accent
+        updateButton.image = symbol("arrow.down.circle.fill", 12)
+        usageIcon.contentTintColor = Theme.fgDim
+        usageLabel.textColor = Theme.fgDim
+        accountIcon.contentTintColor = Theme.fgDim
+        accountLabel.textColor = Theme.fgDim
     }
 }
