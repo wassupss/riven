@@ -95,24 +95,47 @@ enum UsageUI {
     // so it fits the fixed sidebar strip without clipping.
     static func pinnedContent(limits: Usage.Limits?, today: Usage.Today?,
                               codexLimits: CodexUsage.Limits? = nil,
+                              codexToday: CodexUsage.Today = CodexUsage.Today(),
                               onUnpin: @escaping () -> Void) -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical; stack.spacing = 7; stack.alignment = .leading
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 8, right: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        if let s = bar("세션 (5시간)", limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) { stack.addArrangedSubview(s) }
-        if let w = bar("주간 (7일)", limits?.weeklyRemaining, resetIn(limits?.weeklyResetsAt)) { stack.addArrangedSubview(w) }
-        // Codex 는 창이 하나뿐이라 막대 하나로 족하다. 라벨에 CLI 이름을 넣어 두지 않으면
-        // Claude 의 세 번째 창처럼 읽힌다.
+        // 사이드바는 좁아서 막대만 쌓으면 어디까지가 Claude 이고 어디부터 Codex 인지
+        // 알 수 없다 (창 이름만 다른 세 번째 막대처럼 읽힌다). CLI 마다 글리프 + 이름을
+        // 단 머리줄을 두고, 그 아래 막대를 들여쓴다.
+        var claudeBars: [NSView] = []
+        if let s = bar(t("usage.session5h"), limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) { claudeBars.append(s) }
+        if let w = bar(t("usage.weekly7d"), limits?.weeklyRemaining, resetIn(limits?.weeklyResetsAt)) { claudeBars.append(w) }
+        if !claudeBars.isEmpty {
+            stack.addArrangedSubview(providerHead(ChatAgentKind.claude))
+            claudeBars.forEach { stack.addArrangedSubview($0) }
+        }
         if let cx = codexLimits,
-           let b = bar("Codex (\(CodexUsage.windowLabel(cx.windowMinutes)))",
-                       cx.remainingPercent, resetIn(cx.resetsAt)) {
+           let b = bar(CodexUsage.windowLabel(cx.windowMinutes), cx.remainingPercent, resetIn(cx.resetsAt)) {
+            // 앞 묶음과 붙지 않게 한 칸 띄운다 — 간격이 곧 "여기서부터 다른 것" 이다.
+            if !claudeBars.isEmpty { stack.addArrangedSubview(pinSpacer()) }
+            stack.addArrangedSubview(providerHead(ChatAgentKind.codex))
             stack.addArrangedSubview(b)
         }
+        // 오늘 쓴 양. 금액은 Claude 쪽에만 해당하므로 CLI 이름을 적는다 — 바로 위가 Codex
+        // 묶음이라 이름이 없으면 Codex 의 금액으로 읽힌다.
+        var todayLines: [String] = []
         if let today, today.totalTokens > 0 {
-            let t = NSTextField(labelWithString: "오늘 · $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))")
-            t.font = UIScale.font(UIScale.caption); t.textColor = Theme.fgDim
-            stack.addArrangedSubview(t)
+            todayLines.append("Claude · $\(String(format: "%.2f", today.totalCost)) · \(Usage.fmtTokens(today.totalTokens))")
+        }
+        if codexToday.turns > 0 {
+            todayLines.append("Codex · \(Usage.fmtTokens(codexToday.totalTokens)) · \(codexToday.turns)턴")
+        }
+        if !todayLines.isEmpty {
+            stack.addArrangedSubview(pinSpacer())
+            stack.addArrangedSubview(head(t("usage.todayHead")))
+            for line in todayLines {
+                let l = NSTextField(labelWithString: line)
+                l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
+                l.lineBreakMode = .byTruncatingTail
+                stack.addArrangedSubview(l)
+            }
         }
         // Each bar's inner rows constrain to the stack width.
         for v in stack.arrangedSubviews {
@@ -120,6 +143,29 @@ enum UsageUI {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         }
         return stack
+    }
+
+    /// CLI 머리줄: 글리프 + 이름. 탭·레일에서 쓰는 것과 같은 글리프라, 어느 CLI 의
+    /// 숫자인지 읽지 않고도 알아본다.
+    private static func providerHead(_ kind: ChatAgentKind) -> NSView {
+        let iv = NSImageView()
+        iv.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        iv.contentTintColor = Theme.fgDim
+        iv.translatesAutoresizingMaskIntoConstraints = false
+        iv.setContentHuggingPriority(.required, for: .horizontal)
+        let l = head(kind.displayName)
+        let row = NSStackView(views: [iv, l])
+        row.orientation = .horizontal; row.spacing = 5; row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+    /// 묶음 사이의 빈 줄. 높이만 있는 뷰라 스택 간격과 합쳐져 한 칸이 된다.
+    private static func pinSpacer() -> NSView {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.heightAnchor.constraint(equalToConstant: 2).isActive = true
+        return v
     }
 
     private static func head(_ text: String) -> NSTextField {
@@ -175,10 +221,10 @@ enum UsageUI {
             stack.addArrangedSubview(f)
         }
 
-        if let s = bar("세션 (5시간)", limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) {
+        if let s = bar(t("usage.session5h"), limits?.sessionRemaining, resetIn(limits?.sessionResetsAt)) {
             stack.addArrangedSubview(s); s.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         }
-        if let w = bar("주간 (7일)", limits?.weeklyRemaining, resetIn(limits?.weeklyResetsAt)) {
+        if let w = bar(t("usage.weekly7d"), limits?.weeklyRemaining, resetIn(limits?.weeklyResetsAt)) {
             stack.addArrangedSubview(w); w.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         }
 

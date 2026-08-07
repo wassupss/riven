@@ -1107,6 +1107,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                     }
                                     Settings.shared.set("usageShowUsed", false)
                                 }
+                                // 사이드바 고정 스트립도 떠 본다 (좁은 폭에서 CLI 구분이 되는지).
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_PINSHOT"] {
+                                  // 한도 조회(네트워크)가 끝난 뒤에 떠야 Claude 묶음이 들어 있다.
+                                  DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+                                    guard let self else { return }
+                                    let cx = CodexUsage.scan()
+                                    let v = UsageUI.pinnedContent(limits: self.lastLimits, today: self.lastToday,
+                                                                  codexLimits: cx.limits, codexToday: cx.today) { }
+                                    v.translatesAutoresizingMaskIntoConstraints = false
+                                    let host = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 400))
+                                    host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg2.cgColor
+                                    host.addSubview(v)
+                                    NSLayoutConstraint.activate([
+                                        v.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                                        v.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                                        v.topAnchor.constraint(equalTo: host.topAnchor),
+                                    ])
+                                    host.layoutSubtreeIfNeeded()
+                                    host.setFrameSize(NSSize(width: 220, height: v.fittingSize.height + 12))
+                                    host.layoutSubtreeIfNeeded()
+                                    if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                                        host.cacheDisplay(in: host.bounds, to: rep)
+                                        if let d = rep.representation(using: .png, properties: [:]) {
+                                            try? d.write(to: URL(fileURLWithPath: shot))
+                                        }
+                                    }
+                                    RLog.log("PINSHOT done claude=\(self.lastLimits?.sessionRemaining.map(String.init) ?? "-")")
+                                  }
+                                }
                                 let r2 = CodexUsage.scan()
                                 RLog.log("CXPANE 사용량 토큰=\(r2.today.totalTokens) 턴=\(r2.today.turns)"
                                          + " 남은=\(r2.limits.map { "\($0.remainingPercent)%" } ?? "-")"
@@ -6863,7 +6892,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         unpin.font = UIScale.font(UIScale.caption); unpin.contentTintColor = Theme.fgDim
         unpin.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(unpin)
         let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday,
-                                            codexLimits: lastCodexLimits) { }
+                                            codexLimits: lastCodexLimits,
+                                            codexToday: lastCodexToday) { }
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([
