@@ -15,7 +15,12 @@ final class SettingsWindow: NSPanel {
     private var fontPickers: [String: NSPopUpButton] = [:]
     private let editorPreview = NSTextField(labelWithString: "")
     private let terminalPreview = NSTextField(labelWithString: "")
-    private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
+    private var authObserver: Any?
+    private var settingObserver: Any?
+    /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 — 여기에 "저장됨" 을 띄우면 거짓말이다.
+    private static let silentKeys: Set<String> = ["session", "sidebarWidth", "railHeight",
+                                                  "railCollapsed", "browserTabs", "browserZooms",
+                                                  "browserActiveTab", "lastSeenVersion", "installId"]          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
     deinit {
@@ -44,6 +49,8 @@ final class SettingsWindow: NSPanel {
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
     private var rootView: NSView!
+    private let savedLabel = NSTextField(labelWithString: "")
+    private var savedTimer: Timer?
     private var titleLabel: NSTextField!
     private var closeBtn: NSButton!
     private let hair = NSView()
@@ -78,6 +85,13 @@ final class SettingsWindow: NSPanel {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = titleLabel
         header.addSubview(titleLabel)
+        // 바뀌었다는 신호. 설정은 누르는 즉시 저장되는데 화면이 아무 말도 하지 않으면,
+        // 정말 저장된 건지 확인할 방법이 없다 (되돌아가 다시 눌러 보게 된다).
+        savedLabel.font = UIScale.font(UIScale.small, .medium)
+        savedLabel.textColor = Theme.success
+        savedLabel.alphaValue = 0
+        savedLabel.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(savedLabel)
         let closeBtn = NSButton(title: t("common.close"), target: self, action: #selector(closeSettings))
         self.closeBtn = closeBtn
         closeBtn.isBordered = false; closeBtn.font = UIScale.font(UIScale.small)
@@ -87,6 +101,9 @@ final class SettingsWindow: NSPanel {
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
+            savedLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
+            savedLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            savedLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeBtn.leadingAnchor, constant: -10),
             closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -14),
             closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             closeBtn.heightAnchor.constraint(equalToConstant: 22),
@@ -164,6 +181,15 @@ final class SettingsWindow: NSPanel {
         installGlass(on: self, content: root, radius: 14)
         showTab(0)
         Theme.register(self)
+        settingObserver = NotificationCenter.default.addObserver(
+            forName: .rivenSettingChanged, object: nil, queue: .main) { [weak self] n in
+            // 설정 창이 떠 있을 때만. 그리고 창 자신이 저장을 유발한 경우만 — 클라우드
+            // 동기화 같은 배경 쓰기까지 "저장됨" 으로 보이면 신호가 거짓말이 된다.
+            guard let self, self.isVisible else { return }
+            let key = (n.object as? String) ?? ""
+            guard !SettingsWindow.silentKeys.contains(key) else { return }
+            self.flashSaved(t("settings.saved"), ok: true)
+        }
         // Live language switch: relabel the tabs + re-render the active tab.
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -464,19 +490,28 @@ final class SettingsWindow: NSPanel {
     /// ghostty 설정 가져오기 (버튼 + 상태 문구).
     private func ghosttyControls() -> (NSView, NSTextField) {
         let found = GhosttyImport.read()
-        // 가져올 게 있을 때만 버튼이 살아 있다. 파일이 없든, 있는데 비었든 결과는 같지만
-        // 문구는 달라야 한다 — 없는 걸 찾으라는 말과 바꿀 게 없다는 말은 다른 안내다.
+        // 버튼은 늘 눌린다. 예전에는 가져올 게 없으면 onClick 을 아예 달지 않았는데,
+        // 눌리지 않는 버튼과 고장난 버튼은 손끝에서 구분되지 않는다 — 눌러 보고 "왜 안
+        // 되지" 로 끝난다. 지금은 눌리고, 왜 아무 일도 없었는지를 그 자리에서 말해 준다.
         let importable = found.map { !$0.hasNothing } ?? false
         let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
                             textColor: importable ? Theme.fg : Theme.fgDim,
                             bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
         let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
-        if importable {
-            btn.onClick = { [weak self] in
-                guard let f = GhosttyImport.read() else { return }
-                _ = GhosttyImport.apply(f)
-                self?.showTab(0)
+        btn.onClick = { [weak self, weak status] in
+            guard let f = GhosttyImport.read() else {
+                status?.stringValue = t("settings.ghosttyNone")
+                self?.flashSaved(t("settings.ghosttyNothingShort"), ok: false)
+                return
             }
+            guard !f.hasNothing else {
+                status?.stringValue = f.summary
+                self?.flashSaved(t("settings.ghosttyNothingShort"), ok: false)
+                return
+            }
+            let msg = GhosttyImport.apply(f)
+            self?.flashSaved(msg, ok: true)
+            self?.showTab(0)
         }
         return (btn, status)
     }
@@ -1157,6 +1192,22 @@ final class SettingsWindow: NSPanel {
         Settings.shared.set(key, sender.integerValue)
         if key == "editorTabSize" { tabSizeField.stringValue = String(sender.integerValue) }
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+    }
+
+    /// "✓ 저장됨" 을 잠깐 띄운다. 실패한 동작에도 같은 자리를 쓰되 색으로 가른다 —
+    /// 성공만 말하고 실패는 침묵하면, 아무 일도 없었을 때 눌리긴 한 건지 알 수 없다.
+    func flashSaved(_ text: String, ok: Bool) {
+        savedLabel.stringValue = (ok ? "✓ " : "· ") + text
+        savedLabel.textColor = ok ? Theme.success : Theme.fgDim
+        savedTimer?.invalidate()
+        savedLabel.alphaValue = 1
+        savedTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.35
+                self.savedLabel.animator().alphaValue = 0
+            }
+        }
     }
 
     /// 값이 아니라 상태를 보여 주는 자리 (설치된 CLI 의 버전처럼 읽기 전용인 것).

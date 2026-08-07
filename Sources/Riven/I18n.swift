@@ -381,6 +381,8 @@ enum I18n {
         "usage.weekly7d": ("주간 (7일)", "Weekly (7d)"),
         "usage.left": ("남은 비율", "remaining"),
         "usage.used": ("쓴 비율", "used"),
+        "settings.saved": ("저장됨", "Saved"),
+        "settings.ghosttyNothingShort": ("가져올 값이 없습니다", "Nothing to import"),
         "settings.usage": ("사용량", "Usage"),
         "settings.usageMode": ("사용량 표시", "Usage display"),
         "settings.usageModeDesc": ("눈금을 남은 쪽으로 읽을지, 쓴 쪽으로 읽을지",

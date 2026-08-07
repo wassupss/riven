@@ -1042,6 +1042,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         RLog.log("CXUSAGE done")
                     }
                 }
+                // RIVEN_TERMBUSY=1: 평범한 셸에서 Return 을 눌렀을 때 "작업 중" 이 풀리는지.
+                if ProcessInfo.processInfo.environment["RIVEN_TERMBUSY"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                        guard let self, let p = self.currentTerminalPanel(),
+                              let tv = p.content as? TerminalView else {
+                            RLog.log("TERMBUSY 터미널 없음"); RLog.log("TERMBUSY done"); return
+                        }
+                        tv.sendText("echo hi")
+                        tv.debugPressReturn()      // keyDown 과 같은 경로
+                        tv.sendEnter()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            RLog.log("TERMBUSY 엔터 직후 badge=\(p.badge ?? "없음")")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                            RLog.log("TERMBUSY 6초 후 badge=\(p.badge ?? "없음")")
+                            RLog.log("TERMBUSY done")
+                        }
+                    }
+                }
+                // RIVEN_SAVEDSHOT=<path>: 설정을 하나 바꿨을 때 "저장됨" 이 뜨는지.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_SAVEDSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self else { return }
+                        self.settingsMenu()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            // 실제 저장을 일으킨다 (설정 창이 알림을 듣고 신호를 띄운다).
+                            Settings.shared.set("editorMinimap", !Settings.shared.bool("editorMinimap", true))
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                if let v = self.settingsWin?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                RLog.log("SAVEDSHOT done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_THEMESHOT=<prefix>: 어두운 테마에서 한 장, 밝은 테마로 바꾼 뒤 한 장.
+                // 바뀌지 않은 영역이 곧 "테마를 따라가지 않는 곳" 이다.
+                if let prefix = ProcessInfo.processInfo.environment["RIVEN_THEMESHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                        guard let self, let v = self.window?.contentView else { return }
+                        func shot(_ name: String) {
+                            guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: prefix + name + ".png"))
+                            }
+                        }
+                        // 패널을 두루 열어 둔다 — 안 열린 패널은 비교에 잡히지 않는다.
+                        for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
+                            self.toggleDockPanel(id)
+                        }
+                        self.newChat()
+                        self.switchTheme("ember")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            shot("-dark")
+                            self.switchTheme("daylight")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                shot("-light")
+                                RLog.log("THEMESHOT done")
+                            }
+                        }
+                    }
+                }
+            // RIVEN_TERMENV=1: 일반 터미널에서 ghostty 셸 통합이 실제로 로드되는지.
+                // (OSC 133 이 안 오면 "작업 중" 이 영영 안 꺼진다.)
+                if ProcessInfo.processInfo.environment["RIVEN_TERMENV"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let tv = self.currentTerminalPanel()?.content as? TerminalView else {
+                            RLog.log("TERMENV 터미널 없음"); RLog.log("TERMENV done"); return
+                        }
+                        let out = "/private/tmp/termenv.txt"
+                        tv.sendText("{ echo ZDOTDIR=$ZDOTDIR; echo GHOSTTY_RESOURCES_DIR=$GHOSTTY_RESOURCES_DIR; "
+                                    + "echo GHOSTTY_SHELL_FEATURES=$GHOSTTY_SHELL_FEATURES; "
+                                    + "echo precmd=$(typeset -f precmd >/dev/null && echo yes || echo no); "
+                                    + "echo hooks=${(j:,:)precmd_functions}; } > \(out) 2>&1\n")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            RLog.log("TERMENV " + ((try? String(contentsOfFile: out, encoding: .utf8))?
+                                .replacingOccurrences(of: "\n", with: " | ") ?? "(파일 없음)"))
+                            RLog.log("TERMENV done")
+                        }
+                    }
+                }
                 // RIVEN_CODEXPANE=1: Codex 를 네이티브 챗 "패널" 로 열어 한 턴 도는지 (배선 전체).
                 if ProcessInfo.processInfo.environment["RIVEN_CODEXPANE"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1708,6 +1795,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var rootView: NSView!
+    /// 상단 헤더 띠와 그 아래 실선. 지역 변수로만 두면 테마가 바뀔 때 다시 칠할 수가 없어,
+    /// 밝은 테마로 바꿔도 이 띠만 어두운 채로 남아 있었다.
+    private var headerStrip: NSView?
+    private var headerHairline: NSView?
+    /// 사이드바 위쪽 "패널 추가" 띠. 같은 이유로 들고 있어야 다시 칠할 수 있다.
+    private var sidebarHeadStrip: NSView?
+    private var sidebarHeadButton: NSButton?
     private func buildLayout() {
         let root = NSView(frame: window.contentView!.bounds)
         rootView = root
@@ -1856,8 +1950,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rightContainer = NSView(frame: NSRect(x: 0, y: 0, width: rightW, height: H - statusH))
         let dockHeader = DraggableStrip(frame: NSRect(x: 0, y: bodyH, width: rightW, height: titleH))
         dockHeader.wantsLayer = true; dockHeader.layer?.backgroundColor = Theme.bg2.cgColor
+        headerStrip = dockHeader
         dockHeader.autoresizingMask = [.width, .minYMargin]
         let dhair = NSView(); dhair.wantsLayer = true; dhair.layer?.backgroundColor = Theme.hairline.cgColor
+        headerHairline = dhair
         dhair.frame = NSRect(x: 0, y: 0, width: rightW, height: 1); dhair.autoresizingMask = [.width, .maxYMargin]
         dockHeader.addSubview(dhair)
         // Active workspace info (folder + branch) so the header isn't empty.
@@ -1955,12 +2051,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let strip = DraggableStrip(frame: NSRect(x: 0, y: 0, width: width, height: height))
         strip.wantsLayer = true
         strip.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebarHeadStrip = strip
         let addBtn = NSButton(title: " 패널 추가", target: self, action: #selector(quickPanelMenu))
         addBtn.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
         addBtn.imagePosition = .imageLeading
         addBtn.isBordered = false
         addBtn.contentTintColor = Theme.fgDim
+        sidebarHeadButton = addBtn
         addBtn.font = UIScale.font(UIScale.body, .medium)
         addBtn.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(addBtn)
@@ -7019,6 +7117,13 @@ extension AppDelegate: Themable {
         rootView?.layer?.backgroundColor = Theme.bg.cgColor
         dockHost?.layer?.backgroundColor = Theme.bg.cgColor
         sidebarContainer?.layer?.backgroundColor = Theme.bg2.cgColor
+        headerStrip?.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebarHeadStrip?.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebarHeadButton?.contentTintColor = Theme.fgDim
+        headerHairline?.layer?.backgroundColor = Theme.hairline.cgColor
+        headerLabel?.textColor = Theme.fg
+        headerIcon?.contentTintColor = Theme.fgDim
+        headerUsage?.textColor = Theme.fgDim
         // Recolor every dock group (backgrounds + tab titles/underline) — dock views
         // aren't individually Themable, so rebuild their tab bars here.
         for st in states.values {
