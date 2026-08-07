@@ -43,6 +43,33 @@ enum Keys {
         .init(id: "pane.up", label: "위쪽 패널로 포커스", def: "cmd+ctrl+up", cat: "terminal"),
         .init(id: "pane.down", label: "아래쪽 패널로 포커스", def: "cmd+ctrl+down", cat: "terminal"),
     ]
+
+    /// 브라우저 패널 안에서만 듣는 키들. 브라우저를 쓰던 손이 그대로 통하도록 크롬/사파리와
+    /// 같은 배치를 쓴다.
+    ///
+    /// 이 목록은 **보여 주기 위한 것**이다 — PreviewPanel 이 직접 처리하므로 여기서
+    /// 바꿔도 동작이 바뀌지 않는다. 그래도 적어 두는 이유는, 적혀 있지 않으면 있는 줄도
+    /// 모르기 때문이다 (단축키 화면에 브라우저가 통째로 빠져 있었다). 설정 화면은 이
+    /// 목록을 고칠 수 없는 것으로 그린다.
+    static let browserActions: [Action] = [
+        .init(id: "browser.reload", label: "새로고침", def: "cmd+r", cat: "browser"),
+        .init(id: "browser.hardReload", label: "캐시 무시하고 새로고침", def: "cmd+shift+r", cat: "browser"),
+        .init(id: "browser.back", label: "뒤로", def: "cmd+[", cat: "browser"),
+        .init(id: "browser.forward", label: "앞으로", def: "cmd+]", cat: "browser"),
+        .init(id: "browser.stop", label: "멈춤", def: "cmd+.", cat: "browser"),
+        .init(id: "browser.focusURL", label: "주소창으로", def: "cmd+l", cat: "browser"),
+        .init(id: "browser.find", label: "페이지에서 찾기", def: "cmd+f", cat: "browser"),
+        .init(id: "browser.newTab", label: "새 탭", def: "cmd+t", cat: "browser"),
+        .init(id: "browser.reopenTab", label: "닫은 탭 다시 열기", def: "cmd+shift+t", cat: "browser"),
+        .init(id: "browser.closeTab", label: "탭 닫기 (마지막이면 패널)", def: "cmd+w", cat: "browser"),
+        .init(id: "browser.nextTab", label: "다음 탭", def: "cmd+alt+right", cat: "browser"),
+        .init(id: "browser.prevTab", label: "이전 탭", def: "cmd+alt+left", cat: "browser"),
+        .init(id: "browser.pickTab", label: "n번째 탭 (⌘9 = 마지막)", def: "cmd+1", cat: "browser"),
+        .init(id: "browser.inspector", label: "개발자 도구 (Web Inspector)", def: "cmd+alt+i", cat: "browser"),
+        .init(id: "browser.console", label: "콘솔 서랍", def: "cmd+alt+c", cat: "browser"),
+        .init(id: "browser.library", label: "방문 기록·북마크", def: "cmd+y", cat: "browser"),
+        .init(id: "browser.newProfile", label: "새 프로필 탭", def: "cmd+shift+n", cat: "browser"),
+    ]
     // Editor (Monaco) commands — remappable per-command; overrides are applied on top
     // of the chosen preset via addKeybindingRules in editor.html.
     static let editorActions: [Action] = [
@@ -60,7 +87,9 @@ enum Keys {
         .init(id: "editor.action.gotoLine", label: "줄 번호로 이동", def: "ctrl+g", cat: "editor"),
     ]
     static func byCat(_ cat: String) -> [Action] {
-        cat == "editor" ? editorActions : actions.filter { $0.cat == cat }
+        if cat == "editor" { return editorActions }
+        if cat == "browser" { return browserActions }
+        return actions.filter { $0.cat == cat }
     }
     // id -> effective chord for all editor commands (passed to Monaco).
     static func editorChords() -> [String: String] {
@@ -81,7 +110,11 @@ enum Keys {
         // (Monaco) actions. Missing `editorActions` here made every editor chord fall back
         // to "" whenever the user had no override — invisible in dev (the dev machine's
         // settings.json had accumulated overrides) but blank on a fresh/packaged install.
-        overrides[id] ?? (actions.first { $0.id == id } ?? editorActions.first { $0.id == id })?.def ?? ""
+        // 세 목록을 모두 본다. 브라우저를 빠뜨렸을 때는 단축키 화면의 칩이 통째로 비어
+        // 나왔다 — 있는 키를 "없음" 으로 보여 주는 셈이었다.
+        overrides[id] ?? (actions.first { $0.id == id }
+                          ?? editorActions.first { $0.id == id }
+                          ?? browserActions.first { $0.id == id })?.def ?? ""
     }
     static func setOverride(_ id: String, _ chord: String) {
         var o = overrides; o[id] = chord; Settings.shared.set("keybindings", o)

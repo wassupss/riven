@@ -157,4 +157,30 @@ enum CodexUsage {
         guard let data = try? fh.read(upToCount: 256 * 1024), let text = String(data: data, encoding: .utf8) else { return nil }
         return Array(text.split(separator: "\n", omittingEmptySubsequences: true).prefix(max).map(String.init))
     }
+
+    /// 고를 수 있는 Codex 모델. Codex 가 받아 둔 카탈로그에서 읽는다 — 목록을 앱에 박아
+    /// 두면 Codex 가 모델을 바꿀 때마다 riven 이 낡는다. 못 읽으면 빈 목록을 주고,
+    /// 부르는 쪽은 "기본" 만 보여 준다.
+    static func availableModels() -> [(label: String, id: String)] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let root = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+                   ?? home.appendingPathComponent(".codex")
+        guard let d = try? Data(contentsOf: root.appendingPathComponent("models_cache.json")),
+              let obj = try? JSONSerialization.jsonObject(with: d) else { return [] }
+        var out: [(label: String, id: String)] = []
+        var seen = Set<String>()
+        func walk(_ o: Any) {
+            if let m = o as? [String: Any] {
+                if let slug = m["slug"] as? String, let name = m["display_name"] as? String,
+                   // 리뷰 전용처럼 대화에 고를 수 없는 것은 뺀다.
+                   m["hidden"] as? Bool != true, !slug.contains("review"),
+                   seen.insert(slug).inserted {
+                    out.append((label: name, id: slug))
+                }
+                m.values.forEach(walk)
+            } else if let a = o as? [Any] { a.forEach(walk) }
+        }
+        walk(obj)
+        return out
+    }
 }

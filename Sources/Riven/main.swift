@@ -162,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigterm.setEventHandler { [weak self] in
             self?.persistSession()
+            SupabaseAuth.shared.flushOnQuit()
             // NSApp.terminate can be DEFERRED — a modal sheet is up, or a delegate returns
             // .terminateLater. The default SIGTERM disposition is now SIG_IGN, so in that
             // case the process would survive and `kill <pid>` would stop working entirely.
@@ -1042,6 +1043,162 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         RLog.log("CXUSAGE done")
                     }
                 }
+                // RIVEN_TERMBUSY=1: 평범한 셸에서 Return 을 눌렀을 때 "작업 중" 이 풀리는지.
+                if ProcessInfo.processInfo.environment["RIVEN_TERMBUSY"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                        guard let self, let p = self.currentTerminalPanel(),
+                              let tv = p.content as? TerminalView else {
+                            RLog.log("TERMBUSY 터미널 없음"); RLog.log("TERMBUSY done"); return
+                        }
+                        tv.sendText("echo hi")
+                        tv.debugPressReturn()      // keyDown 과 같은 경로
+                        tv.sendEnter()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            RLog.log("TERMBUSY 엔터 직후 badge=\(p.badge ?? "없음")")
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
+                            RLog.log("TERMBUSY 6초 후 badge=\(p.badge ?? "없음")")
+                            RLog.log("TERMBUSY done")
+                        }
+                    }
+                }
+                // RIVEN_SAVEDSHOT=<path>: 설정을 하나 바꿨을 때 "저장됨" 이 뜨는지.
+                if let shot = ProcessInfo.processInfo.environment["RIVEN_SAVEDSHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self else { return }
+                        self.settingsMenu()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            // 실제 저장을 일으킨다 (설정 창이 알림을 듣고 신호를 띄운다).
+                            Settings.shared.set("editorMinimap", !Settings.shared.bool("editorMinimap", true))
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                if let v = self.settingsWin?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                RLog.log("SAVEDSHOT done")
+                            }
+                        }
+                    }
+                }
+                // RIVEN_DROPTEST=1: 탐색기에 파일을 떨어뜨렸을 때 실제로 들여오는지.
+                // (드래그 자체는 합성할 수 없으므로 받는 쪽 경로를 그대로 부른다.)
+                if ProcessInfo.processInfo.environment["RIVEN_DROPTEST"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let ws = self.workspace else { return }
+                        let src = URL(fileURLWithPath: "/private/tmp/droptest/outside.txt")
+                        let ex = self.explorer(for: ws)
+                        for i in 1...2 {   // 두 번 넣어 이름 충돌 처리까지 본다
+                            let ok = ex.debugDrop([src])
+                            RLog.log("DROPTEST \(i)회차 성공=\(ok)")
+                        }
+                        let files = (try? FileManager.default.contentsOfDirectory(atPath: ws.path)) ?? []
+                        RLog.log("DROPTEST 워크스페이스 내용=\(files.sorted())")
+                        RLog.log("DROPTEST done")
+                    }
+                }
+                // RIVEN_GITFRAMES=1: 소스 컨트롤 아래 여백의 정체를 프레임 숫자로.
+                if ProcessInfo.processInfo.environment["RIVEN_GITFRAMES"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let ws = self.workspace, let win = self.window else { return }
+                        // 사용자가 본 화면은 2열(넓은 배치)이다. 창을 넓혀 같은 조건으로 만든다.
+                        var f = win.frame; f.size.width = 1800; f.size.height = 1100
+                        win.setFrame(f, display: true)
+                        self.toggleDockPanel("git")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                            let sc = self.git(for: ws)
+                            sc.layoutSubtreeIfNeeded()
+                            // 맨 위 커밋을 골라 상세를 채운다 (본문이 긴 커밋이라 잘림이 드러난다).
+                            sc.debugSelectFirstCommit()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            sc.layoutSubtreeIfNeeded()
+                            RLog.log("GITFRAMES " + sc.debugFrames())
+                            if let shot = ProcessInfo.processInfo.environment["RIVEN_GITSHOT2"],
+                               let v = self.window?.contentView,
+                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                v.cacheDisplay(in: v.bounds, to: rep)
+                                if let d = rep.representation(using: .png, properties: [:]) {
+                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                }
+                            }
+                            RLog.log("GITFRAMES done")
+                            }
+
+                        }
+                    }
+                }
+                // RIVEN_THEMESHOT=<prefix>: 어두운 테마에서 한 장, 밝은 테마로 바꾼 뒤 한 장.
+                // 바뀌지 않은 영역이 곧 "테마를 따라가지 않는 곳" 이다.
+                if let prefix = ProcessInfo.processInfo.environment["RIVEN_THEMESHOT"] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+                        guard let self, let v = self.window?.contentView else { return }
+                        func shot(_ name: String) {
+                            guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return }
+                            v.cacheDisplay(in: v.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: prefix + name + ".png"))
+                            }
+                        }
+                        // 사용량을 사이드바에 고정해 둔다 (제보된 부분이라 비교에 꼭 넣는다).
+                        Settings.shared.set("usagePinned", true)
+                        self.pinUsage()
+                        self.statusBar.setUpdateAvailable("0.1.99")   // 업데이트 알약도 보이게
+                        // 패널을 두루 열어 둔다 — 안 열린 패널은 비교에 잡히지 않는다.
+                        for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
+                            self.toggleDockPanel(id)
+                        }
+                        self.newChat()
+                        // RIVEN_THEMESTART 가 있으면 그 테마로 시작한 화면만 찍는다 (기준선).
+                        // 없으면 ember 로 시작해 daylight 로 "바꾼" 화면을 찍는다.
+                        // 두 장을 비교하면, 바뀌긴 했지만 끝까지 따라오지 않은 곳까지 드러난다.
+                        // 설정 창도 함께 찍는다 — 테마를 바꾸는 바로 그 창이라, 여기가
+                        // 안 따라오면 사용자가 가장 먼저 본다.
+                        func shotSettings(_ name: String) {
+                            guard let sv = self.settingsWin?.contentView,
+                                  let rep = sv.bitmapImageRepForCachingDisplay(in: sv.bounds) else { return }
+                            sv.cacheDisplay(in: sv.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: prefix + name + ".png"))
+                            }
+                        }
+                        self.settingsMenu()
+                        if let startTheme = ProcessInfo.processInfo.environment["RIVEN_THEMESTART"] {
+                            self.switchTheme(startTheme)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                shot("-ref"); shotSettings("-set-ref"); RLog.log("THEMESHOT done")
+                            }
+                        } else {
+                            self.switchTheme("ember")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                self.switchTheme("daylight")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    shot("-switched"); shotSettings("-set-switched"); RLog.log("THEMESHOT done")
+                                }
+                            }
+                        }
+                    }
+                }
+            // RIVEN_TERMENV=1: 일반 터미널에서 ghostty 셸 통합이 실제로 로드되는지.
+                // (OSC 133 이 안 오면 "작업 중" 이 영영 안 꺼진다.)
+                if ProcessInfo.processInfo.environment["RIVEN_TERMENV"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        guard let self, let tv = self.currentTerminalPanel()?.content as? TerminalView else {
+                            RLog.log("TERMENV 터미널 없음"); RLog.log("TERMENV done"); return
+                        }
+                        let out = "/private/tmp/termenv.txt"
+                        tv.sendText("{ echo ZDOTDIR=$ZDOTDIR; echo GHOSTTY_RESOURCES_DIR=$GHOSTTY_RESOURCES_DIR; "
+                                    + "echo GHOSTTY_SHELL_FEATURES=$GHOSTTY_SHELL_FEATURES; "
+                                    + "echo precmd=$(typeset -f precmd >/dev/null && echo yes || echo no); "
+                                    + "echo hooks=${(j:,:)precmd_functions}; } > \(out) 2>&1\n")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                            RLog.log("TERMENV " + ((try? String(contentsOfFile: out, encoding: .utf8))?
+                                .replacingOccurrences(of: "\n", with: " | ") ?? "(파일 없음)"))
+                            RLog.log("TERMENV done")
+                        }
+                    }
+                }
                 // RIVEN_CODEXPANE=1: Codex 를 네이티브 챗 "패널" 로 열어 한 턴 도는지 (배선 전체).
                 if ProcessInfo.processInfo.environment["RIVEN_CODEXPANE"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1543,7 +1700,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
-            DispatchQueue.main.async { self.restoreSession() }
+            DispatchQueue.main.async {
+                self.restoreSession()
+                // 복원이 자리를 잡은 뒤에 띄운다. 복원 중에 창을 올리면 그 위로 세션이
+                // 그려지면서 깜빡이고, 첫인상이 "업데이트하면 화면이 튄다" 가 된다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    let shown = ReleaseNotes.showIfUpdated(over: self?.window)
+                    // RIVEN_SIDEBARFIX=1: 창 크기를 바꿨을 때 사이드바 폭이 따라 변하는지.
+            if ProcessInfo.processInfo.environment["RIVEN_SIDEBARFIX"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, let body = self.bodySplit, let win = self.window else { return }
+                    func sbw() -> CGFloat { body.arrangedSubviews.first?.frame.width ?? -1 }
+                    RLog.log("SBFIX 스플릿자식=\(body.arrangedSubviews.map { type(of: $0) })")
+                    RLog.log("SBFIX sidebarView 가 스플릿 자식인가=\(body.arrangedSubviews.contains { $0 === self.debugSidebarView })")
+                    let before = sbw()
+                    var f = win.frame; f.size.width += 400
+                    win.setFrame(f, display: true)
+                    body.layoutSubtreeIfNeeded()
+                    RLog.log("SBFIX 창 +400 → 사이드바 \(Int(before)) → \(Int(sbw()))")
+                    f.size.width -= 400
+                    win.setFrame(f, display: true)
+                    body.layoutSubtreeIfNeeded()
+                    RLog.log("SBFIX 창 원복 → 사이드바 \(Int(sbw()))  (저장값=\(Int(Settings.shared.double("sidebarWidth", 220))))")
+                    // 구분선이 실제로 마우스를 받는지. 받지 못하면 아무리 끌어도 안 움직인다.
+                    let dv = body.dividerThickness
+                    let x = sbw() + dv / 2
+                    let mid = NSPoint(x: x, y: body.bounds.midY)
+                    let hit = body.hitTest(body.convert(mid, to: body.superview))
+                    RLog.log("SBFIX 구분선두께=\(dv) 구분선x=\(Int(x)) 그 지점을 받는 뷰=\(hit.map { String(describing: type(of: $0)) } ?? "없음")")
+                    RLog.log("SBFIX 그 뷰가 스플릿인가=\(hit === body)")
+                    for dx in [CGFloat(-4), -2, 2, 4] {
+                        let pt = NSPoint(x: x + dx, y: body.bounds.midY)
+                        let h = body.hitTest(body.convert(pt, to: body.superview))
+                        RLog.log("SBFIX 구분선에서 \(Int(dx))pt → 스플릿이 받나=\(h === body)")
+                    }
+                    RLog.log("SBFIX done")
+                }
+            }
+            if ProcessInfo.processInfo.environment["RIVEN_RELNOTES"] != nil {
+                        RLog.log("RELNOTES 띄움=\(shown) 버전=\(ReleaseNotes.currentVersion)"
+                                 + " 기록=\(Settings.shared.string("lastSeenVersion", "-"))")
+                        if let shot = ProcessInfo.processInfo.environment["RIVEN_RELSHOT"], shown {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                if let v = ReleaseNotes.debugWindow?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                RLog.log("RELNOTES done")
+                            }
+                        } else { RLog.log("RELNOTES done") }
+                    }
+                }
+            }
             // RIVEN_RAILDUP=1: 저장된 세션에 같은 폴더가 두 형태로 들어 있을 때 레일이 어떻게
             // 되는지 (베타테스터 제보: 왼쪽 워크스페이스 클릭이 이상하다). 복원 경로에서만
             // 의미가 있으므로 RIVEN_OPEN 분기 밖에 둔다.
@@ -1570,6 +1781,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if ProcessInfo.processInfo.environment["RIVEN_SETTINGS"] != nil {
                     self.settingsMenu()
                     if let t = ProcessInfo.processInfo.environment["RIVEN_SETTINGS_TAB"].flatMap(Int.init) {
+                        if let sub = ProcessInfo.processInfo.environment["RIVEN_KBSUB"].flatMap(Int.init) {
+                            self.settingsWin?.debugSetKbSubtab(sub)
+                        }
                         self.settingsWin?.openTab(t)
                     }
                     if let shot = ProcessInfo.processInfo.environment["RIVEN_SETTINGSSHOT"] {
@@ -1654,6 +1868,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private var rootView: NSView!
+    /// 상단 헤더 띠와 그 아래 실선. 지역 변수로만 두면 테마가 바뀔 때 다시 칠할 수가 없어,
+    /// 밝은 테마로 바꿔도 이 띠만 어두운 채로 남아 있었다.
+    private var headerStrip: NSView?
+    private var headerHairline: NSView?
+    /// 사이드바 위쪽 "패널 추가" 띠. 같은 이유로 들고 있어야 다시 칠할 수 있다.
+    private var sidebarHeadStrip: NSView?
+    private var sidebarHeadButton: NSButton?
     private func buildLayout() {
         let root = NSView(frame: window.contentView!.bounds)
         rootView = root
@@ -1802,8 +2023,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rightContainer = NSView(frame: NSRect(x: 0, y: 0, width: rightW, height: H - statusH))
         let dockHeader = DraggableStrip(frame: NSRect(x: 0, y: bodyH, width: rightW, height: titleH))
         dockHeader.wantsLayer = true; dockHeader.layer?.backgroundColor = Theme.bg2.cgColor
+        headerStrip = dockHeader
         dockHeader.autoresizingMask = [.width, .minYMargin]
         let dhair = NSView(); dhair.wantsLayer = true; dhair.layer?.backgroundColor = Theme.hairline.cgColor
+        headerHairline = dhair
         dhair.frame = NSRect(x: 0, y: 0, width: rightW, height: 1); dhair.autoresizingMask = [.width, .maxYMargin]
         dockHeader.addSubview(dhair)
         // Active workspace info (folder + branch) so the header isn't empty.
@@ -1896,16 +2119,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
     // and hosts the "패널 추가" button just to their right — in the left fixed area.
     private var sidebarView: NSView!
+    var debugSidebarView: NSView? { sidebarView }
     private func makeSidebarHead(width: CGFloat, height: CGFloat) -> NSView {
         let strip = DraggableStrip(frame: NSRect(x: 0, y: 0, width: width, height: height))
         strip.wantsLayer = true
         strip.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebarHeadStrip = strip
         let addBtn = NSButton(title: " 패널 추가", target: self, action: #selector(quickPanelMenu))
         addBtn.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
         addBtn.imagePosition = .imageLeading
         addBtn.isBordered = false
         addBtn.contentTintColor = Theme.fgDim
+        sidebarHeadButton = addBtn
         addBtn.font = UIScale.font(UIScale.body, .medium)
         addBtn.translatesAutoresizingMaskIntoConstraints = false
         strip.addSubview(addBtn)
@@ -2777,7 +3003,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let dock = activeDock, let ws = workspace else { return }
         // 설정에서 고른 기본 모델로 시작한다. 예전에는 페인마다 ⌥메뉴로 고를 수는 있어도
         // 저장되지 않아서, 새 대화는 늘 계정 기본 모델이었다.
-        let def = Settings.shared.string("defaultModel", "default")
+        // 그 CLI 의 기본을 쓴다 — Claude 모델 이름을 Codex 에 넘기면 거절당한다.
+        let def = Settings.shared.string(kind == .codex ? "defaultModelCodex" : "defaultModel", "default")
         let p = makeChatPanel(for: state(for: ws), agent: agent,
                               model: def == "default" ? nil : def, kind: kind)
         // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
@@ -5063,7 +5290,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // thread and freezes the app: opening it looks like "nothing happens". Refuse past a
     // cap, matching how VSCode guards large files. Applies to both text and image opens
     // (an image is base64'd into a data: URL, ~1.33× its bytes in memory).
-    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB
+    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB — 텍스트(Monaco)용
+    /// 이미지는 Monaco 를 거치지 않고 뷰어로 그린다. 텍스트용 상한(10MB)을 그대로 씌우면
+    /// 평범한 사진 한 장도 "너무 큽니다" 로 거절당했다 — 카메라 원본이 그 정도는 넘는다.
+    /// data: URL 로 넘기느라 메모리를 base64 만큼 더 쓰는 건 사실이라 상한을 아주 없애지는
+    /// 않고, 사람이 실제로 여는 이미지가 다 들어오는 선으로 크게 잡는다.
+    private static let maxImageFileSize = 256 * 1024 * 1024   // 256 MB
 
     private func openFile(_ url: URL) {
         RLog.log("openFile \(url.lastPathComponent) ws=\(workspace?.lastPathComponent ?? "nil")")
@@ -5082,14 +5314,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // Size guard (before any read): a huge file would freeze Monaco on the main
         // thread or balloon memory as a data: URL. Refuse with a clear message.
+        // 이미지는 Monaco 를 안 거치므로 훨씬 넉넉한 상한을 쓴다.
+        // 뷰어로 그리는 것(이미지·PDF)은 Monaco 를 거치지 않으므로 상한이 다르다.
+        let isViewerFile = Self.imageMIME(path) != nil || Self.isPDF(path) || Spreadsheet.isSpreadsheet(path)
+        let cap = isViewerFile ? Self.maxImageFileSize : Self.maxEditorFileSize
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attrs[.size] as? Int, size > Self.maxEditorFileSize {
+           let size = attrs[.size] as? Int, size > cap {
             let a = NSAlert()
             a.messageText = t("editor.tooLarge")
             a.informativeText = t("editor.tooLargeBody", [
                 "name": url.lastPathComponent,
                 "size": ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file),
-                "limit": ByteCountFormatter.string(fromByteCount: Int64(Self.maxEditorFileSize), countStyle: .file)])
+                "limit": ByteCountFormatter.string(fromByteCount: Int64(cap), countStyle: .file)])
             a.alertStyle = .warning
             a.runModal()
             RLog.log("openFile: refused \(path) — \(size) bytes > cap")
@@ -5099,6 +5335,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
         // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
         // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
+        // 표는 값만 읽어 격자로 그린다 (읽기 전용). 파싱은 Swift 에서 하고 웹뷰는 그리기만 한다.
+        if Spreadsheet.isSpreadsheet(path) {
+            guard let sheets = Spreadsheet.read(url), !sheets.isEmpty else {
+                RLog.log("openFile: cannot read spreadsheet \(path)")
+                let a = NSAlert(); a.messageText = t("sheet.cannotRead")
+                a.informativeText = url.lastPathComponent; a.alertStyle = .warning; a.runModal()
+                return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openSheet(path: path, sheets: sheets.map {
+                ["name": $0.name, "rows": $0.rows, "totalRows": $0.totalRows,
+                 "bold": $0.bold, "nums": $0.nums,
+                 "merges": $0.merges, "colWidths": $0.colWidths]
+            })
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
+            return
+        }
+        // PDF 는 웹뷰가 자기 뷰어로 그린다 (페이지 넘김·확대·검색·텍스트 선택이 딸려 온다).
+        if Self.isPDF(path) {
+            guard let data = try? Data(contentsOf: url) else {
+                RLog.log("openFile: cannot read pdf \(path)"); return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openPDF(path: path, src: "data:application/pdf;base64,\(data.base64EncodedString())")
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
+            return
+        }
         if let mime = Self.imageMIME(path) {
             guard let data = try? Data(contentsOf: url) else {
                 RLog.log("openFile: cannot read image \(path)"); return
@@ -5202,6 +5473,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // 에디터에서 이미지 뷰어로 열 확장자 → MIME. SVG는 제외(텍스트로 편집하는 게 유용하고
     // VS Code도 기본은 텍스트다).
+    /// 미리보기로 여는 문서(에디터가 아니라 뷰어로 그리는 것). 지금은 PDF.
+    static func isPDF(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "pdf"
+    }
+
     static func imageMIME(_ path: String) -> String? {
         switch (path as NSString).pathExtension.lowercased() {
         case "png": return "image/png"
@@ -6953,7 +7229,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true); lsp.stopAll() }
+    func applicationWillTerminate(_ n: Notification) {
+        notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
+        SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다
+        lsp.stopAll()
+    }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the
@@ -6964,6 +7244,15 @@ extension AppDelegate: Themable {
         rootView?.layer?.backgroundColor = Theme.bg.cgColor
         dockHost?.layer?.backgroundColor = Theme.bg.cgColor
         sidebarContainer?.layer?.backgroundColor = Theme.bg2.cgColor
+        headerStrip?.layer?.backgroundColor = Theme.bg2.cgColor
+        sidebarHeadStrip?.layer?.backgroundColor = Theme.bg2.cgColor
+        // 사이드바에 고정한 사용량 칸은 만들 때 색을 구워 넣는다 — 통째로 다시 만든다.
+        rebuildPinnedUsage()
+        sidebarHeadButton?.contentTintColor = Theme.fgDim
+        headerHairline?.layer?.backgroundColor = Theme.hairline.cgColor
+        headerLabel?.textColor = Theme.fg
+        headerIcon?.contentTintColor = Theme.fgDim
+        headerUsage?.textColor = Theme.fgDim
         // Recolor every dock group (backgrounds + tab titles/underline) — dock views
         // aren't individually Themable, so rebuild their tab bars here.
         for st in states.values {
@@ -7018,11 +7307,34 @@ extension AppDelegate: NSSplitViewDelegate {
     // Neither the rail nor the sidebar column may collapse to zero (that's what made
     // the workspace area "disappear").
     func splitView(_ sv: NSSplitView, canCollapseSubview view: NSView) -> Bool { false }
+
+    /// 구분선은 1pt 로 그리되, **잡히는 영역**은 그보다 넓게 준다.
+    ///
+    /// 얇은 선은 보기엔 좋지만 1pt 짜리 과녁이다 — 끌려고 누르면 대개 사이드바나 독에
+    /// 떨어지고 아무 일도 일어나지 않는다 ("드래그로 크기 조절이 안 된다"). 그리는 선은
+    /// 그대로 두고 마우스가 닿는 범위만 양옆으로 넓힌다. macOS 자신도 얇은 구분선에
+    /// 이 방식을 쓴다.
+    func splitView(_ sv: NSSplitView, effectiveRect proposed: NSRect,
+                   forDrawnRect drawn: NSRect, ofDividerAt index: Int) -> NSRect {
+        let grab: CGFloat = 5      // 좌우 5pt 씩 → 실질 11pt (사이드바 안쪽 여백이 12pt 라 안전)
+        return sv.isVertical
+            ? drawn.insetBy(dx: -grab, dy: 0)
+            : drawn.insetBy(dx: 0, dy: -grab)
+    }
     // On window resize, flex the main area and keep the sidebar's width; inside the
     // sidebar, keep the rail's height fixed and flex the explorer below it.
     func splitView(_ sv: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
-        if sv === bodySplit { return view !== sidebarView }   // keep the sidebar's width fixed
-        if sv === sidebarSplit { return view !== rail }       // keep the rail height, flex explorer
+        // 비교 대상은 반드시 **그 스플릿의 자식** 이어야 한다. 예전에는 sidebarView(=안쪽
+        // 세로 스플릿)와 비교했는데 bodySplit 의 자식은 그것을 담고 있는 sidebarContainer 다.
+        // 그래서 조건이 늘 참이었고 "사이드바 폭 고정" 은 한 번도 적용되지 않았다 — 창을
+        // 400 넓히면 사이드바가 220 → 289 로 같이 늘어났다.
+        //
+        // 그 결과가 제보된 두 증상이다: 창이 저장할 때보다 크면 켤 때마다 사이드바가
+        // 넓어져 있고(복원은 220 을 넣지만 창이 제 크기를 갖는 순간 비례해서 늘어난다),
+        // 그 상태에서 구분선을 누르면 상한(400)으로 잘리며 폭이 갑자기 줄어든다.
+        if sv === bodySplit { return view !== sidebarContainer }   // 사이드바 폭은 고정
+        // (안쪽 세로 스플릿은 rail 이 실제 자식이라 원래도 맞았다.)
+        if sv === sidebarSplit { return view !== rail }             // 레일 높이 고정, 탐색기가 늘어남
         return true
     }
     // Persist the divider positions the user drags so they survive across launches. The

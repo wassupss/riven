@@ -80,7 +80,26 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // where OSC 133 is exact — so it is used for shells and hooks cover the agents.
 
     /// A shell command finished (OSC 133). Routed from [[GhosttyApp]]'s action handler.
-    func commandFinished() { onIdle?() }
+    func commandFinished() {
+        reportsCompletion = true      // 이 셸은 끝을 알려 준다 → 앞으로도 Return 에 busy 를 걸어도 된다
+        busyProbe?.invalidate(); busyProbe = nil
+        onIdle?()
+    }
+
+    /// 이 셸이 OSC 133(명령 끝)을 보내 준 적이 있는가.
+    ///
+    /// riven 은 ghostty 의 셸 통합 리소스를 번들하지 않는다 (GhosttyKit 프레임워크만
+    /// 들어 있다). 그래서 `shell-integration = detect` 가 주입할 것을 찾지 못하고, 평범한
+    /// 셸에서는 OSC 133 이 영영 오지 않는다. 그런데 busy 는 Return 에 켜고 OSC 133 에
+    /// 끄도록 돼 있었다 — 끄는 쪽이 없으니 아무거나 치면 탭 제목이 계속 "작업 중" 으로
+    /// 남았다.
+    ///
+    /// 끝을 알려 주지 않는 셸에게 "작업 중" 이라고 말할 근거가 없다. 첫 Return 은 모르니
+    /// 켜 보되 잠깐 기다려 보고, 아무 소식이 없으면 끄고 다시는 켜지 않는다. 통합이
+    /// 살아 있는 환경에서는 첫 번째 OSC 133 이 곧바로 도착해 원래대로 동작한다.
+    private var reportsCompletion = false
+    private var probedCompletion = false
+    private var busyProbe: Timer?
 
     /// The surface's process exited (GHOSTTY_ACTION_SHOW_CHILD_EXITED). For an agent pane we
     /// launched the CLI DIRECTLY as the surface command (no shell), so when the user types
@@ -104,6 +123,26 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         onCommandExited?()   // the agent/command ended → the pane is a plain shell now
     }
     var onCommandExited: (() -> Void)?
+
+    /// 벤치용: Return 키를 누른 것과 같은 경로를 탄다 (sendEnter 는 pty 로 직접 써서
+    /// keyDown 을 타지 않는다).
+    func debugPressReturn() { armBusyOnReturn() }
+
+    /// Return 을 눌렀을 때 "작업 중" 을 켤지 결정한다 (위 reportsCompletion 설명 참고).
+    private func armBusyOnReturn() {
+        turnArmed = true
+        if reportsCompletion { onBusy?(); return }
+        guard !probedCompletion else { return }   // 끝을 안 알려 주는 셸 — 켜지 않는다
+        probedCompletion = true
+        onBusy?()
+        // 한 번만 재 본다. 소식이 없으면 이 셸은 끝을 알려 주지 않는 것으로 본다.
+        busyProbe?.invalidate()
+        busyProbe = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            guard let self, !self.reportsCompletion else { return }
+            RLog.log("terminal: 셸이 명령 종료를 알려 주지 않는다 — '작업 중' 표시를 끈다")
+            self.onIdle?()
+        }
+    }
 
     // riven's state ring (busy = static, attn = travelling ember) overlaid on the
     // terminal. Driven from the panel's badge via setRingState.
@@ -473,6 +512,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // Tear down when the terminal panel is closed: stop the display link first
     // (so its callback can't touch a freed surface), then free the surface.
     func dispose() {
+        busyProbe?.invalidate(); busyProbe = nil   // 팬을 닫으면 타이머도 같이 간다
         if let o = fontObserver { NotificationCenter.default.removeObserver(o); fontObserver = nil }
         if let l = link { CVDisplayLinkStop(l) }
         link = nil
@@ -572,7 +612,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         // Return submits a line → the pane is working until the shell reports the command
         // finished (OSC 133). For an agent pane this is a no-op: its hook events are
         // authoritative and main.swift ignores these once the pane is hook-backed.
-        if event.keyCode == 0x24 { turnArmed = true; onBusy?() }
+        if event.keyCode == 0x24 { armBusyOnReturn() }
         if event.modifierFlags.contains(.command) { super.keyDown(with: event); return }
         pendingText = nil
         interpretKeyEvents([event])

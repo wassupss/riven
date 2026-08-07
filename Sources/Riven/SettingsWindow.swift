@@ -15,7 +15,12 @@ final class SettingsWindow: NSPanel {
     private var fontPickers: [String: NSPopUpButton] = [:]
     private let editorPreview = NSTextField(labelWithString: "")
     private let terminalPreview = NSTextField(labelWithString: "")
-    private var authObserver: Any?          // .rivenAuthChanged → refresh the Account tab
+    private var authObserver: Any?
+    private var settingObserver: Any?
+    /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 — 여기에 "저장됨" 을 띄우면 거짓말이다.
+    private static let silentKeys: Set<String> = ["session", "sidebarWidth", "railHeight",
+                                                  "railCollapsed", "browserTabs", "browserZooms",
+                                                  "browserActiveTab", "lastSeenVersion", "installId"]          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
     deinit {
@@ -44,6 +49,8 @@ final class SettingsWindow: NSPanel {
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
     private var rootView: NSView!
+    private let savedLabel = NSTextField(labelWithString: "")
+    private var savedTimer: Timer?
     private var titleLabel: NSTextField!
     private var closeBtn: NSButton!
     private let hair = NSView()
@@ -78,6 +85,13 @@ final class SettingsWindow: NSPanel {
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         self.titleLabel = titleLabel
         header.addSubview(titleLabel)
+        // 바뀌었다는 신호. 설정은 누르는 즉시 저장되는데 화면이 아무 말도 하지 않으면,
+        // 정말 저장된 건지 확인할 방법이 없다 (되돌아가 다시 눌러 보게 된다).
+        savedLabel.font = UIScale.font(UIScale.small, .medium)
+        savedLabel.textColor = Theme.success
+        savedLabel.alphaValue = 0
+        savedLabel.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(savedLabel)
         let closeBtn = NSButton(title: t("common.close"), target: self, action: #selector(closeSettings))
         self.closeBtn = closeBtn
         closeBtn.isBordered = false; closeBtn.font = UIScale.font(UIScale.small)
@@ -87,6 +101,9 @@ final class SettingsWindow: NSPanel {
         closeBtn.translatesAutoresizingMaskIntoConstraints = false
         header.addSubview(closeBtn)
         NSLayoutConstraint.activate([
+            savedLabel.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
+            savedLabel.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            savedLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeBtn.leadingAnchor, constant: -10),
             closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -14),
             closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             closeBtn.heightAnchor.constraint(equalToConstant: 22),
@@ -99,6 +116,7 @@ final class SettingsWindow: NSPanel {
         let sidebar = NSView()
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = Theme.bg2.cgColor
+        navSidebar = sidebar
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         let navStack = NSStackView()
         navStack.orientation = .vertical; navStack.alignment = .leading; navStack.spacing = 2
@@ -112,6 +130,7 @@ final class SettingsWindow: NSPanel {
         sidebar.addSubview(navStack)
         let sideHair = NSView()
         sideHair.wantsLayer = true; sideHair.layer?.backgroundColor = Theme.hairline.cgColor
+        navSideHair = sideHair
         sideHair.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(sideHair)
 
@@ -164,6 +183,15 @@ final class SettingsWindow: NSPanel {
         installGlass(on: self, content: root, radius: 14)
         showTab(0)
         Theme.register(self)
+        settingObserver = NotificationCenter.default.addObserver(
+            forName: .rivenSettingChanged, object: nil, queue: .main) { [weak self] n in
+            // 설정 창이 떠 있을 때만. 그리고 창 자신이 저장을 유발한 경우만 — 클라우드
+            // 동기화 같은 배경 쓰기까지 "저장됨" 으로 보이면 신호가 거짓말이 된다.
+            guard let self, self.isVisible else { return }
+            let key = (n.object as? String) ?? ""
+            guard !SettingsWindow.silentKeys.contains(key) else { return }
+            self.flashSaved(t("settings.saved"), ok: true)
+        }
         // Live language switch: relabel the tabs + re-render the active tab.
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -211,6 +239,10 @@ final class SettingsWindow: NSPanel {
         navLabels[index] = label
         return b
     }
+    /// 왼쪽 목록. applyTheme 이 showTab 으로 본문만 다시 그려서, 이 칸은 만들 때 색 그대로
+    /// 남아 있었다 — 밝은 테마에서 왼쪽만 어둡고 글자가 배경에 묻혔다.
+    private var navSidebar: NSView?
+    private var navSideHair: NSView?
     private var navIcons: [Int: NSImageView] = [:]
     private var navLabels: [Int: NSTextField] = [:]
 
@@ -298,6 +330,8 @@ final class SettingsWindow: NSPanel {
         addRow(t("settings.fontSize"), desc: nil, sizeControl(editorSize, key: "editorFontSize"))
         addRow(t("settings.fontFamily"), desc: t("settings.fontFamilyDesc"),
                fontMenu(key: "editorFontFamily", preview: editorPreview))
+        // 미리보기 줄에 이름이 없으면 "왜 여기 코드 한 줄이 있지" 로 읽힌다 (버그로 보인다).
+        addRow(t("settings.fontPreview"), desc: nil, previewChip())
         addWideRow(editorPreview)
         formatOnSave.title = ""
         formatOnSave.state = s.bool("formatOnSave", false) ? .on : .off
@@ -321,6 +355,7 @@ final class SettingsWindow: NSPanel {
         terminalSize.stringValue = String(s.int("terminalFontSize", 13))
         addRow(t("settings.fontSize"), desc: nil, sizeControl(terminalSize, key: "terminalFontSize"))
         addRow(t("settings.fontFamily"), desc: nil, fontMenu(key: "terminalFontFamily", preview: terminalPreview))
+        addRow(t("settings.fontPreview"), desc: nil, previewChip())
         addWideRow(terminalPreview)
         // 이미 ghostty 를 쓰던 사람은 글꼴·크기를 이미 맞춰 뒀다. 다시 고르게 하지 않는다.
         let (ghosttyBtn, ghosttyStatus) = ghosttyControls()
@@ -464,19 +499,28 @@ final class SettingsWindow: NSPanel {
     /// ghostty 설정 가져오기 (버튼 + 상태 문구).
     private func ghosttyControls() -> (NSView, NSTextField) {
         let found = GhosttyImport.read()
-        // 가져올 게 있을 때만 버튼이 살아 있다. 파일이 없든, 있는데 비었든 결과는 같지만
-        // 문구는 달라야 한다 — 없는 걸 찾으라는 말과 바꿀 게 없다는 말은 다른 안내다.
+        // 버튼은 늘 눌린다. 예전에는 가져올 게 없으면 onClick 을 아예 달지 않았는데,
+        // 눌리지 않는 버튼과 고장난 버튼은 손끝에서 구분되지 않는다 — 눌러 보고 "왜 안
+        // 되지" 로 끝난다. 지금은 눌리고, 왜 아무 일도 없었는지를 그 자리에서 말해 준다.
         let importable = found.map { !$0.hasNothing } ?? false
         let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
                             textColor: importable ? Theme.fg : Theme.fgDim,
                             bg: Theme.hover, border: Theme.edge, radius: 6, hPad: 10, height: 24)
         let status = NSTextField(labelWithString: found.map { $0.summary } ?? t("settings.ghosttyNone"))
-        if importable {
-            btn.onClick = { [weak self] in
-                guard let f = GhosttyImport.read() else { return }
-                _ = GhosttyImport.apply(f)
-                self?.showTab(0)
+        btn.onClick = { [weak self, weak status] in
+            guard let f = GhosttyImport.read() else {
+                status?.stringValue = t("settings.ghosttyNone")
+                self?.flashSaved(t("settings.ghosttyNothingShort"), ok: false)
+                return
             }
+            guard !f.hasNothing else {
+                status?.stringValue = f.summary
+                self?.flashSaved(t("settings.ghosttyNothingShort"), ok: false)
+                return
+            }
+            let msg = GhosttyImport.apply(f)
+            self?.flashSaved(msg, ok: true)
+            self?.showTab(0)
         }
         return (btn, status)
     }
@@ -537,7 +581,18 @@ final class SettingsWindow: NSPanel {
         // 않아서 새 대화는 늘 "기본" 이었고, 권한 모드는 채팅 패널 안에만 있어서 설정에서는
         // 보이지 않았다.
         addSection(t("settings.agentDefaults"))
-        addRow(t("settings.defaultModel"), desc: t("settings.defaultModelDesc"), defaultModelMenu())
+        // CLI 마다 모델이 다르다. 한 칸에 Claude 모델만 늘어놓고 "기본 모델" 이라고 적으면,
+        // Codex 대화를 여는 사람에게는 고를 수 없는 목록이다.
+        if AgentDiscovery.claudeCmd() != nil {
+            addRow(t("settings.defaultModelClaude"), desc: t("settings.defaultModelDesc"),
+                   modelMenu(key: "defaultModel", models: ChatPanel.selectableModels))
+        }
+        if AgentDiscovery.codexCmd() != nil {
+            let cx = CodexUsage.availableModels()
+            addRow(t("settings.defaultModelCodex"), desc: t("settings.defaultModelDesc"),
+                   modelMenu(key: "defaultModelCodex",
+                             models: [(t("chat.model.default"), "default")] + cx.map { ($0.label, $0.id) }))
+        }
         addRow(t("settings.defaultPermMode"), desc: t("settings.defaultPermModeDesc"), defaultModeMenu())
 
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
@@ -588,12 +643,14 @@ final class SettingsWindow: NSPanel {
     // ---- Keybindings tab — three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
     // KeybindingsSettings. The editor tab has preset chips (VS Code / JetBrains /
     // Sublime); the shown chords follow the selected preset. ----
+    /// 벤치용: 단축키 하위 탭을 미리 정한다.
+    func debugSetKbSubtab(_ i: Int) { kbSubtab = i }
     private var kbSubtab = 0   // 0 에디터, 1 터미널, 2 리븐 기본 (riven defaults to editor)
     private let editorPresets = ["vscode": "VS Code", "jetbrains": "JetBrains", "sublime": "Sublime Text"]
 
     private func buildKeybindings() {
         // Sub-tab chips.
-        let names = ["에디터", "터미널", "리븐 기본"]
+        let names = [t("keys.tab.editor"), t("keys.tab.terminal"), t("keys.tab.riven"), t("keys.tab.browser")]
         let row = NSStackView(); row.orientation = .horizontal; row.spacing = 6
         for (i, n) in names.enumerated() {
             let on = i == kbSubtab
@@ -606,7 +663,9 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(row)
         content.addArrangedSubview(spacer(8))
 
-        let hint = NSTextField(labelWithString: "칩을 클릭하고 원하는 키를 누르세요. Esc로 취소.")
+        // 브라우저 키는 패널이 직접 처리해서 여기서 바꿀 수 없다. 바꿀 수 있는 척하면
+        // 눌러 보고 안 먹는 것으로 끝난다 — 안내를 갈라 준다.
+        let hint = NSTextField(labelWithString: kbSubtab == 3 ? t("keys.browserFixed") : t("keys.hint"))
         hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
         content.addArrangedSubview(spacer(10))
@@ -615,20 +674,23 @@ final class SettingsWindow: NSPanel {
         if kbSubtab == 0 { buildEditorKeys() }
         addSection(t("settings.keysSection"))
         let actions: [Keys.Action] = kbSubtab == 0 ? Keys.byCat("editor")
-                                   : kbSubtab == 1 ? Keys.byCat("terminal") : Keys.byCat("riven")
+                                   : kbSubtab == 1 ? Keys.byCat("terminal")
+                                   : kbSubtab == 2 ? Keys.byCat("riven") : Keys.byCat("browser")
         for a in actions {
             let chip = PadButton(title: Keys.display(Keys.effective(a.id)),
                                  font: UIScale.mono(UIScale.small, .medium),
                                  textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
                                  radius: 5, hPad: 8, height: 24)
-            chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            if kbSubtab != 3 {
+                chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            }
             // 바꾼 키는 눈에 띄어야 되돌릴 생각도 든다. 기본값 그대로면 표시하지 않는다.
             let changed = Keys.overrides[a.id] != nil
             if changed { chip.identifierString = "changed" }
             addRow(a.label, desc: changed ? t("settings.keyChanged") : nil, chip)
         }
         // 바꾼 키가 하나라도 있을 때만 되돌리기를 보여 준다 — 누를 일이 없는 버튼은 잡음이다.
-        if actions.contains(where: { Keys.overrides[$0.id] != nil }) {
+        if kbSubtab != 3, actions.contains(where: { Keys.overrides[$0.id] != nil }) {
             addWideRow(secondaryButton(t("settings.keysReset"), symbol: "arrow.counterclockwise") { [weak self] in
                 for a in actions { Keys.reset(a.id) }
                 self?.showTab(2)
@@ -900,6 +962,11 @@ final class SettingsWindow: NSPanel {
         addRow(t("about.autoUpdate"), desc: t("about.autoUpdateDesc"), autoUpdate)
 
         // 설정이 꼬였을 때 손 쓸 방법이 없었다. 파일을 직접 열어 보는 길과, 되돌리는 길.
+        addRow(t("about.whatsNew"), desc: t("about.whatsNewDesc"),
+               secondaryButton(t("about.whatsNew"), symbol: "sparkles") { [weak self] in
+                   ReleaseNotes.showNow(over: self)
+               })
+
         addSection(t("settings.maintenance"))
         addRow(t("settings.openSettingsFile"), desc: AppPaths.support("settings.json").path,
                secondaryButton(t("settings.reveal"), symbol: "folder") {
@@ -1057,20 +1124,21 @@ final class SettingsWindow: NSPanel {
     }
 
     /// 새 대화가 쓸 기본 모델. 페인마다 ⌥메뉴로 바꾸는 건 그대로 둔다.
-    private func defaultModelMenu() -> NSView {
-        let models = ChatPanel.selectableModels
-        let cur = Settings.shared.string("defaultModel", "default")
+    private var modelMenus: [NSPopUpButton: (key: String, ids: [String])] = [:]
+    private func modelMenu(key: String, models: [(String, String)]) -> NSView {
+        let cur = Settings.shared.string(key, "default")
         let pop = NSPopUpButton(frame: .zero, pullsDown: false)
         pop.addItems(withTitles: models.map { $0.0 })
         pop.selectItem(at: models.firstIndex { $0.1 == cur } ?? 0)
         pop.font = UIScale.font(UIScale.small)
         pop.target = self; pop.action = #selector(defaultModelChanged(_:))
+        modelMenus[pop] = (key, models.map { $0.1 })
         return pop
     }
     @objc private func defaultModelChanged(_ sender: NSPopUpButton) {
-        let models = ChatPanel.selectableModels
-        let i = max(0, min(models.count - 1, sender.indexOfSelectedItem))
-        Settings.shared.set("defaultModel", models[i].1)
+        guard let m = modelMenus[sender] else { return }
+        let i = max(0, min(m.ids.count - 1, sender.indexOfSelectedItem))
+        Settings.shared.set(m.key, m.ids[i])
     }
 
     /// 새 대화가 시작할 승인 모드. 채팅 패널의 드롭다운과 같은 키를 쓴다.
@@ -1152,6 +1220,30 @@ final class SettingsWindow: NSPanel {
         Settings.shared.set(key, sender.integerValue)
         if key == "editorTabSize" { tabSizeField.stringValue = String(sender.integerValue) }
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
+    }
+
+    /// "✓ 저장됨" 을 잠깐 띄운다. 실패한 동작에도 같은 자리를 쓰되 색으로 가른다 —
+    /// 성공만 말하고 실패는 침묵하면, 아무 일도 없었을 때 눌리긴 한 건지 알 수 없다.
+    func flashSaved(_ text: String, ok: Bool) {
+        savedLabel.stringValue = (ok ? "✓ " : "· ") + text
+        savedLabel.textColor = ok ? Theme.success : Theme.fgDim
+        savedTimer?.invalidate()
+        savedLabel.alphaValue = 1
+        savedTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.35
+                self.savedLabel.animator().alphaValue = 0
+            }
+        }
+    }
+
+    /// 미리보기 줄의 오른쪽 표식. 고를 것이 없는 줄이라 컨트롤 대신 조용한 라벨을 둔다.
+    private func previewChip() -> NSView {
+        let l = NSTextField(labelWithString: t("settings.fontPreviewHint"))
+        l.font = UIScale.font(UIScale.caption)
+        l.textColor = Theme.fgDim
+        return l
     }
 
     /// 값이 아니라 상태를 보여 주는 자리 (설치된 CLI 의 버전처럼 읽기 전용인 것).
@@ -1247,7 +1339,10 @@ extension SettingsWindow: Themable {
         closeBtn?.contentTintColor = Theme.fgDim
         closeBtn?.layer?.backgroundColor = Theme.hover.cgColor
         hair.layer?.backgroundColor = Theme.hairline.cgColor
-        showTab(activeTab)                           // 탭 라벨/밑줄 + 본문 컨트롤 색 재생성
+        savedLabel.textColor = Theme.success
+        navSidebar?.layer?.backgroundColor = Theme.bg2.cgColor
+        navSideHair?.layer?.backgroundColor = Theme.hairline.cgColor
+        showTab(activeTab)   // 본문 + 선택 표시(아래 selectTab)를 새 색으로 다시 그린다                           // 탭 라벨/밑줄 + 본문 컨트롤 색 재생성
     }
 }
 

@@ -151,6 +151,13 @@ final class SourceControlView: NSView {
     }
 
     func setRoot(_ url: URL?) { graph.setRoot(url); if let url { changes.setRoot(url) } }
+    /// 벤치용: 맨 위 커밋을 고른다.
+    func debugSelectFirstCommit() { graph.debugSelectFirst() }
+
+    /// 벤치용: 실제 프레임을 그대로 찍는다 (아래 여백의 정체를 눈이 아니라 숫자로 본다).
+    func debugFrames() -> String {
+        "컨테이너높이=\(Int(bounds.height)) 넓은배치=\(isWide == true) " + graph.debugFrames()
+    }
 }
 
 // ---- the graph panel (dock content) ----
@@ -219,7 +226,12 @@ final class GitGraphView: NSView, Themable, Scalable {
         // Commit-detail pane: prefer 210 but YIELD (its message/files scroll internally)
         // when the panel is short, so the bottom never gets clipped off. A required min
         // keeps it usable; the graph list takes whatever height is left.
-        let detailH = detail.heightAnchor.constraint(equalToConstant: 210); detailH.priority = .defaultHigh
+        // 210pt 고정이었다. 커밋 본문이 길면(riven 자신의 커밋이 대개 그렇다) 세 줄쯤에서
+        // 잘리고, 패널이 아무리 높아도 그대로였다 — 남는 높이는 목록만 가져갔다.
+        // 패널 높이의 30% 를 쓰되 180~420pt 로 묶는다: 짧은 패널에서는 목록을 지키고,
+        // 높은 패널에서는 본문이 실제로 읽힌다.
+        let detailH = detail.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.30)
+        detailH.priority = .defaultHigh
         self.detailHeight = detailH
         // 상세를 "높이 0" 으로만 접으면 안 된다 — 안쪽 최소 크기가 이겨서 92pt 짜리 빈 띠가
         // 바닥에 남는다 (소스 컨트롤 아래 여백의 정체였다). 아예 배치에서 빼고, 목록이
@@ -227,7 +239,8 @@ final class GitGraphView: NSView, Themable, Scalable {
         detailShown = [
             listScroll.bottomAnchor.constraint(equalTo: divider.topAnchor),
             detailH,
-            detail.heightAnchor.constraint(lessThanOrEqualToConstant: 210),
+            detail.heightAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            detail.heightAnchor.constraint(lessThanOrEqualToConstant: 420),
         ]
         detailHiddenC = [
             listScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -254,8 +267,11 @@ final class GitGraphView: NSView, Themable, Scalable {
         "그래프뷰=\(Int(bounds.height)) 목록스크롤=\(Int(listScroll.frame.minY))~\(Int(listScroll.frame.maxY))"
             + " 목록내용=\(Int((listScroll.documentView?.frame.height) ?? 0))"
             + " 상세=\(Int(detail.frame.minY))~\(Int(detail.frame.maxY)) 숨김=\(detail.isHidden)"
-            + " 상세높이제약=\(Int(detailHeight?.constant ?? -1))"
+            + " " + detail.debugMessageFit()
     }
+    /// 벤치용: 목록의 첫 줄을 고른 것과 같게 만든다.
+    func debugSelectFirst() { list.debugSelectFirst() }
+
     func setCompact(_ compact: Bool) {
         self.compact = compact
         showDetailPane(!compact)
@@ -347,6 +363,11 @@ final class GraphListView: NSView {
         let i = Int(y / rowH)
         if i >= 0 && i < rows.count { selected = i; needsDisplay = true; onSelect?(rows[i].commit) }
     }
+    /// 벤치용: 첫 줄 선택.
+    func debugSelectFirst() {
+        guard !rows.isEmpty else { return }
+        selected = 0; needsDisplay = true; onSelect?(rows[0].commit)
+    }
 
     override func draw(_ dirty: NSRect) {
         guard !rows.isEmpty else { return }
@@ -434,6 +455,9 @@ final class CommitDetailView: NSView, Themable {
     private let filesScroll = NSScrollView()
     private var root: URL?
     var onOpenFile: ((String) -> Void)?
+    private var withFiles: [NSLayoutConstraint] = []
+    private var noFiles: [NSLayoutConstraint] = []
+    private var showingFiles = true
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -455,12 +479,29 @@ final class CommitDetailView: NSView, Themable {
             msgScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
             msgScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             msgScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            msgScroll.heightAnchor.constraint(equalToConstant: 64),
-            filesScroll.topAnchor.constraint(equalTo: msgScroll.bottomAnchor, constant: 2),
             filesScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             filesScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             filesScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        // 메시지 칸을 64pt 로 못 박아 두었다. 그런데 커밋 본문은 대개 그보다 길고, 파일이
+        // 하나도 없는 커밋(문서·설정만 바뀐 커밋, 또는 아직 못 읽은 커밋)에서는 아래 파일
+        // 칸이 통째로 비어 버린다 — 본문은 세 줄에서 잘리는데 그 밑은 새까맣게 남았다.
+        //
+        // 그래서 두 벌을 두고 갈아 끼운다. 파일이 있으면 예전처럼 나눠 쓰고(본문은 최소
+        // 64pt, 남는 높이의 절반까지), 파일이 없으면 본문이 바닥까지 내려온다.
+        withFiles = [
+            msgScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+            msgScroll.heightAnchor.constraint(lessThanOrEqualTo: heightAnchor, multiplier: 0.5),
+            filesScroll.topAnchor.constraint(equalTo: msgScroll.bottomAnchor, constant: 2),
+        ]
+        // 본문이 남는 공간을 먹도록 낮은 우선순위로 밀어 준다 (파일이 적으면 본문이 넓어진다).
+        let grow = msgScroll.heightAnchor.constraint(equalTo: heightAnchor)
+        grow.priority = .defaultLow
+        withFiles.append(grow)
+        noFiles = [
+            msgScroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(withFiles)
         Theme.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -470,6 +511,25 @@ final class CommitDetailView: NSView, Themable {
         message.string = body
         filesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         for f in files { filesStack.addArrangedSubview(fileRow(f)) }
+        // 파일 칸은 보여 줄 것이 있을 때만 자리를 차지한다.
+        let want = !files.isEmpty
+        if want != showingFiles {
+            showingFiles = want
+            filesScroll.isHidden = !want
+            NSLayoutConstraint.deactivate(want ? noFiles : withFiles)
+            NSLayoutConstraint.activate(want ? withFiles : noFiles)
+            needsLayout = true
+        }
+        // 새 커밋을 고르면 본문은 늘 처음부터 보여 준다 (앞 커밋에서 내려둔 위치가 남으면
+        // 다른 커밋의 중간부터 읽게 된다).
+        message.scroll(NSPoint(x: 0, y: 0))
+    }
+
+    /// 벤치용: 지금 본문 칸이 실제로 차지한 높이와 잘림 여부.
+    func debugMessageFit() -> String {
+        let content = message.layoutManager?.usedRect(for: message.textContainer!).height ?? 0
+        return "본문칸=\(Int(msgScroll.frame.height)) 내용=\(Int(content)) "
+             + "파일칸보임=\(!filesScroll.isHidden) 잘림=\(content > msgScroll.frame.height + 1)"
     }
 
     private func fileRow(_ f: Git.DiffFile) -> NSView {
