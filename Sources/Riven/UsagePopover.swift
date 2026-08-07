@@ -4,6 +4,19 @@ import AppKit
 // times, today's per-model spend, and a "pin to sidebar" button. Presented from the
 // status-bar usage widget. Also builds the compact pinned sidebar view.
 enum UsageUI {
+
+    /// 눈금을 "남은" 으로 읽을지 "쓴" 으로 읽을지. 사람마다 보고 싶은 쪽이 다르다 —
+    /// 얼마나 남았나로 관리하는 사람과, 얼마나 썼나로 관리하는 사람.
+    ///
+    /// 한 곳에서 정하고 헤더·팝오버·고정 스트립이 모두 따른다. 화면마다 다른 방향을
+    /// 쓰면 "85%" 가 넉넉하다는 뜻인지 얼마 안 남았다는 뜻인지 구분되지 않는다.
+    static var showUsed: Bool { Settings.shared.bool("usageShowUsed", false) }
+
+    /// 남은 비율을 받아 현재 모드의 숫자로. 저장·계산은 늘 "남은" 기준이고 보여 줄 때만
+    /// 뒤집는다 — 두 기준을 함께 들고 다니면 어느 쪽이 어느 쪽인지 곧 헷갈린다.
+    static func shown(_ remaining: Int) -> Int { showUsed ? 100 - remaining : remaining }
+    static func modeSuffix() -> String { showUsed ? t("usage.used") : t("usage.left") }
+
     static func remColor(_ v: Int) -> NSColor { v < 20 ? Theme.danger : v < 50 ? Theme.warning : Theme.accent }
 
     // "resets in {t}" text from an ISO timestamp (riven resetIn()).
@@ -33,12 +46,16 @@ enum UsageUI {
     // ---- one remaining-limit bar (label · pct · track/fill · reset) ----
     private static func bar(_ label: String, _ rem: Int?, _ resets: String?) -> NSView? {
         guard let rem else { return nil }
+        // 막대 길이는 보이는 숫자를 따라간다 — "쓴 16%" 옆에 거의 꽉 찬 막대가 있으면
+        // 정반대로 읽힌다. 색만은 늘 "남은" 기준이라, 빨강은 어느 모드에서든 "얼마 안
+        // 남았다" 하나를 뜻한다.
         let color = remColor(rem)
+        let fillRatio = CGFloat(shown(rem)) / 100.0
         let top = NSStackView()
         top.orientation = .horizontal; top.distribution = .fill
         let lab = NSTextField(labelWithString: label)
         lab.font = UIScale.font(UIScale.small); lab.textColor = Theme.fgDim
-        let pct = NSTextField(labelWithString: "\(rem)%")
+        let pct = NSTextField(labelWithString: "\(shown(rem))%")
         pct.font = UIScale.font(UIScale.small); pct.textColor = color; pct.alignment = .right
         let spacer = NSView(); spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         top.addArrangedSubview(lab); top.addArrangedSubview(spacer); top.addArrangedSubview(pct)
@@ -56,10 +73,12 @@ enum UsageUI {
             fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
             fill.topAnchor.constraint(equalTo: track.topAnchor),
             fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
-            fill.widthAnchor.constraint(equalTo: track.widthAnchor, multiplier: max(0.01, CGFloat(rem)/100.0))
+            fill.widthAnchor.constraint(equalTo: track.widthAnchor, multiplier: max(0.01, fillRatio))
         ])
-        let col = NSStackView(views: [top, track])
+        let col = UsageBarBox()
+        col.setViews([top, track], in: .top)
         col.orientation = .vertical; col.spacing = 4; col.alignment = .leading
+        col.toolTip = t("usage.clickToToggle")
         top.translatesAutoresizingMaskIntoConstraints = false
         top.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
         track.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
@@ -121,7 +140,7 @@ enum UsageUI {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         // Header row: title + pin button.
-        let title = head("남은 한도 (Claude)")
+        let title = head(t("usage.titleFor", ["m": modeSuffix(), "cli": "Claude"]))
         let pin = NSButton(title: " 사이드바에 고정", target: nil, action: nil)
         pin.image = NSImage(systemSymbolName: "pin", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 10, weight: .regular))
@@ -166,7 +185,7 @@ enum UsageUI {
         // Codex 는 창이 하나뿐이고 방향도 반대(쓴 %)라 Claude 표에 섞지 않는다. 남은 비율로
         // 뒤집는 일은 [[CodexUsage]] 가 이미 해 뒀다 — 화면에서는 두 CLI 가 같은 방향이다.
         if let cx = codexLimits {
-            stack.addArrangedSubview(head(t("usage.codexTitle")))
+            stack.addArrangedSubview(head(t("usage.titleFor", ["m": modeSuffix(), "cli": "Codex"])))
             let label = t("usage.codexWindow", ["w": CodexUsage.windowLabel(cx.windowMinutes)])
             if let b = bar(label, cx.remainingPercent, resetIn(cx.resetsAt)) {
                 stack.addArrangedSubview(b)
@@ -232,4 +251,13 @@ private final class PinTarget: NSObject {
     private let action: () -> Void
     init(_ action: @escaping () -> Void) { self.action = action }
     @objc func fire() { action() }
+}
+
+/// 눌러서 "남은 %" ↔ "쓴 %" 를 뒤집는 막대. 설정까지 가지 않아도, 숫자를 보고 있는
+/// 그 자리에서 바꿀 수 있어야 한다 (openusage 가 값 클릭으로 하는 것과 같은 자리).
+private final class UsageBarBox: NSStackView {
+    override func mouseDown(with event: NSEvent) {
+        Settings.shared.set("usageShowUsed", !UsageUI.showUsed)
+        NotificationCenter.default.post(name: .rivenUsageModeChanged, object: nil)
+    }
 }

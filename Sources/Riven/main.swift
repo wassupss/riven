@@ -1087,6 +1087,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                         }
                                     }
                                 }
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_USAGESHOT2"] {
+                                    let cx = CodexUsage.scan()
+                                    self.lastCodexLimits = cx.limits; self.lastCodexToday = cx.today
+                                    for (i, used) in [false, true].enumerated() {
+                                        Settings.shared.set("usageShowUsed", used)
+                                        let v = UsageUI.content(limits: self.lastLimits, today: self.lastToday,
+                                                                freshness: self.usageFreshness(),
+                                                                codexLimits: cx.limits, codexToday: cx.today,
+                                                                onReload: {}, onPin: {})
+                                        v.layoutSubtreeIfNeeded(); v.setFrameSize(v.fittingSize)
+                                        v.wantsLayer = true; v.layer?.backgroundColor = Theme.bg2.cgColor
+                                        if let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                            v.cacheDisplay(in: v.bounds, to: rep)
+                                            if let d = rep.representation(using: .png, properties: [:]) {
+                                                try? d.write(to: URL(fileURLWithPath: shot + "-\(i).png"))
+                                            }
+                                        }
+                                    }
+                                    Settings.shared.set("usageShowUsed", false)
+                                }
                                 let r2 = CodexUsage.scan()
                                 RLog.log("CXPANE 사용량 토큰=\(r2.today.totalTokens) 턴=\(r2.today.turns)"
                                          + " 남은=\(r2.limits.map { "\($0.remainingPercent)%" } ?? "-")"
@@ -1476,6 +1496,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
             DispatchQueue.main.async { self.restoreSession() }
+            // RIVEN_RAILDUP=1: 저장된 세션에 같은 폴더가 두 형태로 들어 있을 때 레일이 어떻게
+            // 되는지 (베타테스터 제보: 왼쪽 워크스페이스 클릭이 이상하다). 복원 경로에서만
+            // 의미가 있으므로 RIVEN_OPEN 분기 밖에 둔다.
+            if ProcessInfo.processInfo.environment["RIVEN_RAILDUP"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    guard let self else { return }
+                    RLog.log("RAILDUP 워크스페이스 \(self.workspaces.count)개")
+                    for w in self.workspaces {
+                        RLog.log("RAILDUP   absoluteString=\(w.absoluteString) path=\(w.path)")
+                    }
+                    RLog.log("RAILDUP 레일카드=\(self.rail.debugCardCount())개")
+                    RLog.log("RAILDUP done")
+                }
+            }
         }
         // No auto folder-open on launch; the user opens one via + / ⌘O.
         // DEBUG: self-capture the window chrome to a PNG so layout can be
@@ -3299,6 +3333,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // A unique identity URL for a folder — the bare path the first time, then path#2,
     // #3… for additional instances. `.path` strips the fragment so all fs ops share the
     // real folder while each workspace keeps a distinct identity.
+    /// 저장된 키 하나를 워크스페이스 URL 한 형태로 모은다.
+    ///
+    /// 받아 주는 것: 맨 경로("/a/b"), 파일 URL("file:///a/b/"), 그리고 일부러 나눈 사본의
+    /// 조각("file:///a/b/#2"). 조각은 살려 둔다 — 같은 폴더를 둘로 열어 둔 사람의 두 번째
+    /// 카드가 사라지면 그건 고친 게 아니라 잃은 것이다.
+    static func canonicalWorkspaceURL(_ key: String) -> URL {
+        let parsed = URL(string: key)
+        let fragment = parsed?.fragment
+        let path = parsed?.isFileURL == true ? parsed!.path : (parsed?.scheme == nil ? (parsed?.path ?? key) : key)
+        // standardizedFileURL 은 쓰지 않는다 — /private/tmp 를 /tmp 로 바꿔 버려서, 고쳐야 할
+        // 것(끝 슬래시·scheme)이 아닌 경로까지 손댄다. 여기서 맞추려는 건 형태이지 위치가 아니다.
+        let base = URL(fileURLWithPath: path, isDirectory: true)
+        guard let fragment, !fragment.isEmpty,
+              let withFrag = URL(string: base.absoluteString + "#" + fragment) else { return base }
+        return withFrag
+    }
+
     private func uniqueWorkspaceURL(for canon: URL) -> URL {
         if !workspaces.contains(canon) { return canon }
         var n = 2
@@ -4097,11 +4148,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let terms = s["terminals"] as? [String: [String]] ?? [:]   // 구버전 세션 (하위 호환)
         let fm = FileManager.default
         var restored: [URL] = []
+        var seen = Set<String>()
         for key in keys {
-            // Backward-compatible: old sessions stored bare paths, new ones absoluteString.
-            let url = URL(string: key) ?? URL(fileURLWithPath: key)
+            // 예전 세션은 맨 경로("/a/b"), 지금은 absoluteString("file:///a/b/") 을 저장한다.
+            // 둘을 그대로 URL 로 만들면 같은 폴더가 서로 다른 URL 이 되고, 워크스페이스 상태는
+            // URL 로 키를 잡으므로 같은 폴더에 카드가 둘 생긴다 — 어느 쪽을 누르냐에 따라 다른
+            // 패널이 뜬다 (베타테스터가 "클릭이 이상하다" 고 한 것이 이거다). 한 번 이 상태가
+            // 되면 그 폴더를 다시 열 때마다 workspaces.contains 가 빗나가 계속 늘어난다.
+            // 그래서 여기서 하나의 형태로 모으고, 같은 것이 또 오면 버린다.
+            let url = AppDelegate.canonicalWorkspaceURL(key)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            // 같은 폴더가 두 번 나오면 카드는 하나로 모으되, 뒤엣것이 들고 있던 탭·레이아웃은
+            // 버리지 않는다 — 둘 중 어느 쪽에 진짜 작업이 들어 있는지는 알 수 없고, 카드를
+            // 합치면서 열려 있던 파일을 잃으면 그건 고친 게 아니라 잃은 것이다.
+            // ("#2" 처럼 일부러 나눈 사본은 조각이 달라 애초에 겹치지 않는다.)
+            guard seen.insert(url.absoluteString).inserted else {
+                let st = state(for: url)
+                let dupTabs = (tabs[key] as? [String] ?? []).filter { fm.fileExists(atPath: $0) }
+                if st.openTabs.isEmpty { st.openTabs = dupTabs }
+                else { st.openTabs.append(contentsOf: dupTabs.filter { !st.openTabs.contains($0) }) }
+                if st.pendingLayout == nil { st.pendingLayout = layouts[key] as? [String: Any] }
+                RLog.log("restore: 같은 폴더의 워크스페이스를 합쳤다 \(key) (탭 \(dupTabs.count)개)")
+                continue
+            }
             let st = state(for: url)
             st.openTabs = (tabs[key] as? [String] ?? []).filter { fm.fileExists(atPath: $0) }
             st.activeTab = (actives[key] as? String).flatMap { st.openTabs.contains($0) ? $0 : st.openTabs.last }
@@ -4115,7 +4185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !restored.isEmpty else { hideSwitchOverlay(); return }
         workspaces = restored
         let activeKey = s["active"] as? String
-        let active = restored.first { $0.absoluteString == activeKey } ?? restored.first!
+        // 활성 키도 같은 형태로 맞춰서 찾는다 — 예전 형태로 저장돼 있으면 못 찾고 첫 번째로
+        // 떨어져, 재시작할 때마다 보던 워크스페이스가 아닌 곳이 열렸다.
+        let activeCanon = activeKey.map { AppDelegate.canonicalWorkspaceURL($0).absoluteString }
+        let active = restored.first { $0.absoluteString == activeCanon } ?? restored.first!
         let tAct = Date()
         activate(active)
         if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
@@ -6621,6 +6694,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         statusBar.onReloadUsage = { [weak self] in self?.refreshUsage(force: true) }
+        NotificationCenter.default.addObserver(forName: .rivenUsageModeChanged, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            self.statusBar.setUsage(limits: self.lastLimits, today: self.lastToday)
+            self.updateHeaderUsage(limits: self.lastLimits, today: self.lastToday)
+            self.rebuildPinnedUsage()
+            if self.headerUsagePopover?.isShown == true { self.rebuildUsagePopover() }
+        }
         refreshUsage()
         usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
     }
@@ -6674,9 +6754,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func updateHeaderUsage(limits: Usage.Limits?, today: Usage.Today?) {
         var parts: [String] = []
         let s = limits?.sessionRemaining, w = limits?.weeklyRemaining
-        if let s, let w { parts.append("\(s)% · \(w)%") }
-        else if let s { parts.append("\(s)%") }
-        if let cx = lastCodexLimits { parts.append("◎ \(cx.remainingPercent)%") }
+        if let s, let w { parts.append("\(UsageUI.shown(s))% · \(UsageUI.shown(w))%") }
+        else if let s { parts.append("\(UsageUI.shown(s))%") }
+        if let cx = lastCodexLimits { parts.append("◎ \(UsageUI.shown(cx.remainingPercent))%") }
         if !parts.isEmpty {
             // Claude 쪽 숫자가 있을 때만 앞에 표식을 단다 — 하나뿐이면 표식이 군더더기다.
             if parts.count > 1, s != nil { parts[0] = "✳ " + parts[0] }
@@ -6689,7 +6769,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // (아직 한 번도 못 불러온 상태는 흐리게 하지 않는다 — 그냥 뜨는 중이다.)
         let stale = Usage.lastSuccess.map { Date().timeIntervalSince($0) > 300 } ?? false
         headerUsage.alphaValue = stale ? 0.45 : 1
-        headerUsageItem.toolTip = usageFreshness()
+        headerUsageItem.toolTip = UsageUI.modeSuffix() + " · " + usageFreshness()
     }
     /// "방금 갱신" / "12분 전 · 로그인 정보가 만료돼 갱신하지 못했습니다" 같은 한 줄.
     func usageFreshness() -> String {
@@ -6707,6 +6787,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .failed(let why): return when + " · " + t("usage.failed", ["msg": why])
         }
     }
+    /// 열려 있는 팝오버의 내용만 갈아 끼운다 (닫았다 여는 것과 달리 위치가 유지된다).
+    private func rebuildUsagePopover() {
+        headerUsagePopover?.contentViewController?.view = UsageUI.content(
+            limits: lastLimits, today: lastToday, freshness: usageFreshness(),
+            codexLimits: lastCodexLimits, codexToday: lastCodexToday,
+            onReload: { [weak self] in self?.refreshUsage(force: true) },
+            onPin: { [weak self] in self?.headerUsagePopover?.close(); self?.pinUsage() })
+    }
+
     @objc private func headerUsageClicked() {
         if headerUsagePopover?.isShown == true { headerUsagePopover?.close(); return }
         let pop = headerUsagePopover ?? NSPopover()

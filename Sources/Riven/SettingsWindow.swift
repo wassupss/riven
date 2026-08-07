@@ -329,6 +329,10 @@ final class SettingsWindow: NSPanel {
 
         // 브라우저 기본 검색. BrowserStore 가 읽던 키인데 UI 가 없어서, 구글 말고 다른 걸
         // 쓰려면 settings.json 을 손으로 고쳐야 했다.
+        // 사용량을 남은 쪽으로 읽을지 쓴 쪽으로 읽을지. 헤더 숫자를 눌러도 바뀐다.
+        addSection(t("settings.usage"))
+        addRow(t("settings.usageMode"), desc: t("settings.usageModeDesc"), usageModeSeg())
+
         addSection(t("settings.browser"))
         addRow(t("settings.searchEngine"), desc: t("settings.searchEngineDesc"), searchEngineMenu())
 
@@ -992,6 +996,21 @@ final class SettingsWindow: NSPanel {
 
 
     // ---- 새로 노출한 설정들 ---------------------------------------------------
+
+    /// 남은 % / 쓴 % 고르기. 언어·전체 크기와 같은 세그먼트 모양이라 같은 열에서 튀지 않는다.
+    private func usageModeSeg() -> NSView {
+        let seg = NSSegmentedControl(labels: [t("settings.usageLeft"), t("settings.usageUsed")],
+                                     trackingMode: .selectOne, target: self,
+                                     action: #selector(usageModeChanged(_:)))
+        seg.selectedSegment = Settings.shared.bool("usageShowUsed", false) ? 1 : 0
+        seg.font = UIScale.font(UIScale.small)
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        return seg
+    }
+    @objc private func usageModeChanged(_ sender: NSSegmentedControl) {
+        Settings.shared.set("usageShowUsed", sender.selectedSegment == 1)
+        NotificationCenter.default.post(name: .rivenUsageModeChanged, object: nil)
+    }
 
     /// 브라우저 기본 검색. 흔한 것 셋 + 직접 입력 ({q} 자리에 검색어가 들어간다).
     private static let searchEngines: [(String, String)] = [
