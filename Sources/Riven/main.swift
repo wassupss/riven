@@ -1543,7 +1543,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
             }
-            DispatchQueue.main.async { self.restoreSession() }
+            DispatchQueue.main.async {
+                self.restoreSession()
+                // 복원이 자리를 잡은 뒤에 띄운다. 복원 중에 창을 올리면 그 위로 세션이
+                // 그려지면서 깜빡이고, 첫인상이 "업데이트하면 화면이 튄다" 가 된다.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    let shown = ReleaseNotes.showIfUpdated(over: self?.window)
+                    if ProcessInfo.processInfo.environment["RIVEN_RELNOTES"] != nil {
+                        RLog.log("RELNOTES 띄움=\(shown) 버전=\(ReleaseNotes.currentVersion)"
+                                 + " 기록=\(Settings.shared.string("lastSeenVersion", "-"))")
+                        if let shot = ProcessInfo.processInfo.environment["RIVEN_RELSHOT"], shown {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                                if let v = ReleaseNotes.debugWindow?.contentView,
+                                   let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                    v.cacheDisplay(in: v.bounds, to: rep)
+                                    if let d = rep.representation(using: .png, properties: [:]) {
+                                        try? d.write(to: URL(fileURLWithPath: shot))
+                                    }
+                                }
+                                RLog.log("RELNOTES done")
+                            }
+                        } else { RLog.log("RELNOTES done") }
+                    }
+                }
+            }
             // RIVEN_RAILDUP=1: 저장된 세션에 같은 폴더가 두 형태로 들어 있을 때 레일이 어떻게
             // 되는지 (베타테스터 제보: 왼쪽 워크스페이스 클릭이 이상하다). 복원 경로에서만
             // 의미가 있으므로 RIVEN_OPEN 분기 밖에 둔다.

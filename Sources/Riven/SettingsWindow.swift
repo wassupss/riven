@@ -900,6 +900,11 @@ final class SettingsWindow: NSPanel {
         addRow(t("about.autoUpdate"), desc: t("about.autoUpdateDesc"), autoUpdate)
 
         // 설정이 꼬였을 때 손 쓸 방법이 없었다. 파일을 직접 열어 보는 길과, 되돌리는 길.
+        addRow(t("about.whatsNew"), desc: t("about.whatsNewDesc"),
+               secondaryButton(t("about.whatsNew"), symbol: "sparkles") { [weak self] in
+                   ReleaseNotes.showNow(over: self)
+               })
+
         addSection(t("settings.maintenance"))
         addRow(t("settings.openSettingsFile"), desc: AppPaths.support("settings.json").path,
                secondaryButton(t("settings.reveal"), symbol: "folder") {
