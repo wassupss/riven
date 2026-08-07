@@ -1549,7 +1549,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // 그려지면서 깜빡이고, 첫인상이 "업데이트하면 화면이 튄다" 가 된다.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                     let shown = ReleaseNotes.showIfUpdated(over: self?.window)
-                    if ProcessInfo.processInfo.environment["RIVEN_RELNOTES"] != nil {
+                    // RIVEN_SIDEBARFIX=1: 창 크기를 바꿨을 때 사이드바 폭이 따라 변하는지.
+            if ProcessInfo.processInfo.environment["RIVEN_SIDEBARFIX"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard let self, let body = self.bodySplit, let win = self.window else { return }
+                    func sbw() -> CGFloat { body.arrangedSubviews.first?.frame.width ?? -1 }
+                    RLog.log("SBFIX 스플릿자식=\(body.arrangedSubviews.map { type(of: $0) })")
+                    RLog.log("SBFIX sidebarView 가 스플릿 자식인가=\(body.arrangedSubviews.contains { $0 === self.debugSidebarView })")
+                    let before = sbw()
+                    var f = win.frame; f.size.width += 400
+                    win.setFrame(f, display: true)
+                    body.layoutSubtreeIfNeeded()
+                    RLog.log("SBFIX 창 +400 → 사이드바 \(Int(before)) → \(Int(sbw()))")
+                    f.size.width -= 400
+                    win.setFrame(f, display: true)
+                    body.layoutSubtreeIfNeeded()
+                    RLog.log("SBFIX 창 원복 → 사이드바 \(Int(sbw()))  (저장값=\(Int(Settings.shared.double("sidebarWidth", 220))))")
+                    // 구분선이 실제로 마우스를 받는지. 받지 못하면 아무리 끌어도 안 움직인다.
+                    let dv = body.dividerThickness
+                    let x = sbw() + dv / 2
+                    let mid = NSPoint(x: x, y: body.bounds.midY)
+                    let hit = body.hitTest(body.convert(mid, to: body.superview))
+                    RLog.log("SBFIX 구분선두께=\(dv) 구분선x=\(Int(x)) 그 지점을 받는 뷰=\(hit.map { String(describing: type(of: $0)) } ?? "없음")")
+                    RLog.log("SBFIX 그 뷰가 스플릿인가=\(hit === body)")
+                    for dx in [CGFloat(-4), -2, 2, 4] {
+                        let pt = NSPoint(x: x + dx, y: body.bounds.midY)
+                        let h = body.hitTest(body.convert(pt, to: body.superview))
+                        RLog.log("SBFIX 구분선에서 \(Int(dx))pt → 스플릿이 받나=\(h === body)")
+                    }
+                    RLog.log("SBFIX done")
+                }
+            }
+            if ProcessInfo.processInfo.environment["RIVEN_RELNOTES"] != nil {
                         RLog.log("RELNOTES 띄움=\(shown) 버전=\(ReleaseNotes.currentVersion)"
                                  + " 기록=\(Settings.shared.string("lastSeenVersion", "-"))")
                         if let shot = ProcessInfo.processInfo.environment["RIVEN_RELSHOT"], shown {
@@ -1919,6 +1950,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
     // and hosts the "패널 추가" button just to their right — in the left fixed area.
     private var sidebarView: NSView!
+    var debugSidebarView: NSView? { sidebarView }
     private func makeSidebarHead(width: CGFloat, height: CGFloat) -> NSView {
         let strip = DraggableStrip(frame: NSRect(x: 0, y: 0, width: width, height: height))
         strip.wantsLayer = true
@@ -7041,11 +7073,34 @@ extension AppDelegate: NSSplitViewDelegate {
     // Neither the rail nor the sidebar column may collapse to zero (that's what made
     // the workspace area "disappear").
     func splitView(_ sv: NSSplitView, canCollapseSubview view: NSView) -> Bool { false }
+
+    /// 구분선은 1pt 로 그리되, **잡히는 영역**은 그보다 넓게 준다.
+    ///
+    /// 얇은 선은 보기엔 좋지만 1pt 짜리 과녁이다 — 끌려고 누르면 대개 사이드바나 독에
+    /// 떨어지고 아무 일도 일어나지 않는다 ("드래그로 크기 조절이 안 된다"). 그리는 선은
+    /// 그대로 두고 마우스가 닿는 범위만 양옆으로 넓힌다. macOS 자신도 얇은 구분선에
+    /// 이 방식을 쓴다.
+    func splitView(_ sv: NSSplitView, effectiveRect proposed: NSRect,
+                   forDrawnRect drawn: NSRect, ofDividerAt index: Int) -> NSRect {
+        let grab: CGFloat = 5      // 좌우 5pt 씩 → 실질 11pt (사이드바 안쪽 여백이 12pt 라 안전)
+        return sv.isVertical
+            ? drawn.insetBy(dx: -grab, dy: 0)
+            : drawn.insetBy(dx: 0, dy: -grab)
+    }
     // On window resize, flex the main area and keep the sidebar's width; inside the
     // sidebar, keep the rail's height fixed and flex the explorer below it.
     func splitView(_ sv: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
-        if sv === bodySplit { return view !== sidebarView }   // keep the sidebar's width fixed
-        if sv === sidebarSplit { return view !== rail }       // keep the rail height, flex explorer
+        // 비교 대상은 반드시 **그 스플릿의 자식** 이어야 한다. 예전에는 sidebarView(=안쪽
+        // 세로 스플릿)와 비교했는데 bodySplit 의 자식은 그것을 담고 있는 sidebarContainer 다.
+        // 그래서 조건이 늘 참이었고 "사이드바 폭 고정" 은 한 번도 적용되지 않았다 — 창을
+        // 400 넓히면 사이드바가 220 → 289 로 같이 늘어났다.
+        //
+        // 그 결과가 제보된 두 증상이다: 창이 저장할 때보다 크면 켤 때마다 사이드바가
+        // 넓어져 있고(복원은 220 을 넣지만 창이 제 크기를 갖는 순간 비례해서 늘어난다),
+        // 그 상태에서 구분선을 누르면 상한(400)으로 잘리며 폭이 갑자기 줄어든다.
+        if sv === bodySplit { return view !== sidebarContainer }   // 사이드바 폭은 고정
+        // (안쪽 세로 스플릿은 rail 이 실제 자식이라 원래도 맞았다.)
+        if sv === sidebarSplit { return view !== rail }             // 레일 높이 고정, 탐색기가 늘어남
         return true
     }
     // Persist the divider positions the user drags so they survive across launches. The
