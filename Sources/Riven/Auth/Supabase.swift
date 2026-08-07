@@ -77,7 +77,6 @@ final class SupabaseAuth {
     // Invoked if the login window is dismissed before the flow resolves (e.g. the user
     // clicks the close button) so the caller's completion isn't leaked forever.
     private var oauthCancel: (() -> Void)?
-    private var pushTimer: Timer?
     private var applyingRemote = false
 
     var isSignedIn: Bool { session != nil }
@@ -199,7 +198,6 @@ final class SupabaseAuth {
     }
 
     func signOut() {
-        pushTimer?.invalidate(); pushTimer = nil
         session = nil
         Keychain.delete("session")
         NotificationCenter.default.post(name: .rivenAuthChanged, object: nil)
@@ -286,27 +284,54 @@ final class SupabaseAuth {
 
     private func observeLocalChanges() {
         NotificationCenter.default.removeObserver(self, name: .rivenSettingChanged, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(localChanged),
+        NotificationCenter.default.addObserver(self, selector: #selector(localChanged(_:)),
                                                name: .rivenSettingChanged, object: nil)
     }
-    @objc private func localChanged() {
+    @objc private func localChanged(_ n: Notification) {
         guard isSignedIn, !applyingRemote else { return }
-        pushTimer?.invalidate()
-        pushTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in self?.push() }
+        // 동기화하지 않는 키(세션·비밀값·브라우저 탭)는 "바뀐 시각" 에도 넣지 않는다.
+        // 그것까지 세면 로컬이 늘 최신으로 보여, 다른 기기의 변경을 영영 못 받는다.
+        if let key = n.object as? String, Self.noSync.contains(key) { return }
+        dirty = true
+        Settings.shared.set(Self.localStampKey, Self.iso.string(from: Date()))
+    }
+
+    /// 아직 클라우드에 올리지 못한 변경이 있는가.
+    private var dirty = false
+    /// 로컬에서 마지막으로 설정을 바꾼 시각. 이 키 자체는 올리지 않는다.
+    private static let localStampKey = "syncLocalStamp"
+
+    /// 앱이 꺼질 때 한 번 올린다. 설정을 누를 때마다 올리면 눌린 횟수만큼 요청이 나가고,
+    /// 정작 다른 기기가 그것을 받는 시점은 그 기기를 켤 때다 — 즉시 올려도 즉시 반영되지
+    /// 않는다. 나가는 길에 한 번이면 충분하다.
+    func flushOnQuit() {
+        guard isSignedIn, dirty else { return }
+        pushSynchronously()
     }
 
     func pull() {
         guard let uid = session?.userId else { return }
         withValidToken { [weak self] token in
             guard let self, let token else { return }
-            guard let u = URL(string: "\(SupabaseConfig.url)/rest/v1/user_settings?user_id=eq.\(uid)&select=settings") else { return }
+            guard let u = URL(string: "\(SupabaseConfig.url)/rest/v1/user_settings?user_id=eq.\(uid)&select=settings,updated_at") else { return }
             var r = URLRequest(url: u)
             r.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
             r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             URLSession.shared.dataTask(with: r) { data, _, _ in
                 guard let data = data,
                       let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                      let remote = arr.first?["settings"] as? [String: Any] else { return }
+                      let row = arr.first,
+                      let remote = row["settings"] as? [String: Any] else { return }
+                // 원격이 우리 로컬 변경보다 오래됐으면 적용하지 않는다. 예전에는 무조건
+                // 덮어썼는데, 올리기를 종료 시점으로 미룬 지금은 그게 곧 데이터 손실이다
+                // (강제 종료로 못 올린 변경이 다음 실행의 pull 에 지워진다).
+                let remoteAt = (row["updated_at"] as? String).flatMap { Self.iso.date(from: $0) }
+                let localAt = Self.iso.date(from: Settings.shared.string(Self.localStampKey, ""))
+                if let remoteAt, let localAt, remoteAt < localAt {
+                    RLog.log("sync: 원격이 더 오래됐다 — 적용하지 않고 로컬을 올린다")
+                    DispatchQueue.main.async { self.push() }
+                    return
+                }
                 DispatchQueue.main.async { self.applyRemote(remote) }
             }.resume()
         }
@@ -321,6 +346,7 @@ final class SupabaseAuth {
 
     func push() {
         guard let uid = session?.userId else { return }
+        dirty = false
         let payload = Settings.shared.syncableSnapshot(excluding: Self.noSync)
         withValidToken { token in
             guard let token else { return }
@@ -333,9 +359,21 @@ final class SupabaseAuth {
             let body: [String: Any] = ["user_id": uid, "settings": payload,
                                        "updated_at": Self.iso.string(from: Date())]
             r.httpBody = try? JSONSerialization.data(withJSONObject: body)
-            URLSession.shared.dataTask(with: r).resume()
+            URLSession.shared.dataTask(with: r) { [weak self] _, _, _ in
+                DispatchQueue.main.async { self?.pushCompleted?() }
+            }.resume()
         }
     }
+
+    /// 종료 직전용. 앱이 내려가는 중이라 비동기 완료를 기다려 줄 사람이 없다 — 짧게 기다린다.
+    private func pushSynchronously() {
+        let sem = DispatchSemaphore(value: 0)
+        pushCompleted = { sem.signal() }
+        push()
+        _ = sem.wait(timeout: .now() + 2.0)   // 못 올려도 앱을 붙잡지 않는다
+        pushCompleted = nil
+    }
+    private var pushCompleted: (() -> Void)?
 
     // cached — ISO8601DateFormatter is expensive to construct (never do it per call).
     private static let iso = ISO8601DateFormatter()

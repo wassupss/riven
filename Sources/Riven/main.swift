@@ -162,6 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         sigterm.setEventHandler { [weak self] in
             self?.persistSession()
+            SupabaseAuth.shared.flushOnQuit()
             // NSApp.terminate can be DEFERRED — a modal sheet is up, or a delegate returns
             // .terminateLater. The default SIGTERM disposition is now SIG_IGN, so in that
             // case the process would survive and `kill <pid>` would stop working entirely.
@@ -1099,13 +1100,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             self.toggleDockPanel(id)
                         }
                         self.newChat()
-                        self.switchTheme("ember")
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                            shot("-dark")
-                            self.switchTheme("daylight")
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                shot("-light")
-                                RLog.log("THEMESHOT done")
+                        // RIVEN_THEMESTART 가 있으면 그 테마로 시작한 화면만 찍는다 (기준선).
+                        // 없으면 ember 로 시작해 daylight 로 "바꾼" 화면을 찍는다.
+                        // 두 장을 비교하면, 바뀌긴 했지만 끝까지 따라오지 않은 곳까지 드러난다.
+                        // 설정 창도 함께 찍는다 — 테마를 바꾸는 바로 그 창이라, 여기가
+                        // 안 따라오면 사용자가 가장 먼저 본다.
+                        func shotSettings(_ name: String) {
+                            guard let sv = self.settingsWin?.contentView,
+                                  let rep = sv.bitmapImageRepForCachingDisplay(in: sv.bounds) else { return }
+                            sv.cacheDisplay(in: sv.bounds, to: rep)
+                            if let d = rep.representation(using: .png, properties: [:]) {
+                                try? d.write(to: URL(fileURLWithPath: prefix + name + ".png"))
+                            }
+                        }
+                        self.settingsMenu()
+                        if let startTheme = ProcessInfo.processInfo.environment["RIVEN_THEMESTART"] {
+                            self.switchTheme(startTheme)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                shot("-ref"); shotSettings("-set-ref"); RLog.log("THEMESHOT done")
+                            }
+                        } else {
+                            self.switchTheme("ember")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                self.switchTheme("daylight")
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                                    shot("-switched"); shotSettings("-set-switched"); RLog.log("THEMESHOT done")
+                                }
                             }
                         }
                     }
@@ -7110,7 +7130,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
-    func applicationWillTerminate(_ n: Notification) { notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true); lsp.stopAll() }
+    func applicationWillTerminate(_ n: Notification) {
+        notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
+        SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다
+        lsp.stopAll()
+    }
 }
 
 // App-level chrome re-themes with the rest (window/root/terminal well), and the

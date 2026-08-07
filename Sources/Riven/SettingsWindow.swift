@@ -116,6 +116,7 @@ final class SettingsWindow: NSPanel {
         let sidebar = NSView()
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = Theme.bg2.cgColor
+        navSidebar = sidebar
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         let navStack = NSStackView()
         navStack.orientation = .vertical; navStack.alignment = .leading; navStack.spacing = 2
@@ -129,6 +130,7 @@ final class SettingsWindow: NSPanel {
         sidebar.addSubview(navStack)
         let sideHair = NSView()
         sideHair.wantsLayer = true; sideHair.layer?.backgroundColor = Theme.hairline.cgColor
+        navSideHair = sideHair
         sideHair.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(sideHair)
 
@@ -237,6 +239,10 @@ final class SettingsWindow: NSPanel {
         navLabels[index] = label
         return b
     }
+    /// 왼쪽 목록. applyTheme 이 showTab 으로 본문만 다시 그려서, 이 칸은 만들 때 색 그대로
+    /// 남아 있었다 — 밝은 테마에서 왼쪽만 어둡고 글자가 배경에 묻혔다.
+    private var navSidebar: NSView?
+    private var navSideHair: NSView?
     private var navIcons: [Int: NSImageView] = [:]
     private var navLabels: [Int: NSTextField] = [:]
 
@@ -1322,7 +1328,10 @@ extension SettingsWindow: Themable {
         closeBtn?.contentTintColor = Theme.fgDim
         closeBtn?.layer?.backgroundColor = Theme.hover.cgColor
         hair.layer?.backgroundColor = Theme.hairline.cgColor
-        showTab(activeTab)                           // 탭 라벨/밑줄 + 본문 컨트롤 색 재생성
+        savedLabel.textColor = Theme.success
+        navSidebar?.layer?.backgroundColor = Theme.bg2.cgColor
+        navSideHair?.layer?.backgroundColor = Theme.hairline.cgColor
+        showTab(activeTab)   // 본문 + 선택 표시(아래 selectTab)를 새 색으로 다시 그린다                           // 탭 라벨/밑줄 + 본문 컨트롤 색 재생성
     }
 }
 
