@@ -141,8 +141,10 @@ final class CodexChatSession: AgentChatSession {
               let id = thread["id"] as? String else { return }
         threadId = id
         started = true
-        let m = thread["model"] as? String ?? model
-        DispatchQueue.main.async { [weak self] in self?.onInit?(id, m) }
+        // 모델 이름은 thread 객체가 아니라 응답 어딘가에 실려 온다 (thread 키에는 없고
+        // modelProvider 만 있다). 전체를 훑어서 집는다 — 못 집으면 /status 가 "?" 로 남는다.
+        if let result { noteModel(result) }
+        DispatchQueue.main.async { [weak self] in self?.onInit?(id, self?.model) }
         flushQueued()
     }
 
@@ -331,6 +333,9 @@ final class CodexChatSession: AgentChatSession {
     }
 
     private func handleNotification(_ method: String, _ params: [String: Any]) {
+        // 모델 이름은 thread 객체에 없다 (modelProvider 만 있다) — 턴·설정 알림에 실려
+        // 지나간다. 처음 보이는 것을 집어 두지 않으면 /status 가 "모델: ?" 로 남는다.
+        noteModel(params)
         switch method {
         case "item/agentMessage/delta":
             if let itemId = params["itemId"] as? String, let delta = params["delta"] as? String, !delta.isEmpty {
@@ -365,6 +370,26 @@ final class CodexChatSession: AgentChatSession {
         default: break
         }
     }
+    /// 알림 어디에 실려 있든 모델 이름을 한 번 집는다 (중첩된 turn / threadSettings 포함).
+    private func noteModel(_ params: [String: Any]) {
+        guard model == nil || model?.isEmpty == true else { return }
+        // 깊이 3까지 본다 — thread/start 응답은 result.thread 아래 한 겹 더 들어간다.
+        func find(_ d: [String: Any], depth: Int) -> String? {
+            if let m = d["model"] as? String, !m.isEmpty, m != "default" { return m }
+            guard depth > 0 else { return nil }
+            for v in d.values {
+                if let sub = v as? [String: Any], let m = find(sub, depth: depth - 1) { return m }
+            }
+            return nil
+        }
+        guard let m = find(params, depth: 3) else { return }
+        model = m
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let id = self.threadId else { return }
+            self.onInit?(id, m)          // 챗이 모델 칸을 채울 수 있게 다시 알린다
+        }
+    }
+
     private var tokenUsage: ChatUsage?
     /// 메시지 항목별로 델타를 통해 이미 흘려보낸 글자 (완성본이 왔을 때 중복을 막는다).
     private var emitted: [String: String] = [:]

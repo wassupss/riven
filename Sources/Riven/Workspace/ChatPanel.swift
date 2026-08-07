@@ -34,6 +34,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var session: AgentChatSession?
     /// 이 챗을 굴리는 CLI. 페인마다 다르다 (같은 워크스페이스에 Claude 챗과 Codex 챗이 함께 뜬다).
     var agentKind: ChatAgentKind = .claude
+    /// 벤치용: 슬래시 명령을 그대로 돌린다.
+    func debugRunSlash(_ name: String) { _ = handleSlash("/" + name) }
     /// 벤치용: 승인 카드가 실제로 떴는지 확인한다.
     var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
@@ -715,6 +717,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     /// 이 세션에 붙어 있던 계획 배지를 되살린다 (파일이 아직 있을 때만).
     private func restorePlanBadge(_ sid: String) {
+        guard agentKind == .claude else { return }   // 계획 파일은 Claude 가 ~/.claude/plans 에 쓴다
         let path = Settings.shared.string("plan.\(sid)", "")
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else { return }
         planPath = path
@@ -866,7 +869,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Switch THIS pane to a past session in place (no new pane) — replaces the transcript and
     // resumes the chosen session id.
     func switchSession(to sid: String) {
-        guard let url = workspace, let cmd = AgentDiscovery.claudeCmd() else { return }
+        guard let url = workspace,
+              let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else { return }
         session?.stop(); session = nil
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
@@ -879,6 +883,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     // This workspace's past sessions (newest first) with a title from the first user message.
     private func listSessions() -> [(id: String, title: String, date: String)] {
         guard let cwd = workspace?.path else { return [] }
+        // Codex 페인이면 Codex 의 대화를 나열한다. 예전에는 어느 CLI 든 ~/.claude/projects 를
+        // 읽어서, Codex 대화에서 세션 목록을 열면 남의 대화가 나왔고 — 그중 하나를 고르면
+        // 그 팬에서 claude 가 떴다.
+        if agentKind == .codex { return CodexUsage.sessions(cwd: cwd) }
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects/\(enc)")
         guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
@@ -1362,6 +1370,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // /cost — the account's PLAN usage (the same OAuth endpoint the header widget uses), refreshed
     // on demand, plus this session's last turn. It used to print only the last turn's tokens.
     private func showUsage() {
+        // Codex 페인이면 Codex 계정을 보여 준다. 예전에는 어느 CLI 든 Claude 의 OAuth
+        // 사용량을 찍어서, Codex 대화에서 /cost 를 치면 남의 계정 숫자가 나왔다.
+        if agentKind == .codex { showCodexUsage(); return }
         addSystem(t("chat.usage.loading"))
         Usage.limits { [weak self] lim in
             DispatchQueue.main.async {
@@ -1391,6 +1402,33 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
     }
+    /// Codex 의 /cost. 창이 하나뿐이고(30일) 금액은 구독이라 없다 — 없는 칸을 0 으로
+    /// 채우지 않고 아예 적지 않는다.
+    private func showCodexUsage() {
+        let cx = CodexUsage.scan()
+        var lines: [String] = []
+        func bar(_ shown: Int) -> String {
+            let filled = Int((Double(max(0, min(100, shown))) / 10).rounded())
+            return String(repeating: "█", count: filled) + String(repeating: "░", count: 10 - filled) + "  \(shown)%"
+        }
+        if let l = cx.limits {
+            var line = "\(CodexUsage.windowLabel(l.windowMinutes))  \(bar(UsageUI.shown(l.remainingPercent)))"
+            if let r = l.resetsAt, let txt = UsageUI.resetIn(r) { line += "   (\(txt))" }
+            lines.append(line)
+            if let plan = l.planType { lines.append("\(t("chat.usage.plan")): \(plan)") }
+        } else {
+            lines.append(t("chat.usage.unavailable"))
+        }
+        if cx.today.turns > 0 {
+            lines.append("")
+            lines.append("\(t("chat.usage.todayCodex"))  \(Usage.fmtTokens(cx.today.totalTokens))  ·  \(cx.today.turns)턴")
+        }
+        if let u = lastUsage {
+            lines.append("\(t("chat.usage.turn"))  ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))")
+        }
+        addReport(t("chat.usage.title"), lines)
+    }
+
     // /mcp — which servers are connected and WHAT they give the agent, not just a name list.
     private func showMCP() {
         let servers = session?.mcpServers ?? []
@@ -1416,7 +1454,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         lines.append("\(t("chat.perm.title")): \(modes[modeIndex].0)")
         if let ws = workspace { lines.append("\(t("chat.status.workspace")): \(ws.path)") }
         if let sid = session?.sessionId { lines.append("\(t("chat.status.session", ["id": String(sid.prefix(8))]))") }
-        if let v = AgentDiscovery.claudeVersion() { lines.append("\(t("chat.status.cli")): \(v)") }
+        // 어느 CLI 로 도는 팬인지부터 적는다 — 아래 줄들이 무엇에 대한 것인지가 달라진다.
+        lines.append("\(t("chat.status.agent")): \(agentKind.displayName)")
+        if agentKind == .claude, let v = AgentDiscovery.claudeVersion() {
+            lines.append("\(t("chat.status.cli")): \(v)")
+        }
         let tools = session?.toolList ?? []
         if !tools.isEmpty {
             let mcp = tools.filter { $0.hasPrefix("mcp__") }.count
@@ -1488,7 +1530,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "status":
             showStatus(); return true
         case "update":
-            guard let cmd = AgentDiscovery.claudeCmd() else { addSystem(t("chat.noCLIShort")); return true }
+            // 이 팬을 굴리는 CLI 를 업데이트한다. 예전에는 Codex 대화에서 /update 를 쳐도
+            // claude 가 업데이트됐다 — 친 사람이 기대한 것과 다른 프로그램이다.
+            guard let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else {
+                addSystem(t("chat.noCLIShort")); return true
+            }
             addSystem(t("chat.updating"))
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let p = Process(); p.executableURL = URL(fileURLWithPath: cmd); p.arguments = ["update"]
@@ -1565,6 +1611,13 @@ final class ChatPanel: NSView, Themable, Scalable {
             s = String(s[..<r.lowerBound])
         }
         s = s.replacingOccurrences(of: "claude-", with: "")
+        // OpenAI 계열은 버전에 소수점이 들어가고("gpt-5.6-terra") 뒤에 코드네임이 붙는다.
+        // Claude 규칙(숫자 조각을 점으로 잇기)에 그대로 넣으면 "Gpt" 만 남는다.
+        if s.hasPrefix("gpt") {
+            let parts = s.split(separator: "-").map(String.init)
+            let ver = parts.dropFirst().first { $0.first?.isNumber == true } ?? ""
+            return (ver.isEmpty ? "GPT" : "GPT-\(ver)") + suffix
+        }
         let parts = s.split(separator: "-").map(String.init)
         guard let family = parts.first else { return id ?? "?" }
         let ver = parts.dropFirst().filter { $0.allSatisfy { $0.isNumber } }.joined(separator: ".")
@@ -1816,12 +1869,22 @@ final class ChatPanel: NSView, Themable, Scalable {
         if let error, !interrupted { addError(t("chat.error", ["e": error])) }
         interrupted = false
         autoScroll()
-        // Show how much of the plan quota is used (account 5-hour / weekly window, from the
-        // OAuth usage API) — updates after each turn so you can watch it climb.
-        Usage.limits { lim in
-            DispatchQueue.main.async {
-                block?.setQuota(sessionUsed: lim.sessionRemaining.map { 100 - $0 },
-                                weeklyUsed: lim.weeklyRemaining.map { 100 - $0 })
+        // 턴 아래에 플랜 소진도를 붙인다. 어느 CLI 의 계정인지가 중요하다 — 예전에는 Codex
+        // 페인에서도 Claude 의 OAuth 사용량(5시간·7일)을 불러 붙였다. Codex 로 돌린 턴 밑에
+        // Claude 눈금이 붙으면, 그 숫자를 보고 Codex 한도를 판단하게 된다.
+        if agentKind == .codex {
+            let cx = CodexUsage.scan()
+            if let l = cx.limits {
+                block?.setQuota([(CodexUsage.windowLabel(l.windowMinutes), UsageUI.shown(l.remainingPercent))])
+            }
+        } else {
+            Usage.limits { lim in
+                DispatchQueue.main.async {
+                    var e: [(label: String, value: Int)] = []
+                    if let s = lim.sessionRemaining { e.append((t("chat.quota.sessionLabel"), UsageUI.shown(s))) }
+                    if let w = lim.weeklyRemaining { e.append((t("chat.quota.weekLabel"), UsageUI.shown(w))) }
+                    block?.setQuota(e)
+                }
             }
         }
         // Hand this turn's answer to any agent that delegated work here (riven_ask_agent).

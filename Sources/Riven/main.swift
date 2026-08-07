@@ -1136,6 +1136,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                     RLog.log("PINSHOT done claude=\(self.lastLimits?.sessionRemaining.map(String.init) ?? "-")")
                                   }
                                 }
+                                // Codex 페인 안에서 /cost·/status·세션 목록이 Codex 것을 쓰는지.
+                                if ProcessInfo.processInfo.environment["RIVEN_CXCHATUSAGE"] != nil {
+                                    let cwd = self.workspace?.path ?? ""
+                                    RLog.log("CXCHAT /cost·세션 확인: 세션목록=\(CodexUsage.sessions(cwd: cwd).count)개")
+                                    pane.chat.debugRunSlash("cost")
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                        pane.chat.debugRunSlash("status")
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                            if let shot = ProcessInfo.processInfo.environment["RIVEN_CXCHATSHOT"],
+                                               let v = self.window?.contentView,
+                                               let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                                v.cacheDisplay(in: v.bounds, to: rep)
+                                                if let d = rep.representation(using: .png, properties: [:]) {
+                                                    try? d.write(to: URL(fileURLWithPath: shot))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 let r2 = CodexUsage.scan()
                                 RLog.log("CXPANE 사용량 토큰=\(r2.today.totalTokens) 턴=\(r2.today.turns)"
                                          + " 남은=\(r2.limits.map { "\($0.remainingPercent)%" } ?? "-")"

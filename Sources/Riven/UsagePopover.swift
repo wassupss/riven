@@ -21,6 +21,7 @@ enum UsageUI {
 
     // "resets in {t}" text from an ISO timestamp (riven resetIn()).
     /// Date 판. Codex 의 resets_at 은 epoch 초라 ISO 문자열로 되돌릴 이유가 없다.
+    /// (챗의 /cost 도 같은 문구를 쓴다 — 같은 것을 두 군데에 적어 두면 한쪽만 고쳐진다.)
     static func resetIn(_ date: Date?) -> String? {
         guard let date else { return nil }
         let ms = date.timeIntervalSinceNow

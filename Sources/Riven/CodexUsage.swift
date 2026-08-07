@@ -109,4 +109,52 @@ enum CodexUsage {
         if minutes >= 60 { return t("usage.window.hours", ["n": String(minutes / 60)]) }
         return t("usage.window.mins", ["n": String(minutes)])
     }
+
+    /// 이 폴더에서 돌았던 Codex 대화들 (최근 것부터).
+    ///
+    /// 각 롤아웃 파일의 첫 줄이 session_meta 이고 거기에 cwd 와 session_id 가 들어 있다.
+    /// 그래서 파일을 통째로 읽지 않고 앞부분만 본다 — 대화가 길면 파일이 커진다.
+    /// 제목은 첫 user_message 를 쓴다 (Codex 는 요약 제목을 파일에 남기지 않는다).
+    static func sessions(cwd: String, limit: Int = 12) -> [(id: String, title: String, date: String)] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let root = (ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+                    ?? home.appendingPathComponent(".codex")).appendingPathComponent("sessions")
+        let fm = FileManager.default
+        guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
+        var found: [(id: String, title: String, date: Date)] = []
+        for case let url as URL in en where url.pathExtension == "jsonl" {
+            guard found.count < 400 else { break }                 // 오래 쓴 사람의 로그는 수천 개다
+            guard let head = firstLines(url, max: 40) else { continue }
+            var id: String?, title = "", matches = false
+            for line in head {
+                guard let d = line.data(using: .utf8),
+                      let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                      let payload = o["payload"] as? [String: Any] else { continue }
+                if o["type"] as? String == "session_meta" {
+                    guard payload["cwd"] as? String == cwd else { break }   // 다른 폴더의 대화
+                    matches = true
+                    id = payload["session_id"] as? String
+                } else if payload["type"] as? String == "user_message", title.isEmpty {
+                    title = (payload["message"] as? String ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .replacingOccurrences(of: "\n", with: " ")
+                    break
+                }
+            }
+            guard matches, let id else { continue }
+            let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            found.append((id: id, title: title.isEmpty ? id : String(title.prefix(60)), date: mod))
+        }
+        let fmt = DateFormatter(); fmt.dateFormat = "MM/dd HH:mm"
+        return found.sorted { $0.date > $1.date }.prefix(limit)
+            .map { (id: $0.id, title: $0.title, date: fmt.string(from: $0.date)) }
+    }
+
+    /// 파일 앞부분에서 줄 몇 개만. 롤아웃은 한 줄이 길 수 있어 넉넉히 읽고 자른다.
+    private static func firstLines(_ url: URL, max: Int) -> [String]? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? fh.close() }
+        guard let data = try? fh.read(upToCount: 256 * 1024), let text = String(data: data, encoding: .utf8) else { return nil }
+        return Array(text.split(separator: "\n", omittingEmptySubsequences: true).prefix(max).map(String.init))
+    }
 }
