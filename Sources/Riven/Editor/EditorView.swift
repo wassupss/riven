@@ -80,6 +80,12 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     // 이미지 파일을 에디터 탭 안의 뷰어로 연다 (src는 data: URL — 웹뷰가 임의 경로의
     // file:// 이미지를 못 읽기 때문).
+    /// PDF 탭. 이미지와 같은 길로 간다 — 웹뷰가 자기 PDF 뷰어로 그린다.
+    func openPDF(path: String, src: String) {
+        web.evaluateJavaScript("window.rivenOpenPDF && window.rivenOpenPDF(\(jsString(path)), \(jsString(src)))",
+                               completionHandler: nil)
+    }
+
     func openImage(path: String, src: String) {
         web.evaluateJavaScript("window.rivenOpenImage && window.rivenOpenImage(\(jsString(path)), \(jsString(src)))", completionHandler: nil)
     }

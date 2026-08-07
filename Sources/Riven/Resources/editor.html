@@ -61,6 +61,10 @@
     background-size: 16px 16px;
     background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
   .eimage.on { display: flex; }
+  /* PDF 는 탭 줄 아래를 통째로 쓴다 — WKWebView 자체 뷰어가 그 안을 채운다. */
+  .epdf { position: absolute; inset: 30px 0 0 0; display: none; }
+  .epdf.on { display: block; }
+  .epdf embed { width: 100%; height: 100%; border: 0; }
   .eimage img { image-rendering: -webkit-optimize-contrast; cursor: zoom-in; }
   .eimage.actual img { cursor: zoom-out; }
   .eimage .meta { position: absolute; right: 10px; bottom: 8px; font: 11px -apple-system;
@@ -283,7 +287,11 @@ function createGroup() {
   const dropEl = document.createElement('div'); dropEl.className = 'edrop';
   const imgEl = document.createElement('div'); imgEl.className = 'eimage';
   imgEl.innerHTML = '<img alt=""><div class="meta"></div>';
-  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(dropEl);
+  // PDF 는 WKWebView 가 스스로 그린다 — 페이지 넘김·확대·검색·텍스트 선택이 공짜다.
+  // 우리가 할 일은 자리를 내주는 것뿐이라, 뷰어를 직접 만들지 않는다.
+  const pdfEl = document.createElement('div'); pdfEl.className = 'epdf';
+  pdfEl.innerHTML = '<embed type="application/pdf">';
+  el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(pdfEl); el.appendChild(dropEl);
   // A plain mouse wheel only produces a vertical delta; map it to horizontal scroll so
   // the tab strip's overflow is reachable without a trackpad (native dock tabs do this too).
   tabsEl.addEventListener('wheel', (e) => {
@@ -310,7 +318,7 @@ function createGroup() {
     occurrencesHighlight: 'off', selectionHighlight: false,
     wordBasedSuggestions: 'off', links: false, codeLens: false
   });
-  const g = { idx: groups.length, el, tabsEl, monEl, imgEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
+  const g = { idx: groups.length, el, tabsEl, monEl, imgEl, pdfEl, dropEl, ed, tabs: [], active: null, node: null, tabEls: {} };
   // 클릭으로 Fit ↔ 100% 토글 (VS Code와 동일)
   imgEl.addEventListener('click', () => { imgEl.classList.toggle('actual'); layoutImage(g); });
   g.node = { type: 'leaf', g };
@@ -507,8 +515,19 @@ function layoutImage(g) {
 }
 
 // 그룹이 이미지 탭을 보여줄지 Monaco를 보여줄지 전환.
+const pdfSrc = {};
+function isPDF(path) { return Object.prototype.hasOwnProperty.call(pdfSrc, path); }
+
 function applyImageMode(g) {
   const path = g.active;
+  if (path && isPDF(path)) {
+    const emb = g.pdfEl.querySelector('embed');
+    if (emb.getAttribute('src') !== pdfSrc[path]) emb.src = pdfSrc[path];
+    g.pdfEl.classList.add('on'); g.imgEl.classList.remove('on');
+    g.monEl.style.display = 'none';
+    return;
+  }
+  g.pdfEl.classList.remove('on');
   if (path && isImage(path)) {
     const img = g.imgEl.querySelector('img');
     if (img.getAttribute('src') !== imageSrc[path]) {
@@ -523,6 +542,17 @@ function applyImageMode(g) {
   }
 }
 
+window.rivenOpenPDF = function (path, src) {
+  pdfSrc[path] = src;
+  document.getElementById('empty').style.display = 'none';
+  const g = groups.find(x => x.tabs.includes(path)) || activeGroup();
+  if (!g.tabs.includes(path)) g.tabs.push(path);
+  g.active = path;
+  g.ed.setModel(null);            // PDF 탭에서는 Monaco를 비운다 (이미지 탭과 같다)
+  renderTabs(g);
+  setActiveGroup(groups.indexOf(g));
+  applyImageMode(g);
+};
 window.rivenOpenImage = function (path, src) {
   imageSrc[path] = src;
   document.getElementById('empty').style.display = 'none';

@@ -5299,8 +5299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Size guard (before any read): a huge file would freeze Monaco on the main
         // thread or balloon memory as a data: URL. Refuse with a clear message.
         // 이미지는 Monaco 를 안 거치므로 훨씬 넉넉한 상한을 쓴다.
-        let isImageFile = Self.imageMIME(path) != nil
-        let cap = isImageFile ? Self.maxImageFileSize : Self.maxEditorFileSize
+        // 뷰어로 그리는 것(이미지·PDF)은 Monaco 를 거치지 않으므로 상한이 다르다.
+        let isViewerFile = Self.imageMIME(path) != nil || Self.isPDF(path)
+        let cap = isViewerFile ? Self.maxImageFileSize : Self.maxEditorFileSize
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
            let size = attrs[.size] as? Int, size > cap {
             let a = NSAlert()
@@ -5318,6 +5319,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
         // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
         // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
+        // PDF 는 웹뷰가 자기 뷰어로 그린다 (페이지 넘김·확대·검색·텍스트 선택이 딸려 온다).
+        if Self.isPDF(path) {
+            guard let data = try? Data(contentsOf: url) else {
+                RLog.log("openFile: cannot read pdf \(path)"); return
+            }
+            st.openTabs.append(path)
+            st.activeTab = path
+            showEditorPane()
+            tabBar.open(path)
+            editor.openPDF(path: path, src: "data:application/pdf;base64,\(data.base64EncodedString())")
+            statusBar.setFileInfo(fileInfo(path))
+            persistSession()
+            return
+        }
         if let mime = Self.imageMIME(path) {
             guard let data = try? Data(contentsOf: url) else {
                 RLog.log("openFile: cannot read image \(path)"); return
@@ -5421,6 +5436,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // 에디터에서 이미지 뷰어로 열 확장자 → MIME. SVG는 제외(텍스트로 편집하는 게 유용하고
     // VS Code도 기본은 텍스트다).
+    /// 미리보기로 여는 문서(에디터가 아니라 뷰어로 그리는 것). 지금은 PDF.
+    static func isPDF(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "pdf"
+    }
+
     static func imageMIME(_ path: String) -> String? {
         switch (path as NSString).pathExtension.lowercased() {
         case "png": return "image/png"
