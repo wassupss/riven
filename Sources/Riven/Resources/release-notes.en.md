@@ -1,6 +1,6 @@
 ## Fixed a crash on launch
 
-On some setups the app could quit silently while restoring your session right after an update. It was a brief race while a terminal surface was being set up; terminals now draw only once they're actually placed in the window, which removes it. Diagnostics were added too, so if anything like this happens again the app records where it stopped.
+On some setups the app could quit silently while restoring your session right after an update. Syncing settings to the cloud could trigger itself in an endless loop; that loop is now broken. Diagnostics were added too, so if anything like this happens again the app records where it stopped.
 
 ---
 
