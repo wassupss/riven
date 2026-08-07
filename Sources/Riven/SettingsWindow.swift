@@ -572,7 +572,18 @@ final class SettingsWindow: NSPanel {
         // 않아서 새 대화는 늘 "기본" 이었고, 권한 모드는 채팅 패널 안에만 있어서 설정에서는
         // 보이지 않았다.
         addSection(t("settings.agentDefaults"))
-        addRow(t("settings.defaultModel"), desc: t("settings.defaultModelDesc"), defaultModelMenu())
+        // CLI 마다 모델이 다르다. 한 칸에 Claude 모델만 늘어놓고 "기본 모델" 이라고 적으면,
+        // Codex 대화를 여는 사람에게는 고를 수 없는 목록이다.
+        if AgentDiscovery.claudeCmd() != nil {
+            addRow(t("settings.defaultModelClaude"), desc: t("settings.defaultModelDesc"),
+                   modelMenu(key: "defaultModel", models: ChatPanel.selectableModels))
+        }
+        if AgentDiscovery.codexCmd() != nil {
+            let cx = CodexUsage.availableModels()
+            addRow(t("settings.defaultModelCodex"), desc: t("settings.defaultModelDesc"),
+                   modelMenu(key: "defaultModelCodex",
+                             models: [(t("chat.model.default"), "default")] + cx.map { ($0.label, $0.id) }))
+        }
         addRow(t("settings.defaultPermMode"), desc: t("settings.defaultPermModeDesc"), defaultModeMenu())
 
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
@@ -623,12 +634,14 @@ final class SettingsWindow: NSPanel {
     // ---- Keybindings tab — three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
     // KeybindingsSettings. The editor tab has preset chips (VS Code / JetBrains /
     // Sublime); the shown chords follow the selected preset. ----
+    /// 벤치용: 단축키 하위 탭을 미리 정한다.
+    func debugSetKbSubtab(_ i: Int) { kbSubtab = i }
     private var kbSubtab = 0   // 0 에디터, 1 터미널, 2 리븐 기본 (riven defaults to editor)
     private let editorPresets = ["vscode": "VS Code", "jetbrains": "JetBrains", "sublime": "Sublime Text"]
 
     private func buildKeybindings() {
         // Sub-tab chips.
-        let names = ["에디터", "터미널", "리븐 기본"]
+        let names = [t("keys.tab.editor"), t("keys.tab.terminal"), t("keys.tab.riven"), t("keys.tab.browser")]
         let row = NSStackView(); row.orientation = .horizontal; row.spacing = 6
         for (i, n) in names.enumerated() {
             let on = i == kbSubtab
@@ -641,7 +654,9 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(row)
         content.addArrangedSubview(spacer(8))
 
-        let hint = NSTextField(labelWithString: "칩을 클릭하고 원하는 키를 누르세요. Esc로 취소.")
+        // 브라우저 키는 패널이 직접 처리해서 여기서 바꿀 수 없다. 바꿀 수 있는 척하면
+        // 눌러 보고 안 먹는 것으로 끝난다 — 안내를 갈라 준다.
+        let hint = NSTextField(labelWithString: kbSubtab == 3 ? t("keys.browserFixed") : t("keys.hint"))
         hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
         content.addArrangedSubview(spacer(10))
@@ -650,20 +665,23 @@ final class SettingsWindow: NSPanel {
         if kbSubtab == 0 { buildEditorKeys() }
         addSection(t("settings.keysSection"))
         let actions: [Keys.Action] = kbSubtab == 0 ? Keys.byCat("editor")
-                                   : kbSubtab == 1 ? Keys.byCat("terminal") : Keys.byCat("riven")
+                                   : kbSubtab == 1 ? Keys.byCat("terminal")
+                                   : kbSubtab == 2 ? Keys.byCat("riven") : Keys.byCat("browser")
         for a in actions {
             let chip = PadButton(title: Keys.display(Keys.effective(a.id)),
                                  font: UIScale.mono(UIScale.small, .medium),
                                  textColor: Theme.fgDim, bg: Theme.bg3, border: Theme.edge,
                                  radius: 5, hPad: 8, height: 24)
-            chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            if kbSubtab != 3 {
+                chip.onClick = { [weak self, weak chip] in self?.beginRecording(a.id, a.cat, chip) }
+            }
             // 바꾼 키는 눈에 띄어야 되돌릴 생각도 든다. 기본값 그대로면 표시하지 않는다.
             let changed = Keys.overrides[a.id] != nil
             if changed { chip.identifierString = "changed" }
             addRow(a.label, desc: changed ? t("settings.keyChanged") : nil, chip)
         }
         // 바꾼 키가 하나라도 있을 때만 되돌리기를 보여 준다 — 누를 일이 없는 버튼은 잡음이다.
-        if actions.contains(where: { Keys.overrides[$0.id] != nil }) {
+        if kbSubtab != 3, actions.contains(where: { Keys.overrides[$0.id] != nil }) {
             addWideRow(secondaryButton(t("settings.keysReset"), symbol: "arrow.counterclockwise") { [weak self] in
                 for a in actions { Keys.reset(a.id) }
                 self?.showTab(2)
@@ -1097,20 +1115,21 @@ final class SettingsWindow: NSPanel {
     }
 
     /// 새 대화가 쓸 기본 모델. 페인마다 ⌥메뉴로 바꾸는 건 그대로 둔다.
-    private func defaultModelMenu() -> NSView {
-        let models = ChatPanel.selectableModels
-        let cur = Settings.shared.string("defaultModel", "default")
+    private var modelMenus: [NSPopUpButton: (key: String, ids: [String])] = [:]
+    private func modelMenu(key: String, models: [(String, String)]) -> NSView {
+        let cur = Settings.shared.string(key, "default")
         let pop = NSPopUpButton(frame: .zero, pullsDown: false)
         pop.addItems(withTitles: models.map { $0.0 })
         pop.selectItem(at: models.firstIndex { $0.1 == cur } ?? 0)
         pop.font = UIScale.font(UIScale.small)
         pop.target = self; pop.action = #selector(defaultModelChanged(_:))
+        modelMenus[pop] = (key, models.map { $0.1 })
         return pop
     }
     @objc private func defaultModelChanged(_ sender: NSPopUpButton) {
-        let models = ChatPanel.selectableModels
-        let i = max(0, min(models.count - 1, sender.indexOfSelectedItem))
-        Settings.shared.set("defaultModel", models[i].1)
+        guard let m = modelMenus[sender] else { return }
+        let i = max(0, min(m.ids.count - 1, sender.indexOfSelectedItem))
+        Settings.shared.set(m.key, m.ids[i])
     }
 
     /// 새 대화가 시작할 승인 모드. 채팅 패널의 드롭다운과 같은 키를 쓴다.

@@ -1711,6 +1711,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if ProcessInfo.processInfo.environment["RIVEN_SETTINGS"] != nil {
                     self.settingsMenu()
                     if let t = ProcessInfo.processInfo.environment["RIVEN_SETTINGS_TAB"].flatMap(Int.init) {
+                        if let sub = ProcessInfo.processInfo.environment["RIVEN_KBSUB"].flatMap(Int.init) {
+                            self.settingsWin?.debugSetKbSubtab(sub)
+                        }
                         self.settingsWin?.openTab(t)
                     }
                     if let shot = ProcessInfo.processInfo.environment["RIVEN_SETTINGSSHOT"] {
@@ -2930,7 +2933,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let dock = activeDock, let ws = workspace else { return }
         // 설정에서 고른 기본 모델로 시작한다. 예전에는 페인마다 ⌥메뉴로 고를 수는 있어도
         // 저장되지 않아서, 새 대화는 늘 계정 기본 모델이었다.
-        let def = Settings.shared.string("defaultModel", "default")
+        // 그 CLI 의 기본을 쓴다 — Claude 모델 이름을 Codex 에 넘기면 거절당한다.
+        let def = Settings.shared.string(kind == .codex ? "defaultModelCodex" : "defaultModel", "default")
         let p = makeChatPanel(for: state(for: ws), agent: agent,
                               model: def == "default" ? nil : def, kind: kind)
         // 터미널과 같은 규칙: 새 팬은 지금 그룹의 탭으로 붙인다 (예전에는 항상 오른쪽으로
