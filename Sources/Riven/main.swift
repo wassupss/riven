@@ -1027,6 +1027,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
+                // RIVEN_CXUSAGE=1: Codex 사용량을 자기 로그에서 제대로 읽어 오는지.
+                if ProcessInfo.processInfo.environment["RIVEN_CXUSAGE"] != nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        let r = CodexUsage.scan()
+                        RLog.log("CXUSAGE 오늘 토큰=\(r.today.totalTokens) 턴=\(r.today.turns)")
+                        if let l = r.limits {
+                            RLog.log("CXUSAGE 남은=\(l.remainingPercent)% 창=\(CodexUsage.windowLabel(l.windowMinutes))"
+                                     + " 리셋=\(l.resetsAt.map { ISO8601DateFormatter().string(from: $0) } ?? "-")"
+                                     + " 플랜=\(l.planType ?? "-")")
+                        } else {
+                            RLog.log("CXUSAGE 한도 없음 (오늘 Codex 를 안 썼거나 로그가 없다)")
+                        }
+                        RLog.log("CXUSAGE done")
+                    }
+                }
                 // RIVEN_CODEXPANE=1: Codex 를 네이티브 챗 "패널" 로 열어 한 턴 도는지 (배선 전체).
                 if ProcessInfo.processInfo.environment["RIVEN_CODEXPANE"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1053,6 +1068,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                         try? d.write(to: URL(fileURLWithPath: shot))
                                     }
                                 }
+                                // 사용량 팝오버를 그려서 눈으로 확인한다 (새 섹션이 붙는 자리).
+                                if let shot = ProcessInfo.processInfo.environment["RIVEN_USAGESHOT"] {
+                                    let cx = CodexUsage.scan()
+                                    self.lastCodexLimits = cx.limits; self.lastCodexToday = cx.today
+                                    let v = UsageUI.content(limits: self.lastLimits, today: self.lastToday,
+                                                            freshness: self.usageFreshness(),
+                                                            codexLimits: cx.limits, codexToday: cx.today,
+                                                            onReload: {}, onPin: {})
+                                    v.layoutSubtreeIfNeeded()
+                                    v.setFrameSize(v.fittingSize)
+                                    v.wantsLayer = true
+                                    v.layer?.backgroundColor = Theme.bg2.cgColor
+                                    if let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
+                                        v.cacheDisplay(in: v.bounds, to: rep)
+                                        if let d = rep.representation(using: .png, properties: [:]) {
+                                            try? d.write(to: URL(fileURLWithPath: shot))
+                                        }
+                                    }
+                                }
+                                let r2 = CodexUsage.scan()
+                                RLog.log("CXPANE 사용량 토큰=\(r2.today.totalTokens) 턴=\(r2.today.turns)"
+                                         + " 남은=\(r2.limits.map { "\($0.remainingPercent)%" } ?? "-")"
+                                         + " 창=\(r2.limits.map { CodexUsage.windowLabel($0.windowMinutes) } ?? "-")")
                                 RLog.log("CXPANE done")
                             }
                         }
@@ -6592,6 +6630,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 마지막 조회가 어떻게 끝났는지. 실패를 감추면 화면은 옛 숫자를 그대로 들고 있고
     /// 사용자에게는 "갱신이 안 된다" 로 보인다 (실제로 그렇게 보였다).
     private(set) var lastUsageOutcome: Usage.Outcome = .ok
+    /// Codex 쪽 최신값 (없으면 Codex 를 안 쓰는 사람이다 — 화면에 내보내지 않는다).
+    private var lastCodexLimits: CodexUsage.Limits?
+    private var lastCodexToday = CodexUsage.Today()
     private func refreshUsage(force: Bool = false) {
         // 사용자가 openusage 같은 걸 같이 띄워 두면 같은 엔드포인트를 함께 두드리게 된다.
         // 우리 쪽에서 불필요하게 겹쳐 부르지 않도록 최소 간격을 둔다 (버튼은 예외).
@@ -6599,6 +6640,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastUsageRefresh = Date()
         DispatchQueue.global(qos: .utility).async {
             let t = Usage.today()
+            let cx = CodexUsage.scan()
+            DispatchQueue.main.async { self.lastCodexToday = cx.today; self.lastCodexLimits = cx.limits }
             // Show today's $cost right away (riven's fallback) so the widget is never
             // empty; upgrade to session%·weekly% if the plan-limits API resolves.
             DispatchQueue.main.async { self.lastToday = t; self.statusBar.setUsage(limits: self.lastLimits, today: t); self.updateHeaderUsage(limits: self.lastLimits, today: t); self.rebuildPinnedUsage() }
@@ -6616,11 +6659,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Header usage widget: session% · weekly% (remaining), else today's $cost.
+    // 헤더 사용량: Claude 는 세션%·주간%, Codex 는 창 하나. 둘 다 "남은" 비율이다.
+    //
+    // 한 줄에 나란히 놓기 때문에 방향이 같아야 한다 — Codex 는 "쓴 %" 로 주는 것을
+    // [[CodexUsage]] 가 뒤집어 둔다. 안 그러면 "12%" 가 넉넉하다는 뜻인지 얼마 안 남았다는
+    // 뜻인지 화면에서 구분되지 않는다.
+    //
+    // 안 쓰는 CLI 는 아예 내보내지 않는다. Claude 만 쓰는 사람 헤더에 죽은 눈금이 남으면
+    // 그건 정보가 아니라 잡음이다.
     private func updateHeaderUsage(limits: Usage.Limits?, today: Usage.Today?) {
+        var parts: [String] = []
         let s = limits?.sessionRemaining, w = limits?.weeklyRemaining
-        if let s, let w { headerUsage.stringValue = "\(s)% · \(w)%"; headerUsageItem.isHidden = false }
-        else if let s { headerUsage.stringValue = "\(s)%"; headerUsageItem.isHidden = false }
+        if let s, let w { parts.append("\(s)% · \(w)%") }
+        else if let s { parts.append("\(s)%") }
+        if let cx = lastCodexLimits { parts.append("◎ \(cx.remainingPercent)%") }
+        if !parts.isEmpty {
+            // Claude 쪽 숫자가 있을 때만 앞에 표식을 단다 — 하나뿐이면 표식이 군더더기다.
+            if parts.count > 1, s != nil { parts[0] = "✳ " + parts[0] }
+            headerUsage.stringValue = parts.joined(separator: "   ")
+            headerUsageItem.isHidden = false
+        }
         else if let c = today?.totalCost, c > 0 { headerUsage.stringValue = String(format: "$%.2f", c); headerUsageItem.isHidden = false }
         else { headerUsageItem.isHidden = true }
         // 오래된 숫자는 흐리게. 5분 넘게 갱신되지 않았으면 지금 값이 아니다.
@@ -6652,6 +6710,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pop.contentViewController = NSViewController()
         pop.contentViewController?.view = UsageUI.content(
             limits: lastLimits, today: lastToday, freshness: usageFreshness(),
+            codexLimits: lastCodexLimits, codexToday: lastCodexToday,
             onReload: { [weak self] in self?.refreshUsage(force: true) },
             onPin: { [weak self] in self?.headerUsagePopover?.close(); self?.pinUsage() })
         headerUsagePopover = pop
@@ -6710,7 +6769,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         unpin.imagePosition = .imageLeading; unpin.isBordered = false
         unpin.font = UIScale.font(UIScale.caption); unpin.contentTintColor = Theme.fgDim
         unpin.translatesAutoresizingMaskIntoConstraints = false; box.addSubview(unpin)
-        let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday) { }
+        let content = UsageUI.pinnedContent(limits: lastLimits, today: lastToday,
+                                            codexLimits: lastCodexLimits) { }
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([
