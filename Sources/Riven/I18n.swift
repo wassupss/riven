@@ -268,6 +268,7 @@ enum I18n {
         // model
         "chat.model.default": ("기본 (CLI 기본값)", "Default (CLI default)"),
         "chat.model.now": ("현재: {m}", "Current: {m}"),
+        "chat.model.tip": ("이 대화의 모델", "Model for this chat"),
         "chat.model.set": ("모델: {m}", "Model: {m}"),
         // status / usage
         "chat.status.model": ("모델: {m}", "Model: {m}"),

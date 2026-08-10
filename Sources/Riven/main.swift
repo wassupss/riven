@@ -2959,6 +2959,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.chatAgent = agent                                      // persisted so a restore keeps the role
         p.sessionId = resume                                     // persisted for resume-on-relaunch
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
+        chat.onModelChanged = { [weak p] id in p?.chatModel = id }   // 인라인 모델 칩 → 레이아웃에 영속
         let wsPath = st.url.path, paneId = p.id
         // Clear the "done" ember/attn badge — call whenever the user looks at or focuses the pane.
         let clearAttn: () -> Void = { [weak self, weak chat, weak p] in
