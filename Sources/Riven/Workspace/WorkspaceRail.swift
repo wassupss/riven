@@ -150,7 +150,7 @@ final class WorkspaceRail: NSView, Themable {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         Theme.register(self)
         installCommandHint()
@@ -356,8 +356,10 @@ final class WorkspaceRail: NSView, Themable {
         ])
         countLabels[url] = countBadge
 
-        let idx = (workspaces.firstIndex(of: url) ?? 0) + 1
-        let kbd = NSTextField(labelWithString: idx <= 9 ? "⌘\(idx)" : "")
+        // URL 이 배열에 없으면 번호를 붙이지 않는다. 예전엔 `?? 0` 라 미발견 카드가 "⌘1" 로
+        // 위장했고, ⌘1/그 카드 클릭이 workspaces[0](첫 워크스페이스)로 튀었다.
+        let num = workspaces.firstIndex(of: url).map { $0 + 1 }
+        let kbd = NSTextField(labelWithString: (num != nil && num! <= 9) ? "⌘\(num!)" : "")
         kbd.font = UIScale.mono(UIScale.caption, .medium); kbd.textColor = Theme.accent
         kbd.wantsLayer = true; kbd.layer?.backgroundColor = Theme.accentMuted.cgColor
         kbd.layer?.cornerRadius = 4; kbd.drawsBackground = false

@@ -74,7 +74,7 @@ final class SearchPanel: NSView, Themable, Scalable {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             resultsStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             resultsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            resultsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
+            resultsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in

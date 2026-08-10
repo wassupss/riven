@@ -64,7 +64,7 @@ final class LibraryView: NSView, Themable {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             doc.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            doc.widthAnchor.constraint(equalTo: scroll.widthAnchor),
+            doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             stack.topAnchor.constraint(equalTo: doc.topAnchor),
             stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor),

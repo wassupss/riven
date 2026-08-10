@@ -111,7 +111,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
         addHeaderRow()
         addRow()   // start with one empty row

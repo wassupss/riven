@@ -611,14 +611,17 @@ final class ChatPanel: NSView, Themable, Scalable {
     var parentName: String?
     /// This pane's role (nickname › custom agent) and whether it's mid-turn — for riven_agents().
     var agentRole: String { nickname ?? agentPersona ?? "Claude" }
-    var isBusy: Bool { turnStart != nil }
+    // 세션이 살아 있어야만 busy 다. 세션이 죽었는데(크래시·교체·이전 실행 잔재) turnStart 가
+    // 남아 있으면, 아무 일도 안 하는 멤버가 riven_agents/조직도에 "작업 중" 으로 잘못 뜬다
+    // (사용자가 "대기인데 왜 작업중?" 이라고 본 것). 죽은 세션은 busy 로 세지 않는다.
+    var isBusy: Bool { turnStart != nil && session?.isAlive != false }
 
     /// 조직도의 상태 칩이 읽는 값. busy 하나로는 "승인을 기다리며 멈춰 있음"과 "도구를 돌리는
     /// 중"이 구분되지 않는데, 병렬로 여러 명을 돌릴 때 정작 사람이 움직여야 하는 건 전자다.
     /// 승인 대기는 추론이 아니라 실제 권한 요청 이벤트(onPermissionRequest → 승인 카드)에서 온다.
     var runState: AgentRunState {
         if approvalActive { return .waiting }
-        guard turnStart != nil else { return .idle }
+        guard turnStart != nil, session?.isAlive != false else { return .idle }
         if let liveTool { return .tool(liveTool) }
         return .thinking
     }
@@ -1156,7 +1159,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
             addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
             apiRequest(args) { result in reply(result) }
-        case let n where n.hasPrefix("riven_note_"):
+        case let n where n.hasPrefix("riven_note_") || n == "riven_doc_write":
             let result = onNoteTool?(tool, args) ?? "notes unavailable"
             // 메모를 만들거나 고쳤으면 대화에도 한 줄 남긴다 — 패널을 안 보고 있어도
             // "에이전트가 뭘 썼는지"가 대화에서 드러나야 한다.
@@ -1176,11 +1179,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "riven_ask_agent":
             let target = s("agent"), msg = s("message")
             let wait = (args["wait"] as? Bool) ?? true
-            addSystem("→ \(target): \(ChatPanel.shortTitle(msg))")
+            // 진행 중임을 분명히 남긴다 — 예전엔 "→ 멤버" 한 줄뿐이라, 비동기(wait=false) 위임 때
+            // 리드에 아무 표시가 없어 돌고 있는지 끝났는지 알 수 없었다. 끝나면 "← 멤버 (완료)".
+            addSystem("→ \(target) · \(ChatPanel.shortTitle(msg)) — \(t("chat.delegating"))")
             if let onAskAgent {
                 onAskAgent(target, msg) { [weak self] answer in
                     guard let self else { return }
-                    self.addSystem("← \(target)")
+                    self.addSystem("← \(target) — \(t("chat.delegateDone"))")
                     // wait=false 였으면 도구 호출은 이미 끝났다 → 답을 대화로 밀어 넣는다.
                     if wait { reply(answer) } else { self.deliverPeerAnswer(from: target, answer) }
                 }
@@ -1198,10 +1203,10 @@ final class ChatPanel: NSView, Themable, Scalable {
                 return
             }
             let waitAll = (args["wait"] as? Bool) ?? true
-            addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", "))
+            addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", ") + " — \(t("chat.delegating"))")
             onAskAgents(tasks) { [weak self] answers in
                 guard let self else { return }
-                self.addSystem("← " + answers.map { $0.0 }.joined(separator: ", "))
+                self.addSystem("← " + answers.map { $0.0 }.joined(separator: ", ") + " — \(t("chat.delegateDone"))")
                 let joined = answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
                 if waitAll { reply(joined) } else { self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), joined) }
             }

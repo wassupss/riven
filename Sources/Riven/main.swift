@@ -3695,7 +3695,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.allowsMultipleSelection = false
         panel.begin { [weak self] resp in
             guard resp == .OK, let url = panel.url, let self else { return }
-            let canon = url.standardizedFileURL.resolvingSymlinksInPath()
+            let canon = AppDelegate.canonicalWorkspacePath(url.path)   // restoreSession 과 동일한 형태
             // Allow MULTIPLE workspaces on the same folder (parallel agent sessions like
             // cmux). Identity is disambiguated with a URL fragment (#2, #3…) that .path
             // ignores — so the filesystem/explorer/git/terminal all use the same real
@@ -3718,13 +3718,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 받아 주는 것: 맨 경로("/a/b"), 파일 URL("file:///a/b/"), 그리고 일부러 나눈 사본의
     /// 조각("file:///a/b/#2"). 조각은 살려 둔다 — 같은 폴더를 둘로 열어 둔 사람의 두 번째
     /// 카드가 사라지면 그건 고친 게 아니라 잃은 것이다.
+    /// 한 폴더의 정규 식별 경로 — 표준화 + 심링크 해제 + 끝 슬래시. openFolder 와 restoreSession
+    /// 이 반드시 이 하나를 거쳐 같은 형태를 만들어야 한다. 예전엔 openFolder 는 심링크를 풀고
+    /// (/tmp→/private/tmp) canonicalWorkspaceURL 은 안 풀어서, 심링크 경로나 구버전 세션 키에서
+    /// 같은 폴더가 카드 두 개로 갈라졌다 (그러면 3번째 카드를 눌러도 앞 카드로 붕괴). 두 변환을
+    /// 함께 쓰면 /tmp·/private/tmp 어느 쪽이 들어와도 같은 실경로로 수렴한다.
+    static func canonicalWorkspacePath(_ path: String) -> URL {
+        let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+        return URL(fileURLWithPath: resolved.path, isDirectory: true)
+    }
     static func canonicalWorkspaceURL(_ key: String) -> URL {
         let parsed = URL(string: key)
         let fragment = parsed?.fragment
         let path = parsed?.isFileURL == true ? parsed!.path : (parsed?.scheme == nil ? (parsed?.path ?? key) : key)
-        // standardizedFileURL 은 쓰지 않는다 — /private/tmp 를 /tmp 로 바꿔 버려서, 고쳐야 할
-        // 것(끝 슬래시·scheme)이 아닌 경로까지 손댄다. 여기서 맞추려는 건 형태이지 위치가 아니다.
-        let base = URL(fileURLWithPath: path, isDirectory: true)
+        let base = canonicalWorkspacePath(path)          // openFolder 와 동일한 정규화
         guard let fragment, !fragment.isEmpty,
               let withFrag = URL(string: base.absoluteString + "#" + fragment) else { return base }
         return withFrag
@@ -6964,8 +6971,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let ws = uniqueWorkspaceURL(for: url); rail.addWorkspace(ws); activate(ws)
                 srv.resolve(id, result: "opened \(url.path)")
             } else { srv.resolve(id, result: "not a folder: \(s("path"))") }
-        case let n where n.hasPrefix("riven_note_"):
-            srv.resolve(id, result: runNoteTool(tool, args))
+        case let n where n.hasPrefix("riven_note_") || n == "riven_doc_write":
+            // owner = workspaceContaining(cwd) — 호출한 CLI 의 워크스페이스에 쓴다. 예전엔 owner 를
+            // 넘기지 않아 전역(보고 있는) 워크스페이스 루트에 문서가 떨어졌다.
+            srv.resolve(id, result: runNoteTool(tool, args, in: owner))
         default:
             srv.resolve(id, result: "unknown tool: \(tool)")
         }
@@ -7036,7 +7045,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var rel = s("path")
             if rel.isEmpty { return "path is required" }
             if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
-            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel) : ws.appendingPathComponent(rel)
+            // 워크스페이스 문서는 <ws>/.claude/docs 아래에 모은다 — 저장소 루트를 어지르지 않고,
+            // 문서 탭이 이 폴더를 스캔한다. 절대경로는 그대로 두되(드묾) isInside 로 워크스페이스
+            // 밖 쓰기를 막는다.
+            let base = ws.appendingPathComponent(".claude/docs", isDirectory: true)
+            let dest = rel.hasPrefix("/") ? URL(fileURLWithPath: rel) : base.appendingPathComponent(rel)
             guard AppDelegate.isInside(dest, ws) else {
                 return "refusing to write outside the workspace: \(AppDelegate.resolved(dest).path)"
             }
