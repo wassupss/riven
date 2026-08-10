@@ -280,6 +280,10 @@ final class SupabaseAuth {
         "browserTabs", "browserActiveTab",   // 이 기기에서 열어 둔 탭
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
+        // 이 기기의 로컬 부기 값 — 동기화하면 안 된다. 특히 lastSeenVersion 이 동기화되면,
+        // 한 기기가 업데이트 후 클라우드에 현재 버전을 올리고 → 다른 기기가 그 값을 pull 해
+        // "이미 봤음" 이 돼 릴리스노트 다이얼로그가 안 떴다. installId 는 설치별 식별자라 공유 금지.
+        "lastSeenVersion", "installId",
         // The local-change stamp is bookkeeping, never uploaded — AND it must be here or
         // localChanged() recurses into itself: set(any syncable key) → .rivenSettingChanged →
         // localChanged → set(localStampKey) → .rivenSettingChanged → localChanged → … until the

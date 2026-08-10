@@ -82,6 +82,15 @@ enum NoteStore {
             out.append(note(u, scope: .workspace))
             if out.count >= limit { break }
         }
+        // riven_doc_write 는 <ws>/.claude/docs 에 쓴다. 위 열거는 .skipsHiddenFiles 라 점(.)으로
+        // 시작하는 .claude 폴더를 못 봐서, 여기서 그 폴더만 따로 얕게 훑어 합친다.
+        let docsDir = ws.appendingPathComponent(".claude/docs", isDirectory: true)
+        if let extra = try? fm.contentsOfDirectory(at: docsDir, includingPropertiesForKeys: [.contentModificationDateKey],
+                                                   options: [.skipsSubdirectoryDescendants]) {
+            for u in extra where u.pathExtension.lowercased() == "md" {
+                out.append(note(u, scope: .workspace))
+            }
+        }
         return out.sorted { $0.updated > $1.updated }
     }
 

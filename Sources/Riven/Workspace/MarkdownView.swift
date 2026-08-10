@@ -36,7 +36,7 @@ final class MarkdownView: NSView, Themable, Scalable {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            stack.widthAnchor.constraint(equalTo: scroll.widthAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
         Theme.register(self); UIScale.register(self)
     }

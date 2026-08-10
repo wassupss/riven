@@ -140,6 +140,11 @@ final class SettingsWindow: NSPanel {
         content.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = content
         scroll.hasVerticalScroller = true
+        // "스크롤 막대 항상 표시" 로 설정된 맥에서는 세로 스크롤러가 폭을 먹는데, 문서 폭을
+        // 클립 뷰(scroll.contentView)에 묶어 두면 딱 맞아 가로 스크롤이 생기지 않는다. 가로
+        // 스크롤러 자체도 꺼서 어떤 경우에도 x축 막대가 뜨지 않게 한다.
+        scroll.hasHorizontalScroller = false
+        scroll.horizontalScrollElasticity = .none
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.automaticallyAdjustsContentInsets = false
@@ -176,7 +181,7 @@ final class SettingsWindow: NSPanel {
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             content.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             content.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            content.widthAnchor.constraint(equalTo: scroll.widthAnchor)
+            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         contentView = root
         rootView = root

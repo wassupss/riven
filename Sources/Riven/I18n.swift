@@ -162,6 +162,8 @@ enum I18n {
         "chat.cancel": ("취소", "Cancel"),
         "chat.delegated": ("{a} 에게 전달했습니다. 끝나면 답이 이 대화로 옵니다.",
                            "Sent to {a}. The answer will arrive in this conversation when it's done."),
+        "chat.delegating": ("진행 중…", "in progress…"),
+        "chat.delegateDone": ("완료", "done"),
         "chat.peerAnswer": ("[{a} 의 작업 결과]", "[Result from {a}]"),
         // 입력창에서 @동료 부르기
         "chat.mention.empty": ("@동료 뒤에 시킬 내용을 적어 주세요.", "Add what you want them to do after the @name."),

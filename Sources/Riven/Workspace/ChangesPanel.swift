@@ -56,7 +56,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             rowsStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             rowsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            rowsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
+            rowsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         // Coalesce refreshes: a burst of agent edits (one notify per file) would otherwise
         // rebuild the whole row list once per file — O(N²) over a turn. Collapse all notifies

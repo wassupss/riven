@@ -112,7 +112,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
             scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
             rowsStack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             rowsStack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
-            rowsStack.widthAnchor.constraint(equalTo: scroll.widthAnchor)
+            rowsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         applyTheme()
         Theme.register(self); UIScale.register(self)
