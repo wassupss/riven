@@ -21,7 +21,8 @@ final class SettingsWindow: NSPanel {
     /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 — 여기에 "저장됨" 을 띄우면 거짓말이다.
     private static let silentKeys: Set<String> = ["session", "sidebarWidth", "railHeight",
                                                   "railCollapsed", "browserTabs", "browserZooms",
-                                                  "browserActiveTab", "lastSeenVersion", "installId"]          // .rivenAuthChanged → refresh the Account tab
+                                                  "browserActiveTab", "lastSeenVersion", "installId",
+                                                  "syncLocalStamp"]          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
     deinit {
@@ -605,6 +606,7 @@ final class SettingsWindow: NSPanel {
         // 프로젝트가 아니라 riven 전체에 걸린다.
         addSection(t("settings.promptSection"))
         addNote(t("settings.promptNote"))
+        addWideRow(promptTemplatePicker())
         addWideRow(promptEditor(), fill: true)
 
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
@@ -1351,6 +1353,37 @@ final class SettingsWindow: NSPanel {
         sc.translatesAutoresizingMaskIntoConstraints = false
         sc.heightAnchor.constraint(equalToConstant: UIScale.pt(120)).isActive = true
         return sc
+    }
+    /// 고정 프롬프트를 처음부터 쓰기 막막할 때를 위한 예시 몇 개. 고르면 편집기에 넣어 준다
+    /// (이미 내용이 있으면 지우지 않고 아래에 이어 붙인다 — 여러 개를 섞어 쓸 수 있게).
+    private func promptTemplates() -> [(String, String)] {
+        [(t("settings.promptTpl.warm"),    t("settings.promptTpl.warmBody")),
+         (t("settings.promptTpl.concise"), t("settings.promptTpl.conciseBody")),
+         (t("settings.promptTpl.review"),  t("settings.promptTpl.reviewBody")),
+         (t("settings.promptTpl.korean"),  t("settings.promptTpl.koreanBody"))]
+    }
+    private func promptTemplatePicker() -> NSView {
+        // pull-down: 첫 항목은 늘 보이는 제목이고, 나머지가 실제 선택지다.
+        let pop = NSPopUpButton(frame: .zero, pullsDown: true)
+        pop.addItem(withTitle: t("settings.promptTemplate"))
+        for tpl in promptTemplates() { pop.addItem(withTitle: tpl.0) }
+        pop.font = UIScale.font(UIScale.small)
+        pop.target = self; pop.action = #selector(promptTemplatePicked(_:))
+        let wrap = NSStackView(views: [pop]); wrap.orientation = .horizontal
+        return wrap
+    }
+    @objc private func promptTemplatePicked(_ p: NSPopUpButton) {
+        // pull-down 에서 인덱스 0 은 제목이므로 실제 템플릿은 1 부터.
+        let idx = p.indexOfSelectedItem
+        let tpls = promptTemplates()
+        guard idx >= 1, idx - 1 < tpls.count else { return }
+        let body = tpls[idx - 1].1
+        let cur = fixedPromptView.string
+        let combined = cur.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? body : cur + "\n\n" + body
+        fixedPromptView.string = combined
+        Settings.shared.set("prompt.global", combined)
+        p.selectItem(at: 0)   // 제목으로 되돌린다
     }
     private func primaryButton(_ title: String, _ action: Selector) -> NSView {
         let b = PadButton(title: title, font: UIScale.font(UIScale.title, .semibold),

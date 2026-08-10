@@ -69,6 +69,13 @@ final class Settings {
 
     func set(_ key: String, _ value: Any) {
         lock.lock()
+        // 값이 그대로면 아무 일도 없었던 것으로 친다. 탭을 그릴 때 컨트롤이 현재 값을
+        // 자기 자신에게 다시 써넣는(예: 폰트칸의 sendsActionOnEndEditing → saveFonts) 경우가
+        // 있는데, 그때마다 .rivenSettingChanged 를 쏘면 (1) 설정창에 헛-"저장됨" 이 뜨고
+        // (2) 클라우드 동기화가 바뀐 게 없는데도 dirty 로 표시된다.
+        if let old = dict[key] as? NSObject, let new = value as? NSObject, old.isEqual(new) {
+            lock.unlock(); return
+        }
         dict[key] = value
         lock.unlock()
         scheduleFlush()
