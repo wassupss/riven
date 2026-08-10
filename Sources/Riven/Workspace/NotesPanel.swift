@@ -396,14 +396,14 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     }
 
     // ---- selection / editing ----
-    private func select(_ url: URL) {
+    private func select(_ url: URL, forcePreview: Bool = false) {
         flush()                       // don't lose edits to the note we're leaving
         selectedURL = url
         agentTouched.remove(url.path)  // 열어 봤으면 "새로 생김" 표시는 지운다
-        // 워크스페이스 문서(.md, 보통 에이전트가 쓴 것)는 읽으라고 여는 것이니 미리보기로,
-        // 개인 메모는 쓰라고 여는 것이니 편집으로 연다. 예전에는 직전 모드를 그대로 물려받아
-        // 편집 중이었으면 문서를 열어도 원문 편집 화면이 떴다.
-        previewing = (selected?.scope == .workspace)
+        // 에이전트가 방금 만들어 띄운 것(forcePreview)은 읽으라고 여는 것이니 항상 미리보기.
+        // 그 외에는 워크스페이스 문서(.md)는 미리보기, 개인 메모는 편집으로 연다. 예전에는 직전
+        // 모드를 물려받아 편집 중이었으면 문서를 열어도 원문 편집 화면이 떴다.
+        previewing = forcePreview || (selected?.scope == .workspace)
         modeTabs.select(previewing ? 1 : 0)
         loadSelectionIntoEditor()     // previewing 이면 preview 를 함께 렌더한다
         setMode(detail: true)
@@ -496,12 +496,12 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     /// 벤치용: 지금 열려 있는 문서 경로.
     func debugCurrentPath() -> String { selectedURL?.lastPathComponent ?? "(없음)" }
 
-    func open(_ url: URL) {
+    func open(_ url: URL, forcePreview: Bool = false) {
         flush()
         let inWs = workspace.map { url.path.hasPrefix($0.path) } ?? false
         if inWs != showingDocs { showingDocs = inWs; sourceTabs.select(inWs ? 1 : 0) }
         reload()
-        select(url)
+        select(url, forcePreview: forcePreview)
     }
 
     /// 검증용: 편집 ↔ 미리보기 전환 (탭을 누른 것과 같은 경로).
@@ -525,11 +525,13 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         reload(force: true)      // 방금 쓴 문서가 목록에 바로 보여야 한다
         // 에이전트가 쓴 문서를 바로 펼친다. 예전에는 목록만 갱신해서 패널만 열리고
         // 정작 무엇을 썼는지 사용자가 다시 찾아 들어가야 했다.
-        if selectedURL != url { open(url); return }
+        // 에이전트가 방금 만든/고친 문서는 읽으라고 띄우는 것 → 항상 미리보기로.
+        if selectedURL != url { open(url, forcePreview: true); return }
         if selectedURL == url {
             saveTimer?.invalidate(); saveTimer = nil
+            previewing = true; modeTabs.select(1)
             loadSelectionIntoEditor()
-            if previewing { preview.setMarkdown(body.string) }
+            preview.setMarkdown(body.string)
         }
         setMode(detail: showingDetail)   // 되돌리기 버튼 노출 갱신
     }

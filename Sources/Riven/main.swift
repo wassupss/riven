@@ -4223,7 +4223,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     let parent = fld(4), model = fld(5), avatar = fld(6)
                     let kind = ChatAgentKind(rawValue: fld(7)) ?? .claude   // 빈 칸 = 예전 스냅샷 = claude
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
-                        return liveChats.remove(at: i)          // reuse — no respawn, no reload
+                        let live = liveChats.remove(at: i)      // reuse — no respawn, no reload
+                        // 재사용해도 그룹 정체성은 스냅샷 기준으로 다시 세운다. 예전엔 여기서
+                        // 그냥 반환해, 재사용된 멤버 팬의 group/nickname 이 비거나 낡아 조직도에서
+                        // "열려 있는데 닫힘" 으로 잘못 뜨는 경우가 있었다 (liveAgentGroups 는
+                        // chat.groupName + agentRole 로 라이브 여부를 판단한다).
+                        if !nick.isEmpty {
+                            live.title = group.isEmpty ? nick : "\(group) · \(nick)"
+                            live.agentName = nick; live.chatNickname = nick
+                            live.chatGroup = group.isEmpty ? nil : group
+                            live.chatParent = parent.isEmpty ? nil : parent
+                            let chat = live.content as? ChatPanel
+                            chat?.nickname = nick; chat?.groupName = group.isEmpty ? nil : group
+                            chat?.parentName = parent.isEmpty ? nil : parent
+                        }
+                        return live
                     }
                     let p = self.makeChatPanel(for: st, resume: sid.isEmpty ? nil : sid,
                                                agent: persona.isEmpty ? nil : persona,
