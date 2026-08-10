@@ -23,8 +23,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let sendButton = CircleButton()               // circular ↑ / ■ (send / stop), accent
     private let plusButton = CircleButton()               // circular + (attach a file path)
     private let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let modelPopup = NSPopUpButton(frame: .zero, pullsDown: false)   // pick this pane's model, inline
     private let composer = NSVisualEffectView()          // glass composer card (input on top, action row below)
     private let modeChip = NSView()                      // pill behind the compact mode popup
+    private let modelChip = NSView()                     // pill behind the compact model popup (next to mode)
     private let hairline = NSView()
     private let slash = SlashPopup()
     private var slashHeight: NSLayoutConstraint!
@@ -104,6 +106,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onAttention: ((Bool) -> Void)?
     var onTitle: ((String) -> Void)?
     var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
+    var onModelChanged: ((String?) -> Void)?  // inline model chip → persist onto the DockPanel (chatModel)
     var onOpenSettings: (() -> Void)?       // /config
     private let attnRing = AttnRingView(frame: .zero)
     // Live-edge scrolling (shadcn MessageScroller behavior): only auto-follow the bottom while the
@@ -178,6 +181,21 @@ final class ChatPanel: NSView, Themable, Scalable {
         modePopup.target = self; modePopup.action = #selector(modeChanged)
         modePopup.translatesAutoresizingMaskIntoConstraints = false
 
+        // Model chip: pick this pane's model inline, right next to the mode chip. Mirrors the mode
+        // popup's compact/borderless styling. Selection reflects preferredModel and updates when the
+        // CLI reports the running model (onInit); changing it applies live + persists with the layout.
+        modelChip.wantsLayer = true
+        modelChip.layer?.cornerRadius = UIScale.pt(28) / 2
+        modelChip.translatesAutoresizingMaskIntoConstraints = false
+        modelPopup.addItems(withTitles: ChatPanel.selectableModels.map { $0.0 })
+        modelPopup.font = UIScale.font(UIScale.caption, .medium)
+        modelPopup.controlSize = .small
+        modelPopup.isBordered = false
+        modelPopup.toolTip = t("chat.model.tip")
+        modelPopup.target = self; modelPopup.action = #selector(modelChanged)
+        modelPopup.translatesAutoresizingMaskIntoConstraints = false
+        syncModelPopup()
+
         input.placeholder = t("chat.placeholder")
         input.onSubmit = { [weak self] in self?.sendFromInput() }
         input.onTextChange = { [weak self] in self?.inputChanged() }
@@ -212,7 +230,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         jumpButton.translatesAutoresizingMaskIntoConstraints = false
 
         modeChip.addSubview(modePopup)
-        [modeChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
+        modelChip.addSubview(modelPopup)
+        [modeChip, modelChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
         [scroll, subSide, hairline, composer, slash, jumpButton, planBadge].forEach { addSubview($0) }
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
@@ -271,7 +290,14 @@ final class ChatPanel: NSView, Themable, Scalable {
             modePopup.leadingAnchor.constraint(equalTo: modeChip.leadingAnchor, constant: 8),
             modePopup.trailingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: -4),
             modePopup.centerYAnchor.constraint(equalTo: modeChip.centerYAnchor),
-            plusButton.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 6),
+            // model chip sits right next to the mode chip
+            modelChip.leadingAnchor.constraint(equalTo: modeChip.trailingAnchor, constant: 6),
+            modelChip.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
+            modelChip.heightAnchor.constraint(equalToConstant: UIScale.pt(28)),
+            modelPopup.leadingAnchor.constraint(equalTo: modelChip.leadingAnchor, constant: 8),
+            modelPopup.trailingAnchor.constraint(equalTo: modelChip.trailingAnchor, constant: -4),
+            modelPopup.centerYAnchor.constraint(equalTo: modelChip.centerYAnchor),
+            plusButton.leadingAnchor.constraint(equalTo: modelChip.trailingAnchor, constant: 6),
             plusButton.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
             plusButton.widthAnchor.constraint(equalToConstant: UIScale.pt(28)),
             plusButton.heightAnchor.constraint(equalToConstant: UIScale.pt(28)),
@@ -390,6 +416,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         composer.appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
         composer.layer?.borderColor = Theme.edge.cgColor
         modeChip.layer?.backgroundColor = Theme.hover.cgColor
+        modelChip.layer?.backgroundColor = Theme.hover.cgColor
         input.textColor = Theme.fg
         jumpButton.fillColor = Theme.hover
         jumpButton.strokeColor = Theme.edge
@@ -989,6 +1016,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                 agentName: agentPersona, model: preferredModel)
         s?.onInit = { [weak self] sid, model in
             self?.model = model; self?.sessionId = sid; self?.onSessionId?(sid)
+            self?.syncModelPopup()   // 실행 중인 모델을 인라인 칩에 반영
             self?.restorePlanBadge(sid)
         }
         s?.onTextDelta = { [weak self] t in
@@ -1688,6 +1716,25 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.setModel(id ?? "default")
         let label = ChatPanel.selectableModels.first { $0.1 == (id ?? "default") }?.0 ?? "?"
         addSystem(t("chat.model.set", ["m": label]))
+        syncModelPopup()
+    }
+    /// 컴포저의 모델 칩에서 고른 모델을 적용한다 (라이브 세션 변경 + 레이아웃에 영속).
+    @objc private func modelChanged() {
+        let models = ChatPanel.selectableModels
+        let i = modelPopup.indexOfSelectedItem
+        guard i >= 0, i < models.count else { return }
+        let id = models[i].1 == "default" ? nil : models[i].1
+        applyModel(id)
+        onModelChanged?(id)   // DockPanel.chatModel 까지 갱신해 재시작에도 유지
+    }
+    /// 인라인 모델 팝업이 현재 모델을 가리키게 한다. 고정한 preferredModel 을 먼저, 없으면 CLI 가
+    /// 알려 준 실행 모델("claude-opus-5" 등)을 selectableModels 에 맞춰 보고, 그것도 없으면 기본.
+    private func syncModelPopup() {
+        let models = ChatPanel.selectableModels
+        var idx = 0
+        if let want = preferredModel, !want.isEmpty, let i = models.firstIndex(where: { $0.1 == want }) { idx = i }
+        else if let m = model?.lowercased(), let i = models.firstIndex(where: { $0.1 != "default" && m.contains($0.1) }) { idx = i }
+        if idx < modelPopup.numberOfItems { modelPopup.selectItem(at: idx) }
     }
     /// 벤치용: 입력창에 한 줄 넣고 Enter 를 누른 것과 같은 경로 (@멘션 파싱까지 그대로 탄다).
     func debugSendInput(_ text: String) {
