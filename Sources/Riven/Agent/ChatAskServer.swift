@@ -58,7 +58,7 @@ final class ChatAskServer {
     }
     var toolPrefix: String { "mcp__riven" }        // allowedTools entry: allow all riven tools
     func systemPrompt() -> String {
-        """
+        let base = """
         이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
         - 문서를 써 달라고 하면 `riven_doc_write`(path, body) 로 실제 .md 파일을 만듭니다. path 는 그 워크스페이스의 `.claude/docs/` 기준입니다 (예: path="정리.md" → `<워크스페이스>/.claude/docs/정리.md`). 문서 탭에 뜹니다. `riven_note_write` 는 저장소에 남기지 않는 작업 메모용입니다.
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
@@ -77,6 +77,13 @@ final class ChatAskServer {
         - **advisor(자문)**: 일은 넘기지 않고 2차 소견만 받을 때. 한 명에게 "이 접근이 맞는지 / 놓친 게 있는지" 만 묻고 결정과 실행은 당신이 합니다.
         - **loop(루프)**: worker↔verifier 사이클. 한 동료가 만들고 다른 동료가 검증해 되돌리기를 반복합니다. 반드시 **종료 조건(예: verifier가 통과)·최대 반복 횟수·최대 시간**으로 묶어 무한 반복을 막으세요. worker 와 verifier 는 서로 다른 동료(가능하면 다른 계열)로 두어야 서로의 맹점을 잡습니다.
         """
+        // 사용자가 설정(설정 → AI)에서 지정한 전역 고정 프롬프트를 모든 에이전트에 덧붙인다.
+        // CLAUDE.md 처럼 프로젝트가 아니라 riven 전체에 걸리는 기본 지침. 네이티브 챗과 터미널
+        // shim 이 둘 다 이 systemPrompt() 를 --append-system-prompt 로 넘기므로 한 곳이면 양쪽에
+        // 적용된다. (append 라 CLAUDE.md·CLI 기본 프롬프트를 대체하지 않고 더한다. 스폰 시점에
+        // 굳으므로 새 세션부터 반영된다.)
+        let user = Settings.shared.string("prompt.global", "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return user.isEmpty ? base : base + "\n\n# 사용자 지정 지침\n" + user
     }
 
     /// 답을 기다리던 요청이 실제로 있었는지 돌려준다 — 이미 만료·취소된 요청에 답하면 false

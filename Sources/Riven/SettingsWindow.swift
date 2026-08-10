@@ -15,6 +15,7 @@ final class SettingsWindow: NSPanel {
     private var fontPickers: [String: NSPopUpButton] = [:]
     private let editorPreview = NSTextField(labelWithString: "")
     private let terminalPreview = NSTextField(labelWithString: "")
+    private let fixedPromptView = HintTextView()   // 전역 고정 프롬프트 편집기 (AI 탭)
     private var authObserver: Any?
     private var settingObserver: Any?
     /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 — 여기에 "저장됨" 을 띄우면 거짓말이다.
@@ -599,6 +600,12 @@ final class SettingsWindow: NSPanel {
                              models: [(t("chat.model.default"), "default")] + cx.map { ($0.label, $0.id) }))
         }
         addRow(t("settings.defaultPermMode"), desc: t("settings.defaultPermModeDesc"), defaultModeMenu())
+
+        // 전역 고정 프롬프트: 모든 에이전트(챗·터미널)에 덧붙는 기본 지침 — CLAUDE.md 처럼 쓰되
+        // 프로젝트가 아니라 riven 전체에 걸린다.
+        addSection(t("settings.promptSection"))
+        addNote(t("settings.promptNote"))
+        addWideRow(promptEditor())
 
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
         // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
@@ -1321,6 +1328,30 @@ final class SettingsWindow: NSPanel {
         tf.heightAnchor.constraint(equalToConstant: 22).isActive = true   // compact (riven .set-num)
         return tf
     }
+    /// 전역 고정 프롬프트 멀티라인 편집기. 값은 즉시(디바운스) 저장된다 (textDidChange).
+    private func promptEditor() -> NSView {
+        let tv = fixedPromptView
+        tv.font = UIScale.mono(UIScale.small)
+        tv.isRichText = false; tv.drawsBackground = false; tv.allowsUndo = true
+        tv.textColor = Theme.fg; tv.insertionPointColor = Theme.fg
+        tv.textContainerInset = NSSize(width: 6, height: 6)
+        tv.isVerticallyResizable = true; tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.textContainer?.widthTracksTextView = true
+        tv.hint = t("settings.promptHint")
+        tv.string = Settings.shared.string("prompt.global", "")
+        tv.delegate = self
+        let sc = NSScrollView()
+        sc.documentView = tv
+        sc.hasVerticalScroller = true; sc.hasHorizontalScroller = false
+        sc.horizontalScrollElasticity = .none
+        sc.drawsBackground = true; sc.backgroundColor = Theme.isLight ? Theme.bg : Theme.bg3
+        sc.wantsLayer = true; sc.layer?.cornerRadius = 5
+        sc.layer?.borderWidth = 1; sc.layer?.borderColor = Theme.edge.cgColor
+        sc.translatesAutoresizingMaskIntoConstraints = false
+        sc.heightAnchor.constraint(equalToConstant: UIScale.pt(120)).isActive = true
+        return sc
+    }
     private func primaryButton(_ title: String, _ action: Selector) -> NSView {
         let b = PadButton(title: title, font: UIScale.font(UIScale.title, .semibold),
             textColor: Theme.isLight ? .white : Theme.hex(Theme.current.bg),
@@ -1459,5 +1490,14 @@ final class SettingsCard: NSView, Themable {
         layer?.backgroundColor = Theme.bg3.cgColor
         layer?.borderWidth = 1
         layer?.borderColor = Theme.hairline.cgColor
+    }
+}
+
+extension SettingsWindow: NSTextViewDelegate {
+    // 전역 고정 프롬프트 편집기의 변경을 즉시(디바운스) 저장한다. 이 창의 다른 텍스트 입력은
+    // NSTextField(별도 경로)라, 여기로 오는 건 fixedPromptView 뿐이다.
+    func textDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTextView) === fixedPromptView else { return }
+        Settings.shared.set("prompt.global", fixedPromptView.string)
     }
 }
