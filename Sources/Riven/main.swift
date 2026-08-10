@@ -4931,16 +4931,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                 guard let self, let ws = self.workspace else { return }
                 RLog.log("DOC write=" + self.runNoteTool("riven_doc_write",
-                    ["path": "docs/정리.md", "body": "# 정리 문서\n\n본문 첫 줄.\n"]))
+                    ["path": "정리.md", "body": "# 정리 문서\n\n본문 첫 줄.\n"], in: ws))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    let f = ws.appendingPathComponent("docs/정리.md")
-                    RLog.log("DOC 파일존재=\(FileManager.default.fileExists(atPath: f.path)) "
+                    let f = ws.appendingPathComponent(".claude/docs/정리.md")
+                    RLog.log("DOC 파일존재=\(FileManager.default.fileExists(atPath: f.path)) 경로=\(f.path) "
                            + "패널문서=\(self.notesPanel.debugCurrentPath()) "
                            + "미리보기제목중복=\(self.notesPanel.debugPreviewHasTitleTwice())")
                     RLog.log("DOC 덮어쓰기거부=" + self.runNoteTool("riven_doc_write",
-                        ["path": "docs/정리.md", "body": "x"]))
+                        ["path": "정리.md", "body": "x"], in: ws))
                     RLog.log("DOC 밖차단=" + self.runNoteTool("riven_doc_write",
-                        ["path": "../밖.md", "body": "x"]))
+                        ["path": "../../../../../../../../tmp/riven-escape.md", "body": "x"], in: ws))
                 }
             }
         }

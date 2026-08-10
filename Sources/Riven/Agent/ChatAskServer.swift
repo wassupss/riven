@@ -60,7 +60,7 @@ final class ChatAskServer {
     func systemPrompt() -> String {
         """
         이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
-        - 문서를 써 달라고 하면 `riven_doc_write`(path, body) 로 워크스페이스에 실제 .md 파일을 만듭니다. `riven_note_write` 는 저장소에 남기지 않는 작업 메모용입니다.
+        - 문서를 써 달라고 하면 `riven_doc_write`(path, body) 로 실제 .md 파일을 만듭니다. path 는 그 워크스페이스의 `.claude/docs/` 기준입니다 (예: path="정리.md" → `<워크스페이스>/.claude/docs/정리.md`). 문서 탭에 뜹니다. `riven_note_write` 는 저장소에 남기지 않는 작업 메모용입니다.
         - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 `ask_user`(mcp__riven__ask_user) 를 호출하세요(options 배열 → UI에서 방향키 선택, 고른 값 반환).
         - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
         - riven 브라우저를 직접 운전할 수 있습니다: `riven_browser_open`(url, new_tab?) 로 열고, `riven_browser_state`() 로 지금 주소·제목을 확인하고, `riven_browser_read`(selector?, html?) 로 내용을 읽고, `riven_browser_click`(selector) / `riven_browser_fill`(selector, value, submit?) 로 조작하고, 늦게 그려지는 화면은 `riven_browser_wait`(selector) 로 기다립니다. 뒤로/앞으로/새로고침은 `riven_browser_go`(action). 화면이 필요하면 `riven_screenshot`(url?) 로 캡처해 PNG 경로를 Read 로 읽으세요.
