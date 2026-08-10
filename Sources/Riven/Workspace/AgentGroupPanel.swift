@@ -1049,11 +1049,22 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         refreshPersonas()
         groups = groupsProvider?() ?? []
         if let g = shownGroup, !groups.contains(where: { $0.group == g }) { shownGroup = nil }
+        // 재시작하면 패널이 새로 생겨 shownGroup 이 nil → 늘 "새 그룹" 탭으로 떨어졌다. 마지막으로
+        // 보던 그룹을 워크스페이스별로 저장해 두었다가, 아직 살아 있으면 그 탭으로 되돌린다.
+        // (draft 탭을 보고 있었으면 빈 문자열이 저장돼 있어 그대로 새 그룹 탭에 머문다.)
+        if shownGroup == nil, let g = loadShownGroup?(), !g.isEmpty,
+           groups.contains(where: { $0.group == g }) {
+            shownGroup = g
+        }
         tabStrip.tabs = [(t("team.draft"), nil)] + groups.map { ($0.group, $0.members.count) }
         let idx = shownGroup.flatMap { g in groups.firstIndex(where: { $0.group == g }).map { $0 + 1 } } ?? 0
         tabStrip.select(idx)
         applyTab()
     }
+    /// 마지막으로 본 그룹 탭을 워크스페이스별로 기억한다 (재시작 후 그 탭으로 복원). 호스트가
+    /// Settings 에 이어 준다 — 패널은 워크스페이스를 직접 모르기 때문.
+    var loadShownGroup: (() -> String?)?
+    var saveShownGroup: ((String?) -> Void)?
     private var groups: [(group: String, members: [AgentNode])] = []
 
     /// 카드의 페르소나 목록을 지금 워크스페이스 기준으로 다시 채운다.
@@ -1104,6 +1115,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     func show(group: String) {
         shownGroup = group
         previewing = false
+        saveShownGroup?(shownGroup)
         refresh()
     }
 
@@ -1139,6 +1151,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     private func tabPicked(_ i: Int) {
         shownGroup = (i == 0) ? nil : (i - 1 < groups.count ? groups[i - 1].group : nil)
         if shownGroup != nil { previewing = false }   // 기존 그룹 탭은 언제나 조직도
+        saveShownGroup?(shownGroup)   // 재시작 후 이 탭으로 복원 (draft = 빈 문자열)
         applyTab()
     }
 

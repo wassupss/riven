@@ -3374,6 +3374,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let st = state(for: ws)
         if let t = st.team { return t }
         let p = AgentGroupPanel(frame: .zero)
+        // 마지막으로 본 그룹 탭을 워크스페이스별로 기억한다 — 재시작하면 패널이 새로 생겨 늘
+        // "새 그룹" 탭으로 떨어지던 것을, 보던 그룹 탭으로 되돌린다. (draft = 빈 문자열)
+        let shownKey = "team.shown.\(ws.path)"
+        p.saveShownGroup = { g in Settings.shared.set(shownKey, g ?? "") }
+        p.loadShownGroup = { let s = Settings.shared.string(shownKey, ""); return s.isEmpty ? nil : s }
         p.agentsProvider = { [weak self] in self?.chatAgents() ?? [] }
         p.onCreate = { [weak self] group, specs in self?.createAgentGroup(group, specs) }
         // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
