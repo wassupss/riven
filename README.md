@@ -58,3 +58,12 @@ dmg release (`.github/workflows/release.yml`).
 | Preview / Pop out panel | `⌘⇧V` / `⌘⇧P` |
 | Settings / Keybindings | `⌘,` / `⌥⌘K` |
 | Split editor (right / down) | `⌘\` / `⌥⌘\` |
+
+## License
+
+riven is **source-available, not open source**. It is licensed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE) — you're free to read, study, and use it
+for **noncommercial** purposes, but **commercial use is not permitted** without a separate
+license. For commercial licensing, contact the author.
+
+© 2026 riven. All rights reserved except as granted by the license.
