@@ -880,6 +880,49 @@ final class ChatPanel: NSView, Themable, Scalable {
         loadHistory(cwd: url.path, sessionId: sid)
         onSessionId?(sid)
     }
+
+    // ---- Restart on the current CLI (after it auto-updates mid-session) --------------------
+    // The `claude` CLI updates itself in place while riven runs; the already-running headless
+    // process keeps the OLD binary in memory (and older builds could spin a dead pipe reader at
+    // 100% CPU). Restarting the process on the current binary — resuming the same session id so
+    // the conversation continues — is just switchSession(to: ownSessionId), which already respawns
+    // via the freshly-resolved claudeCmd().
+    var onRestartAllCLI: (() -> Void)?      // "restart all" from the offer → AppDelegate restarts every chat
+
+    /// True when the CLI has auto-updated since this chat's process was spawned.
+    func cliUpgradeAvailable() -> Bool {
+        guard agentKind == .claude,
+              let spawned = session?.spawnVersion,
+              let now = AgentDiscovery.claudeVersion(),
+              spawned != now else { return false }
+        return true
+    }
+
+    private var cliUpgradeOfferedFor: String?   // don't re-offer the same version repeatedly
+    /// Offer to restart on the current CLI when this chat runs an out-of-date one. Call after a
+    /// fresh version read (AgentDiscovery.claudeVersion(fresh: true)). Offered once per new version.
+    func offerCLIUpgradeIfStale() {
+        guard cliUpgradeAvailable(), let now = AgentDiscovery.claudeVersion(),
+              cliUpgradeOfferedFor != now else { return }
+        cliUpgradeOfferedFor = now
+        presentChoice(t("chat.cliUpgrade.title", ["ver": now]), options: [
+            (t("chat.cliUpgrade.all"),   { [weak self] in self?.onRestartAllCLI?() }),
+            (t("chat.cliUpgrade.this"),  { [weak self] in self?.restartOnCurrentCLI() }),
+            (t("chat.cliUpgrade.later"), { }),
+        ], allowOther: false)
+    }
+
+    /// Restart this chat's process on the current CLI, resuming the same conversation. No-op if
+    /// there's no session yet or a turn is in flight (restarting mid-turn would drop it).
+    @discardableResult
+    func restartOnCurrentCLI() -> Bool {
+        guard agentKind == .claude, let sid = session?.sessionId else { return false }
+        guard !isBusy else { addSystem(t("chat.cliRestartBusy")); return false }
+        cliUpgradeOfferedFor = nil
+        switchSession(to: sid)   // stop → current claudeCmd() --resume sid → replay history
+        addSystem(t("chat.cliRestarted", ["ver": AgentDiscovery.claudeVersion() ?? "?"]))
+        return true
+    }
     // This workspace's past sessions (newest first) with a title from the first user message.
     private func listSessions() -> [(id: String, title: String, date: String)] {
         guard let cwd = workspace?.path else { return [] }
@@ -1456,8 +1499,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         if let sid = session?.sessionId { lines.append("\(t("chat.status.session", ["id": String(sid.prefix(8))]))") }
         // 어느 CLI 로 도는 팬인지부터 적는다 — 아래 줄들이 무엇에 대한 것인지가 달라진다.
         lines.append("\(t("chat.status.agent")): \(agentKind.displayName)")
-        if agentKind == .claude, let v = AgentDiscovery.claudeVersion() {
+        if agentKind == .claude, let v = AgentDiscovery.claudeVersion(fresh: true) {
             lines.append("\(t("chat.status.cli")): \(v)")
+            if cliUpgradeAvailable(), let old = session?.spawnVersion {
+                lines.append(t("chat.status.cliStale", ["old": old, "new": v]))
+            }
         }
         let tools = session?.toolList ?? []
         if !tools.isEmpty {
@@ -1529,6 +1575,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             return true
         case "status":
             showStatus(); return true
+        case "restart":
+            // Restart this chat on the current CLI, resuming the conversation (picks up a CLI
+            // auto-update without losing history). "all" restarts every chat in the workspace.
+            let arg = String(text.dropFirst()).split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            if arg == "all" { onRestartAllCLI?() } else { restartOnCurrentCLI() }
+            return true
         case "update":
             // 이 팬을 굴리는 CLI 를 업데이트한다. 예전에는 Codex 대화에서 /update 를 쳐도
             // claude 가 업데이트됐다 — 친 사람이 기대한 것과 다른 프로그램이다.

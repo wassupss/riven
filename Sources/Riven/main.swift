@@ -81,6 +81,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // terminal instead (#2). Route through the active panel so focus returns where it was.
     func windowDidBecomeKey(_ notification: Notification) {
         focusActivePanel()
+        checkCLIUpgradeOnFocus()
+    }
+    // The `claude` CLI auto-updates in place while riven runs; coming back to the window is a
+    // natural moment to notice. Re-read the on-disk version (throttled) and let the active chat
+    // offer to restart on it (resuming the conversation) if its process is running an older one.
+    private var lastCLIVersionCheck = Date.distantPast
+    private func checkCLIUpgradeOnFocus() {
+        guard Date().timeIntervalSince(lastCLIVersionCheck) > 20,
+              activeDock?.activeGroup?.activePanel?.content is ChatPanel else { return }
+        lastCLIVersionCheck = Date()
+        // `claude --version` spawns a process (~100ms) — off the main thread so focus never hitches.
+        DispatchQueue.global(qos: .utility).async {
+            _ = AgentDiscovery.claudeVersion(fresh: true)   // refresh the cached on-disk version
+            DispatchQueue.main.async { [weak self] in
+                (self?.activeDock?.activeGroup?.activePanel?.content as? ChatPanel)?.offerCLIUpgradeIfStale()
+            }
+        }
+    }
+    /// Restart every chat in the active workspace on the current CLI, resuming each conversation.
+    /// Staggered so we don't exec N headless `claude` processes at the same instant. A chat that's
+    /// mid-turn skips itself (restarting would drop the turn) — /restart it when it's idle.
+    func restartAllChatsOnCurrentCLI() {
+        let chats = (activeDock?.groups ?? []).flatMap { $0.panels }.compactMap { $0.content as? ChatPanel }
+        for (i, chat) in chats.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.4) { [weak chat] in
+                chat?.restartOnCurrentCLI()
+            }
+        }
     }
     var window: NSWindow!
     var rail: WorkspaceRail!
@@ -2810,6 +2838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "removed \(name) from \(group)"
         }
         chat.onGroupDelete = { [weak self] group in self?.deleteGroup(group) ?? "unavailable" }
+        chat.onRestartAllCLI = { [weak self] in self?.restartAllChatsOnCurrentCLI() }
         chat.onAgentExists = { [weak self, weak chat] name in
             guard let self else { return false }
             let q = name.trimmingCharacters(in: .whitespaces).lowercased()

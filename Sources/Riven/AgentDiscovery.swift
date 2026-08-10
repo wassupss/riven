@@ -45,6 +45,14 @@ enum AgentDiscovery {
     // so a CLI upgrade can change behaviour under us — we surface the version and flag changes
     // rather than touching the user's own auto-update setting.
     private static var cachedVersion: String??
+    /// Re-read `claude --version` from disk, busting the per-launch cache. The CLI auto-updates
+    /// itself in place while riven runs, so the launch-cached value goes stale — this is how the
+    /// "restart agents on the current CLI" feature notices an update happened mid-session.
+    @discardableResult
+    static func claudeVersion(fresh: Bool) -> String? {
+        if fresh { cachedVersion = nil }
+        return claudeVersion()
+    }
     static func claudeVersion() -> String? {
         if let v = cachedVersion { return v }
         var out: String?

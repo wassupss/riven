@@ -60,6 +60,9 @@ final class ClaudeChatSession {
     var onToolRequest: ((_ id: String, _ tool: String, _ args: [String: Any]) -> Void)?
 
     private(set) var sessionId: String?
+    /// The CLI version this process was launched with. Compared against the current on-disk
+    /// version to offer "restart on the current CLI" after the CLI auto-updates mid-session.
+    let spawnVersion: String?
     private(set) var toolList: [String] = []                       // tools from the init event
     private(set) var mcpServers: [(name: String, status: String)] = []   // connected MCP servers (like the CLI's /mcp)
     static let contextLimit = 200_000
@@ -72,6 +75,9 @@ final class ClaudeChatSession {
           interactive: Bool = false, agentName: String? = nil, model: String? = nil) {
         self.perm = interactive ? ChatPermissionServer() : nil
         self.ask = ChatAskServer()
+        // Record the version of the binary we're about to exec (on-disk now), so a later
+        // fresh check can tell this session apart from one spawned after a CLI auto-update.
+        self.spawnVersion = AgentDiscovery.claudeVersion(fresh: true)
         proc.executableURL = URL(fileURLWithPath: command)
         // Allow all riven MCP tools so they run without a permission prompt.
         let tools = ask.map { "\(allowedTools),\($0.toolPrefix)" } ?? allowedTools

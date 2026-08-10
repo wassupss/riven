@@ -14,6 +14,9 @@ protocol AgentChatSession: AnyObject {
     var isAlive: Bool { get }
     /// 이 대화의 id (Claude: session id, Codex: thread id). 재시작 후 이어 붙일 때 쓴다.
     var sessionId: String? { get }
+    /// 이 프로세스를 스폰할 때의 CLI 버전. 실행 중 CLI 가 자동 업데이트되면 현재 버전과
+    /// 달라지고, 그때 "현재 버전으로 재시작(대화 이어받기)" 을 제안한다. 못 알면 nil.
+    var spawnVersion: String? { get }
     /// init 이벤트가 알려 준 도구 목록 / MCP 서버 (상태 줄에 그대로 나온다).
     var toolList: [String] { get }
     var mcpServers: [(name: String, status: String)] { get }
@@ -59,4 +62,6 @@ enum ChatAgentKind: String {
     var symbol: String { self == .claude ? "asterisk" : "camera.aperture" }
 }
 
+// Codex 는 버전 추적을 하지 않는다 (이 기능은 Claude CLI 자동업데이트 대응이다). 기본 nil.
+extension AgentChatSession { var spawnVersion: String? { nil } }
 extension ClaudeChatSession: AgentChatSession {}
