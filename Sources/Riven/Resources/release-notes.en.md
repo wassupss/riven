@@ -1,16 +1,19 @@
-## Restart agents on the latest CLI (keeping the conversation)
+## Documents open in preview
 
-The `claude` CLI updates itself even while riven is running. Agents already open then keep the **old** binary in memory — and an older version's bug could keep burning CPU.
+Opening a workspace document (`.md`, usually agent-written) in the Notes panel now shows the **rendered preview** first. It used to drop you into the raw editor. Personal memos still open in edit.
 
-- riven now notices the update and **offers to restart on the latest** — `[all / this chat / later]`. The conversation continues where it left off.
-- Do it yourself with `/restart` (this chat) or `/restart all`. `/status` shows the version too.
+## Your agent-group tab comes back
 
-## Leftover sockets and processes are cleaned up automatically
+Fixed the group tab switching to "New group" after a restart. The last group tab you were viewing is remembered per workspace and restored.
 
-Each native chat uses a unix socket and a headless process. These used to pile up (hundreds) when riven crashed or was force-quit without cleaning them.
+## Four ways for agents to work together
 
-- **On quit**, chat sessions are torn down properly (sockets released, child processes ended).
-- **On launch**, dead sockets left by a previous run are reclaimed. Live ones are never touched.
+Agents now have named collaboration patterns, layered on the existing delegation:
+
+- **handoff** — give the whole task to a context-less peer with a self-contained brief
+- **committee** — when stuck, ask two differently-minded peers in parallel and compare
+- **advisor** — keep the work, get a second opinion only
+- **loop** — split maker and verifier, bounded, and iterate
 
 ## Also
 
