@@ -400,9 +400,14 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
         flush()                       // don't lose edits to the note we're leaving
         selectedURL = url
         agentTouched.remove(url.path)  // 열어 봤으면 "새로 생김" 표시는 지운다
-        loadSelectionIntoEditor()
+        // 워크스페이스 문서(.md, 보통 에이전트가 쓴 것)는 읽으라고 여는 것이니 미리보기로,
+        // 개인 메모는 쓰라고 여는 것이니 편집으로 연다. 예전에는 직전 모드를 그대로 물려받아
+        // 편집 중이었으면 문서를 열어도 원문 편집 화면이 떴다.
+        previewing = (selected?.scope == .workspace)
+        modeTabs.select(previewing ? 1 : 0)
+        loadSelectionIntoEditor()     // previewing 이면 preview 를 함께 렌더한다
         setMode(detail: true)
-        if previewing { modePicked(1) } else { window?.makeFirstResponder(body) }
+        if !previewing { window?.makeFirstResponder(body) }
     }
     private func loadSelectionIntoEditor() {
         guard let n = selected else {
