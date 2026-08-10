@@ -1,19 +1,11 @@
-## Documents open in preview
+## Fixed in this release
 
-Opening a workspace document (`.md`, usually agent-written) in the Notes panel now shows the **rendered preview** first. It used to drop you into the raw editor. Personal memos still open in edit.
-
-## Your agent-group tab comes back
-
-Fixed the group tab switching to "New group" after a restart. The last group tab you were viewing is remembered per workspace and restored.
-
-## Four ways for agents to work together
-
-Agents now have named collaboration patterns, layered on the existing delegation:
-
-- **handoff** — give the whole task to a context-less peer with a self-contained brief
-- **committee** — when stuck, ask two differently-minded peers in parallel and compare
-- **advisor** — keep the work, get a second opinion only
-- **loop** — split maker and verifier, bounded, and iterate
+- **Delegating to an agent** now shows **"in progress…" → "done"** in the lead conversation, so you can tell whether async-delegated work is still running.
+- **Where documents are saved.** Docs created with `riven_doc_write` now land in **that workspace's `.claude/docs`** and show in the Docs tab (they used to go to the wrong place and never appear).
+- **Idle members no longer show as "busy"** — only a genuinely running session is marked busy.
+- **Workspace card clicks** — fixed the 3rd card jumping to the 1st (a folder could split into two cards; that's gone).
+- **Macs set to always show scroll bars** no longer get a stray horizontal scrollbar in the settings window and other panels.
+- **Release notes after an update** now show on signed-in machines (they could be suppressed by cloud-synced state).
 
 ## Also
 
