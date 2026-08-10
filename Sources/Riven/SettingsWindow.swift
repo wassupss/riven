@@ -605,7 +605,7 @@ final class SettingsWindow: NSPanel {
         // 프로젝트가 아니라 riven 전체에 걸린다.
         addSection(t("settings.promptSection"))
         addNote(t("settings.promptNote"))
-        addWideRow(promptEditor())
+        addWideRow(promptEditor(), fill: true)
 
         // 스니펫: 등록된 것 → 추가 줄. 예전에는 안내문·목록·입력칸·버튼이 폭 500 으로 못 박힌
         // 채 배경 위에 그냥 쌓여 있어서, 카드로 정리한 다른 섹션과 따로 놀았다.
@@ -1281,8 +1281,8 @@ final class SettingsWindow: NSPanel {
     }
 
     /// 카드 폭을 통째로 쓰는 줄 (테마 격자·미리보기처럼 이름/컨트롤로 나뉘지 않는 것).
-    private func addWideRow(_ view: NSView) {
-        currentCard?.addWide(view)
+    private func addWideRow(_ view: NSView, fill: Bool = false) {
+        currentCard?.addWide(view, fill: fill)
     }
     private func sectionLabel(_ t: String) -> NSView {
         let l = NSTextField(labelWithString: t)
@@ -1453,15 +1453,21 @@ final class SettingsCard: NSView, Themable {
         add(row)
     }
 
-    func addWide(_ view: NSView) {
+    func addWide(_ view: NSView) { addWide(view, fill: false) }
+    /// fill=true 면 뷰가 카드 폭을 꽉 채운다 (trailing 을 == 로). intrinsic 폭이 없는 뷰
+    /// (스크롤뷰·에디터)는 이걸 써야 한다 — lessThanOrEqualTo 로는 폭 0 으로 접혀 안 보인다.
+    func addWide(_ view: NSView, fill: Bool) {
         if !rows.isEmpty { addSeparator() }
         view.translatesAutoresizingMaskIntoConstraints = false
         let row = NSView()
         row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(view)
+        let trailing = fill
+            ? view.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16)
+            : view.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16)
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            view.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -16),
+            trailing,
             view.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
             view.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -12),
         ])
