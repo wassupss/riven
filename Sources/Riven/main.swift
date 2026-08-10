@@ -240,6 +240,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         reportBootFailureIfAny()        // if the previous launch died mid-boot, fold it into crash.txt
         CrashReporter.reportPending()   // upload the previous run's crash (if any), then clear it
         rivenBootStep("didFinishLaunching")
+        // Reclaim per-chat sockets left behind by a previous crash / force-kill (ARC doesn't free
+        // OS resources). Off the main thread so launch never waits; new chats use fresh names so
+        // it can't race a socket we're about to create. See [[RuntimeGC]].
+        DispatchQueue.global(qos: .utility).async { RuntimeGC.sweepDeadChatSockets() }
         maybeShowCrashReportingNotice()   // one-time opt-out disclosure
         setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
         startAgentHooks()  // agent lifecycle events → pane busy/attn (replaces viewport polling)
@@ -7333,7 +7337,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ n: Notification) {
         notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
         SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다
+        teardownAllChats()   // state is saved above — now release chat sockets + child processes
         lsp.stopAll()
+    }
+    /// Stop every chat session at quit so their unix sockets are unlinked and their child
+    /// claude/mcp processes are terminated (neither goes away on its own when the app exits).
+    /// Runs AFTER persistSession above, so restore is unaffected: the saved layout and each
+    /// pane's resumable session id are already on disk — this only releases live resources that
+    /// were about to be dropped anyway. Fast (a handful of chats), so quit doesn't stall.
+    private func teardownAllChats() {
+        for st in states.values {
+            st.dock?.groups.flatMap { $0.panels }.forEach { ($0.content as? ChatPanel)?.teardown() }
+        }
     }
 }
 
