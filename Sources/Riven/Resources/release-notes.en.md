@@ -1,38 +1,16 @@
-## Fixed a crash on launch
+## Restart agents on the latest CLI (keeping the conversation)
 
-On some setups the app could quit silently while restoring your session right after an update. Syncing settings to the cloud could trigger itself in an endless loop; that loop is now broken. Diagnostics were added too, so if anything like this happens again the app records where it stopped.
+The `claude` CLI updates itself even while riven is running. Agents already open then keep the **old** binary in memory — and an older version's bug could keep burning CPU.
 
----
+- riven now notices the update and **offers to restart on the latest** — `[all / this chat / later]`. The conversation continues where it left off.
+- Do it yourself with `/restart` (this chat) or `/restart all`. `/status` shows the version too.
 
-The items below arrived in 0.1.57 (worth a look if you skipped it).
+## Leftover sockets and processes are cleaned up automatically
 
-## PDF and spreadsheets open in tabs
+Each native chat uses a unix socket and a headless process. These used to pile up (hundreds) when riven crashed or was force-quit without cleaning them.
 
-`.pdf`, `.xlsx`, `.csv` and `.tsv` open as tabs from the explorer. Tabs, closing and splitting work the same as any other file.
-
-- PDFs keep page navigation, zoom, search and text selection
-- Spreadsheets show **dates, thousands separators, percentages, merged cells, column widths and bold** (read-only)
-- Large images open now too (anything over 10MB used to be refused)
-
-## Drop files onto the explorer to import them
-
-Dragging from Finder **copies** into that folder. If the name is taken it becomes `name 2.txt` — nothing is overwritten.
-
-## Fixed
-
-- **Sidebar resizing.** The sidebar grew with the window, and clicking the divider snapped it narrower. The 1pt divider was also nearly impossible to grab
-- **Places that ignored a theme change** — the top strip, the sidebar header, the settings sidebar, the pinned usage panel, the update pill
-- **Plain terminals looked permanently "busy"**
-- **Commit details were cut off with blank space below**
-- In a Codex chat, `/cost`, `/status` and the session list showed Claude account data
-
-## Settings
-
-- Changing a setting now shows **"✓ Saved"**
-- **Default model per CLI** (Claude / Codex)
-- **17 browser shortcuts** are listed in the shortcuts screen
-- Read usage as **remaining % or used %** (clicking a bar switches too)
-- Cloud sync now happens once, on quit
+- **On quit**, chat sessions are torn down properly (sockets released, child processes ended).
+- **On launch**, dead sockets left by a previous run are reclaimed. Live ones are never touched.
 
 ## Also
 
