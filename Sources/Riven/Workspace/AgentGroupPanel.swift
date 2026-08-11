@@ -758,14 +758,17 @@ final class AgentEditForm: NSView, Themable {
 
 // MARK: - 직렬 파이프라인 만들기 폼
 
-/// 파이프라인 한 단계. 이름 + 모델 + 그 단계의 고정 역할 프롬프트.
+/// 파이프라인 한 단계. 이름 + 모델 + 그 단계의 고정 역할 프롬프트(textarea).
 final class PipelineStageRow: NSView, Themable {
     let nameField = RivenInput(placeholder: t("pipe.stageName"), compact: true)
     let model = RivenSelect(ChatPanel.selectableModels.map { $0.0 }, compact: true)
-    let role = RivenInput(placeholder: t("pipe.role"))
+    let roleView = HintTextView()
+    private let roleScroll = NSScrollView()
     let numberLabel = NSTextField(labelWithString: "1")
     let removeBtn = NSButton(title: "✕", target: nil, action: nil)
     var onRemove: (() -> Void)?
+    var roleText: String { roleView.string }
+    func setRole(_ s: String) { roleView.string = s }
 
     init() {
         super.init(frame: .zero)
@@ -779,9 +782,21 @@ final class PipelineStageRow: NSView, Themable {
         removeBtn.setContentHuggingPriority(.required, for: .horizontal)
         nameField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        roleView.font = UIScale.font(UIScale.small); roleView.isRichText = false
+        roleView.drawsBackground = false; roleView.textColor = Theme.fg
+        roleView.textContainerInset = NSSize(width: 5, height: 5); roleView.hint = t("pipe.role")
+        roleView.isVerticallyResizable = true; roleView.autoresizingMask = [.width]
+        roleView.textContainer?.widthTracksTextView = true
+        roleScroll.documentView = roleView
+        roleScroll.hasVerticalScroller = true; roleScroll.drawsBackground = true
+        roleScroll.wantsLayer = true; roleScroll.layer?.cornerRadius = 5
+        roleScroll.layer?.borderWidth = 1
+        roleScroll.translatesAutoresizingMaskIntoConstraints = false
+        roleScroll.heightAnchor.constraint(equalToConstant: UIScale.pt(52)).isActive = true
+
         let header = NSStackView(views: [numberLabel, nameField, removeBtn])
         header.orientation = .horizontal; header.spacing = 8; header.alignment = .centerY
-        let body = NSStackView(views: [header, model, role])
+        let body = NSStackView(views: [header, model, roleScroll])
         body.orientation = .vertical; body.spacing = 7; body.alignment = .leading
         body.translatesAutoresizingMaskIntoConstraints = false
         addSubview(body)
@@ -793,7 +808,7 @@ final class PipelineStageRow: NSView, Themable {
             body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
             header.widthAnchor.constraint(equalTo: body.widthAnchor),
             model.widthAnchor.constraint(equalTo: body.widthAnchor),
-            role.widthAnchor.constraint(equalTo: body.widthAnchor),
+            roleScroll.widthAnchor.constraint(equalTo: body.widthAnchor),
         ])
         applyTheme(); Theme.register(self)
     }
@@ -803,18 +818,20 @@ final class PipelineStageRow: NSView, Themable {
         layer?.backgroundColor = Theme.bg.cgColor
         layer?.borderColor = Theme.edge.cgColor
         numberLabel.textColor = Theme.accent
+        roleScroll.backgroundColor = Theme.isLight ? Theme.bg2 : Theme.bg3
+        roleScroll.layer?.borderColor = Theme.edge.cgColor
         removeBtn.attributedTitle = NSAttributedString(string: "✕", attributes: [
             .foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.caption)])
     }
 }
 
-/// 직렬 파이프라인(기획 → 디자인 → 개발 → QA → 배포)을 눈으로 만드는 폼. 단계마다 이름 +
-/// 모델 + 고정 역할 프롬프트를 넣고, 작업(task)을 적어 "실행"하면 순서대로 흘러간다.
+/// 직렬 파이프라인(기획 → 디자인 → 개발 → QA → 배포)을 눈으로 만드는 인라인 폼. "새 그룹"
+/// 탭에서 모드 세그먼트로 그룹 폼과 토글된다. 단계마다 이름 + 모델 + 고정 역할 프롬프트를
+/// 넣고, 작업(task)을 적어 "실행"하면 순서대로 흘러간다. 파이프라인 이름도 위에서 정한다.
 final class PipelineForm: NSView, Themable {
     var onRun: ((_ group: String, _ stages: [(name: String, model: String?, instruction: String?)], _ task: String) -> Void)?
-    var onCancel: (() -> Void)?
 
-    private let nameField = RivenInput(placeholder: t("pipe.nameDefault"))
+    let nameField = RivenInput(placeholder: t("pipe.nameDefault"))
     private let stagesStack = NSStackView()
     private let stagesScroll = NSScrollView()
     private let stagesHost = NSView()
@@ -823,14 +840,17 @@ final class PipelineForm: NSView, Themable {
     private var rows: [PipelineStageRow] = []
 
     init(defaults: [(String, String)]) {
-        super.init(frame: NSRect(x: 0, y: 0, width: 380, height: 520))
+        super.init(frame: .zero)
         wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
         nameField.stringValue = t("pipe.nameDefault")
 
-        let title = NSTextField(labelWithString: t("pipe.title"))
-        title.font = UIScale.font(UIScale.title, .semibold); title.textColor = Theme.fg
-        let sub = NSTextField(wrappingLabelWithString: t("pipe.hint"))
-        sub.font = UIScale.font(UIScale.caption); sub.textColor = Theme.fgDim
+        let nameLabel = NSTextField(labelWithString: t("pipe.nameLabel"))
+        nameLabel.font = UIScale.font(UIScale.caption); nameLabel.textColor = Theme.fgDim
+        nameLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let nameRow = NSStackView(views: [nameLabel, nameField])
+        nameRow.orientation = .horizontal; nameRow.spacing = 8; nameRow.alignment = .centerY
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
 
         stagesStack.orientation = .vertical; stagesStack.spacing = 8; stagesStack.alignment = .leading
         stagesStack.translatesAutoresizingMaskIntoConstraints = false
@@ -849,34 +869,24 @@ final class PipelineForm: NSView, Themable {
         taskView.textContainer?.widthTracksTextView = true
         taskScroll.documentView = taskView
         taskScroll.hasVerticalScroller = true; taskScroll.drawsBackground = true
-        taskScroll.backgroundColor = Theme.isLight ? Theme.bg : Theme.bg3
         taskScroll.wantsLayer = true; taskScroll.layer?.cornerRadius = 5
-        taskScroll.layer?.borderWidth = 1; taskScroll.layer?.borderColor = Theme.edge.cgColor
+        taskScroll.layer?.borderWidth = 1
         taskScroll.translatesAutoresizingMaskIntoConstraints = false
 
         let run = RivenPrimaryButton(t("pipe.run"), target: self, action: #selector(runTapped))
-        let cancel = RivenSecondaryButton(t("common.cancel"), target: self, action: #selector(cancelTapped))
-        let buttons = NSStackView(views: [cancel, run])
-        buttons.orientation = .horizontal; buttons.spacing = 8; buttons.distribution = .fillEqually
 
-        [title, sub, nameField, stagesScroll, add, taskScroll, buttons].forEach {
+        [nameRow, stagesScroll, add, taskScroll, run].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0)
         }
-        let pad = UIScale.pt(14)
+        // 단계 영역(stagesScroll)만 가변 - 위/아래는 고정 높이고, 남는 공간을 단계 목록이 채운다.
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: UIScale.pt(380)),
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            title.topAnchor.constraint(equalTo: topAnchor, constant: pad),
-            sub.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            sub.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            sub.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
-            nameField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            nameField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            nameField.topAnchor.constraint(equalTo: sub.bottomAnchor, constant: 10),
-            stagesScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            stagesScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            stagesScroll.topAnchor.constraint(equalTo: nameField.bottomAnchor, constant: 10),
-            stagesScroll.heightAnchor.constraint(equalToConstant: UIScale.pt(240)),
+            nameRow.leadingAnchor.constraint(equalTo: leadingAnchor),
+            nameRow.trailingAnchor.constraint(equalTo: trailingAnchor),
+            nameRow.topAnchor.constraint(equalTo: topAnchor),
+            stagesScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stagesScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stagesScroll.topAnchor.constraint(equalTo: nameRow.bottomAnchor, constant: 10),
+            stagesScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(120)),
             stagesHost.topAnchor.constraint(equalTo: stagesScroll.contentView.topAnchor),
             stagesHost.leadingAnchor.constraint(equalTo: stagesScroll.contentView.leadingAnchor),
             stagesHost.widthAnchor.constraint(equalTo: stagesScroll.contentView.widthAnchor),
@@ -884,21 +894,20 @@ final class PipelineForm: NSView, Themable {
             stagesStack.trailingAnchor.constraint(equalTo: stagesHost.trailingAnchor),
             stagesStack.topAnchor.constraint(equalTo: stagesHost.topAnchor),
             stagesStack.bottomAnchor.constraint(equalTo: stagesHost.bottomAnchor),
-            add.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            add.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            add.leadingAnchor.constraint(equalTo: leadingAnchor),
+            add.trailingAnchor.constraint(equalTo: trailingAnchor),
             add.topAnchor.constraint(equalTo: stagesScroll.bottomAnchor, constant: 8),
-            taskScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            taskScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            taskScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            taskScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             taskScroll.topAnchor.constraint(equalTo: add.bottomAnchor, constant: 10),
-            taskScroll.heightAnchor.constraint(equalToConstant: UIScale.pt(70)),
-            buttons.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            buttons.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            buttons.topAnchor.constraint(equalTo: taskScroll.bottomAnchor, constant: 12),
-            buttons.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
+            taskScroll.heightAnchor.constraint(equalToConstant: UIScale.pt(64)),
+            run.leadingAnchor.constraint(equalTo: leadingAnchor),
+            run.trailingAnchor.constraint(equalTo: trailingAnchor),
+            run.topAnchor.constraint(equalTo: taskScroll.bottomAnchor, constant: 12),
+            run.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
-        // 기본 단계를 채운다 (예: 기획/디자인/개발/QA/배포). 사용자가 지우거나 늘릴 수 있다.
         for (name, role) in defaults { appendStage(name: name, role: role) }
-        if rows.isEmpty { appendStage(name: "", role: "") ; appendStage(name: "", role: "") }
+        if rows.isEmpty { appendStage(name: "", role: ""); appendStage(name: "", role: "") }
         applyTheme(); Theme.register(self)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -906,7 +915,7 @@ final class PipelineForm: NSView, Themable {
     private func appendStage(name: String, role: String) {
         let r = PipelineStageRow()
         r.nameField.stringValue = name
-        r.role.stringValue = role
+        r.setRole(role)
         r.onRemove = { [weak self, weak r] in
             guard let self, let r, self.rows.count > 2 else { return }   // 최소 2단계
             self.stagesStack.removeArrangedSubview(r); r.removeFromSuperview()
@@ -922,13 +931,12 @@ final class PipelineForm: NSView, Themable {
         for (i, r) in rows.enumerated() { r.numberLabel.stringValue = "\(i + 1)" }
     }
     @objc private func addStageTapped() { appendStage(name: "", role: "") }
-    @objc private func cancelTapped() { onCancel?() }
     @objc private func runTapped() {
         let stages: [(name: String, model: String?, instruction: String?)] = rows.compactMap { r in
             let n = r.nameField.stringValue.trimmingCharacters(in: .whitespaces)
             guard !n.isEmpty else { return nil }
             let mi = r.model.indexOfSelectedItem
-            let role = r.role.stringValue.trimmingCharacters(in: .whitespaces)
+            let role = r.roleText.trimmingCharacters(in: .whitespacesAndNewlines)
             return (name: n,
                     model: mi > 0 ? ChatPanel.selectableModels[mi].1 : nil,
                     instruction: role.isEmpty ? nil : role)
@@ -939,7 +947,6 @@ final class PipelineForm: NSView, Themable {
         onRun?(group.isEmpty ? t("pipe.nameDefault") : group, stages, task)
     }
     func applyTheme() {
-        layer?.backgroundColor = Theme.bg2.cgColor
         taskScroll.backgroundColor = Theme.isLight ? Theme.bg : Theme.bg3
         taskScroll.layer?.borderColor = Theme.edge.cgColor
     }
@@ -978,8 +985,17 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     private let hint = NSTextField(labelWithString: t("team.hint"))
     private let tabStrip = RivenTabStrip(frame: .zero)
     private let previewBtn = RivenSecondaryButton(t("team.preview"), target: nil, action: #selector(togglePreview))
-    private let pipelineBtn = RivenSecondaryButton(t("pipe.button"), target: nil, action: #selector(openPipeline))
-    private var pipelinePopover: NSPopover?
+    // "새 그룹" 탭 상단의 모드 선택 (일반 그룹 | 파이프라인). 선택에 따라 아래 폼이 바뀐다.
+    private let modeSeg = NSSegmentedControl(labels: [t("pipe.modeGroup"), t("pipe.modePipeline")],
+                                             trackingMode: .selectOne, target: nil, action: #selector(pipelineModeChanged))
+    private let pipeForm = PipelineForm(defaults: [
+        (t("pipe.def.plan"),   t("pipe.def.planRole")),
+        (t("pipe.def.design"), t("pipe.def.designRole")),
+        (t("pipe.def.build"),  t("pipe.def.buildRole")),
+        (t("pipe.def.qa"),     t("pipe.def.qaRole")),
+        (t("pipe.def.ship"),   t("pipe.def.shipRole")),
+    ])
+    private var pipeMode: Bool { modeSeg.selectedSegment == 1 }
     private let addToGroupBtn = RivenSecondaryButton(t("team.addToGroup"), target: nil, action: #selector(addToGroup))
     private let deleteGroupBtn = RivenSecondaryButton(t("team.deleteGroup"), target: nil, action: #selector(deleteGroup))
     private let groupLabel = NSTextField(labelWithString: t("team.name"))
@@ -1084,7 +1100,10 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         createBtn = RivenPrimaryButton(t("team.create"), target: nil, action: #selector(create))
         super.init(frame: frame)
         wantsLayer = true
-        [createBtn, previewBtn, pipelineBtn, addToGroupBtn, deleteGroupBtn].forEach { $0.target = self }
+        [createBtn, previewBtn, addToGroupBtn, deleteGroupBtn].forEach { $0.target = self }
+        modeSeg.target = self; modeSeg.selectedSegment = 0
+        modeSeg.translatesAutoresizingMaskIntoConstraints = false
+        pipeForm.onRun = { [weak self] group, stages, task in self?.onRunPipeline?(group, stages, task) }
         addTile.onClick = { [weak self] in self?.addAgent() }
         tabStrip.onSelect = { [weak self] i in self?.tabPicked(i) }
 
@@ -1116,7 +1135,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         }
         chart.onEdit = { [weak self] name in self?.editAgent(name) }
 
-        [titleLabel, hint, tabStrip, head, gridScroll, chartScroll, previewBtn, pipelineBtn, createBtn,
+        [titleLabel, hint, tabStrip, modeSeg, head, gridScroll, chartScroll, pipeForm, previewBtn, createBtn,
          addToGroupBtn, deleteGroupBtn].forEach { addSubview($0) }
         deleteGroupBtn.attributedTitle = NSAttributedString(string: t("team.deleteGroup"), attributes: [
             .foregroundColor: Theme.danger, .font: UIScale.font(UIScale.body, .medium)])
@@ -1135,20 +1154,28 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
             tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
             tabStrip.topAnchor.constraint(equalTo: hint.bottomAnchor, constant: 14),
 
+            // 모드 세그먼트: "새 그룹" 탭 상단. 아래 폼(그룹/파이프라인)을 전환한다.
+            modeSeg.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            modeSeg.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            modeSeg.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 12),
+
             head.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             head.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            head.topAnchor.constraint(equalTo: tabStrip.bottomAnchor, constant: 14),
+            head.topAnchor.constraint(equalTo: modeSeg.bottomAnchor, constant: 12),
 
             gridScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
             gridScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
             gridScroll.topAnchor.constraint(equalTo: head.bottomAnchor, constant: 12),
             gridScroll.bottomAnchor.constraint(equalTo: previewBtn.topAnchor, constant: -12),
             previewBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
-            previewBtn.trailingAnchor.constraint(equalTo: centerXAnchor, constant: -4),
+            previewBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
             previewBtn.bottomAnchor.constraint(equalTo: createBtn.topAnchor, constant: -8),
-            pipelineBtn.leadingAnchor.constraint(equalTo: centerXAnchor, constant: 4),
-            pipelineBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
-            pipelineBtn.centerYAnchor.constraint(equalTo: previewBtn.centerYAnchor),
+
+            // 파이프라인 인라인 폼: 모드가 "파이프라인"일 때 그룹 그리드 자리에 보인다.
+            pipeForm.leadingAnchor.constraint(equalTo: leadingAnchor, constant: pad),
+            pipeForm.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
+            pipeForm.topAnchor.constraint(equalTo: head.bottomAnchor, constant: 12),
+            pipeForm.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -pad),
             // 그리드는 클립뷰 폭을 그대로 따라가고 높이만 스스로 정한다 → 가로 스크롤 없음.
             grid.topAnchor.constraint(equalTo: gridScroll.contentView.topAnchor),
             grid.leadingAnchor.constraint(equalTo: gridScroll.contentView.leadingAnchor),
@@ -1353,13 +1380,16 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
 
     /// 지금 탭에 맞는 화면을 보인다: 새 그룹 = 구성(또는 미리보기), 그룹 = 조직도.
     private func applyTab() {
-        let showChart = (shownGroup != nil) || previewing
-        [head0, gridScroll].forEach { $0?.isHidden = showChart }
-        createBtn.isHidden = (shownGroup != nil)
-        previewBtn.isHidden = (shownGroup != nil)
-        pipelineBtn.isHidden = (shownGroup != nil)   // 새 그룹(구성) 탭에서만
-        addToGroupBtn.isHidden = (shownGroup == nil)   // 기존 그룹 탭에서만
-        deleteGroupBtn.isHidden = (shownGroup == nil)
+        let existing = (shownGroup != nil)
+        let showChart = existing || previewing
+        let pipe = !showChart && pipeMode              // 새 그룹 탭 + 파이프라인 모드
+        modeSeg.isHidden = existing                    // 새 그룹 탭에서만 (일반/파이프라인 선택)
+        [head0, gridScroll].forEach { $0?.isHidden = showChart || pipe }   // 그룹 모드 UI
+        createBtn.isHidden = existing || pipe
+        previewBtn.isHidden = existing || pipe
+        pipeForm.isHidden = !pipe                      // 파이프라인 모드 UI
+        addToGroupBtn.isHidden = !existing             // 기존 그룹 탭에서만
+        deleteGroupBtn.isHidden = !existing
         previewBtn.title = t(previewing ? "team.backToSetup" : "team.preview")
         previewBtn.applyTheme()
         chartScroll.isHidden = !showChart
@@ -1453,26 +1483,8 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
 
     @objc private func togglePreview() { previewing.toggle(); applyTab() }
 
-    /// 직렬 파이프라인 만들기 폼을 팝오버로 연다. 기본 단계(기획→디자인→개발→QA→배포)를
-    /// 역할 프롬프트와 함께 미리 채워, 그대로 실행하거나 고쳐서 쓸 수 있게 한다.
-    @objc private func openPipeline() {
-        let form = PipelineForm(defaults: [
-            (t("pipe.def.plan"),   t("pipe.def.planRole")),
-            (t("pipe.def.design"), t("pipe.def.designRole")),
-            (t("pipe.def.build"),  t("pipe.def.buildRole")),
-            (t("pipe.def.qa"),     t("pipe.def.qaRole")),
-            (t("pipe.def.ship"),   t("pipe.def.shipRole")),
-        ])
-        form.onCancel = { [weak self] in self?.pipelinePopover?.close(); self?.pipelinePopover = nil }
-        form.onRun = { [weak self] group, stages, task in
-            self?.pipelinePopover?.close(); self?.pipelinePopover = nil
-            self?.onRunPipeline?(group, stages, task)
-        }
-        let vc = NSViewController(); vc.view = form
-        let pop = NSPopover(); pop.contentViewController = vc; pop.behavior = .transient
-        pop.show(relativeTo: pipelineBtn.bounds, of: pipelineBtn, preferredEdge: .maxY)
-        pipelinePopover = pop
-    }
+    /// 모드(일반 그룹 ↔ 파이프라인) 전환. 미리보기 중이었으면 끄고 구성 화면으로 돌아온다.
+    @objc private func pipelineModeChanged() { previewing = false; applyTab() }
 
     /// 그룹 삭제. 되돌릴 수 없으니 먼저 확인을 받는다.
     @objc private func deleteGroup() {
