@@ -70,6 +70,7 @@ final class ChatAskServer {
         - 다른 에이전트와 팀으로 일할 수 있습니다: `riven_agents` 로 동료(역할·상태)를 확인하고, `riven_ask_agent`(agent, message) 로 일을 넘긴 뒤 답을 받습니다. 여러 명에게 서로 무관한 일을 시킬 땐 `riven_ask_agents`(tasks=[{agent,message},…]) 를 한 번 호출하세요. 전원이 동시에 시작합니다 (한 명씩 부르면 순차로 끝날 때까지 기다리게 됩니다). 오래 걸릴 일은 `wait=false` 로 넘기면 즉시 반환되고, 답은 도착하는 대로 당신의 대화에 전달됩니다. 그동안 다른 일을 하세요.
         - 긴 결과(요약·계획·조사 메모·인수인계 문서)는 대화에 쏟아 넣지 말고 메모로 남기세요: `riven_note_write`(title, body, note?) 로 riven 메모 패널에 마크다운 문서를 만듭니다(note 를 주면 그 메모를 갈아끼웁니다. 이전 내용은 백업되어 사용자가 되돌릴 수 있습니다). 이어 쓰기는 `riven_note_append`(note, body), 읽기는 `riven_note_read`(note), 목록은 `riven_note_list`(scope?) 입니다. 워크스페이스에 실제 .md 파일로 남길 땐 `riven_note_save_file`(note, path, overwrite?) 를 씁니다.
         - 그룹 인원은 `riven_group_add_agent`(group, name, persona?, model?, parent?) 로 늘리고, `riven_group_remove_agent`(group, name) 로 줄입니다. 그룹 자체는 `riven_group_delete`(group). 줄이거나 지우는 건 사용자 확인을 거쳐야 실행되며, 동의하지 않으면 그대로 유지됩니다. 새 동료가 필요하면 `riven_open_panel`("chat") 로 패널을 엽니다. 자기 자신에게는 넘길 수 없습니다.
+        - 여러 단계를 순서대로 거쳐야 하는 일(예: 기획 → 디자인 → 개발 → QA → 배포)은 `riven_start_pipeline`(name, task, stages=[{name, agent?, model?, instruction?},…]) 로 직렬 파이프라인을 만듭니다. 단계마다 새 에이전트가 뜨고, 앞 단계의 산출물이 다음 단계의 입력으로 자동 전달됩니다. 비동기라 즉시 반환되고, 마지막 단계가 끝나면 전체 결과가 대화로 전달됩니다. 서로 독립적인 병렬 작업엔 `riven_ask_agents` 를, 단계가 앞의 결과에 의존할 때만 이걸 쓰세요.
 
         동료와 함께 일할 때는 아래 4가지 협업 패턴 중 상황에 맞는 것을 고르세요. 전부 위의 `riven_ask_agent`/`riven_ask_agents` 위에서 도는 것이라 새 도구는 없습니다 - 언제·어떻게 부르느냐의 문제입니다:
         - **handoff(넘기기)**: 일을 통째로 다른 동료에게 넘길 때. 받는 동료는 당신의 대화를 보지 못하므로 프롬프트가 자기완결적이어야 합니다 - [작업: 무엇을] · [맥락: 왜] · [관련 파일·경로] · [현재 상태] · [이미 시도한 것] 을 모두 담으세요. 맥락이 빠지면 그 동료는 처음부터 헤맵니다.
@@ -302,6 +303,9 @@ final class ChatAskServer {
             {"name": "riven_group_delete",
              "description": "Delete a whole agent group: every member's turn is stopped, all its panes are closed and its saved roster is erased. DESTRUCTIVE - riven always asks the user to confirm first, and the tool returns whether they agreed.",
              "inputSchema": {"type": "object", "properties": {"group": {"type": "string"}}, "required": ["group"]}},
+            {"name": "riven_start_pipeline",
+             "description": "Create a SERIAL agent pipeline and run a task through it. `stages` is an ORDERED list of steps (e.g. plan -> design -> build -> QA -> ship); each stage is a fresh agent pane. The task starts at stage 1; each stage's output is handed to the next stage as its input. Runs asynchronously: returns at once, and the final combined result is delivered into your conversation when the last stage finishes. Each stage: name (required), agent (persona / .claude/agents name), model (opus/sonnet/haiku/fable), instruction (what this stage should do).",
+             "inputSchema": {"type": "object", "properties": {"name": {"type": "string"}, "task": {"type": "string"}, "stages": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "agent": {"type": "string"}, "model": {"type": "string"}, "instruction": {"type": "string"}}, "required": ["name"]}}}, "required": ["name", "task", "stages"]}},
             {"name": "riven_workspaces",
              "description": "List open workspaces (folders) and which one is active.",
              "inputSchema": {"type": "object", "properties": {}}},

@@ -1,15 +1,16 @@
-## Fixed prompt: your own instructions for every agent
+## Serial pipeline groups
 
-Settings → AI now has a **Fixed prompt**. Like CLAUDE.md, whatever you write here is automatically prepended to every agent in riven (chat and terminal). You can also drop in one of **4 templates** (warm tone / concise / thorough review / Korean first).
+You can now build an agent team that runs in stages, one after another. In **Agent group panel → "New group" → [Pipeline]**, set up stages like Plan → Design → Build → QA → Ship, **pin each stage's role with a prompt**, enter a task, and:
 
-## Sessions that survive updates
+- Stages run in order, **auto-executed**, and each stage's output is handed to the next.
+- The last stage produces the overall wrap-up.
+- If you stop a stage midway, the pipeline halts there instead of moving on.
 
-Per-workspace sessions (open tabs, panels, groups) now carry a **schema version with automatic migration**, so old sessions stay safe as the structure evolves. If something ever gets tangled, **Settings → About → Maintenance → Restore backup** rolls you back to the pre-update state.
+You can also just tell an agent "run this as a pipeline."
 
 ## Also fixed
 
-- **Moving a panel** no longer occasionally leaves the panel blank.
-- **Switching settings tabs** no longer flashes "Saved" when you changed nothing.
+- When a background sub-agent finishes and the conversation continues, the panel correctly shows **in-progress → done** again (it used to stay stuck on "done," so you couldn't tell it had actually finished).
 
 ## Also
 
