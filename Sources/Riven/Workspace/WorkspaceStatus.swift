@@ -3,7 +3,7 @@ import Foundation
 // Per-workspace activity rollup (riven's state/workspaceStatus.ts). Each terminal
 // pane reports busy / needs-attention; a workspace rolls up to the most urgent:
 // needs-you > busy > idle. 상태 어휘 자체는 [[AgentStatus]] 하나로 통일돼 있다
-// (UI/AgentStatus.swift) — 여기서는 워크스페이스 단위로 접기만 한다.
+// (UI/AgentStatus.swift) - 여기서는 워크스페이스 단위로 접기만 한다.
 
 final class WorkspaceStatus {
     static let shared = WorkspaceStatus()

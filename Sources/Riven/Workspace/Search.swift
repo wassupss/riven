@@ -1,6 +1,6 @@
 import Foundation
 
-// Find-in-files over a workspace — a direct port of riven's main/search.ts.
+// Find-in-files over a workspace - a direct port of riven's main/search.ts.
 // Node-based file walk (no ripgrep dep): skips ignored dirs, binary and large
 // files, and caps results. Runs off the main thread.
 enum Search {

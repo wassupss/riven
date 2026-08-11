@@ -114,7 +114,7 @@ func installGlass(on panel: NSPanel, content: NSView, radius: CGFloat = 12) {
     content.wantsLayer = true
     content.layer?.cornerRadius = radius
     content.layer?.masksToBounds = true
-    // A translucent theme tint over the blur — keeps the palette while frosted.
+    // A translucent theme tint over the blur - keeps the palette while frosted.
     content.layer?.backgroundColor = Theme.bg2.withAlphaComponent(0.72).cgColor
     content.layer?.borderWidth = 1
     content.layer?.borderColor = Theme.edge.cgColor
@@ -132,7 +132,7 @@ func clampToWindow(_ panel: NSWindow, parent: NSWindow, margin: CGFloat = 8) {
     panel.setFrame(f, display: true)
 }
 
-// The dock header strip: behaves like a native titlebar — drag to move the window
+// The dock header strip: behaves like a native titlebar - drag to move the window
 // (via mouseDownCanMoveWindow), double-click to zoom per the user's macOS setting.
 final class DraggableStrip: NSView {
     override var mouseDownCanMoveWindow: Bool { true }

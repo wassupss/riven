@@ -34,7 +34,7 @@ final class FileNode {
         "dist", "out", ".next", ".venv", "venv", "target", ".cache"
     ]
 
-    // True if any path segment is an ignored entry — used to skip explorer refreshes
+    // True if any path segment is an ignored entry - used to skip explorer refreshes
     // on churn inside .git/node_modules/.build/… which the tree doesn't show anyway.
     static func isIgnoredPath(_ path: String) -> Bool {
         path.split(separator: "/").contains { ignored.contains(String($0)) }
@@ -43,11 +43,11 @@ final class FileNode {
     func loadChildren() -> [FileNode] {
         if let c = children { return c }
         let fm = FileManager.default
-        // Show dotfiles (.claude, .env, .gitignore, …) — VSCode's default. We deliberately
+        // Show dotfiles (.claude, .env, .gitignore, …) - VSCode's default. We deliberately
         // do NOT pass .skipsHiddenFiles; the noise dirs that shouldn't appear (.git,
         // node_modules, .venv, .next, .cache, .DS_Store, …) are filtered by `ignored` below,
         // so removing the flag surfaces useful dotfiles without also showing that churn.
-        // 링크는 가리키는 곳에서 읽는다 — 링크 경로로 물으면 빈 목록이 온다.
+        // 링크는 가리키는 곳에서 읽는다 - 링크 경로로 물으면 빈 목록이 온다.
         let listURL = isLink ? url.resolvingSymlinksInPath() : url
         let items = (try? fm.contentsOfDirectory(at: listURL,
             includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [])) ?? []
@@ -257,7 +257,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     }
     // MARK: - 파일 들여오기 (Finder / 다른 앱에서 끌어다 놓기)
 
-    /// 어디에 떨어뜨렸든 "폴더" 로 바꾼다. 파일 줄 위에 놓으면 그 파일이 있는 폴더로 —
+    /// 어디에 떨어뜨렸든 "폴더" 로 바꾼다. 파일 줄 위에 놓으면 그 파일이 있는 폴더로 -
     /// 파일 안에 파일을 넣을 수는 없는데 거절만 하면 왜 안 되는지 알 수 없다.
     private func dropFolder(for item: Any?) -> FileNode? {
         guard let node = item as? FileNode else { return root }
@@ -290,7 +290,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             let dest = Self.uniqueDestination(in: target.url, name: src.lastPathComponent)
             do { try fm.copyItem(at: src, to: dest); landed.append(dest) }
             catch {
-                RLog.log("explorer drop: 복사 실패 \(src.lastPathComponent) — \(error.localizedDescription)")
+                RLog.log("explorer drop: 복사 실패 \(src.lastPathComponent) - \(error.localizedDescription)")
                 let a = NSAlert()
                 a.messageText = t("explorer.dropFailed")
                 a.informativeText = "\(src.lastPathComponent)\n\(error.localizedDescription)"
@@ -300,7 +300,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         }
         guard !landed.isEmpty else { return false }
         reloadContainer(target === root ? nil : target)
-        // 들여온 것을 골라 준다 — 어디에 들어갔는지 눈으로 확인되지 않으면 다시 찾아야 한다.
+        // 들여온 것을 골라 준다 - 어디에 들어갔는지 눈으로 확인되지 않으면 다시 찾아야 한다.
         if let first = landed.first { reveal(first) }
         RLog.log("explorer drop: \(landed.count)개 들여옴 → \(target.url.lastPathComponent)")
         return true
@@ -513,7 +513,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
         guard let root else { return }
         // Capture expanded folders by walking each node's CHILDREN. The root is the
         // invisible sentinel (never an outline item, so isItemExpanded(root) is always
-        // false) — gating the walk on the root's own expansion collected nothing and
+        // false) - gating the walk on the root's own expansion collected nothing and
         // re-expanded nothing, so every FS-driven refresh collapsed the whole tree (#).
         var expanded: Set<String> = []
         func collect(_ n: FileNode) {
@@ -628,7 +628,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             let c = ExplorerCell(); c.identifier = id; return c
         }()
 
-        // Inline new-file / new-folder editor row (VSCode-style — no modal dialog).
+        // Inline new-file / new-folder editor row (VSCode-style - no modal dialog).
         if node.isPlaceholder {
             let dir = creatingIsDir
             cell.chevron.image = nil
@@ -653,7 +653,7 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             : nil
         cell.chevron.contentTintColor = Theme.fgDim
         cell.icon.image = FileIcon.image(name: node.name, isDir: node.isDir, open: expanded)
-        // 링크는 링크라고 보이게 한다 — 실제 파일이 어디 있는지 알 수 있어야 한다.
+        // 링크는 링크라고 보이게 한다 - 실제 파일이 어디 있는지 알 수 있어야 한다.
         cell.icon.toolTip = node.isLink ? node.url.resolvingSymlinksInPath().path : nil
         cell.linkBadge.isHidden = !node.isLink
         cell.label.stringValue = node.name

@@ -4,7 +4,7 @@ import Foundation
 //
 // A PreToolUse hook injected via `--settings` runs a tiny python relay for each gated tool
 // call. The relay forwards the hook JSON to this unix socket, then BLOCKS reading the reply
-// — so the `claude` tool call is paused until riven answers. We surface the request to the
+// - so the `claude` tool call is paused until riven answers. We surface the request to the
 // chat UI (Allow / Deny card); the user's choice is written back as the hook's decision JSON.
 //
 // WHY unix domain + per-session path: no ports, filesystem perms are the auth, and each chat

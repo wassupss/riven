@@ -5,7 +5,7 @@ import AppKit
 // status-bar usage widget. Also builds the compact pinned sidebar view.
 enum UsageUI {
 
-    /// 눈금을 "남은" 으로 읽을지 "쓴" 으로 읽을지. 사람마다 보고 싶은 쪽이 다르다 —
+    /// 눈금을 "남은" 으로 읽을지 "쓴" 으로 읽을지. 사람마다 보고 싶은 쪽이 다르다 -
     /// 얼마나 남았나로 관리하는 사람과, 얼마나 썼나로 관리하는 사람.
     ///
     /// 한 곳에서 정하고 헤더·팝오버·고정 스트립이 모두 따른다. 화면마다 다른 방향을
@@ -13,7 +13,7 @@ enum UsageUI {
     static var showUsed: Bool { Settings.shared.bool("usageShowUsed", false) }
 
     /// 남은 비율을 받아 현재 모드의 숫자로. 저장·계산은 늘 "남은" 기준이고 보여 줄 때만
-    /// 뒤집는다 — 두 기준을 함께 들고 다니면 어느 쪽이 어느 쪽인지 곧 헷갈린다.
+    /// 뒤집는다 - 두 기준을 함께 들고 다니면 어느 쪽이 어느 쪽인지 곧 헷갈린다.
     static func shown(_ remaining: Int) -> Int { showUsed ? 100 - remaining : remaining }
     static func modeSuffix() -> String { showUsed ? t("usage.used") : t("usage.left") }
 
@@ -21,7 +21,7 @@ enum UsageUI {
 
     // "resets in {t}" text from an ISO timestamp (riven resetIn()).
     /// Date 판. Codex 의 resets_at 은 epoch 초라 ISO 문자열로 되돌릴 이유가 없다.
-    /// (챗의 /cost 도 같은 문구를 쓴다 — 같은 것을 두 군데에 적어 두면 한쪽만 고쳐진다.)
+    /// (챗의 /cost 도 같은 문구를 쓴다 - 같은 것을 두 군데에 적어 두면 한쪽만 고쳐진다.)
     static func resetIn(_ date: Date?) -> String? {
         guard let date else { return nil }
         let ms = date.timeIntervalSinceNow
@@ -47,7 +47,7 @@ enum UsageUI {
     // ---- one remaining-limit bar (label · pct · track/fill · reset) ----
     private static func bar(_ label: String, _ rem: Int?, _ resets: String?) -> NSView? {
         guard let rem else { return nil }
-        // 막대 길이는 보이는 숫자를 따라간다 — "쓴 16%" 옆에 거의 꽉 찬 막대가 있으면
+        // 막대 길이는 보이는 숫자를 따라간다 - "쓴 16%" 옆에 거의 꽉 찬 막대가 있으면
         // 정반대로 읽힌다. 색만은 늘 "남은" 기준이라, 빨강은 어느 모드에서든 "얼마 안
         // 남았다" 하나를 뜻한다.
         let color = remColor(rem)
@@ -114,12 +114,12 @@ enum UsageUI {
         }
         if let cx = codexLimits,
            let b = bar(CodexUsage.windowLabel(cx.windowMinutes), cx.remainingPercent, resetIn(cx.resetsAt)) {
-            // 앞 묶음과 붙지 않게 한 칸 띄운다 — 간격이 곧 "여기서부터 다른 것" 이다.
+            // 앞 묶음과 붙지 않게 한 칸 띄운다 - 간격이 곧 "여기서부터 다른 것" 이다.
             if !claudeBars.isEmpty { stack.addArrangedSubview(pinSpacer()) }
             stack.addArrangedSubview(providerHead(ChatAgentKind.codex))
             stack.addArrangedSubview(b)
         }
-        // 오늘 쓴 양. 금액은 Claude 쪽에만 해당하므로 CLI 이름을 적는다 — 바로 위가 Codex
+        // 오늘 쓴 양. 금액은 Claude 쪽에만 해당하므로 CLI 이름을 적는다 - 바로 위가 Codex
         // 묶음이라 이름이 없으면 Codex 의 금액으로 읽힌다.
         var todayLines: [String] = []
         if let today, today.totalTokens > 0 {
@@ -230,7 +230,7 @@ enum UsageUI {
         }
 
         // Codex 는 창이 하나뿐이고 방향도 반대(쓴 %)라 Claude 표에 섞지 않는다. 남은 비율로
-        // 뒤집는 일은 [[CodexUsage]] 가 이미 해 뒀다 — 화면에서는 두 CLI 가 같은 방향이다.
+        // 뒤집는 일은 [[CodexUsage]] 가 이미 해 뒀다 - 화면에서는 두 CLI 가 같은 방향이다.
         if let cx = codexLimits {
             stack.addArrangedSubview(head(t("usage.titleFor", ["m": modeSuffix(), "cli": "Codex"])))
             let label = t("usage.codexWindow", ["w": CodexUsage.windowLabel(cx.windowMinutes)])
@@ -260,7 +260,7 @@ enum UsageUI {
                 stack.addArrangedSubview(r)
             }
         }
-        // Codex 턴은 모델별 표에 못 섞는다 — 비용을 추정할 가격표가 없다(구독). 토큰과
+        // Codex 턴은 모델별 표에 못 섞는다 - 비용을 추정할 가격표가 없다(구독). 토큰과
         // 턴 수만 사실대로 적는다. 값을 모르는 칸에 0 을 적으면 안 쓴 것처럼 읽힌다.
         if codexToday.turns > 0 {
             let line = NSTextField(labelWithString: t("usage.todayCodex", [

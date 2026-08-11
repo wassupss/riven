@@ -1,22 +1,22 @@
 import Foundation
 
-// Lifecycle GC for external OS resources that ARC does NOT manage — the per-chat unix sockets
+// Lifecycle GC for external OS resources that ARC does NOT manage - the per-chat unix sockets
 // (chat-tools-<uid>.sock / chat-perm-<uid>.sock) that back each native chat's MCP relay and
 // approval hook.
 //
 // Each ClaudeChatSession's servers unlink their own socket on stop() (the graceful path). But a
-// GUI app is force-killed sooner or later — a crash, Force Quit, SIGKILL — and no cleanup code
+// GUI app is force-killed sooner or later - a crash, Force Quit, SIGKILL - and no cleanup code
 // runs then. So graceful teardown alone leaks: every crash/kill leaves that run's chat sockets
 // behind, and nothing ever reclaims them (hundreds accumulated over days here).
 //
 // The fix is two-sided: teardown on quit (see AppDelegate.teardownAllChats), and this sweep on
 // startup to reclaim whatever a previous crash left. A socket is DEAD when nothing is listening
-// (connect fails) — those are safe to remove. A live one (an orphan still holding it) refuses
+// (connect fails) - those are safe to remove. A live one (an orphan still holding it) refuses
 // deletion by simply being kept. On ANY uncertainty we keep the file, never delete on doubt.
 enum RuntimeGC {
 
     /// Remove stale per-chat sockets left by crashed / force-killed runs. Cheap (a non-blocking
-    /// connect probe per file) — run it off the main thread at startup. New chats use fresh
+    /// connect probe per file) - run it off the main thread at startup. New chats use fresh
     /// random names, so this never races a socket the current run is about to create.
     static func sweepDeadChatSockets() {
         let dir = AgentHookServer.ensureSupportDir()
@@ -35,7 +35,7 @@ enum RuntimeGC {
     }
 
     /// True ONLY when we can prove no one is listening (connect refused / file gone). Any other
-    /// outcome — a listener accepts, or we can't probe — returns false so the caller keeps the file.
+    /// outcome - a listener accepts, or we can't probe - returns false so the caller keeps the file.
     private static func socketIsDead(_ path: String) -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }              // can't probe → treat as alive (keep)

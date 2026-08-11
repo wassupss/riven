@@ -13,7 +13,7 @@ import AppKit
 // 저장은 디바운스(타이핑마다 디스크를 때리지 않게)하고, 선택 변경·워크스페이스 전환·앱
 // 종료 때 강제로 흘려보낸다.
 
-// A clickable list row (mirrors RailRow — NSView has no built-in click callback).
+// A clickable list row (mirrors RailRow - NSView has no built-in click callback).
 final class NoteRow: NSView {
     var onSelect: (() -> Void)?
     override func mouseDown(with event: NSEvent) { onSelect?() }
@@ -41,7 +41,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     private var docs: [Note] = []
     private var selectedURL: URL?
     private var saveTimer: Timer?
-    /// 에이전트가 만들거나 고친 메모 — 목록과 상세에 표시했다가 사용자가 열어 보면 지운다.
+    /// 에이전트가 만들거나 고친 메모 - 목록과 상세에 표시했다가 사용자가 열어 보면 지운다.
     private var agentTouched: Set<String> = []
 
     /// 워크스페이스 문서 탭을 보고 있는지 (0 = 메모, 1 = 문서).
@@ -304,7 +304,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     }
 
     // ---- list ----
-    /// 마지막으로 그린 목록의 지문. 같은 목록을 또 그리지 않기 위한 것 — 문서 100여 개면
+    /// 마지막으로 그린 목록의 지문. 같은 목록을 또 그리지 않기 위한 것 - 문서 100여 개면
     /// 줄을 새로 만드는 데만 40ms 가 든다. 목록을 새로 그리는 경로가 여럿이라 (패널 열기,
     /// 탭 전환, 에이전트 알림, 저장) 그때마다 값을 치르고 있었다.
     private var renderedKey = ""
@@ -365,7 +365,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
             time.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -10),
             time.centerYAnchor.constraint(equalTo: row.centerYAnchor)
         ]
-        // 에이전트가 쓴 메모에는 점을 찍는다 — 목록만 보고도 "내가 안 쓴 게 생겼다"가 보여야 한다.
+        // 에이전트가 쓴 메모에는 점을 찍는다 - 목록만 보고도 "내가 안 쓴 게 생겼다"가 보여야 한다.
         if agentTouched.contains(n.url.path) {
             let dot = NSView(); dot.wantsLayer = true
             dot.layer?.backgroundColor = Theme.accent.cgColor
@@ -438,7 +438,7 @@ final class NotesPanel: NSView, Themable, Scalable, NSTextViewDelegate, NSTextFi
     @objc private func deleteSelected() {
         guard let n = selected else { return }
         saveTimer?.invalidate(); saveTimer = nil
-        // 워크스페이스 문서는 사용자의 소스 파일이다 — 패널에서 지우지 않고 목록에서만 뺀다.
+        // 워크스페이스 문서는 사용자의 소스 파일이다 - 패널에서 지우지 않고 목록에서만 뺀다.
         if n.scope == .workspace {
             selectedURL = nil
             loadSelectionIntoEditor(); setMode(detail: false); reload()

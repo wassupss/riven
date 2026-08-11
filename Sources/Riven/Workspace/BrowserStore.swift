@@ -151,17 +151,17 @@ enum BrowserStore {
         guard !q.isEmpty else { return [] }
         var out: [Suggestion] = []
 
-        // 1) 열려 있는 탭 — 이미 띄워 둔 걸 또 여는 실수를 막는다.
+        // 1) 열려 있는 탭 - 이미 띄워 둔 걸 또 여는 실수를 막는다.
         for t in openTabs where match(t.title, t.url, q) != nil {
             out.append(Suggestion(kind: .openTab, title: t.title, url: t.url,
                                   score: 900 + (match(t.title, t.url, q) ?? 0)))
         }
-        // 2) 북마크 — 일부러 저장한 것이니 기록보다 위.
+        // 2) 북마크 - 일부러 저장한 것이니 기록보다 위.
         for b in marks {
             guard let m = match(b.title, b.url, q) else { continue }
             out.append(Suggestion(kind: .bookmark, title: b.title, url: b.url, score: 600 + m))
         }
-        // 3) 방문 기록 — 횟수와 최근성을 함께 본다.
+        // 3) 방문 기록 - 횟수와 최근성을 함께 본다.
         let now = Date()
         for v in visits.values {
             guard let m = match(v.title, v.url, q) else { continue }
@@ -206,7 +206,7 @@ enum BrowserStore {
         if s.hasPrefix("localhost") || s.hasPrefix("127.0.0.1") || s.contains("://") { return true }
         return s.contains(".")
     }
-    /// 주소창에 친 게 주소가 아니면 여기로 보낸다. 기본은 구글 — 평소 쓰는 검색이 나와야지,
+    /// 주소창에 친 게 주소가 아니면 여기로 보낸다. 기본은 구글 - 평소 쓰는 검색이 나와야지,
     /// 주소창에 검색어를 쳤는데 낯선 엔진이 뜨면 그 자체가 걸림돌이다.
     static func searchURL(_ q: String) -> String {
         let e = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
@@ -231,7 +231,7 @@ enum BrowserStore {
     // MARK: - 사이트별 확대
     //
     // 글씨가 작은 사이트를 볼 때마다 다시 확대하는 건 성가시다. 호스트마다 기억해 두고
-    // 다음에 그 사이트를 열면 그대로 맞춘다 (1.0 이면 기억하지 않는다 — 기본값이니까).
+    // 다음에 그 사이트를 열면 그대로 맞춘다 (1.0 이면 기억하지 않는다 - 기본값이니까).
 
     private static var zooms: [String: Double] = Settings.shared.object("browserZooms") as? [String: Double] ?? [:]
 
@@ -309,7 +309,7 @@ enum BrowserStore {
         }
     }
 
-    /// 파비콘이 없을 때 쓰는 대체 표시 — 호스트에서 뽑은 색 (같은 사이트끼리 같은 색).
+    /// 파비콘이 없을 때 쓰는 대체 표시 - 호스트에서 뽑은 색 (같은 사이트끼리 같은 색).
     static func fallbackColor(host: String) -> NSColor {
         guard !host.isEmpty else { return Theme.fgDim.withAlphaComponent(0.5) }
         var h: UInt64 = 5381

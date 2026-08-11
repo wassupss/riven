@@ -4,7 +4,7 @@ Every native chat composer now has a **model picker next to the permission-mode 
 
 ## Also fixed
 
-- **Documents an agent creates** now open in **preview** (rendered), not the raw editor — switch to the edit tab if you want to edit.
+- **Documents an agent creates** now open in **preview** (rendered), not the raw editor - switch to the edit tab if you want to edit.
 - **After a restart**, an open agent-group member no longer shows as "closed" in the org chart.
 
 ## Also

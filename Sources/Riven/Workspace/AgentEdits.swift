@@ -1,7 +1,7 @@
 import Foundation
 
 // Tracks files an agent edited this session (before/after content), backing the
-// Changes panel — a port of riven's state/agentEdits.ts. The native AI is inline
+// Changes panel - a port of riven's state/agentEdits.ts. The native AI is inline
 // completion today (no file-writing agent), so record() has no caller yet; the
 // store + panel are the faithful infrastructure that lights up when an agent
 // starts applying edits. Accept drops the entry; revert restores `before`.
@@ -56,7 +56,7 @@ final class AgentEdits {
         baselineOrder = kept
     }
 
-    // Release everything retained for a workspace — called when it's closed so a long
+    // Release everything retained for a workspace - called when it's closed so a long
     // session doesn't pin every file it ever touched (#60).
     func clearWorkspace(_ workspace: String) {
         let prefix = workspace.hasSuffix("/") ? workspace : workspace + "/"
@@ -75,7 +75,7 @@ final class AgentEdits {
     private var snapshotted: Set<String> = []
     private static let ignoredDirs: Set<String> = [
         // `.claude` is agent scaffolding (settings, memory, worktrees) that the agent
-        // itself rewrites constantly — tracking it filled the Changes panel with noise
+        // itself rewrites constantly - tracking it filled the Changes panel with noise
         // AND retained those files' full contents for the session (#60).
         ".claude",
         ".git", "node_modules", "out", "dist", ".riven", ".cache", ".next", ".turbo",
@@ -104,7 +104,7 @@ final class AgentEdits {
                       let s = String(data: data, encoding: .utf8) else { continue }
                 snap[url.path] = s
                 count += 1; bytes += data.count
-                // Stop on EITHER cap — 2000 files at 200KB each would be ~400 MB (#60).
+                // Stop on EITHER cap - 2000 files at 200KB each would be ~400 MB (#60).
                 if count >= 2000 || bytes >= AgentEdits.baselineBudget { break }
             }
             // Route through updateBaseline so the byte budget + eviction apply.
@@ -114,7 +114,7 @@ final class AgentEdits {
 
     // Observers (the Changes panel) refresh when the timeline changes. observe() used
     // to only append, so every ChangesPanel ever created left its closure in the array
-    // forever (a slow leak over panel recreations — #64). Now it returns a token the
+    // forever (a slow leak over panel recreations - #64). Now it returns a token the
     // caller removes on teardown.
     private var observers: [Int: () -> Void] = [:]
     private var nextObserverToken = 0

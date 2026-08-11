@@ -1,6 +1,6 @@
 import AppKit
 
-// Live, remappable keybindings for the app-level (menu) shortcuts — riven's keymap.
+// Live, remappable keybindings for the app-level (menu) shortcuts - riven's keymap.
 // Each action has a stable id and a default chord; the user can override any of them
 // in Settings › Shortcuts (the recorder writes an override), and the menu bar is
 // rebuilt from this model so the new key takes effect immediately.
@@ -47,7 +47,7 @@ enum Keys {
     /// 브라우저 패널 안에서만 듣는 키들. 브라우저를 쓰던 손이 그대로 통하도록 크롬/사파리와
     /// 같은 배치를 쓴다.
     ///
-    /// 이 목록은 **보여 주기 위한 것**이다 — PreviewPanel 이 직접 처리하므로 여기서
+    /// 이 목록은 **보여 주기 위한 것**이다 - PreviewPanel 이 직접 처리하므로 여기서
     /// 바꿔도 동작이 바뀌지 않는다. 그래도 적어 두는 이유는, 적혀 있지 않으면 있는 줄도
     /// 모르기 때문이다 (단축키 화면에 브라우저가 통째로 빠져 있었다). 설정 화면은 이
     /// 목록을 고칠 수 없는 것으로 그린다.
@@ -70,7 +70,7 @@ enum Keys {
         .init(id: "browser.library", label: "방문 기록·북마크", def: "cmd+y", cat: "browser"),
         .init(id: "browser.newProfile", label: "새 프로필 탭", def: "cmd+shift+n", cat: "browser"),
     ]
-    // Editor (Monaco) commands — remappable per-command; overrides are applied on top
+    // Editor (Monaco) commands - remappable per-command; overrides are applied on top
     // of the chosen preset via addKeybindingRules in editor.html.
     static let editorActions: [Action] = [
         .init(id: "actions.find", label: "찾기", def: "cmd+f", cat: "editor"),
@@ -108,10 +108,10 @@ enum Keys {
     static func effective(_ id: String) -> String {
         // Look up the built-in default across BOTH the app (menu) actions AND the editor
         // (Monaco) actions. Missing `editorActions` here made every editor chord fall back
-        // to "" whenever the user had no override — invisible in dev (the dev machine's
+        // to "" whenever the user had no override - invisible in dev (the dev machine's
         // settings.json had accumulated overrides) but blank on a fresh/packaged install.
         // 세 목록을 모두 본다. 브라우저를 빠뜨렸을 때는 단축키 화면의 칩이 통째로 비어
-        // 나왔다 — 있는 키를 "없음" 으로 보여 주는 셈이었다.
+        // 나왔다 - 있는 키를 "없음" 으로 보여 주는 셈이었다.
         overrides[id] ?? (actions.first { $0.id == id }
                           ?? editorActions.first { $0.id == id }
                           ?? browserActions.first { $0.id == id })?.def ?? ""

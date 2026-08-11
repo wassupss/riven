@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 import CryptoKit
 
-// riven account & settings sync via Supabase — the native counterpart of riven's
+// riven account & settings sync via Supabase - the native counterpart of riven's
 // renderer auth (state/auth.ts) + main/auth.ts. GitHub OAuth uses PKCE: we open
 // the provider authorize URL in a WKWebView window and intercept the redirect to
 // lift the `code` (no custom URL scheme / Supabase allowlist change needed, exactly
@@ -31,7 +31,7 @@ enum SupabaseConfig {
 // and the data-protection keychain needs a `keychain-access-groups` entitlement that a
 // Developer-ID app can't ship without a provisioning profile (it made the app get SIGKILL'd
 // at launch). Store the token in a 0600 file under the user's account-protected home dir
-// instead — the same tradeoff gh/npm/git credential stores make.
+// instead - the same tradeoff gh/npm/git credential stores make.
 enum Keychain {
     private static let dir: URL = {
         let d = AppPaths.support("secrets")
@@ -133,7 +133,7 @@ final class SupabaseAuth {
     }
 
     private func presentOAuthWindow(url: URL, delegate: OAuthNavDelegate) {
-        // WKWebView / NSWindow may only be created on the main thread — hop there if
+        // WKWebView / NSWindow may only be created on the main thread - hop there if
         // the caller isn't already on it (otherwise AppKit traps and crashes).
         guard Thread.isMainThread else {
             DispatchQueue.main.async { [weak self] in self?.presentOAuthWindow(url: url, delegate: delegate) }
@@ -157,7 +157,7 @@ final class SupabaseAuth {
         oauthWindow = win
         web.load(URLRequest(url: url))
     }
-    // The flow resolved (success/failure) — tear down without firing the cancel path.
+    // The flow resolved (success/failure) - tear down without firing the cancel path.
     private func closeOAuthWindow() {
         oauthCancel = nil
         oauthWindow?.delegate = nil   // suppress windowWillClose re-entry
@@ -272,19 +272,19 @@ final class SupabaseAuth {
     // aiApiKey/session are secrets; aiCompleteEndpoint/aiProvider are machine-local
     // (a custom endpoint URL shouldn't leak to other devices via the synced settings row).
     // Never sync to the cloud: AI key/endpoint, the local dock session, AND the API panel's
-    // request history / saved collections / environments — those can hold Bearer tokens and
+    // request history / saved collections / environments - those can hold Bearer tokens and
     // Basic-auth passwords, so they stay on this device only.
     private static let noSync: Set<String> = [
         "browserURLs",      // 이 기기에서 보던 주소 (워크스페이스 경로가 들어간다)
-        "browserZooms",     // 사이트별 확대 — 어느 사이트에 갔는지가 드러난다
+        "browserZooms",     // 사이트별 확대 - 어느 사이트에 갔는지가 드러난다
         "browserTabs", "browserActiveTab",   // 이 기기에서 열어 둔 탭
         "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
-        // 이 기기의 로컬 부기 값 — 동기화하면 안 된다. 특히 lastSeenVersion 이 동기화되면,
+        // 이 기기의 로컬 부기 값 - 동기화하면 안 된다. 특히 lastSeenVersion 이 동기화되면,
         // 한 기기가 업데이트 후 클라우드에 현재 버전을 올리고 → 다른 기기가 그 값을 pull 해
         // "이미 봤음" 이 돼 릴리스노트 다이얼로그가 안 떴다. installId 는 설치별 식별자라 공유 금지.
         "lastSeenVersion", "installId",
-        // The local-change stamp is bookkeeping, never uploaded — AND it must be here or
+        // The local-change stamp is bookkeeping, never uploaded - AND it must be here or
         // localChanged() recurses into itself: set(any syncable key) → .rivenSettingChanged →
         // localChanged → set(localStampKey) → .rivenSettingChanged → localChanged → … until the
         // stack overflows. That was the v0.1.57 launch crash: while signed in, the first
@@ -313,7 +313,7 @@ final class SupabaseAuth {
     private static let localStampKey = "syncLocalStamp"
 
     /// 앱이 꺼질 때 한 번 올린다. 설정을 누를 때마다 올리면 눌린 횟수만큼 요청이 나가고,
-    /// 정작 다른 기기가 그것을 받는 시점은 그 기기를 켤 때다 — 즉시 올려도 즉시 반영되지
+    /// 정작 다른 기기가 그것을 받는 시점은 그 기기를 켤 때다 - 즉시 올려도 즉시 반영되지
     /// 않는다. 나가는 길에 한 번이면 충분하다.
     func flushOnQuit() {
         guard isSignedIn, dirty else { return }
@@ -339,7 +339,7 @@ final class SupabaseAuth {
                 let remoteAt = (row["updated_at"] as? String).flatMap { Self.iso.date(from: $0) }
                 let localAt = Self.iso.date(from: Settings.shared.string(Self.localStampKey, ""))
                 if let remoteAt, let localAt, remoteAt < localAt {
-                    RLog.log("sync: 원격이 더 오래됐다 — 적용하지 않고 로컬을 올린다")
+                    RLog.log("sync: 원격이 더 오래됐다 - 적용하지 않고 로컬을 올린다")
                     DispatchQueue.main.async { self.push() }
                     return
                 }
@@ -376,7 +376,7 @@ final class SupabaseAuth {
         }
     }
 
-    /// 종료 직전용. 앱이 내려가는 중이라 비동기 완료를 기다려 줄 사람이 없다 — 짧게 기다린다.
+    /// 종료 직전용. 앱이 내려가는 중이라 비동기 완료를 기다려 줄 사람이 없다 - 짧게 기다린다.
     private func pushSynchronously() {
         let sem = DispatchSemaphore(value: 0)
         pushCompleted = { sem.signal() }
@@ -386,7 +386,7 @@ final class SupabaseAuth {
     }
     private var pushCompleted: (() -> Void)?
 
-    // cached — ISO8601DateFormatter is expensive to construct (never do it per call).
+    // cached - ISO8601DateFormatter is expensive to construct (never do it per call).
     private static let iso = ISO8601DateFormatter()
 }
 

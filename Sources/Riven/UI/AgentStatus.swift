@@ -1,6 +1,6 @@
 import AppKit
 
-/// 에이전트 팬 하나의 상태 — 레일 / 독 탭 / 조직도가 공유하는 단 하나의 어휘.
+/// 에이전트 팬 하나의 상태 - 레일 / 독 탭 / 조직도가 공유하는 단 하나의 어휘.
 ///
 /// 예전에는 자리마다 어휘가 달랐다. 팬은 badge("busy"/"attn") 문자열, 레일은 PaneActivity,
 /// 조직도는 AgentRunState. 그래서 같은 순간이 레일에서는 초록 체크, 탭에서는 액센트 점,
@@ -14,9 +14,9 @@ import AppKit
 enum AgentStatus: Equatable {
     /// 턴이 없다.
     case idle
-    /// 일하는 중 — 제목이 shimmer 한다.
+    /// 일하는 중 - 제목이 shimmer 한다.
     case busy
-    /// 승인·입력 대기. 사람이 병목이다 — 어디서 보든 Theme.warning 한 가지 색.
+    /// 승인·입력 대기. 사람이 병목이다 - 어디서 보든 Theme.warning 한 가지 색.
     case waiting
     /// 끝났는데 아직 안 본 상태 (완료 알림).
     case done

@@ -10,7 +10,7 @@ final class GhosttyApp {
     private(set) var config: ghostty_config_t?
 
     // Build a finalized ghostty config for the CURRENT theme. Colors are applied via
-    // a temp .conf loaded with ghostty_config_load_file — they need a leading '#' or
+    // a temp .conf loaded with ghostty_config_load_file - they need a leading '#' or
     // ghostty rejects the value and the config never finalizes → surfaces fail.
     private func makeConfig() -> ghostty_config_t? {
         let cfg = ghostty_config_new()
@@ -91,13 +91,13 @@ final class GhosttyApp {
             let me = Unmanaged<GhosttyApp>.fromOpaque(ud).takeUnretainedValue()
             DispatchQueue.main.async { me.scheduleTick() }
         }
-        // Handle ghostty actions we care about — desktop notifications (OSC 9 /
+        // Handle ghostty actions we care about - desktop notifications (OSC 9 /
         // OSC 777 from the shell / agent) and the terminal bell.
         rt.action_cb = { _, target, action in
             let surface = target.tag == GHOSTTY_TARGET_SURFACE ? target.target.surface : nil
             switch action.tag {
             case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
-                // Do NOT post here — the activity poller (onTurnDone) is the SINGLE,
+                // Do NOT post here - the activity poller (onTurnDone) is the SINGLE,
                 // gated notification source (one per user turn). Posting the agent's own
                 // desktop notification too caused duplicate banners. Just mark activity
                 // (attn ember + dedup timestamp).
@@ -114,7 +114,7 @@ final class GhosttyApp {
                 }
             // Shell command finished (OSC 133) → the pane is idle. This is exact for plain
             // shells. It is absent for agent TUIs, which is why it was previously ignored
-            // altogether — but those are now covered by lifecycle hooks, so each signal is
+            // altogether - but those are now covered by lifecycle hooks, so each signal is
             // used where it is actually correct (docs/agent-hooks-design.md).
             case GHOSTTY_ACTION_COMMAND_FINISHED:
                 DispatchQueue.main.async { TerminalView.view(for: surface)?.commandFinished() }

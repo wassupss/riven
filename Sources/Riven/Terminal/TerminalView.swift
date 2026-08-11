@@ -8,7 +8,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private var surface: ghostty_surface_t?
     private var link: CVDisplayLink?
     private let workdir: String?
-    private var command: String?          // initial command (agent launch) — runs directly;
+    private var command: String?          // initial command (agent launch) - runs directly;
                                           // cleared after the first child-exit respawn so the
                                           // pane falls back to a plain shell (see childExited).
     private let env: [String: String]     // extra environment for the surface (session shim)
@@ -36,7 +36,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // first done-signal notifies and disarms. Stops the 3-notifications-per-command spam
     // (an agent turn has several output bursts, each an idle gap).
     var turnArmed = false
-    // The terminal that currently holds focus — used by the clipboard read callback
+    // The terminal that currently holds focus - used by the clipboard read callback
     // to complete a paste request against the right surface.
     static weak var focused: TerminalView?
     var surfaceHandle: ghostty_surface_t? { surface }
@@ -67,7 +67,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // ---- busy / idle signals ------------------------------------------------
     // These used to be derived by polling the visible viewport (ghostty_surface_read_text
     // every 0.3s, per pane, forever). That call is documented as expensive and not to be
-    // polled, and it leaked ~10KB each time — ~9.3MB/min across a normal set of panes,
+    // polled, and it leaked ~10KB each time - ~9.3MB/min across a normal set of panes,
     // which is where the multi-GB sessions came from.
     //
     // Nothing polls now. The callbacks below are driven by push signals only:
@@ -77,7 +77,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     //
     // The old comment here claimed COMMAND_FINISHED was unreliable. That was true of the
     // agent TUIs it was being tested against (they never emit it) but not of plain shells,
-    // where OSC 133 is exact — so it is used for shells and hooks cover the agents.
+    // where OSC 133 is exact - so it is used for shells and hooks cover the agents.
 
     /// A shell command finished (OSC 133). Routed from [[GhosttyApp]]'s action handler.
     func commandFinished() {
@@ -91,7 +91,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     /// riven 은 ghostty 의 셸 통합 리소스를 번들하지 않는다 (GhosttyKit 프레임워크만
     /// 들어 있다). 그래서 `shell-integration = detect` 가 주입할 것을 찾지 못하고, 평범한
     /// 셸에서는 OSC 133 이 영영 오지 않는다. 그런데 busy 는 Return 에 켜고 OSC 133 에
-    /// 끄도록 돼 있었다 — 끄는 쪽이 없으니 아무거나 치면 탭 제목이 계속 "작업 중" 으로
+    /// 끄도록 돼 있었다 - 끄는 쪽이 없으니 아무거나 치면 탭 제목이 계속 "작업 중" 으로
     /// 남았다.
     ///
     /// 끝을 알려 주지 않는 셸에게 "작업 중" 이라고 말할 근거가 없다. 첫 Return 은 모르니
@@ -103,7 +103,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
 
     /// The surface's process exited (GHOSTTY_ACTION_SHOW_CHILD_EXITED). For an agent pane we
     /// launched the CLI DIRECTLY as the surface command (no shell), so when the user types
-    /// `exit` in claude the pty has no shell to fall back to — the terminal goes dead (a
+    /// `exit` in claude the pty has no shell to fall back to - the terminal goes dead (a
     /// blinking cursor that accepts nothing). Respawn a plain shell in the same workdir/env
     /// so the pane stays usable; the env still carries RIVEN_PANE_SESSION + the ZDOTDIR shim,
     /// so typing `claude` again resumes THIS pane's own conversation. We clear `command` first
@@ -132,14 +132,14 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     private func armBusyOnReturn() {
         turnArmed = true
         if reportsCompletion { onBusy?(); return }
-        guard !probedCompletion else { return }   // 끝을 안 알려 주는 셸 — 켜지 않는다
+        guard !probedCompletion else { return }   // 끝을 안 알려 주는 셸 - 켜지 않는다
         probedCompletion = true
         onBusy?()
         // 한 번만 재 본다. 소식이 없으면 이 셸은 끝을 알려 주지 않는 것으로 본다.
         busyProbe?.invalidate()
         busyProbe = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
             guard let self, !self.reportsCompletion else { return }
-            RLog.log("terminal: 셸이 명령 종료를 알려 주지 않는다 — '작업 중' 표시를 끈다")
+            RLog.log("terminal: 셸이 명령 종료를 알려 주지 않는다 - '작업 중' 표시를 끈다")
             self.onIdle?()
         }
     }
@@ -217,7 +217,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         return true
     }
     // Releasing focus MUST tell ghostty, otherwise the surface keeps drawing a solid
-    // (focused) block cursor even after another pane takes focus — which shows up as
+    // (focused) block cursor even after another pane takes focus - which shows up as
     // "two cursors" once a second terminal/editor is focused. (ghostty's own macOS app
     // does exactly this in resignFirstResponder.)
     override func resignFirstResponder() -> Bool {
@@ -276,7 +276,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
 
     // Standard Edit-menu shortcuts route to the terminal clipboard when it has focus.
     // The menu items target the responder chain (copy:/paste:/cut:/selectAll:), which the
-    // ghostty surface view doesn't implement — so ⌘C/⌘V/⌘X/⌘A did nothing. Bridge them.
+    // ghostty surface view doesn't implement - so ⌘C/⌘V/⌘X/⌘A did nothing. Bridge them.
     @objc func copy(_ sender: Any?) { ctxCopy() }
     @objc func paste(_ sender: Any?) { ctxPaste() }
     @objc func cut(_ sender: Any?) { ctxCopy() }              // a terminal has no cut → copy
@@ -314,7 +314,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         sc.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
         // 새로 만드는 터미널도 설정값으로 시작한다 (예전에는 13 고정이라 설정이 무시됐다).
         sc.font_size = Float(UIScale.terminalFontSize)
-        // Optionally start in a directory, run a command directly (agent launch — e.g.
+        // Optionally start in a directory, run a command directly (agent launch - e.g.
         // `claude` runs immediately), and inject per-surface env (session shim). ghostty
         // copies the config strings during surface_new, so strdup here + free after is safe.
         var owned: [UnsafeMutablePointer<CChar>] = []
@@ -345,7 +345,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
 
     // ghostty in this build does NOT emit GHOSTTY_ACTION_RENDER, so we draw every
     // display-link frame like ghostty's own POC (≈4% CPU for one terminal). needsDraw
-    // is kept as a harmless hint but not gated on — the real CPU hog was elsewhere
+    // is kept as a harmless hint but not gated on - the real CPU hog was elsewhere
     // (Usage.today() created an ISO8601DateFormatter per log line). To keep many/hidden
     // terminals cheap the link is PAUSED while occluded (setOccluded).
     private var needsDraw = true
@@ -380,7 +380,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         // NOTE: the link is NOT started here. It starts in viewDidMoveToWindow once the view
         // is actually in a window. Starting it in init let the display-link thread call
         // ghostty_surface_draw on a surface whose view had no window and a zero-size Metal
-        // drawable — harmless most of the time, but during session restore many surfaces are
+        // drawable - harmless most of the time, but during session restore many surfaces are
         // created in a burst and a draw landing on a half-set-up / just-freed surface fatally
         // crashed libghostty (the same fragility noted at sendText: "recreating the surface
         // crashes libghostty"). Restore reorder in 0.1.57 made that race far more likely.
@@ -390,7 +390,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
             if view.fullRate || view.frameTick & 1 == 0 { DispatchQueue.main.async { view.drawIfNeeded() } }
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
-        // Intentionally not started here — see the note above. viewDidMoveToWindow starts it.
+        // Intentionally not started here - see the note above. viewDidMoveToWindow starts it.
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -408,7 +408,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         // Pause the GPU draw loop (and ghostty occlusion) whenever this terminal leaves
-        // the window — a hidden dock tab or an inactive workspace's terminal must not
+        // the window - a hidden dock tab or an inactive workspace's terminal must not
         // keep rendering every frame (that's what multiplied idle CPU across terminals).
         if window == nil {
             if let l = link { CVDisplayLinkStop(l) }
@@ -443,7 +443,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         guard let s = surface else { return }
         text.withCString { ghostty_surface_text(s, $0, UInt(strlen($0))) }
     }
-    // Press Enter as a real key event — sending "\r"/"\n" as TEXT does NOT execute a
+    // Press Enter as a real key event - sending "\r"/"\n" as TEXT does NOT execute a
     // command (the pty gets a bare CR), so command-running paths must use this.
     func sendEnter() {
         guard let s = surface else { return }
@@ -487,7 +487,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         else if delta < 0 { fontAction("decrease_font_size:\(-delta)") }
     }
     private func applySettingsFontSize() { setFontSize(UIScale.terminalFontSize) }
-    // 색은 GhosttyApp이 서피스 단위로 갱신한다 — 여기서는 그때 함께 초기화되는 폰트
+    // 색은 GhosttyApp이 서피스 단위로 갱신한다 - 여기서는 그때 함께 초기화되는 폰트
     // 크기만 설정값으로 되돌린다.
     func applyTheme() { applySettingsFontSize() }
     // 설정 → 일반 → 터미널 폰트 크기 변경을 살아있는 모든 터미널에 즉시 반영.
@@ -502,7 +502,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // triggers becomeFirstResponder, which forwards focus to the ghostty surface.
     func focusTerminal() {
         window?.makeFirstResponder(self)
-        // Assert ghostty focus EVEN IF we were already first responder — after a
+        // Assert ghostty focus EVEN IF we were already first responder - after a
         // workspace swap the view can stay first responder while the surface lost
         // focus, so keystrokes went nowhere until you clicked again.
         if let s = surface { ghostty_surface_set_focus(s, true) }
@@ -535,7 +535,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         sendText(" cd '\(escaped)'\n")
     }
 
-    // IME state (Korean/CJK composition) — see NSTextInputClient below.
+    // IME state (Korean/CJK composition) - see NSTextInputClient below.
     private var markedText = ""
     private var pendingText: String?   // committed text captured by insertText during a keyDown
 
@@ -554,12 +554,12 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     //
     // keycodeOverride lets a caller detach the attached TEXT from the triggering
     // event's keycode. This exists for one reason: Return/Tab/Escape/keypad-Enter
-    // are "commit + action" keys in Korean IME — the final composed syllable is
+    // are "commit + action" keys in Korean IME - the final composed syllable is
     // committed (via insertText) by the SAME keystroke that also has to fire the
     // key's own action (submit the line / indent / cancel). If we sent one event
     // with keycode = Return AND that text attached, ghostty treats it as the
-    // Return action and the attached syllable is dropped — see keyDown below.
-    // Overriding to a neutral keycode (0x00, 'a' with no modifiers — a key with
+    // Return action and the attached syllable is dropped - see keyDown below.
+    // Overriding to a neutral keycode (0x00, 'a' with no modifiers - a key with
     // no keybinding of its own) makes ghostty fall back to printing `.text`
     // instead of running the Return/Tab/Escape action, so the syllable prints.
     private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e, text: String?, keycodeOverride: UInt32? = nil) {
@@ -568,7 +568,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         k.action = action
         k.keycode = keycodeOverride ?? UInt32(event.keyCode)
         // A neutral override keycode must not carry the original event's modifiers
-        // either (e.g. leftover shift) — keep it a plain, unbound keystroke so only
+        // either (e.g. leftover shift) - keep it a plain, unbound keystroke so only
         // the attached text is observable.
         k.mods = keycodeOverride != nil ? GHOSTTY_MODS_NONE : ghosttyMods(event.modifierFlags)
         if let text, let first = text.utf8.first, first >= 0x20 {
@@ -581,10 +581,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // macOS virtual keycodes that both COMMIT IME text and carry their own action:
     // Return, keypad Enter, Tab, Escape. For these, the committed syllable and the
     // key's action must be sent as TWO separate ghostty_surface_key events (see
-    // keyDown) — otherwise ghostty prioritizes the action and the text is lost.
+    // keyDown) - otherwise ghostty prioritizes the action and the text is lost.
     private static let commitActionKeycodes: Set<UInt16> = [0x24, 0x4C, 0x30, 0x35]
 
-    // Key flow — matches ghostty's official macOS app (Surface.keyDown):
+    // Key flow - matches ghostty's official macOS app (Surface.keyDown):
     // interpretKeyEvents routes the event to the IME, which calls back into
     // insertText / setMarkedText / doCommand. We do NOT send anything to the
     // shell from those callbacks; instead insertText only *captures* the
@@ -594,7 +594,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // This is the critical difference from the old code (which called
     // ghostty_surface_text directly): a printable char sent via
     // ghostty_surface_text bypasses ghostty's key pipeline, and its cursor
-    // bookkeeping diverged from the shell's echoed cursor — that mismatch was
+    // bookkeeping diverged from the shell's echoed cursor - that mismatch was
     // rendered as TWO cursors on different rows. Routing everything through
     // ghostty_surface_key keeps one authoritative cursor. It also fixes
     // Enter-first-press: a plain Enter produces no insertText, so pendingText
@@ -606,13 +606,13 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // interpretKeyEvents commits the syllable via insertText in the SAME keyDown
     // that must also fire Return's own action. Sending one event with
     // keycode=Return AND that text attached made ghostty run the Return action
-    // and silently drop the attached text — the reported bug (issue #11): the
+    // and silently drop the attached text - the reported bug (issue #11): the
     // final syllable vanished on every Enter-to-submit. The fix: for these
     // "commit + action" keys, send the committed text FIRST under a neutral
     // keycode (so ghostty prints it, not interprets it as Return), THEN send the
     // real key as a keycode-only event so the line still submits / tab still
     // fires. For an ordinary letter/number key committing the PREVIOUS syllable
-    // mid-composition, the single combined event is correct as before — the
+    // mid-composition, the single combined event is correct as before - the
     // committed text is attached to a plain letter keycode ghostty already just
     // prints, and resending that key would double-type it.
     override func keyDown(with event: NSEvent) {
@@ -656,10 +656,10 @@ extension TerminalView: NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         let chars = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
         markedText = ""
-        // ACCUMULATE — the IME can call insertText MORE THAN ONCE per keyDown: typing a
+        // ACCUMULATE - the IME can call insertText MORE THAN ONCE per keyDown: typing a
         // punctuation mark right after 한글 commits the composing syllable ("글") and then
         // inserts the punctuation ("."), as two calls. Overwriting dropped the syllable, so
-        // "한글." came out as "한." — append instead (ghostty's keyTextAccumulator model).
+        // "한글." came out as "한." - append instead (ghostty's keyTextAccumulator model).
         // keyDown resets pendingText to nil before interpretKeyEvents, so this starts fresh
         // for each keystroke.
         pendingText = (pendingText ?? "") + chars

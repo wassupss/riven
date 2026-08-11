@@ -144,12 +144,12 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
         }
     }
 
-    // Column captions above the rows — without them a bare pair of boxes gives no clue which is
+    // Column captions above the rows - without them a bare pair of boxes gives no clue which is
     // the key and which is the value until you click in.
     private var headerRow: NSView?
     private var plusRow: NSView?
     // An explicit "+ 행 추가" affordance. Before, you had to notice that a blank trailing row existed
-    // and click into it — there was no visible way to add.
+    // and click into it - there was no visible way to add.
     private func addPlusRow() {
         plusRow?.removeFromSuperview()
         let b = NSButton(title: "  + " + t("api.addRow"), target: self, action: #selector(addRowClicked))
@@ -198,7 +198,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
     }
     private func field(_ tf: NSTextField, _ ph: String) {
         styleAPIInput(tf, placeholder: ph)
-        // Inside the table the ROW draws the grid — individual boxed inputs made it look like a
+        // Inside the table the ROW draws the grid - individual boxed inputs made it look like a
         // pile of separate widgets rather than a table.
         tf.layer?.borderWidth = 0
         tf.layer?.backgroundColor = NSColor.clear.cgColor
@@ -247,7 +247,7 @@ final class KVEditor: NSView, Themable, Scalable, NSTextFieldDelegate {
         stack.addArrangedSubview(r.box)
         // Full-width rows. Guard the cross-view constraint: addArrangedSubview normally makes
         // r.box a subview of `stack` (shared ancestor), but a crash was recorded here
-        // ("no common ancestor") — activating with no shared ancestor throws an NSException
+        // ("no common ancestor") - activating with no shared ancestor throws an NSException
         // that takes down the app. Only activate once the relationship is actually in place;
         // worst case a row is slightly misaligned instead of the whole app crashing.
         if r.box.superview === stack {
@@ -359,7 +359,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         urlField.font = UIScale.mono(UIScale.body, .regular)
         urlField.target = self; urlField.action = #selector(send)
         urlField.translatesAutoresizingMaskIntoConstraints = false
-        // Accent-filled primary action — the plain 60pt roundRect read as a secondary control.
+        // Accent-filled primary action - the plain 60pt roundRect read as a secondary control.
         sendBtn.bezelStyle = .roundRect; sendBtn.keyEquivalent = "\r"
         sendBtn.isBordered = false
         sendBtn.wantsLayer = true
@@ -403,7 +403,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         // --- response ---
         let respBox = NSView()
         // Status reads as a COLORED PILL (2xx green / 3xx accent / 4xx amber / 5xx red) with the
-        // timing + size beside it — a dim one-line string made you squint to tell success from failure.
+        // timing + size beside it - a dim one-line string made you squint to tell success from failure.
         statusPill.wantsLayer = true
         statusPill.font = UIScale.font(UIScale.caption, .semibold)
         statusPill.alignment = .center
@@ -444,7 +444,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         split.translatesAutoresizingMaskIntoConstraints = false
         split.addArrangedSubview(reqBox); split.addArrangedSubview(respBox)
         // Initial ~50/50 via a low-priority height ratio; user drags override it and
-        // window resizes keep the proportion — no setPosition feedback loop.
+        // window resizes keep the proportion - no setPosition feedback loop.
         let reqRatio = reqBox.heightAnchor.constraint(equalTo: split.heightAnchor, multiplier: 0.5)
         reqRatio.priority = .defaultLow; reqRatio.isActive = true
 
@@ -460,7 +460,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
             method.leadingAnchor.constraint(equalTo: methodDot.trailingAnchor, constant: 6),
             method.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 8),
             method.widthAnchor.constraint(equalToConstant: UIScale.pt(92)),
-            // The request line shares ONE height — the URL field had no height constraint at all, so
+            // The request line shares ONE height - the URL field had no height constraint at all, so
             // it collapsed to its minimum and looked cramped next to the method select.
             urlField.leadingAnchor.constraint(equalTo: method.trailingAnchor, constant: 6),
             urlField.centerYAnchor.constraint(equalTo: method.centerYAnchor),
@@ -609,7 +609,7 @@ final class APIClientPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         responseView.textStorage?.setAttributedString(APIClientPanel.colorJSON(text))
     }
     // A tiny hand-written JSON colouriser: keys, strings, numbers, literals. Deliberately a single
-    // linear scan rather than regex — a big response through a backtracking pattern is exactly the
+    // linear scan rather than regex - a big response through a backtracking pattern is exactly the
     // kind of thing that froze the app before, and this stays O(n).
     static func colorJSON(_ s: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 2

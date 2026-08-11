@@ -51,7 +51,7 @@ final class DockTabBar: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // 일반 마우스 휠은 세로 델타만 준다 — 가로 스트립이므로 세로 델타를 가로 이동으로
+    // 일반 마우스 휠은 세로 델타만 준다 - 가로 스트립이므로 세로 델타를 가로 이동으로
     // 바꿔 준다 (트랙패드 가로 스와이프는 그대로 동작).
     override func scrollWheel(with e: NSEvent) {
         let dx = e.scrollingDeltaX != 0 ? e.scrollingDeltaX : e.scrollingDeltaY
@@ -142,7 +142,7 @@ final class DockTab: NSView, NSDraggingSource {
         icon.heightAnchor.constraint(equalToConstant: UIScale.pt(14)).isActive = true
 
         // 상태 점: 사람을 부르는 상태(승인 대기 / 완료)에만 뜬다. "작업 중"은 제목이
-        // 훑리는 것으로 이미 말하고 있어서 점을 겹치지 않는다 — 레일의 에이전트 행과
+        // 훑리는 것으로 이미 말하고 있어서 점을 겹치지 않는다 - 레일의 에이전트 행과
         // 같은 어휘다.
         let badge = statusDot
 
@@ -185,7 +185,7 @@ final class DockTab: NSView, NSDraggingSource {
             sep.bottomAnchor.constraint(equalTo: bottomAnchor),
             sep.widthAnchor.constraint(equalToConstant: 1)
         ])
-        // 2px accent underline — full accent when the group is focused, faint
+        // 2px accent underline - full accent when the group is focused, faint
         // when it isn't (so only the focused pane shows the hot ember marker).
         // 탭을 다시 만들지 않고 활성 상태를 바꿀 수 있게 항상 만들어 두고 숨긴다.
         let u = NSView(); u.wantsLayer = true
@@ -202,7 +202,7 @@ final class DockTab: NSView, NSDraggingSource {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 제자리 갱신 — 제목·상태·활성 표시만 바꾼다 (탭 뷰를 다시 만들면 shimmer 가
+    /// 제자리 갱신 - 제목·상태·활성 표시만 바꾼다 (탭 뷰를 다시 만들면 shimmer 가
     /// 매번 처음으로 되감기고 레이어가 계속 새로 붙는다).
     func update(active: Bool, groupActive: Bool) {
         self.active = active; self.groupActive = groupActive
@@ -215,7 +215,7 @@ final class DockTab: NSView, NSDraggingSource {
         let status = panel.status
         titleLabel.shimmering = status.shimmers
         statusDot.set(color: status.showsTabDot ? status.color : nil, pulsing: status.pulses)
-        // 역할이 있는 에이전트 팬은 탭 아이콘도 그 에이전트의 아바타로 — 탭이 여러 개
+        // 역할이 있는 에이전트 팬은 탭 아이콘도 그 에이전트의 아바타로 - 탭이 여러 개
         // 열려 있을 때 "이 탭이 누구인지"가 제목을 읽기 전에 보인다.
         let wanted = panel.avatarKey.flatMap {
             AgentAvatar.image(for: $0, override: panel.chatAvatar, size: UIScale.pt(12))
@@ -308,7 +308,7 @@ final class DockTab: NSView, NSDraggingSource {
     }
 }
 
-// A borderless "×" that tints on hover — the dock tab's close affordance.
+// A borderless "×" that tints on hover - the dock tab's close affordance.
 final class HoverX: NSButton {
     var onClick: (() -> Void)?
     override init(frame: NSRect) {

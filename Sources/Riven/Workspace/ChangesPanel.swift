@@ -1,6 +1,6 @@
 import AppKit
 
-// The Changes timeline — a native port of riven's ChangesPanel.tsx. Lists files
+// The Changes timeline - a native port of riven's ChangesPanel.tsx. Lists files
 // an agent edited this session with +added/−removed counts; accept (keep) or
 // revert (restore pre-edit content) per file or in bulk. Click a row to open the
 // file with its changed lines highlighted. Driven by [[AgentEdits]].
@@ -12,9 +12,9 @@ final class ChangesPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()
     private var workspace: URL?
 
-    // (path) — open the file and highlight its agent-changed lines.
+    // (path) - open the file and highlight its agent-changed lines.
     var onOpen: ((String) -> Void)?
-    // (path) — a file was reverted; reload it if open in the editor.
+    // (path) - a file was reverted; reload it if open in the editor.
     var onReverted: ((String) -> Void)?
 
     override init(frame: NSRect) {
@@ -59,7 +59,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
             rowsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
         ])
         // Coalesce refreshes: a burst of agent edits (one notify per file) would otherwise
-        // rebuild the whole row list once per file — O(N²) over a turn. Collapse all notifies
+        // rebuild the whole row list once per file - O(N²) over a turn. Collapse all notifies
         // in a runloop turn into a single rebuild.
         editsToken = AgentEdits.shared.observe { [weak self] in
             guard let self, !self.refreshScheduled else { return }
@@ -91,7 +91,7 @@ final class ChangesPanel: NSView, Themable, Scalable {
     func setWorkspace(_ url: URL) { workspace = url; refresh() }
 
     // The Changes panel shows what the AGENT edited this session (before/after from the
-    // session baseline) — riven's agentEdits.timeline, NOT git working-tree status.
+    // session baseline) - riven's agentEdits.timeline, NOT git working-tree status.
     func refresh() {
         guard let ws = workspace else { entries = []; render(); return }
         entries = AgentEdits.shared.timeline.filter { $0.workspace == ws.path }.reversed()  // newest first

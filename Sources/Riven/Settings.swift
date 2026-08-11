@@ -34,7 +34,7 @@ final class Settings {
     func object(_ key: String) -> [String: Any]? { read { dict[key] as? [String: Any] } }
 
     // In-memory update is immediate; the DISK write is coalesced. set() used to serialize the whole
-    // settings dictionary and write it synchronously on every call — and divider drags call it on
+    // settings dictionary and write it synchronously on every call - and divider drags call it on
     // every frame (sidebar width / rail height), so resizing a panel stuttered against the disk.
     // Readers see the new value at once; the file catches up within a runloop turn.
     private var flushScheduled = false
@@ -52,7 +52,7 @@ final class Settings {
         NotificationCenter.default.post(name: .rivenSettingChanged, object: key)
     }
 
-    /// 설정만 기본값으로. 세션(열린 탭·대화)·설치 식별자처럼 "설정" 이 아닌 것은 남긴다 —
+    /// 설정만 기본값으로. 세션(열린 탭·대화)·설치 식별자처럼 "설정" 이 아닌 것은 남긴다 -
     /// "설정 초기화" 로 작업까지 날리면 그건 초기화가 아니라 사고다.
     func resetPreferences() {
         let keep: Set<String> = ["session", "installId", "crashNoticeShown",
@@ -89,7 +89,7 @@ final class Settings {
     /// Write the settings file.
     ///
     /// `sync: true` (quit) writes on the CALLING thread: an async write scheduled at termination
-    /// never ran — the process exited first — and left a 0-byte settings file, i.e. the whole
+    /// never ran - the process exited first - and left a 0-byte settings file, i.e. the whole
     /// session (workspaces, layouts, tabs) gone. The write is also ATOMIC, so an interrupted write
     /// can never truncate the existing file.
     func flush(sync: Bool = false) {
@@ -103,7 +103,7 @@ final class Settings {
         DispatchQueue.global(qos: .utility).async { try? data.write(to: dest, options: .atomic) }
     }
 
-    // A JSON-safe copy of all settings minus the given keys (used for cloud sync —
+    // A JSON-safe copy of all settings minus the given keys (used for cloud sync -
     // sensitive/local keys like the AI API key + session are excluded by the caller).
     func syncableSnapshot(excluding: Set<String>) -> [String: Any] {
         read {

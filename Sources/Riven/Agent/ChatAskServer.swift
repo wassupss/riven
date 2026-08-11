@@ -28,7 +28,7 @@ final class ChatAskServer {
     // 그동안 CLI 는 어차피 답을 기다리며 서 있을 뿐이라 길게 잡아도 손해가 없다.
     private static let timeout: TimeInterval = 1800
     /// 기다리던 요청이 사라졌을 때 (시간 초과·세션 종료). 화면의 선택 카드를 그때 바로
-    /// 만료 표시로 바꾸기 위한 것 — 예전에는 사용자가 눌러 보고 나서야 알 수 있었다.
+    /// 만료 표시로 바꾸기 위한 것 - 예전에는 사용자가 눌러 보고 나서야 알 수 있었다.
     var onExpire: ((_ id: String, _ reason: String) -> Void)?
 
     init?() {
@@ -65,14 +65,14 @@ final class ChatAskServer {
         - 코드/파일을 사용자와 함께 보며 이야기할 땐 `riven_open_file`(path, line?) 로 riven 에디터에 엽니다.
         - riven 브라우저를 직접 운전할 수 있습니다: `riven_browser_open`(url, new_tab?) 로 열고, `riven_browser_state`() 로 지금 주소·제목을 확인하고, `riven_browser_read`(selector?, html?) 로 내용을 읽고, `riven_browser_click`(selector) / `riven_browser_fill`(selector, value, submit?) 로 조작하고, 늦게 그려지는 화면은 `riven_browser_wait`(selector) 로 기다립니다. 뒤로/앞으로/새로고침은 `riven_browser_go`(action). 화면이 필요하면 `riven_screenshot`(url?) 로 캡처해 PNG 경로를 Read 로 읽으세요.
         - 브라우저는 쿠키·세션을 유지합니다 (로그인한 페이지가 그대로 남아 있을 수 있습니다). 전용 도구로 안 되는 경우에만 `riven_browser_eval`(js) 를 쓰고, 이건 페이지마다 사용자 승인을 받습니다.
-        - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) — riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
+        - HTTP/API 를 테스트할 땐 `riven_api_request`(method,url,headers?,body?) - riven API 패널에 열려 실행되고 상태/본문을 반환합니다.
         - riven의 패널/워크스페이스를 파악·조작할 수 있습니다: `riven_panels`(현재 패널 목록), `riven_open_panel`(kind), `riven_close_panel`(id), `riven_workspaces`, `riven_open_workspace`(path).
         - 다른 에이전트와 팀으로 일할 수 있습니다: `riven_agents` 로 동료(역할·상태)를 확인하고, `riven_ask_agent`(agent, message) 로 일을 넘긴 뒤 답을 받습니다. 여러 명에게 서로 무관한 일을 시킬 땐 `riven_ask_agents`(tasks=[{agent,message},…]) 를 한 번 호출하세요. 전원이 동시에 시작합니다 (한 명씩 부르면 순차로 끝날 때까지 기다리게 됩니다). 오래 걸릴 일은 `wait=false` 로 넘기면 즉시 반환되고, 답은 도착하는 대로 당신의 대화에 전달됩니다. 그동안 다른 일을 하세요.
         - 긴 결과(요약·계획·조사 메모·인수인계 문서)는 대화에 쏟아 넣지 말고 메모로 남기세요: `riven_note_write`(title, body, note?) 로 riven 메모 패널에 마크다운 문서를 만듭니다(note 를 주면 그 메모를 갈아끼웁니다. 이전 내용은 백업되어 사용자가 되돌릴 수 있습니다). 이어 쓰기는 `riven_note_append`(note, body), 읽기는 `riven_note_read`(note), 목록은 `riven_note_list`(scope?) 입니다. 워크스페이스에 실제 .md 파일로 남길 땐 `riven_note_save_file`(note, path, overwrite?) 를 씁니다.
         - 그룹 인원은 `riven_group_add_agent`(group, name, persona?, model?, parent?) 로 늘리고, `riven_group_remove_agent`(group, name) 로 줄입니다. 그룹 자체는 `riven_group_delete`(group). 줄이거나 지우는 건 사용자 확인을 거쳐야 실행되며, 동의하지 않으면 그대로 유지됩니다. 새 동료가 필요하면 `riven_open_panel`("chat") 로 패널을 엽니다. 자기 자신에게는 넘길 수 없습니다.
 
-        동료와 함께 일할 때는 아래 4가지 협업 패턴 중 상황에 맞는 것을 고르세요. 전부 위의 `riven_ask_agent`/`riven_ask_agents` 위에서 도는 것이라 새 도구는 없습니다 — 언제·어떻게 부르느냐의 문제입니다:
-        - **handoff(넘기기)**: 일을 통째로 다른 동료에게 넘길 때. 받는 동료는 당신의 대화를 보지 못하므로 프롬프트가 자기완결적이어야 합니다 — [작업: 무엇을] · [맥락: 왜] · [관련 파일·경로] · [현재 상태] · [이미 시도한 것] 을 모두 담으세요. 맥락이 빠지면 그 동료는 처음부터 헤맵니다.
+        동료와 함께 일할 때는 아래 4가지 협업 패턴 중 상황에 맞는 것을 고르세요. 전부 위의 `riven_ask_agent`/`riven_ask_agents` 위에서 도는 것이라 새 도구는 없습니다 - 언제·어떻게 부르느냐의 문제입니다:
+        - **handoff(넘기기)**: 일을 통째로 다른 동료에게 넘길 때. 받는 동료는 당신의 대화를 보지 못하므로 프롬프트가 자기완결적이어야 합니다 - [작업: 무엇을] · [맥락: 왜] · [관련 파일·경로] · [현재 상태] · [이미 시도한 것] 을 모두 담으세요. 맥락이 빠지면 그 동료는 처음부터 헤맵니다.
         - **committee(합의체)**: 막혔을 때. 성향(가능하면 모델 계열)이 다른 동료 2명에게 `riven_ask_agents` 로 같은 문제의 근본 원인 + 계획을 병렬로 물어, 두 답을 대조해 고릅니다. "혼자 더 파지 말고 물러서서 두 시각을 받는" 용도입니다.
         - **advisor(자문)**: 일은 넘기지 않고 2차 소견만 받을 때. 한 명에게 "이 접근이 맞는지 / 놓친 게 있는지" 만 묻고 결정과 실행은 당신이 합니다.
         - **loop(루프)**: worker↔verifier 사이클. 한 동료가 만들고 다른 동료가 검증해 되돌리기를 반복합니다. 반드시 **종료 조건(예: verifier가 통과)·최대 반복 횟수·최대 시간**으로 묶어 무한 반복을 막으세요. worker 와 verifier 는 서로 다른 동료(가능하면 다른 계열)로 두어야 서로의 맹점을 잡습니다.
@@ -86,7 +86,7 @@ final class ChatAskServer {
         return user.isEmpty ? base : base + "\n\n# 사용자 지정 지침\n" + user
     }
 
-    /// 답을 기다리던 요청이 실제로 있었는지 돌려준다 — 이미 만료·취소된 요청에 답하면 false
+    /// 답을 기다리던 요청이 실제로 있었는지 돌려준다 - 이미 만료·취소된 요청에 답하면 false
     /// (호출자는 그걸 사용자에게 알려줄 수 있다).
     @discardableResult
     func resolve(_ id: String, result: String) -> Bool {
@@ -220,7 +220,7 @@ final class ChatAskServer {
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.connect(SOCK)
             # 어느 워크스페이스에서 부른 것인지. riven 은 이 값으로 그 프로젝트의 패널을
-            # 찾는다 — 사용자가 지금 다른 워크스페이스를 보고 있어도 남의 화면을 건드리지 않게.
+            # 찾는다 - 사용자가 지금 다른 워크스페이스를 보고 있어도 남의 화면을 건드리지 않게.
             s.sendall((json.dumps({"tool": tool, "args": args, "cwd": os.getcwd()}) + "\n").encode())
             s.shutdown(socket.SHUT_WR)
             buf = b""
@@ -243,7 +243,7 @@ final class ChatAskServer {
              "description": "Capture the browser panel (optionally navigating first). Returns a PNG file path; read it with the Read tool to see the page.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}}}},
             {"name": "riven_browser_open",
-             "description": "Open a URL in riven's browser panel. Set new_tab=true to keep the current page. The panel keeps cookies/session, so a page you logged into stays logged in. Pass profile (e.g. \"A\") to use a SEPARATE login — that lets you be signed into the same site as two different accounts at once; a profile always opens a new tab.",
+             "description": "Open a URL in riven's browser panel. Set new_tab=true to keep the current page. The panel keeps cookies/session, so a page you logged into stays logged in. Pass profile (e.g. \"A\") to use a SEPARATE login - that lets you be signed into the same site as two different accounts at once; a profile always opens a new tab.",
              "inputSchema": {"type": "object", "properties": {"url": {"type": "string"}, "new_tab": {"type": "boolean"}, "profile": {"type": "string"}}, "required": ["url"]}},
             {"name": "riven_browser_tab",
              "description": "Switch to or close a browser tab by index (see the tabs list in riven_browser_state). action: select | close.",
@@ -339,7 +339,7 @@ final class ChatAskServer {
                 send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
             elif m == "tools/call":
                 # 호출마다 스레드. 예전엔 stdin 루프가 한 번에 하나씩만 처리해서, 모델이 한
-                # 메시지에 도구를 여러 개(riven_ask_agent ×3) 내보내도 우리가 줄을 세웠다 —
+                # 메시지에 도구를 여러 개(riven_ask_agent ×3) 내보내도 우리가 줄을 세웠다 -
                 # 동료들이 순차로 돌던 원인. JSON-RPC는 응답 순서가 뒤바뀌어도 된다.
                 def work(mid, p):
                     name = p.get("name", ""); a = p.get("arguments", {})

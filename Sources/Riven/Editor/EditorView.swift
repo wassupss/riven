@@ -3,7 +3,7 @@ import WebKit
 
 // Monaco editor hosted in a WKWebView, with a native <-> web message bridge for
 // file open/save + dirty state. This is the "editor stays Monaco" half of the
-// hybrid — riven's editor assets reused as-is instead of reimplemented natively.
+// hybrid - riven's editor assets reused as-is instead of reimplemented natively.
 final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var web: WKWebView!
     private var ready = false
@@ -53,7 +53,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     required init?(coder: NSCoder) { fatalError() }
 
     // The file the editor should currently be showing. Re-pushed whenever Monaco
-    // (re)signals ready — critical because moving the WKWebView into the dock the
+    // (re)signals ready - critical because moving the WKWebView into the dock the
     // first time reloads the page, which would otherwise drop the open file.
     private var currentOpen: (path: String, content: String)?
 
@@ -67,7 +67,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         let p = jsString(path), c = jsString(content)
         web.evaluateJavaScript("window.rivenOpen(\(p), \(c))", completionHandler: nil)
     }
-    // Move the cursor to (line, column) — 1-based — and center it. The reveal is
+    // Move the cursor to (line, column) - 1-based - and center it. The reveal is
     // queued a beat after open() so Monaco's model/layout exists first.
     func reveal(path: String, line: Int, column: Int) {
         web.evaluateJavaScript("window.rivenReveal(\(jsString(path)), \(line), \(column))", completionHandler: nil)
@@ -78,9 +78,9 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func close(path: String) {
         web.evaluateJavaScript("window.rivenClose(\(jsString(path)))", completionHandler: nil)
     }
-    // 이미지 파일을 에디터 탭 안의 뷰어로 연다 (src는 data: URL — 웹뷰가 임의 경로의
+    // 이미지 파일을 에디터 탭 안의 뷰어로 연다 (src는 data: URL - 웹뷰가 임의 경로의
     // file:// 이미지를 못 읽기 때문).
-    /// 표 탭 (.xlsx/.csv/.tsv). 값만 읽어 넘긴다 — 웹뷰는 격자만 그린다.
+    /// 표 탭 (.xlsx/.csv/.tsv). 값만 읽어 넘긴다 - 웹뷰는 격자만 그린다.
     func openSheet(path: String, sheets: [[String: Any]]) {
         guard let data = try? JSONSerialization.data(withJSONObject: ["sheets": sheets]),
               let json = String(data: data, encoding: .utf8) else { return }
@@ -88,7 +88,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
                                completionHandler: nil)
     }
 
-    /// PDF 탭. 이미지와 같은 길로 간다 — 웹뷰가 자기 PDF 뷰어로 그린다.
+    /// PDF 탭. 이미지와 같은 길로 간다 - 웹뷰가 자기 PDF 뷰어로 그린다.
     func openPDF(path: String, src: String) {
         web.evaluateJavaScript("window.rivenOpenPDF && window.rivenOpenPDF(\(jsString(path)), \(jsString(src)))",
                                completionHandler: nil)
@@ -122,8 +122,8 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         web.evaluateJavaScript("window.rivenSetTheme(\(jsString(shiki)), \(jsString(bg)), \(jsString(accent)), \(jsString(accent2)))", completionHandler: nil)
     }
     // Live-set the Monaco font size (⌘+/⌘-/⌘0). Stashed so it survives a WKWebView
-    // reload (re-applied on "ready") — this also keeps the peek/references list sized.
-    // 초기값은 설정(editorFontSize)에서 읽는다 — 예전에는 12로 고정이라 설정이 무시됐다.
+    // reload (re-applied on "ready") - this also keeps the peek/references list sized.
+    // 초기값은 설정(editorFontSize)에서 읽는다 - 예전에는 12로 고정이라 설정이 무시됐다.
     private var fontSize = UIScale.editorFontSize
     func setFontSize(_ size: Int) {
         fontSize = size
@@ -229,12 +229,12 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         guard let responder = window?.firstResponder as? NSView else { return false }
         return responder === web || responder.isDescendant(of: web)
     }
-    // Show the empty state (no active file) — used when switching to a workspace
+    // Show the empty state (no active file) - used when switching to a workspace
     // that has no open tabs.
     // Swap the visible tab set WITHOUT disposing models (workspace switch). Calls back with the
     // paths that have no model yet, so the caller only reads THOSE files from disk.
     func setTabs(_ paths: [String], active: String?, missing: @escaping ([String]) -> Void) {
-        // The webview isn't loaded yet during session restore — evaluating then is a no-op and the
+        // The webview isn't loaded yet during session restore - evaluating then is a no-op and the
         // tabs never appear. Queue it and replay on "ready" (same contract as open()/pending).
         guard ready else {
             pendingTabs = (paths, active, missing)
@@ -262,7 +262,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     func showEmpty() {
         web.evaluateJavaScript("window.rivenShowEmpty()", completionHandler: nil)
     }
-    // Ask Monaco to save this path (posts a 'save' message back with content) —
+    // Ask Monaco to save this path (posts a 'save' message back with content) -
     // works even when the WKWebView doesn't hold key focus (⌘S from anywhere).
     func requestSave(path: String) {
         web.evaluateJavaScript("window.rivenRequestSave(\(jsString(path)))", completionHandler: nil)

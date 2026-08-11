@@ -1,13 +1,13 @@
 import AppKit
 
-/// 아바타 고르는 줄 — 미리보기 + 글리프 한 줄 + 색 한 줄 + "자동".
+/// 아바타 고르는 줄 - 미리보기 + 글리프 한 줄 + 색 한 줄 + "자동".
 ///
 /// 조합은 8글리프 × 12색 = 96가지인데 96칸을 늘어놓으면 편집 팝오버가 그것만으로 꽉 찬다.
 /// 두 축을 따로 고르게 하면 20칸으로 같은 96가지를 다 덮는다. 왼쪽 미리보기가 조직도
 /// 카드에 실제로 그려지는 모습 그대로라, 고르는 동안 결과를 바로 본다.
 ///
 /// 값은 [[AgentAvatar]] 의 "글리프.색" 문자열이고, nil 이면 이름 해시 자동 배정이다.
-/// 자동일 때도 미리보기와 선택 표시는 "지금 실제로 보이는 조합"을 가리킨다 — 자동이
+/// 자동일 때도 미리보기와 선택 표시는 "지금 실제로 보이는 조합"을 가리킨다 - 자동이
 /// 고른 것과 사용자가 고른 것이 화면에서 달라 보이면 안 된다.
 final class AvatarPicker: NSView, Themable, Scalable {
     /// 고른 값이 바뀔 때마다 부른다 (nil = 자동).
@@ -20,7 +20,7 @@ final class AvatarPicker: NSView, Themable, Scalable {
     private var colorChips: [CircleButton] = []
 
     /// - Parameters:
-    ///   - key: 아바타 키(역할 이름) — 자동 배정의 기준.
+    ///   - key: 아바타 키(역할 이름) - 자동 배정의 기준.
     ///   - value: 지금 저장된 값 (nil = 자동).
     init(key: String, value: String?) {
         self.key = key

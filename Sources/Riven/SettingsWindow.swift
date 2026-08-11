@@ -1,6 +1,6 @@
 import AppKit
 
-// Settings modal — a native port of riven's SettingsModal. A 560-wide panel with a
+// Settings modal - a native port of riven's SettingsModal. A 560-wide panel with a
 // "설정" header, an underline-active tab bar (일반 / AI / 단축키 / 정보) and a single
 // scrollable content pane padded 20px on each side. Theme selection is a wrapping
 // row of swatch pills (colored dot + name) with an accent ring on the active one.
@@ -18,7 +18,7 @@ final class SettingsWindow: NSPanel {
     private let fixedPromptView = HintTextView()   // 전역 고정 프롬프트 편집기 (AI 탭)
     private var authObserver: Any?
     private var settingObserver: Any?
-    /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 — 여기에 "저장됨" 을 띄우면 거짓말이다.
+    /// 사용자가 고른 것이 아니라 앱이 알아서 적는 키들 - 여기에 "저장됨" 을 띄우면 거짓말이다.
     private static let silentKeys: Set<String> = ["session", "sidebarWidth", "railHeight",
                                                   "railCollapsed", "browserTabs", "browserZooms",
                                                   "browserActiveTab", "lastSeenVersion", "installId",
@@ -68,7 +68,7 @@ final class SettingsWindow: NSPanel {
         titlebarAppearsTransparent = true
         titleVisibility = .hidden
         appearance = NSAppearance(named: Theme.isLight ? .aqua : .darkAqua)
-        // riven's settings is an in-app overlay with NO traffic lights — hide them so
+        // riven's settings is an in-app overlay with NO traffic lights - hide them so
         // the "설정" title sits at the natural 16px left (a Close button replaces them).
         standardWindowButton(.closeButton)?.isHidden = true
         standardWindowButton(.miniaturizeButton)?.isHidden = true
@@ -157,7 +157,7 @@ final class SettingsWindow: NSPanel {
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             // 제목 줄은 창을 끄는 버튼 자리만큼만. "설정" 이라는 글자 하나가 44pt 를 통째로
-            // 먹고 있었다 — 그만큼 내용이 아래로 밀렸다.
+            // 먹고 있었다 - 그만큼 내용이 아래로 밀렸다.
             header.heightAnchor.constraint(equalToConstant: 34),
             titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 14),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -192,7 +192,7 @@ final class SettingsWindow: NSPanel {
         Theme.register(self)
         settingObserver = NotificationCenter.default.addObserver(
             forName: .rivenSettingChanged, object: nil, queue: .main) { [weak self] n in
-            // 설정 창이 떠 있을 때만. 그리고 창 자신이 저장을 유발한 경우만 — 클라우드
+            // 설정 창이 떠 있을 때만. 그리고 창 자신이 저장을 유발한 경우만 - 클라우드
             // 동기화 같은 배경 쓰기까지 "저장됨" 으로 보이면 신호가 거짓말이 된다.
             guard let self, self.isVisible else { return }
             let key = (n.object as? String) ?? ""
@@ -210,7 +210,7 @@ final class SettingsWindow: NSPanel {
 
     static let tabSymbols = ["gearshape", "sparkles", "keyboard", "person.crop.circle", "info.circle"]
 
-    /// 왼쪽 목록 한 줄. 선택되면 알약 배경 — 지금 어디에 있는지가 늘 보인다.
+    /// 왼쪽 목록 한 줄. 선택되면 알약 배경 - 지금 어디에 있는지가 늘 보인다.
     private func makeNavItem(_ title: String, symbol: String, index: Int) -> NSButton {
         // 버튼의 image+title 을 그대로 쓰면 아이콘 글리프 폭에 따라 글자 시작점이 달라진다
         // (keyboard 는 넓고 info.circle 은 좁아서 "단축키" 만 밀려 보였다).
@@ -247,7 +247,7 @@ final class SettingsWindow: NSPanel {
         return b
     }
     /// 왼쪽 목록. applyTheme 이 showTab 으로 본문만 다시 그려서, 이 칸은 만들 때 색 그대로
-    /// 남아 있었다 — 밝은 테마에서 왼쪽만 어둡고 글자가 배경에 묻혔다.
+    /// 남아 있었다 - 밝은 테마에서 왼쪽만 어둡고 글자가 배경에 묻혔다.
     private var navSidebar: NSView?
     private var navSideHair: NSView?
     private var navIcons: [Int: NSImageView] = [:]
@@ -315,7 +315,7 @@ final class SettingsWindow: NSPanel {
         zoomSegment = zoomSeg
         addRow(t("settings.uiScale"), desc: t("settings.uiScaleDesc"), zoomSeg)
 
-        // 테마는 이름만 늘어놓으면 뭘 고르는지 모른다 — 색 점이 붙은 격자로 보여 준다.
+        // 테마는 이름만 늘어놓으면 뭘 고르는지 모른다 - 색 점이 붙은 격자로 보여 준다.
         swatches = []
         let grid = NSGridView()
         grid.rowSpacing = 6; grid.columnSpacing = 6
@@ -420,7 +420,7 @@ final class SettingsWindow: NSPanel {
     @objc private func changeLanguage(_ seg: NSSegmentedControl) {
         I18n.setLanguage(seg.selectedSegment == 1 ? .en : .ko)
     }
-    // 폰트 크기 입력칸 — 엔터를 치거나 포커스를 잃는 순간 바로 저장 + 적용된다.
+    // 폰트 크기 입력칸 - 엔터를 치거나 포커스를 잃는 순간 바로 저장 + 적용된다.
     // (예전에는 "저장" 버튼을 눌러야 값이 들어갔고, 그마저도 읽는 쪽이 없어 재시작해도
     //  반영되지 않았다.)
     // 크기: 숫자칸 + 스테퍼. 숫자만 있으면 몇까지 되는지도 모르고 한 칸씩 올리기도 번거롭다.
@@ -448,7 +448,7 @@ final class SettingsWindow: NSPanel {
         saveFonts()
     }
 
-    /// 글꼴 고르기. 목록은 고정폭 글꼴만 — 에디터·터미널에 비고정폭을 고르면 칸이 어긋난다.
+    /// 글꼴 고르기. 목록은 고정폭 글꼴만 - 에디터·터미널에 비고정폭을 고르면 칸이 어긋난다.
     private func fontMenu(key: String, preview: NSTextField) -> NSView {
         let pop = NSPopUpButton()
         pop.translatesAutoresizingMaskIntoConstraints = false
@@ -478,11 +478,11 @@ final class SettingsWindow: NSPanel {
         let family = Settings.shared.string(isEditor ? "editorFontFamily" : "terminalFontFamily", "")
         label.font = (family.isEmpty ? nil : NSFont(name: family, size: size))
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-        label.stringValue = "riven — let x = 1; 한글 0O l1 {}"
+        label.stringValue = "riven - let x = 1; 한글 0O l1 {}"
         label.textColor = Theme.fg
         label.lineBreakMode = .byTruncatingTail
     }
-    /// 시스템에 깔린 고정폭 글꼴 (한 번만 훑는다 — 폰트 목록 조회는 느리다).
+    /// 시스템에 깔린 고정폭 글꼴 (한 번만 훑는다 - 폰트 목록 조회는 느리다).
     static let monoFonts: [String] = {
         let all = NSFontManager.shared.availableFontFamilies
         return all.filter { fam in
@@ -507,7 +507,7 @@ final class SettingsWindow: NSPanel {
     private func ghosttyControls() -> (NSView, NSTextField) {
         let found = GhosttyImport.read()
         // 버튼은 늘 눌린다. 예전에는 가져올 게 없으면 onClick 을 아예 달지 않았는데,
-        // 눌리지 않는 버튼과 고장난 버튼은 손끝에서 구분되지 않는다 — 눌러 보고 "왜 안
+        // 눌리지 않는 버튼과 고장난 버튼은 손끝에서 구분되지 않는다 - 눌러 보고 "왜 안
         // 되지" 로 끝난다. 지금은 눌리고, 왜 아무 일도 없었는지를 그 자리에서 말해 준다.
         let importable = found.map { !$0.hasNothing } ?? false
         let btn = PadButton(title: t("settings.ghosttyImport"), font: UIScale.font(UIScale.small, .medium),
@@ -602,7 +602,7 @@ final class SettingsWindow: NSPanel {
         }
         addRow(t("settings.defaultPermMode"), desc: t("settings.defaultPermModeDesc"), defaultModeMenu())
 
-        // 전역 고정 프롬프트: 모든 에이전트(챗·터미널)에 덧붙는 기본 지침 — CLAUDE.md 처럼 쓰되
+        // 전역 고정 프롬프트: 모든 에이전트(챗·터미널)에 덧붙는 기본 지침 - CLAUDE.md 처럼 쓰되
         // 프로젝트가 아니라 riven 전체에 걸린다.
         addSection(t("settings.promptSection"))
         addNote(t("settings.promptNote"))
@@ -654,7 +654,7 @@ final class SettingsWindow: NSPanel {
         saveAI()
     }
 
-    // ---- Keybindings tab — three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
+    // ---- Keybindings tab - three sub-tabs (에디터 / 터미널 / 리븐 기본), matching riven's
     // KeybindingsSettings. The editor tab has preset chips (VS Code / JetBrains /
     // Sublime); the shown chords follow the selected preset. ----
     /// 벤치용: 단축키 하위 탭을 미리 정한다.
@@ -678,7 +678,7 @@ final class SettingsWindow: NSPanel {
         content.addArrangedSubview(spacer(8))
 
         // 브라우저 키는 패널이 직접 처리해서 여기서 바꿀 수 없다. 바꿀 수 있는 척하면
-        // 눌러 보고 안 먹는 것으로 끝난다 — 안내를 갈라 준다.
+        // 눌러 보고 안 먹는 것으로 끝난다 - 안내를 갈라 준다.
         let hint = NSTextField(labelWithString: kbSubtab == 3 ? t("keys.browserFixed") : t("keys.hint"))
         hint.font = UIScale.font(UIScale.small); hint.textColor = Theme.fgDim
         content.addArrangedSubview(hint)
@@ -703,7 +703,7 @@ final class SettingsWindow: NSPanel {
             if changed { chip.identifierString = "changed" }
             addRow(a.label, desc: changed ? t("settings.keyChanged") : nil, chip)
         }
-        // 바꾼 키가 하나라도 있을 때만 되돌리기를 보여 준다 — 누를 일이 없는 버튼은 잡음이다.
+        // 바꾼 키가 하나라도 있을 때만 되돌리기를 보여 준다 - 누를 일이 없는 버튼은 잡음이다.
         if kbSubtab != 3, actions.contains(where: { Keys.overrides[$0.id] != nil }) {
             addWideRow(secondaryButton(t("settings.keysReset"), symbol: "arrow.counterclockwise") { [weak self] in
                 for a in actions { Keys.reset(a.id) }
@@ -792,7 +792,7 @@ final class SettingsWindow: NSPanel {
         ("터미널 아래로 분할", "⌘⇧D"), ("다음 터미널 탭", "⌘⇧]"), ("이전 터미널 탭", "⌘⇧["),
         ("N번 터미널로", "⌃1–9")
     ]
-    // (label, [vscode, jetbrains, sublime]) — from editorKeymaps.ts.
+    // (label, [vscode, jetbrains, sublime]) - from editorKeymaps.ts.
     private let editorKeys: [(String, [String])] = [
         ("찾기", ["⌘F", "⌘F", "⌘F"]), ("바꾸기", ["⌘⌥F", "⌘R", "⌘⌥F"]),
         ("다음 같은 항목 선택", ["⌘D", "⌃G", "⌘D"]), ("같은 항목 모두 선택", ["⌘F2", "⌘⌃G", "⌘⌃G"]),
@@ -840,7 +840,7 @@ final class SettingsWindow: NSPanel {
         return h
     }
 
-    // ---- Account tab — riven's Supabase account & settings sync. The native build
+    // ---- Account tab - riven's Supabase account & settings sync. The native build
     // ships no Supabase project, so it shows riven's real "not configured" state
     // (the same UI riven renders when the env vars are absent). ----
     private func buildAccount() {
@@ -863,7 +863,7 @@ final class SettingsWindow: NSPanel {
         }
 
         // 로그인 상태·버튼은 다른 탭과 같은 카드 줄에 둔다. 예전에는 content 에 직접 쌓아서
-        // 이 탭만 카드 밖에 맨몸으로 떠 있었다 — 정보 탭 버튼이 맨몸이라 지적받은 것과 같은
+        // 이 탭만 카드 밖에 맨몸으로 떠 있었다 - 정보 탭 버튼이 맨몸이라 지적받은 것과 같은
         // 문제인데, 디버그 빌드는 Supabase 미구성이라 위에서 return 해 눈에 띄지 않았다.
         if SupabaseAuth.shared.isSignedIn {
             let out = accountButton(icon: "rectangle.portrait.and.arrow.right",
@@ -918,7 +918,7 @@ final class SettingsWindow: NSPanel {
         return box
     }
 
-    // ---- About tab — version + update check (riven's AboutTab/electron-updater) ----
+    // ---- About tab - version + update check (riven's AboutTab/electron-updater) ----
     private func buildAbout() {
         // 앱 정보는 아이콘 · 이름 · 버전이 한 덩어리로 보여야 한다. 예전에는 작은 글자 세 줄이
         // 왼쪽 위에 그냥 쌓여 있어서 만들다 만 화면처럼 보였다 (애플의 "이 Mac에 관하여" 처럼).
@@ -1014,7 +1014,7 @@ final class SettingsWindow: NSPanel {
     private var updateStatusLabel: NSTextField!
     // Sparkle이 자체 UI(최신 버전/다운로드-설치 흐름)를 보여주므로 결과 텍스트는 여기서 세팅하지 않는다.
     // 대신 확인이 끝나는 모든 경로(최신 · 업데이트 발견 · 실패 · 사용자가 창을 닫음)에서
-    // Updater가 알려주면 라벨을 유휴 문구로 되돌린다 — "확인 중…"이 영영 남지 않도록.
+    // Updater가 알려주면 라벨을 유휴 문구로 되돌린다 - "확인 중…"이 영영 남지 않도록.
     @objc private func checkUpdate() {
         updateStatusLabel.stringValue = t("about.checking"); updateStatusLabel.textColor = Theme.fgDim
         // Sparkle의 업데이트 창은 평범한 창이라, floating 패널인 설정 창에 가려 뒤에 뜬다.
@@ -1025,7 +1025,7 @@ final class SettingsWindow: NSPanel {
         Updater.shared.checkForUpdates(self)
     }
 
-    // floating(항상 위) 토글 — 업데이트 창이 뒤로 숨지 않게 잠시 내렸다가 되돌린다.
+    // floating(항상 위) 토글 - 업데이트 창이 뒤로 숨지 않게 잠시 내렸다가 되돌린다.
     private func setFloating(_ on: Bool) {
         isFloatingPanel = on
         level = on ? .floating : .normal
@@ -1046,7 +1046,7 @@ final class SettingsWindow: NSPanel {
     // ---- shared builders ----
     /// 섹션 = 제목 + 카드 하나. 카드에 줄을 담고 줄 사이에 옅은 구분선을 둔다.
     ///
-    /// 예전에는 컨트롤들이 배경 위에 그냥 떠 있었다 — 어디까지가 한 묶음인지 눈으로 알 수
+    /// 예전에는 컨트롤들이 배경 위에 그냥 떠 있었다 - 어디까지가 한 묶음인지 눈으로 알 수
     /// 없으니 "동떨어져" 보인다. 묶음을 그려 주는 것만으로 절반은 해결된다.
     private var currentCard: SettingsCard?
     private func addSection(_ t: String) {
@@ -1062,7 +1062,7 @@ final class SettingsWindow: NSPanel {
     private func addRow(_ label: String, desc: String? = nil, _ control: NSView) {
         currentCard?.addRow(label: label, desc: desc, control: control)
     }
-    /// 카드 안의 설명 문단 (문장이 주인인 섹션 — 계정·정보).
+    /// 카드 안의 설명 문단 (문장이 주인인 섹션 - 계정·정보).
     private func addNote(_ text: String, color: NSColor? = nil) {
         let l = NSTextField(labelWithString: text)
         l.font = UIScale.font(UIScale.small)
@@ -1109,7 +1109,7 @@ final class SettingsWindow: NSPanel {
         pop.font = UIScale.font(UIScale.small)
         pop.target = self; pop.action = #selector(searchEngineChanged(_:))
         pop.translatesAutoresizingMaskIntoConstraints = false
-        // 직접 입력일 때만 주소 칸을 보여 준다 — 늘 띄워 두면 고르는 줄이 두 줄이 된다.
+        // 직접 입력일 때만 주소 칸을 보여 준다 - 늘 띄워 두면 고르는 줄이 두 줄이 된다.
         searchCustom.stringValue = idx == nil ? cur : ""
         searchCustom.isHidden = idx != nil
         searchCustom.target = self; searchCustom.action = #selector(searchCustomChanged)
@@ -1132,7 +1132,7 @@ final class SettingsWindow: NSPanel {
     }
     @objc private func searchCustomChanged() {
         let v = searchCustom.stringValue.trimmingCharacters(in: .whitespaces)
-        // {q} 가 없으면 검색이 아니라 그냥 그 주소로 가 버린다 — 저장하지 않는다.
+        // {q} 가 없으면 검색이 아니라 그냥 그 주소로 가 버린다 - 저장하지 않는다.
         guard v.contains("{q}") else { return }
         Settings.shared.set("browserSearch", v)
     }
@@ -1175,7 +1175,7 @@ final class SettingsWindow: NSPanel {
     }
 
     /// 되돌리기는 되돌릴 수 없는 일이라 반드시 한 번 묻는다. 테마·글꼴 같은 것만 지우고
-    /// 세션(열린 탭·대화)은 건드리지 않는다 — "설정 초기화" 로 작업까지 날리면 사고다.
+    /// 세션(열린 탭·대화)은 건드리지 않는다 - "설정 초기화" 로 작업까지 날리면 사고다.
     private func confirmResetAll() {
         let a = NSAlert()
         a.messageText = t("settings.resetAll")
@@ -1192,7 +1192,7 @@ final class SettingsWindow: NSPanel {
     private let searchCustom = NSTextField()
     private var searchCustomBox: NSView?
 
-    /// 에디터 동작 토글. 저장하고 곧바로 에디터에 밀어 넣는다 — 재시작해야 먹는 설정은
+    /// 에디터 동작 토글. 저장하고 곧바로 에디터에 밀어 넣는다 - 재시작해야 먹는 설정은
     /// 고른 사람 입장에서 안 먹는 설정과 구분되지 않는다.
     private func editorToggle(_ b: NSButton, key: String, def: Bool) -> NSButton {
         b.title = ""
@@ -1208,7 +1208,7 @@ final class SettingsWindow: NSPanel {
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }
 
-    /// 숫자 + 스테퍼 한 줄 (폰트 크기 칸과 같은 모양 — 같은 행에서 모양이 다르면 눈에 걸린다).
+    /// 숫자 + 스테퍼 한 줄 (폰트 크기 칸과 같은 모양 - 같은 행에서 모양이 다르면 눈에 걸린다).
     private func stepperControl(_ field: NSTextField, key: String, min lo: Int, max hi: Int,
                                 def: Int, hint: String) -> NSView {
         let cur = Swift.max(lo, Swift.min(hi, Settings.shared.int(key, def)))
@@ -1236,7 +1236,7 @@ final class SettingsWindow: NSPanel {
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
     }
 
-    /// "✓ 저장됨" 을 잠깐 띄운다. 실패한 동작에도 같은 자리를 쓰되 색으로 가른다 —
+    /// "✓ 저장됨" 을 잠깐 띄운다. 실패한 동작에도 같은 자리를 쓰되 색으로 가른다 -
     /// 성공만 말하고 실패는 침묵하면, 아무 일도 없었을 때 눌리긴 한 건지 알 수 없다.
     func flashSaved(_ text: String, ok: Bool) {
         savedLabel.stringValue = (ok ? "✓ " : "· ") + text
@@ -1355,7 +1355,7 @@ final class SettingsWindow: NSPanel {
         return sc
     }
     /// 고정 프롬프트를 처음부터 쓰기 막막할 때를 위한 예시 몇 개. 고르면 편집기에 넣어 준다
-    /// (이미 내용이 있으면 지우지 않고 아래에 이어 붙인다 — 여러 개를 섞어 쓸 수 있게).
+    /// (이미 내용이 있으면 지우지 않고 아래에 이어 붙인다 - 여러 개를 섞어 쓸 수 있게).
     private func promptTemplates() -> [(String, String)] {
         [(t("settings.promptTpl.warm"),    t("settings.promptTpl.warmBody")),
          (t("settings.promptTpl.concise"), t("settings.promptTpl.conciseBody")),
@@ -1474,7 +1474,7 @@ final class SettingsCard: NSView, Themable {
             left.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             left.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             left.trailingAnchor.constraint(lessThanOrEqualTo: control.leadingAnchor, constant: -12),
-            // 컨트롤은 오른쪽 끝에 맞춘다 — 줄마다 제각각이면 눈이 기댈 선이 없다.
+            // 컨트롤은 오른쪽 끝에 맞춘다 - 줄마다 제각각이면 눈이 기댈 선이 없다.
             control.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             control.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(38)),
@@ -1488,7 +1488,7 @@ final class SettingsCard: NSView, Themable {
 
     func addWide(_ view: NSView) { addWide(view, fill: false) }
     /// fill=true 면 뷰가 카드 폭을 꽉 채운다 (trailing 을 == 로). intrinsic 폭이 없는 뷰
-    /// (스크롤뷰·에디터)는 이걸 써야 한다 — lessThanOrEqualTo 로는 폭 0 으로 접혀 안 보인다.
+    /// (스크롤뷰·에디터)는 이걸 써야 한다 - lessThanOrEqualTo 로는 폭 0 으로 접혀 안 보인다.
     func addWide(_ view: NSView, fill: Bool) {
         if !rows.isEmpty { addSeparator() }
         view.translatesAutoresizingMaskIntoConstraints = false

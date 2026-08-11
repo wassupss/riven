@@ -1,15 +1,15 @@
-# Landing demo clip — source
+# Landing demo clip - source
 
 `landing/assets/riven-demo.mp4` is **not** a screen recording of the app. It's a
 synthetic mock: `index.html` draws a fake riven window (fake `taskflow` project,
 fabricated code and git state, no real account) as a deterministic still frame per
 `?f=N`, and the clip is those frames encoded in order.
 
-Shot this way on purpose — a real capture leaks whatever is on screen (source,
+Shot this way on purpose - a real capture leaks whatever is on screen (source,
 commit messages, shell prompt, usage figures), and it has to be re-shot by hand
 every time the UI moves. This one is text you can edit.
 
-Because it's a mock, the chrome is only as accurate as what it was traced from —
+Because it's a mock, the chrome is only as accurate as what it was traced from -
 so trace it from the Swift, never from a screenshot. Current sources of truth:
 `Theme.swift` (ember tokens), `main.swift` (sidebar 220 / header 30 / status 25,
 folder label LEFT in the header, usage+gear right, folder+branch left and
@@ -44,11 +44,11 @@ sips -Z 1280 --out ../assets/riven-poster.png frames/0330.png    # poster
 
 `capture.py` drives one browser over the DevTools protocol and calls
 `renderFrame(n)` per frame (~35s for the whole clip). Launching Chrome per frame
-instead takes hours — don't.
+instead takes hours - don't.
 
 Frame count = `duration × 24`; the scene clock lives in `T` at the top of the
 script in `index.html`.
 
 The page is 1280×760 captured at `deviceScaleFactor: 2` and downscaled during
-encode, which is where the text crispness comes from. Only mp4/H.264 is shipped —
+encode, which is where the text crispness comes from. Only mp4/H.264 is shipped -
 VP9 would need ffmpeg, and `<video>` falls back to the poster anyway.

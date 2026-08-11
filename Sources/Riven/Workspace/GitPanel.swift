@@ -1,6 +1,6 @@
 import AppKit
 
-// Source-control sidebar panel — a native port of riven's GitPanel.tsx. Branch
+// Source-control sidebar panel - a native port of riven's GitPanel.tsx. Branch
 // header with ahead/behind + pull/push/refresh, a commit box, and staged/changed
 // sections whose rows stage/unstage/discard. Click a file to open it with its
 // changed lines highlighted. Lives in the sidebar (native has no dockview grid).
@@ -20,7 +20,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
     private var root: URL?
     private var status = Git.GitStatus(branch: nil, isRepo: true, ahead: 0, behind: 0, hasUpstream: false, files: [])
 
-    // (relPath) — open the file and show its diff against HEAD.
+    // (relPath) - open the file and show its diff against HEAD.
     var onOpenDiff: ((String) -> Void)?
 
     override init(frame: NSRect) {
@@ -160,7 +160,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
     }
     @objc private func push() { remoteOp(t("git.push"), Git.push) }
     @objc private func pull() { remoteOp(t("git.pull"), Git.pull) }
-    // Remote ops can fail (auth, non-fast-forward, no upstream) — surface the error
+    // Remote ops can fail (auth, non-fast-forward, no upstream) - surface the error
     // instead of silently swallowing it, and always refresh after.
     private func remoteOp(_ name: String, _ op: @escaping (String) -> (ok: Bool, error: String)) {
         guard let r = root else { return }
@@ -343,7 +343,7 @@ final class GitPanel: NSView, Themable, Scalable, NSTextViewDelegate {
         if staged {
             actBtn("minus", t("git.unstage"), Theme.fgDim) { [weak self] in self?.unstage(f.path) }
         } else {
-            // 되돌릴 수 없는 "버리기" 가 눈에 제일 띄면 안 된다 — 늘 빨갛게 두면 그게 기본
+            // 되돌릴 수 없는 "버리기" 가 눈에 제일 띄면 안 된다 - 늘 빨갛게 두면 그게 기본
             // 동작처럼 읽힌다. 평소엔 흐리고, 스테이지(+)를 먼저 두고, 확인 창은 그대로다.
             actBtn("trash", t("git.discard"), Theme.fgDim) { [weak self] in self?.discard(f) }
             actBtn("plus", t("git.stage"), Theme.accent) { [weak self] in self?.stage(f.path) }

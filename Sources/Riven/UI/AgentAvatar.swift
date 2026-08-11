@@ -1,13 +1,13 @@
 import AppKit
 
-/// 에이전트 식별 아바타 — 이름에서 결정론적으로 뽑는 사람 모양 글리프 + 색.
+/// 에이전트 식별 아바타 - 이름에서 결정론적으로 뽑는 사람 모양 글리프 + 색.
 ///
 /// 이미지 에셋을 번들하지 않는다. SF Symbols 는 시스템이 이미 메모리에 들고 있고 벡터라
 /// 배율(UIScale)마다 파일을 따로 둘 필요도 없다. 이름 해시로 (글리프, 색조)를 고르므로
 /// 설정 없이도 에이전트마다 다른 아바타가 되고, 조직도·레일·독 탭이 같은 키를 쓰면
 /// 세 군데에서 같은 얼굴이 나온다.
 ///
-/// 키는 "역할"이지 "팬"이 아니다 — 닉네임(그룹 멤버) → 커스텀 에이전트 → 에이전트 종류
+/// 키는 "역할"이지 "팬"이 아니다 - 닉네임(그룹 멤버) → 커스텀 에이전트 → 에이전트 종류
 /// 순으로 고른다. 팬 id 를 쓰면 재시작마다 얼굴이 바뀌고, 제목을 쓰면 AI 요약 제목이
 /// 갱신될 때마다 바뀐다.
 enum AgentAvatar {
@@ -19,13 +19,13 @@ enum AgentAvatar {
         return nil
     }
 
-    // 사람 모양 글리프 — 색이 정체성의 대부분을 지고, 글리프가 한 겹 더 갈라 준다
+    // 사람 모양 글리프 - 색이 정체성의 대부분을 지고, 글리프가 한 겹 더 갈라 준다
     // (12색 × 8글리프 = 96가지). 이름은 모두 SF Symbols 이고, 혹시 이 OS 에 없으면
     // person.fill 로 떨어진다.
     //
     // 후보를 11pt(탭·레일 실제 크기)로 렌더해 보고 고른 목록이다. 작은 크기에서 속이 꽉 찬
     // 도형으로 뭉개지는 것들(face.smiling.fill·person.crop.circle.fill = 그냥 원,
-    // person.text.rectangle.fill = 그냥 사각형)은 뺐다 — 상태 점과 헷갈리기까지 한다.
+    // person.text.rectangle.fill = 그냥 사각형)은 뺐다 - 상태 점과 헷갈리기까지 한다.
     private static let symbols = [
         "person.fill", "person.2.fill", "person.bust.fill", "brain.head.profile",
         "figure.walk", "figure.stand", "figure.wave", "figure.arms.open",
@@ -35,7 +35,7 @@ enum AgentAvatar {
         0.02, 0.08, 0.12, 0.28, 0.38, 0.46, 0.53, 0.60, 0.68, 0.75, 0.83, 0.92,
     ]
 
-    /// FNV-1a 64bit. Swift 의 hashValue 는 프로세스마다 시드가 달라서 못 쓴다 — 재시작하면
+    /// FNV-1a 64bit. Swift 의 hashValue 는 프로세스마다 시드가 달라서 못 쓴다 - 재시작하면
     /// 얼굴이 바뀐다.
     private static func hash(_ s: String) -> UInt64 {
         var h: UInt64 = 0xcbf29ce484222325
@@ -48,7 +48,7 @@ enum AgentAvatar {
 
     // ---- 고른 아바타 (사용자 지정) ----------------------------------------------
     // 자동 배정은 기본값일 뿐이고, 사용자가 고르면 그게 이긴다. 저장 형식은 "글리프.색"
-    // 인덱스 두 개 ("3.7") — 심볼 이름을 그대로 넣으면 나중에 목록을 바꿀 때 저장분이
+    // 인덱스 두 개 ("3.7") - 심볼 이름을 그대로 넣으면 나중에 목록을 바꿀 때 저장분이
     // 깨지고, JSON 한 칸에 들어가야 해서 짧을수록 좋다.
     static var glyphCount: Int { symbols.count }
     static var colorCount: Int { hues.count }
@@ -116,7 +116,7 @@ enum AgentAvatar {
         return img
     }
 
-    /// 조직도처럼 직접 그리는 곳을 위한 헬퍼 — 원형 배경 + 가운데 글리프.
+    /// 조직도처럼 직접 그리는 곳을 위한 헬퍼 - 원형 배경 + 가운데 글리프.
     /// filled = 리드 노드(색을 꽉 채우고 글리프는 반전).
     static func draw(key: String, override: String? = nil, in rect: NSRect, filled: Bool) {
         let tint = color(for: key, override: override)

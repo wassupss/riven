@@ -1,8 +1,8 @@
 import AppKit
 
-// Bottom status bar — a native port of riven's StatusBar. Left: workspace folder
+// Bottom status bar - a native port of riven's StatusBar. Left: workspace folder
 // + git branch (with icons). Right: a settings gear. 25px, bg-2, hairline top,
-// text-xs, tabular numerals — matching styles.css `.status-bar`.
+// text-xs, tabular numerals - matching styles.css `.status-bar`.
 final class StatusBarView: NSView, Themable {
     private let line = NSView()
     private let folderIcon = NSImageView()
@@ -16,7 +16,7 @@ final class StatusBarView: NSView, Themable {
     private lazy var usageItem = item(usageIcon, usageLabel)
     private let accountIcon = NSImageView()
     private let accountLabel = NSTextField(labelWithString: "")
-    private let updateButton = NSButton()   // "vX 업데이트" — shown only when an update is available
+    private let updateButton = NSButton()   // "vX 업데이트" - shown only when an update is available
     var onUpdate: (() -> Void)?
     private lazy var accountItem = item(accountIcon, accountLabel)
     var onSettings: (() -> Void)?
@@ -162,7 +162,7 @@ final class StatusBarView: NSView, Themable {
     // Prefer riven's "session% · weekly%" (remaining, from the OAuth usage API);
     // fall back to today's estimated $cost (local logs); hide if neither is known.
     // Clicking the widget opens the detail popover (riven's .usage-pop).
-    // Usage + settings live in the app header now — hide them here (folder/branch stay).
+    // Usage + settings live in the app header now - hide them here (folder/branch stay).
     private var controlsInHeader = false
     func moveControlsToHeader() { controlsInHeader = true; settings.isHidden = true; usageItem.isHidden = true }
 
@@ -231,7 +231,7 @@ final class StatusBarView: NSView, Themable {
         langLabel.textColor = Theme.fgDim
         settings.contentTintColor = Theme.fgDim
         settings.image = symbol("gearshape", 13)
-        // 아래 줄들이 빠져 있었다 — 업데이트 알약과 사용량·계정 칸이 밝은 테마에서도
+        // 아래 줄들이 빠져 있었다 - 업데이트 알약과 사용량·계정 칸이 밝은 테마에서도
         // 어두운 색 글자를 그대로 들고 있었다. 아이콘은 색만 바꿔서는 안 되고 다시
         // 만들어야 한다 (심볼 이미지는 만들 때의 tint 를 굽는다).
         updateButton.contentTintColor = Theme.accent

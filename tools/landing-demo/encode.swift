@@ -73,4 +73,4 @@ let fin = DispatchSemaphore(value: 0)
 writer.finishWriting { fin.signal() }
 fin.wait()
 if writer.status != .completed { fputs("failed: \(writer.error?.localizedDescription ?? "?")\n", stderr); exit(1) }
-print("wrote \(out.path) — \(files.count) frames @ \(fps)fps")
+print("wrote \(out.path) - \(files.count) frames @ \(fps)fps")

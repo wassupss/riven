@@ -1,4 +1,4 @@
-# Agent hooks — replacing viewport polling
+# Agent hooks - replacing viewport polling
 
 ## Why
 
@@ -13,10 +13,10 @@ Measured on a live 0.0.1 build, 2026-07-27:
 | 9m12s  | 754 MB        | 178 MB       |
 | 28m15s | 957 MB        | 355 MB       |
 
-`MALLOC_SMALL` grew **9.3 MB/min, perfectly linearly** — ~558 MB/hour, which is the
+`MALLOC_SMALL` grew **9.3 MB/min, perfectly linearly** - ~558 MB/hour, which is the
 reported "6 GB after a long session". `leaks` confirmed genuinely unreferenced blocks
 (32,522 leaks / 167 MB at 25 min), all in 5–24 KB size classes, appearing at ~13.3/s
-— exactly (number of panes) × 3.33 Hz. Two `heap` snapshots 10.4 min apart showed
+- exactly (number of panes) × 3.33 Hz. Two `heap` snapshots 10.4 min apart showed
 every AppKit view/constraint class flat, so this was not a view leak; it was the text
 buffer from each `read_text` call.
 
@@ -24,7 +24,7 @@ libghostty's own header says of that API: *"This is an expensive operation so it
 shouldn't be called too often. We recommend that callers cache the result and throttle
 calls to this function."*
 
-cmux (same architecture — Swift + libghostty) does not poll at all. It takes status
+cmux (same architecture - Swift + libghostty) does not poll at all. It takes status
 from OSC 9/99/777 escapes and from agent lifecycle hooks. This is that approach,
 adapted.
 
@@ -35,7 +35,7 @@ and exits without starting a conversation, so it costs no tokens):
 
 1. **`--settings` deep-merges the `hooks` key.** A user hook in `CLAUDE_CONFIG_DIR`'s
    `settings.json` and a riven hook passed via `--settings` both fired. So riven can
-   inject hooks without touching — or having to read and re-emit — the user's config.
+   inject hooks without touching - or having to read and re-emit - the user's config.
    This was the single largest design risk and it is resolved.
 2. **Hook processes inherit the pane's environment.** `RIVEN_PANE_SESSION` set on the
    terminal surface was readable from the hook process.
@@ -86,14 +86,14 @@ therefore never stuck looking idle.
 
 | event | busy | attn | notify |
 |---|---|---|---|
-| `SessionStart` | false | false | — |
-| `UserPromptSubmit` | **true** | false | — |
+| `SessionStart` | false | false | - |
+| `UserPromptSubmit` | **true** | false | - |
 | `PermissionRequest` | false | **true** | tool awaiting approval |
-| `Notification` | — | **true** | `message` |
+| `Notification` | - | **true** | `message` |
 | `Stop` | **false** | true if unwatched | `last_assistant_message` |
 | `StopFailure` | false | **true** | `error_message` |
 
-`Stop.last_assistant_message` replaces `lastAgentMessage()` — ~55 lines of regex that
+`Stop.last_assistant_message` replaces `lastAgentMessage()` - ~55 lines of regex that
 filtered spinners, box-drawing, token counters and status lines out of scraped screen
 text to guess what the agent said. The agent now just tells us.
 
@@ -112,7 +112,7 @@ status+message because it lacks that field.
 | agent coverage | 8-agent catalog | Claude Code + Codex; others fall back to tier C |
 | notify dedupe | status + message hash | `prompt_id` |
 
-## Codex — UNVERIFIED
+## Codex - UNVERIFIED
 
 Codex documents the same hook event names and payload schema, loaded from
 `$CODEX_HOME/hooks.json` or an inline `[hooks]` config section, gated on
@@ -136,10 +136,10 @@ notice in `AgentHooksInstall`.
 
 ## Security
 
-- socket in a 0700 directory, `chmod 0600` — filesystem permissions are the auth
+- socket in a 0700 directory, `chmod 0600` - filesystem permissions are the auth
 - 256 KB line cap, 250 ms receive timeout, one line per connection
 - `pane` must parse as a UUID **and** resolve in the registry; everything else dropped
-- payload text is trimmed to 400 chars and only ever reaches a notification body —
+- payload text is trimmed to 400 chars and only ever reaches a notification body -
   never a shell, never JS
 - a stale socket is only reclaimed after a connect probe proves nothing is listening,
   so a second instance cannot steal a live one's socket
@@ -148,14 +148,14 @@ notice in `AgentHooksInstall`.
 
 | PR | scope | status |
 |---|---|---|
-| 0 | probe `--settings` semantics | done — deep-merge confirmed |
+| 0 | probe `--settings` semantics | done - deep-merge confirmed |
 | 1 | `riven-hook` target, `AgentHookServer`, registry, config generation. Not yet consumed | this branch |
 | 2 | wire the state machine, delete `pollActivity()`; `agentActivitySource` setting for rollback | blocked on the in-flight per-pane session work |
-| 3 | tier B shell integration, `PermissionRequest` UI, subagent badges, remove fallback | — |
+| 3 | tier B shell integration, `PermissionRequest` UI, subagent badges, remove fallback | - |
 
 Verification for PR 2 is the same measurement that found the leak: sample
 `footprint -p <pid>` once a minute and confirm `MALLOC_SMALL` goes flat.
 
-Per cmux's own guidance — *"Running heavy tools against a primary terminal-hosting
-process can freeze the user's active terminal"* — `leaks`/`heap` should be run against
+Per cmux's own guidance - *"Running heavy tools against a primary terminal-hosting
+process can freeze the user's active terminal"* - `leaks`/`heap` should be run against
 a dedicated profiling instance, not the one being used for work.

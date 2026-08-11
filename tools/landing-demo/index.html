@@ -129,7 +129,7 @@
 <div id="stage"></div>
 <script>
 // ---------------------------------------------------------------------------
-// Synthetic riven demo — one deterministic still frame per renderFrame(n).
+// Synthetic riven demo - one deterministic still frame per renderFrame(n).
 // The chrome mirrors the real app (see the tokens comment above); the CONTENT is
 // fabricated on purpose: no real project, code, git state, account or usage.
 // ---------------------------------------------------------------------------
@@ -260,7 +260,7 @@ const termH = DOCK.h - chatH - (chatU > 0 ? 1 : 0);
   };
   L(`<span class="k">import</span> <span class="p">{</span> <span class="v">Task</span><span class="p">,</span> <span class="v">createTask</span> <span class="p">}</span> <span class="k">from</span> <span class="s">'./task'</span>`);
   L('');
-  L(`<span class="c">// A minimal observable store — the whole app state.</span>`);
+  L(`<span class="c">// A minimal observable store - the whole app state.</span>`);
   L(`<span class="k">export class</span> <span class="t">Store</span> <span class="p">{</span>`);
   L(`  <span class="k">private</span> <span class="v">tasks</span><span class="p">:</span> <span class="t">Task</span><span class="p">[] = []</span>`);
   L(`  <span class="k">private</span> <span class="v">listeners</span> <span class="p">=</span> <span class="k">new</span> <span class="t">Set</span><span class="p">&lt;</span><span class="t">Listener</span><span class="p">&gt;()</span>`);
@@ -368,7 +368,7 @@ if (chatU > 0) {
           <div style="color:#5f9e7c">+ const o = createTask(title)</div>
           <div style="color:#5f9e7c">+ return this.persist(o).catch(…)</div>
         </div>`;
-      const a2 = type('Handing the rest to the group, in parallel —', T.send + 3.4, T.send + 4.4);
+      const a2 = type('Handing the rest to the group, in parallel -', T.send + 3.4, T.send + 4.4);
       if (a2) conv += `<div class="atext"><span class="b">●</span>${a2}</div>`;
       if (t > T.subOpen - 0.4) conv += `<div class="tline"><span>◇</span>
           <span class="tn">riven_ask_agents</span><span>Pico, Wren</span>

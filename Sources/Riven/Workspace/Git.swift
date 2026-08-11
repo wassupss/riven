@@ -4,7 +4,7 @@ import Foundation
 // + porcelain status parsed with -z (handles non-ASCII / Korean paths).
 enum Git {
     // A Finder/Dock-launched app inherits a minimal environment: no Homebrew on PATH
-    // and, crucially, no SSH_AUTH_SOCK — so `git pull/push` to a remote can't find the
+    // and, crucially, no SSH_AUTH_SOCK - so `git pull/push` to a remote can't find the
     // user's ssh-agent (macOS keychain SSH) and silently fails to authenticate. Build a
     // proper env once: full PATH, the launchd ssh-agent socket, and GIT_TERMINAL_PROMPT=0
     // so a missing credential fails fast (surfaced as an error) instead of hanging.

@@ -10,7 +10,7 @@ import Foundation
 // is now a distinct, authoritative event.
 //
 // The UI verbs are injected rather than called directly so this file stays free of
-// AppKit and the policy — what raises attention, when a banner fires — is reviewable on
+// AppKit and the policy - what raises attention, when a banner fires - is reviewable on
 // its own. Main queue only; AgentHookServer hops before calling in.
 final class AgentActivity {
     static let shared = AgentActivity()
@@ -21,7 +21,7 @@ final class AgentActivity {
         let setAttention: (PaneSessionRegistry.Pane, Bool) -> Void
         /// True when the user is looking at this pane right now (focused pane of the
         /// key window). Looking at it counts as having seen it, so we neither raise
-        /// the ember ring nor post a banner — riven's existing convention.
+        /// the ember ring nor post a banner - riven's existing convention.
         let isWatched: (PaneSessionRegistry.Pane) -> Bool
         let notify: (PaneSessionRegistry.Pane, String) -> Void
     }
@@ -40,7 +40,7 @@ final class AgentActivity {
     func hasActiveTurn(_ session: String) -> Bool { currentTurn[session] != nil }
 
     func handle(_ event: AgentEvent) {
-        // postToolUse is change-tracking only (handled in routeAgentEvent) — it must not
+        // postToolUse is change-tracking only (handled in routeAgentEvent) - it must not
         // touch busy/attn state or the per-turn notification bookkeeping here.
         if event.kind == .postToolUse { return }
         guard let pane = PaneSessionRegistry.shared.pane(for: event.pane), let sink else { return }
@@ -62,7 +62,7 @@ final class AgentActivity {
             sink.setAttention(pane, false)   // submitting means you're here
 
         case .permissionRequest:
-            // Waiting on the user is NOT busy — that distinction is the whole reason
+            // Waiting on the user is NOT busy - that distinction is the whole reason
             // to prefer hooks over screen scraping.
             sink.setBusy(pane, false)
             guard !sink.isWatched(pane) else { break }

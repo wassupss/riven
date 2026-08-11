@@ -13,7 +13,7 @@ struct ThemeDef {
 }
 
 // riven color themes + a runtime-switchable current palette. The default is
-// `ember` — riven's factory default (state/settings.ts: theme:'ember') — so the
+// `ember` - riven's factory default (state/settings.ts: theme:'ember') - so the
 // native app matches the Electron app out of the box.
 enum Theme {
     // Shared dark semantic defaults (used unless a theme overrides them).
@@ -90,7 +90,7 @@ enum Theme {
                        blue: CGFloat(v & 0xff) / 255, alpha: 1)
     }
 
-    // Token accessors — computed so they follow `current` after a live switch.
+    // Token accessors - computed so they follow `current` after a live switch.
     static var bg: NSColor      { hex(current.bg) }
     static var bg2: NSColor     { hex(current.bg2) }
     static var bg3: NSColor     { hex(current.bg3) }
@@ -115,7 +115,7 @@ enum Theme {
     static var hairline: NSColor { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.08 : 0.06) } // --hairline
     static var edge: NSColor    { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.12 : 0.09) }  // --edge
 
-    // git decoration colors — riven's exact --git-* tokens (VSCode-style working-tree
+    // git decoration colors - riven's exact --git-* tokens (VSCode-style working-tree
     // colours), not the generic semantic palette (untracked/renamed are GREEN, not blue).
     static var gitModified: NSColor  { isLight ? hex("#8f6a1e") : hex("#d3a45f") }  // amber
     static var gitAdded: NSColor     { isLight ? hex("#227d3f") : hex("#6cc08b") }  // green
@@ -130,7 +130,7 @@ enum Theme {
 
     // ---- live theme switching ----
     // Views that render themed chrome register here; apply() re-invokes their
-    // color setup in place (no view recreation — recreating terminals crashes).
+    // color setup in place (no view recreation - recreating terminals crashes).
     // A weak hash table auto-drops deallocated views. The old `[Weak]` box array only
     // pruned dead boxes on a theme change, so between switches it grew one dead entry
     // per view ever created (#64).
@@ -160,7 +160,7 @@ enum Theme {
     // 테두리와 1px 구분선을 새 팔레트의 같은 토큰 색으로 바꿔치기한다.
 
     // 어떤 테마 정의 기준의 팔레트 전체. 접근자를 그대로 재사용하려고 current를 잠깐
-    // 바꿨다 되돌린다(메인 스레드 동기 코드라 관측되지 않는다) — 파생 토큰 공식이
+    // 바꿨다 되돌린다(메인 스레드 동기 코드라 관측되지 않는다) - 파생 토큰 공식이
     // 두 군데로 갈라지는 걸 막는다.
     private static func palette(_ d: ThemeDef) -> [NSColor] {
         let saved = current

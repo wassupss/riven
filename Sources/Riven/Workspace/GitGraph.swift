@@ -38,7 +38,7 @@ enum GraphLayout {
             let dot = dc!
             row.dotCol = dot; row.dotColor = dotColor
 
-            // Top half: every active incoming lane draws to center — into the dot if it
+            // Top half: every active incoming lane draws to center - into the dot if it
             // awaited this commit (merge / continuation), else straight through.
             for (i, s) in before.enumerated() where s != nil {
                 row.top.append((from: i, to: s == c.sha ? dot : i, color: beforeColor[i]))
@@ -73,7 +73,7 @@ enum GraphLayout {
 }
 
 // Source-control panel = the commit graph (main) + the working-changes/commit view
-// (right). This is what the "git" dock panel shows — the graph lives in source
+// (right). This is what the "git" dock panel shows - the graph lives in source
 // control, not a separate command.
 final class SourceControlView: NSView {
     let graph = GitGraphView(frame: .zero)
@@ -112,7 +112,7 @@ final class SourceControlView: NSView {
             prefWidth,
         ]
         // 좁을 때: 위아래로 쌓는다. 나란히 두면 그래프가 90~200px 로 눌려 커밋 메시지가
-        // 두 글자로 잘렸다 — 목록이라기보다 얼룩이었다. 폭을 통째로 쓰게 한다.
+        // 두 글자로 잘렸다 - 목록이라기보다 얼룩이었다. 폭을 통째로 쓰게 한다.
         // 위가 변경 사항(지금 손대는 것), 아래가 히스토리.
         // 변경 사항은 필요한 만큼만 (최대 45%). 파일 두 개뿐인데 화면 절반을 비워 두고
         // 히스토리를 아래로 밀어내면 둘 다 답답하다.
@@ -227,13 +227,13 @@ final class GitGraphView: NSView, Themable, Scalable {
         // when the panel is short, so the bottom never gets clipped off. A required min
         // keeps it usable; the graph list takes whatever height is left.
         // 210pt 고정이었다. 커밋 본문이 길면(riven 자신의 커밋이 대개 그렇다) 세 줄쯤에서
-        // 잘리고, 패널이 아무리 높아도 그대로였다 — 남는 높이는 목록만 가져갔다.
+        // 잘리고, 패널이 아무리 높아도 그대로였다 - 남는 높이는 목록만 가져갔다.
         // 패널 높이의 30% 를 쓰되 180~420pt 로 묶는다: 짧은 패널에서는 목록을 지키고,
         // 높은 패널에서는 본문이 실제로 읽힌다.
         let detailH = detail.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.30)
         detailH.priority = .defaultHigh
         self.detailHeight = detailH
-        // 상세를 "높이 0" 으로만 접으면 안 된다 — 안쪽 최소 크기가 이겨서 92pt 짜리 빈 띠가
+        // 상세를 "높이 0" 으로만 접으면 안 된다 - 안쪽 최소 크기가 이겨서 92pt 짜리 빈 띠가
         // 바닥에 남는다 (소스 컨트롤 아래 여백의 정체였다). 아예 배치에서 빼고, 목록이
         // 바닥까지 내려오게 한다.
         detailShown = [
@@ -262,7 +262,7 @@ final class GitGraphView: NSView, Themable, Scalable {
         NSLayoutConstraint.activate(show ? detailShown : detailHiddenC)
         needsLayout = true
     }
-    /// 좁은 배치에서는 커밋 상세를 접는다 — 목록이 먼저다. 줄을 고르면 그때 펼친다.
+    /// 좁은 배치에서는 커밋 상세를 접는다 - 목록이 먼저다. 줄을 고르면 그때 펼친다.
     func debugFrames() -> String {
         "그래프뷰=\(Int(bounds.height)) 목록스크롤=\(Int(listScroll.frame.minY))~\(Int(listScroll.frame.maxY))"
             + " 목록내용=\(Int((listScroll.documentView?.frame.height) ?? 0))"
@@ -333,7 +333,7 @@ final class GraphListView: NSView {
     override var isFlipped: Bool { true }
 
     // draw(_:) positions right-aligned metadata / hover fill / subject width from
-    // bounds.width, and the view is pinned to the clip view's leading/trailing — so a
+    // bounds.width, and the view is pinned to the clip view's leading/trailing - so a
     // panel resize changes the frame width. A plain NSView doesn't repaint on a size
     // change, so without this the graph keeps stale geometry until an unrelated
     // redraw (scroll/selection/reload) happens (#62).
@@ -404,14 +404,14 @@ final class GraphListView: NSView {
 
     private func drawText(_ row: GraphRow, x: CGFloat, mid: CGFloat) {
         var cx = x + 4
-        // ref badges (HEAD/branch/tag) — stop once we run out of horizontal room
+        // ref badges (HEAD/branch/tag) - stop once we run out of horizontal room
         for ref in row.commit.refs.prefix(4) {
             if cx > bounds.width - 24 { break }
             cx = drawBadge(ref, x: cx, mid: mid) + 5
         }
         let sha = attr(row.commit.short, UIScale.mono(UIScale.small, .regular), Theme.fgDim)
         sha.draw(at: NSPoint(x: cx, y: mid - sha.size().height / 2)); cx += sha.size().width + 8
-        // author + relative time (right-aligned) — only when there's comfortable room. On a
+        // author + relative time (right-aligned) - only when there's comfortable room. On a
         // narrow panel it's dropped entirely so it can never overlap the sha/subject cluster.
         let meta = "\(row.commit.author) · \(relTime(row.commit.timestamp))"
         let ma = attr(meta, UIScale.font(UIScale.caption), Theme.fgDim)
@@ -485,7 +485,7 @@ final class CommitDetailView: NSView, Themable {
         ])
         // 메시지 칸을 64pt 로 못 박아 두었다. 그런데 커밋 본문은 대개 그보다 길고, 파일이
         // 하나도 없는 커밋(문서·설정만 바뀐 커밋, 또는 아직 못 읽은 커밋)에서는 아래 파일
-        // 칸이 통째로 비어 버린다 — 본문은 세 줄에서 잘리는데 그 밑은 새까맣게 남았다.
+        // 칸이 통째로 비어 버린다 - 본문은 세 줄에서 잘리는데 그 밑은 새까맣게 남았다.
         //
         // 그래서 두 벌을 두고 갈아 끼운다. 파일이 있으면 예전처럼 나눠 쓰고(본문은 최소
         // 64pt, 남는 높이의 절반까지), 파일이 없으면 본문이 바닥까지 내려온다.

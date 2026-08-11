@@ -1,9 +1,9 @@
 import Foundation
 
-// Codex 를 네이티브 챗 패널로 몬다 — TUI 없이, [[ClaudeChatSession]] 과 같은 자리에서.
+// Codex 를 네이티브 챗 패널로 몬다 - TUI 없이, [[ClaudeChatSession]] 과 같은 자리에서.
 //
 // 붙는 곳은 `codex app-server`: Codex 자신의 TUI 가 쓰는 JSON-RPC 이다. 처음엔
-// `codex exec --json` 이 간단해 보였지만 그건 비대화형이라 **승인을 물어볼 수 없다** —
+// `codex exec --json` 이 간단해 보였지만 그건 비대화형이라 **승인을 물어볼 수 없다** -
 // riven 챗의 승인 카드가 통째로 사라진다. app-server 는 승인을 서버→클라이언트 요청으로
 // 보내 주므로, 카드가 그대로 산다.
 //
@@ -40,7 +40,7 @@ final class CodexChatSession: AgentChatSession {
     private(set) var model: String?
     /// [[AgentChatSession]] 이 부르는 이름. Codex 에서는 thread id 가 그 자리다.
     var sessionId: String? { threadId }
-    /// Codex 는 도구 목록을 init 에서 주지 않는다 — 상태 줄은 비워 둔다.
+    /// Codex 는 도구 목록을 init 에서 주지 않는다 - 상태 줄은 비워 둔다.
     var toolList: [String] { [] }
     var mcpServers: [(name: String, status: String)] { mcpStatus }
     private var mcpStatus: [(name: String, status: String)] = []
@@ -55,7 +55,7 @@ final class CodexChatSession: AgentChatSession {
     //
     // 처음엔 "Codex 에는 모드가 없다" 고 보고 드롭다운을 감췄는데 틀렸다. Codex 도
     // approvalPolicy(untrusted/on-request/never)와 sandbox(read-only/workspace-write)를
-    // 가지고, 둘 다 턴마다 덮어쓸 수 있다 — Claude 의 set_permission_mode 와 같은 자리다.
+    // 가지고, 둘 다 턴마다 덮어쓸 수 있다 - Claude 의 set_permission_mode 와 같은 자리다.
     //
     // danger-full-access 로는 절대 올라가지 않는다. "자동" 은 승인을 묻지 않겠다는 뜻이지
     // 워크스페이스 밖을 마음대로 쓰겠다는 뜻이 아니다.
@@ -92,7 +92,7 @@ final class CodexChatSession: AgentChatSession {
         proc.standardInput = inPipe
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
-        // 기본 환경 그대로 — Codex 도 구독 로그인(~/.codex/auth.json)을 쓴다.
+        // 기본 환경 그대로 - Codex 도 구독 로그인(~/.codex/auth.json)을 쓴다.
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
             // EOF 에서 핸들러를 반드시 떼어낸다. 안 그러면 죽은 프로세스의 fd 가 계속 신호를
@@ -117,7 +117,7 @@ final class CodexChatSession: AgentChatSession {
             guard let self else { return }
             self.notify("initialized", [:])
             if let resume = self.resumeThread {
-                // 지난 대화로 돌아간다. 실패하면(지워진 스레드 등) 새로 연다 —
+                // 지난 대화로 돌아간다. 실패하면(지워진 스레드 등) 새로 연다 -
                 // 이어붙일 게 없다고 페인이 죽어 있는 것보다 낫다.
                 self.request("thread/resume", ["threadId": resume]) { [weak self] result, err in
                     if err != nil { self?.startThread() } else { self?.adoptThread(result) }
@@ -142,7 +142,7 @@ final class CodexChatSession: AgentChatSession {
         threadId = id
         started = true
         // 모델 이름은 thread 객체가 아니라 응답 어딘가에 실려 온다 (thread 키에는 없고
-        // modelProvider 만 있다). 전체를 훑어서 집는다 — 못 집으면 /status 가 "?" 로 남는다.
+        // modelProvider 만 있다). 전체를 훑어서 집는다 - 못 집으면 /status 가 "?" 로 남는다.
         if let result { noteModel(result) }
         DispatchQueue.main.async { [weak self] in self?.onInit?(id, self?.model) }
         flushQueued()
@@ -160,7 +160,7 @@ final class CodexChatSession: AgentChatSession {
         // 승인 정책·샌드박스를 턴마다 실어 보낸다. 그래야 도는 도중에 모드를 바꿔도
         // 다음 턴부터 바로 먹는다 (Claude 의 라이브 모드 전환과 같은 체감).
         request("turn/start", ["threadId": tid,
-                               // 배열이어야 한다 — 맵이면 턴이 시작조차 되지 않는다.
+                               // 배열이어야 한다 - 맵이면 턴이 시작조차 되지 않는다.
                                "input": [["type": "text", "text": text]],
                                "approvalPolicy": approvalPolicy,
                                "sandboxPolicy": sandboxPolicyObject]) { _, _ in }
@@ -176,7 +176,7 @@ final class CodexChatSession: AgentChatSession {
         guard let p = pendingApprovals.removeValue(forKey: id) else { return }
         if p.kind == "permissions/requestApproval" {
             // 허용은 "요청한 프로파일을 그대로 돌려주기", 거절은 빈 프로파일이다.
-            // 범위는 turn — 한 번 허용했다고 세션 내내 열어 두지 않는다.
+            // 범위는 turn - 한 번 허용했다고 세션 내내 열어 두지 않는다.
             let granted = allow ? (p.params["permissions"] as? [String: Any] ?? [:]) : [:]
             respondRPC(p.rpcId, ["permissions": granted, "scope": "turn"])
             return
@@ -212,7 +212,7 @@ final class CodexChatSession: AgentChatSession {
         proc.terminate()
     }
 
-    /// 모델 바꾸기는 다음 스레드부터 적용된다 — app-server 에는 진행 중 스레드의 모델을
+    /// 모델 바꾸기는 다음 스레드부터 적용된다 - app-server 에는 진행 중 스레드의 모델을
     /// 갈아 끼우는 요청이 없다 (Claude 의 set_model 컨트롤 메시지와 다르다).
     func setModel(_ model: String) { self.model = model }
     /// 다음 턴부터 적용된다 (turn/start 가 정책을 함께 싣는다).
@@ -220,7 +220,7 @@ final class CodexChatSession: AgentChatSession {
     /// riven MCP 도구는 아직 Codex 쪽에 연결하지 않았다.
     @discardableResult func respondTool(_ id: String, _ result: String) -> Bool { false }
 
-    // Claude 에만 있는 신호들 — 프로토콜을 만족시키되 아무도 부르지 않는다.
+    // Claude 에만 있는 신호들 - 프로토콜을 만족시키되 아무도 부르지 않는다.
     var onSubagentStart: ((String, String, String) -> Void)?
     var onSubagentText: ((String, String) -> Void)?
     var onSubagentTool: ((String, String, String, String?, String?) -> Void)?
@@ -261,7 +261,7 @@ final class CodexChatSession: AgentChatSession {
     private func writeLine(_ obj: [String: Any]) {
         guard proc.isRunning, let body = try? JSONSerialization.data(withJSONObject: obj) else { return }
         var line = body; line.append(0x0a)
-        // 던지는 write 를 쓰고 오류는 삼킨다 — 프로세스가 죽은 뒤 쓰면 예전 API 는
+        // 던지는 write 를 쓰고 오류는 삼킨다 - 프로세스가 죽은 뒤 쓰면 예전 API 는
         // NSException("Broken pipe") 으로 앱을 통째로 내렸다.
         do { try inPipe.fileHandleForWriting.write(contentsOf: line) } catch {}
     }
@@ -297,7 +297,7 @@ final class CodexChatSession: AgentChatSession {
     private func handleServerRequest(_ method: String, _ params: [String: Any], rpcId: Any) {
         let key = UUID().uuidString
         // 실제 메서드에는 `item/` 접두사가 붙어 온다 (item/commandExecution/requestApproval).
-        // 접두사 없는 이름으로 매칭했다가 전부 default 로 빠졌고, default 는 빈 응답 —
+        // 접두사 없는 이름으로 매칭했다가 전부 default 로 빠졌고, default 는 빈 응답 -
         // 즉 거절이었다. 사용자에겐 묻지도 않고 거부된 것처럼 보였다. 접미사로 맞춘다.
         switch method.hasPrefix("item/") ? String(method.dropFirst(5)) : method {
         case "commandExecution/requestApproval":
@@ -315,7 +315,7 @@ final class CodexChatSession: AgentChatSession {
                 self?.onPermissionRequest?(key, "Edit", reason, nil, root)
             }
         case "permissions/requestApproval":
-            // 샌드박스 밖으로 나가려 할 때 온다 — 워크스페이스 밖 파일을 쓰거나 네트워크를
+            // 샌드박스 밖으로 나가려 할 때 온다 - 워크스페이스 밖 파일을 쓰거나 네트워크를
             // 열 때. 처음엔 "카드로 못 그리니 거절" 로 두었는데, 그게 가장 흔한 승인이었다:
             // 사용자에겐 묻지도 않고 거부된 것처럼 보였다.
             pendingApprovals[key] = (rpcId, method, params)
@@ -333,7 +333,7 @@ final class CodexChatSession: AgentChatSession {
     }
 
     private func handleNotification(_ method: String, _ params: [String: Any]) {
-        // 모델 이름은 thread 객체에 없다 (modelProvider 만 있다) — 턴·설정 알림에 실려
+        // 모델 이름은 thread 객체에 없다 (modelProvider 만 있다) - 턴·설정 알림에 실려
         // 지나간다. 처음 보이는 것을 집어 두지 않으면 /status 가 "모델: ?" 로 남는다.
         noteModel(params)
         switch method {
@@ -373,7 +373,7 @@ final class CodexChatSession: AgentChatSession {
     /// 알림 어디에 실려 있든 모델 이름을 한 번 집는다 (중첩된 turn / threadSettings 포함).
     private func noteModel(_ params: [String: Any]) {
         guard model == nil || model?.isEmpty == true else { return }
-        // 깊이 3까지 본다 — thread/start 응답은 result.thread 아래 한 겹 더 들어간다.
+        // 깊이 3까지 본다 - thread/start 응답은 result.thread 아래 한 겹 더 들어간다.
         func find(_ d: [String: Any], depth: Int) -> String? {
             if let m = d["model"] as? String, !m.isEmpty, m != "default" { return m }
             guard depth > 0 else { return nil }
@@ -400,7 +400,7 @@ final class CodexChatSession: AgentChatSession {
         switch type {
         case "agentMessage":
             // 델타 없이 완성본만 오는 턴이 있다 (도구를 쓴 뒤의 짧은 마무리 말이 그랬다).
-            // 델타만 보고 있으면 그런 답은 통째로 사라진다 — 실제로 파일은 만들어졌는데
+            // 델타만 보고 있으면 그런 답은 통째로 사라진다 - 실제로 파일은 만들어졌는데
             // 챗에는 아무 말도 남지 않았다. 이미 흘려보낸 만큼을 빼고 나머지를 채운다.
             guard completed, let id = item["id"] as? String, let text = item["text"] as? String else { return }
             let already = emitted[id] ?? ""

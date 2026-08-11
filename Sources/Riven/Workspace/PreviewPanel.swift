@@ -24,7 +24,7 @@ final class BrowserTab: NSObject {
     private(set) var urlString = ""
     private(set) var progress: Double = 0
     private(set) var isLoading = false
-    /// 시크릿 탭 — 방문 기록을 남기지 않는다.
+    /// 시크릿 탭 - 방문 기록을 남기지 않는다.
     var isPrivate = false
     /// 이 탭의 마지막 로드 실패. 다음 탐색이 시작되면 지운다.
     var errorText: String?
@@ -243,7 +243,7 @@ final class BrowserTabStrip: NSView, Themable, Scalable {
         override func rightMouseDown(with e: NSEvent) { onMenu?(e) }
         @objc private func closeTapped() { onClose?() }
         override func draw(_ dirty: NSRect) {
-            // 활성 표시는 아래에 긋는다 — riven 의 패널 탭(RivenTabStrip·독 탭)이 아래에
+            // 활성 표시는 아래에 긋는다 - riven 의 패널 탭(RivenTabStrip·독 탭)이 아래에
             // 긋는데 브라우저 탭만 위에 그어서, 같은 화면에 두 규칙이 섞여 보였다.
             if hot && !active {
                 Theme.fgDim.withAlphaComponent(0.07).setFill()
@@ -396,7 +396,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private let urlField = NSTextField()
     private let addressBar = NSView()         // 주소창 알약 (안에 입력칸 + 별)
     private let starBtn = NSButton()          // 북마크 켜고 끄기
-    private let menuBtn = NSButton()          // ⋮ — 자주 안 쓰는 것들은 여기로
+    private let menuBtn = NSButton()          // ⋮ - 자주 안 쓰는 것들은 여기로
     private let suggest = SuggestList(frame: .zero)   // 주소창 자동완성
     private let console = BrowserConsole(frame: .zero)   // riven 콘솔 서랍 (⌥⌘C)
     /// Safari Web Inspector 를 담는 자리. 인스펙터는 원래 따로 뜨는 창이지만, 그 웹뷰를
@@ -433,7 +433,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 모든 탭이 같은 쿠키·세션을 쓰고 앱을 껐다 켜도 로그인이 유지된다 (기본 데이터 저장소).
     private static let processPool = WKProcessPool()
 
-    // 프로필 — 같은 사이트에 계정 두 개로 동시에 들어가야 할 때가 있다 (회사 계정과 개인
+    // 프로필 - 같은 사이트에 계정 두 개로 동시에 들어가야 할 때가 있다 (회사 계정과 개인
     // 계정, 관리자와 일반 사용자). 저장소가 하나뿐이면 한쪽이 다른 쪽을 밀어낸다.
     // 이름마다 따로 저장소를 두고, 껐다 켜도 유지된다 (시크릿 탭은 메모리에만 남는 별개).
     private static var profileStores: [String: WKWebsiteDataStore] = [:]
@@ -482,7 +482,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
         urlField.placeholderString = t("browser.urlPlaceholder")
         urlField.font = UIScale.font(UIScale.small)
-        // 테두리는 알약(addressBar)이 그린다 — 입력칸에 또 테두리가 있으면 이중으로 보인다.
+        // 테두리는 알약(addressBar)이 그린다 - 입력칸에 또 테두리가 있으면 이중으로 보인다.
         urlField.isBordered = false
         urlField.drawsBackground = false
         urlField.focusRingType = .none
@@ -539,11 +539,11 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         statusHeight = statusLabel.heightAnchor.constraint(equalToConstant: 0)
         consoleHeight = console.heightAnchor.constraint(equalToConstant: 0)
         inspectorHeight = inspectorHost.heightAnchor.constraint(equalToConstant: 0)
-        // 숨겨도 자리는 남는다 — 폭까지 0 으로 접어야 주소창이 그만큼 넓어진다.
+        // 숨겨도 자리는 남는다 - 폭까지 0 으로 접어야 주소창이 그만큼 넓어진다.
         downloadWidth = downloadBtn.widthAnchor.constraint(equalToConstant: 0)
         // 크롬·브레이브·엣지와 같은 순서: 탭 줄이 맨 위, 그 아래에 이동 버튼 + 주소창.
         // 예전에는 주소창이 위, 탭이 아래여서 브라우저를 쓰던 감각과 어긋났다.
-        // 오른쪽에 아이콘을 다 늘어놓지도 않는다 — 캡처·검사·확대·외부 열기는 ⋮ 안으로.
+        // 오른쪽에 아이콘을 다 늘어놓지도 않는다 - 캡처·검사·확대·외부 열기는 ⋮ 안으로.
         NSLayoutConstraint.activate([
             tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
             tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -635,7 +635,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     private func makeConfiguration(isPrivate: Bool = false, profile: String = "") -> WKWebViewConfiguration {
         let cfg = WKWebViewConfiguration()
         cfg.processPool = Self.processPool
-        // 시크릿 탭은 메모리에만 남는 저장소를 쓴다 — 탭을 닫으면 쿠키·로그인이 함께 사라진다.
+        // 시크릿 탭은 메모리에만 남는 저장소를 쓴다 - 탭을 닫으면 쿠키·로그인이 함께 사라진다.
         // 프로필을 주면 그 이름의 저장소를 쓴다 (같은 사이트에 계정 두 개로 동시에 들어가기).
         cfg.websiteDataStore = isPrivate ? .nonPersistent() : Self.store(profile: profile)
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
@@ -646,7 +646,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         // 일부 사이트는 UA 에 Safari 토큰이 없으면 "지원하지 않는 브라우저" 로 막는다.
         // UA 를 통째로 바꾸면 다른 게 깨지므로, 기본 UA 뒤에 붙는 이 값만 채운다.
         cfg.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
-        // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 — WKWebView 가 AppKit 마우스
+        // 페이지를 클릭하면 이 독 그룹이 활성화되어야 한다 - WKWebView 가 AppKit 마우스
         // 이벤트를 삼키므로 작은 스크립트가 대신 알려준다.
         cfg.userContentController.add(self, name: "prevfocus")
         // 콘솔: 페이지의 console 출력·오류를 riven 으로 보낸다.
@@ -834,7 +834,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
 
     @objc private func goBack() { tab?.web.goBack() }
     @objc private func goForward() { tab?.web.goForward() }
-    /// ⌘⇧R — 캐시를 무시하고 다시 받는다. 개발 중에 바뀐 자산이 안 보일 때 쓰는 그 키다.
+    /// ⌘⇧R - 캐시를 무시하고 다시 받는다. 개발 중에 바뀐 자산이 안 보일 때 쓰는 그 키다.
     func hardReload() {
         guard let web = tab?.web else { return }
         web.reloadFromOrigin()
@@ -852,7 +852,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
     }
 
-    /// 쿠키·로컬 저장소까지 — 이 프로필에서 로그아웃된다. 되돌릴 수 없어 먼저 묻는다.
+    /// 쿠키·로컬 저장소까지 - 이 프로필에서 로그아웃된다. 되돌릴 수 없어 먼저 묻는다.
     func clearSiteData() {
         let a = NSAlert()
         a.messageText = t("browser.clearDataConfirm")
@@ -886,7 +886,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         tab?.web.isHidden = false
         Self.load(url, into: tab?.web)
     }
-    /// file:// 은 그냥 load(URLRequest:) 로는 열리지 않는다 — WebKit 이 읽기 권한을 따로
+    /// file:// 은 그냥 load(URLRequest:) 로는 열리지 않는다 - WebKit 이 읽기 권한을 따로
     /// 요구한다. dist/index.html, 커버리지 리포트, 로컬 PDF 를 열려면 이 경로가 필요하다.
     static func load(_ url: URL, into web: WKWebView?) {
         guard let web else { return }
@@ -906,26 +906,26 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 개발자 도구 = Safari Web Inspector. 요소·네트워크·소스·콘솔이 다 들어 있는 그 도구다
     /// (WKWebView 를 쓰는 네이티브 앱이 쓸 수 있는 진짜 개발자 도구).
     ///
-    /// 여는 공개 API 는 없다 — isInspectable 을 켜면 페이지 오른쪽 클릭 → "요소 정보 검사"
+    /// 여는 공개 API 는 없다 - isInspectable 을 켜면 페이지 오른쪽 클릭 → "요소 정보 검사"
     /// 로 열 수 있고, 메뉴·단축키로 열려면 _WKInspector 를 거쳐야 한다. 언젠가 사라질 수 있는
     /// 길이라, 안 되면 조용히 실패하지 않고 오른쪽 클릭으로 열라고 알려 준다.
     /// 개발자 도구.
     ///
     /// Safari Web Inspector 를 쓰려면 페이지에서 오른쪽 클릭 → "요소 정보 검사" 다 (isInspectable
     /// 이 켜져 있어 요소·네트워크·소스·콘솔이 그대로 열린다). 메뉴·단축키로 여는 공개 API 는
-    /// 없고, _WKInspector 로 여는 비공개 길은 실제로 해 보니 창이 뜨지 않았다 — 게다가 예전에는
+    /// 없고, _WKInspector 로 여는 비공개 길은 실제로 해 보니 창이 뜨지 않았다 - 게다가 예전에는
     /// 그 호출이 앱을 죽였다 (하드닝 런타임에 allow-jit 이 없어서. 그건 별도로 고쳤다).
     /// 그래서 여기서는 확실히 되는 것만 한다: riven 안의 콘솔 서랍을 열고, 전체 도구를 여는
     /// 방법을 알려 준다.
     /// 개발자 도구. Safari Web Inspector 는 페이지에서 오른쪽 클릭 → "요소 정보 검사" 로 연다.
     ///
     /// 프로그램으로 여는 길을 두 번 시도했고 둘 다 실패했다:
-    ///  · _WKInspector.show() — 창이 뜨지 않는다 (예전에는 앱까지 죽였다. 그건 서명 문제라
+    ///  · _WKInspector.show() - 창이 뜨지 않는다 (예전에는 앱까지 죽였다. 그건 서명 문제라
     ///    allow-jit 으로 고쳤지만, 죽지 않을 뿐 열리지도 않는다).
-    ///  · 합성 우클릭으로 페이지 메뉴 띄우기 — 메뉴가 떴다가 바로 닫혀 화면이 깜빡였다
+    ///  · 합성 우클릭으로 페이지 메뉴 띄우기 - 메뉴가 떴다가 바로 닫혀 화면이 깜빡였다
     ///    (짝이 되는 rightMouseUp 이 없으면 WebKit 이 트래킹을 접는다).
     /// 그래서 여기서는 아무 것도 흉내내지 않고, 여는 방법만 한 줄로 알려 준다.
-    /// 개발자 도구 (⌥⌘I) — Safari Web Inspector 를 이 패널 안에 붙여서 연다.
+    /// 개발자 도구 (⌥⌘I) - Safari Web Inspector 를 이 패널 안에 붙여서 연다.
     ///
     /// 인스펙터는 원래 따로 뜨는 창이고 여는 공개 API 도 없다. 다만 _WKInspector 가
     /// inspectorWebView 를 들고 있어서, connect 한 뒤 그 뷰를 꺼내 우리 자리에 옮겨 붙이면
@@ -940,7 +940,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         func visible() -> Bool {
             let v = NSSelectorFromString("isVisible")
             guard ins.responds(to: v) else { return false }
-            // BOOL 은 perform 으로 못 읽는다 — 값을 직접 꺼낸다.
+            // BOOL 은 perform 으로 못 읽는다 - 값을 직접 꺼낸다.
             typealias BoolFn = @convention(c) (AnyObject, Selector) -> Bool
             let imp = class_getMethodImplementation(object_getClass(ins), v)
             return imp.map { unsafeBitCast($0, to: BoolFn.self)(ins, v) } ?? false
@@ -1058,7 +1058,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }
     }
 
-    /// 탭 오른쪽 클릭 — 브라우저에서 늘 하는 것들.
+    /// 탭 오른쪽 클릭 - 브라우저에서 늘 하는 것들.
     private func showTabMenu(_ i: Int, _ e: NSEvent) {
         guard tabs.indices.contains(i) else { return }
         let menu = NSMenu()
@@ -1108,7 +1108,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         (sender.representedObject as? () -> Void)?()
     }
 
-    /// 소스 보기 — WKWebView 에는 공개 개발자 도구 API 가 없어서, 받은 HTML 을 새 탭에
+    /// 소스 보기 - WKWebView 에는 공개 개발자 도구 API 가 없어서, 받은 HTML 을 새 탭에
     /// 글자 그대로 띄운다 (브라우저의 view-source: 와 같은 결과).
     private func viewSource(_ tb: BrowserTab) {
         guard let url = tb.web.url else { return }
@@ -1133,7 +1133,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         }.resume()
     }
 
-    /// ⌘⇧T — 마지막으로 닫은 탭을 되살린다.
+    /// ⌘⇧T - 마지막으로 닫은 탭을 되살린다.
     private func reopenClosedTab() {
         guard let u = closedURLs.popLast(), let url = URL(string: u) else { return }
         newTab(url, activate: true)
@@ -1227,7 +1227,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         completionHandler(.cancelAuthenticationChallenge, nil)
         DispatchQueue.main.async { [weak self] in self?.refreshChrome() }
     }
-    /// 사용자가 계속하기로 한 호스트 (이 실행 동안만 — 껐다 켜면 다시 묻는다).
+    /// 사용자가 계속하기로 한 호스트 (이 실행 동안만 - 껐다 켜면 다시 묻는다).
     private static var trustedHosts: Set<String> = []
 
     // MARK: - 주소창 자동완성 / 북마크
@@ -1415,7 +1415,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
     func debugError() -> String { tab?.errorText ?? "(오류표시 없음)" }
     func debugTabURLs() -> [String] { tabs.map { $0.web.url?.absoluteString ?? "-" } }
-    /// ⌘W (메뉴에서 들어온다 — 메뉴 단축키가 뷰보다 먼저 잡힌다).
+    /// ⌘W (메뉴에서 들어온다 - 메뉴 단축키가 뷰보다 먼저 잡힌다).
     func closeActiveTab() { closeTab(current) }
 
     /// 벤치용: ⌘W 를 누른 것과 같은 경로.
@@ -1434,7 +1434,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             + [tb.web.url?.host ?? "?"]
     }
     func debugViewSource(_ i: Int) { if tabs.indices.contains(i) { viewSource(tabs[i]) } }
-    /// 팝오버는 자기 창에 그려져 부모 창 캡처에 안 잡힌다 — 뷰를 직접 찍는다.
+    /// 팝오버는 자기 창에 그려져 부모 창 캡처에 안 잡힌다 - 뷰를 직접 찍는다.
     func debugLibraryShot(_ path: String) {
         guard let v = libraryPopover?.contentViewController?.view else { return }
         v.layoutSubtreeIfNeeded()
@@ -1452,7 +1452,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     var workspaceRoot: URL?
     private func showLoadError(_ error: Error, on webView: WKWebView? = nil) {
         let e = error as NSError
-        if e.domain == "WebKitErrorDomain" && e.code == 102 { return }   // 리다이렉트로 끊긴 것 — 실패가 아니다
+        if e.domain == "WebKitErrorDomain" && e.code == 102 { return }   // 리다이렉트로 끊긴 것 - 실패가 아니다
         if e.domain == NSURLErrorDomain && e.code == NSURLErrorCancelled { return }
         let target = webView.flatMap { w in tabs.first { $0.web === w } } ?? tab
         target?.errorText = t("preview.loadFailed", ["msg": e.localizedDescription])
@@ -1534,7 +1534,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         var dir = home ?? URL(fileURLWithPath: NSTemporaryDirectory())
         var fellBack = false
         // isWritableFile 은 POSIX 권한만 본다. macOS 가 폴더 접근을 막고 있으면 그건 통과하고
-        // 실제 쓰기에서 "Cannot create file" 로 죽는다 — 그래서 진짜로 파일을 하나 만들어 본다.
+        // 실제 쓰기에서 "Cannot create file" 로 죽는다 - 그래서 진짜로 파일을 하나 만들어 본다.
         if forceTempDownloadDir || !Self.canWrite(dir) {
             dir = URL(fileURLWithPath: NSTemporaryDirectory())
             fellBack = true
@@ -1558,7 +1558,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     func downloadDidFinish(_ download: WKDownload) {
         let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
         item?.finish()
-        // 예전에는 다 받으면 Finder 가 앞으로 튀어나왔다 — 일하다 창이 바뀌는 건 방해라
+        // 예전에는 다 받으면 Finder 가 앞으로 튀어나왔다 - 일하다 창이 바뀌는 건 방해라
         // 알림만 남기고, 열지 말지는 목록에서 고르게 한다.
         setStatus(t("browser.downloaded", ["f": item?.name ?? ""]))
         refreshDownloadButton()
@@ -1566,7 +1566,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let item = downloadItems.removeValue(forKey: ObjectIdentifier(download))
         // 파일을 못 만들어 실패했으면 임시 폴더로 한 번 더 해 본다. 내려받기 폴더에
-        // 쓸 수 있는지는 미리 알 수 없다 — 권한을 POSIX 로 물으면 된다고 나오는데 실제
+        // 쓸 수 있는지는 미리 알 수 없다 - 권한을 POSIX 로 물으면 된다고 나오는데 실제
         // 쓰기에서 막히는 경우가 있어서(그럼 "Cannot create file" 만 남는다), 겪은 뒤에
         // 옮기는 게 확실하다.
         let createFailed = error.localizedDescription.lowercased().contains("cannot create file")
@@ -1603,7 +1603,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         let running = downloads.contains { !$0.done && $0.failed == nil }
         downloadBtn.contentTintColor = running ? Theme.accent : Theme.fgDim
     }
-    /// ⋮ — 브라우저마다 있는 그 메뉴. 늘 쓰는 것(뒤로·앞으로·새로고침·주소·별)만 밖에 두고
+    /// ⋮ - 브라우저마다 있는 그 메뉴. 늘 쓰는 것(뒤로·앞으로·새로고침·주소·별)만 밖에 두고
     /// 나머지는 여기 넣는다. 아이콘을 여섯 개씩 늘어놓으면 무엇이 중요한지 알 수 없다.
     @objc private func showMenu() {
         let menu = buildMenu()
@@ -1650,7 +1650,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         return menu
     }
     func debugMenu() -> String {
-        buildMenu().items.map { $0.isSeparatorItem ? "—" : ($0.title + ($0.isEnabled ? "" : "(꺼짐)")) }
+        buildMenu().items.map { $0.isSeparatorItem ? "-" : ($0.title + ($0.isEnabled ? "" : "(꺼짐)")) }
             .joined(separator: " / ")
     }
 
@@ -1692,7 +1692,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     }
 
     /// 브라우저 단축키. 패널(또는 그 안의 웹뷰)에 포커스가 있을 때만 잡는다.
-    /// ⌘+/− 는 riven 전체 UI 배율이라 건드리지 않는다 — 페이지 확대는 툴바 버튼으로.
+    /// ⌘+/− 는 riven 전체 UI 배율이라 건드리지 않는다 - 페이지 확대는 툴바 버튼으로.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard let win = window, let fr = win.firstResponder as? NSView, fr.isDescendant(of: self) || fr === self
         else { return super.performKeyEquivalent(with: event) }
@@ -1720,7 +1720,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
             newTab(nil, activate: true, isPrivate: true)
             setStatus(t("browser.privateTab"))
             return true
-        // ⌘W: 브라우저 탭을 닫는다. 마지막 탭이면 패널이 닫힌다 — 브라우저에서 마지막
+        // ⌘W: 브라우저 탭을 닫는다. 마지막 탭이면 패널이 닫힌다 - 브라우저에서 마지막
         // 탭을 닫으면 창이 닫히는 것과 같다. 예전에는 탭이 하나면 아무 일도 없었다.
         case "w" where cmd: closeTab(current); return true
         case "y" where cmd: showLibrary(); return true
@@ -1746,7 +1746,7 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     // MARK: - agent control (riven_browser_*)
     //
     // 에이전트가 부르는 것들. 전부 메인 스레드에서만 돌고(WKWebView 요구), 무엇을 했는지
-    // 패널 상태 줄에 남긴다 — mcp__riven__ 도구는 자동 승인이라, 사용자가 화면만 봐도 무슨
+    // 패널 상태 줄에 남긴다 - mcp__riven__ 도구는 자동 승인이라, 사용자가 화면만 봐도 무슨
     // 일이 일어났는지 알 수 있어야 한다.
     private func note(_ text: String) { setStatus("🤖 " + text); agentLog.append(text) }
     /// 벤치용: 에이전트가 이 패널에 실제로 시킨 동작들.
@@ -1771,14 +1771,14 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
            let s = String(data: d, encoding: .utf8) { return s }
         return "\(v)"
     }
-    /// 에이전트에게 돌려주는 텍스트는 잘라서 준다 — 페이지 전체가 컨텍스트를 다 먹지 않게.
+    /// 에이전트에게 돌려주는 텍스트는 잘라서 준다 - 페이지 전체가 컨텍스트를 다 먹지 않게.
     private static func clip(_ s: String, _ limit: Int = 8000) -> String {
         s.count <= limit ? s : String(s.prefix(limit)) + "\n…(truncated, \(s.count) chars total)"
     }
 
     func agentNavigate(_ urlString: String, newTab wantsNew: Bool, profile: String = "") -> String {
         guard let url = BrowserTab.resolve(urlString) else { return "invalid url: \(urlString)" }
-        // 프로필을 주면 언제나 새 탭이다 — 로그인 묶음이 다르니 지금 탭을 재사용할 수 없다.
+        // 프로필을 주면 언제나 새 탭이다 - 로그인 묶음이 다르니 지금 탭을 재사용할 수 없다.
         if wantsNew || !profile.isEmpty { newTab(url, activate: true, profile: profile) }
         else { urlField.stringValue = url.absoluteString; load(url) }
         note(t("browser.agent.navigate", ["u": url.absoluteString]))

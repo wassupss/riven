@@ -14,7 +14,7 @@ let rivenCrashPath: String = {
 
 // ---- Boot breadcrumb (crash diagnostics) --------------------------------------------------
 // v0.1.57 crash-looped on some machines during session restore, and the deaths left NO
-// artifact — no crash.txt, no .ghosttycrash, no OS corpse (a silent exit()/kill, not a
+// artifact - no crash.txt, no .ghosttycrash, no OS corpse (a silent exit()/kill, not a
 // signal). To make the NEXT such death diagnosable, each restore milestone is written here
 // immediately (atomic write = durable) and the file is deleted only once boot completes.
 // So an orphaned boot.step on the next launch means "the previous boot died at THIS step",
@@ -35,7 +35,7 @@ func rivenBootComplete() {
 // Call ONCE at the very start of launch, before CrashReporter.reportPending(): if boot.step
 // survived from the previous run, that run died mid-boot. Fold it into crash.txt so the
 // existing uploader ships it. A real crash (crash.txt already populated by the signal/exception
-// handler) is preserved — we only append the last boot step to it; otherwise crash.txt was
+// handler) is preserved - we only append the last boot step to it; otherwise crash.txt was
 // empty (the silent-death case) and we write a standalone boot-failure record.
 func reportBootFailureIfAny() {
     guard let step = try? String(contentsOfFile: rivenBootPath, encoding: .utf8),
@@ -45,18 +45,18 @@ func reportBootFailureIfAny() {
     let existing = (try? String(contentsOfFile: rivenCrashPath, encoding: .utf8)) ?? ""
     let stepLine = step.trimmingCharacters(in: .whitespacesAndNewlines)
     if existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        // Silent death — no signal/exception was caught. This is the case that had no artifact.
+        // Silent death - no signal/exception was caught. This is the case that had no artifact.
         try? "v\(ver) BOOT-INCOMPLETE (silent exit during launch)\nlast step: \(stepLine)\n"
             .write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
     } else {
         try? (existing + "\nBOOT-INCOMPLETE last step: \(stepLine)\n")
             .write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
     }
-    RLog.log("boot: previous launch died mid-boot at \"\(stepLine)\" — folded into crash report")
+    RLog.log("boot: previous launch died mid-boot at \"\(stepLine)\" - folded into crash report")
 }
 
 // exit() during boot leaves nothing behind on its own. This @convention(c) handler (no
-// captures — only globals) records a stack the moment such an exit happens, so a stray
+// captures - only globals) records a stack the moment such an exit happens, so a stray
 // exit()/return-before-ready is diagnosable and not just a blank boot.step. (SIGKILL skips
 // atexit, but the orphaned boot.step still flags that run via reportBootFailureIfAny.)
 func installBootExitGuard() {
@@ -70,7 +70,7 @@ func installBootExitGuard() {
     }
 }
 
-// riven native shell — Phase 1 core loop:
+// riven native shell - Phase 1 core loop:
 //   explorer (file tree) | Monaco editor (WKWebView) | libghostty terminal
 // Open a folder → browse files → click to open in Monaco → ⌘S saves to disk.
 // The terminal is a real GPU shell rooted at the workspace.
@@ -91,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard Date().timeIntervalSince(lastCLIVersionCheck) > 20,
               activeDock?.activeGroup?.activePanel?.content is ChatPanel else { return }
         lastCLIVersionCheck = Date()
-        // `claude --version` spawns a process (~100ms) — off the main thread so focus never hitches.
+        // `claude --version` spawns a process (~100ms) - off the main thread so focus never hitches.
         DispatchQueue.global(qos: .utility).async {
             _ = AgentDiscovery.claudeVersion(fresh: true)   // refresh the cached on-disk version
             DispatchQueue.main.async { [weak self] in
@@ -101,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// Restart every chat in the active workspace on the current CLI, resuming each conversation.
     /// Staggered so we don't exec N headless `claude` processes at the same instant. A chat that's
-    /// mid-turn skips itself (restarting would drop the turn) — /restart it when it's idle.
+    /// mid-turn skips itself (restarting would drop the turn) - /restart it when it's idle.
     func restartAllChatsOnCurrentCLI() {
         let chats = (activeDock?.groups ?? []).flatMap { $0.panels }.compactMap { $0.content as? ChatPanel }
         for (i, chat) in chats.enumerated() {
@@ -247,7 +247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         maybeShowCrashReportingNotice()   // one-time opt-out disclosure
         setupShellShim()   // per-pane `claude` session shim (typed `claude` resumes on relaunch)
         startAgentHooks()  // agent lifecycle events → pane busy/attn (replaces viewport polling)
-        // Persist the session on SIGTERM too (kill / restart / logout), not just ⌘Q —
+        // Persist the session on SIGTERM too (kill / restart / logout), not just ⌘Q -
         // Cocoa doesn't call applicationWillTerminate for SIGTERM, so a killed app would
         // otherwise lose panes created since the last save (incl. their claude session ids).
         // A dispatch source runs on the main queue, so touching AppKit here is safe.
@@ -256,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sigterm.setEventHandler { [weak self] in
             self?.persistSession()
             SupabaseAuth.shared.flushOnQuit()
-            // NSApp.terminate can be DEFERRED — a modal sheet is up, or a delegate returns
+            // NSApp.terminate can be DEFERRED - a modal sheet is up, or a delegate returns
             // .terminateLater. The default SIGTERM disposition is now SIG_IGN, so in that
             // case the process would survive and `kill <pid>` would stop working entirely.
             // Arm a watchdog so the signal still means "exit", after giving the normal path
@@ -336,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // without waiting for Sparkle's 24h scheduled check or a manual "Check for Updates".
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { Updater.shared.probeForUpdate() }
         // Debug/demo: force-show the update pill (real builds surface it only when Sparkle
-        // finds a newer version on the feed — a dev/test build has no feed, so it never shows).
+        // finds a newer version on the feed - a dev/test build has no feed, so it never shows).
         if let fake = ProcessInfo.processInfo.environment["RIVEN_FAKE_UPDATE"] { statusBar.setUpdateAvailable(fake) }
         // Open a folder on launch (or RIVEN_OPEN=path for headless debug).
         if let dbg = ProcessInfo.processInfo.environment["RIVEN_OPEN"] {
@@ -485,7 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         log("idle")      // 아무 일도 없으면 타이머는 꺼져 있어야 한다
-                        // 팀 입력줄로 두 명에게 동시에 — 실제 UI 경로(파싱 → askAgentPanes)를 탄다.
+                        // 팀 입력줄로 두 명에게 동시에 - 실제 UI 경로(파싱 → askAgentPanes)를 탄다.
                         self.mentionFromLead("@구현 @리뷰 숫자 7만 답해. 설명 금지.")
                         log("sent")
                         for (i, at) in [0.4, 1.5, 4.0, 8.0, 16.0, 30.0].enumerated() {
@@ -568,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
                 // RIVEN_STATUSSHOT=<path>: 상태 언어를 한 화면에 세워 놓고 창을 통째로 떠서
-                // 눈으로 대조한다 — 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
+                // 눈으로 대조한다 - 독 탭 제목 shimmer(작업 중) / 상태 점(승인 대기·완료) /
                 // 레일 행 / 조직도 아바타가 서로 같은 색·의미인지. 상태를 합성해서 넣는 것이라
                 // 에이전트를 돌리지 않는다(토큰 0). 창 자체를 컴포지터에서 뜨므로 애니메이션이
                 // 실제로 걸려 있는지도 그림에 남는다.
@@ -597,7 +597,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 RLog.log("STATUSSHOT panes=\(self.agentPanes().count) "
                                        + "live=\(ViewAnimationGate.liveCount)")
                                 self.debugWindowSnapshot(to: shot)
-                                // 0.45초 뒤 한 장 더 — 두 장의 같은 자리를 비교하면 제목이
+                                // 0.45초 뒤 한 장 더 - 두 장의 같은 자리를 비교하면 제목이
                                 // 정말 훑리고 있는지(정지 화면이 아닌지) 숫자로 확인된다.
                                 // 렌더 트리 값도 같이 남겨서 "애니메이션은 도는데 캡처에만
                                 // 안 잡히는" 경우와 구분한다.
@@ -790,7 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
                 // RIVEN_CHATSHOT=<png>: 채팅 팬을 실제 대화로 채우고 그 모습을 찍는다.
-                // 답을 기다리지 않고 정해진 시각에 찍는다 — 스트리밍 중간 모습도 봐야 한다.
+                // 답을 기다리지 않고 정해진 시각에 찍는다 - 스트리밍 중간 모습도 봐야 한다.
                 if let shot = ProcessInfo.processInfo.environment["RIVEN_CHATSHOT"] {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                         guard let self else { return }
@@ -1060,7 +1060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                     }
                 }
-                // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 — 에이전트 팬이 실제로 한 턴을 돌리는지.
+                // RIVEN_SHIPCHECK=1: 배포 전 핵심 경로 - 에이전트 팬이 실제로 한 턴을 돌리는지.
                 if ProcessInfo.processInfo.environment["RIVEN_SHIPCHECK"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                         guard let self else { return }
@@ -1077,7 +1077,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     }
                 }
                 // RIVEN_CODEXCHECK=1: Codex 페인이 실제로 훅을 흘려보내는지 (배지·상태의 근거).
-                // riven 의 터미널(libghostty) 안에서 돌려야 의미가 있다 — pty 밖에서 codex TUI 는
+                // riven 의 터미널(libghostty) 안에서 돌려야 의미가 있다 - pty 밖에서 codex TUI 는
                 // 터미널 질의 응답을 기다리다 아무것도 그리지 않는다.
                 if ProcessInfo.processInfo.environment["RIVEN_CODEXCHECK"] != nil {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
@@ -1087,13 +1087,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         }
                         RLog.log("CODEX 훅인자=\(AgentHooksInstall.codexLaunchOverrides().count)개")
                         self.launchAgent(codex)
-                        // TUI 가 뜰 시간을 준 뒤 한 턴 돌린다. 페인은 이름으로 찾는다 —
+                        // TUI 가 뜰 시간을 준 뒤 한 턴 돌린다. 페인은 이름으로 찾는다 -
                         // currentTerminalPanel() 은 먼저 있던 빈 터미널을 가리킬 수 있다.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
                             let tv = self.activeDock?.groups.flatMap { $0.panels }
                                 .first { $0.agentName == "Codex" }?.content as? TerminalView
                             RLog.log("CODEX 입력대상=\(tv == nil ? "없음" : "찾음")")
-                            // Codex 는 처음 보는 훅을 그냥 실행하지 않는다 — "Hooks need review" 를
+                            // Codex 는 처음 보는 훅을 그냥 실행하지 않는다 - "Hooks need review" 를
                             // 띄우고 고르게 한다. 2번(Trust all and continue)을 골라야 그 다음이 있다.
                             // "Hooks need review" → Enter 로 목록을 열고, 거기서 t (trust all).
                             tv?.sendEnter()
@@ -1238,7 +1238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         Settings.shared.set("usagePinned", true)
                         self.pinUsage()
                         self.statusBar.setUpdateAvailable("0.1.99")   // 업데이트 알약도 보이게
-                        // 패널을 두루 열어 둔다 — 안 열린 패널은 비교에 잡히지 않는다.
+                        // 패널을 두루 열어 둔다 - 안 열린 패널은 비교에 잡히지 않는다.
                         for id in ["search", "git", "changes", "notes", "api", "team", "preview"] {
                             self.toggleDockPanel(id)
                         }
@@ -1246,7 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         // RIVEN_THEMESTART 가 있으면 그 테마로 시작한 화면만 찍는다 (기준선).
                         // 없으면 ember 로 시작해 daylight 로 "바꾼" 화면을 찍는다.
                         // 두 장을 비교하면, 바뀌긴 했지만 끝까지 따라오지 않은 곳까지 드러난다.
-                        // 설정 창도 함께 찍는다 — 테마를 바꾸는 바로 그 창이라, 여기가
+                        // 설정 창도 함께 찍는다 - 테마를 바꾸는 바로 그 창이라, 여기가
                         // 안 따라오면 사용자가 가장 먼저 본다.
                         func shotSettings(_ name: String) {
                             guard let sv = self.settingsWin?.contentView,
@@ -1575,7 +1575,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                 }
                                 RLog.log("BRSHOT 배치 \(p.debugFrames())")
                                 RLog.log("BRSHOT 메뉴=\(p.debugMenu())")
-                                // 웹 내용은 cacheDisplay 로 안 잡힌다 (원격 레이어) — 스냅샷으로 확인.
+                                // 웹 내용은 cacheDisplay 로 안 잡힌다 (원격 레이어) - 스냅샷으로 확인.
                                 p.capture { path in RLog.log("BRSHOT 페이지스냅=\(path ?? "실패")") }
                                 RLog.log("BRSHOT done \(p.debugSuggestions())")
                                 // 두 번째 장면: 기록·북마크 보기 (⌘Y)
@@ -1714,13 +1714,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 print("[KEYTEST] sent synthetic keys OK")
             }
         }
-        // Restore the previous session (open folders + tabs) on a normal launch —
+        // Restore the previous session (open folders + tabs) on a normal launch -
         // but NOT when a debug folder is forced via RIVEN_OPEN (else both would
         // open and the restored session would clobber the forced folder).
         // RIVEN_AVATARTEST=<png>: 아바타 고르기 한 바퀴. 첫 실행은 그룹을 만들고
         // 편집 팝오버를 연 뒤(고르는 줄이 실제로 보이는지) 팝오버와 같은 경로로
         // 아바타를 심는다. 같은 데이터 디렉터리로 다시 띄우면 이미 심어져 있으므로
-        // 아무것도 고르지 않고 복원된 값만 찍는다 — 재기동 후에도 남는지 확인.
+        // 아무것도 고르지 않고 복원된 값만 찍는다 - 재기동 후에도 남는지 확인.
         if let shot = ProcessInfo.processInfo.environment["RIVEN_AVATARTEST"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                 guard let self else { return }
@@ -1760,7 +1760,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         self.logAvatarState(target, tag: "restored")
                         self.debugWindowSnapshot(to: shot.replacingOccurrences(
                             of: ".png", with: "-restored.png"))
-                        // "자동으로 되돌리기"도 같은 경로다 — 고른 값을 지우면 이름 해시로 돌아가야 한다.
+                        // "자동으로 되돌리기"도 같은 경로다 - 고른 값을 지우면 이름 해시로 돌아가야 한다.
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                             self.editAgentPane("배포팀", target, name: target,
                                                model: pane?.chat.preferredModel,
@@ -1772,7 +1772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         if ProcessInfo.processInfo.environment["RIVEN_OPEN"] == nil {
-            // Reopening restores workspaces, dock layouts, editor tabs and chat transcripts — enough
+            // Reopening restores workspaces, dock layouts, editor tabs and chat transcripts - enough
             // work to look like a freeze. Show the overlay FIRST and force a paint, then restore on
             // the next runloop turn so the spinner is actually on screen while it happens.
             let willRestore = (Settings.shared.object("session")?["workspaces"] as? [String])?.isEmpty == false
@@ -1946,7 +1946,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // Write crash stacks to a per-user, owner-only file under Application Support
-    // (not world-readable /tmp — stacks can contain workspace paths). Raw binary
+    // (not world-readable /tmp - stacks can contain workspace paths). Raw binary
     // won't produce a normal crash report. Covers Obj-C exceptions + fatal signals.
     private func installCrashHandler() {
         // NSSetUncaughtExceptionHandler needs a context-free C function pointer, so the
@@ -2004,7 +2004,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         body.delegate = self
         bodySplit = body
 
-        // --- Sidebar: workspace rail (top) + explorer (below) — unchanged. Wrapped
+        // --- Sidebar: workspace rail (top) + explorer (below) - unchanged. Wrapped
         // in a container that reserves `titleH` at the very top for the macOS traffic
         // lights, so the rail aligns with the right-area header and never sits under
         // the window buttons.
@@ -2103,7 +2103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let path = stripped.removingPercentEncoding ?? stripped
             self?.editor.setDiagnostics(path: path, diags: diags)
         }
-        // The editor fills the whole pane — file tabs are rendered INSIDE the WebView
+        // The editor fills the whole pane - file tabs are rendered INSIDE the WebView
         // (one strip per split group). `tabBar` stays as a headless state tracker
         // (flat tab list, dirty state, ⌘W target, persistence) but isn't shown.
         editor.translatesAutoresizingMaskIntoConstraints = false
@@ -2192,13 +2192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             // Restore the user's saved sidebar width + rail height (default 220 / 190).
             // Guard persistence until AFTER this restore so the transient initial layout
-            // can't clobber the saved value before we apply it. CLAMP to sane ranges — an
+            // can't clobber the saved value before we apply it. CLAMP to sane ranges - an
             // earlier bug saved the MAX (480 / 693), which then reopened the sidebar full-wide.
             let sw = CGFloat(Settings.shared.double("sidebarWidth", 220))
             let sr = CGFloat(Settings.shared.double("railHeight", 190))
             let w = (sw >= 160 && sw <= 400) ? sw : 220     // out of range = corrupt (480 artifact) → default
             let rh = (sr >= 96 && sr <= 500) ? sr : 190     // (693 artifact) → default
-            // Clean a corrupt stored value in place so it stops reverting every launch — otherwise
+            // Clean a corrupt stored value in place so it stops reverting every launch - otherwise
             // a stuck 480 keeps failing the range check and restoring 220 forever.
             if w != sw { Settings.shared.set("sidebarWidth", Double(w)) }
             if rh != sr { Settings.shared.set("railHeight", Double(rh)) }
@@ -2216,7 +2216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // The sidebar head (riven's .sidebar-head): draggable like a native titlebar
     // (window move + double-click zoom), reserves the traffic-light zone on the left,
-    // and hosts the "패널 추가" button just to their right — in the left fixed area.
+    // and hosts the "패널 추가" button just to their right - in the left fixed area.
     private var sidebarView: NSView!
     var debugSidebarView: NSView? { sidebarView }
     private func makeSidebarHead(width: CGFloat, height: CGFloat) -> NSView {
@@ -2242,7 +2242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // Create (once) an empty workspace dock. The terminal is added AFTER the dock
-    // is in the window (see activate) — a libghostty surface created off-window
+    // is in the window (see activate) - a libghostty surface created off-window
     // with a zero frame never spawns its shell.
     private func makeDock(for st: WorkspaceState) -> DockManager {
         let dock = DockManager()
@@ -2261,7 +2261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Created with a real frame + only while its host dock is in the window.
     // Per-pane Claude session shim. riven exports ZDOTDIR to this dir + RIVEN_PANE_SESSION
     // per terminal; the .zshrc here sources the user's real config, then defines a `claude`
-    // function that injects `--session-id $RIVEN_PANE_SESSION` — so even a hand-typed
+    // function that injects `--session-id $RIVEN_PANE_SESSION` - so even a hand-typed
     // `claude` resumes that pane's exact conversation on relaunch. Interactive shells only
     // (.zshrc isn't sourced for scripts), so scripts that call `claude` are unaffected.
     private var rivenZdotdir: String {
@@ -2271,7 +2271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let dir = rivenZdotdir
         // 0700: everything in here is SOURCED BY THE SHELL, so write access for another
         // local user would be code execution in the user's terminal. The explicit chmod
-        // matters — createDirectory's attributes are ignored when the directory already
+        // matters - createDirectory's attributes are ignored when the directory already
         // exists, which it does on every launch after the first.
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
@@ -2284,7 +2284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             # riven: typing `claude` resumes THIS pane's session across app restarts.
             if [ -n "$RIVEN_PANE_SESSION" ]; then
               claude() {
-                # Build flags in a zsh array — NOT via ${VAR:+--flag "$VAR"}, because zsh
+                # Build flags in a zsh array - NOT via ${VAR:+--flag "$VAR"}, because zsh
                 # does not field-split parameter expansions, so that form would pass
                 # "--flag value" to claude as a single argv word (it rejects it).
                 local -a rv
@@ -2319,7 +2319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 command "${RIVEN_REAL_CLAUDE:-claude}" "${rv[@]}" "$@"
               }
               # riven: 손으로 친 `codex` 도 상태 훅을 달고, 이 페인의 대화를 이어 간다.
-              # Codex 는 세션 id 를 골라 줄 수 없어 방향이 반대다 — 지난 실행의 SessionStart
+              # Codex 는 세션 id 를 골라 줄 수 없어 방향이 반대다 - 지난 실행의 SessionStart
               # 훅이 적어 둔 id 를 읽어 `resume` 로 되돌아간다 (파일이 없으면 새 대화).
               codex() {
                 local -a rv
@@ -2349,11 +2349,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ---- agent lifecycle hooks (docs/agent-hooks-design.md) -----------------
     // Start the hook socket and give [[AgentActivity]] the UI verbs it needs. The
     // policy (what raises attention, when a banner fires) lives in AgentActivity; this
-    // only supplies "how" — which panel, which badge, is the user looking at it.
+    // only supplies "how" - which panel, which badge, is the user looking at it.
     private func startAgentHooks() {
         AgentActivity.shared.sink = AgentActivity.Sink(
             setBusy: { [weak self] pane, busy in
-                // Set the pane badge BEFORE WorkspaceStatus.setPane — setPane fires onChange,
+                // Set the pane badge BEFORE WorkspaceStatus.setPane - setPane fires onChange,
                 // which rebuilds the rail from p.badge; if the badge weren't set yet the rail
                 // would read the STALE value and busy never showed (esp. other workspaces).
                 if let p = self?.panel(pane) {
@@ -2395,13 +2395,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // by workspace path. This is what gates the FSEvents backstop for hook-backed panes:
     // record shell-driven edits (sed / redirects the agent runs via Bash) ONLY while a
     // turn is active, so a `git checkout` or build run OUTSIDE a turn no longer pollutes
-    // the Changes panel — the coarse "ever had an agent session" gate did.
+    // the Changes panel - the coarse "ever had an agent session" gate did.
     /// 벤치가 붙잡아 두는 Codex 챗 세션 (놓으면 프로세스가 바로 죽는다).
     private var codexChatBench: CodexChatSession?
     private var turnActiveWorkspaces: Set<String> = []
 
     // Change-tracking half of the hook stream. Edit/Write/MultiEdit give a precise,
-    // per-pane "the agent changed THIS file" signal — far better than guessing from
+    // per-pane "the agent changed THIS file" signal - far better than guessing from
     // FSEvents. Turn boundaries drive the FSEvents backstop gate above.
     private func routeAgentEvent(_ event: AgentEvent) {
         guard let pane = PaneSessionRegistry.shared.pane(for: event.pane) else { return }
@@ -2423,7 +2423,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         default: break
         }
         // Learn the agent KIND for a hand-typed pane (agentName nil) and give its tab the
-        // matching glyph — so a plain terminal running `claude` shows the Claude icon, not the
+        // matching glyph - so a plain terminal running `claude` shows the Claude icon, not the
         // generic terminal icon (#9). Refresh the rail so the row appears with the right icon.
         if let p = panel(pane) {
             p.agentExited = false   // a hook means an agent is running in this pane again
@@ -2446,7 +2446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Kill a claude left over from a previous riven that still holds this pane's session id
     // (claude ignores SIGHUP, so it survives quit and otherwise blocks restore with "Session
-    // ID already in use"). Run from riven's OWN process — never from the pane's shell, whose
+    // ID already in use"). Run from riven's OWN process - never from the pane's shell, whose
     // cmdline carries "--session-id <id>" and would be matched and killed by an in-shell
     // pkill before claude could exec. UUIDs contain only [0-9a-f-], so the argument is safe.
     private func reapOrphanSession(_ session: String) {
@@ -2488,7 +2488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// Single-quote a path for the launch command line — the app-support path contains
+    /// Single-quote a path for the launch command line - the app-support path contains
     /// a space ("Application Support") and could contain more if the home dir is renamed.
     private func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -2508,13 +2508,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // EVERY terminal gets a stable per-pane session UUID (reused on restore) and env
         // that (a) makes a hand-typed `claude` resume THIS pane's session via the ZDOTDIR
         // shim, and (b) forces transcript persistence. Only a well-formed UUID is accepted
-        // from the persisted (tamperable) snapshot — else mint a fresh one — so nothing
+        // from the persisted (tamperable) snapshot - else mint a fresh one - so nothing
         // untrusted reaches the shell/command.
         let paneSession = sessionId.flatMap { UUID(uuidString: $0) != nil ? $0 : nil } ?? UUID().uuidString.lowercased()
         // NOTE: this pane resumes ONLY its OWN session (paneSession). We deliberately do NOT
         // adopt "the folder's latest conversation" when this pane's id has no transcript:
-        // that made any plain terminal in a claude-touched folder — including a brand-new one
-        // opened after the user closed a claude pane — resurrect an unrelated old conversation
+        // that made any plain terminal in a claude-touched folder - including a brand-new one
+        // opened after the user closed a claude pane - resurrect an unrelated old conversation
         // (observed: "restore reconnect: pane X → folder latest Y"). A closed pane's session
         // must stay closed; a new pane must start fresh. The fixed shim (v0.1.16+) keeps the
         // pane id and the conversation id in sync, so precise per-pane matching is correct.
@@ -2523,7 +2523,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE": "1",
             "ZDOTDIR": rivenZdotdir,
             // Where `riven-hook` posts lifecycle events. Hook processes are descendants
-            // of this surface, so they inherit both this and RIVEN_PANE_SESSION — that
+            // of this surface, so they inherit both this and RIVEN_PANE_SESSION - that
             // pair is the whole routing mechanism (docs/agent-hooks-design.md).
             "RIVEN_HOOK_SOCKET": AgentHookServer.socketPath,
         ]
@@ -2578,7 +2578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         //
         // This MUST run from the app, NOT wrapped into the pane's shell command: the launch
         // string contains "--session-id <id>", so the login/shell that runs it carries that
-        // in its own cmdline — an in-shell `pkill -f -- '--session-id <id>'` matches and kills
+        // in its own cmdline - an in-shell `pkill -f -- '--session-id <id>'` matches and kills
         // that very shell before `exec claude` runs (v0.1.14 regression: agent panes showed
         // only the login line). Reaping from riven's own process avoids the self-match; no
         // pane shell exists for this session yet, so only the real orphan matches.
@@ -2625,11 +2625,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             WorkspaceStatus.shared.clearPane(ws: wsPath, pane: paneId)
             PaneSessionRegistry.shared.unregister(session: paneSession)
             AgentActivity.shared.forget(pane: paneSession)
-            // 닫은 대화는 닫힌 채로 둔다 — 새 페인이 남의 옛 Codex 대화를 이어받으면 안 된다.
+            // 닫은 대화는 닫힌 채로 둔다 - 새 페인이 남의 옛 Codex 대화를 이어받으면 안 된다.
             CodexSessions.forget(pane: paneSession)
         }
         // A bell or desktop-notification means the agent FINISHED a turn / needs input
-        // (riven's pty:bell + pty:done). This is the authoritative "done" signal —
+        // (riven's pty:bell + pty:done). This is the authoritative "done" signal -
         // long-running agents never emit a shell COMMAND_FINISHED, so busy would
         // otherwise stay stuck. Always clear busy; then raise the attention ember
         // ring UNLESS you're already watching this exact pane (then it's just seen).
@@ -2667,7 +2667,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if p?.badge == "attn" { p?.badge = nil; tv?.setRingState(nil); self?.refreshDockTabs() }
         }
         // Busy while an agent/command actively works. Shown ONLY on the left workspace
-        // rail (WorkspaceStatus) — no tab dot, no panel border ring (user asked to keep
+        // rail (WorkspaceStatus) - no tab dot, no panel border ring (user asked to keep
         // the running indicator to the rail; the ring is reserved for completion/attn).
         // Return pressed in a plain shell → working until OSC 133 says otherwise.
         tv.onBusy = { [weak self, weak p] in
@@ -2750,14 +2750,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func refreshChangesAndGit() { refreshGit() }
 
     // A workspace has a live agent session once an agent is launched or a terminal
-    // goes busy — from then on, file changes (minus our own editor saves) are recorded
+    // goes busy - from then on, file changes (minus our own editor saves) are recorded
     // as agent edits (riven gates on pgrep; ghostty hides the shell PID, so we gate on
     // the launch/busy signal instead).
     private func markAgentSession() { if let ws = workspace { agentSessionWorkspaces.insert(ws.path) } }
 
     // Off-main queue for the hook-driven change recorder (recordAgentFileEdit): file read +
     // git-baseline lookup run here so a large edit never blocks the UI. FSEvents no longer
-    // feeds the Changes panel — only agent hooks do — so there's no batch path anymore.
+    // feeds the Changes panel - only agent hooks do - so there's no batch path anymore.
     private let fileChangeQueue = DispatchQueue(label: "com.riven.filechange", qos: .utility)
 
     // Open the Changes panel (240px, right) WITHOUT stealing keyboard focus from the
@@ -2801,13 +2801,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func makeChatPanel(for st: WorkspaceState, resume: String? = nil, agent: String? = nil,
                                model: String? = nil, kind: ChatAgentKind = .claude) -> DockPanel {
         chatSeq += 1
-        // 이 팬이 속한 워크스페이스. MCP 로 하는 일은 전부 여기에 종속된다 — 사용자가 지금
+        // 이 팬이 속한 워크스페이스. MCP 로 하는 일은 전부 여기에 종속된다 - 사용자가 지금
         // 어느 워크스페이스를 보고 있든 상관없이. 예전에는 활성 워크스페이스를 썼기 때문에
         // 다른 워크스페이스의 에이전트가 연 페이지가 보고 있던 화면에 떴다.
         let owner = st.url
         let chat = ChatPanel(frame: dockHost.bounds)
         chat.autoresizingMask = [.width, .height]
-        chat.agentKind = kind              // 어느 CLI 로 굴릴지 — 세션을 만들기 전에 정해져 있어야 한다
+        chat.agentKind = kind              // 어느 CLI 로 굴릴지 - 세션을 만들기 전에 정해져 있어야 한다
         chat.agentPersona = agent
         chat.preferredModel = model        // 팬별 모델 고정 (그룹 카드에서 고른 값)
         chat.onOpenFile = { [weak self] url in self?.openFileAt(url, line: 1, column: 1) }
@@ -2947,7 +2947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "not a folder: \(path)"
         }
         queueBind(chat, ws: st.url, resume: resume)
-        // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 — 같은 워크스페이스에 Claude 챗과
+        // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 - 같은 워크스페이스에 Claude 챗과
         // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
         let icon = NSImage(systemSymbolName: kind == .codex ? kind.symbol : "bubble.left.and.text.bubble.right",
                            accessibilityDescription: nil)
@@ -2961,7 +2961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onSessionId = { [weak p] sid in p?.sessionId = sid }
         chat.onModelChanged = { [weak p] id in p?.chatModel = id }   // 인라인 모델 칩 → 레이아웃에 영속
         let wsPath = st.url.path, paneId = p.id
-        // Clear the "done" ember/attn badge — call whenever the user looks at or focuses the pane.
+        // Clear the "done" ember/attn badge - call whenever the user looks at or focuses the pane.
         let clearAttn: () -> Void = { [weak self, weak chat, weak p] in
             guard p?.badge == "attn" else { return }
             p?.badge = nil; chat?.setRingState(nil)
@@ -2999,11 +2999,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let pid = p?.id { self.lastSubagentPanel[pid] = nil }   // column reset for the next turn
         }
         p.onActivate = { [weak chat] in chat?.focusInput(); clearAttn() }   // tab/group activation
-        // Clicking INTO the pane also clears it — even when it's already the active panel, where
+        // Clicking INTO the pane also clears it - even when it's already the active panel, where
         // focusGroup/setActive is a no-op so onActivate wouldn't fire (the lingering-完료 bug).
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat); clearAttn() }
         p.onClose = { [weak self, weak chat, weak p] in
-            // 그룹 팬이면 닫기 전에 명단에 마지막 상태(세션 id 포함)를 남긴다 — 조직도에서
+            // 그룹 팬이면 닫기 전에 명단에 마지막 상태(세션 id 포함)를 남긴다 - 조직도에서
             // 다시 열 때 그 세션을 --resume 으로 이어받는다.
             if let p, let g = p.chatGroup { self?.noteClosedAgent(g, p) }
             chat?.teardown()
@@ -3023,7 +3023,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.refreshUsageAfterTurn()
                 // Done: if you're not watching THIS pane, raise the ember + post a banner.
                 // "Watching" = the app is frontmost AND this pane is the visible/selected one in the
-                // CURRENT workspace's dock (so clicking anywhere in it counts) — OR it holds focus.
+                // CURRENT workspace's dock (so clicking anywhere in it counts) - OR it holds focus.
                 // Before, this hung on isKeyWindow + firstResponder only, so the notification kept
                 // firing even while the user was looking right at the pane.
                 var watching = false
@@ -3052,7 +3052,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         chat.onAttention = { [weak self, weak p, weak chat] attn in
             guard let self, let p else { return }
-            // 승인 대기는 "완료"와 다른 상태다 — 문자열 badge 로는 둘 다 "attn" 이라 레일은
+            // 승인 대기는 "완료"와 다른 상태다 - 문자열 badge 로는 둘 다 "attn" 이라 레일은
             // 초록 체크, 탭은 액센트 점으로 갈라졌다. 상태를 직접 넣어 세 군데가 같은 색을 쓴다.
             p.status = attn ? .waiting : .busy                   // still working after the prompt
             chat?.setRingState(p.badge)
@@ -3062,7 +3062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         chat.onTitle = { [weak self, weak p] title in
             guard let self, let p else { return }
-            // 그룹 팬은 정체성이 먼저다 — "배포팀 · 구현"을 요약 제목으로 덮어쓰면 누가 누군지
+            // 그룹 팬은 정체성이 먼저다 - "배포팀 · 구현"을 요약 제목으로 덮어쓰면 누가 누군지
             // 알 수 없다. 그룹/닉네임은 고정하고 요약은 뒤에 덧붙인다.
             if let g = p.chatGroup, let nick = p.chatNickname {
                 let base = "\(g) · \(nick)"
@@ -3104,7 +3104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let dock = activeDock, let ws = workspace else { return }
         // 설정에서 고른 기본 모델로 시작한다. 예전에는 페인마다 ⌥메뉴로 고를 수는 있어도
         // 저장되지 않아서, 새 대화는 늘 계정 기본 모델이었다.
-        // 그 CLI 의 기본을 쓴다 — Claude 모델 이름을 Codex 에 넘기면 거절당한다.
+        // 그 CLI 의 기본을 쓴다 - Claude 모델 이름을 Codex 에 넘기면 거절당한다.
         let def = Settings.shared.string(kind == .codex ? "defaultModelCodex" : "defaultModel", "default")
         let p = makeChatPanel(for: state(for: ws), agent: agent,
                               model: def == "default" ? nil : def, kind: kind)
@@ -3116,7 +3116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.setActive(p.group ?? dock.activeGroup!)
         p.content.window?.makeFirstResponder(p.content)
     }
-    // Custom agents defined in .claude/agents (project + user) — usable as `claude --agent <name>`.
+    // Custom agents defined in .claude/agents (project + user) - usable as `claude --agent <name>`.
     private func chatAgents() -> [String] {
         guard let ws = workspace else { return [] }
         let fm = FileManager.default
@@ -3177,7 +3177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(p, reference: host, direction: nil)
         dock.setActive(p.group ?? dock.activeGroup!)
     }
-    // This workspace's Claude session transcripts, newest first — with a title from the first
+    // This workspace's Claude session transcripts, newest first - with a title from the first
     // user message so the user knows which conversation to resume.
     private struct ChatSessionInfo { let id: String; let modified: Date; let title: String }
     private func claudeSessions(for cwd: String) -> [ChatSessionInfo] {
@@ -3213,7 +3213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return ""
     }
     // Launch an agent in its own panel (titled "Claude Code" + icon), running the CLI
-    // directly — not typed into a shell.
+    // directly - not typed into a shell.
     private func launchAgent(_ agent: AgentDiscovery.Agent) {
         guard let dock = activeDock, let ws = workspace else { return }
         let p = makeTerminalPanel(for: state(for: ws), agent: agent)
@@ -3222,7 +3222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // contextBus: text (⌘L selection / preview capture) is delivered to a running agent
-    // terminal, or — when none exists — QUEUED and the agent picker opened; the queue is
+    // terminal, or - when none exists - QUEUED and the agent picker opened; the queue is
     // flushed into the agent once it launches (riven's contextBus.flushPending).
     private var pendingAgentContext: [String] = []
     private func deliverToAgent(_ text: String) {
@@ -3247,7 +3247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         newTerminalRunning(cmd)
     }
-    // Open a terminal and run a command in it (agent launch) — waits for the shell
+    // Open a terminal and run a command in it (agent launch) - waits for the shell
     // to spawn, then types the command (riven's addTerminal(cmd)).
     private func newTerminalRunning(_ cmd: String) {
         guard let dock = activeDock, let ws = workspace else { return }
@@ -3257,7 +3257,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let tv = p.content as? TerminalView
         tv?.focusTerminal()
         // Wait for the shell to spawn its prompt, then type + run the command (Enter is
-        // a real key event — sending "\r" as text doesn't execute it).
+        // a real key event - sending "\r" as text doesn't execute it).
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { tv?.runCommand(cmd) }
     }
     private func splitTerminal(_ dir: DockDir) {       // ⌘D right / ⌘⇧D below
@@ -3267,7 +3267,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.addPanel(p, reference: dock.activeGroup ?? currentTerminalPanel()?.group, direction: dir)
         (p.content as? TerminalView)?.focusTerminal()
     }
-    // ⌃1..9 — 활성 패널 그룹 안의 N번째 탭으로 이동한다. 예전에는 모든 그룹의 터미널을
+    // ⌃1..9 - 활성 패널 그룹 안의 N번째 탭으로 이동한다. 예전에는 모든 그룹의 터미널을
     // 통틀어 N번째를 골라서, 단축키가 그룹 사이를 건너뛰어 버렸다.
     private func selectTerminal(_ n: Int) {
         guard let g = activeDock?.activeGroup, g.panels.indices.contains(n - 1) else { return }
@@ -3275,7 +3275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         g.select(id: p.id)
         (p.content as? TerminalView)?.focusTerminal()
     }
-    /// ⌘⇧] / ⌘⇧[ — 지금 그룹의 패널 탭을 넘긴다. 예전에는 터미널 패널만 대상이라
+    /// ⌘⇧] / ⌘⇧[ - 지금 그룹의 패널 탭을 넘긴다. 예전에는 터미널 패널만 대상이라
     /// 채팅·에이전트 탭 사이에서는 아무 일도 일어나지 않았다.
     private func cycleTerminal(_ delta: Int) {
         if let g = activeDock?.activeGroup, g.panels.count > 1 {
@@ -3294,7 +3294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         next.group?.select(id: next.id)
         (next.content as? TerminalView)?.focusTerminal()
     }
-    // ⌃⌘←→↑↓ — move focus to the nearest dock group in a direction (any panel).
+    // ⌃⌘←→↑↓ - move focus to the nearest dock group in a direction (any panel).
     private func focusDock(_ dir: DockDir) {
         guard let dock = activeDock, let cur = dock.activeGroup else { return }
         let cf = cur.convert(cur.bounds, to: dockHost)
@@ -3318,7 +3318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // Ensure the editor panel is in the active dock (opens to the right of the
-    // terminal the first time a file is opened — riven's ensureEditor).
+    // terminal the first time a file is opened - riven's ensureEditor).
     private func showEditorPane() {
         guard let dock = activeDock else { return }
         let p = ensureEditorPanel()
@@ -3339,7 +3339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             p.group?.select(id: "editor")
         }
     }
-    // 공유 에디터 패널(싱글턴)을 만들거나 돌려준다 — 배치는 호출자 몫 (showEditorPane
+    // 공유 에디터 패널(싱글턴)을 만들거나 돌려준다 - 배치는 호출자 몫 (showEditorPane
     // 의 기본 배치 또는 레이아웃 복원의 스냅샷 자리).
     private func ensureEditorPanel() -> DockPanel {
         guard let ws = workspace else { return editorDockPanel ?? DockPanel(id: "editor", title: t("title.editor"), content: NSView()) }
@@ -3375,7 +3375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let st = state(for: ws)
         if let t = st.team { return t }
         let p = AgentGroupPanel(frame: .zero)
-        // 마지막으로 본 그룹 탭을 워크스페이스별로 기억한다 — 재시작하면 패널이 새로 생겨 늘
+        // 마지막으로 본 그룹 탭을 워크스페이스별로 기억한다 - 재시작하면 패널이 새로 생겨 늘
         // "새 그룹" 탭으로 떨어지던 것을, 보던 그룹 탭으로 되돌린다. (draft = 빈 문자열)
         let shownKey = "team.shown.\(ws.path)"
         p.saveShownGroup = { g in Settings.shared.set(shownKey, g ?? "") }
@@ -3396,7 +3396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.onDeleteGroup = { [weak self] group in self?.deleteGroup(group) }
         // 팀 입력줄: 여러 명이면 한 번에 던진다 (askAgentPanes 는 전원을 같은 런루프 턴에
         // 출발시키므로 실제로 동시에 돈다). 답은 각 에이전트의 패널에 그대로 남는다.
-        // 조직도 상태 칩이 읽는 값 — 살아 있는 팬만 훑는다 (명단/Settings 를 건드리지 않는다).
+        // 조직도 상태 칩이 읽는 값 - 살아 있는 팬만 훑는다 (명단/Settings 를 건드리지 않는다).
         p.statusProvider = { [weak self] group in
             guard let self else { return [:] }
             var out: [String: (state: AgentRunState, since: Date?)] = [:]
@@ -3536,7 +3536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Move a shared panel view into a workspace's host container (one view; cheap).
     private func adopt(_ view: NSView, into host: NSView) {
         // 호스트에는 하나만 있어야 한다. 예전 것을 안 걷으면 뷰가 쌓이고, 나중에 붙은 것이
-        // 위를 덮는다 — 워크스페이스를 오갈 때 남의 탐색기가 그대로 보이던 원인이다
+        // 위를 덮는다 - 워크스페이스를 오갈 때 남의 탐색기가 그대로 보이던 원인이다
         // (돌아왔을 때는 이미 붙어 있어 early return 에 걸려 아무 일도 하지 않았다).
         for v in host.subviews where v !== view { v.removeFromSuperview() }
         guard view.superview !== host else { return }
@@ -3562,7 +3562,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         st.openTabs = []; st.activeTab = nil
         tabBar.closeAll(); editor.showEmpty()
         editorDockPanel = nil
-        // 사용자가 에디터 패널을 직접 닫았으니 남은 자리 기록은 지운다 — 다음에
+        // 사용자가 에디터 패널을 직접 닫았으니 남은 자리 기록은 지운다 - 다음에
         // 열 때는 기본 위치로 (#4).
         activeDock?.savedPlacements["editor"] = nil
         persistSession()
@@ -3576,7 +3576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.deliverToAgent("@\(file):\(start)-\(end)\n```\(lang)\n\(text)\n```\n")
         }
         ed.onAgentRevert = { [weak self, weak ed] path, newAfter in
-            // Only revert a file we're actually tracking an agent edit for — bounds this
+            // Only revert a file we're actually tracking an agent edit for - bounds this
             // web-bridge write to known workspace files (edits are recorded from FSEvents
             // gated on the workspace root), rejecting any injected arbitrary path.
             guard let e = AgentEdits.shared.edit(for: path) else { return }
@@ -3599,7 +3599,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // A WKWebView reload (dock reparent / WebKit recycle) wipes every Monaco model,
         // but native still lists all open tabs. The ready handler re-pushes only the
-        // active file, so the others became native-open / web-missing — reopening one hit
+        // active file, so the others became native-open / web-missing - reopening one hit
         // the "already open → send empty content" path and Monaco showed a blank buffer.
         // Re-push the whole set here. Primary editor only (it owns the workspace tabs).
         if !secondary { ed.onReady = { [weak self, weak ed] in self?.resyncOpenTabs(to: ed) } }
@@ -3635,14 +3635,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     ed.openBackground(path: p, content: content)
                 }
                 // Tabs are APPENDED as their content arrives, and the active tab is re-pushed
-                // separately by EditorView — so the strip ended up in load order (t2,t3,t1), not the
+                // separately by EditorView - so the strip ended up in load order (t2,t3,t1), not the
                 // user's order. Re-assert the canonical order once every model exists.
                 ed.setTabs(cur.openTabs, active: cur.activeTab) { _ in }
             }
         }
     }
     // Set while a workspace is being restored/activated: the layout code calls setActive on
-    // several panels (editor tabs, aux) which would each steal keyboard focus — so the LAST
+    // several panels (editor tabs, aux) which would each steal keyboard focus - so the LAST
     // panel restored (usually the editor) ended up focused instead of the pane the user was
     // on. Suppress focus during activation; activate() applies the intended focus at the end.
     private var suppressAutoFocus = false
@@ -3650,13 +3650,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let p else { return }
         refreshRailAgents()   // pane added/closed/switched → keep the rail's agent rows in sync
         guard !suppressAutoFocus else { return }
-        // 클릭으로 활성화된 경우엔 강제 포커스를 걸지 않는다 — 클릭 지점(트랜스크립트 본문,
+        // 클릭으로 활성화된 경우엔 강제 포커스를 걸지 않는다 - 클릭 지점(트랜스크립트 본문,
         // 코드블록 등)이 스스로 포커스를 가져간다. 여기서 입력창을 잡아채면 드래그 선택이
         // 끊긴다. 클릭 지점이 포커스를 못 받는 여백이면 Dock 쪽에서 한 번 더 불러 보정한다.
         if click { return }
         // Terminals carry an onActivate (makeFirstResponder + clear attn). Editor/aux panels
         // don't, so without this fallback setActive would move the ring but leave the window
-        // FIRST RESPONDER on the just-closed view (or nil) — focus "disappeared". Route every
+        // FIRST RESPONDER on the just-closed view (or nil) - focus "disappeared". Route every
         // panel type through a real focus so activation always lands somewhere.
         if p.onActivate != nil { p.onActivate?() } else { focusPanelContent(p) }
     }
@@ -3699,7 +3699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let canon = AppDelegate.canonicalWorkspacePath(url.path)   // restoreSession 과 동일한 형태
             // Allow MULTIPLE workspaces on the same folder (parallel agent sessions like
             // cmux). Identity is disambiguated with a URL fragment (#2, #3…) that .path
-            // ignores — so the filesystem/explorer/git/terminal all use the same real
+            // ignores - so the filesystem/explorer/git/terminal all use the same real
             // path, while workspaces/states/rail treat them as distinct instances.
             let ws = self.uniqueWorkspaceURL(for: canon)
             self.rail.addWorkspace(ws)
@@ -3711,15 +3711,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var workspaces: [URL] = []
     private var states: [URL: WorkspaceState] = [:]      // per-workspace editor tabs + terminal
 
-    // A unique identity URL for a folder — the bare path the first time, then path#2,
+    // A unique identity URL for a folder - the bare path the first time, then path#2,
     // #3… for additional instances. `.path` strips the fragment so all fs ops share the
     // real folder while each workspace keeps a distinct identity.
     /// 저장된 키 하나를 워크스페이스 URL 한 형태로 모은다.
     ///
     /// 받아 주는 것: 맨 경로("/a/b"), 파일 URL("file:///a/b/"), 그리고 일부러 나눈 사본의
-    /// 조각("file:///a/b/#2"). 조각은 살려 둔다 — 같은 폴더를 둘로 열어 둔 사람의 두 번째
+    /// 조각("file:///a/b/#2"). 조각은 살려 둔다 - 같은 폴더를 둘로 열어 둔 사람의 두 번째
     /// 카드가 사라지면 그건 고친 게 아니라 잃은 것이다.
-    /// 한 폴더의 정규 식별 경로 — 표준화 + 심링크 해제 + 끝 슬래시. openFolder 와 restoreSession
+    /// 한 폴더의 정규 식별 경로 - 표준화 + 심링크 해제 + 끝 슬래시. openFolder 와 restoreSession
     /// 이 반드시 이 하나를 거쳐 같은 형태를 만들어야 한다. 예전엔 openFolder 는 심링크를 풀고
     /// (/tmp→/private/tmp) canonicalWorkspaceURL 은 안 풀어서, 심링크 경로나 구버전 세션 키에서
     /// 같은 폴더가 카드 두 개로 갈라졌다 (그러면 3번째 카드를 눌러도 앞 카드로 붕괴). 두 변환을
@@ -3750,7 +3750,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 패널을 그대로 들고 있을 워크스페이스 수. 워크스페이스마다 패널을 따로 두면 편한
     /// 대신, 여러 곳을 오갈수록 메모리가 쌓인다 (12곳에 전부 열어 보니 199MB → 536MB 였다).
-    /// 최근에 본 몇 곳만 남기고 나머지는 놓아준다 — 돌아가면 그 자리에 다시 만들어진다.
+    /// 최근에 본 몇 곳만 남기고 나머지는 놓아준다 - 돌아가면 그 자리에 다시 만들어진다.
     private static let warmWorkspaces = Int(ProcessInfo.processInfo.environment["RIVEN_WARMWS"] ?? "") ?? 3
 
     /// 오래 안 본 워크스페이스의 패널을 놓아준다.
@@ -3781,7 +3781,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for g in dock.groups {
             for p in g.panels {
                 guard p.content is TerminalView || p.content is ChatPanel, !seen.contains(p.id) else { continue }
-                // Skip panes whose agent has EXITED (now a plain shell) — a terminal must not
+                // Skip panes whose agent has EXITED (now a plain shell) - a terminal must not
                 // stay listed as an agent just because it once ran one.
                 if p.agentExited { continue }
                 // An "agent" is EITHER a pane launched as one (Claude Code / Codex button) OR a
@@ -3831,7 +3831,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 디버그 전용: 창을 컴포지터에서 그대로 떠서 PNG 로 남긴다. 뷰를 다시 그리는
     /// cacheDisplay 와 달리 지금 걸려 있는 CALayer 애니메이션(shimmer 마스크·펄스)의 한
     /// 프레임이 그림에 남아서, 애니메이션이 실제로 붙었는지 눈으로 확인할 수 있다.
-    /// 팝오버는 별도의 창이라 메인 창만 뜨면 안 잡힌다 — 지금 떠 있는 팝오버 창을 따로 뜬다.
+    /// 팝오버는 별도의 창이라 메인 창만 뜨면 안 잡힌다 - 지금 떠 있는 팝오버 창을 따로 뜬다.
     private func debugPopoverSnapshot(to path: String) {
         guard let pop = NSApp.windows.first(where: {
             $0.isVisible && String(describing: type(of: $0)).contains("Popover")
@@ -3951,7 +3951,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let dock = activeDock,
                   let panel = dock.groups.flatMap({ $0.panels }).first(where: { $0.id == panelId }),
                   let g = panel.group else { return }
-            // 그룹만 활성화하면 그 그룹의 다른 탭이 보이는 채로 끝난다 — 누른 패널의 탭으로
+            // 그룹만 활성화하면 그 그룹의 다른 탭이 보이는 채로 끝난다 - 누른 패널의 탭으로
             // 실제로 넘어가야 한다 (이미 그 탭이면 select 가 값싸게 빠져나온다).
             g.select(id: panel.id)
             dock.setActive(g)
@@ -3969,7 +3969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // The name to show for a workspace: the user's custom rail name if set, else the folder.
     private func displayName(for url: URL) -> String {
         // Match by PATH, not URL identity: the stored keys are directory URLs (trailing "/"), so a
-        // URL(fileURLWithPath:) rebuilt from a pane's workspace path missed the entry entirely —
+        // URL(fileURLWithPath:) rebuilt from a pane's workspace path missed the entry entirely -
         // which is why notifications fell back to the raw folder name after a rename.
         var custom = workspaceNames[url]?.trimmingCharacters(in: .whitespacesAndNewlines)
         if custom?.isEmpty != false {
@@ -4003,7 +4003,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self, let dock = self.activeDock,
                   let sv = dock.container.subviews.compactMap({ $0 as? NSSplitView }).first,
                   sv.arrangedSubviews.count >= 2 else { RLog.log("RESIZEBENCH no split"); return }
-            // Measure BOTH splits, and include the display pass — a drag repaints every frame, so
+            // Measure BOTH splits, and include the display pass - a drag repaints every frame, so
             // layout alone understates it.
             func run(_ label: String, _ target: NSSplitView) {
                 var times: [Double] = []
@@ -4039,7 +4039,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let body = self.bodySplit { run("sidebar", body) }
         }
     }
-    // The FIRST switch to a workspace pays one-time costs (build its dock, spawn its panes) —
+    // The FIRST switch to a workspace pays one-time costs (build its dock, spawn its panes) -
     // measured at ~186ms vs ~20ms for later switches, which is the "재실행 후 첫 이동이 렉" report.
     // Build those docks while the app is idle instead, one per runloop pass so the UI stays live.
     // 채팅 팬 준비(claude 프로세스 기동 + 기록 재생)는 팬 하나에 0.2~1.2초가 든다. 복원 때
@@ -4118,7 +4118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         st.lastUsed = Date()
 
         // Snapshot the OUTgoing workspace's FULL dock layout (split tree + pane sizes% +
-        // panel types, incl. editor/aux still in place) so returning restores it EXACTLY —
+        // panel types, incl. editor/aux still in place) so returning restores it EXACTLY -
         // not just "which aux were open". Must run BEFORE detaching the singletons below.
         if let old = workspace, old != url {
             state(for: old).openAux = Set(auxDockPanels.keys)
@@ -4127,7 +4127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // the return path rebuild the whole tree (profiled: DockManager.restore → a full
             // layoutSubtreeIfNeeded over thousands of views was the rest of the switch lag).
             // `pendingLayout` now only carries a layout loaded from DISK at launch. We still take a
-            // cheap snapshot for SAVING (walking the tree is not what cost time — rebuilding it was).
+            // cheap snapshot for SAVING (walking the tree is not what cost time - rebuilding it was).
             state(for: old).savedLayout = activeDock?.snapshot()
             state(for: old).activePanelId = activeDock?.activeGroup?.activePanel?.id  // restore focus on return
         }
@@ -4155,7 +4155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // HIDE the outgoing one instead of removing it, and only addSubview a dock the FIRST time.
         // Profiling a real switch showed the cost was almost entirely
         //   activate → addSubview → _setSuperview → _setLayoutEngine (recursive)
-        // — AppKit migrates the ENTIRE subtree into the window's autolayout engine on every
+        // - AppKit migrates the ENTIRE subtree into the window's autolayout engine on every
         // insertion, and riven's dock is thousands of views (splits, panels, chat transcript). A
         // visibility toggle keeps the tree in the engine, so switching costs nothing to re-adopt.
         activeDock?.container.isHidden = true
@@ -4172,18 +4172,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // makes the next addPanel fall through to setRoot() and wipe the terminals. Re-point
         // it at a live pane before anything restores. Also protects the ⌘T/agent add paths.
         if dock.activeGroup == nil, let g = dock.groups.first(where: { !$0.panels.isEmpty }) { dock.setActive(g) }
-        // 이전 세션의 독 레이아웃 전체(스플릿 트리/팬 크기/탭 구성)를 재현한다 — 독을
+        // 이전 세션의 독 레이아웃 전체(스플릿 트리/팬 크기/탭 구성)를 재현한다 - 독을
         // 처음 만들 때 한 번. 서술자 → 패널: 터미널은 새로 만들고(에이전트는 이름으로
         // 되찾음), 에디터/aux 싱글턴은 공유 인스턴스를 스냅샷의 자리에 부착한다.
         // 지워진 에이전트는 nil → 그 패널만 빠지고 나머지 레이아웃은 그대로 선다.
-        // Restore the EXACT saved layout — on first visit (session restore) AND on every
+        // Restore the EXACT saved layout - on first visit (session restore) AND on every
         // return (the snapshot taken on switch-away). Terminals already alive in this dock
         // are REUSED (their shells survive); only missing ones are freshly spawned.
         var restoredLayout = false
         if let rawSnap = st.pendingLayout {
             st.pendingLayout = nil
             // Promote plain panes whose workspace has a claude conversation to Claude Code
-            // panes (so restore resumes them) — markClaudePanes runs at save too, but old
+            // panes (so restore resumes them) - markClaudePanes runs at save too, but old
             // snapshots were saved before folder-based promotion existed, so re-apply here.
             let snap = markClaudePanes(rawSnap, cwd: st.url.path)
             let agents = AgentDiscovery.available()
@@ -4191,8 +4191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Chat panes hold a LIVE `claude` subprocess. restore() drops the old views WITHOUT
             // calling onClose, so if we rebuilt them from scratch every switch we'd (a) spawn a new
             // claude + re-run loadHistory each time and (b) LEAK the previous process (orphaned,
-            // still burning memory/CPU). So reuse the live pane by session id — exactly like
-            // terminals reuse their shell — and only teardown the ones not carried over.
+            // still burning memory/CPU). So reuse the live pane by session id - exactly like
+            // terminals reuse their shell - and only teardown the ones not carried over.
             var liveChats = dock.groups.flatMap { $0.panels }.filter { $0.content is ChatPanel }
             restoredLayout = dock.restore(snap) { [weak self] desc -> DockPanel? in
                 guard let self else { return nil }
@@ -4217,14 +4217,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // when its session id matches; otherwise resume the persisted id, else fresh.
                 if desc.hasPrefix("chat:") {
                     // sid \t nickname \t persona \t group \t parent \t model \t avatar
-                    // — 짧은(구버전) 형식도 그대로 읽힌다.
+                    // - 짧은(구버전) 형식도 그대로 읽힌다.
                     let f = desc.dropFirst(5).components(separatedBy: "\t")
                     func fld(_ i: Int) -> String { i < f.count ? f[i] : "" }
                             let sid = fld(0), nick = fld(1), persona = fld(2), group = fld(3)
                     let parent = fld(4), model = fld(5), avatar = fld(6)
                     let kind = ChatAgentKind(rawValue: fld(7)) ?? .claude   // 빈 칸 = 예전 스냅샷 = claude
                     if !sid.isEmpty, let i = liveChats.firstIndex(where: { $0.sessionId == sid }) {
-                        let live = liveChats.remove(at: i)      // reuse — no respawn, no reload
+                        let live = liveChats.remove(at: i)      // reuse - no respawn, no reload
                         // 재사용해도 그룹 정체성은 스냅샷 기준으로 다시 세운다. 예전엔 여기서
                         // 그냥 반환해, 재사용된 멤버 팬의 group/nickname 이 비거나 낡아 조직도에서
                         // "열려 있는데 닫힘" 으로 잘못 뜨는 경우가 있었다 (liveAgentGroups 는
@@ -4256,7 +4256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return p
                 }
                 if desc == "chat" || desc.hasPrefix("chat-") {
-                    // session-less chat (never sent a turn yet) — reuse the first idle live one
+                    // session-less chat (never sent a turn yet) - reuse the first idle live one
                     if let i = liveChats.firstIndex(where: { $0.sessionId == nil }) {
                         return liveChats.remove(at: i)
                     }
@@ -4264,14 +4264,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 return self.makeAuxPanel(desc)
             }
-            // Any live chat pane NOT carried into the new layout is genuinely gone — stop its
+            // Any live chat pane NOT carried into the new layout is genuinely gone - stop its
             // claude process (restore() removed the view but never called onClose).
             for stale in liveChats { (stale.content as? ChatPanel)?.teardown() }
             if restoredLayout {
                 st.pendingTerminals = nil                 // 구버전 폴백 기록은 더 필요 없다
                 st.openAux = Set(auxDockPanels.keys)      // 레이아웃이 배치한 aux가 곧 열린 aux
                 // Focus is applied at the END of activate (after rebuildTabs, which would
-                // otherwise re-focus the editor) — see the restoreFocus call below.
+                // otherwise re-focus the editor) - see the restoreFocus call below.
             }
         }
         // Add the default terminal now that the dock is in the window (a libghostty
@@ -4318,12 +4318,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateWorkspaceHeader(url)
         rail.setActive(url)   // keep the highlighted card in sync with the shown workspace
         // Populate the SIDE panels (file tree, git/search/changes roots, rail agent rows) on the
-        // next runloop so the dock swap + active editor tab paint FIRST — this is the heavy tail of
+        // next runloop so the dock swap + active editor tab paint FIRST - this is the heavy tail of
         // a workspace switch, and running it in the same frame is what made the switch feel janky.
         DispatchQueue.main.async { [weak self] in
             guard let self, self.workspace == url else { return }   // bailed if switched again
             // 각 패널이 워크스페이스마다 따로라 루트를 다시 가리킬 것이 없다. 탐색기만
-            // 사이드바 자리에 끼운다. 아직 안 만든 패널은 여기서도 만들지 않는다 —
+            // 사이드바 자리에 끼운다. 아직 안 만든 패널은 여기서도 만들지 않는다 -
             // 워크스페이스를 스무 개 열어 두고 훑기만 해도 그만큼 만들어지면 안 된다.
             self.adopt(self.explorer(for: url), into: self.explorerHost)
             self.trimColdWorkspaces()   // 오래 안 본 곳의 패널은 여기서 놓아준다
@@ -4334,7 +4334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.refreshGit()
         }
 
-        // NOW apply focus — after rebuildTabs (which re-adds the editor) so it can't steal it.
+        // NOW apply focus - after rebuildTabs (which re-adds the editor) so it can't steal it.
         // Target: an explicit reveal pane, else the pane the user last had focused here.
         suppressAutoFocus = false
         let target = focusPaneId ?? st.activePanelId
@@ -4353,14 +4353,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         agentWatch?.stop()
         agentWatch = AgentWatch(root: url) { [weak self] path in
             // The Changes panel is fed ONLY by agent hooks (recordAgentFileEdit) so it shows
-            // exactly what riven's own agents edited — NOT git pull, the user's own edits, or
+            // exactly what riven's own agents edited - NOT git pull, the user's own edits, or
             // another tool (cmux etc.) touching the folder. FSEvents can't tell who wrote a
             // file, so it no longer records changes here; it only refreshes the file tree.
             if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
             self?.scheduleEditorReload(path)   // agent edited a file → refresh it if it's open
         }
     }
-    // Debounced editor reload for files changed on disk (agent edits) while open — otherwise
+    // Debounced editor reload for files changed on disk (agent edits) while open - otherwise
     // the editor showed a stale copy until you closed & reopened the tab.
     private var pendingReload = Set<String>()
     private var reloadTimer: Timer?
@@ -4396,7 +4396,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let st0 = states[url]
         if let st = states[url] {
             // Dock containers now STAY in dockHost (hidden) across switches, so closing a workspace
-            // must remove this one explicitly, and stop its chat sessions — otherwise its hidden
+            // must remove this one explicitly, and stop its chat sessions - otherwise its hidden
             // tree and its claude processes would outlive the workspace.
             st.dock?.container.removeFromSuperview()
             for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] {
@@ -4461,7 +4461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // promoted back to Claude Code panes on restore. Verified against a real transcript
     // path on 2026-07-27.
     // True if a Claude Code transcript for this session id exists. Globs by id across all
-    // project dirs — session ids are globally unique, so this is independent of how the
+    // project dirs - session ids are globally unique, so this is independent of how the
     // workspace path is encoded into a dir name AND of CLAUDE_CONFIG_DIR. (The old version
     // reconstructed the encoded path and silently missed non-ASCII workspaces.)
     private func claudeSessionExists(sessionId: String) -> Bool {
@@ -4484,11 +4484,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         var colors: [String: String] = [:]
         for url in workspaces { if let hex = workspaceColors[url] { colors[url.absoluteString] = hex } }
-        // 독 레이아웃 전체를 저장한다 — 스플릿 트리/각 팬의 크기/탭 묶음/활성 탭까지,
+        // 독 레이아웃 전체를 저장한다 - 스플릿 트리/각 팬의 크기/탭 묶음/활성 탭까지,
         // 재시작하면 패널 배치가 그대로 돌아온다. 이번 실행에서 방문하지 않은 워크스
         // 페이스는 이전 기록(pendingLayout)을 그대로 이월하고, 구버전 "terminals" 기록만
         // 있으면 그 구성을 레이아웃 형식으로 승격해 저장한다. (실행 중이던 프로세스
-        // 자체는 riven의 자식이라 종료와 함께 죽는다 — 되살리는 건 패널 구성뿐이다.)
+        // 자체는 riven의 자식이라 종료와 함께 죽는다 - 되살리는 건 패널 구성뿐이다.)
         var layouts: [String: Any] = [:]
         for url in workspaces {
             let st = state(for: url)
@@ -4555,7 +4555,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for key in keys {
             // 예전 세션은 맨 경로("/a/b"), 지금은 absoluteString("file:///a/b/") 을 저장한다.
             // 둘을 그대로 URL 로 만들면 같은 폴더가 서로 다른 URL 이 되고, 워크스페이스 상태는
-            // URL 로 키를 잡으므로 같은 폴더에 카드가 둘 생긴다 — 어느 쪽을 누르냐에 따라 다른
+            // URL 로 키를 잡으므로 같은 폴더에 카드가 둘 생긴다 - 어느 쪽을 누르냐에 따라 다른
             // 패널이 뜬다 (베타테스터가 "클릭이 이상하다" 고 한 것이 이거다). 한 번 이 상태가
             // 되면 그 폴더를 다시 열 때마다 workspaces.contains 가 빗나가 계속 늘어난다.
             // 그래서 여기서 하나의 형태로 모으고, 같은 것이 또 오면 버린다.
@@ -4563,7 +4563,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { continue }
             // 같은 폴더가 두 번 나오면 카드는 하나로 모으되, 뒤엣것이 들고 있던 탭·레이아웃은
-            // 버리지 않는다 — 둘 중 어느 쪽에 진짜 작업이 들어 있는지는 알 수 없고, 카드를
+            // 버리지 않는다 - 둘 중 어느 쪽에 진짜 작업이 들어 있는지는 알 수 없고, 카드를
             // 합치면서 열려 있던 파일을 잃으면 그건 고친 게 아니라 잃은 것이다.
             // ("#2" 처럼 일부러 나눈 사본은 조각이 달라 애초에 겹치지 않는다.)
             guard seen.insert(url.absoluteString).inserted else {
@@ -4588,7 +4588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !restored.isEmpty else { hideSwitchOverlay(); return }
         workspaces = restored
         let activeKey = s["active"] as? String
-        // 활성 키도 같은 형태로 맞춰서 찾는다 — 예전 형태로 저장돼 있으면 못 찾고 첫 번째로
+        // 활성 키도 같은 형태로 맞춰서 찾는다 - 예전 형태로 저장돼 있으면 못 찾고 첫 번째로
         // 떨어져, 재시작할 때마다 보던 워크스페이스가 아닌 곳이 열렸다.
         let activeCanon = activeKey.map { AppDelegate.canonicalWorkspaceURL($0).absoluteString }
         let active = restored.first { $0.absoluteString == activeCanon } ?? restored.first!
@@ -4706,7 +4706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     dirs.append(d)
                 }
                 var step = 0.0
-                // 1) 그냥 훑기 — 패널을 열지 않고 워크스페이스만 오간다.
+                // 1) 그냥 훑기 - 패널을 열지 않고 워크스페이스만 오간다.
                 for d in dirs {
                     step += 0.6
                     DispatchQueue.main.asyncAfter(deadline: .now() + step) { self.activate(d) }
@@ -4715,7 +4715,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + step) {
                     RLog.log("WSMANY \(n)곳 훑은 뒤 RSS=\(rss())MB (탐색기만 생김)")
                 }
-                // 2) 각 워크스페이스에서 패널을 전부 열어 본다 — 최악의 경우.
+                // 2) 각 워크스페이스에서 패널을 전부 열어 본다 - 최악의 경우.
                 for d in dirs {
                     step += 1.2
                     DispatchQueue.main.asyncAfter(deadline: .now() + step) {
@@ -5082,7 +5082,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
-        // RIVEN_ASKBENCH=1: 도구 응답 전달 규칙 — 정상 resolve / 만료된 id / 세션 종료 시.
+        // RIVEN_ASKBENCH=1: 도구 응답 전달 규칙 - 정상 resolve / 만료된 id / 세션 종료 시.
         if ProcessInfo.processInfo.environment["RIVEN_ASKBENCH"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 guard let srv = ChatAskServer() else { RLog.log("ASK server unavailable"); return }
@@ -5184,7 +5184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dump("after") }
             }
         }
-        // RIVEN_UIBENCH=1: 사용자가 실제로 하는 순서 그대로 — 패널을 열고 기본값으로 [그룹 만들기].
+        // RIVEN_UIBENCH=1: 사용자가 실제로 하는 순서 그대로 - 패널을 열고 기본값으로 [그룹 만들기].
         if ProcessInfo.processInfo.environment["RIVEN_UIBENCH"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let self else { return }
@@ -5347,7 +5347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // Rebuild the tab bar + editor for a workspace's open tabs. 에디터 웹뷰는 모든
     // 워크스페이스가 공유하는 하나의 WKWebView라서, 전환 시 이전 워크스페이스의
-    // 모델/탭이 그대로 남아 있었다(#7) — 먼저 전부 정리하고 이 워크스페이스의
+    // 모델/탭이 그대로 남아 있었다(#7) - 먼저 전부 정리하고 이 워크스페이스의
     // 탭을 전부 다시 연다 (활성 탭을 마지막에 열어 그 탭이 보이게).
     private func rebuildTabs(for st: WorkspaceState) {
         tabBar.closeAll()
@@ -5365,7 +5365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         showEditorPane()
         // Swap the tab set instead of disposing every Monaco model and re-creating it. Disposing
-        // meant each switch re-read and re-tokenized every file — the 1-2s workspace-switch stall.
+        // meant each switch re-read and re-tokenized every file - the 1-2s workspace-switch stall.
         // Models now live until the workspace is closed, so returning is a pure tab swap and only
         // never-loaded files are read from disk (reported back as `missing`).
         let ws = workspace
@@ -5406,7 +5406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return Set(state(for: ws).openTabs)
     }
 
-    // Open a file and jump to (line, column) — used by search results. Reveal is
+    // Open a file and jump to (line, column) - used by search results. Reveal is
     // deferred a beat so Monaco's model/layout exists before we move the cursor.
     private func openFileAt(_ url: URL, line: Int, column: Int) {
         openFile(url)
@@ -5417,13 +5417,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // Monaco here runs on the MAIN THREAD (the editor WebView loads from file://, which
-    // blocks its Web Workers — see EditorView), so a very large file tokenizes on the UI
+    // blocks its Web Workers - see EditorView), so a very large file tokenizes on the UI
     // thread and freezes the app: opening it looks like "nothing happens". Refuse past a
     // cap, matching how VSCode guards large files. Applies to both text and image opens
     // (an image is base64'd into a data: URL, ~1.33× its bytes in memory).
-    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB — 텍스트(Monaco)용
+    private static let maxEditorFileSize = 10 * 1024 * 1024   // 10 MB - 텍스트(Monaco)용
     /// 이미지는 Monaco 를 거치지 않고 뷰어로 그린다. 텍스트용 상한(10MB)을 그대로 씌우면
-    /// 평범한 사진 한 장도 "너무 큽니다" 로 거절당했다 — 카메라 원본이 그 정도는 넘는다.
+    /// 평범한 사진 한 장도 "너무 큽니다" 로 거절당했다 - 카메라 원본이 그 정도는 넘는다.
     /// data: URL 로 넘기느라 메모리를 base64 만큼 더 쓰는 건 사실이라 상한을 아주 없애지는
     /// 않고, 사람이 실제로 여는 이미지가 다 들어오는 선으로 크게 잡는다.
     private static let maxImageFileSize = 256 * 1024 * 1024   // 256 MB
@@ -5459,11 +5459,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "limit": ByteCountFormatter.string(fromByteCount: Int64(cap), countStyle: .file)])
             a.alertStyle = .warning
             a.runModal()
-            RLog.log("openFile: refused \(path) — \(size) bytes > cap")
+            RLog.log("openFile: refused \(path) - \(size) bytes > cap")
             return
         }
         // 이미지는 Monaco가 못 그리므로 에디터 탭 안의 이미지 뷰어로 연다 (VS Code의
-        // Image Preview와 같은 흐름 — 탭/닫기/분할이 다른 파일과 동일하게 동작).
+        // Image Preview와 같은 흐름 - 탭/닫기/분할이 다른 파일과 동일하게 동작).
         // 에디터 웹뷰는 리소스 폴더로 읽기 권한이 묶여 있어 임의 경로의 file:// 이미지를
         // 못 불러오므로, 바이트를 읽어 data: URL로 넘긴다. SVG는 VS Code처럼 텍스트로.
         // 표는 값만 읽어 격자로 그린다 (읽기 전용). 파싱은 Swift 에서 하고 웹뷰는 그리기만 한다.
@@ -5719,7 +5719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let p = Process(); p.executableURL = URL(fileURLWithPath: bin)
         p.arguments = ["--fix", path]
         p.currentDirectoryURL = root
-        // Discard output to /dev/null — a noisy eslint (>64KB) would fill an unread pipe
+        // Discard output to /dev/null - a noisy eslint (>64KB) would fill an unread pipe
         // and wedge waitUntilExit() on the save thread.
         p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return }
@@ -5744,7 +5744,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let inPipe = Pipe(), outPipe = Pipe(); p.standardInput = inPipe; p.standardOutput = outPipe
         p.standardError = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return nil }
-        // Write stdin on a background queue so we read stdout concurrently — otherwise a
+        // Write stdin on a background queue so we read stdout concurrently - otherwise a
         // large formatted output fills prettier's stdout pipe while we're still blocked
         // writing stdin → deadlock (save spins forever).
         let inData = content.data(using: .utf8) ?? Data()
@@ -5831,13 +5831,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         addRemap(termMenu, t("menu.nextTerminal"), "term.next", #selector(nextTerminalMenu))
         addRemap(termMenu, t("menu.prevTerminal"), "term.prev", #selector(prevTerminalMenu))
         termMenu.addItem(.separator())
-        // Directional focus between split panes (⌃⌘←→↑↓) — riven focusGroupInDirection.
+        // Directional focus between split panes (⌃⌘←→↑↓) - riven focusGroupInDirection.
         addRemap(termMenu, t("menu.paneLeft"), "pane.left", #selector(focusPaneLeftMenu))
         addRemap(termMenu, t("menu.paneRight"), "pane.right", #selector(focusPaneRightMenu))
         addRemap(termMenu, t("menu.paneUp"), "pane.up", #selector(focusPaneUpMenu))
         addRemap(termMenu, t("menu.paneDown"), "pane.down", #selector(focusPaneDownMenu))
         termMenu.addItem(.separator())
-        // Select terminal 1..9 (⌃N on macOS, keeping ⌘N for workspaces) — riven terminal.select.
+        // Select terminal 1..9 (⌃N on macOS, keeping ⌘N for workspaces) - riven terminal.select.
         for i in 1...9 {
             let it = NSMenuItem(title: t("menu.selectTerminalN", ["n": i]), action: #selector(selectTerminalMenu(_:)), keyEquivalent: "\(i)")
             it.keyEquivalentModifierMask = [.control]
@@ -5888,7 +5888,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return scripts.keys.sorted().map { ($0, "\(pm) run \($0)") }
     }
 
-    // Separate "Run script" picker (NOT the add-panel panel — running a script isn't
+    // Separate "Run script" picker (NOT the add-panel panel - running a script isn't
     // adding a panel). Runs the chosen package.json script in a new terminal, and for
     // server scripts opens a preview panel on the port the server starts listening on.
     private var scriptPanel: QuickPanel?
@@ -5961,7 +5961,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             QuickAction(title: t("menu.newTerminal"), hint: "⌘T", symbol: "terminal") { [weak self] in self?.newTerminal() }
         ]
         // 설치된 AI 에이전트. "agentUI" 설정이 네이티브 챗 팬으로 열지, 터미널에 CLI 를
-        // 그대로 띄울지 정한다. Codex 도 이제 네이티브다 — app-server 로 몰기 때문에
+        // 그대로 띄울지 정한다. Codex 도 이제 네이티브다 - app-server 로 몰기 때문에
         // 스트리밍·승인 카드·변경사항 연동이 Claude 와 같은 자리에서 돈다.
         let nativeUI = Settings.shared.string("agentUI", "native") == "native"
         let nativeKinds: [String: ChatAgentKind] = ["Claude Code": .claude, "Codex": .codex]
@@ -6023,15 +6023,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // A modal/aux window (settings / palette / quick panel) takes ⌘W first.
         if let kw = NSApp.keyWindow, kw !== window { kw.performClose(nil); return }
         // Close the FOCUSED panel first, one at a time. Quitting the app is the LAST
-        // resort — only when there is genuinely nothing left to close (no panels).
+        // resort - only when there is genuinely nothing left to close (no panels).
         // Terminal focused → close that terminal panel.
         if let tv = window?.firstResponder as? TerminalView,
            let p = currentTerminalPanel(), p.content === tv {
             activeDock?.removePanel(p); return
         }
-        // 브라우저가 활성이면 ⌘W 는 먼저 브라우저 탭을 닫는다 — 브라우저에서 늘 그렇다.
+        // 브라우저가 활성이면 ⌘W 는 먼저 브라우저 탭을 닫는다 - 브라우저에서 늘 그렇다.
         // 마지막 탭이었으면 브라우저가 스스로 패널 닫기를 요청한다 (onRequestClose).
-        // (패널의 content 는 호스트 컨테이너라 타입으로 못 알아본다 — id 로 본다.)
+        // (패널의 content 는 호스트 컨테이너라 타입으로 못 알아본다 - id 로 본다.)
         if let panel = activeDock?.activeGroup?.activePanel, panel.id == "preview",
            let ws = workspace {
             preview(for: ws).closeActiveTab()
@@ -6062,7 +6062,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let g = dock.groups.first(where: { !$0.panels.isEmpty }) { dock.setActive(g) }
             return
         }
-        // 정말 아무것도 안 남았을 때만 종료 — 실수로 닫히지 않게 한 번 확인한다.
+        // 정말 아무것도 안 남았을 때만 종료 - 실수로 닫히지 않게 한 번 확인한다.
         confirmQuit()
     }
 
@@ -6079,7 +6079,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func terminalHasFocus() -> Bool { window?.firstResponder is TerminalView }
 
-    // ---- global UI zoom (⌘+ / ⌘- / ⌘0) — scales the WHOLE UI (editor + terminals +
+    // ---- global UI zoom (⌘+ / ⌘- / ⌘0) - scales the WHOLE UI (editor + terminals +
     // all AppKit chrome), matching riven's browser page-zoom, via UIScale. ----
     /// 설정 화면에서도 같은 경로를 쓴다 (메뉴·단축키와 결과가 달라지면 안 된다).
     func zoomFromSettings(_ delta: Int) {
@@ -6092,7 +6092,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // ⌘+/⌘− AUTO-REPEATS. Each press used to synchronously re-font the editor, reload the ghostty
     // config, re-set every terminal surface's font, rebuild the rail/status/tabs/explorer and
     // broadcast applyScale() to every registered panel (which walks the whole chat transcript).
-    // Holding the key queued that whole pipeline per repeat — the reported lag. UIScale.factor is
+    // Holding the key queued that whole pipeline per repeat - the reported lag. UIScale.factor is
     // already updated by the caller, so coalescing the EXPENSIVE part is safe: the single rebuild
     // that runs uses the final factor.
     private var zoomWork: DispatchWorkItem?
@@ -6105,7 +6105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyZoomNow() {
         // ⌘+/⌘−/⌘0 scales EVERYTHING. The editor and terminal sizes are the user's chosen
         // Settings sizes multiplied by the zoom factor (UIScale.editorFontSize /
-        // .terminalFontSize) — not a separate 12pt base — so zoom and the font-size setting
+        // .terminalFontSize) - not a separate 12pt base - so zoom and the font-size setting
         // compose instead of overwriting each other.
         editor.setFontSize(UIScale.editorFontSize)
         // Terminals: rebuild the ghostty config with the new absolute font-size (the
@@ -6218,7 +6218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         body.layoutSubtreeIfNeeded()
     }
 
-    // Toggle an auxiliary dock panel (search/git/preview/changes) — matches riven's
+    // Toggle an auxiliary dock panel (search/git/preview/changes) - matches riven's
     // togglePanel: if open, close it; else add it to the dock (search/git open to
     // the left, preview/changes to the right of the main area). Once open, the user
     // can drag it anywhere / split / resize like any dock panel.
@@ -6242,7 +6242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel = st.auxPanels[id], let dock = st.dock else { return false }
         return panel.group?.manager === dock
     }
-    /// 그 워크스페이스에 aux 패널을 연다. 지금 보고 있는 워크스페이스는 건드리지 않는다 —
+    /// 그 워크스페이스에 aux 패널을 연다. 지금 보고 있는 워크스페이스는 건드리지 않는다 -
     /// 에이전트가 자기 워크스페이스에서 한 일이 남의 화면을 바꾸면 안 된다.
     @discardableResult
     private func ensureAux(_ id: String, in ws: URL) -> Bool {
@@ -6265,12 +6265,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if bodySplit.arrangedSubviews.first?.isHidden ?? false { toggleSidebar() }
         guard let panel = makeAuxPanel(id) else { return }
         // A panel is just an AREA in the dock tree; only its CONTENT differs by type.
-        // So adding one splits the FOCUSED group to the right — exactly like ⌘D — for
+        // So adding one splits the FOCUSED group to the right - exactly like ⌘D - for
         // every type (search/git/preview/api/changes). No per-type side/width, no fixed
         // edge, no tab. If the dock is empty, addPanel falls through to a full-size root.
         // `?? groups.last`: after a workspace switch `activeGroup` can be nil (its weak ref
         // died when the outgoing aux group was cleaned up). Without a live anchor, addPanel
-        // would fall through to setRoot() and EJECT THE WHOLE TERMINAL TREE — the reported
+        // would fall through to setRoot() and EJECT THE WHOLE TERMINAL TREE - the reported
         // "terminals disappear on workspace return" bug. groups.last is a live terminal group.
         // Prefer the slot this panel last occupied in THIS workspace; fall back to the default edge.
         if !dock.restorePlacement(panel) {
@@ -6300,7 +6300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         default: return nil
         }
         // Per-workspace panel hosting the SHARED view (same pattern as the editor): the dock tree
-        // then never changes on a switch — we only re-parent the content view.
+        // then never changes on a switch - we only re-parent the content view.
         let st = state(for: ws)
         let host = st.auxHost(id)
         adopt(content, into: host)
@@ -6384,7 +6384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dock.giveMajority(to: main.group, fraction: 0.72)
         dock.setActive(main.group ?? dock.activeGroup!)
         refreshDockTabs(); refreshRailAgents()
-        // 만든 그룹의 조직도로 바로 넘어간다 (패널은 그대로 둔다 — 방금 만든 구조를 확인하고
+        // 만든 그룹의 조직도로 바로 넘어간다 (패널은 그대로 둔다 - 방금 만든 구조를 확인하고
         // 다른 그룹으로 옮겨 다니는 게 자연스럽다).
         saveGroupRoster(group)
         teamPanel.show(group: group)
@@ -6550,7 +6550,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard Date().timeIntervalSince(lastMarkdownSurface) > 1.5 else { return }
         lastMarkdownSurface = Date()
         // 그 문서가 속한 워크스페이스에 연다. 예전에는 ws 를 인자로 받고도 무시한 채
-        // "지금 보고 있는" 워크스페이스에 메모 패널을 열고 거기에 남의 문서를 띄웠다 —
+        // "지금 보고 있는" 워크스페이스에 메모 패널을 열고 거기에 남의 문서를 띄웠다 -
         // 에이전트에게 시켜 놓고 다른 워크스페이스로 옮기면 그대로 겪는다.
         ensureAux("notes", in: ws)
         notes(for: ws).open(url)
@@ -6579,7 +6579,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return c.count > p.count && Array(c.prefix(p.count)) == p
     }
 
-    /// Groups that actually exist right now, read off the live panes — name → members with their
+    /// Groups that actually exist right now, read off the live panes - name → members with their
     /// reporting lines. Drives the panel's group chips and its org chart.
     private func liveAgentGroups() -> [(group: String, members: [AgentNode])] {
         var out: [String: [AgentNode]] = [:]
@@ -6592,7 +6592,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                  parent: p.chat.parentName, open: true,
                                                  avatar: p.panel.chatAvatar))
         }
-        // 닫힌 멤버를 명단에서 채운다 — 그룹 전체를 닫아도 탭과 조직도는 남는다.
+        // 닫힌 멤버를 명단에서 채운다 - 그룹 전체를 닫아도 탭과 조직도는 남는다.
         if let ws = workspace {
             for g in savedGroupNames(ws) {
                 let live = Set((out[g] ?? []).map { $0.name })
@@ -6766,7 +6766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var left = tasks.count
         for (i, task) in tasks.enumerated() {
             askAgentPane(task.agent, task.message, from: sender, inGroup: inGroup) { answer in
-                // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 — 잠금 없이 안전하다.
+                // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 - 잠금 없이 안전하다.
                 guard answers[i] == nil else { return }
                 answers[i] = answer
                 left -= 1
@@ -6776,7 +6776,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 부른 팬과 같은 워크스페이스의 채팅 팬들. 워크스페이스가 다르면 남의 일감이다 —
+    /// 부른 팬과 같은 워크스페이스의 채팅 팬들. 워크스페이스가 다르면 남의 일감이다 -
     /// 이름이 같은 "멤버1" 이 여러 프로젝트에 있을 수 있고, 남의 프로젝트에 일이 넘어가면
     /// 그 워크스페이스의 패널까지 건드리게 된다.
     private func agentPanes(near sender: ChatPanel?) -> [(panel: DockPanel, chat: ChatPanel, ws: URL)] {
@@ -6806,7 +6806,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let q = target.trimmingCharacters(in: .whitespaces).lowercased()
         let panes = agentPanes(near: sender).map { (panel: $0.panel, chat: $0.chat) }
             .filter { $0.chat !== sender }      // never delegate to yourself
-        // 같은 그룹 동료를 먼저 본다 — 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
+        // 같은 그룹 동료를 먼저 본다 - 그룹이 여러 개면 "리드" 같은 닉네임이 겹칠 수 있고,
         // 그때 남의 팀 사람에게 일이 넘어가면 안 된다.
         let mates = (inGroup ?? sender?.groupName).map { g in panes.filter { $0.chat.groupName == g } } ?? []
         let inMates = mates.first { $0.chat.agentRole.lowercased() == q }
@@ -6987,7 +6987,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 srv.resolve(id, result: "opened \(url.path)")
             } else { srv.resolve(id, result: "not a folder: \(s("path"))") }
         case let n where n.hasPrefix("riven_note_") || n == "riven_doc_write":
-            // owner = workspaceContaining(cwd) — 호출한 CLI 의 워크스페이스에 쓴다. 예전엔 owner 를
+            // owner = workspaceContaining(cwd) - 호출한 CLI 의 워크스페이스에 쓴다. 예전엔 owner 를
             // 넘기지 않아 전역(보고 있는) 워크스페이스 루트에 문서가 떨어졌다.
             srv.resolve(id, result: runNoteTool(tool, args, in: owner))
         default:
@@ -7060,7 +7060,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var rel = s("path")
             if rel.isEmpty { return "path is required" }
             if !rel.lowercased().hasSuffix(".md") { rel += ".md" }
-            // 워크스페이스 문서는 <ws>/.claude/docs 아래에 모은다 — 저장소 루트를 어지르지 않고,
+            // 워크스페이스 문서는 <ws>/.claude/docs 아래에 모은다 - 저장소 루트를 어지르지 않고,
             // 문서 탭이 이 폴더를 스캔한다. 절대경로는 그대로 두되(드묾) isInside 로 워크스페이스
             // 밖 쓰기를 막는다.
             let base = ws.appendingPathComponent(".claude/docs", isDirectory: true)
@@ -7109,7 +7109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // Open an agent-edited file with its before/after diff (green added lines, red
-    // deleted view-zones, hunk revert) — the editor opens to the RIGHT of the terminal.
+    // deleted view-zones, hunk revert) - the editor opens to the RIGHT of the terminal.
     private func openAgentEdit(_ path: String) {
         openFile(URL(fileURLWithPath: path))
         if let e = AgentEdits.shared.edit(for: path) {
@@ -7119,7 +7119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     // Open a changed file with its diff-vs-HEAD (git panel): before = HEAD version,
-    // after = working tree — same before/after renderer as agent edits.
+    // after = working tree - same before/after renderer as agent edits.
     private func openGitDiff(_ rel: String) {
         guard let ws = workspace else { return }
         let url = ws.appendingPathComponent(rel)
@@ -7176,7 +7176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 마지막 조회가 어떻게 끝났는지. 실패를 감추면 화면은 옛 숫자를 그대로 들고 있고
     /// 사용자에게는 "갱신이 안 된다" 로 보인다 (실제로 그렇게 보였다).
     private(set) var lastUsageOutcome: Usage.Outcome = .ok
-    /// Codex 쪽 최신값 (없으면 Codex 를 안 쓰는 사람이다 — 화면에 내보내지 않는다).
+    /// Codex 쪽 최신값 (없으면 Codex 를 안 쓰는 사람이다 - 화면에 내보내지 않는다).
     private var lastCodexLimits: CodexUsage.Limits?
     private var lastCodexToday = CodexUsage.Today()
     private func refreshUsage(force: Bool = false) {
@@ -7207,7 +7207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // 헤더 사용량: Claude 는 세션%·주간%, Codex 는 창 하나. 둘 다 "남은" 비율이다.
     //
-    // 한 줄에 나란히 놓기 때문에 방향이 같아야 한다 — Codex 는 "쓴 %" 로 주는 것을
+    // 한 줄에 나란히 놓기 때문에 방향이 같아야 한다 - Codex 는 "쓴 %" 로 주는 것을
     // [[CodexUsage]] 가 뒤집어 둔다. 안 그러면 "12%" 가 넉넉하다는 뜻인지 얼마 안 남았다는
     // 뜻인지 화면에서 구분되지 않는다.
     //
@@ -7220,7 +7220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else if let s { parts.append("\(UsageUI.shown(s))%") }
         if let cx = lastCodexLimits { parts.append("◎ \(UsageUI.shown(cx.remainingPercent))%") }
         if !parts.isEmpty {
-            // Claude 쪽 숫자가 있을 때만 앞에 표식을 단다 — 하나뿐이면 표식이 군더더기다.
+            // Claude 쪽 숫자가 있을 때만 앞에 표식을 단다 - 하나뿐이면 표식이 군더더기다.
             if parts.count > 1, s != nil { parts[0] = "✳ " + parts[0] }
             headerUsage.stringValue = parts.joined(separator: "   ")
             headerUsageItem.isHidden = false
@@ -7228,7 +7228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else if let c = today?.totalCost, c > 0 { headerUsage.stringValue = String(format: "$%.2f", c); headerUsageItem.isHidden = false }
         else { headerUsageItem.isHidden = true }
         // 오래된 숫자는 흐리게. 5분 넘게 갱신되지 않았으면 지금 값이 아니다.
-        // (아직 한 번도 못 불러온 상태는 흐리게 하지 않는다 — 그냥 뜨는 중이다.)
+        // (아직 한 번도 못 불러온 상태는 흐리게 하지 않는다 - 그냥 뜨는 중이다.)
         let stale = Usage.lastSuccess.map { Date().timeIntervalSince($0) > 300 } ?? false
         headerUsage.alphaValue = stale ? 0.45 : 1
         headerUsageItem.toolTip = UsageUI.modeSuffix() + " · " + usageFreshness()
@@ -7276,7 +7276,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // a strip at the bottom of the sidebar container and hides the status-bar widget.
     // Height of the pinned usage strip. It is MEASURED from the content (header + session
     // bar + weekly bar + optional today line, each including its reset-time line) rather
-    // than a fixed constant — a fixed 118pt clipped the bottom rows, which is why the
+    // than a fixed constant - a fixed 118pt clipped the bottom rows, which is why the
     // session/weekly reset times went missing when pinned. Recomputed on every rebuild so
     // it stays correct as the content changes.
     private var pinnedUsageH: CGFloat = 118
@@ -7370,13 +7370,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationWillTerminate(_ n: Notification) {
         notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
         SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다
-        teardownAllChats()   // state is saved above — now release chat sockets + child processes
+        teardownAllChats()   // state is saved above - now release chat sockets + child processes
         lsp.stopAll()
     }
     /// Stop every chat session at quit so their unix sockets are unlinked and their child
     /// claude/mcp processes are terminated (neither goes away on its own when the app exits).
     /// Runs AFTER persistSession above, so restore is unaffected: the saved layout and each
-    /// pane's resumable session id are already on disk — this only releases live resources that
+    /// pane's resumable session id are already on disk - this only releases live resources that
     /// were about to be dropped anyway. Fast (a handful of chats), so quit doesn't stall.
     private func teardownAllChats() {
         for st in states.values {
@@ -7395,14 +7395,14 @@ extension AppDelegate: Themable {
         sidebarContainer?.layer?.backgroundColor = Theme.bg2.cgColor
         headerStrip?.layer?.backgroundColor = Theme.bg2.cgColor
         sidebarHeadStrip?.layer?.backgroundColor = Theme.bg2.cgColor
-        // 사이드바에 고정한 사용량 칸은 만들 때 색을 구워 넣는다 — 통째로 다시 만든다.
+        // 사이드바에 고정한 사용량 칸은 만들 때 색을 구워 넣는다 - 통째로 다시 만든다.
         rebuildPinnedUsage()
         sidebarHeadButton?.contentTintColor = Theme.fgDim
         headerHairline?.layer?.backgroundColor = Theme.hairline.cgColor
         headerLabel?.textColor = Theme.fg
         headerIcon?.contentTintColor = Theme.fgDim
         headerUsage?.textColor = Theme.fgDim
-        // Recolor every dock group (backgrounds + tab titles/underline) — dock views
+        // Recolor every dock group (backgrounds + tab titles/underline) - dock views
         // aren't individually Themable, so rebuild their tab bars here.
         for st in states.values {
             st.dock?.container.layer?.backgroundColor = Theme.bg.cgColor
@@ -7411,7 +7411,7 @@ extension AppDelegate: Themable {
                 g.tabBar.rebuild()
             }
         }
-        // Live-recolor the terminal(s) — ghostty config is otherwise frozen at launch.
+        // Live-recolor the terminal(s) - ghostty config is otherwise frozen at launch.
         GhosttyApp.shared.reloadTheme()
     }
     // Called from Settings: switch theme live across all chrome + the editor.
@@ -7446,9 +7446,9 @@ extension AppDelegate: NSSplitViewDelegate {
     func splitView(_ sv: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
         // 400 == the save/restore cap. Previously this allowed 480 while save/restore capped at 400,
         // so dragging into (400,480] was silently NOT persisted (dead zone) and any old 480 artifact
-        // restored as the 220 default — the sidebar kept "reverting" to a width the user never set.
+        // restored as the 220 default - the sidebar kept "reverting" to a width the user never set.
         if sv === bodySplit && i == 0 { return 400 }
-        // 레일 높이에는 인위적인 상한을 두지 않는다 — 아래 탐색기가 사라지지 않을
+        // 레일 높이에는 인위적인 상한을 두지 않는다 - 아래 탐색기가 사라지지 않을
         // 최소치(120pt)만 남기고 사이드바 거의 전체 높이까지 끌어올릴 수 있다.
         if sv === sidebarSplit && i == 0 { return max(96, sv.bounds.height - 120) }
         return p
@@ -7459,7 +7459,7 @@ extension AppDelegate: NSSplitViewDelegate {
 
     /// 구분선은 1pt 로 그리되, **잡히는 영역**은 그보다 넓게 준다.
     ///
-    /// 얇은 선은 보기엔 좋지만 1pt 짜리 과녁이다 — 끌려고 누르면 대개 사이드바나 독에
+    /// 얇은 선은 보기엔 좋지만 1pt 짜리 과녁이다 - 끌려고 누르면 대개 사이드바나 독에
     /// 떨어지고 아무 일도 일어나지 않는다 ("드래그로 크기 조절이 안 된다"). 그리는 선은
     /// 그대로 두고 마우스가 닿는 범위만 양옆으로 넓힌다. macOS 자신도 얇은 구분선에
     /// 이 방식을 쓴다.
@@ -7475,7 +7475,7 @@ extension AppDelegate: NSSplitViewDelegate {
     func splitView(_ sv: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
         // 비교 대상은 반드시 **그 스플릿의 자식** 이어야 한다. 예전에는 sidebarView(=안쪽
         // 세로 스플릿)와 비교했는데 bodySplit 의 자식은 그것을 담고 있는 sidebarContainer 다.
-        // 그래서 조건이 늘 참이었고 "사이드바 폭 고정" 은 한 번도 적용되지 않았다 — 창을
+        // 그래서 조건이 늘 참이었고 "사이드바 폭 고정" 은 한 번도 적용되지 않았다 - 창을
         // 400 넓히면 사이드바가 220 → 289 로 같이 늘어났다.
         //
         // 그 결과가 제보된 두 증상이다: 창이 저장할 때보다 크면 켤 때마다 사이드바가
@@ -7509,7 +7509,7 @@ extension AppDelegate: NSSplitViewDelegate {
 
 // NSSplitView that knows when the USER is dragging a divider (vs a window-resize / layout /
 // collapse pass). Divider dragging is driven by the split view's own mouseDown, which runs a
-// modal tracking loop until mouseUp — so isUserDragging is true for exactly that span, and
+// modal tracking loop until mouseUp - so isUserDragging is true for exactly that span, and
 // persistence can ignore the transient extreme values layout passes produce (which is how
 // sidebarWidth/railHeight kept getting saved as their MAX).
 final class PersistingSplitView: NSSplitView {

@@ -1,7 +1,7 @@
 import AppKit
 import UserNotifications
 
-// macOS notifications for the terminal — posts OS notifications for OSC 9 / OSC 777
+// macOS notifications for the terminal - posts OS notifications for OSC 9 / OSC 777
 // desktop-notification escapes and the bell, matching riven (notifies when an agent
 // finishes or a shell sends a notification). Gated by the "notifications" setting.
 // A delegate makes banners show even while riven is frontmost (macOS otherwise

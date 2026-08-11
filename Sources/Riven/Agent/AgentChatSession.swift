@@ -1,14 +1,14 @@
 import Foundation
 
-// 네이티브 챗 패널이 에이전트에게 기대하는 것 — CLI 가 무엇이든 이만큼이면 된다.
+// 네이티브 챗 패널이 에이전트에게 기대하는 것 - CLI 가 무엇이든 이만큼이면 된다.
 //
 // [[ChatPanel]] 은 오랫동안 [[ClaudeChatSession]] 을 직접 들고 있었다. Codex 를 같은
 // 패널로 몰려면 둘 중 하나를 골라야 했다: 패널을 CLI 마다 하나씩 복제하거나, 패널이
-// 기대하는 것을 이름 붙여 두 세션이 그 이름을 만족하게 하거나. 후자다 — 승인 카드,
+// 기대하는 것을 이름 붙여 두 세션이 그 이름을 만족하게 하거나. 후자다 - 승인 카드,
 // 스트리밍, 변경사항 연동, 턴 배지는 전부 CLI 와 무관한 riven 의 것이다.
 //
 // Claude 에만 있는 것(서브에이전트, riven MCP 도구 호출, 권한 모드 전환)은 여기서
-// 선택 사항이다. Codex 는 기본 구현으로 조용히 넘긴다 — "지원하지 않음" 을 표현하려고
+// 선택 사항이다. Codex 는 기본 구현으로 조용히 넘긴다 - "지원하지 않음" 을 표현하려고
 // 패널 쪽에 if 를 심으면, CLI 가 하나 더 늘 때마다 그 if 가 자란다.
 protocol AgentChatSession: AnyObject {
     var isAlive: Bool { get }
@@ -57,7 +57,7 @@ enum ChatAgentKind: String {
 
     var displayName: String { self == .claude ? "Claude Code" : "Codex" }
     /// 브랜드가 읽히는 글리프. Claude 의 asterisk 가 Anthropic 마크로 읽히는 것과 같은
-    /// 자리다 — camera.aperture 는 6방향 회전 대칭 매듭이라 OpenAI 마크와 인상이 같고,
+    /// 자리다 - camera.aperture 는 6방향 회전 대칭 매듭이라 OpenAI 마크와 인상이 같고,
     /// 11pt(탭·레일 실제 크기)에서도 뭉개지지 않는다. `</>` 는 "코드" 일 뿐 Codex 가 아니었다.
     var symbol: String { self == .claude ? "asterisk" : "camera.aperture" }
 }
