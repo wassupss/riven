@@ -625,8 +625,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// hand-off is visible and steerable), and `done` fires with the answer when the turn ends -
     /// queued behind any turn already running, exactly like a message the user types.
     func ask(_ text: String, done: @escaping (String) -> Void) {
-        guard session != nil, session?.isAlive != false else { done("agent session is not running"); return }
-        askWaiters.append(done)
+        askOutcome(text) { answer, _ in done(answer) }
+    }
+    /// ask 와 같지만 턴이 깨끗이 끝났는지(ok)도 알려준다. 파이프라인은 한 단계가 중단·에러로
+    /// 끝나면(ok=false) 다음 단계로 넘어가지 않고 거기서 멈춰야 하므로 이 신호가 필요하다.
+    func askOutcome(_ text: String, _ cb: @escaping (String, Bool) -> Void) {
+        guard session != nil, session?.isAlive != false else { cb("agent session is not running", false); return }
+        askWaiters.append(cb)
         let bubble = addUser(text)
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }
         if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)) }
@@ -649,6 +654,13 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 이 팬에 지금 위임을 보내도 되는지 (세션이 떠 있는지). 파이프라인이 갓 만든 멤버 팬은
     /// claude 프로세스가 뜨는 데 잠깐 걸리므로, 보내기 전에 이 값으로 준비됨을 확인한다.
     var isSessionAlive: Bool { session?.isAlive == true }
+
+    /// 이 팬만 자동 실행(승인 없이 진행) 모드로 둔다. 파이프라인 단계는 기본이 자동 실행이다.
+    /// 전역 기본값(chatPermMode)은 건드리지 않는다 - modeChanged 를 부르지 않는 이유.
+    func setAutoRun() {
+        modePopup.selectItem(at: 2)           // 0 plan · 1 ask · 2 auto (requestPermission 이 modeIndex 를 본다)
+        session?.setPermissionMode("auto")    // codex 등에도 반영 (claude 는 modeIndex 만으로 충분)
+    }
 
     /// 조직도의 상태 칩이 읽는 값. busy 하나로는 "승인을 기다리며 멈춰 있음"과 "도구를 돌리는
     /// 중"이 구분되지 않는데, 병렬로 여러 명을 돌릴 때 정작 사람이 움직여야 하는 건 전자다.
@@ -1919,7 +1931,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private var currentTurnText: String?
     private var turnText = ""                                   // assistant text of the running turn
-    private var askWaiters: [(String) -> Void] = []             // agents waiting on this pane's answer
+    private var askWaiters: [(String, Bool) -> Void] = []       // (answer, ok) - ok=false 면 중단/에러로 끝난 것
     private var currentTurnBubble: UserBubble?
     private func newBlock() -> TurnBlock {
         trimTranscript()               // bound the rendered view count before adding a new turn
@@ -1949,6 +1961,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     static let subBench = ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil
     /// 서브에이전트 이름 (완료 알림 문구에 쓴다).
     private var subNames: [String: String] = [:]
+
+    /// 외부(파이프라인 등)에서 이 팬 대화에 회색 시스템 한 줄을 남긴다.
+    func systemNote(_ text: String) { addSystem(text) }
 
     private func noteSubagentFinished(_ id: String) {
         let name = subNames[id] ?? "sub-agent"
@@ -1989,6 +2004,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil }
 
     private func endTurn(cost: Double?, usage: ChatUsage?, error: String? = nil) {
+        let wasInterrupted = interrupted   // askWaiters drain 전에 초기화되므로 미리 잡아 둔다
         let secs = turnStart.map { Int(Date().timeIntervalSince($0) - pausedTotal) } ?? 0
         stopFlush()
         lastUsage = usage
@@ -2021,8 +2037,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Hand this turn's answer to any agent that delegated work here (riven_ask_agent).
         if !askWaiters.isEmpty {
             let answer = turnText.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ok = (error == nil) && !wasInterrupted           // 중단·에러면 ok=false (파이프라인이 여기서 멈춘다)
             let waiters = askWaiters; askWaiters.removeAll()
-            waiters.forEach { $0(answer.isEmpty ? (error ?? "(no answer)") : answer) }
+            waiters.forEach { $0(answer.isEmpty ? (error ?? "(no answer)") : answer, ok) }
         }
         refreshAITitle()   // adopt the CLI's summarized title if it produced one this turn
         // Send the next queued user message (typed while this turn was running).

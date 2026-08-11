@@ -2824,7 +2824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onListAgents = { [weak self] in self?.chatAgents() ?? [] }
         chat.onAgentPanes = { [weak self, weak chat] in self?.agentPanesReport(near: chat) ?? "(unavailable)" }
         chat.onAskAgent = { [weak self, weak chat] target, message, done in
-            self?.askAgentPane(target, message, from: chat, done)
+            self?.askAgentPane(target, message, from: chat) { answer, _ in done(answer) }
         }
         chat.onAskAgents = { [weak self, weak chat] tasks, done in
             self?.askAgentPanes(tasks, from: chat, done)
@@ -3391,10 +3391,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             // 폼의 단계(이름·모델·역할)를 startPipeline 스펙으로. persona 는 안 쓰고 역할은 instruction 으로.
             let specs = stages.map { (name: $0.name, agent: nil as String?, model: $0.model, instruction: $0.instruction) }
-            self.startPipeline(group, stages: specs, task: task, from: nil) { [weak self] result in
-                // 완료 결과는 파이프라인 첫 단계(리드 격) 대화에 남긴다 - 폼에서 시작한 건 요청한 챗이 없다.
-                self?.agentPanes().first { $0.chat.groupName == group }?.chat.deliverPeerAnswer(from: "\(group) 파이프라인", result)
-            }
+            // 총 정리는 마지막 단계에서 처리하므로 여기 done 은 비운다 (폼에서 시작한 건 요청한 챗이 없다).
+            self.startPipeline(group, stages: specs, task: task, from: nil) { _ in }
         }
         // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
         p.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
@@ -5360,7 +5358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             (agent: $0.chat.agentRole, message: "숫자 7만 답해. 설명 금지.")
                         }
                         for task in tasks {
-                            self.askAgentPane(task.agent, task.message, from: nil) { _ in
+                            self.askAgentPane(task.agent, task.message, from: nil) { _, _ in
                                 RLog.log(String(format: "PAR done %@ at %.2fs", task.agent, Date().timeIntervalSince(t0)))
                             }
                         }
@@ -6522,6 +6520,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let group = createAgentGroup(requested, specs)
         guard !group.isEmpty else { done("파이프라인 그룹을 만들지 못했습니다 (워크스페이스를 여세요)."); return }
         savePipeline(ws, group, stages)
+        // 파이프라인 단계는 기본이 자동 실행이다 - 단계마다 승인 카드가 뜨면 흐름이 멈춘다.
+        for p in allAgentPanes() where p.chat.groupName == group { p.chat.setAutoRun() }
         runPipelineStage(group: group, stages: stages, index: 0, input: task, transcript: [], from: sender, done: done)
     }
 
@@ -6532,6 +6532,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard index < stages.count else {
             teamPanel.refresh()
             let summary = transcript.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+            // 총 정리는 마지막 단계에서. 마지막 단계 에이전트에게 전체 산출물을 종합하게 한다
+            // (예전엔 첫 단계에 물려서, 정리가 맨 앞에서 났다).
+            RLog.log("pipeline[\(group)] 완료 - 총정리 → \(stages.last?.name ?? "-")")
+            if let last = stages.last,
+               let pane = allAgentPanes().first(where: {
+                   $0.chat.groupName == group && $0.chat.agentRole.lowercased() == last.name.lowercased()
+               }) {
+                pane.chat.ask(t("chat.pipelineSummary") + "\n\n" + summary) { _ in }
+            }
             done(summary.isEmpty ? "(파이프라인 산출물 없음)" : summary)
             return
         }
@@ -6553,7 +6562,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 done(t("chat.pipelineStageFail", ["stage": stage.name]) + (sofar.isEmpty ? "" : "\n\n" + sofar))
                 return
             }
-            self.askAgentPane(stage.name, msg, from: sender, inGroup: group) { answer in
+            self.askAgentPane(stage.name, msg, from: sender, inGroup: group) { [weak self] answer, ok in
+                guard let self else { return }
+                // 중단·에러로 끝났으면(ok=false) 다음 단계로 넘기지 않고 여기서 멈춘다.
+                guard ok else {
+                    RLog.log("pipeline[\(group)] \(stage.name) 중단 - 다음 단계로 진행하지 않음")
+                    self.allAgentPanes().first { $0.chat.groupName == group && $0.chat.agentRole.lowercased() == stage.name.lowercased() }?
+                        .chat.systemNote(t("chat.pipelineHalted", ["stage": stage.name]))
+                    done(t("chat.pipelineHalted", ["stage": stage.name]))
+                    return
+                }
                 var next = transcript; next.append((stage.name, answer))
                 self.runPipelineStage(group: group, stages: stages, index: index + 1,
                                       input: answer, transcript: next, from: sender, done: done)
@@ -6970,8 +6988,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var answers = [String?](repeating: nil, count: tasks.count)
         var left = tasks.count
         for (i, task) in tasks.enumerated() {
-            askAgentPane(task.agent, task.message, from: sender, inGroup: inGroup) { answer in
-                // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 - 잠금 없이 안전하다.
+            askAgentPane(task.agent, task.message, from: sender, inGroup: inGroup) { answer, _ in
+                // 콜백은 전부 메인 스레드(세션 이벤트)에서 온다 - 잠금 없이 안전하다. (병렬 위임은 ok 무시)
                 guard answers[i] == nil else { return }
                 answers[i] = answer
                 left -= 1
@@ -7007,7 +7025,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "리드" 가 두 그룹에 있을 때 전역 검색으로 떨어지면 남의 팀에 일이 넘어간다.
     private func askAgentPane(_ target: String, _ message: String, from sender: ChatPanel?,
                               inGroup: String? = nil,
-                              _ done: @escaping (String) -> Void) {
+                              _ done: @escaping (String, Bool) -> Void) {
         let q = target.trimmingCharacters(in: .whitespaces).lowercased()
         let panes = agentPanes(near: sender).map { (panel: $0.panel, chat: $0.chat) }
             .filter { $0.chat !== sender }      // never delegate to yourself
@@ -7024,7 +7042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ?? panes.first { $0.panel.title.lowercased().contains(q) }
         guard let hit else {
             done("no agent matched \(target). Open one with riven_open_panel(chat) or pick from:\n"
-                 + agentPanesReport(near: sender))
+                 + agentPanesReport(near: sender), false)
             return
         }
         hit.panel.badge = hit.panel.badge ?? "busy"
@@ -7033,9 +7051,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // sender 가 nil 이면 사용자가 팀 입력줄에서 직접 보낸 것이다.
         let flow = teamPanel.beginFlow(group: hit.chat.groupName, from: sender?.agentRole,
                                        to: hit.chat.agentRole, summary: ChatPanel.shortTitle(message))
-        hit.chat.ask(message) { [weak self] answer in
-            self?.teamPanel.endFlow(flow, ok: !answer.hasPrefix("agent session is not running"))
-            done(answer)
+        hit.chat.askOutcome(message) { [weak self] answer, ok in
+            self?.teamPanel.endFlow(flow, ok: ok && !answer.hasPrefix("agent session is not running"))
+            done(answer, ok)
         }
     }
 
@@ -7180,7 +7198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case "riven_agents":
             srv.resolve(id, result: agentPanesReport())
         case "riven_ask_agent":
-            askAgentPane(s("agent"), s("message"), from: nil) { srv.resolve(id, result: $0) }
+            askAgentPane(s("agent"), s("message"), from: nil) { answer, _ in srv.resolve(id, result: answer) }
         case "riven_workspaces":
             srv.resolve(id, result: workspaces.map { ($0 == workspace ? "* " : "- ") + $0.path }.joined(separator: "\n"))
         case "riven_open_workspace":
