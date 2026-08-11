@@ -3387,6 +3387,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         p.loadShownGroup = { let s = Settings.shared.string(shownKey, ""); return s.isEmpty ? nil : s }
         p.agentsProvider = { [weak self] in self?.chatAgents() ?? [] }
         p.onCreate = { [weak self] group, specs in self?.createAgentGroup(group, specs) }
+        p.onRunPipeline = { [weak self] group, stages, task in
+            guard let self else { return }
+            // 폼의 단계(이름·모델·역할)를 startPipeline 스펙으로. persona 는 안 쓰고 역할은 instruction 으로.
+            let specs = stages.map { (name: $0.name, agent: nil as String?, model: $0.model, instruction: $0.instruction) }
+            self.startPipeline(group, stages: specs, task: task, from: nil) { [weak self] result in
+                // 완료 결과는 파이프라인 첫 단계(리드 격) 대화에 남긴다 - 폼에서 시작한 건 요청한 챗이 없다.
+                self?.agentPanes().first { $0.chat.groupName == group }?.chat.deliverPeerAnswer(from: "\(group) 파이프라인", result)
+            }
+        }
         // 활성 그룹 칩·조직도는 살아있는 팬에서 그대로 읽는다 (별도 상태를 두면 어긋난다).
         p.groupsProvider = { [weak self] in self?.liveAgentGroups() ?? [] }
         p.onFocusAgent = { [weak self] group, name in self?.focusAgentPane(group, name) }
