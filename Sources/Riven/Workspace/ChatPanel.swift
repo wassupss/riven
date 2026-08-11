@@ -1039,10 +1039,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.restorePlanBadge(sid)
         }
         s?.onTextDelta = { [weak self] t in
+            if !t.isEmpty { self?.ensureAutoTurn() }  // 세션이 스스로 재개한 턴이면 상태를 세운다
             self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
             self?.current?.bufferText(t); self?.turnText += t
         }
         s?.onMainTool = { [weak self] name, detail, code, path in
+            self?.ensureAutoTurn()
             self?.liveTool = name
             self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
             // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 - 조금 기다렸다 집어서 배지로.
@@ -1050,6 +1052,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         s?.onSubagentStart = { [weak self] id, type, desc in
             if ChatPanel.subBench { RLog.log("SUB 시작 id=\(id.suffix(8)) type=\(type) desc=\(desc.prefix(40))") }
+            self?.ensureAutoTurn()
             self?.addSubagentPane(id, type: type, desc: desc)
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
@@ -1084,8 +1087,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             if self.turnStart != nil { self.endTurn(cost: nil, usage: nil, error: code != 0 ? t("chat.sessionCrashed", ["c": code]) : nil) }
             if code != 0 { self.addSystem(t("chat.sessionExit", ["c": code])) }
         }
-        s?.onPermissionRequest = { [weak self] id, name, detail, code, path in self?.requestPermission(id, name, detail, code, path) }
-        s?.onToolRequest = { [weak self] id, tool, args in self?.handleTool(id, tool, args) }
+        s?.onPermissionRequest = { [weak self] id, name, detail, code, path in
+            self?.ensureAutoTurn(); self?.requestPermission(id, name, detail, code, path)
+        }
+        s?.onToolRequest = { [weak self] id, tool, args in
+            self?.ensureAutoTurn(); self?.handleTool(id, tool, args)
+        }
         s?.onAskExpired = { [weak self] id, reason in self?.markRequestExpired(id, reason) }
         session = s
         if s == nil { addSystem(t("chat.sessionStartFailed")) }
@@ -1928,6 +1935,20 @@ final class ChatPanel: NSView, Themable, Scalable {
         onBusyChange?(true)
         session?.send(text)
         scrollSoon()
+    }
+    /// 사용자가 보낸 게 아니라 세션이 스스로 새 턴을 시작한 경우 턴 상태를 세운다. 백그라운드
+    /// 서브에이전트(Task run_in_background)가 끝나 에이전트가 알림으로 재개될 때, 스트림은
+    /// 들어오지만 beginTurn 을 거치지 않아 패널이 "완료"에 그대로 머물렀다 (진행 중으로 안 바뀌고,
+    /// 끝나도 완료 표시가 새로 안 났다). 스트림의 첫 신호에서 이걸 불러 새 블록·busy 상태를 세운다.
+    /// beginTurn 과 달리 아무것도 send 하지 않는다 - 이미 세션이 스스로 말하고 있다.
+    private func ensureAutoTurn() {
+        guard turnStart == nil, session?.isAlive != false else { return }
+        turnText = ""
+        current = newBlock()
+        current?.startWorking()
+        turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil
+        startFlush()
+        setRunning(true); onBusyChange?(true)
     }
     private var currentTurnText: String?
     private var turnText = ""                                   // assistant text of the running turn
