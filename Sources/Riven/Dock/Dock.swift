@@ -1263,7 +1263,7 @@ final class DockGroup: NSView, Scalable {
             let v = panel.content
             let oldContent = content   // this group's content view
             // 실제로 떼는 건 다음 런루프로 미룬다(닫을 때 무거운 서브트리 정리 비용을 클릭
-            // 순간에 안 치르려고). 단, move() 는 그 사이 이 뷰를 새 그룹으로 옮겨 붙인다 —
+            // 순간에 안 치르려고). 단, move() 는 그 사이 이 뷰를 새 그룹으로 옮겨 붙인다 -
             // 그때 지연됐던 이 제거가 터지면 새 그룹에서 뷰를 떼어 "패널 내부가 빈 화면"이
             // 됐다. 여전히 이 그룹의 content 에 붙어 있을 때만 뗀다 (옮겨졌으면 스킵).
             DispatchQueue.main.async { if v.superview === oldContent { v.removeFromSuperview() } }
