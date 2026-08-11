@@ -175,6 +175,12 @@ enum I18n {
                            "Sent to {a}. The answer will arrive in this conversation when it's done."),
         "chat.delegating": ("진행 중…", "in progress…"),
         "chat.delegateDone": ("완료", "done"),
+        "chat.pipeline": ("파이프라인", "pipeline"),
+        "chat.pipelineStart": ("파이프라인 시작", "pipeline start"),
+        "chat.pipelineStarted": ("파이프라인 '{name}' 시작됨 ({stages}). 마지막 단계가 끝나면 결과가 이 대화로 옵니다.",
+                                 "Pipeline '{name}' started ({stages}). The result will arrive in this conversation when the last stage finishes."),
+        "chat.pipelineStageFail": ("파이프라인 중단: '{stage}' 단계 세션이 뜨지 않았습니다.",
+                                   "Pipeline stopped: the '{stage}' stage session did not come up."),
         "chat.peerAnswer": ("[{a} 의 작업 결과]", "[Result from {a}]"),
         // 입력창에서 @동료 부르기
         "chat.mention.empty": ("@동료 뒤에 시킬 내용을 적어 주세요.", "Add what you want them to do after the @name."),

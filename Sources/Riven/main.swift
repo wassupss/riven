@@ -2829,6 +2829,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onAskAgents = { [weak self, weak chat] tasks, done in
             self?.askAgentPanes(tasks, from: chat, done)
         }
+        chat.onStartPipeline = { [weak self, weak chat] group, stages, task, done in
+            self?.startPipeline(group, stages: stages, task: task, from: chat, done: done)
+        }
         // 그룹 인원 조절 (MCP). 줄이는 쪽은 ChatPanel 이 확인 카드를 받은 뒤에만 부른다.
         chat.onGroupAddAgent = { [weak self] group, name, persona, model, parent in
             guard let self else { return "unavailable" }
@@ -6421,8 +6424,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The slots are created FIRST, while each still holds a single pane, and only then filled
     /// downward. Done the other way round the next slot nests inside one cell of the previous slot
     /// instead of standing on its own.
-    private func createAgentGroup(_ requested: String, _ specs: [(name: String, agent: String?, model: String?, parent: Int?)]) {
-        guard let dock = activeDock, let ws = workspace, !specs.isEmpty else { return }
+    @discardableResult
+    private func createAgentGroup(_ requested: String, _ specs: [(name: String, agent: String?, model: String?, parent: Int?)]) -> String {
+        guard let dock = activeDock, let ws = workspace, !specs.isEmpty else { return "" }
         let st = state(for: ws)
         // 그룹 이름이 곧 식별자다(탭·조직도·riven_ask_agent 가 이름으로 찾는다). 같은 이름으로
         // 또 만들면 두 그룹이 하나로 합쳐져 보이므로, 살아 있는 그룹과 겹치지 않게 번호를 붙인다.
@@ -6442,7 +6446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let main = makeMember(0)
         dock.addPanel(main, reference: dock.activeGroup ?? dock.groups.last, direction: .right)
         let members = Array(specs.indices.dropFirst())
-        guard !members.isEmpty else { dock.setActive(main.group ?? dock.activeGroup!); return }
+        guard !members.isEmpty else { dock.setActive(main.group ?? dock.activeGroup!); return group }
         let perSlot = 3
         var slotHeads: [DockPanel] = []
         for start in stride(from: 0, to: members.count, by: perSlot) {
@@ -6476,6 +6480,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let par = s.parent.flatMap { $0 >= 0 && $0 < specs.count ? specs[$0].name : nil }
             return par.map { "\(s.name) ← \($0)" } ?? s.name
         })
+        return group
+    }
+
+    // ---- serial pipeline (직렬 파이프라인 그룹) -------------------------------------------
+    // 단계를 순서대로 거치는 그룹(기획 → 디자인 → 개발 → QA → 배포). 그룹 생성/위임/조직도는
+    // 기존 것을 그대로 재사용하고, 여기서는 "앞 단계 산출물을 다음 단계 입력으로 흘리는" 얇은
+    // 오케스트레이터만 얹는다. 단계 i 의 상사(parent)를 i-1 로 두어 조직도가 세로 체인으로 그려진다.
+    private func pipelineKey(_ ws: URL) -> String {
+        "pipeline.\(AppDelegate.canonicalWorkspacePath(ws.path).path)|"
+    }
+    /// 파이프라인 정의(단계 순서·지시)를 워크스페이스별로 남긴다. 재시작 뒤에도 어떤 그룹이
+    /// 파이프라인이었는지 알 수 있게. 그룹 로스터와 같은 canonical 키 규약을 쓴다.
+    private func savePipeline(_ ws: URL, _ group: String,
+                              _ stages: [(name: String, agent: String?, model: String?, instruction: String?)]) {
+        let list = stages.map { ["name": $0.name, "instruction": $0.instruction ?? ""] }
+        if let d = try? JSONSerialization.data(withJSONObject: list),
+           let json = String(data: d, encoding: .utf8) {
+            Settings.shared.set(pipelineKey(ws) + group, json)
+        }
+    }
+
+    /// 직렬 파이프라인을 만들고(단계 = 부모 체인) 첫 단계부터 task 를 흘려보낸다. 비동기 -
+    /// 마지막 단계가 끝나면 누적 산출물을 done 으로 돌려준다.
+    func startPipeline(_ requested: String,
+                       stages: [(name: String, agent: String?, model: String?, instruction: String?)],
+                       task: String, from sender: ChatPanel?, done: @escaping (String) -> Void) {
+        guard let ws = workspace, stages.count >= 2 else { done("파이프라인은 단계가 2개 이상이어야 합니다."); return }
+        let specs: [(name: String, agent: String?, model: String?, parent: Int?)] = stages.enumerated().map {
+            (name: $0.element.name, agent: $0.element.agent, model: $0.element.model, parent: $0.offset == 0 ? nil : $0.offset - 1)
+        }
+        let group = createAgentGroup(requested, specs)
+        guard !group.isEmpty else { done("파이프라인 그룹을 만들지 못했습니다 (워크스페이스를 여세요)."); return }
+        savePipeline(ws, group, stages)
+        runPipelineStage(group: group, stages: stages, index: 0, input: task, transcript: [], from: sender, done: done)
+    }
+
+    private func runPipelineStage(group: String,
+                                  stages: [(name: String, agent: String?, model: String?, instruction: String?)],
+                                  index: Int, input: String, transcript: [(String, String)],
+                                  from sender: ChatPanel?, done: @escaping (String) -> Void) {
+        guard index < stages.count else {
+            teamPanel.refresh()
+            let summary = transcript.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+            done(summary.isEmpty ? "(파이프라인 산출물 없음)" : summary)
+            return
+        }
+        let stage = stages[index]
+        RLog.log("pipeline[\(group)] \(index + 1)/\(stages.count) → \(stage.name)")
+        var msg = ""
+        if let ins = stage.instruction, !ins.isEmpty { msg += ins + "\n\n" }
+        if index == 0 {
+            msg += "[파이프라인 작업]\n" + input
+        } else {
+            msg += "[이전 단계 · \(stages[index - 1].name) 의 산출물]\n" + input
+            msg += "\n\n위 산출물을 이어받아 당신(\(stage.name)) 단계를 수행하고, 다음 단계로 넘길 결과를 내세요."
+        }
+        // 갓 만든 멤버 팬은 claude 프로세스가 뜨는 데 잠깐 걸린다 - 살아날 때까지 기다렸다 보낸다.
+        whenAgentReady(group: group, name: stage.name, tries: 30) { [weak self] ready in
+            guard let self else { return }
+            guard ready else {
+                let sofar = transcript.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
+                done(t("chat.pipelineStageFail", ["stage": stage.name]) + (sofar.isEmpty ? "" : "\n\n" + sofar))
+                return
+            }
+            self.askAgentPane(stage.name, msg, from: sender, inGroup: group) { answer in
+                var next = transcript; next.append((stage.name, answer))
+                self.runPipelineStage(group: group, stages: stages, index: index + 1,
+                                      input: answer, transcript: next, from: sender, done: done)
+            }
+        }
+    }
+
+    /// 그룹 안 특정 이름의 팬이 위임을 받을 수 있을 만큼(세션이 떠서) 준비됐는지 폴링한다.
+    private func whenAgentReady(group: String, name: String, tries: Int, _ cb: @escaping (Bool) -> Void) {
+        let q = name.trimmingCharacters(in: .whitespaces).lowercased()
+        let hit = allAgentPanes().first { $0.chat.groupName == group && $0.chat.agentRole.lowercased() == q }
+        if let hit, hit.chat.isSessionAlive { cb(true); return }
+        guard tries > 0 else { cb(false); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.whenAgentReady(group: group, name: name, tries: tries - 1, cb)
+        }
     }
 
     // ---- agent teams -------------------------------------------------------------------

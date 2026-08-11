@@ -83,6 +83,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onAskAgent: ((String, String, @escaping (String) -> Void) -> Void)?  // delegate work to a peer
     /// Fan out to several peers at once; the callback fires when every one of them has answered.
     var onAskAgents: (([(agent: String, message: String)], @escaping ([(String, String)]) -> Void) -> Void)?
+    /// 직렬 파이프라인: 단계 순서대로 에이전트를 만들고 앞 단계 산출물을 다음 단계로 흘린다.
+    /// 마지막 단계가 끝나면 전체 결과를 콜백으로 돌려준다 (비동기).
+    var onStartPipeline: ((_ group: String, _ stages: [(name: String, agent: String?, model: String?, instruction: String?)], _ task: String, _ done: @escaping (String) -> Void) -> Void)?
     /// 그룹 인원 조절 (에이전트가 MCP 로 부른다). 줄이는 쪽은 사용자 확인을 거친 뒤에만 호출된다.
     var onGroupAddAgent: ((_ group: String, _ name: String, _ persona: String?, _ model: String?, _ parent: String?) -> String)?
     var onGroupRemoveAgent: ((_ group: String, _ name: String) -> String)?
@@ -642,6 +645,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     // 남아 있으면, 아무 일도 안 하는 멤버가 riven_agents/조직도에 "작업 중" 으로 잘못 뜬다
     // (사용자가 "대기인데 왜 작업중?" 이라고 본 것). 죽은 세션은 busy 로 세지 않는다.
     var isBusy: Bool { turnStart != nil && session?.isAlive != false }
+
+    /// 이 팬에 지금 위임을 보내도 되는지 (세션이 떠 있는지). 파이프라인이 갓 만든 멤버 팬은
+    /// claude 프로세스가 뜨는 데 잠깐 걸리므로, 보내기 전에 이 값으로 준비됨을 확인한다.
+    var isSessionAlive: Bool { session?.isAlive == true }
 
     /// 조직도의 상태 칩이 읽는 값. busy 하나로는 "승인을 기다리며 멈춰 있음"과 "도구를 돌리는
     /// 중"이 구분되지 않는데, 병렬로 여러 명을 돌릴 때 정작 사람이 움직여야 하는 건 전자다.
@@ -1239,6 +1246,26 @@ final class ChatPanel: NSView, Themable, Scalable {
                 if waitAll { reply(joined) } else { self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), joined) }
             }
             if !waitAll { reply(t("chat.delegated", ["a": tasks.map { $0.agent }.joined(separator: ", ")])) }
+        case "riven_start_pipeline":
+            let name = s("name")
+            let task = s("task").isEmpty ? s("message") : s("task")
+            let stages: [(name: String, agent: String?, model: String?, instruction: String?)] =
+                (args["stages"] as? [[String: Any]] ?? []).compactMap { d -> (name: String, agent: String?, model: String?, instruction: String?)? in
+                    guard let n = (d["name"] as? String), !n.isEmpty else { return nil }
+                    func opt(_ k: String) -> String? { (d[k] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+                    return (name: n, agent: opt("agent"), model: opt("model"), instruction: opt("instruction"))
+                }
+            guard stages.count >= 2, !name.isEmpty, let start = onStartPipeline else {
+                reply(stages.count < 2 ? "stages must be an ordered array of 2+ {name, instruction?}"
+                                       : "pipeline unavailable")
+                return
+            }
+            addSystem("⛓ \(t("chat.pipelineStart")): " + stages.map { $0.name }.joined(separator: " → "))
+            start(name, stages, task) { [weak self] result in
+                guard let self else { return }
+                self.deliverPeerAnswer(from: "\(name) \(t("chat.pipeline"))", result)
+            }
+            reply(t("chat.pipelineStarted", ["name": name, "stages": stages.map { $0.name }.joined(separator: " → ")]))
         case "riven_group_add_agent":
             let g = s("group"), n = s("name")
             guard !g.isEmpty, !n.isEmpty, let add = onGroupAddAgent else {
