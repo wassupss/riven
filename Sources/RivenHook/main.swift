@@ -1,6 +1,6 @@
 import Foundation
 
-// riven-hook — the tiny bridge an agent's lifecycle hook executes.
+// riven-hook - the tiny bridge an agent's lifecycle hook executes.
 //
 //   riven-hook <agent> <event>      (hook payload JSON arrives on stdin)
 //
@@ -10,7 +10,7 @@ import Foundation
 //  1. NEVER block or fail the agent. Every error path exits 0. A coding agent must
 //     not stall because riven is closed, restarting, or wedged.
 //  2. No dependencies beyond Foundation, so this stays a few hundred KB and starts
-//     in single-digit milliseconds — it runs on every prompt/stop of every pane.
+//     in single-digit milliseconds - it runs on every prompt/stop of every pane.
 //  3. The pane identity comes from RIVEN_PANE_SESSION in our OWN environment, not
 //     from the payload. riven injects that var into each terminal surface, and hook
 //     processes are descendants of the pane's command, so they inherit it. This is
@@ -36,7 +36,7 @@ let socketPath = ProcessInfo.processInfo.environment["RIVEN_HOOK_SOCKET"]
 // Cap the read: a payload is normally a few hundred bytes, but PostToolUse-style
 // events can carry large tool output. We only ever use small scalar fields, so
 // truncating protects both this process and the app's line limit. Truncated JSON
-// fails to parse app-side and is dropped — deliberately better than unbounded reads.
+// fails to parse app-side and is dropped - deliberately better than unbounded reads.
 let maxPayload = 256 * 1024
 var payload = Data()
 while payload.count < maxPayload, let chunk = try? FileHandle.standardInput.read(upToCount: 64 * 1024),
@@ -46,7 +46,7 @@ while payload.count < maxPayload, let chunk = try? FileHandle.standardInput.read
 
 // Keep the payload as an opaque JSON value; the app decides which fields it needs.
 // If stdin wasn't valid JSON (or was truncated) send an empty object rather than
-// dropping the event — the event NAME alone still drives the state machine.
+// dropping the event - the event NAME alone still drives the state machine.
 let payloadObject: Any = (try? JSONSerialization.jsonObject(with: payload)) ?? [String: Any]()
 
 let envelope: [String: Any] = [

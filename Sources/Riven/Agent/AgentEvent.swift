@@ -10,7 +10,7 @@ struct AgentEvent {
     enum Kind: String {
         case sessionStart      = "SessionStart"       // pane ↔ session binding confirmed
         case userPromptSubmit  = "UserPromptSubmit"   // a turn began (replaces the Enter-key guess)
-        case permissionRequest = "PermissionRequest"  // waiting on the user — NOT working
+        case permissionRequest = "PermissionRequest"  // waiting on the user - NOT working
         case notification      = "Notification"       // agent asked for attention
         case stop              = "Stop"               // turn finished (authoritative)
         case stopFailure       = "StopFailure"        // turn ended on an API error
@@ -20,11 +20,11 @@ struct AgentEvent {
     }
 
     let kind: Kind
-    /// RIVEN_PANE_SESSION — the routing key. Always a validated UUID string.
+    /// RIVEN_PANE_SESSION - the routing key. Always a validated UUID string.
     let pane: String
     /// Which CLI produced this ("claude" / "codex"), for per-agent quirks + logging.
     let agent: String
-    /// The agent's own session id. Diagnostics only — routing never depends on it,
+    /// The agent's own session id. Diagnostics only - routing never depends on it,
     /// because Codex has no way to be launched with a caller-chosen session id.
     let sessionId: String?
     /// Present on turn-scoped events; lets notifications dedupe per turn instead of
@@ -35,7 +35,7 @@ struct AgentEvent {
     let message: String?
     /// Tool awaiting approval (permissionRequest) or the tool that ran (postToolUse).
     let toolName: String?
-    /// Absolute path the tool edited (postToolUse for Edit/Write/MultiEdit) — the
+    /// Absolute path the tool edited (postToolUse for Edit/Write/MultiEdit) - the
     /// precise, per-pane signal that drives the Changes panel. nil for other events.
     let filePath: String?
 

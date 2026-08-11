@@ -3,10 +3,10 @@ import AppKit
 // 이미 ghostty 를 쓰던 사람의 설정을 가져온다.
 //
 // riven 의 터미널은 libghostty 라, 그 사람이 몇 달에 걸쳐 맞춰 둔 글꼴·크기·색이 이미 있다.
-// 그걸 riven 에서 처음부터 다시 고르게 하는 건 실례다 — 한 번 눌러 가져오게 한다.
+// 그걸 riven 에서 처음부터 다시 고르게 하는 건 실례다 - 한 번 눌러 가져오게 한다.
 //
 // ghostty 설정은 `key = value` 한 줄씩이고 `#` 주석과 빈 줄이 섞인다. 우리가 쓰는 것만
-// 골라 읽는다 (모르는 키는 조용히 넘긴다 — 남의 설정 파일을 해석하려 들지 않는다).
+// 골라 읽는다 (모르는 키는 조용히 넘긴다 - 남의 설정 파일을 해석하려 들지 않는다).
 enum GhosttyImport {
 
     struct Found {
@@ -22,7 +22,7 @@ enum GhosttyImport {
             fontFamily == nil && fontSize == nil && theme == nil && background == nil
         }
 
-        /// 사람이 읽을 요약 — 무엇을 가져왔는지 눈으로 확인하고 되돌릴 수 있어야 한다.
+        /// 사람이 읽을 요약 - 무엇을 가져왔는지 눈으로 확인하고 되돌릴 수 있어야 한다.
         var summary: String {
             var parts: [String] = []
             if let f = fontFamily { parts.append("글꼴 \(f)") }
@@ -30,7 +30,7 @@ enum GhosttyImport {
             if let t = theme { parts.append("테마 \(t)") }
             if theme == nil, let b = background { parts.append("배경 \(b)") }
             if parts.isEmpty {
-                // 파일은 있는데 값이 없다 — "못 찾았다" 와는 다른 상황이라 그렇게 말해 준다.
+                // 파일은 있는데 값이 없다 - "못 찾았다" 와는 다른 상황이라 그렇게 말해 준다.
                 return t("settings.ghosttyEmpty", ["p": path.lastPathComponent])
             }
             return parts.joined(separator: " · ")
@@ -41,7 +41,7 @@ enum GhosttyImport {
     ///
     /// 파일 이름이 두 가지다: 보통은 `config` 인데, macOS 앱에서 "Open Configuration" 으로
     /// 만들면 `config.ghostty` 가 생긴다. 처음엔 `config` 만 찾아서 "설정 파일을 찾지 못했습니다"
-    /// 가 떴다 — 실제로는 있는데 이름이 달랐다.
+    /// 가 떴다 - 실제로는 있는데 이름이 달랐다.
     static var candidatePaths: [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         var dirs: [URL] = []

@@ -3,7 +3,7 @@ import WebKit
 
 // 내려받기 목록.
 //
-// 지금까지는 상태 줄에 한 줄 뜨고 끝났고, 다 받으면 Finder 가 앞으로 튀어나왔다 — 일하다가
+// 지금까지는 상태 줄에 한 줄 뜨고 끝났고, 다 받으면 Finder 가 앞으로 튀어나왔다 - 일하다가
 // 창이 바뀌는 건 방해다. 대신 주소창 옆에 받는 중 표시를 두고, 눌러야 목록이 열리게 한다.
 final class DownloadItem: NSObject {
     let name: String

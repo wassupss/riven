@@ -1,6 +1,6 @@
 import AppKit
 
-// Find-in-files sidebar panel — a native port of riven's SearchPanel.tsx.
+// Find-in-files sidebar panel - a native port of riven's SearchPanel.tsx.
 // Query + replace fields, results grouped by file, click a match to open the
 // file at that line. Lives in the sidebar's lower region (native has no
 // dockview grid, so search swaps in where the explorer sits).
@@ -14,7 +14,7 @@ final class SearchPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()
     private var root: URL?
 
-    // (filePath, line, column) — 1-based, to open + reveal in the editor.
+    // (filePath, line, column) - 1-based, to open + reveal in the editor.
     var onOpen: ((String, Int, Int) -> Void)?
 
     override init(frame: NSRect) {

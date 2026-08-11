@@ -1,11 +1,15 @@
-## Pick a model right in each chat
+## Fixed prompt: your own instructions for every agent
 
-Every native chat composer now has a **model picker next to the permission-mode chip**. See and switch this chat's model without `/model`; your choice persists across restarts.
+Settings → AI now has a **Fixed prompt**. Like CLAUDE.md, whatever you write here is automatically prepended to every agent in riven (chat and terminal). You can also drop in one of **4 templates** (warm tone / concise / thorough review / Korean first).
+
+## Sessions that survive updates
+
+Per-workspace sessions (open tabs, panels, groups) now carry a **schema version with automatic migration**, so old sessions stay safe as the structure evolves. If something ever gets tangled, **Settings → About → Maintenance → Restore backup** rolls you back to the pre-update state.
 
 ## Also fixed
 
-- **Documents an agent creates** now open in **preview** (rendered), not the raw editor — switch to the edit tab if you want to edit.
-- **After a restart**, an open agent-group member no longer shows as "closed" in the org chart.
+- **Moving a panel** no longer occasionally leaves the panel blank.
+- **Switching settings tabs** no longer flashes "Saved" when you changed nothing.
 
 ## Also
 

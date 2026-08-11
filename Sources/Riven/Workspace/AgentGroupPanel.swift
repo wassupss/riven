@@ -1,14 +1,14 @@
 import AppKit
 
-// Agent group — riven's orchestration surface.
+// Agent group - riven's orchestration surface.
 //
 // Agents can already talk to each other (riven_agents / riven_ask_agent), but nothing told you the
 // capability existed. This panel makes it a feature:
-//   · 탭      — "새 그룹"(작성) + 지금 열려 있는 그룹 하나당 탭 하나
-//   · 새 그룹  — one card per agent (nickname, persona, model, who it reports to) in a responsive grid
-//   · 그룹 탭  — that group's reporting tree drawn as a flow chart
+//   · 탭      - "새 그룹"(작성) + 지금 열려 있는 그룹 하나당 탭 하나
+//   · 새 그룹  - one card per agent (nickname, persona, model, who it reports to) in a responsive grid
+//   · 그룹 탭  - that group's reporting tree drawn as a flow chart
 //
-// Each agent gets a NICKNAME, which is how peers address it — "chat-90690212265" is a dock id, not
+// Each agent gets a NICKNAME, which is how peers address it - "chat-90690212265" is a dock id, not
 // something you'd type in a prompt. The hierarchy is real: creating the group lays the panes out by
 // level (main left, its reports in the next column, theirs in the one after).
 
@@ -19,7 +19,7 @@ import AppKit
 struct AgentNode {
     let name: String
     let persona: String?
-    let model: String?      // "opus"/"sonnet"/… — nil이면 계정 기본
+    let model: String?      // "opus"/"sonnet"/… - nil이면 계정 기본
     let parent: String?
     /// 지금 패널이 열려 있는지. 닫힌 멤버도 조직도에 흐리게 남겨 두고, 누르면 되살린다.
     var open: Bool = true
@@ -64,7 +64,7 @@ final class OrgChartView: NSView, Themable {
     // ---- 상태 칩 / 라이브 위임 ------------------------------------------------------
     /// 이름 → 지금 상태. `nodes` 와 분리해 두면 상태가 바뀌어도 트리를 다시 배치하지 않는다.
     private var states: [String: (state: AgentRunState, since: Date?)] = [:]
-    /// 마지막으로 그린 칩 문자열 — 이게 바뀔 때만 그 칩 자리를 다시 그린다.
+    /// 마지막으로 그린 칩 문자열 - 이게 바뀔 때만 그 칩 자리를 다시 그린다.
     private var chipCache: [String: String] = [:]
     private var flows: [TeamFlow] = []
     private var flowGeo: [Int: FlowGeo] = [:]
@@ -73,7 +73,7 @@ final class OrgChartView: NSView, Themable {
     /// 흐르는 선은 여기에만 그린다 (조직도 본체는 프레임마다 다시 그리지 않는다).
     private let overlay = FlowOverlayView(frame: .zero)
 
-    /// 위임 하나를 그리는 데 필요한 기하 — 경로는 flows/레이아웃이 바뀔 때만 다시 만든다.
+    /// 위임 하나를 그리는 데 필요한 기하 - 경로는 flows/레이아웃이 바뀔 때만 다시 만든다.
     private struct FlowGeo {
         let path: NSBezierPath
         /// 경로의 꺾인 점들 + 누적 길이 (역방향 반짝임의 위치 계산용).
@@ -88,7 +88,7 @@ final class OrgChartView: NSView, Themable {
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { contentSize }
 
-    /// 축소는 하지 않는다 — 줄이면 읽을 수 없다. 넓으면 그대로 두고 스크롤로 본다.
+    /// 축소는 하지 않는다 - 줄이면 읽을 수 없다. 넓으면 그대로 두고 스크롤로 본다.
     private let scale: CGFloat = 1
     private var nodeW: CGFloat { UIScale.pt(168) * scale }
     /// 3줄(이름 / 페르소나·모델 / 상태 칩)이 들어간다.
@@ -160,7 +160,7 @@ final class OrgChartView: NSView, Themable {
             maxX = max(maxX, r.maxX); maxY = max(maxY, r.maxY)
         }
         contentSize = NSSize(width: maxX + pad, height: maxY + pad)
-        // 뷰가 내용보다 넓으면 가운데로 — 왼쪽에 몰려 있으면 허전하다.
+        // 뷰가 내용보다 넓으면 가운데로 - 왼쪽에 몰려 있으면 허전하다.
         let dx = max(0, (bounds.width - contentSize.width) / 2)
         if dx > 0 { for k in rect.keys { rect[k]!.origin.x += dx } }
         for n in nodes { if let r = rect[n.name] { boxes.append((n, r)) } }
@@ -189,7 +189,7 @@ final class OrgChartView: NSView, Themable {
         rebuildFlowGeo()
         let after = flowDirtyRect().union(before)
         if !after.isEmpty { overlay.setNeedsDisplay(after.insetBy(dx: -2, dy: -2)) }
-        // 화살표를 받는 노드는 테두리가 굵어진다 — 정지 상태라 flows 가 바뀔 때만 다시 그린다.
+        // 화살표를 받는 노드는 테두리가 굵어진다 - 정지 상태라 flows 가 바뀔 때만 다시 그린다.
         let targets = Set(list.map { $0.to })
         if targets != flowTargets {
             for name in targets.symmetricDifference(flowTargets) {
@@ -221,7 +221,7 @@ final class OrgChartView: NSView, Themable {
         let byName = Dictionary(boxes.map { ($0.node.name, $0.rect) }, uniquingKeysWith: { a, _ in a })
         for f in flows {
             guard let to = byName[f.to] else { continue }
-            // 사용자가 보낸 건(from == nil) 출발 노드가 없다 — 라벨만 노드 위에 띄운다.
+            // 사용자가 보낸 건(from == nil) 출발 노드가 없다 - 라벨만 노드 위에 띄운다.
             let pts = f.from.flatMap { byName[$0] }.map { route(from: $0, to: to) } ?? []
             let path = NSBezierPath()
             var cum: [CGFloat] = [0]
@@ -281,12 +281,12 @@ final class OrgChartView: NSView, Themable {
         return f.summary.isEmpty ? teamElapsed(f.start, now) : "\(f.summary) · \(teamElapsed(f.start, now))"
     }
     private func labelRect(for f: TeamFlow, at anchor: NSPoint, near target: NSRect) -> NSRect {
-        // 폭은 "가장 길어질 때"로 잡아 둔다 — 초가 늘어도 무효화 영역이 커지지 않게.
+        // 폭은 "가장 길어질 때"로 잡아 둔다 - 초가 늘어도 무효화 영역이 커지지 않게.
         let probe = (f.summary.isEmpty ? "" : f.summary + " · ") + "00m 00s"
         let w = min(UIScale.pt(190),
                     (probe as NSString).size(withAttributes: [.font: font(UIScale.caption, .medium)]).width + 14)
         let h = UIScale.pt(17)
-        // 사용자가 맨 윗줄 노드에 보내면 라벨이 캔버스 위로 잘린다 — 그때는 노드 아래로 뒤집는다.
+        // 사용자가 맨 윗줄 노드에 보내면 라벨이 캔버스 위로 잘린다 - 그때는 노드 아래로 뒤집는다.
         var y = anchor.y
         if y - h / 2 < 2 { y = target.maxY + UIScale.pt(13) }
         // 가장자리 노드에서 라벨이 캔버스 밖으로 나가지 않게.
@@ -313,7 +313,7 @@ final class OrgChartView: NSView, Themable {
         // 위임선은 오버레이가 그린다 (drawFlows).
     }
 
-    /// 옅은 점 캔버스 — 다이어그램이라는 걸 배경만으로 알려준다.
+    /// 옅은 점 캔버스 - 다이어그램이라는 걸 배경만으로 알려준다.
     private func drawDotGrid(_ dirty: NSRect) {
         let step = UIScale.pt(16)
         Theme.fgDim.withAlphaComponent(0.10).setFill()
@@ -351,7 +351,7 @@ final class OrgChartView: NSView, Themable {
             }
             Theme.edge.setStroke()
             p.stroke()
-            // 자식 쪽 끝에 작은 화살촉 — 방향(위→아래)을 분명히.
+            // 자식 쪽 끝에 작은 화살촉 - 방향(위→아래)을 분명히.
             Theme.edge.setFill()
             for t in bus.to {
                 let a = NSBezierPath()
@@ -428,10 +428,10 @@ final class OrgChartView: NSView, Themable {
                width: r.width - UIScale.pt(20), height: UIScale.pt(19) * scale)
     }
 
-    /// (표시 문자열, 색, 꽉 채울지). 승인 대기만 색을 통째로 칠한다 — 팔레트에 따라 액센트와
+    /// (표시 문자열, 색, 꽉 채울지). 승인 대기만 색을 통째로 칠한다 - 팔레트에 따라 액센트와
     /// 경고색의 색상이 가까울 수 있어서, 채도가 아니라 "칠했나/안 칠했나"로 구분되게 했다.
     private func chipStyle(_ name: String, _ open: Bool, _ now: Date) -> (String, NSColor, Bool) {
-        // 닫힌 멤버는 칩을 그리지 않는다 — 부제 줄이 이미 "닫힘 · 눌러서 다시 열기"다.
+        // 닫힌 멤버는 칩을 그리지 않는다 - 부제 줄이 이미 "닫힘 · 눌러서 다시 열기"다.
         guard open else { return ("", Theme.fgDim, false) }
         let s = states[name] ?? (.idle, nil)
         let secs = s.since.map { " " + teamElapsed($0, now) } ?? ""
@@ -459,7 +459,7 @@ final class OrgChartView: NSView, Themable {
         if solid {
             color.setFill(); bg.fill()
         } else if case .idle = (states[n.name]?.state ?? .idle) {
-            // 대기는 배경 없이 — 칩이 전부 칠해져 있으면 "지금 움직이는 것"이 안 보인다.
+            // 대기는 배경 없이 - 칩이 전부 칠해져 있으면 "지금 움직이는 것"이 안 보인다.
         } else {
             color.withAlphaComponent(0.14).setFill(); bg.fill()
         }
@@ -485,7 +485,7 @@ final class OrgChartView: NSView, Themable {
 
     // MARK: - flow rendering
 
-    /// FlowOverlayView 가 호출한다 — 좌표계가 같아서 기하를 그대로 쓴다.
+    /// FlowOverlayView 가 호출한다 - 좌표계가 같아서 기하를 그대로 쓴다.
     func drawFlows(_ dirty: NSRect) {
         guard !flows.isEmpty else { return }
         let now = Date()
@@ -519,7 +519,7 @@ final class OrgChartView: NSView, Themable {
                     NSBezierPath(ovalIn: NSRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)).fill()
                 }
             }
-            // 라벨은 불투명하게 채워 아래 선을 가린다 — 겹쳐도 글자가 읽힌다.
+            // 라벨은 불투명하게 채워 아래 선을 가린다 - 겹쳐도 글자가 읽힌다.
             let text = flowLabelText(f, now)
             let at: [NSAttributedString.Key: Any] = [
                 .font: font(UIScale.caption, .medium),
@@ -630,7 +630,7 @@ final class AddCard: NSView, Themable {
         let t = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow], owner: self)
         addTrackingArea(t); track = t
     }
-    // 가운데 라벨이 클릭을 먹어 mouseDown이 안 오던 문제 — 타일 전체가 하나의 버튼이다.
+    // 가운데 라벨이 클릭을 먹어 mouseDown이 안 오던 문제 - 타일 전체가 하나의 버튼이다.
     override func hitTest(_ point: NSPoint) -> NSView? {
         bounds.contains(convert(point, from: superview)) ? self : nil
     }
@@ -643,7 +643,7 @@ final class AddCard: NSView, Themable {
         alphaValue = enabled ? 1 : 0.5
         needsDisplay = true
     }
-    // 점선 테두리 — 실제 카드가 아니라 "빈 자리"라는 신호.
+    // 점선 테두리 - 실제 카드가 아니라 "빈 자리"라는 신호.
     override func draw(_ dirty: NSRect) {
         let r = bounds.insetBy(dx: 0.5, dy: 0.5)
         let path = NSBezierPath(roundedRect: r, xRadius: UIScale.pt(10), yRadius: UIScale.pt(10))
@@ -759,7 +759,7 @@ final class AgentEditForm: NSView, Themable {
 // MARK: - panel
 
 final class AgentGroupPanel: NSView, Themable, Scalable {
-    /// (nickname, persona, index of the agent it reports to) — the FIRST entry is the main agent.
+    /// (nickname, persona, index of the agent it reports to) - the FIRST entry is the main agent.
     var onCreate: ((_ group: String, _ members: [(name: String, agent: String?, model: String?, parent: Int?)]) -> Void)?
     /// Custom agents available for the persona picker (.claude/agents).
     var agentsProvider: (() -> [String])?
@@ -914,7 +914,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         gridScroll.documentView = grid
         chartScroll.documentView = chart
         chartScroll.hasHorizontalScroller = true
-        // 이게 빠지면 아래 제약이 오토리사이징과 충돌해 문서 뷰가 0x0으로 남는다 —
+        // 이게 빠지면 아래 제약이 오토리사이징과 충돌해 문서 뷰가 0x0으로 남는다 -
         // 조직도가 넓어져도 스크롤이 안 되고 잘려 보이던 원인.
         chart.translatesAutoresizingMaskIntoConstraints = false
         chart.onPick = { [weak self] name in
@@ -937,7 +937,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
             hint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -pad),
             hint.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 5),
 
-            // 탭 스트립은 패널 폭을 꽉 채운다 — 기준선(hairline)이 섹션 구분선 역할까지 한다.
+            // 탭 스트립은 패널 폭을 꽉 채운다 - 기준선(hairline)이 섹션 구분선 역할까지 한다.
             tabStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
             tabStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
             tabStrip.topAnchor.constraint(equalTo: hint.bottomAnchor, constant: 14),
@@ -999,7 +999,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 패널이 호스트에 붙을 때마다(열기·워크스페이스 복귀) 탭을 새로 읽는다 — 예전에는
+    /// 패널이 호스트에 붙을 때마다(열기·워크스페이스 복귀) 탭을 새로 읽는다 - 예전에는
     /// toggleDockPanel 경로에서만 갱신해서, 레이아웃 복원으로 열린 패널엔 탭이 하나도 없었다.
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
@@ -1043,7 +1043,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         grid.cardH = UIScale.pt(196)
     }
 
-    /// 패널이 열릴 때마다 탭을 다시 만든다 — 첫 탭은 "새 그룹"(작성), 나머지는 지금 열려 있는
+    /// 패널이 열릴 때마다 탭을 다시 만든다 - 첫 탭은 "새 그룹"(작성), 나머지는 지금 열려 있는
     /// 그룹들. 탭 하나가 곧 화면 하나라 별도의 모드 스위치가 필요 없다.
     func refresh() {
         refreshPersonas()
@@ -1062,7 +1062,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         applyTab()
     }
     /// 마지막으로 본 그룹 탭을 워크스페이스별로 기억한다 (재시작 후 그 탭으로 복원). 호스트가
-    /// Settings 에 이어 준다 — 패널은 워크스페이스를 직접 모르기 때문.
+    /// Settings 에 이어 준다 - 패널은 워크스페이스를 직접 모르기 때문.
     var loadShownGroup: (() -> String?)?
     var saveShownGroup: ((String?) -> Void)?
     private var groups: [(group: String, members: [AgentNode])] = []
@@ -1198,11 +1198,11 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     }
 
     /// 에이전트의 바쁨/승인 상태가 바뀌었다 (main.swift 의 onBusyChange / onAttention).
-    /// 폴링을 상시로 돌리지 않기 위한 신호 — 여기서 타이머를 다시 켠다.
+    /// 폴링을 상시로 돌리지 않기 위한 신호 - 여기서 타이머를 다시 켠다.
     func agentActivityChanged() {
         guard shownGroup != nil else { return }
         anyLive = true          // 다음 폴링이 사실을 확인한다
-        pollStates()            // 지금 바로 한 번 읽는다 — 첫 틱까지 기다리면 그동안 idle 로 보인다
+        pollStates()            // 지금 바로 한 번 읽는다 - 첫 틱까지 기다리면 그동안 idle 로 보인다
         updateTicker()
     }
 
@@ -1219,7 +1219,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
     //
     // 조건이 하나라도 어긋나면 즉시 멈춘다: 보이지 않거나(다른 탭/워크스페이스/가려진 창),
     // 그룹 탭이 아니거나, 그릴 위임도 움직이는 에이전트도 없을 때. 아무 일도 없으면 타이머는
-    // 존재하지 않는다 — 유휴 CPU 점유 0.
+    // 존재하지 않는다 - 유휴 CPU 점유 0.
     private func updateTicker() {
         let visible = window != nil && !isHiddenOrHasHiddenAncestor
             && (window?.occlusionState.contains(.visible) ?? false)
@@ -1272,7 +1272,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         refresh()
     }
 
-    /// 기존 그룹에 멤버 추가 — 이름·페르소나·모델·보고 대상을 받아 팬을 하나 더 연다.
+    /// 기존 그룹에 멤버 추가 - 이름·페르소나·모델·보고 대상을 받아 팬을 하나 더 연다.
     @objc private func addToGroup() {
         guard let g = shownGroup, let members = groups.first(where: { $0.group == g })?.members else { return }
         let names = members.map { $0.name }
@@ -1299,9 +1299,9 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         if let g = shownGroup, let found = (groupsProvider?() ?? []).first(where: { $0.group == g }) {
             chart.nodes = found.members
         } else {
-            // 작성 중인 구성을 그대로 미리 본다 — 만들기 전에 조직도가 맞는지 확인할 수 있게.
+            // 작성 중인 구성을 그대로 미리 본다 - 만들기 전에 조직도가 맞는지 확인할 수 있게.
             chart.nodes = cards.enumerated().map { i, c in
-                // 상위 드롭다운의 항목은 카드와 1:1 (i번째 항목 = i번째 카드, 자기 자신은 "—").
+                // 상위 드롭다운의 항목은 카드와 1:1 (i번째 항목 = i번째 카드, 자기 자신은 "-").
                 let pi = c.parent.indexOfSelectedItem
                 let parent = (i > 0 && pi >= 0 && pi < cards.count && pi != i) ? cards[pi].name.stringValue : nil
                 let mi = c.model.indexOfSelectedItem
@@ -1352,7 +1352,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         relabel()
     }
 
-    /// 배지·제거 버튼·상위 선택지를 현재 구성에 맞춘다 — 카드를 지우면 번호가 밀린다.
+    /// 배지·제거 버튼·상위 선택지를 현재 구성에 맞춘다 - 카드를 지우면 번호가 밀린다.
     private func relabel() {
         for (i, c) in cards.enumerated() {
             c.isMain = (i == 0)
@@ -1363,14 +1363,14 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
             c.applyTheme(); c.applyScale()
         }
         relabelParents()
-        // 상한에 닿으면 타일은 남기되 비활성 — 자리가 사라지면 레이아웃이 튄다.
+        // 상한에 닿으면 타일은 남기되 비활성 - 자리가 사라지면 레이아웃이 튄다.
         addTile.enabled = cards.count < Self.maxAgents
         grid.cards = cards + [addTile]
         grid.needsLayout = true
         redrawChart()
     }
 
-    /// 상위 드롭다운은 "자기 자신을 뺀 나머지 에이전트" — 이름을 고쳐도 그대로 따라간다.
+    /// 상위 드롭다운은 "자기 자신을 뺀 나머지 에이전트" - 이름을 고쳐도 그대로 따라간다.
     private func relabelParents() {
         for (i, c) in cards.enumerated() where i > 0 {
             let keep = c.parent.indexOfSelectedItem
@@ -1414,7 +1414,7 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
             }
             for _ in 0..<7 { self.addAgent() }               // 상한(8)에서 멈춰야 함
             RLog.log("GRID selftest afterAdd=\(self.cards.count) addEnabled=\(self.addTile.enabled)")
-            // 상한 있는 for로 돈다 — 조건부 while은 removeCard의 하한 가드에 걸리는 순간
+            // 상한 있는 for로 돈다 - 조건부 while은 removeCard의 하한 가드에 걸리는 순간
             // 메인 스레드를 통째로 잡아먹고(앱이 SIGTERM에도 안 죽는다) 만다.
             for _ in 0..<Self.maxAgents where self.cards.count > Self.minAgents {
                 if let last = self.cards.last { self.removeCard(last.remove) }

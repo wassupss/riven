@@ -39,7 +39,7 @@ final class LSPManager {
 
     private struct Spec { let command: String; let args: [String]; let env: [String: String] }
 
-    // Resolution runs `zsh -ilc` (login shell) probes — expensive. Cache the result per
+    // Resolution runs `zsh -ilc` (login shell) probes - expensive. Cache the result per
     // server key (INCLUDING nil) so a failed lookup doesn't re-spawn shells on every LSP
     // request (which made go-to-references lag, then appear broken).
     private var specCache: [String: Spec?] = [:]
@@ -53,7 +53,7 @@ final class LSPManager {
         switch key {
         case "typescript":
             guard let node = findNode() else {
-                // No node — a standalone PATH-installed server is the only option.
+                // No node - a standalone PATH-installed server is the only option.
                 if let bin = which("typescript-language-server") {
                     return Spec(command: bin, args: ["--stdio"], env: [:])
                 }
@@ -126,7 +126,7 @@ final class LSPManager {
     }
 
     // Find a module's entry file across the common GLOBAL node_modules roots (npm -g,
-    // homebrew, nvm, custom prefix) — machine-independent, no hardcoded user path.
+    // homebrew, nvm, custom prefix) - machine-independent, no hardcoded user path.
     private func findGlobalModuleCLI(_ rel: String) -> String? {
         let fm = FileManager.default
         var roots: [String] = []

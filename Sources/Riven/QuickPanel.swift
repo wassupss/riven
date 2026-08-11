@@ -1,7 +1,7 @@
 import AppKit
 
 // ⌘O quick panel (matches riven's QuickPanel): a keyboard-driven list of "add panel"
-// actions — new terminal, panels, explorer toggle — with an icon + label + hint per
+// actions - new terminal, panels, explorer toggle - with an icon + label + hint per
 // row, a title header and a footer hint. ↑/↓ move, ↵ run, esc close. NOT a folder
 // picker (riven's ⌘O is the add-panel dialog; folder-open lives on the workspace +).
 struct QuickAction { let title: String; let hint: String; let symbol: String; let run: () -> Void }
@@ -90,7 +90,7 @@ final class QuickPanel: NSPanel, NSTableViewDataSource, NSTableViewDelegate {
         let a = actions[r]; dismiss(); a.run()
     }
 
-    // Keyboard nav handled here (the panel is first responder — no search field).
+    // Keyboard nav handled here (the panel is first responder - no search field).
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 53: dismiss()                                   // esc

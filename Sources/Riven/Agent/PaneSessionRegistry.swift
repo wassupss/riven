@@ -5,7 +5,7 @@ import Foundation
 //
 // riven already mints one UUID per terminal pane and threads it through the launch
 // command, the shell shim and the persisted session snapshot; this is just the reverse
-// index. Main-queue only, like [[AgentEdits]] — AgentHookServer hops to main before
+// index. Main-queue only, like [[AgentEdits]] - AgentHookServer hops to main before
 // touching it.
 final class PaneSessionRegistry {
     static let shared = PaneSessionRegistry()
@@ -16,7 +16,7 @@ final class PaneSessionRegistry {
     private var panes: [String: Pane] = [:]        // session UUID -> pane
     /// Panes whose agent has proven it can deliver hooks (a SessionStart arrived).
     /// Activity detection stays on the passive OSC/bell path until then, so a pane
-    /// running a plain shell — or an agent whose hooks aren't wired — never gets stuck
+    /// running a plain shell - or an agent whose hooks aren't wired - never gets stuck
     /// looking idle because we waited for events that will not come.
     private var hookBacked: Set<String> = []
 
@@ -40,7 +40,7 @@ final class PaneSessionRegistry {
     /// True once this pane has delivered at least one hook event.
     func isHookBacked(_ session: String) -> Bool { hookBacked.contains(session) }
 
-    /// Called on every routed event — the first one promotes the pane to hook-backed.
+    /// Called on every routed event - the first one promotes the pane to hook-backed.
     /// Returns true if this was the promotion, so the caller can log the handover.
     @discardableResult
     func markHookBacked(_ session: String) -> Bool {

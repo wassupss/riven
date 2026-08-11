@@ -13,7 +13,7 @@
   .esplit.row { flex-direction: row; }
   .esplit.col { flex-direction: column; }
   .esplit > * { flex: 1 1 0; min-width: 0; min-height: 0; }
-  /* the only seam between panes — a hair of the synced theme tone, no bright line */
+  /* the only seam between panes - a hair of the synced theme tone, no bright line */
   .esplit.row > * + * { border-left: 1px solid var(--seam, rgba(127,127,127,0.22)); }
   .esplit.col > * + * { border-top: 1px solid var(--seam, rgba(127,127,127,0.22)); }
   .egroup { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
@@ -43,7 +43,7 @@
   .emonaco { flex: 1 1 0; min-height: 0; position: relative; }
   /* Unify Monaco with the NATIVE chrome: force the editor background + gutter to the
      app canvas token (--bg, set by native from the theme) so the editor area, the tab
-     strips, and the native dock chrome are all ONE color — no seam/band between them.
+     strips, and the native dock chrome are all ONE color - no seam/band between them.
      Syntax token colors still come from Shiki. Mirrors riven's styles.css. */
   .monaco-editor,
   .monaco-editor .monaco-editor-background,
@@ -61,7 +61,7 @@
     background-size: 16px 16px;
     background-position: 0 0, 0 8px, 8px -8px, -8px 0; }
   .eimage.on { display: flex; }
-  /* PDF 는 탭 줄 아래를 통째로 쓴다 — WKWebView 자체 뷰어가 그 안을 채운다. */
+  /* PDF 는 탭 줄 아래를 통째로 쓴다 - WKWebView 자체 뷰어가 그 안을 채운다. */
   .epdf { position: absolute; inset: 30px 0 0 0; display: none; }
   .epdf.on { display: block; }
   .epdf embed { width: 100%; height: 100%; border: 0; }
@@ -95,7 +95,7 @@
     color: #6a6a6a; font: 13px -apple-system; pointer-events: none; }
   /* Peek / references widget: the file-match LIST uses a fixed workbench font, not the
      editor fontSize, so it ignored our font-size setting. Bind it to --riven-font-size.
-     (The embedded preview editor honors fontSize itself — don't force CSS on it.) */
+     (The embedded preview editor honors fontSize itself - don't force CSS on it.) */
   .monaco-editor .reference-zone-widget .ref-tree,
   .monaco-editor .reference-zone-widget .ref-tree .monaco-list-row,
   .monaco-editor .reference-zone-widget .ref-tree .reference-file,
@@ -109,7 +109,7 @@
   .monaco-editor, .monaco-editor .monaco-editor-background,
   .monaco-editor .margin, .monaco-editor .margin-view-overlays,
   .monaco-editor-background { background-color: var(--bg) !important; }
-  /* NOTE: don't override .minimap background — it hides the minimap's code overview. */
+  /* NOTE: don't override .minimap background - it hides the minimap's code overview. */
   /* agent diff review (matches riven) */
   .agent-add-line { background: rgba(76, 195, 138, 0.13); }
   .agent-add-gutter { background: #4cc38a; width: 3px !important; margin-left: 3px; }
@@ -149,10 +149,10 @@
 <script>
 // Monaco is bundled locally (monaco/vs). Syntax colors come from Shiki (the same
 // TextMate grammars + themes VS Code uses), bundled locally in shiki.js (wasm
-// inlined — no CDN). window.rivenInitShiki(monaco) takes over Monaco's registry.
+// inlined - no CDN). window.rivenInitShiki(monaco) takes over Monaco's registry.
 let editor = null;
 let shikiReady = false;
-// 에디터 동작 설정. 기본값은 예전 하드코딩 그대로 — 아무것도 안 고른 사람의 화면이
+// 에디터 동작 설정. 기본값은 예전 하드코딩 그대로 - 아무것도 안 고른 사람의 화면이
 // 바뀌면 안 된다. 네이티브가 rivenSetEditorOptions 로 실제 값을 넣어 준다. 새 그룹이
 // 생길 때 create() 가 이 값을 읽으므로, 분할한 에디터에도 같은 설정이 적용된다.
 let rivenEditorOpts = { tabSize: 2, minimap: true, wordWrap: false, ligatures: false };
@@ -172,7 +172,7 @@ function timed(label, fn) {
   const t0 = performance.now(); const r = fn(); const dt = performance.now() - t0;
   if (dt > 60) wlog('SLOW ' + label + ' ' + Math.round(dt) + 'ms'); return r;
 }
-// Run fn on the next frame (falls back to a macrotask) — used to push non-essential
+// Run fn on the next frame (falls back to a macrotask) - used to push non-essential
 // work (decoration mutation, native round-trips) off the current mousedown/focus
 // event so Monaco's own pointer-drag tracking for THIS event finishes first.
 const defer = (fn) => (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(fn);
@@ -276,7 +276,7 @@ function detachFromGroup(g, path) {
 }
 // A tab was dropped on a group. center → move into it; an edge → split that
 // direction (top/bottom = stacked, left/right = side-by-side). Native's flat tab
-// list is unchanged (the file stays open once) — only group assignment moves.
+// list is unchanged (the file stays open once) - only group assignment moves.
 function handleTabDrop(path, src, dest, zone) {
   const content = models[path] ? models[path].getValue() : '';
   const soloSelf = (src === dest && dest.tabs.length <= 1);   // splitting a 1-tab group off itself is a no-op
@@ -308,11 +308,11 @@ function createGroup() {
   const dropEl = document.createElement('div'); dropEl.className = 'edrop';
   const imgEl = document.createElement('div'); imgEl.className = 'eimage';
   imgEl.innerHTML = '<img alt=""><div class="meta"></div>';
-  // PDF 는 WKWebView 가 스스로 그린다 — 페이지 넘김·확대·검색·텍스트 선택이 공짜다.
+  // PDF 는 WKWebView 가 스스로 그린다 - 페이지 넘김·확대·검색·텍스트 선택이 공짜다.
   // 우리가 할 일은 자리를 내주는 것뿐이라, 뷰어를 직접 만들지 않는다.
   const pdfEl = document.createElement('div'); pdfEl.className = 'epdf';
   pdfEl.innerHTML = '<embed type="application/pdf">';
-  // 표(.xlsx/.csv/.tsv) — 값만 읽어 온 것을 격자로 그린다. 읽기 전용이다.
+  // 표(.xlsx/.csv/.tsv) - 값만 읽어 온 것을 격자로 그린다. 읽기 전용이다.
   const sheetEl = document.createElement('div'); sheetEl.className = 'esheet';
   sheetEl.innerHTML = '<div class="stabs"></div><div class="sbody"></div><div class="snote"></div>';
   el.appendChild(tabsEl); el.appendChild(monEl); el.appendChild(imgEl); el.appendChild(pdfEl);
@@ -325,7 +325,7 @@ function createGroup() {
   const ed = monaco.editor.create(monEl, {
     value: '', language: 'plaintext', theme: shikiReady ? currentTheme : 'vs-dark',
     fontFamily: 'Menlo, Monaco, "Courier New", monospace', fontSize: 12,
-    // 이 넷은 설정에서 온다 (기본값은 예전 하드코딩과 같다 — 아무것도 안 고른 사람의
+    // 이 넷은 설정에서 온다 (기본값은 예전 하드코딩과 같다 - 아무것도 안 고른 사람의
     // 화면이 바뀌면 안 된다). rivenSetEditorOptions 로 나중에 갈아 끼운다.
     minimap: { enabled: rivenEditorOpts.minimap }, automaticLayout: true, scrollBeyondLastLine: false,
     glyphMargin: true, tabSize: rivenEditorOpts.tabSize,
@@ -335,10 +335,10 @@ function createGroup() {
     inlineSuggest: { enabled: true }, model: null,
     // These dispatch to Monaco's editorWorkerService, which can't run in a background
     // worker here (the file:// page has a null origin, so WKWebView won't spawn the
-    // worker) — Monaco runs them on the main thread instead. occurrencesHighlight /
+    // worker) - Monaco runs them on the main thread instead. occurrencesHighlight /
     // selectionHighlight rescan on every cursor move, so keeping them off keeps cursor
     // movement snappy; wordBasedSuggestions is redundant with (and noisier than) the
-    // native LSP completions — VS Code itself disables it when a language server is
+    // native LSP completions - VS Code itself disables it when a language server is
     // present. completion/hover/definition/references all come from the LSP regardless.
     occurrencesHighlight: 'off', selectionHighlight: false,
     wordBasedSuggestions: 'off', links: false, codeLens: false
@@ -350,7 +350,7 @@ function createGroup() {
   groups.push(g);
   wireEd(g);
   // Bubble phase (not capture) so this runs AFTER Monaco's own mousedown handling
-  // for the click has already read the initial hit-test/position — a capture-phase
+  // for the click has already read the initial hit-test/position - a capture-phase
   // listener here used to fire (and mutate decorations via setActiveGroup) BEFORE
   // Monaco's handler ran, which could corrupt its drag-anchor and start a phantom
   // text selection (issue #5). The idx guard also makes this a true no-op for
@@ -381,7 +381,7 @@ function setActiveGroup(i) {
   currentPath = g.active;
   groups.forEach(x => x.el.classList.toggle('focused', x === g));
   // Defer the hunk-nav/blame refresh (blame mutates a Monaco decorations collection)
-  // off whatever event triggered this — a mousedown or a focus event fired mid-click.
+  // off whatever event triggered this - a mousedown or a focus event fired mid-click.
   // Mutating decorations synchronously inside that event can race Monaco's own
   // mousedown->drag-select tracking and start a phantom selection (issue #5). One
   // rAF tick is imperceptible and runs after Monaco has finished with the event.
@@ -413,7 +413,7 @@ function wireEd(g) {
   ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.Backslash, () => splitEditor('col'));
   ed.onDidChangeCursorPosition(() => { if (g.idx === activeIdx) scheduleBlame(); });
   // setActiveGroup itself is safe to call synchronously (its decoration/blame work
-  // is deferred internally, see setActiveGroup) — but the native round-trip below
+  // is deferred internally, see setActiveGroup) - but the native round-trip below
   // is NOT: focus fires synchronously as part of Monaco's own mousedown handling
   // (clicking into an unfocused editor focuses it before the click finishes being
   // processed), and `post({type:'focus'})` can make native call back into the
@@ -452,7 +452,7 @@ function tabEl(g, path) {
     post({ type: 'activeTab', path });
     g.ed.focus();
   });
-  // Drag the tab (header) onto an editor area to split / move — VS Code style.
+  // Drag the tab (header) onto an editor area to split / move - VS Code style.
   t.addEventListener('dragstart', (e) => {
     dragPath = path; dragSrc = g;
     try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/riven-tab', path); } catch (_) {}
@@ -467,7 +467,7 @@ function renderTabs(g) {
   g.tabEls = {};
   for (const p of g.tabs) { const el = tabEl(g, p); g.tabEls[p] = el; g.tabsEl.appendChild(el); }
 }
-// Toggle ONLY the .dirty class on the tab element(s) for `path` — no DOM rebuild.
+// Toggle ONLY the .dirty class on the tab element(s) for `path` - no DOM rebuild.
 // This is on the hot path (runs per keystroke via onDidChangeContent), so it must
 // stay O(groups showing path), not O(all tabs) like a renderTabs() call would be.
 function setTabDirty(path, dirty) {
@@ -486,7 +486,7 @@ const docVersion = {};   // path -> last LSP document version sent
 function bumpVersion(path) { docVersion[path] = (docVersion[path] || 1) + 1; return docVersion[path]; }
 // Push the model's CURRENT text to the server immediately (before an on-demand
 // request like definition/references) so the server never answers on a stale
-// buffer — this is why references/imports were being missed.
+// buffer - this is why references/imports were being missed.
 function flushChange(path) {
   const m = models[path]; if (!m) return;
   post({ type: 'lspSync', path, version: bumpVersion(path), text: m.getValue() });
@@ -494,7 +494,7 @@ function flushChange(path) {
 function ensureModel(path, content) {
   if (models[path]) return;
   // Bind the model to a real file:// URI (like VS Code / riven) so the LSP's
-  // file:// locations match our models — required for cross-file definition +
+  // file:// locations match our models - required for cross-file definition +
   // references peek previews.
   const uri = monaco.Uri.file(path);
   let model = monaco.editor.getModel(uri);
@@ -503,10 +503,10 @@ function ensureModel(path, content) {
   lastDirty[path] = false;
   let syncTimer = null;
   model.onDidChangeContent(() => {
-    // Hot path — fires on EVERY keystroke. Only touch the DOM / notify native when
+    // Hot path - fires on EVERY keystroke. Only touch the DOM / notify native when
     // the dirty flag actually FLIPS (previously this unconditionally called
     // refreshDirty(), which rebuilt the whole tab strip's innerHTML + re-attached
-    // every tab's listeners on every keystroke — the main cause of issue #6's
+    // every tab's listeners on every keystroke - the main cause of issue #6's
     // typing lag). Once a file is dirty this is a no-op for the rest of the edit.
     const d = isDirty(path);
     if (lastDirty[path] !== d) {
@@ -514,7 +514,7 @@ function ensureModel(path, content) {
       post({ type: 'dirty', path, dirty: d });
       setTabDirty(path, d);
     }
-    // Full-document sync stays debounced at 300ms — do NOT post the full text here
+    // Full-document sync stays debounced at 300ms - do NOT post the full text here
     // synchronously per keystroke.
     clearTimeout(syncTimer);
     syncTimer = setTimeout(() => post({ type: 'lspSync', path, version: bumpVersion(path), text: model.getValue() }), 300);
@@ -545,7 +545,7 @@ function isPDF(path) { return Object.prototype.hasOwnProperty.call(pdfSrc, path)
 const sheetData = {};   // path -> {sheets:[{name,rows,totalRows}], active:0, note:""}
 function isSheet(path) { return Object.prototype.hasOwnProperty.call(sheetData, path); }
 
-// 표를 그린다. 열 머리는 A,B,C…(엑셀과 같은 이름)로 두고, 첫 칸에 행 번호를 둔다 —
+// 표를 그린다. 열 머리는 A,B,C…(엑셀과 같은 이름)로 두고, 첫 칸에 행 번호를 둔다 -
 // 원본과 같은 좌표로 읽히지 않으면 표를 보는 의미가 없다.
 function renderSheet(g) {
   const path = g.active, d = sheetData[path];
@@ -711,7 +711,7 @@ function openInGroup(g, path, content) {
 }
 // Close a path from ONE group. If it's still shown in another group, just detach
 // here (model stays). If this is the last instance, let native drive the close
-// (dirty confirm) — native calls rivenClose to actually remove + dispose.
+// (dirty confirm) - native calls rivenClose to actually remove + dispose.
 function closeInGroup(g, path) {
   const elsewhere = groups.some(x => x !== g && x.tabs.includes(path));
   if (!elsewhere) { post({ type: 'closeTab', path }); return; }
@@ -740,7 +740,7 @@ function removeGroup(g) {
   renderLayout();
   setActiveGroup(Math.min(activeIdx, groups.length - 1));
 }
-// Split — open the current file in a NEW group beside the active one (shared model,
+// Split - open the current file in a NEW group beside the active one (shared model,
 // so it shows in both). dir: 'row' (right, ⌘\) or 'col' (down, ⌥⌘\).
 function splitEditor(dir) {
   if (groups.length >= 4) return;             // cap at 4 panes
@@ -787,7 +787,7 @@ function isDirty(path) {
   return m.getAlternativeVersionId() !== (savedVersion[path] ?? -1);
 }
 
-// Silence Monaco's OWN built-in TS/JS validator — for a standalone file (no
+// Silence Monaco's OWN built-in TS/JS validator - for a standalone file (no
 // tsconfig) it spams false "cannot find name/module" errors. Real diagnostics
 // come from our language server (onDiagnostics → rivenDiagnostics markers).
 function disableMonacoTSValidation() {
@@ -873,7 +873,7 @@ require(['vs/editor/editor.main'], async function () {
     }
   });
   // Find All References (Shift+F12 / peek). Without this provider Monaco always
-  // says "No references" — the LSP is never asked. flushChange first so imports +
+  // says "No references" - the LSP is never asked. flushChange first so imports +
   // fresh usages are included.
   monaco.languages.registerReferenceProvider(LSP_LANGS, {
     provideReferences: async (model, position, context) => {
@@ -898,7 +898,7 @@ require(['vs/editor/editor.main'], async function () {
     monaco.editor.setModelMarkers(m, 'lsp', markers);
   };
 
-  // ---- User snippets (riven's snippets.ts) — prefix expands to body with ${1} stops ----
+  // ---- User snippets (riven's snippets.ts) - prefix expands to body with ${1} stops ----
   window.rivenSnippets = window.rivenSnippets || [];
   monaco.languages.registerCompletionItemProvider({ pattern: '**' }, {
     provideCompletionItems: (model, position) => {
@@ -917,7 +917,7 @@ require(['vs/editor/editor.main'], async function () {
   });
   window.rivenSetSnippets = function (list) { window.rivenSnippets = Array.isArray(list) ? list : []; };
 
-  // NOTE: editor SPLIT is handled INSIDE this WebView (see the Editor GROUPS section) —
+  // NOTE: editor SPLIT is handled INSIDE this WebView (see the Editor GROUPS section) -
   // ⌘\ adds a Monaco editor group with its own HTML tab strip. The native side keeps a
   // flat tab list for persistence and drives full closes (dirty confirm).
 
@@ -998,7 +998,7 @@ window.rivenOpen = function (path, content) {
   openInGroup(g, path, content);
   g.ed.focus();
 };
-// Reveal a line/column (1-based) in the given file — used by search results.
+// Reveal a line/column (1-based) in the given file - used by search results.
 window.rivenReveal = function (path, line, column) {
   const g = groups.find(x => x.active === path); if (!g) return;
   const pos = { lineNumber: line, column: Math.max(1, column) };
@@ -1024,7 +1024,7 @@ window.rivenClose = function (path) {
   if (ag) updateHunkNav(currentPath);
   if (!groups.some(x => x.tabs.length)) document.getElementById('empty').style.display = 'flex';
 };
-// Switch the visible tab set WITHOUT disposing models — the workspace-switch path.
+// Switch the visible tab set WITHOUT disposing models - the workspace-switch path.
 // rivenShowEmpty() disposes every Monaco model, so returning to a workspace had to re-create
 // and re-tokenize each file: that was 1-2s of the switch. Keeping models resident makes a
 // return a pure tab swap. Models are freed when a workspace is CLOSED (rivenDisposePaths).
@@ -1060,7 +1060,7 @@ window.rivenShowEmpty = function () {
   const g = groups[0];
   if (g) { g.tabs = []; g.active = null; g.ed.setModel(null); renderTabs(g); }
   currentPath = null;
-  // Dispose EVERY Monaco model, not just the tabs — otherwise files opened across
+  // Dispose EVERY Monaco model, not just the tabs - otherwise files opened across
   // workspaces stay resident (text + tokenization + undo history) for the whole
   // session (a per-session memory leak). Editors were detached above (setModel(null)
   // / removeGroup), so disposing the models now is safe.
@@ -1086,9 +1086,9 @@ window.rivenOpenBackground = function (path, content) {
 // ---- Editor keymap presets (VS Code / JetBrains / Sublime) → Monaco ----
 // Monaco ships the VS Code keymap by default; for the other presets we register the
 // differing chords via addKeybindingRules (Monaco can't REMOVE a default rule, so a
-// preset switch fully "settles" after a reload — new chords work immediately though).
+// preset switch fully "settles" after a reload - new chords work immediately though).
 const EDITOR_PRESETS = {
-  vscode: {},   // Monaco default — nothing to add
+  vscode: {},   // Monaco default - nothing to add
   jetbrains: {
     'editor.action.startFindReplaceAction': 'Mod+r',
     'editor.action.addSelectionToNextFindMatch': 'Ctrl+g',
@@ -1211,7 +1211,7 @@ function clearAgent(path) {
 // Deleted-line view-zones are DOM nodes Monaco must measure on every layout/render.
 // A large git-diff (heavy refactor, generated file) can produce hundreds/thousands of
 // them, which makes EVERY interaction (cursor move, scroll, typing) re-measure the lot
-// — that was the "editor lags only for files opened from the Changes panel" jank. Cap
+// - that was the "editor lags only for files opened from the Changes panel" jank. Cap
 // the total deleted rows rendered as zones; the green added-line decorations + hunk
 // nav + revert glyphs are unaffected, so the review stays fully usable.
 const MAX_DEL_ZONE_ROWS = 400;
@@ -1238,7 +1238,7 @@ function rivenAgentDiffNow(path, before, after) {
       glyphs.push({ range: new monaco.Range(s, 1, s, 1), options: { glyphMarginClassName: 'agent-revert-glyph',
         glyphMarginHoverMessage: { value: T('editor.revertThisChange','이 변경 되돌리기') } } });
     } else {
-      // pure deletion — anchor glyph on the line after the deletion point
+      // pure deletion - anchor glyph on the line after the deletion point
       const s = Math.max(1, h.afterStart);
       st.lineToHunk[s] = h;
       glyphs.push({ range: new monaco.Range(s, 1, s, 1), options: { glyphMarginClassName: 'agent-revert-glyph',
@@ -1247,7 +1247,7 @@ function rivenAgentDiffNow(path, before, after) {
   }
   st.decoCol = editor.createDecorationsCollection(decos);
   st.glyphCol = editor.createDecorationsCollection(glyphs);
-  // Red deleted lines as view-zones — budgeted (see MAX_DEL_ZONE_ROWS).
+  // Red deleted lines as view-zones - budgeted (see MAX_DEL_ZONE_ROWS).
   let rowBudget = MAX_DEL_ZONE_ROWS, truncated = false;
   editor.changeViewZones(acc => {
     for (const h of hunks) {
@@ -1317,7 +1317,7 @@ function acceptCurrentHunk() {
   window.rivenAgentDiff(currentPath, computeBeforeFrom(remaining, st.after), st.after);
 }
 // Reconstruct a "before" text that yields only the remaining hunks (apply reverts of
-// the accepted ones is not needed — simplest: keep after as before for accepted).
+// the accepted ones is not needed - simplest: keep after as before for accepted).
 function computeBeforeFrom(hunks, after) {
   const lines = after.length ? after.split('\n') : [];
   // Build before by replacing each remaining hunk's after-range with its before-lines.

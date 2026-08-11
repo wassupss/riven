@@ -1,12 +1,12 @@
 import Foundation
 
-// Scans for installed AI coding agents — the native analogue of riven's `cli:list`
+// Scans for installed AI coding agents - the native analogue of riven's `cli:list`
 // (src/main/cli.ts). Selecting one opens a terminal running that command. Only agents
 // actually installed are returned.
 //
 // A Finder/Dock-launched macOS app inherits a MINIMAL environment: its PATH is just the
 // system defaults (`/usr/bin:/bin:/usr/sbin:/sbin`) and does NOT include Homebrew,
-// npm/pnpm/yarn/volta/asdf global bins, ~/.local/bin, ~/.cargo/bin, etc. — exactly where
+// npm/pnpm/yarn/volta/asdf global bins, ~/.local/bin, ~/.cargo/bin, etc. - exactly where
 // tools like `codex` (`@openai/codex`), `claude`, `gemini` live. So a naive PATH lookup
 // finds nothing even though the CLIs are installed. This mirrors the same class of bug
 // that once hid `git` from the app.
@@ -18,12 +18,12 @@ import Foundation
 enum AgentDiscovery {
     // Session persistence per pane: if `sessionFlag`/`resumeFlag` are set, riven mints a
     // UUID per pane, launches with `<cmd> <sessionFlag> <uuid>`, stores the uuid, and on
-    // restore runs `<cmd> <resumeFlag> <uuid>` (from the same workspace dir) — resuming that
+    // restore runs `<cmd> <resumeFlag> <uuid>` (from the same workspace dir) - resuming that
     // pane's EXACT conversation. Only Claude Code is confirmed; others launch fresh.
     struct Agent {
         let name: String; let cmd: String; let symbol: String
-        var sessionFlag: String? = nil   // e.g. "--session-id" — mint & attach a session id
-        var resumeFlag: String? = nil    // e.g. "--resume" — resume that id on restore
+        var sessionFlag: String? = nil   // e.g. "--session-id" - mint & attach a session id
+        var resumeFlag: String? = nil    // e.g. "--resume" - resume that id on restore
     }
 
     private static let candidates: [(name: String, cmd: String, symbol: String, session: String?, resume: String?)] = [
@@ -42,11 +42,11 @@ enum AgentDiscovery {
     static func codexCmd() -> String? { available().first { $0.name == "Codex" }?.cmd }
 
     // `claude --version` (e.g. "2.1.220"), cached per launch. riven PARSES the CLI's stream-json,
-    // so a CLI upgrade can change behaviour under us — we surface the version and flag changes
+    // so a CLI upgrade can change behaviour under us - we surface the version and flag changes
     // rather than touching the user's own auto-update setting.
     private static var cachedVersion: String??
     /// Re-read `claude --version` from disk, busting the per-launch cache. The CLI auto-updates
-    /// itself in place while riven runs, so the launch-cached value goes stale — this is how the
+    /// itself in place while riven runs, so the launch-cached value goes stale - this is how the
     /// "restart agents on the current CLI" feature notices an update happened mid-session.
     @discardableResult
     static func claudeVersion(fresh: Bool) -> String? {
@@ -109,7 +109,7 @@ enum AgentDiscovery {
     }
 
     // Ask the user's real login shell to resolve every candidate in one shot. A GUI app's
-    // inherited PATH is minimal, so we run an interactive login shell (`-ilc`) — it sources
+    // inherited PATH is minimal, so we run an interactive login shell (`-ilc`) - it sources
     // ~/.zprofile AND ~/.zshrc, picking up nvm/homebrew/pyenv/asdf/volta and the like. We
     // print a `cmd\tpath` line per resolvable command. Best-effort: any failure just leaves
     // the dir scan to cover it.
@@ -136,7 +136,7 @@ enum AgentDiscovery {
             guard parts.count == 2 else { continue }
             let cmd = String(parts[0]).trimmingCharacters(in: .whitespaces)
             let path = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            // command -v may return a shell builtin/function name (no slash) — keep only real paths.
+            // command -v may return a shell builtin/function name (no slash) - keep only real paths.
             if path.hasPrefix("/") { result[cmd] = path }
         }
         return result

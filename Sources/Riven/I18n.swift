@@ -1,6 +1,6 @@
 import AppKit
 
-// Korean/English localization — a native port of riven's i18n.ts. Korean is the
+// Korean/English localization - a native port of riven's i18n.ts. Korean is the
 // source language; English is the translation. `t("key", ["n": 3])` looks up the
 // dictionary, picks ko/en by the current language, and interpolates {name} params.
 // Language is a persisted setting; changing it posts `.rivenLanguageChanged` so the
@@ -15,17 +15,17 @@ extension Notification.Name {
     // 에디터/터미널 폰트 크기 설정이 바뀜 → 각 뷰가 즉시 반영 (재시작 불필요).
     static let rivenFontSizeChanged = Notification.Name("rivenFontSizeChanged")
     /// 사용량을 남은 %/쓴 % 중 어느 쪽으로 보여 줄지 바뀌었다. 헤더·팝오버·고정 스트립이
-    /// 함께 다시 그려져야 한다 — 한 곳만 바뀌면 화면 안에서 방향이 갈린다.
+    /// 함께 다시 그려져야 한다 - 한 곳만 바뀌면 화면 안에서 방향이 갈린다.
     static let rivenUsageModeChanged = Notification.Name("rivenUsageModeChanged")
     // Divider drag begin/end. NSSplitView's mouseDown runs a modal tracking loop for the whole
-    // drag, so these bracket it exactly — unlike viewWillStartLiveResize, which isn't guaranteed
+    // drag, so these bracket it exactly - unlike viewWillStartLiveResize, which isn't guaranteed
     // for divider tracking. Panes with expensive layout (the chat transcript) freeze on begin.
     static let rivenDividerDragBegan = Notification.Name("rivenDividerDragBegan")
     static let rivenDividerDragEnded = Notification.Name("rivenDividerDragEnded")
 }
 
 enum I18n {
-    // 첫 접근 시 프로세스 선호 언어까지 맞춘다 — Sparkle 같은 프레임워크는 자기 .lproj를
+    // 첫 접근 시 프로세스 선호 언어까지 맞춘다 - Sparkle 같은 프레임워크는 자기 .lproj를
     // AppleLanguages 기준으로 고르므로, 이걸 안 맞추면 앱은 한국어인데 업데이트 창만
     // 영어로 뜬다.
     static var current: Lang = {
@@ -61,6 +61,17 @@ enum I18n {
     static let dict: [String: (ko: String, en: String)] = [
         // common
         "common.close": ("닫기", "Close"), "common.cancel": ("취소", "Cancel"),
+        "common.later": ("나중에", "Later"),
+        "settings.sessionRestore": ("세션 복원", "Restore session"),
+        "settings.sessionRestoreDesc": ("업데이트로 세션 구조가 바뀌기 전 백업이 있습니다. 워크스페이스·탭·그룹이 꼬였다면 그때로 되돌릴 수 있어요.",
+                                        "There is a backup from before the update changed the session structure. If workspaces, tabs, or groups got tangled, you can roll back to it."),
+        "settings.sessionRestoreBtn": ("백업으로 복원", "Restore backup"),
+        "settings.sessionRestoreConfirm": ("업데이트 이전 세션 상태로 되돌립니다. 그 이후에 연 탭·대화·워크스페이스 변경은 사라집니다. 계속할까요?",
+                                           "This rolls back to the session as it was before the update. Any tabs, chats, or workspace changes made since then will be lost. Continue?"),
+        "settings.sessionRestoreDone": ("복원 준비 완료", "Ready to restore"),
+        "settings.sessionRestoreDoneDesc": ("riven 을 재시작하면 백업된 세션으로 열립니다.",
+                                            "Restart riven to reopen with the backed-up session."),
+        "settings.restartNow": ("지금 재시작", "Restart now"),
         "common.ok": ("확인", "OK"),
         // crash reporting (opt-out disclosure + settings toggle)
         "crash.noticeTitle": ("익명 크래시 리포트", "Anonymous crash reports"),
@@ -174,14 +185,14 @@ enum I18n {
                                      "No answer for {m} minutes, so this tool run was denied"),
         "chat.expired.session": ("이 팬의 세션이 다시 시작돼 질문이 취소됐습니다", "This pane's session restarted, so the question was cancelled"),
         "chat.expired.badge": ("만료됨", "expired"),
-        "chat.subagentStart": ("서브에이전트 {n} 시작 — {d} (옆 패널에서 진행이 보입니다)",
-                               "Sub-agent {n} started — {d} (progress shows in its panel)"),
-        "chat.subagentDone": ("서브에이전트 {n} 완료 — 결과는 그 패널에 있습니다",
-                              "Sub-agent {n} finished — its result is in that panel"),
+        "chat.subagentStart": ("서브에이전트 {n} 시작 - {d} (옆 패널에서 진행이 보입니다)",
+                               "Sub-agent {n} started - {d} (progress shows in its panel)"),
+        "chat.subagentDone": ("서브에이전트 {n} 완료 - 결과는 그 패널에 있습니다",
+                              "Sub-agent {n} finished - its result is in that panel"),
         "chat.tool.expired": ("이 요청은 이미 만료되어 선택을 전달하지 못했습니다.",
                               "That request already expired, so the choice wasn't delivered."),
         "chat.plan.tip": ("계획 파일 열기 · {f}", "Open the plan file · {f}"),
-        // /cost — plan usage from the OAuth usage API
+        // /cost - plan usage from the OAuth usage API
         "chat.usage.title": ("사용량", "Usage"),
         "chat.usage.loading": ("사용량 확인 중…", "Checking usage…"),
         "chat.usage.session": ("5시간 창", "5-hour window"),
@@ -238,16 +249,16 @@ enum I18n {
         "chat.cliChanged": ("claude CLI가 {prev} → {now} 로 변경되었습니다. 이상 동작 시 riven 업데이트를 확인하세요.",
                             "claude CLI changed {prev} → {now}. If something misbehaves, check for a riven update."),
         "chat.cliUpgrade.title": ("claude CLI가 업데이트됐어요 (v{ver}). 지금 돌고 있는 대화는 이전 버전이라 재시작하면 최신으로 이어집니다.",
-                                  "claude CLI updated (v{ver}). Running chats still use the old one — restart to continue on the latest."),
+                                  "claude CLI updated (v{ver}). Running chats still use the old one - restart to continue on the latest."),
         "chat.cliUpgrade.all": ("전체 재시작 (대화 이어받기)", "Restart all (resume conversations)"),
         "chat.cliUpgrade.this": ("이 챗만 재시작", "Restart this chat only"),
         "chat.cliUpgrade.later": ("나중에", "Later"),
-        "chat.cliRestarted": ("현재 CLI(v{ver})로 재시작했습니다 — 대화를 이어받습니다.",
-                              "Restarted on the current CLI (v{ver}) — resuming the conversation."),
+        "chat.cliRestarted": ("현재 CLI(v{ver})로 재시작했습니다 - 대화를 이어받습니다.",
+                              "Restarted on the current CLI (v{ver}) - resuming the conversation."),
         "chat.cliRestartBusy": ("턴이 끝난 뒤에 재시작할 수 있어요 (지금 작업 중).",
                                 "Can restart once the current turn finishes (busy right now)."),
-        "chat.status.cliStale": ("  ↑ 이 대화는 v{old} 로 도는 중 — /restart 로 v{new} 로 재시작",
-                                 "  ↑ this chat runs v{old} — /restart to move to v{new}"),
+        "chat.status.cliStale": ("  ↑ 이 대화는 v{old} 로 도는 중 - /restart 로 v{new} 로 재시작",
+                                 "  ↑ this chat runs v{old} - /restart to move to v{new}"),
         "chat.updating": ("claude 업데이트 확인 중…", "Checking for claude updates…"),
         "chat.updateDone": ("업데이트 완료(출력 없음)", "Update finished (no output)"),
         "chat.updateApplies": ("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.",
@@ -415,7 +426,7 @@ enum I18n {
         "usage.never": ("아직 갱신 못 함", "never updated"),
         "usage.noToken": ("로그인 정보를 찾지 못했습니다", "couldn't find your login"),
         "usage.unauthorized": ("로그인 정보가 만료돼 갱신하지 못했습니다", "your login expired, so this didn't update"),
-        "usage.rateLimited": ("요청이 많아 {n}초 뒤에 다시 시도합니다", "too many requests — retrying in {n}s"),
+        "usage.rateLimited": ("요청이 많아 {n}초 뒤에 다시 시도합니다", "too many requests - retrying in {n}s"),
         "usage.failed": ("갱신하지 못했습니다 ({msg})", "couldn't update ({msg})"),
         "browser.bookmarks": ("북마크", "Bookmarks"),
         "browser.certTitle": ("{h} 의 인증서를 확인할 수 없습니다", "Can't verify the certificate for {h}"),
@@ -455,12 +466,12 @@ enum I18n {
         "browser.agent.tabSelect": ("에이전트가 {n}번 탭으로 이동", "Agent switched to tab {n}"),
         "browser.agent.tabClose": ("에이전트가 {n}번 탭을 닫음", "Agent closed tab {n}"),
         "browser.certBlocked": ("{h} 의 인증서를 확인할 수 없어 열지 않았습니다",
-                                "Didn't open {h} — its certificate couldn't be verified"),
+                                "Didn't open {h} - its certificate couldn't be verified"),
         "browser.downloads": ("내려받기", "Downloads"),
         "browser.downloadRetryTemp": ("내려받기 폴더에 쓸 수 없어 임시 폴더로 다시 받습니다",
-                                      "Can't write to the Downloads folder — retrying into a temp folder"),
-        "browser.downloadingTemp": ("{f} 내려받는 중 — 내려받기 폴더에 쓸 수 없어 임시 폴더에 받습니다",
-                                    "Downloading {f} — the Downloads folder isn't writable, saving to a temp folder"),
+                                      "Can't write to the Downloads folder - retrying into a temp folder"),
+        "browser.downloadingTemp": ("{f} 내려받는 중 - 내려받기 폴더에 쓸 수 없어 임시 폴더에 받습니다",
+                                    "Downloading {f} - the Downloads folder isn't writable, saving to a temp folder"),
         "browser.reloadTab": ("새로고침", "Reload"),
         "browser.duplicateTab": ("탭 복제", "Duplicate tab"),
         "browser.copyAddress": ("주소 복사", "Copy address"),
@@ -476,7 +487,7 @@ enum I18n {
         "browser.noHistory": ("아직 방문 기록이 없습니다", "No history yet"),
         "browser.noBookmarks": ("아직 북마크가 없습니다", "No bookmarks yet"),
         "browser.noMatch": ("찾는 게 없습니다", "Nothing matched"),
-        "browser.privateTab": ("시크릿 탭 — 기록을 남기지 않습니다", "Private tab — nothing is recorded"),
+        "browser.privateTab": ("시크릿 탭 - 기록을 남기지 않습니다", "Private tab - nothing is recorded"),
         "time.justNow": ("방금", "just now"),
         "time.minsAgo": ("{n}분 전", "{n}m ago"),
         "time.hoursAgo": ("{n}시간 전", "{n}h ago"),
@@ -600,7 +611,7 @@ enum I18n {
                                   "Found {p} but it's empty (nothing customized in ghostty yet)"),
         "settings.ghosttyNone": ("ghostty 설정 파일을 찾지 못했습니다", "No ghostty config found"),
         "settings.ghosttyNothing": ("가져올 값이 없습니다", "Nothing to import"),
-        "settings.ghosttyApplied": ("가져왔습니다 — {items}", "Imported — {items}"),
+        "settings.ghosttyApplied": ("가져왔습니다 - {items}", "Imported - {items}"),
         "settings.fontSize": ("폰트 크기", "Font size"),
         "settings.colorTheme": ("색상 테마", "Color theme"),
         "settings.notifications": ("알림", "Notifications"),
@@ -667,7 +678,7 @@ enum I18n {
         "account.noBackend": ("Supabase 미구성: 이 네이티브 빌드에는 riven 계정 백엔드가 아직 연결되어 있지 않습니다.",
                               "Supabase not configured: this native build has no riven account backend yet."),
         "account.secretsLocal": ("API 키 등 민감한 값은 동기화되지 않고 이 기기에만 저장됩니다.",
-                                 "Secrets like API keys are never synced — they stay on this machine."),
+                                 "Secrets like API keys are never synced - they stay on this machine."),
         "account.signIn": ("로그인", "Sign in"),
         "account.signInDesc": ("GitHub 계정으로 riven 에 로그인합니다", "Sign in to riven with GitHub"),
         "account.signInFailed": ("로그인 실패: {msg}", "Sign-in failed: {msg}"),
@@ -685,8 +696,26 @@ enum I18n {
         "settings.cliFound": ("설치됨", "Installed"),
         "settings.cliNone": ("설치된 에이전트 CLI 를 찾지 못했습니다. claude / codex 를 설치하면 여기에 나타납니다.",
                              "No agent CLI found. Install claude / codex and it shows up here."),
-        "settings.codexHooksNote": ("Codex 는 처음 보는 훅을 실행하기 전에 한 번 확인을 받습니다. 첫 Codex 탭에서 「Hooks need review」 화면이 뜨면 t 를 눌러 신뢰해 주세요 — 그래야 진행 중·승인 대기 상태가 riven 에 표시됩니다. 한 번만 물어봅니다.",
-                                   "Codex asks before running hooks it hasn't seen. On your first Codex tab it shows \"Hooks need review\" — press t to trust them, and riven can then show busy / waiting state. It only asks once."),
+        "settings.codexHooksNote": ("Codex 는 처음 보는 훅을 실행하기 전에 한 번 확인을 받습니다. 첫 Codex 탭에서 「Hooks need review」 화면이 뜨면 t 를 눌러 신뢰해 주세요 - 그래야 진행 중·승인 대기 상태가 riven 에 표시됩니다. 한 번만 물어봅니다.",
+                                   "Codex asks before running hooks it hasn't seen. On your first Codex tab it shows \"Hooks need review\" - press t to trust them, and riven can then show busy / waiting state. It only asks once."),
+        "settings.promptSection": ("고정 프롬프트", "Fixed prompt"),
+        "settings.promptNote": ("모든 에이전트(챗·터미널)에 덧붙는 기본 지침입니다. CLAUDE.md 처럼 쓰되 프로젝트가 아니라 riven 전체에 걸립니다. 새로 시작하는 대화부터 적용됩니다.",
+                                "Prepended to every agent (chat & terminal). Like CLAUDE.md, but riven-wide instead of per-project. Applies to newly started conversations."),
+        "settings.promptHint": ("예: 항상 한국어로 답하고, 커밋 메시지는 간결하게…",
+                                "e.g. Always answer in English; keep commit messages terse…"),
+        "settings.promptTemplate": ("템플릿 넣기…", "Insert template…"),
+        "settings.promptTpl.warm": ("따뜻한 톤", "Warm tone"),
+        "settings.promptTpl.warmBody": ("항상 따뜻하고 친근한 말투로 답합니다. 딱딱한 지시문 대신, 곁에서 함께 일하는 동료처럼 다정하게 설명하고 격려를 곁들입니다.",
+                                        "Always reply in a warm, friendly tone. Instead of terse directives, explain things kindly and with a bit of encouragement, like a teammate working alongside you."),
+        "settings.promptTpl.concise": ("간결하게", "Concise"),
+        "settings.promptTpl.conciseBody": ("군더더기 없이 핵심만 짧게 답합니다. 서론·중복 설명·불필요한 요약은 생략하고 결론을 먼저 말합니다.",
+                                           "Answer with only the essentials - no preamble, no redundant explanation, no needless summaries. Lead with the conclusion."),
+        "settings.promptTpl.review": ("꼼꼼한 리뷰", "Thorough review"),
+        "settings.promptTpl.reviewBody": ("코드를 제안하기 전에 엣지 케이스·에러 처리·성능·보안을 스스로 점검합니다. 각 변경의 근거와 트레이드오프를 함께 설명합니다.",
+                                          "Before proposing code, check edge cases, error handling, performance, and security yourself. Explain the rationale and trade-offs of each change."),
+        "settings.promptTpl.korean": ("한국어 우선", "Korean first"),
+        "settings.promptTpl.koreanBody": ("특별한 요청이 없으면 항상 한국어로 답합니다. 코드 주석과 커밋 메시지도 한국어를 기본으로 합니다.",
+                                          "Unless asked otherwise, always answer in Korean. Default code comments and commit messages to Korean too."),
         "settings.snippets": ("스니펫", "Snippets"),
         "settings.snippetsHint": ("접두어를 입력하면 본문이 자동완성으로 제안됩니다. ${1} 로 탭 정지점을 넣을 수 있어요.", "Type the prefix to get the body as a completion. Use ${1} for tab stops."),
         "settings.snippetPrefix": ("접두어", "Prefix"), "settings.snippetBody": ("본문", "Body"),
@@ -703,7 +732,7 @@ enum I18n {
         "ws.copyPath": ("경로 복사", "Copy Path"), "ws.close": ("워크스페이스 닫기", "Close workspace"),
         "ws.reveal": ("Finder에서 보기", "Reveal in Finder"), "ws.color": ("색상", "Color"),
         "ws.renameTitle": ("워크스페이스 이름 변경", "Rename workspace"),
-        // editor (webview — injected via rivenSetI18n)
+        // editor (webview - injected via rivenSetI18n)
         "editor.emptyTitle": ("파일을 선택하세요", "Select a file to edit"),
         "editor.prevChange": ("이전 변경", "Previous change"), "editor.nextChange": ("다음 변경", "Next change"),
         "editor.accept": ("수락", "Accept"), "editor.revert": ("되돌리기", "Revert"),
@@ -715,7 +744,7 @@ enum I18n {
         "preview.captureTitle": ("현재 화면을 캡처해 에이전트에 전달", "Capture the current view and send to the agent"),
         // notifications
         "term.done": ("작업이 완료되었습니다", "Done"),
-        // agent lifecycle (hook-driven — see docs/agent-hooks-design.md)
+        // agent lifecycle (hook-driven - see docs/agent-hooks-design.md)
         "agent.needsApproval": ("승인이 필요합니다", "Approval needed"),
         "agent.needsApprovalTool": ("{tool} 실행 승인이 필요합니다", "Approval needed to run {tool}"),
         "agent.failed": ("턴이 오류로 끝났습니다", "The turn ended with an error"),

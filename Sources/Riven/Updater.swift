@@ -12,7 +12,7 @@ final class Updater: NSObject {
     static let shared = Updater()
     private var controller: SPUStandardUpdaterController?
 
-    // 확인이 진행 중인지 — 설정 창을 닫았다 다시 열어도 상태 라벨을 복원할 수 있게 공개한다.
+    // 확인이 진행 중인지 - 설정 창을 닫았다 다시 열어도 상태 라벨을 복원할 수 있게 공개한다.
     private(set) var isChecking = false
     // 확인이 끝났을 때(최신 · 업데이트 발견 · 실패 · 사용자가 창을 닫음) 호출된다.
     // Sparkle이 자기 UI를 닫아도 우리 쪽 "확인 중…" 라벨이 남지 않도록 하는 훅.
@@ -29,7 +29,7 @@ final class Updater: NSObject {
 
     // Start the updater (background scheduled checks) if a feed is configured.
     func start() {
-        // Sparkle 번들이 로드되기 전에 프로세스 선호 언어를 riven 설정과 맞춰 둔다 —
+        // Sparkle 번들이 로드되기 전에 프로세스 선호 언어를 riven 설정과 맞춰 둔다 -
         // 이 시점 이후 Sparkle이 고르는 .lproj가 결정된다.
         I18n.applyProcessLanguage(I18n.current)
         guard configured, controller == nil else { return }
@@ -57,7 +57,7 @@ final class Updater: NSObject {
         controller?.updater.checkForUpdateInformation()
     }
 
-    // User-initiated "Check for Updates…" — Sparkle drives its own progress/UI.
+    // User-initiated "Check for Updates…" - Sparkle drives its own progress/UI.
     @objc func checkForUpdates(_ sender: Any?) {
         guard configured else {
             let a = NSAlert()
@@ -74,7 +74,7 @@ final class Updater: NSObject {
     }
 
     // 어떤 경로로 끝나든 상태를 내리고 알린다 (Sparkle 콜백은 여러 개가 올 수 있으므로
-    // 멱등하게 — 라벨을 유휴 문구로 되돌리는 동작이라 중복 호출은 무해하다).
+    // 멱등하게 - 라벨을 유휴 문구로 되돌리는 동작이라 중복 호출은 무해하다).
     private func finishCheck() {
         isChecking = false
         DispatchQueue.main.async { [weak self] in self?.onCheckFinished?() }
@@ -89,7 +89,7 @@ extension Updater: SPUUpdaterDelegate {
     }
     func updaterDidNotFindUpdate(_ updater: SPUUpdater) { finishCheck() }
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) { finishCheck() }
-    // 업데이트를 찾은 경우에도 확인 단계는 끝난 것 — 이후는 Sparkle 자체 UI가 맡는다.
+    // 업데이트를 찾은 경우에도 확인 단계는 끝난 것 - 이후는 Sparkle 자체 UI가 맡는다.
     // Also surface the version to the app so it can show a persistent in-app banner (a
     // background check's own alert is easy to miss / dismiss).
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {

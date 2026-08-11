@@ -3,7 +3,7 @@ import AppKit
 // Shared control components + metrics.
 //
 // Sizes used to be hand-written at every call site (a height here, a bezel there, padding
-// nowhere), so the same kind of control ended up a different size in each panel — and a field
+// nowhere), so the same kind of control ended up a different size in each panel - and a field
 // with no height constraint collapsed to its minimum. Build controls through these factories and
 // they come out consistent, themed, and correctly sized.
 enum UIMetrics {
@@ -80,7 +80,7 @@ final class RivenSelect: NSPopUpButton, Themable {
     func applyTheme() { contentTintColor = Theme.fg }
 }
 
-/// Outlined secondary button — same height/radius as the primary so the two line up
+/// Outlined secondary button - same height/radius as the primary so the two line up
 /// in a column or a row; used for non-committing actions next to a primary (add a row,
 /// cancel, reset).
 final class RivenSecondaryButton: NSButton, Themable {
@@ -106,7 +106,7 @@ final class RivenSecondaryButton: NSButton, Themable {
     }
 }
 
-/// Flat underline tabs — the same tab language as the dock strip (text + a 2pt accent underline
+/// Flat underline tabs - the same tab language as the dock strip (text + a 2pt accent underline
 /// under the active one, hairline baseline across the whole strip). NOT pills: a pill reads as a
 /// filter chip, and a row of pills next to another row of pills reads as nothing at all.
 final class RivenTabStrip: NSView, Themable, Scalable {
@@ -161,7 +161,7 @@ final class RivenTabStrip: NSView, Themable, Scalable {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
-    // 아래쪽 하드라인(기준선)은 스트립 자신이 그린다 — 탭 사이 간격에서도 끊기지 않게.
+    // 아래쪽 하드라인(기준선)은 스트립 자신이 그린다 - 탭 사이 간격에서도 끊기지 않게.
     override func draw(_ dirty: NSRect) {
         Theme.hairline.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()

@@ -9,9 +9,9 @@ import AppKit
 //          Sources/Riven/UI/StatusAnimation.swift -o /tmp/shimmer-bench && /tmp/shimmer-bench
 //
 // 3단계로 잰다:
-//   A 정지    — 뷰만 올려 두고 애니메이션 끔 (바닥값)
-//   B 8+8 구동 — shimmer 8개 + 펄스 점 8개 동시 (요구 조건인 "동시에 8개")
-//   C 가림     — 창을 화면에서 내림. 게이트가 전부 멈춰야 하고 CPU 는 A 로 돌아와야 한다
+//   A 정지    - 뷰만 올려 두고 애니메이션 끔 (바닥값)
+//   B 8+8 구동 - shimmer 8개 + 펄스 점 8개 동시 (요구 조건인 "동시에 8개")
+//   C 가림     - 창을 화면에서 내림. 게이트가 전부 멈춰야 하고 CPU 는 A 로 돌아와야 한다
 //
 // CPU% = (user+sys CPU 시간 증가분 / 실제 흐른 시간) × 100. 이 프로세스 기준이다
 // (WindowServer 쪽 비용은 여기 포함되지 않는다).

@@ -3,11 +3,11 @@ import AppKit
 // 카드 드래그 재정렬용 pasteboard 타입 (dock의 dockPBType과 같은 방식).
 let wsRailPBType = NSPasteboard.PasteboardType("com.riven.workspacecard")
 
-// Left workspace rail — cmux-style cards (matches riven's WorkspaceTabs). One
+// Left workspace rail - cmux-style cards (matches riven's WorkspaceTabs). One
 // card per open folder; click to activate, + to open another. Phase 4 will add
 // multi-workspace switching; for now it shows the active workspace.
 final class WorkspaceRail: NSView, Themable {
-    // 카드 좌우 여백 — 섹션 타이틀(12pt)과 같은 인셋이라 창 왼쪽 가장자리에 붙지 않는다.
+    // 카드 좌우 여백 - 섹션 타이틀(12pt)과 같은 인셋이라 창 왼쪽 가장자리에 붙지 않는다.
     private static let cardInset: CGFloat = 12
     private var workspaces: [URL] = []
     private var active: URL?
@@ -26,7 +26,7 @@ final class WorkspaceRail: NSView, Themable {
         let subtitle: String?     // agent kind / branch, dimmed
         let activity: AgentStatus
         let iconSymbol: String?   // agent-type glyph (Claude=sparkles, Codex=…); nil = none
-        /// 아바타 키(역할 이름). 있으면 종류 글리프 대신 그 에이전트의 아바타를 쓴다 —
+        /// 아바타 키(역할 이름). 있으면 종류 글리프 대신 그 에이전트의 아바타를 쓴다 -
         /// 조직도·독 탭과 같은 얼굴이라 "누가 누구인지"가 세 군데에서 같게 읽힌다.
         var avatarKey: String? = nil
         /// 사용자가 고른 아바타 ("글리프.색"). nil 이면 이름 해시 자동 배정.
@@ -82,7 +82,7 @@ final class WorkspaceRail: NSView, Themable {
     // 카드를 끌어 순서를 바꾸면 새 순서 전체를 넘긴다 (main.swift가 workspaces 배열을
     // 같은 순서로 맞추고 persistSession()으로 저장 → 재시작해도 순서가 유지된다).
     var onReorder: (([URL]) -> Void)?
-    var onRename: ((URL, String?) -> Void)?   // (url, newName|nil) — persist custom workspace name
+    var onRename: ((URL, String?) -> Void)?   // (url, newName|nil) - persist custom workspace name
 
     // 드래그 중인 워크스페이스 (dock의 DockManager.draggingPanel과 같은 패턴).
     static var draggingWorkspace: URL?
@@ -125,7 +125,7 @@ final class WorkspaceRail: NSView, Themable {
         scroll.autohidesScrollers = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        // 삽입 인디케이터는 스크롤 위에 떠 있는 오버레이 — 프레임으로 직접 배치한다.
+        // 삽입 인디케이터는 스크롤 위에 떠 있는 오버레이 - 프레임으로 직접 배치한다.
         dropLine.wantsLayer = true
         dropLine.layer?.backgroundColor = Theme.accent.cgColor
         dropLine.layer?.cornerRadius = 1
@@ -140,7 +140,7 @@ final class WorkspaceRail: NSView, Themable {
             add.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             add.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             add.widthAnchor.constraint(equalToConstant: 22),
-            // 스크롤뷰는 좌우 끝까지 채운다 — 스크롤바가 창 오른쪽 끝에 붙도록.
+            // 스크롤뷰는 좌우 끝까지 채운다 - 스크롤바가 창 오른쪽 끝에 붙도록.
             // 카드의 좌우 여백은 stack.edgeInsets로 준다: documentView의 leading 제약은
             // NSScrollView가 문서를 원점에 배치하며 무시하지만(그래서 예전엔 왼쪽만 붙었다),
             // edgeInsets는 스택이 직접 적용하므로 확실하게 먹는다.
@@ -293,7 +293,7 @@ final class WorkspaceRail: NSView, Themable {
     }
 
     // Workspace header: colour dot + name + agent-count badge, with the folder PATH and git
-    // BRANCH beneath (Orca-like). Transparent — the enclosing group container carries the
+    // BRANCH beneath (Orca-like). Transparent - the enclosing group container carries the
     // active highlight. Draggable for reorder + right-click menu.
     private func makeWorkspaceRow(_ url: URL) -> NSView {
         let isActive = url == active
@@ -330,7 +330,7 @@ final class WorkspaceRail: NSView, Themable {
 
         // Count badge: a capsule CONTAINER with a CENTERED label. The label no longer drives
         // the badge frame, so a single digit is a true circle and multi-digit is a padded
-        // capsule — never a squished ellipse (the old label-with-fixed-height distorted).
+        // capsule - never a squished ellipse (the old label-with-fixed-height distorted).
         let n = (agents[url] ?? []).count
         let countBadge = NSView()
         countBadge.wantsLayer = true
@@ -473,7 +473,7 @@ final class WorkspaceRail: NSView, Themable {
         row.addSubview(dot); row.addSubview(name)
         var cons: [NSLayoutConstraint] = [
             row.heightAnchor.constraint(equalToConstant: UIScale.pt(24)),
-            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),   // no indent — aligns with the workspace dot column
+            dot.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),   // no indent - aligns with the workspace dot column
             dot.centerYAnchor.constraint(equalTo: name.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: UIScale.pt(11)),             // gear/check need a little size to read
             dot.heightAnchor.constraint(equalToConstant: UIScale.pt(11)),
@@ -500,7 +500,7 @@ final class WorkspaceRail: NSView, Themable {
             underline.layer?.cornerRadius = 1
             underline.translatesAutoresizingMaskIntoConstraints = false
             row.addSubview(underline)
-            // Underline spans from the icon (when present) through the name — not just the text.
+            // Underline spans from the icon (when present) through the name - not just the text.
             cons += [
                 underline.leadingAnchor.constraint(equalTo: icon != nil ? iconView.leadingAnchor : name.leadingAnchor),
                 underline.trailingAnchor.constraint(equalTo: name.trailingAnchor),
@@ -534,7 +534,7 @@ final class WorkspaceRail: NSView, Themable {
         add(t("ws.rename"), #selector(renameCard(_:)))
         add(t("ws.reveal"), #selector(revealCard(_:)))
         add(t("ws.copyPath"), #selector(copyPathCard(_:)))
-        // Subtle per-workspace background tint (glassmorphism-like — text stays legible).
+        // Subtle per-workspace background tint (glassmorphism-like - text stays legible).
         let colorItem = NSMenuItem(title: t("ws.color"), action: nil, keyEquivalent: "")
         let colorMenu = NSMenu()
         let presets: [(String, NSColor?)] = [("기본", nil), ("빨강", .systemRed), ("주황", .systemOrange),
@@ -657,9 +657,9 @@ final class WSCard: NSView, NSDraggingSource {
 // Workspace agent status indicator (radar-pulse):
 //   • idle    → a small stationary dot
 //   • busy    → an accent dot with rings that expand outward and fade, forever (a live/radar
-//               ping — clearly reads as "running")
+//               ping - clearly reads as "running")
 //   • waiting → 승인 대기. 경고색 점이 숨쉬듯 깜빡인다 (독 탭 점 / 조직도 칩과 같은 색).
-//               완료와 같은 초록 체크로 보이면 안 된다 — 사람이 움직여야 하는 쪽이다.
+//               완료와 같은 초록 체크로 보이면 안 된다 - 사람이 움직여야 하는 쪽이다.
 //   • done    → only a green checkmark that DRAWS ITSELF (strokeEnd 0→1), no dot/rings
 final class StatusIndicator: NSView {
     private let core = CAShapeLayer()    // centre dot
@@ -709,7 +709,7 @@ final class StatusIndicator: NSView {
         ring.add(g, forKey: "ping")
     }
 
-    // 무한히 도는 것(레이더 핑 / 승인 대기 숨쉬기)은 독 탭과 같은 게이트를 통과한다 —
+    // 무한히 도는 것(레이더 핑 / 승인 대기 숨쉬기)은 독 탭과 같은 게이트를 통과한다 -
     // 행이 창에서 빠지거나(레일은 자주 통째로 다시 만들어진다) 창이 가려지면 멈춘다.
     // 한 번만 그려지는 체크 표시는 게이트가 필요 없다.
     private lazy var gate = ViewAnimationGate(view: self,
@@ -774,7 +774,7 @@ final class StatusIndicator: NSView {
 }
 
 // A lightweight clickable row for agent children (no drag, unlike WSCard). Click jumps to
-// that agent's pane. No hover highlight — the tracking-area approach left a stuck residual
+// that agent's pane. No hover highlight - the tracking-area approach left a stuck residual
 // across the rail's frequent rebuilds, so it's removed entirely per user request.
 final class RailRow: NSView {
     var onSelect: (() -> Void)?

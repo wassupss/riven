@@ -1,7 +1,7 @@
 import Foundation
 
 // Debug logger. Appends to a per-user, owner-only file under Application Support
-// (NOT world-readable /tmp — a shared temp dir would leak workspace paths / trace
+// (NOT world-readable /tmp - a shared temp dir would leak workspace paths / trace
 // data to any local user). Raw binary stdout is buffered and lost, so file logging
 // is how we trace real-run behavior.
 enum RLog {

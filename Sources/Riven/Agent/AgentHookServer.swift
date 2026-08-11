@@ -4,13 +4,13 @@ import Foundation
 //
 // WHY a socket rather than polling the terminal: riven used to derive busy/idle by
 // dumping every terminal's viewport 3.3×/s (ghostty_surface_read_text), which the
-// libghostty docs explicitly warn against — "expensive … shouldn't be called too
-// often" — and which leaked ~10 KB per call, ~9 MB/min in a normal session. Hooks
+// libghostty docs explicitly warn against - "expensive … shouldn't be called too
+// often" - and which leaked ~10 KB per call, ~9 MB/min in a normal session. Hooks
 // give the same information as authoritative push events at zero idle cost, and they
 // distinguish states screen-scraping never could (waiting on approval vs. working).
 //
 // WHY unix domain rather than a localhost port: no port allocation or collisions, no
-// network exposure, and filesystem permissions ARE the authentication — the socket
+// network exposure, and filesystem permissions ARE the authentication - the socket
 // lives in a 0700 directory only this user can traverse.
 final class AgentHookServer {
     static let shared = AgentHookServer()
@@ -58,7 +58,7 @@ final class AgentHookServer {
         // forced to 0700 so another local user can't even reach it.
         Self.ensureSupportDir()
         guard reclaim(path) else {
-            RLog.log("HOOKS another riven owns \(path) — not starting a second listener")
+            RLog.log("HOOKS another riven owns \(path) - not starting a second listener")
             return
         }
 

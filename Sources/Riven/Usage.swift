@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-// Local Claude Code usage — a native port of riven's usage:today. Walks
+// Local Claude Code usage - a native port of riven's usage:today. Walks
 // ~/.claude/projects/**/*.jsonl session logs, sums today's tokens + estimated
 // cost per model (deduped by message id), matching riven's status-bar widget.
 enum Usage {
@@ -108,14 +108,14 @@ enum Usage {
                 guard let ld = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: ld) as? [String: Any] else { continue }
                 // Today only (local), by top-level timestamp. NOTE: the formatters are
-                // cached statics — creating an ISO8601DateFormatter per line (thousands
+                // cached statics - creating an ISO8601DateFormatter per line (thousands
                 // of lines × thousands of files) pegged a whole core for seconds.
                 guard let ts = obj["timestamp"] as? String,
                       let date = Usage.isoFrac.date(from: ts) ?? Usage.isoPlain.date(from: ts),
                       cal.isDateInToday(date) else { continue }
                 guard let msg = obj["message"] as? [String: Any],
                       let usage = msg["usage"] as? [String: Any] else { continue }
-                // Dedupe by message id / requestId (per file — ids are session-scoped).
+                // Dedupe by message id / requestId (per file - ids are session-scoped).
                 let id = (msg["id"] as? String) ?? (obj["requestId"] as? String) ?? UUID().uuidString
                 if st!.seen.contains(id) { continue }
                 st!.seen.insert(id)
@@ -157,7 +157,7 @@ enum Usage {
         return result
     }
 
-    // Cached formatters — reused across every log line (see today()).
+    // Cached formatters - reused across every log line (see today()).
     private static let isoFrac: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
     }()
@@ -249,7 +249,7 @@ enum Usage {
     }
 
     // Resolve the token AT MOST ONCE per app session and cache the result (even a
-    // failure), so the keychain "allow access" dialog can appear a single time — never
+    // failure), so the keychain "allow access" dialog can appear a single time - never
     // again this session, whether the user allowed or denied it. (The repeated prompt
     // came from re-reading the keychain on every 60s poll.)
     private static var cachedToken: String??   // nil = not resolved; .some(nil) = tried, none
@@ -264,17 +264,17 @@ enum Usage {
         // 1) ~/.claude/.credentials.json (no prompt).
         let cred = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/.credentials.json")
         if let t = tokenFromJSON(try? Data(contentsOf: cred)) { cachedToken = t; return t }
-        // 2) macOS keychain — may prompt once; the result (allow or deny) is cached.
+        // 2) macOS keychain - may prompt once; the result (allow or deny) is cached.
         let t = tokenFromJSON(keychainCredentials())
         cachedToken = t
         return t
     }
     // Read Claude Code's stored credential from the login keychain by shelling out to
-    // /usr/bin/security — NOT an in-process SecItemCopyMatching. This is why the "allow
+    // /usr/bin/security - NOT an in-process SecItemCopyMatching. This is why the "allow
     // access" dialog stopped nagging on every update:
     //
     //   • In-process access identifies the REQUESTING APP as riven. When the user clicks
-    //     "Always Allow", the grant is pinned to riven.app's code signature — and riven
+    //     "Always Allow", the grant is pinned to riven.app's code signature - and riven
     //     auto-updates constantly, so every new binary invalidates the grant and the dialog
     //     comes back. (This was the reported "왜 계속 물어봐".)
     //   • Via /usr/bin/security the requesting app is a STABLE, Apple-signed system binary,
@@ -282,7 +282,7 @@ enum Usage {
     //     openusage (robinebers/openusage) reads it without the recurring prompt.
     //
     // Try the current-user account first (Claude Code stores it under `-a <user>`), then a
-    // service-only lookup as a fallback. Exit 44 = errSecItemNotFound (no credential) — the
+    // service-only lookup as a fallback. Exit 44 = errSecItemNotFound (no credential) - the
     // normal "not logged in" case, distinct from a real failure.
     private static func keychainCredentials() -> Data? {
         let service = "Claude Code-credentials"

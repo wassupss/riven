@@ -10,19 +10,19 @@ import Foundation
 enum AgentHooksInstall {
 
     // Verified against Claude Code on 2026-07-27 with `claude --init-only`:
-    //  • `--settings` DEEP-MERGES the `hooks` key — a user's own hooks still fire
+    //  • `--settings` DEEP-MERGES the `hooks` key - a user's own hooks still fire
     //    alongside riven's, so passing our file is not destructive.
     //  • the hook process inherits the pane's environment, so RIVEN_PANE_SESSION is
     //    readable from `riven-hook`'s own env (this is what makes routing work for
     //    agents like Codex that can't be launched with a caller-chosen session id).
     //  • the payload arrives on stdin as JSON with session_id / cwd / hook_event_name.
 
-    // (event, matcher) — matcher filters PostToolUse to just the file-editing tools so we
+    // (event, matcher) - matcher filters PostToolUse to just the file-editing tools so we
     // get a precise per-file change signal, not the whole tool firehose. nil = every call.
     struct Hook { let event: String; let matcher: String? }
 
     /// Status events + the file-edit signal that drives the Changes panel. PreToolUse and
-    /// unmatched PostToolUse are still excluded — only Edit/Write/MultiEdit are recorded.
+    /// unmatched PostToolUse are still excluded - only Edit/Write/MultiEdit are recorded.
     private static let claudeHooks: [Hook] = [
         Hook(event: "SessionStart", matcher: nil),
         Hook(event: "UserPromptSubmit", matcher: nil),
@@ -38,7 +38,7 @@ enum AgentHooksInstall {
     /// `codex exec` with a probe hook on each name and reading what actually fired.
     /// It has no Notification / StopFailure. PostToolUse exists but Codex's tool names
     /// are its own (apply_patch / shell, not Edit|Write|MultiEdit), so the Changes-panel
-    /// matcher would never hit — that's left out rather than shipped as a dead matcher.
+    /// matcher would never hit - that's left out rather than shipped as a dead matcher.
     private static let codexHookSpecs: [Hook] = [
         Hook(event: "SessionStart", matcher: nil),
         Hook(event: "UserPromptSubmit", matcher: nil),
@@ -65,8 +65,8 @@ enum AgentHooksInstall {
     }
 
     /// One matcher group per event, each running the bridge.
-    ///   async  — never make the agent wait on us; delivery is fire-and-forget.
-    ///   timeout— a floor under a wedged socket; the helper already self-limits to ~1s.
+    ///   async  - never make the agent wait on us; delivery is fire-and-forget.
+    ///   timeout- a floor under a wedged socket; the helper already self-limits to ~1s.
     private static func hooksBlock(agent: String, hooks: [Hook], helper: String) -> [String: Any] {
         var out: [String: Any] = [:]
         for h in hooks {
@@ -87,7 +87,7 @@ enum AgentHooksInstall {
     /// Regenerated every launch so an app move/upgrade can't leave a stale helper path.
     static func claudeSettingsPath() -> String? {
         guard let helper = helperPath else {
-            RLog.log("HOOKS riven-hook helper missing — agent hooks disabled")
+            RLog.log("HOOKS riven-hook helper missing - agent hooks disabled")
             return nil
         }
         let url = AgentHookServer.ensureSupportDir().appendingPathComponent("claude-hooks.json")
@@ -108,13 +108,13 @@ enum AgentHooksInstall {
     //
     // The trust flag looks like the fix and is the opposite of one. Verified in riven's
     // own terminal: WITH the flag, Codex prints "hooks may run without review", skips the
-    // review screen — and the hooks still show Active=0 and never fire. WITHOUT it, Codex
+    // review screen - and the hooks still show Active=0 and never fire. WITHOUT it, Codex
     // opens "Hooks need review · 6 hooks are new or changed" listing exactly riven's six,
     // and trusting them there is what turns them on. So riven does NOT pass the flag; a
     // toggle for it would have been a switch that promises status and delivers silence.
     //
     // What that means for the user: the FIRST Codex tab shows Codex's own review screen
-    // (press t to trust all). That is Codex asking, not riven — riven only supplies the
+    // (press t to trust all). That is Codex asking, not riven - riven only supplies the
     // hook set, and the answer is remembered per hook set, so it is asked once.
     //
     // The delivery chain past that point is verified end to end: Codex ran the real

@@ -1,7 +1,7 @@
 import AppKit
 
 // riven's terminal-panel state ring (.terminal-panel.busy/.attn::after), drawn as
-// a non-interactive overlay ABOVE the Metal terminal — an inset box-shadow on the
+// a non-interactive overlay ABOVE the Metal terminal - an inset box-shadow on the
 // panel itself would sit behind the edge-to-edge terminal surface and be invisible.
 //
 //  • busy  → a STATIC 1.5px inset ring in the violet "working" accent.
@@ -31,7 +31,7 @@ final class AttnRingView: NSView {
 
         gradient.type = .conic
         // The ember: dim accent for most of the sweep, brightening to a hot head near
-        // the end (≈350°) — the same stops riven uses in its conic-gradient.
+        // the end (≈350°) - the same stops riven uses in its conic-gradient.
         gradient.locations = [0.0, 0.56, 0.83, 0.97, 1.0]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
         gradient.endPoint = CGPoint(x: 0.5, y: 0.0)
@@ -53,7 +53,7 @@ final class AttnRingView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // Never intercept clicks — the terminal underneath must stay interactive.
+    // Never intercept clicks - the terminal underneath must stay interactive.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
     override var mouseDownCanMoveWindow: Bool { false }
 
@@ -70,14 +70,14 @@ final class AttnRingView: NSView {
         maskShape.frame = bounds; maskShape.path = path
         busyRing.frame = bounds; busyRing.path = path
         // Oversize the gradient (centered) so that at any rotation it still covers the
-        // whole ring band — a bounds-sized square would leave the corners uncovered.
+        // whole ring band - a bounds-sized square would leave the corners uncovered.
         let side = max(bounds.width, bounds.height) * 1.6
         gradient.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         gradient.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
     }
 
-    // Re-read theme colors (accent / working accent) — called on theme change.
+    // Re-read theme colors (accent / working accent) - called on theme change.
     func applyColors() {
         let accent = Theme.accent
         gradient.colors = [

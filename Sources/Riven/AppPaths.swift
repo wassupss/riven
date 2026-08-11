@@ -4,11 +4,11 @@ import Foundation
 // snapshot, logs, hook socket, the shell shim, cached secrets).
 //
 // Everything used to hardcode ~/Library/Application Support/riven-native, which meant a
-// second riven launched for testing shared the primary install's session file — and its
+// second riven launched for testing shared the primary install's session file - and its
 // restore then relaunched `claude --session-id <id>` for sessions already live in the
 // primary, colliding ("Session ID already in use"). Routing every path through here lets
 // an isolated instance point at its own directory via RIVEN_DATA_DIR: separate session
-// (so nothing is restored), separate socket, separate log — zero interference with a
+// (so nothing is restored), separate socket, separate log - zero interference with a
 // running primary. Unset (the normal case) keeps the exact original location.
 enum AppPaths {
     static let supportDir: URL = {

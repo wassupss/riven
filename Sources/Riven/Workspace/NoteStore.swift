@@ -1,6 +1,6 @@
 import Foundation
 
-/// 메모 저장소 — 메모 하나가 실제 .md 파일 하나다.
+/// 메모 저장소 - 메모 하나가 실제 .md 파일 하나다.
 ///
 /// 예전에는 워크스페이스마다 JSON 배열 하나에 제목·본문을 넣어 뒀다. 그래서 메모를 다른
 /// 도구로 열거나, 그대로 문서로 넘기거나, 마크다운으로 미리 보는 게 전부 불가능했다.
@@ -10,8 +10,8 @@ import Foundation
 /// 두 갈래를 다룬다:
 ///   • 개인 메모 (`~/Library/Application Support/riven-native/notes/<enc-ws>/*.md`)
 ///     레포 밖이라 git status 에 뜨지 않고 에이전트의 `git add -A` 에도 안 걸린다.
-///     저장 위치를 옮기지 않은 이유다 — 예전 주석의 판단을 그대로 지킨다.
-///   • 워크스페이스 문서 (프로젝트 안의 .md) — 열어서 그 자리에서 고친다.
+///     저장 위치를 옮기지 않은 이유다 - 예전 주석의 판단을 그대로 지킨다.
+///   • 워크스페이스 문서 (프로젝트 안의 .md) - 열어서 그 자리에서 고친다.
 enum NoteScope: String, Codable {
     case personal    // riven 지원 폴더의 개인 메모
     case workspace   // 프로젝트 안의 .md 문서
@@ -27,7 +27,7 @@ struct Note: Equatable {
     var agentTouched: Bool = false
 
     var id: String { url.path }
-    /// 본문은 목록을 그릴 때 읽지 않는다 — 메모가 수백 개여도 목록은 파일 이름/시각만 본다.
+    /// 본문은 목록을 그릴 때 읽지 않는다 - 메모가 수백 개여도 목록은 파일 이름/시각만 본다.
     func read() -> String { (try? String(contentsOf: url, encoding: .utf8)) ?? "" }
 }
 
@@ -64,7 +64,7 @@ enum NoteStore {
             .sorted { $0.updated > $1.updated }
     }
 
-    /// 워크스페이스 안의 .md 문서. 목록은 얕게 훑는다 — 큰 레포에서 전부 뒤지면 패널을 열
+    /// 워크스페이스 안의 .md 문서. 목록은 얕게 훑는다 - 큰 레포에서 전부 뒤지면 패널을 열
     /// 때마다 디스크를 갈아 마신다. 무시 폴더는 건너뛰고 상한을 둔다.
     static func workspaceDocs(_ ws: URL, limit: Int = 200) -> [Note] {
         let skip: Set<String> = ["node_modules", ".git", ".build", "dist", "build", "vendor",
@@ -127,7 +127,7 @@ enum NoteStore {
         guard !t0.isEmpty else { return b0.isEmpty ? "" : b0 + "\n" }
         return "# \(t0)\n\n" + (b0.isEmpty ? "" : b0 + "\n")
     }
-    /// compose 의 반대 — 첫 `# 헤딩` 을 제목으로 떼어낸다.
+    /// compose 의 반대 - 첫 `# 헤딩` 을 제목으로 떼어낸다.
     static func split(_ text: String) -> (title: String, body: String) {
         var lines = text.components(separatedBy: "\n")
         guard let first = lines.first?.trimmingCharacters(in: .whitespaces), first.hasPrefix("# ") else {
@@ -141,7 +141,7 @@ enum NoteStore {
 
     @discardableResult
     static func write(_ text: String, to url: URL, backup: Bool = true) -> Bool {
-        // 덮어쓰기는 되돌릴 수 있어야 한다 — 이전 내용을 .bak 로 한 벌 남긴다.
+        // 덮어쓰기는 되돌릴 수 있어야 한다 - 이전 내용을 .bak 로 한 벌 남긴다.
         if backup, FileManager.default.fileExists(atPath: url.path) {
             let bak = url.appendingPathExtension("bak")
             try? FileManager.default.removeItem(at: bak)
@@ -162,7 +162,7 @@ enum NoteStore {
         FileManager.default.fileExists(atPath: url.appendingPathExtension("bak").path)
     }
 
-    /// 새 개인 메모 파일을 만든다. 파일 이름은 만들 때 한 번만 정한다 — 제목을 고칠 때마다
+    /// 새 개인 메모 파일을 만든다. 파일 이름은 만들 때 한 번만 정한다 - 제목을 고칠 때마다
     /// 파일 이름이 따라 바뀌면 다른 도구에서 열어 둔 경로가 계속 깨진다.
     static func create(in ws: URL, title: String, body: String = "") -> Note {
         let base = slug(title).isEmpty ? "note-\(stamp())" : slug(title)
@@ -196,7 +196,7 @@ enum NoteStore {
 
     // ---- 예전 JSON → .md 이사 ----------------------------------------------------
 
-    /// 예전 형식이 남아 있으면 .md 로 옮긴다. 원본 JSON 은 지우지 않고 이름만 바꿔 둔다 —
+    /// 예전 형식이 남아 있으면 .md 로 옮긴다. 원본 JSON 은 지우지 않고 이름만 바꿔 둔다 -
     /// 옮기다 뭔가 잘못돼도 사용자의 메모가 사라지면 안 된다.
     static func migrateIfNeeded(_ ws: URL) {
         let legacy = legacyFile(ws)

@@ -1,6 +1,6 @@
 import Foundation
 
-// Drives the `claude` CLI headless in stream-json mode to back a NATIVE chat panel — no
+// Drives the `claude` CLI headless in stream-json mode to back a NATIVE chat panel - no
 // terminal TUI, no Agent SDK (the SDK is API-key only; the CLI in this mode uses the user's
 // SUBSCRIPTION login from the keychain, so there is no API billing). Bidirectional: user
 // turns are written as JSON lines to stdin, structured events are read from stdout.
@@ -47,7 +47,7 @@ final class ClaudeChatSession {
     var onSubagentTool: ((_ parentId: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentDone: ((_ id: String, _ result: String) -> Void)?
     /// 서브에이전트가 돌린 도구의 결과. 예전에는 이 이벤트를 아무 데도 보내지 않아서,
-    /// 서브 팬에는 "Bash <명령>" 만 뜨고 출력이 영영 안 나왔다 — 오래 걸리는 명령일수록
+    /// 서브 팬에는 "Bash <명령>" 만 뜨고 출력이 영영 안 나왔다 - 오래 걸리는 명령일수록
     /// 죽은 것처럼 보였다 (사용자가 다시 물어보게 되는 지점).
     var onSubagentToolResult: ((_ parentId: String, _ text: String, _ isError: Bool) -> Void)?
     var onFileEdited: ((_ path: String) -> Void)?   // a main-thread edit landed → feed the Changes panel
@@ -118,7 +118,7 @@ final class ClaudeChatSession {
             let d = h.availableData
             // EOF (process exited / closed stdout): availableData is empty AND the fd stays
             // signalled forever, so the handler is re-invoked in a tight loop pegging a worker
-            // thread at 100%. MUST detach the handler here — this was the runaway CPU when an agent
+            // thread at 100%. MUST detach the handler here - this was the runaway CPU when an agent
             // died (bad --resume, crash, 529-exit): every dead session left a spinning pipe reader.
             if d.isEmpty { h.readabilityHandler = nil; return }
             self?.queue.async { self?.feed(d) }
@@ -138,7 +138,7 @@ final class ClaudeChatSession {
                    "parent_tool_use_id": NSNull()])
     }
 
-    // Change the CLI permission mode WITHOUT restarting — verified to work live over the
+    // Change the CLI permission mode WITHOUT restarting - verified to work live over the
     // stream-json control channel, so an in-flight turn keeps running.
     private var ctrlSeq = 0
     func setPermissionMode(_ mode: String) {
@@ -273,7 +273,7 @@ final class ClaudeChatSession {
             let cost = o["total_cost_usd"] as? Double
             let sid = o["session_id"] as? String
             let u = usage(o["usage"] as? [String: Any])
-            // Surface failures: on is_error the turn produced no (or partial) answer — e.g. a 529
+            // Surface failures: on is_error the turn produced no (or partial) answer - e.g. a 529
             // Overloaded, max-turns, or interrupt. Previously this was dropped, so the turn just
             // ended with a "완료" notification and nothing shown (the "결과가 날아간" report).
             var err: String? = nil
@@ -355,7 +355,7 @@ final class ClaudeChatSession {
         if lines.count <= 28 { return s }
         return lines.prefix(28).joined(separator: "\n") + "\n… (\(lines.count - 28)줄 더)"
     }
-    // Raw (absolute) file path a tool acts on, for opening it in riven's editor — nil for
+    // Raw (absolute) file path a tool acts on, for opening it in riven's editor - nil for
     // tools without a file target.
     private func toolPath(_ name: String, _ input: [String: Any]) -> String? {
         switch name {

@@ -3,7 +3,7 @@ import Foundation
 // Codex 페인이 재시작 후에도 같은 대화로 돌아오게 하는 최소한의 장부.
 //
 // Claude 는 riven 이 세션 id 를 골라 줄 수 있다 (`--session-id <uuid>`). Codex 에는
-// 그런 플래그가 없다 — id 는 Codex 가 정하고, `codex resume <id>` 로만 되돌아간다.
+// 그런 플래그가 없다 - id 는 Codex 가 정하고, `codex resume <id>` 로만 되돌아간다.
 // 그래서 방향이 반대다: riven 이 id 를 주는 게 아니라 받아 적는다.
 //
 // 받아 적을 자리는 이미 있었다. SessionStart 훅 payload 에 `session_id` 가 실려 오고,
@@ -42,7 +42,7 @@ enum CodexSessions {
         return UUID(uuidString: id) != nil ? id : nil
     }
 
-    /// 페인이 닫히면 장부에서도 지운다 — 닫은 대화가 새 페인에 되살아나면 안 된다
+    /// 페인이 닫히면 장부에서도 지운다 - 닫은 대화가 새 페인에 되살아나면 안 된다
     /// (Claude 쪽에서 "폴더의 최신 대화" 를 주워 오다 겪은 것과 같은 실수).
     static func forget(pane: String) {
         guard let p = path(forPane: pane) else { return }

@@ -1,15 +1,15 @@
 import AppKit
 
 // Native chat panel: drives `claude` headless (ClaudeChatSession, subscription auth) and
-// renders a rich custom chat — not the terminal TUI, not a WebView. Each user turn produces
+// renders a rich custom chat - not the terminal TUI, not a WebView. Each user turn produces
 // a TurnBlock with a thinking/writing/elapsed header + token usage; main-thread tokens stream
 // with a smooth typewriter reveal interleaved with tool lines (edits show a diff); sub-agents
-// get their own lane. A permission-mode selector — cyclable with Shift+Tab like the CLI —
+// get their own lane. A permission-mode selector - cyclable with Shift+Tab like the CLI -
 // includes an interactive "승인 요청" mode that pops an approval card per tool call. A
 // scrollable slash-command popup autocompletes `/` commands.
 final class ChatPanel: NSView, Themable, Scalable {
     private let scroll = NSScrollView()                   // conversation
-    /// 계획 모드 결과 배지 — CLI가 ~/.claude/plans/<slug>.md 로 저장한 계획의 제목을
+    /// 계획 모드 결과 배지 - CLI가 ~/.claude/plans/<slug>.md 로 저장한 계획의 제목을
     /// 대화 오른쪽 위에 살짝 겹쳐 띄운다. 계획대로 작업이 도는 동안 계속 보인다.
     private let planBadge = PlanBadge()
     private var planPath: String?
@@ -50,7 +50,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// the session starts (agent groups pick one per agent) and persisted with the layout.
     var preferredModel: String?
     private var commands: [SlashCommand] = []
-    /// 색칠용 조회 집합 (소문자). commands 와 함께 한 번만 만든다 — 타이핑마다 디스크를 읽지 않는다.
+    /// 색칠용 조회 집합 (소문자). commands 와 함께 한 번만 만든다 - 타이핑마다 디스크를 읽지 않는다.
     private var commandNames: Set<String> = []
     private var lastScaleFactor: CGFloat = 1
     private var pendingResume: String?                   // resume this session id on next bind
@@ -65,9 +65,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // UI labels. The approval hook is ALWAYS installed and fires for BOTH main- and sub-agent
     // tools (verified), so riven's per-mode policy covers sub-agents too. CLI mode is "plan"
     // for 계획, else "default" (the hook governs). Switching is a live control message.
-    //   계획      — read-only planning
-    //   승인 요청 — ask per gated tool (cards)
-    //   자동 실행 — auto-run everything, no cards (main + sub)
+    //   계획      - read-only planning
+    //   승인 요청 - ask per gated tool (cards)
+    //   자동 실행 - auto-run everything, no cards (main + sub)
     // Computed, not stored: the labels must follow a live language switch.
     private var modes: [(String, String)] { [(t("chat.mode.plan"), "plan"), (t("chat.mode.ask"), "default"), (t("chat.mode.auto"), "auto")] }
     private var modeIndex: Int { max(0, modePopup.indexOfSelectedItem) }
@@ -132,11 +132,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         scroll.documentView = stack
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
         scroll.drawsBackground = false; scroll.autohidesScrollers = true
-        scroll.scrollerStyle = .overlay   // floating scroller — never steals content width (no reflow on click/scroll)
+        scroll.scrollerStyle = .overlay   // floating scroller - never steals content width (no reflow on click/scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         // Sub-agents render as EQUAL columns (riven-style panes) in a right-side area. It's laid
-        // out with a plain width constraint (NOT an NSSplitView) — the split view was toggling
+        // out with a plain width constraint (NOT an NSSplitView) - the split view was toggling
         // itself back on click/relayout, leaving ghost empty columns. Deterministic width = no
         // ghosts, no flatten-on-click. Hidden (width 0) until a sub-agent starts.
         subStack.orientation = .horizontal; subStack.spacing = 1; subStack.alignment = .top
@@ -152,7 +152,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         hairline.isHidden = true          // glass composer has its own border → no separate rule
         hairline.translatesAutoresizingMaskIntoConstraints = false
 
-        // Glass composer: ONE row — compact mode chip | borderless input | accent send pill —
+        // Glass composer: ONE row - compact mode chip | borderless input | accent send pill -
         // on a blurred, hairline-bordered card floating above the chat background.
         composer.material = .hudWindow
         composer.blendingMode = .withinWindow
@@ -168,10 +168,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         modeChip.translatesAutoresizingMaskIntoConstraints = false
 
         // modePopup stays the single source of truth for the mode (index read via modeIndex,
-        // set by cycleMode/approval cards) — just restyled compact & borderless inside the chip,
+        // set by cycleMode/approval cards) - just restyled compact & borderless inside the chip,
         // so its title updates itself on every selectItem(at:).
         modePopup.addItems(withTitles: modes.map { $0.0 })
-        // Restore the last-used permission mode (persisted globally) — before it always reset to
+        // Restore the last-used permission mode (persisted globally) - before it always reset to
         // "승인 요청" on every new/reopened pane. Read BEFORE bind() so startSession picks it up.
         modePopup.selectItem(at: min(max(Settings.shared.int("chatPermMode", 1), 0), modes.count - 1))
         modePopup.font = UIScale.font(UIScale.caption, .medium)
@@ -202,14 +202,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         input.onKey = { [weak self] sel in self?.inputKey(sel) ?? false }
         input.onFocus = { [weak self] in self?.onFocused?() }   // clicking the input clears the "done" ember
 
-        // Circular ↑ send button (shadcn message-scroller style) — no "보내기" text pill.
+        // Circular ↑ send button (shadcn message-scroller style) - no "보내기" text pill.
         // CircleButton keeps it a perfect circle; sizes match the mode chip via `rowH`.
         sendButton.isBordered = false; sendButton.bezelStyle = .regularSquare
         sendButton.imagePosition = .imageOnly
         sendButton.wantsLayer = true                        // layer must exist before styleSendButton sets bg
         sendButton.target = self; sendButton.action = #selector(sendOrStop)
         sendButton.translatesAutoresizingMaskIntoConstraints = false
-        // Circular + button on the left of the action row — attaches a file path to the message.
+        // Circular + button on the left of the action row - attaches a file path to the message.
         plusButton.isBordered = false; plusButton.bezelStyle = .regularSquare
         plusButton.imagePosition = .imageOnly
         plusButton.wantsLayer = true
@@ -272,7 +272,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             composer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            // shadcn message-scroller composer: TWO rows in a rounded card — the multiline input on
+            // shadcn message-scroller composer: TWO rows in a rounded card - the multiline input on
             // top, an action row below (mode chip + "+" on the left, circular ↑ send on the right).
             // Floor only; the composer HUGS the input via the equality top/bottom pins + the input's
             // high vertical content hugging (kept at its intrinsic 1–6 line size).
@@ -282,7 +282,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             inputScroll.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 12),
             inputScroll.trailingAnchor.constraint(equalTo: composer.trailingAnchor, constant: -12),
             inputScroll.bottomAnchor.constraint(equalTo: sendButton.topAnchor, constant: -8),
-            // row 2 (bottom): mode chip + "+" left, send right — ALL the same height (rowH=28) and
+            // row 2 (bottom): mode chip + "+" left, send right - ALL the same height (rowH=28) and
             // vertically centered on one line, so the circles and the chip line up.
             modeChip.leadingAnchor.constraint(equalTo: composer.leadingAnchor, constant: 8),
             modeChip.centerYAnchor.constraint(equalTo: sendButton.centerYAnchor),
@@ -359,9 +359,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     // Shown again (workspace switched back): catch the typewriter up to everything buffered while
-    // offscreen and pin to the bottom — the flush timer does no UI work while window == nil.
+    // offscreen and pin to the bottom - the flush timer does no UI work while window == nil.
     // A drag changes our width every frame, and each rendered message is a wrapping label whose
-    // height must be recomputed — measured at ~15ms/frame with a restored transcript, i.e. the whole
+    // height must be recomputed - measured at ~15ms/frame with a restored transcript, i.e. the whole
     // 60fps budget. The text can't reflow usefully mid-drag anyway, so freeze the document while the
     // divider is moving and do ONE layout when the user lets go.
     private func freezeTranscriptWidth() {
@@ -397,7 +397,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard window != nil else { return }
         while current?.flush() == true {}   // reveal any text buffered offscreen (bounded by content)
         scrollToBottom()
-        // The dock lays out AFTER this callback, so the height used above can be stale — which
+        // The dock lays out AFTER this callback, so the height used above can be stale - which
         // intermittently left the transcript scrolled up after a workspace switch. Re-pin to the
         // bottom on the next runloop (and once more) when the geometry is final.
         DispatchQueue.main.async { [weak self] in self?.scrollToBottom() }
@@ -437,7 +437,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         sendButton.image = NSImage(systemSymbolName: stop ? "stop.fill" : "arrow.up",
                                    accessibilityDescription: stop ? t("chat.stop") : t("chat.send"))?
             .withSymbolConfiguration(.init(pointSize: UIScale.pt(stop ? 10 : 13), weight: .semibold))
-        // Contrast against the fill by its luminance — a flat .white vanished on light accents
+        // Contrast against the fill by its luminance - a flat .white vanished on light accents
         // (e.g. the "void" theme's near-white accent left the arrow invisible).
         sendButton.contentTintColor = ChatPanel.onColor(stop ? Theme.danger : Theme.accent)
     }
@@ -460,7 +460,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ⌘+/⌘−/⌘0: rescale every font in the panel (incl. already-rendered messages) by the ratio of
     // the new factor to the last one. Applied IMMEDIATELY (not debounced): the old 0.12s debounce
     // left a window where content rendered between the zoom and the deferred rescale was scaled off
-    // the wrong base — so freshly-typed messages ended up a different size than older ones. The
+    // the wrong base - so freshly-typed messages ended up a different size than older ones. The
     // transcript is capped at 150 views, so an immediate walk is cheap enough for key auto-repeat.
     func applyScale() {
         let factor = UIScale.pt(100) / 100
@@ -473,7 +473,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private static func rescale(_ v: NSView, _ ratio: CGFloat) {
         if let tv = v as? NSTextView {
-            // NSTextView (the multiline composer) isn't an NSControl, so it was silently skipped —
+            // NSTextView (the multiline composer) isn't an NSControl, so it was silently skipped -
             // that's why ⌘+/− didn't grow the input. Scale its font and re-measure its height.
             if let f = tv.font { tv.font = f.withSize(f.pointSize * ratio) }
             tv.invalidateIntrinsicContentSize()
@@ -568,7 +568,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         while let cur = v { if cur === self { return true }; v = cur.superview }
         return false
     }
-    // Toggle the sub-agent area by swapping its width constraint (0 ↔ 45%). Deterministic —
+    // Toggle the sub-agent area by swapping its width constraint (0 ↔ 45%). Deterministic -
     // no NSSplitView to ghost/flatten on relayout.
     private func showSubSide(_ show: Bool) {
         guard subSide.isHidden == show else { return }   // only on a real transition
@@ -598,7 +598,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             return
         }
         // The CLI updates itself on the user's own schedule (riven never changes that setting), but
-        // riven parses its stream format — so tell the user WHEN it changed, once per new version.
+        // riven parses its stream format - so tell the user WHEN it changed, once per new version.
         if agentKind == .claude,
            let prev = AgentDiscovery.claudeVersionChange(), let now = AgentDiscovery.claudeVersion() {
             addSystem(t("chat.cliChanged", ["prev": prev, "now": now]))
@@ -619,7 +619,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         addSystem(t("team.created", ["group": group, "names": names.joined(separator: ", ")]))
     }
     /// Another agent delegates work to THIS pane. The message is shown like a user message (so the
-    /// hand-off is visible and steerable), and `done` fires with the answer when the turn ends —
+    /// hand-off is visible and steerable), and `done` fires with the answer when the turn ends -
     /// queued behind any turn already running, exactly like a message the user types.
     func ask(_ text: String, done: @escaping (String) -> Void) {
         guard session != nil, session?.isAlive != false else { done("agent session is not running"); return }
@@ -630,13 +630,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         else { beginTurn(text, bubble: bubble) }
     }
     /// Human-readable handle other agents address this pane by (riven_ask_agent). Falls back to the
-    /// custom-agent name — "chat-90690212265" is a dock id, not something an agent should have to use.
+    /// custom-agent name - "chat-90690212265" is a dock id, not something an agent should have to use.
     var nickname: String?
     /// Agent-group this pane belongs to (nil = standalone chat).
     var groupName: String?
-    /// Nickname of the agent this one reports to — the group's org chart / who to escalate to.
+    /// Nickname of the agent this one reports to - the group's org chart / who to escalate to.
     var parentName: String?
-    /// This pane's role (nickname › custom agent) and whether it's mid-turn — for riven_agents().
+    /// This pane's role (nickname › custom agent) and whether it's mid-turn - for riven_agents().
     var agentRole: String { nickname ?? agentPersona ?? "Claude" }
     // 세션이 살아 있어야만 busy 다. 세션이 죽었는데(크래시·교체·이전 실행 잔재) turnStart 가
     // 남아 있으면, 아무 일도 안 하는 멤버가 riven_agents/조직도에 "작업 중" 으로 잘못 뜬다
@@ -677,14 +677,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         onShowEdit?(URL(fileURLWithPath: path), old, new)
     }
 
-    // A short, CLI-like title from the first message (a heuristic — no extra model call/tokens;
+    // A short, CLI-like title from the first message (a heuristic - no extra model call/tokens;
     // a true summary would cost a small request).
     static func shortTitle(_ s: String) -> String {
         var t = s.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
         if let r = t.range(of: "[.?!。？！]", options: .regularExpression) { t = String(t[..<r.lowerBound]) }
         return t.count > 24 ? String(t.prefix(24)) + "…" : t
     }
-    // The CLI writes an AI-summarized title into the transcript as an `ai-title` entry — read the
+    // The CLI writes an AI-summarized title into the transcript as an `ai-title` entry - read the
     // latest one so the pane shows the same concise title the CLI does, instead of the raw first
     // message. Tail-read only (the entry is rewritten each turn, so the last one is near the end).
     static func latestAITitle(cwd: String, sessionId: String) -> String? {
@@ -709,7 +709,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Adopt the CLI's summarized title once it has produced one.
     //
     // The CLI writes the `ai-title` transcript entry ASYNCHRONOUSLY, shortly AFTER the turn's
-    // result event — so reading once at endTurn usually missed it and the pane kept the raw
+    // result event - so reading once at endTurn usually missed it and the pane kept the raw
     // first-message title until the next turn ("타이틀 자동 생성이 안 된다"). Re-check a few times
     // with a backoff and stop as soon as the title changes.
     private var lastAITitle: String?
@@ -740,7 +740,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                 guard let self else { return }
                 self.planPath = newest.0
                 self.planBadge.show(title: title, file: (newest.0 as NSString).lastPathComponent)
-                // 세션에 묶어 저장한다 — 재기동해서 이 대화를 이어받으면 배지도 같이 돌아온다.
+                // 세션에 묶어 저장한다 - 재기동해서 이 대화를 이어받으면 배지도 같이 돌아온다.
                 if let sid = self.sessionId { Settings.shared.set("plan.\(sid)", newest.0) }
             }
         }
@@ -777,7 +777,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                     self.lastAITitle = t
                     self.aiTitleSet = true
                     self.onTitle?(t)
-                    return                       // got it — stop polling
+                    return                       // got it - stop polling
                 }
                 // Not written yet: 1s, 3s, 6s. Cheap (a 256KB tail read off the main thread).
                 let delays: [Double] = [1, 2, 3]
@@ -810,7 +810,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             else if type == "assistant" { msgs.append((false, s)) }
         }
         // Render only the LAST N messages; keep the older ones as data behind a "load earlier"
-        // pager. Rendering the WHOLE conversation exploded on launch — a big session = thousands of
+        // pager. Rendering the WHOLE conversation exploded on launch - a big session = thousands of
         // autolayout views, and DockManager.restore()'s synchronous constraint pass pegged the CPU
         // (profiled). Paging keeps the live view count bounded no matter how long the history is.
         let cap = 50
@@ -838,7 +838,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     // A non-interactive marker at the very top telling the reader there's more above; scrolling to
-    // the top auto-loads it (see clipMoved). Not a button — the load is scroll-driven.
+    // the top auto-loads it (see clipMoved). Not a button - the load is scroll-driven.
     private func addLoadEarlierButton() {
         let l = NSTextField(labelWithString: t("chat.olderNote", ["n": pendingHistory.count]))
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
@@ -849,9 +849,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private var loadingEarlier = false
     // Prepend the previous batch ABOVE the current view, keeping the reader's position stable
-    // (anchor by document-height delta) — so auto-loading never yanks the scroll.
-    // Load one small batch per runloop turn. Rendering 50 messages at once — markdown parsing and
-    // syntax highlighting for each — froze the main thread; the "scrolling up lags" report. Small
+    // (anchor by document-height delta) - so auto-loading never yanks the scroll.
+    // Load one small batch per runloop turn. Rendering 50 messages at once - markdown parsing and
+    // syntax highlighting for each - froze the main thread; the "scrolling up lags" report. Small
     // chunks keep each turn short, and the scroll stays anchored after every chunk.
     private static let pageBatch = 12
     @objc private func loadEarlier() {
@@ -875,7 +875,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Paging upward used to grow the rendered stack without limit (trimTranscript only runs when a
     // NEW turn starts), so after a few loads every layout pass walked hundreds of extra views. Drop
-    // views from the BOTTOM once the window is full — they're re-rendered from the session when the
+    // views from the BOTTOM once the window is full - they're re-rendered from the session when the
     // reader scrolls back down.
     private func trimBottomIfNeeded() {
         let maxViews = 120
@@ -896,7 +896,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         return ""
     }
 
-    // Switch THIS pane to a past session in place (no new pane) — replaces the transcript and
+    // Switch THIS pane to a past session in place (no new pane) - replaces the transcript and
     // resumes the chosen session id.
     func switchSession(to sid: String) {
         guard let url = workspace,
@@ -914,8 +914,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ---- Restart on the current CLI (after it auto-updates mid-session) --------------------
     // The `claude` CLI updates itself in place while riven runs; the already-running headless
     // process keeps the OLD binary in memory (and older builds could spin a dead pipe reader at
-    // 100% CPU). Restarting the process on the current binary — resuming the same session id so
-    // the conversation continues — is just switchSession(to: ownSessionId), which already respawns
+    // 100% CPU). Restarting the process on the current binary - resuming the same session id so
+    // the conversation continues - is just switchSession(to: ownSessionId), which already respawns
     // via the freshly-resolved claudeCmd().
     var onRestartAllCLI: (() -> Void)?      // "restart all" from the offer → AppDelegate restarts every chat
 
@@ -957,7 +957,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func listSessions() -> [(id: String, title: String, date: String)] {
         guard let cwd = workspace?.path else { return [] }
         // Codex 페인이면 Codex 의 대화를 나열한다. 예전에는 어느 CLI 든 ~/.claude/projects 를
-        // 읽어서, Codex 대화에서 세션 목록을 열면 남의 대화가 나왔고 — 그중 하나를 고르면
+        // 읽어서, Codex 대화에서 세션 목록을 열면 남의 대화가 나왔고 - 그중 하나를 고르면
         // 그 팬에서 claude 가 떴다.
         if agentKind == .codex { return CodexUsage.sessions(cwd: cwd) }
         let enc = cwd.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
@@ -986,7 +986,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Show a standalone arrow-select card in the transcript (not part of a turn's approval flow).
     /// riven's OWN choice cards (session picker, agent picker…). Unlike a permission prompt these
-    /// are dismissible, so they always get 기타(직접 입력) — hand it back to the composer — and 취소,
+    /// are dismissible, so they always get 기타(직접 입력) - hand it back to the composer - and 취소,
     /// plus Esc. Without them a card was a dead end you couldn't back out of.
     private func presentChoice(_ title: String, options: [(String, () -> Void)], allowOther: Bool = true) {
         let block = newBlock(); current = block
@@ -1026,7 +1026,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onMainTool = { [weak self] name, detail, code, path in
             self?.liveTool = name
             self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
-            // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 — 조금 기다렸다 집어서 배지로.
+            // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 - 조금 기다렸다 집어서 배지로.
             if name == "ExitPlanMode" { self?.pickUpPlanFile(attempt: 0) }
         }
         s?.onSubagentStart = { [weak self] id, type, desc in
@@ -1059,7 +1059,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onExit = { [weak self] code in
             guard let self else { return }
             // If the process dies mid-turn (crash, 529 that killed the stream, kill) the result
-            // event never arrives — so WITHOUT this the flush timer runs FOREVER at 20fps doing a
+            // event never arrives - so WITHOUT this the flush timer runs FOREVER at 20fps doing a
             // full-transcript layout, which pegs the main thread (the reported "even the shimmer
             // can't animate" lag). End the turn so the timer stops.
             if self.turnStart != nil { self.endTurn(cost: nil, usage: nil, error: code != 0 ? t("chat.sessionCrashed", ["c": code]) : nil) }
@@ -1075,9 +1075,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ---- permission / choice cards (per-mode policy, applied live) ----
     private func requestPermission(_ id: String, _ name: String, _ detail: String, _ code: String?, _ path: String?) {
         debugOnApproval?(name, detail)
-        // riven's own tools run in-app (choice card / preview / api) — never gate them.
+        // riven's own tools run in-app (choice card / preview / api) - never gate them.
         if name.hasPrefix("mcp__riven__") { session?.respond(id, allow: true); return }
-        // ExitPlanMode: the agent is presenting a plan and asking to proceed — an arrow-select
+        // ExitPlanMode: the agent is presenting a plan and asking to proceed - an arrow-select
         // choice regardless of the current permission mode.
         if name == "ExitPlanMode" {
             pendingRequestId = id
@@ -1098,8 +1098,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             enqueueChoice(title: t("chat.permReq", ["name": name]), detail: detail, code: code, path: path,
                           options: [approve, alwaysAuto, deny])
             pendingRequestId = nil
-        case 2:  session?.respond(id, allow: true)          // 자동 실행 — everything (main + sub)
-        default: session?.respond(id, allow: false)         // 계획 — no edits expected
+        case 2:  session?.respond(id, allow: true)          // 자동 실행 - everything (main + sub)
+        default: session?.respond(id, allow: false)         // 계획 - no edits expected
         }
     }
     // ---- riven tools (MCP) ----
@@ -1115,17 +1115,17 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onClosePanel: ((String) -> String)?
     var onWorkspaces: (() -> String)?
     var onOpenWorkspace: ((String) -> String)?
-    /// riven_note_* — 메모/문서 읽기·쓰기 (앱이 처리하고 결과 문장을 돌려준다).
+    /// riven_note_* - 메모/문서 읽기·쓰기 (앱이 처리하고 결과 문장을 돌려준다).
     var onNoteTool: ((_ tool: String, _ args: [String: Any]) -> String)?
 
     private func handleTool(_ id: String, _ tool: String, _ args: [String: Any]) {
         func s(_ k: String) -> String { args[k] as? String ?? "" }
         // 답은 "물어본" 세션에게 돌려줘야 한다. self.session 을 클릭/완료 시점에 다시 읽으면,
         // 그 사이 세션이 바뀌었을 때(대화 재개·다른 세션으로 전환·크래시 후 재기동) 엉뚱한
-        // 서버로 가고 원래 요청자는 영영 기다린다 — "선택했는데 아무 일도 안 일어남".
+        // 서버로 가고 원래 요청자는 영영 기다린다 - "선택했는데 아무 일도 안 일어남".
         let asker = session
         func reply(_ text: String) {
-            // 이미 만료·취소된 요청이면 조용히 사라지지 않고 대화에 남긴다 — 예전엔 카드를
+            // 이미 만료·취소된 요청이면 조용히 사라지지 않고 대화에 남긴다 - 예전엔 카드를
             // 눌러도 아무 일이 없어서 클릭이 씹힌 건지 알 수 없었다.
             if asker?.respondTool(id, text) != true { addSystem(t("chat.tool.expired")) }
         }
@@ -1150,7 +1150,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             onBrowser(tool, args) { reply($0) }
         case "riven_browser_eval":
             // 임의 자바스크립트만 승인을 받는다. 나머지 도구는 사람이 마우스로 할 수 있는 범위
-            // 안이지만, eval 은 그 페이지에서 무엇이든 할 수 있다 — 브라우저가 로그인 세션을
+            // 안이지만, eval 은 그 페이지에서 무엇이든 할 수 있다 - 브라우저가 로그인 세션을
             // 그대로 들고 있으므로(쿠키 유지) 자동 승인에 맡길 수 없다.
             guard let onBrowser else { reply("browser panel unavailable"); return }
             let js = s("js")
@@ -1189,7 +1189,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             apiRequest(args) { result in reply(result) }
         case let n where n.hasPrefix("riven_note_") || n == "riven_doc_write":
             let result = onNoteTool?(tool, args) ?? "notes unavailable"
-            // 메모를 만들거나 고쳤으면 대화에도 한 줄 남긴다 — 패널을 안 보고 있어도
+            // 메모를 만들거나 고쳤으면 대화에도 한 줄 남긴다 - 패널을 안 보고 있어도
             // "에이전트가 뭘 썼는지"가 대화에서 드러나야 한다.
             if tool != "riven_note_list", tool != "riven_note_read" {
                 let title = (args["title"] as? String) ?? (args["note"] as? String) ?? ""
@@ -1207,20 +1207,20 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "riven_ask_agent":
             let target = s("agent"), msg = s("message")
             let wait = (args["wait"] as? Bool) ?? true
-            // 진행 중임을 분명히 남긴다 — 예전엔 "→ 멤버" 한 줄뿐이라, 비동기(wait=false) 위임 때
+            // 진행 중임을 분명히 남긴다 - 예전엔 "→ 멤버" 한 줄뿐이라, 비동기(wait=false) 위임 때
             // 리드에 아무 표시가 없어 돌고 있는지 끝났는지 알 수 없었다. 끝나면 "← 멤버 (완료)".
-            addSystem("→ \(target) · \(ChatPanel.shortTitle(msg)) — \(t("chat.delegating"))")
+            addSystem("→ \(target) · \(ChatPanel.shortTitle(msg)) - \(t("chat.delegating"))")
             if let onAskAgent {
                 onAskAgent(target, msg) { [weak self] answer in
                     guard let self else { return }
-                    self.addSystem("← \(target) — \(t("chat.delegateDone"))")
+                    self.addSystem("← \(target) - \(t("chat.delegateDone"))")
                     // wait=false 였으면 도구 호출은 이미 끝났다 → 답을 대화로 밀어 넣는다.
                     if wait { reply(answer) } else { self.deliverPeerAnswer(from: target, answer) }
                 }
                 if !wait { reply(t("chat.delegated", ["a": target])) }
             } else { session?.respondTool(id, "agent messaging unavailable") }
         case "riven_ask_agents":
-            // 한 번에 여러 명 — 전원이 동시에 시작하고, 마지막 한 명이 끝나면 한꺼번에 돌려준다.
+            // 한 번에 여러 명 - 전원이 동시에 시작하고, 마지막 한 명이 끝나면 한꺼번에 돌려준다.
             let tasks: [(agent: String, message: String)] = (args["tasks"] as? [[String: Any]] ?? []).compactMap {
                 guard let a = $0["agent"] as? String, let m = $0["message"] as? String else { return nil }
                 return (agent: a, message: m)
@@ -1231,10 +1231,10 @@ final class ChatPanel: NSView, Themable, Scalable {
                 return
             }
             let waitAll = (args["wait"] as? Bool) ?? true
-            addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", ") + " — \(t("chat.delegating"))")
+            addSystem("⇉ " + tasks.map { $0.agent }.joined(separator: ", ") + " - \(t("chat.delegating"))")
             onAskAgents(tasks) { [weak self] answers in
                 guard let self else { return }
-                self.addSystem("← " + answers.map { $0.0 }.joined(separator: ", ") + " — \(t("chat.delegateDone"))")
+                self.addSystem("← " + answers.map { $0.0 }.joined(separator: ", ") + " - \(t("chat.delegateDone"))")
                 let joined = answers.map { "## \($0.0)\n\($0.1)" }.joined(separator: "\n\n")
                 if waitAll { reply(joined) } else { self.deliverPeerAnswer(from: answers.map { $0.0 }.joined(separator: ", "), joined) }
             }
@@ -1291,7 +1291,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             DispatchQueue.main.async { done(out) }
         }.resume()
     }
-    // The agent called ask_user — show its options as an arrow-select choice card.
+    // The agent called ask_user - show its options as an arrow-select choice card.
     private func presentAsk(_ id: String, _ question: String, _ options: [String],
                             _ reply: @escaping (String) -> Void) {
         let opts: [(String, () -> Void)] = options.map { opt in (opt, { reply(opt) }) }
@@ -1311,7 +1311,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private weak var debugLastCard: ApprovalCard?
     func debugCardStatus() -> String { debugLastCard?.debugStatus() ?? "(카드 없음)" }
 
-    /// 기다리던 요청이 사라졌다 — 그 질문 카드를 만료로 표시한다.
+    /// 기다리던 요청이 사라졌다 - 그 질문 카드를 만료로 표시한다.
     func markRequestExpired(_ id: String, _ reason: String) {
         guard let card = cardsByRequest.removeValue(forKey: id)?.card else { return }
         card.expire(reason)
@@ -1363,7 +1363,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // Live mode switch: no restart, so an in-flight turn keeps running.
     @objc private func modeChanged() {
-        // riven 의 모드 이름을 그대로 넘긴다 — "auto" 를 여기서 "default" 로 뭉개면
+        // riven 의 모드 이름을 그대로 넘긴다 - "auto" 를 여기서 "default" 로 뭉개면
         // Codex 쪽에서 "자동" 과 "승인 요청" 을 구분할 수 없다. 옮기는 일은 세션이 한다.
         session?.setPermissionMode(modes[modeIndex].1)
         Settings.shared.set("chatPermMode", modeIndex)   // persist so it survives reopen/relaunch
@@ -1375,7 +1375,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
 
     // ---- send / turn lifecycle ----
-    // Interrupt the running turn (Esc / the stop button) — like the CLI's Esc.
+    // Interrupt the running turn (Esc / the stop button) - like the CLI's Esc.
     private var interrupted = false
     /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
     func stopTurn() { interruptTurn() }
@@ -1400,13 +1400,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
-    // "+" — attach file path(s) to the message (the agent reads them). Same intent as a drag-drop.
+    // "+" - attach file path(s) to the message (the agent reads them). Same intent as a drag-drop.
     @objc private func attachFile() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true; panel.canChooseDirectories = true; panel.allowsMultipleSelection = true
         panel.begin { [weak self] resp in
             guard let self, resp == .OK, !panel.urls.isEmpty else { return }
-            // One path per line so each wraps and the input GROWS (up to 6 lines, then scrolls) —
+            // One path per line so each wraps and the input GROWS (up to 6 lines, then scrolls) -
             // before, paths were joined on one line and, without a relayout, the composer stayed a
             // single line so the text was clipped / looked like it collided with the mode select.
             let paths = panel.urls.map { $0.path }.joined(separator: "\n")
@@ -1443,7 +1443,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
     // commands, passthrough built-ins) return false and go to the CLI as a normal message.
     // ---- richer slash-command reports -------------------------------------------------
-    // /cost — the account's PLAN usage (the same OAuth endpoint the header widget uses), refreshed
+    // /cost - the account's PLAN usage (the same OAuth endpoint the header widget uses), refreshed
     // on demand, plus this session's last turn. It used to print only the last turn's tokens.
     private func showUsage() {
         // Codex 페인이면 Codex 계정을 보여 준다. 예전에는 어느 CLI 든 Claude 의 OAuth
@@ -1478,7 +1478,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
     }
-    /// Codex 의 /cost. 창이 하나뿐이고(30일) 금액은 구독이라 없다 — 없는 칸을 0 으로
+    /// Codex 의 /cost. 창이 하나뿐이고(30일) 금액은 구독이라 없다 - 없는 칸을 0 으로
     /// 채우지 않고 아예 적지 않는다.
     private func showCodexUsage() {
         let cx = CodexUsage.scan()
@@ -1505,7 +1505,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         addReport(t("chat.usage.title"), lines)
     }
 
-    // /mcp — which servers are connected and WHAT they give the agent, not just a name list.
+    // /mcp - which servers are connected and WHAT they give the agent, not just a name list.
     private func showMCP() {
         let servers = session?.mcpServers ?? []
         let tools = session?.toolList ?? []
@@ -1523,14 +1523,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         if servers.isEmpty { lines.append(t("chat.mcp.none")) }
         self.addReport(t("chat.mcp.title"), lines)
     }
-    // /status — what this pane is actually running.
+    // /status - what this pane is actually running.
     private func showStatus() {
         var lines: [String] = []
         lines.append("\(t("chat.status.model", ["m": ChatPanel.modelLabel(model)]))   [\(model ?? "?")]")
         lines.append("\(t("chat.perm.title")): \(modes[modeIndex].0)")
         if let ws = workspace { lines.append("\(t("chat.status.workspace")): \(ws.path)") }
         if let sid = session?.sessionId { lines.append("\(t("chat.status.session", ["id": String(sid.prefix(8))]))") }
-        // 어느 CLI 로 도는 팬인지부터 적는다 — 아래 줄들이 무엇에 대한 것인지가 달라진다.
+        // 어느 CLI 로 도는 팬인지부터 적는다 - 아래 줄들이 무엇에 대한 것인지가 달라진다.
         lines.append("\(t("chat.status.agent")): \(agentKind.displayName)")
         if agentKind == .claude, let v = AgentDiscovery.claudeVersion(fresh: true) {
             lines.append("\(t("chat.status.cli")): \(v)")
@@ -1548,7 +1548,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         addReport(t("chat.status.title"), lines)
     }
-    /// A titled, monospaced block — readable columns instead of one dim run-on line.
+    /// A titled, monospaced block - readable columns instead of one dim run-on line.
     private func addReport(_ title: String, _ lines: [String]) {
         let head = NSTextField(labelWithString: title)
         head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
@@ -1597,7 +1597,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "config":
             onOpenSettings?(); return true
         case "permissions":
-            // Not a paragraph of prose — a picker that actually switches the mode.
+            // Not a paragraph of prose - a picker that actually switches the mode.
             let descs = [t("chat.perm.planDesc"), t("chat.perm.askDesc"), t("chat.perm.autoDesc")]
             let opts: [(String, () -> Void)] = modes.enumerated().map { i, m in
                 ("\(m.0) · \(descs[i])", { [weak self] in
@@ -1616,7 +1616,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             return true
         case "update":
             // 이 팬을 굴리는 CLI 를 업데이트한다. 예전에는 Codex 대화에서 /update 를 쳐도
-            // claude 가 업데이트됐다 — 친 사람이 기대한 것과 다른 프로그램이다.
+            // claude 가 업데이트됐다 - 친 사람이 기대한 것과 다른 프로그램이다.
             guard let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else {
                 addSystem(t("chat.noCLIShort")); return true
             }
@@ -1660,7 +1660,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let b = addUser(text)
         if turnStart != nil { b.setQueued(true); queuedMessages.append((text, b)) } else { beginTurn(text, bubble: b) }
     }
-    // Live model switch (control channel) via a small menu — the CLI accepts aliases.
+    // Live model switch (control channel) via a small menu - the CLI accepts aliases.
     // The menu names the VERSION each alias maps to and marks the one currently running: a resumed
     // session keeps the model it was created with, so "기본" is not necessarily what this pane runs
     // (that's why a resumed pane could sit on an older Opus while new chats start on Opus 5).
@@ -1681,7 +1681,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let anchor = convert(inputScroll.frame.origin, from: inputScroll.superview)
         menu.popUp(positioning: nil, at: anchor, in: self)
     }
-    /// The models a pane can be pinned to — one source for the ⌥ menu and the agent-group cards.
+    /// The models a pane can be pinned to - one source for the ⌥ menu and the agent-group cards.
     static var selectableModels: [(String, String)] {
         [(t("chat.model.default"), "default"), ("Fable 5", "fable"), ("Opus 5", "opus"),
          ("Sonnet 5", "sonnet"), ("Haiku 4.5", "haiku")]
@@ -1781,7 +1781,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 되돌리기 어려운 작업은 대화에 확인 카드를 띄우고, 사용자가 고른 뒤에 진행한다.
     /// eval 을 계속 허용하기로 한 출처들 (이 대화 안에서만 기억한다).
     private var evalAllowedOrigins: Set<String> = []
-    /// 패널에 남길 한 줄 — 무엇을 했는지 사람이 읽을 수 있게.
+    /// 패널에 남길 한 줄 - 무엇을 했는지 사람이 읽을 수 있게.
     static func browserSummary(_ tool: String, _ args: [String: Any]) -> String {
         let verb = tool.replacingOccurrences(of: "riven_browser_", with: "")
         let detail: String
@@ -1809,7 +1809,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 에이전트에게 간다).
     ///
     /// 답은 각 동료의 패널에 그대로 남는다. 여기(보낸 쪽)에는 "누구에게 보냈고 누가 돌아왔는지"만
-    /// 남긴다 — 답 본문까지 밀어 넣으면 이 팬의 에이전트가 시키지도 않은 턴을 돌게 된다.
+    /// 남긴다 - 답 본문까지 밀어 넣으면 이 팬의 에이전트가 시키지도 않은 턴을 돌게 된다.
     /// 동료의 답을 이 에이전트에게 넘기고 싶을 때는 에이전트가 riven_ask_agent 로 부르면 된다.
     @discardableResult
     private func delegateToMentions(_ text: String) -> Bool {
@@ -1846,7 +1846,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         return true
     }
 
-    /// 비동기로 넘긴 일의 답이 도착했을 때 — 대화에 넣고 모델에게도 새 턴으로 전달한다.
+    /// 비동기로 넘긴 일의 답이 도착했을 때 - 대화에 넣고 모델에게도 새 턴으로 전달한다.
     /// (도구 호출은 이미 끝났으므로 결과를 돌려줄 곳이 없다. 사람이 말한 것처럼 넣어 준다.)
     func deliverPeerAnswer(from agent: String, _ answer: String) {
         let text = t("chat.peerAnswer", ["a": agent]) + "\n\n" + answer
@@ -1855,7 +1855,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     /// 앱이 이 팬의 대화에 한 줄 남긴다 (그룹 복구 안내 등).
     func noteSystem(_ text: String) { addSystem(text) }
-    /// 조직도에서 닉네임을 바꿨을 때 — 대화에도 남겨 동료가 새 이름을 알 수 있게 한다.
+    /// 조직도에서 닉네임을 바꿨을 때 - 대화에도 남겨 동료가 새 이름을 알 수 있게 한다.
     func applyNickname(_ name: String) {
         guard name != nickname else { return }
         nickname = name
@@ -1877,7 +1877,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             setRunning(false); onBusyChange?(false)
             return
         }
-        // Do NOT close the previous turn's sub-agent panels here — the user wants to keep viewing
+        // Do NOT close the previous turn's sub-agent panels here - the user wants to keep viewing
         // them (and closing them while one was still running lost visibility). They're real dock
         // panels now: they stay open until the user closes them (or the workspace changes).
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
@@ -1904,10 +1904,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
-    // stay in the CLI session/context — only their VIEWS are dropped.
+    // stay in the CLI session/context - only their VIEWS are dropped.
     private func trimTranscript() {
         // Bound the LIVE view count: autolayout over the transcript is superlinear, so an unbounded
-        // stack pegs the CPU on every relayout (profiled — a huge restored stack froze launch).
+        // stack pegs the CPU on every relayout (profiled - a huge restored stack froze launch).
         let cap = 80
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
@@ -1916,7 +1916,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // ---- sub-agent panes ----
     // Each sub-agent opens as a REAL dock panel (main.swift places it via onOpenSubagentPane), so it
-    // resizes / moves / tabs exactly like every other panel — instead of the old fixed left/right
+    // resizes / moves / tabs exactly like every other panel - instead of the old fixed left/right
     // split that couldn't be positioned. This panel only owns the SubagentPane VIEW; the dock owns
     // its placement.
     static let subBench = ProcessInfo.processInfo.environment["RIVEN_SUBBENCH"] != nil
@@ -1941,7 +1941,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         subToPane.removeAll()
         if !ids.isEmpty { onCloseSubagentPanes?(ids) }
     }
-    // The user closed a sub-agent's dock panel directly — drop our view reference.
+    // The user closed a sub-agent's dock panel directly - drop our view reference.
     func clearSubagentRef(_ id: String) { subToPane[id] = nil }
 
     private func startFlush() {
@@ -1968,12 +1968,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         let block = current
         block?.finish(secs: secs, cost: cost, usage: usage, model: model)
         turnStart = nil; liveTool = nil
-        // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" —
+        // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" -
         // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).
         if let error, !interrupted { addError(t("chat.error", ["e": error])) }
         interrupted = false
         autoScroll()
-        // 턴 아래에 플랜 소진도를 붙인다. 어느 CLI 의 계정인지가 중요하다 — 예전에는 Codex
+        // 턴 아래에 플랜 소진도를 붙인다. 어느 CLI 의 계정인지가 중요하다 - 예전에는 Codex
         // 페인에서도 Claude 의 OAuth 사용량(5시간·7일)을 불러 붙였다. Codex 로 돌린 턴 밑에
         // Claude 눈금이 붙으면, 그 숫자를 보고 Codex 한도를 판단하게 된다.
         if agentKind == .codex {
@@ -2024,7 +2024,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
         scrollSoon()
     }
-    // A visible, danger-tinted line for turn failures (529, etc.) — not the dim system gray.
+    // A visible, danger-tinted line for turn failures (529, etc.) - not the dim system gray.
     private func addError(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
         l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
@@ -2046,7 +2046,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         jumpButton.isHidden = true
     }
     // AUTO scroll (streaming / turn end / tool lines): follow the bottom ONLY while the reader is at
-    // the live edge. If they scrolled up to read, don't yank — just surface the jump pill.
+    // the live edge. If they scrolled up to read, don't yank - just surface the jump pill.
     private func autoScroll() {
         if stickToBottom { scrollToBottom() }
         else { jumpButton.isHidden = isAtBottom() }
@@ -2080,14 +2080,14 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func inputChanged() {
         highlightInput()
         let s = input.stringValue
-        // 1) 맨 앞의 /명령 — 지금까지와 같다.
+        // 1) 맨 앞의 /명령 - 지금까지와 같다.
         if s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") {
             let q = String(s.dropFirst()).lowercased()
             let matches = commands.filter { q.isEmpty || $0.name.lowercased().hasPrefix(q) }
             if matches.isEmpty { hideSlash() } else { popupKind = .slash; showSlash(matches) }
             return
         }
-        // 2) 커서 앞의 @동료 — 그룹에 속한 패널에서만. 그룹이 아니면 @ 는 그냥 글자다.
+        // 2) 커서 앞의 @동료 - 그룹에 속한 패널에서만. 그룹이 아니면 @ 는 그냥 글자다.
         if let (range, q) = mentionQuery() {
             let names = peerNames()
             let matches = names.filter { q.isEmpty || $0.lowercased().hasPrefix(q) }
@@ -2207,7 +2207,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // from .claude/commands. riven handles the useful ones itself (see handleSlash); the rest
     // pass through to the CLI (custom commands run; a few TUI-only built-ins may report back).
     // Only commands that DO something. /compact and /memory were removed: headless sessions don't
-    // support manual compaction, and memory editing has no UI here — printing "not supported" is
+    // support manual compaction, and memory editing has no UI here - printing "not supported" is
     // worse than not offering it.
     private static let builtins: [SlashCommand] = [
         .init(name: "clear", desc: t("chat.cmd.clear")),

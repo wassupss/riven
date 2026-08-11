@@ -3,10 +3,10 @@ import Foundation
 // 표 파일(.xlsx / .csv / .tsv)을 읽어 화면에 그릴 수 있는 값으로만 바꾼다.
 //
 // 라이브러리를 넣지 않았다. xlsx 는 XML 몇 개를 담은 zip 이고, 우리가 필요한 것은 셀에
-// 보이는 값뿐이다 — 수식·서식·차트는 읽지 않는다. 그걸 위해 1MB 짜리 파서를 들이면
+// 보이는 값뿐이다 - 수식·서식·차트는 읽지 않는다. 그걸 위해 1MB 짜리 파서를 들이면
 // 번들만 커지고, 정작 안 쓰는 코드가 대부분이 된다.
 //
-// 읽기 전용이다. 편집을 지원하는 척하지 않는다 — 반쯤 편집되는 표는 안 되는 것보다 나쁘다.
+// 읽기 전용이다. 편집을 지원하는 척하지 않는다 - 반쯤 편집되는 표는 안 되는 것보다 나쁘다.
 enum Spreadsheet {
 
     struct Sheet {
@@ -32,7 +32,7 @@ enum Spreadsheet {
     }
 
     /// 한 번에 그리는 최대 행. 수만 행짜리 표를 통째로 DOM 에 만들면 창이 멈춘다.
-    /// 자른 사실은 화면에 적는다 — 조용히 자르면 데이터가 없는 것처럼 보인다.
+    /// 자른 사실은 화면에 적는다 - 조용히 자르면 데이터가 없는 것처럼 보인다.
     static let maxRows = 5_000
     static let maxCols = 200
 
@@ -96,11 +96,11 @@ enum Spreadsheet {
 
     private static func readXLSX(_ url: URL) -> [Sheet]? {
         // zip 을 직접 풀지 않고 시스템 unzip 에 맡긴다. Foundation 에는 zip API 가 없고,
-        // 직접 구현하면 중앙 디렉터리 파싱까지 떠안게 된다 — 표를 읽자고 할 일이 아니다.
+        // 직접 구현하면 중앙 디렉터리 파싱까지 떠안게 된다 - 표를 읽자고 할 일이 아니다.
         guard let workbook = unzip(url, "xl/workbook.xml") else { return nil }
         let shared = unzip(url, "xl/sharedStrings.xml").map(sharedStrings) ?? []
         let rels = unzip(url, "xl/_rels/workbook.xml.rels").map(relationships) ?? [:]
-        // 서식이 없으면 날짜가 45678 같은 일련번호로, 비율이 0.15 로 보인다 — 값은 맞는데
+        // 서식이 없으면 날짜가 45678 같은 일련번호로, 비율이 0.15 로 보인다 - 값은 맞는데
         // 표는 깨져 보인다. 스타일 표를 읽어 셀마다 어떤 형식인지 알아 둔다.
         let styles = unzip(url, "xl/styles.xml").map(cellStyles) ?? []
         let names = sheetNames(workbook)          // [(name, r:id)]
@@ -207,11 +207,11 @@ private final class AttrCollector: NSObject, XMLParserDelegate {
     }
 }
 
-/// 워크시트를 행렬로. 셀 좌표(r="C5")를 그대로 읽어 빈 칸을 지킨다 — 좌표를 무시하고
+/// 워크시트를 행렬로. 셀 좌표(r="C5")를 그대로 읽어 빈 칸을 지킨다 - 좌표를 무시하고
 /// 나온 순서대로 채우면, 중간이 빈 표에서 값들이 왼쪽으로 밀려 다른 열에 붙는다.
 ///
 /// 값과 함께 **어떻게 보여야 하는지**도 읽는다. 서식을 버리면 날짜가 45678 로, 비율이
-/// 0.15 로 나온다 — 값은 맞는데 사람 눈에는 깨진 표다.
+/// 0.15 로 나온다 - 값은 맞는데 사람 눈에는 깨진 표다.
 private final class SheetParser: NSObject, XMLParserDelegate {
     private let shared: [String]
     private let styles: [Spreadsheet.Style]
@@ -370,7 +370,7 @@ extension Spreadsheet {
 
     /// 셀에 저장된 raw 값을 그 셀의 형식으로 그린다.
     ///
-    /// 완전한 엑셀 형식 엔진이 아니다 — 날짜/시간, 백분율, 천 단위, 소수 자릿수까지만
+    /// 완전한 엑셀 형식 엔진이 아니다 - 날짜/시간, 백분율, 천 단위, 소수 자릿수까지만
     /// 본다. 그 넷이 "표가 깨져 보인다" 의 대부분이고, 나머지(색·조건부 서식·회계
     /// 괄호)는 값을 틀리게 보여 주지는 않는다.
     static func display(_ raw: String, format: String, isText: Bool) -> String {
@@ -395,7 +395,7 @@ extension Spreadsheet {
         fm.minimumFractionDigits = decimals
         fm.maximumFractionDigits = decimals
         let body = fm.string(from: NSNumber(value: value)) ?? trimNumber(value)
-        // 통화 기호는 형식 코드에 그대로 들어 있다 (₩#,##0 처럼) — 앞에 붙은 것만 살린다.
+        // 통화 기호는 형식 코드에 그대로 들어 있다 (₩#,##0 처럼) - 앞에 붙은 것만 살린다.
         let currency = format.prefix { "₩$€£¥".contains($0) }
         return currency + body + suffix
     }

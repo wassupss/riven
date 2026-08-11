@@ -32,7 +32,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$BIN" "$APP/Contents/MacOS/riven"
-# Agent hook bridge — agents exec this to report lifecycle events. It must sit beside
+# Agent hook bridge - agents exec this to report lifecycle events. It must sit beside
 # the main binary: a GUI-launched app has a minimal PATH, so hook commands are written
 # as absolute paths derived from the bundle location.
 cp ".build/release/RivenHook" "$APP/Contents/MacOS/riven-hook"
@@ -49,7 +49,7 @@ if [ -d node_modules/typescript-language-server ] && [ -d node_modules/typescrip
   cp -R node_modules/typescript "$LSP_NM/"
   echo "▸ Bundled TypeScript language server ($(du -sh "$LSP_NM" | cut -f1))"
 else
-  echo "⚠︎ node_modules/typescript-language-server or typescript missing — LSP won't be bundled (run npm install)"
+  echo "⚠︎ node_modules/typescript-language-server or typescript missing - LSP won't be bundled (run npm install)"
 fi
 # App icon (shared ember mark, reused from the Electron build assets).
 [ -f "$ICON" ] && cp "$ICON" "$APP/Contents/Resources/riven.icns"
@@ -77,7 +77,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <!-- Declare the languages the app supports. Without these macOS limits the bundle to a
        single (development) localization, so EMBEDDED frameworks can't resolve their own
-       localized strings — Sparkle ships ko.lproj but its update window came out in the
+       localized strings - Sparkle ships ko.lproj but its update window came out in the
        wrong/mixed language. Declaring ko+en lets Sparkle localize per the user's language. -->
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key>

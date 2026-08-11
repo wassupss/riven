@@ -1,10 +1,10 @@
 import AppKit
 
-// Material-Icon-Theme-style file-type icons — a faithful native port of riven's
+// Material-Icon-Theme-style file-type icons - a faithful native port of riven's
 // components/FileIcon.tsx. The recognizable glyphs (React atom for tsx/jsx, the
 // Python two-snake mark, the Docker whale, the git branch, npm, the SQL cylinder,
 // etc.) are reproduced by re-using the *exact* SVG path/shape data from the TSX
-// source and rendering it with CoreGraphics — no assets, no SVG runtime.
+// source and rendering it with CoreGraphics - no assets, no SVG runtime.
 //
 // Coordinates are authored in SVG space (viewBox 0 0 16 16, y-down). `drawVector`
 // flips the CTM once so those numbers map straight onto the 16×16 NSImage. Plain
@@ -354,7 +354,7 @@ enum FileIcon {
 }
 
 // Minimal SVG path-data parser → CGPath. Supports M/L/H/V/C/S/Q/T/A (+ relative
-// lowercase) and Z, with implicit command repetition and packed arc flags —
+// lowercase) and Z, with implicit command repetition and packed arc flags -
 // enough to reproduce riven's inline icon glyphs verbatim.
 private enum SVGPath {
     static func parse(_ d: String) -> CGPath {

@@ -1,6 +1,6 @@
 import AppKit
 
-// A small text button that runs a closure — lets static factory views (code blocks) wire
+// A small text button that runs a closure - lets static factory views (code blocks) wire
 // actions without a target object.
 final class ClosureButton: NSButton {
     private let onClick: () -> Void
@@ -17,7 +17,7 @@ final class ClosureButton: NSButton {
 }
 
 extension NSView {
-    // Nearest ChatPanel ancestor — lets a deeply-nested control (a code-block button) call back to
+    // Nearest ChatPanel ancestor - lets a deeply-nested control (a code-block button) call back to
     // the exact pane it lives in, instead of a shared static that races across panes.
     var enclosingChatPanel: ChatPanel? {
         var v: NSView? = self
@@ -30,7 +30,7 @@ extension NSView {
 // the single-line NSTextField so multi-line messages work like the CLI.
 final class ChatInput: NSTextView {
     var onSubmit: (() -> Void)?
-    var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle — return true if consumed
+    var onKey: ((Selector) -> Bool)?     // slash-popup nav / mode cycle - return true if consumed
     var onTextChange: (() -> Void)?
     var onFocus: (() -> Void)?           // gained keyboard focus (click/tab) → pane is being looked at
     var placeholder = "" { didSet { needsDisplay = true } }
@@ -82,7 +82,7 @@ final class ChatInput: NSTextView {
 
     // Paste an IMAGE (a Cmd-Shift-4 screenshot on the clipboard, or copied image files) like the
     // CLI does: save it to a temp PNG and insert the path so the agent can Read it.
-    // A plain-text NSTextView refuses image pastes — worse, when the clipboard holds ONLY an image
+    // A plain-text NSTextView refuses image pastes - worse, when the clipboard holds ONLY an image
     // (no text), Paste is disabled and paste(_:) never even fires. So we (1) advertise image/file
     // types as readable to keep Paste enabled, and (2) intercept the actual read here.
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
@@ -196,7 +196,7 @@ final class WorkingDots: NSView {
     func stop() { dots.forEach { $0.removeAnimation(forKey: "pulse") }; isHidden = true }
 }
 
-// MARK: - tool line ("◇ Read  math.js") — a quiet, muted step row (like the CLI's dim
+// MARK: - tool line ("◇ Read  math.js") - a quiet, muted step row (like the CLI's dim
 // tool lines): the whole row recedes so surrounding prose stays the visual focus.
 final class ToolLine: NSView {
     private let nameLabel: NSTextField
@@ -217,7 +217,7 @@ final class ToolLine: NSView {
         detailLabel.font = UIScale.mono(UIScale.caption); detailLabel.textColor = Theme.fgDim
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        // A single horizontal stack pinned to the row's edges — the row height always wraps its
+        // A single horizontal stack pinned to the row's edges - the row height always wraps its
         // tallest child, so rows can never under-report height and overlap the next item.
         let row = NSStackView(views: [icon, nameLabel, detailLabel])
         row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 7
@@ -235,8 +235,8 @@ final class ToolLine: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     // A bright band glides left→right over the tool NAME while it runs (same shadcn-style flow
-    // as "생각 중"), stopped when it finishes. Masking the single text label — not the whole
-    // row — makes it read as a directional sweep instead of the whole row blinking.
+    // as "생각 중"), stopped when it finishes. Masking the single text label - not the whole
+    // row - makes it read as a directional sweep instead of the whole row blinking.
     private let shimmer = CAGradientLayer()
     private var shimmerOn = false
     func startShimmer() {
@@ -312,7 +312,7 @@ final class AssistantText: NSView {
     var isEmpty: Bool { chars.isEmpty }
     func receive(_ chunk: String) { chars.append(contentsOf: chunk) }
 
-    // Reveal a slice toward the full text — steady enough to look typed, fast enough to catch bursts.
+    // Reveal a slice toward the full text - steady enough to look typed, fast enough to catch bursts.
     @discardableResult func advance() -> Bool {
         guard !finalized, shownCount < chars.count else { return false }
         let remaining = chars.count - shownCount
@@ -362,10 +362,10 @@ final class AssistantText: NSView {
     private func ensureLabel() -> NSTextField {
         if let s = streaming { return s }
         // Wrap the streaming label in the SAME bullet + gutter row the final render uses, so the
-        // text is already at its final x-position/indent while typing — renderFinal then only adds
+        // text is already at its final x-position/indent while typing - renderFinal then only adds
         // inline emphasis instead of visibly reflowing the whole answer.
         let l = ChatText.prose("")
-        // ⏺ 는 답변의 첫 블록에만. 확정된 블록이 이미 있으면 같은 들여쓰기만 맞춘다 —
+        // ⏺ 는 답변의 첫 블록에만. 확정된 블록이 이미 있으면 같은 들여쓰기만 맞춘다 -
         // 안 그러면 문단이 확정될 때마다 꼬리에 점이 새로 붙었다 사라진다.
         let row = content.arrangedSubviews.isEmpty ? ChatText.bulletRow(l) : ChatText.indentedProse(l)
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -377,7 +377,7 @@ final class AssistantText: NSView {
     func renderFinal() {
         guard !finalized else { return }
         finalized = true
-        // 확정된 블록은 그대로 두고 남은 꼬리만 최종 서식으로 바꾼다 — 예전엔 전체를 지우고
+        // 확정된 블록은 그대로 두고 남은 꼬리만 최종 서식으로 바꾼다 - 예전엔 전체를 지우고
         // 다시 그려서 긴 답변이 끝날 때 화면이 통째로 리플로우됐다.
         streamRow?.removeFromSuperview(); streamRow = nil; streaming = nil
         let rest = String(chars[min(committed, chars.count)...])
@@ -391,7 +391,7 @@ final class AssistantText: NSView {
 
 // A button whose background is ALWAYS a perfect circle. Rather than rounding the button's own
 // layer (which renders as a capsule the instant the frame isn't perfectly square), it draws a
-// dedicated circular fill layer of diameter = min(width,height), centered — so it's a circle no
+// dedicated circular fill layer of diameter = min(width,height), centered - so it's a circle no
 // matter what the frame ends up being.
 final class CircleButton: NSButton {
     private let fill = CALayer()
@@ -410,7 +410,7 @@ final class CircleButton: NSButton {
 }
 
 // MARK: - shared text rendering (markdown prose + ``` code blocks, diff coloring)
-/// 자기가 담고 있는 코드를 기억하는 상자 — 승인 카드가 같은 내용을 다시 그릴 때 중복을 걷어낸다.
+/// 자기가 담고 있는 코드를 기억하는 상자 - 승인 카드가 같은 내용을 다시 그릴 때 중복을 걷어낸다.
 final class CodeCarrier: NSView {
     var carriedCode: String?
 }
@@ -447,7 +447,7 @@ enum ChatText {
     }
 
     // Prose is the focus of the transcript. Base text is SOFTENED (not full-contrast) so that
-    // **bold** — full-brightness + heavier — clearly stands out; before, base was so dark that
+    // **bold** - full-brightness + heavier - clearly stands out; before, base was so dark that
     // emphasis was indistinguishable.
     private static let proseSize: CGFloat = UIScale.prose   // single source: the app type scale
     static var proseColor: NSColor { Theme.fg.withAlphaComponent(0.80) }   // regular text (calmer)
@@ -461,7 +461,7 @@ enum ChatText {
         l.allowsEditingTextAttributes = true
         return l
     }
-    // Roomier line spacing — the default was too tight to read.
+    // Roomier line spacing - the default was too tight to read.
     static var para: NSParagraphStyle {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 5; p.paragraphSpacing = 6; return p
     }
@@ -469,7 +469,7 @@ enum ChatText {
         NSAttributedString(string: s, attributes: [.foregroundColor: proseColor, .font: UIScale.font(proseSize), .paragraphStyle: para])
     }
     // A SINGLE tilde is strikethrough to the markdown parser, but in Korean prose "20~30행" is a
-    // numeric range — the range marker was opening a strikethrough that swallowed the rest of the
+    // numeric range - the range marker was opening a strikethrough that swallowed the rest of the
     // sentence (and ate the "~" itself). Escape lone tildes so they stay literal; "~~real~~"
     // strikethrough still works.
     private static let loneTilde = try? NSRegularExpression(pattern: "(?<!~)~(?!~)")
@@ -490,7 +490,7 @@ enum ChatText {
         return l
     }
     /// 인라인 마크다운(**굵게**, `코드`, *기울임*)이 적용된 본문 속성 문자열.
-    /// 스트리밍 중에도 이걸 쓴다 — 예전엔 타이핑 동안 순수 텍스트로 그리다가 턴이 끝나야
+    /// 스트리밍 중에도 이걸 쓴다 - 예전엔 타이핑 동안 순수 텍스트로 그리다가 턴이 끝나야
     /// 서식이 튀어나와서, 답변이 다 끝날 때까지 굵게·코드가 원문 그대로 보였다.
     /// 미완성 마크업(닫히지 않은 **)은 그냥 매치가 안 될 뿐이라 부분 문자열에도 안전하다.
     static func attributedMarkdown(_ s: String) -> NSAttributedString {
@@ -500,7 +500,7 @@ enum ChatText {
             let full = NSRange(location: 0, length: m.length)
             m.addAttributes([.foregroundColor: proseColor, .font: UIScale.font(proseSize), .paragraphStyle: para],
                             range: full)
-            // Re-apply the inline emphasis the wholesale font pass just erased — **bold** is
+            // Re-apply the inline emphasis the wholesale font pass just erased - **bold** is
             // bolder AND brighter than the softened base so it clearly pops; `code` spans mono+accent.
             m.enumerateAttribute(.inlinePresentationIntent, in: full) { v, r, _ in
                 var intent = InlinePresentationIntent()
@@ -523,7 +523,7 @@ enum ChatText {
         bulletRow(proseMarkdown(text))
     }
     // The same bullet + gutter container, around an arbitrary label. Used for the STREAMING label
-    // too, so the text sits at its final position from the first character — previously streaming
+    // too, so the text sits at its final position from the first character - previously streaming
     // used a bare full-width label and the whole answer jumped/indented when renderFinal ran.
     static func bulletRow(_ label: NSTextField) -> NSView {
         let row = NSView()
@@ -601,14 +601,14 @@ enum ChatText {
         return box
     }
     // Lightweight, language-agnostic syntax highlighting (comments, strings, numbers, keywords)
-    // so code blocks read like the CLI's coloring — a regex pass, not a full grammar.
+    // so code blocks read like the CLI's coloring - a regex pass, not a full grammar.
     private static let kwPattern = "\\b(func|let|var|const|if|else|elif|for|while|do|return|import|from|as|class|struct|enum|protocol|extension|interface|type|def|function|lambda|public|private|internal|fileprivate|static|final|override|guard|switch|case|default|break|continue|new|delete|async|await|try|catch|finally|throw|throws|typealias|package|self|this|super|true|false|nil|null|none|undefined|True|False|None|and|or|not|in|is|export|module|namespace|use|fn|impl|mut|pub|match|where|with|yield|assert|print|echo)\\b"
     static func highlight(_ code: String) -> NSAttributedString {
         let p = NSMutableParagraphStyle(); p.lineSpacing = 3
         let base: [NSAttributedString.Key: Any] = [.font: UIScale.mono(UIScale.body), .foregroundColor: Theme.fg, .paragraphStyle: p]
         let m = NSMutableAttributedString(string: code, attributes: base)
         // Skip regex highlighting for large blocks: the string/comment patterns can catastrophically
-        // backtrack, and the per-match `protected` intersection is O(n²) — together they pegged the
+        // backtrack, and the per-match `protected` intersection is O(n²) - together they pegged the
         // CPU and froze the app (e.g. a big SQL dump rendered on workspace switch). Plain mono instead.
         guard code.utf16.count <= 2500 else { return m }
         let full = NSRange(location: 0, length: (code as NSString).length)
@@ -864,7 +864,7 @@ enum ChatText {
     }
 }
 
-// MARK: - user message (LEFT-aligned) — an accent bar + quiet tint, like the CLI's "> "
+// MARK: - user message (LEFT-aligned) - an accent bar + quiet tint, like the CLI's "> "
 // prompt line: instantly reads as "you said this" without a loud bordered box.
 /// 사용자가 보낸 말. 왼쪽 얇은 선 하나로는 어시스턴트 글과 구분되지 않아서, 옅은 배경과
 /// 둥근 모서리를 준다 (읽는 사람은 "누가 한 말인지" 를 색·모양으로 먼저 읽는다).
@@ -905,7 +905,7 @@ final class UserBubble: NSView {
         card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
         // The tag sits on its OWN line BELOW the message (it used to be pinned top-right, overlapping
         // the text). Two card-bottom constraints toggle so the card only reserves the tag's row while
-        // queued — otherwise it collapses to hug the text.
+        // queued - otherwise it collapses to hug the text.
         bottomToText = card.bottomAnchor.constraint(equalTo: l.bottomAnchor, constant: 8)
         bottomToTag = card.bottomAnchor.constraint(equalTo: queuedTag.bottomAnchor, constant: 8)
         NSLayoutConstraint.activate([
@@ -929,7 +929,7 @@ final class UserBubble: NSView {
     required init?(coder: NSCoder) { fatalError() }
     private var bottomToText: NSLayoutConstraint!
     private var bottomToTag: NSLayoutConstraint!
-    /// 동료에게 넘긴 메시지 — 이 팬의 에이전트가 아니라 누구에게 갔는지 버블에 붙인다.
+    /// 동료에게 넘긴 메시지 - 이 팬의 에이전트가 아니라 누구에게 갔는지 버블에 붙인다.
     func setDelegated(_ who: String) {
         queuedTag.stringValue = "→ " + who
         queuedTag.textColor = Theme.accent
@@ -1067,7 +1067,7 @@ final class ApprovalCard: NSView {
         case 123, 126: sel = (sel - 1 + options.count) % options.count; restyleSel()   // ← / ↑
         case 124, 125: sel = (sel + 1) % options.count; restyleSel()                    // → / ↓
         case 36, 76, 49: pick(sel)                                                       // return / enter / space
-        case 53: onCancel?()                                                             // esc — back out
+        case 53: onCancel?()                                                             // esc - back out
         default: super.keyDown(with: e)
         }
     }
@@ -1092,7 +1092,7 @@ final class ApprovalCard: NSView {
         (statusLabel.isHidden ? "(표시 없음)" : statusLabel.stringValue)
             + " 버튼보임=\(buttons.contains { !$0.isHidden })"
     }
-    /// 답을 받을 수 없게 됐다 (시간 초과·세션 종료). 버튼을 걷고 이유를 남긴다 —
+    /// 답을 받을 수 없게 됐다 (시간 초과·세션 종료). 버튼을 걷고 이유를 남긴다 -
     /// 예전에는 카드가 그대로 눌리는 것처럼 보였고, 눌러 봐야 실패를 알 수 있었다.
     func expire(_ reason: String) {
         guard !decided else { return }
@@ -1118,7 +1118,7 @@ final class ApprovalCard: NSView {
 }
 
 // MARK: - one assistant turn: an OPEN column (prose sits directly on the chat background,
-// like the CLI — no boxed card competing with the code blocks). A hairline rule + dim
+// like the CLI - no boxed card competing with the code blocks). A hairline rule + dim
 // footer under the content delimit the turn: working indicator (spinner + 생각/작성 중) on
 // the LEFT and the token/quota summary on the RIGHT.
 final class TurnBlock: NSView {
@@ -1141,7 +1141,7 @@ final class TurnBlock: NSView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        card.translatesAutoresizingMaskIntoConstraints = false   // draws nothing — open column
+        card.translatesAutoresizingMaskIntoConstraints = false   // draws nothing - open column
         content.orientation = .vertical; content.spacing = 9; content.alignment = .leading
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
@@ -1191,7 +1191,7 @@ final class TurnBlock: NSView {
 
     private var phase = t("chat.thinking")          // current activity shown in the shimmer label
     func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); workLabel.stringValue = t("chat.thinking") + "…"; startShimmer() }
-    // Set the current activity (a tool name etc.) — shown shimmering, like "생각 중".
+    // Set the current activity (a tool name etc.) - shown shimmering, like "생각 중".
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
     private var lastRenderedSecs = -1
     private var lastRenderedPhase = ""
@@ -1199,14 +1199,14 @@ final class TurnBlock: NSView {
         lastSecs = secs
         guard !finished, !waiting else { return }
         // The flush timer calls tick() ~20×/s, but the label only ever shows whole seconds. Skip the
-        // relayout unless the second OR the phase actually changed — otherwise we forced a full
+        // relayout unless the second OR the phase actually changed - otherwise we forced a full
         // needsLayout pass (shimmer mask re-fit) 20×/s for identical text.
         guard secs != lastRenderedSecs || phase != lastRenderedPhase else { return }
         lastRenderedSecs = secs; lastRenderedPhase = phase
         workLabel.stringValue = phase + "… " + ChatText.duration(secs)
         needsLayout = true              // text width changed → re-fit the shimmer mask
     }
-    // Pause the "thinking/writing" indicator while the user is being asked to approve/choose —
+    // Pause the "thinking/writing" indicator while the user is being asked to approve/choose -
     // the agent is idle then, not working.
     func setWaiting(_ w: Bool) {
         guard !finished else { return }
@@ -1217,7 +1217,7 @@ final class TurnBlock: NSView {
 
     // Shimmer (shadcn-style "Thinking…"): a bright band glides left→right over the label,
     // repeating while the turn works. The gradient is an alpha-only MASK on workLabel's layer,
-    // so only the glyphs shimmer — the text reads dim except where the band passes, and the
+    // so only the glyphs shimmer - the text reads dim except where the band passes, and the
     // effect inherits the label's Theme color (accent2), working in dark AND light themes.
     private func startShimmer() {
         guard !shimmerOn else { return }
@@ -1273,7 +1273,7 @@ final class TurnBlock: NSView {
     private func add(_ v: NSView) {
         v.translatesAutoresizingMaskIntoConstraints = false
         // Consecutive tool lines cluster into a tight, quiet step list; prose keeps the
-        // full gap — the CLI's rhythm.
+        // full gap - the CLI's rhythm.
         let prev = content.arrangedSubviews.last
         content.addArrangedSubview(v)
         if let prev, prev is ToolLine, v is ToolLine { content.setCustomSpacing(3, after: prev) }
@@ -1324,15 +1324,15 @@ final class TurnBlock: NSView {
         workLabel.stringValue = "✓ " + times.joined(separator: " · ")
         workLabel.textColor = Theme.fgDim
         // right: tokens actually consumed THIS turn (new input incl. cache-write, + output).
-        // cacheRead is excluded — it's context re-read, summed across tool iterations, not work.
+        // cacheRead is excluded - it's context re-read, summed across tool iterations, not work.
         if let u = usage {
             tokenBase = t("chat.tokens", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])
         }
         tokenLabel.stringValue = tokenBase
     }
-    // Append the OVERALL plan-quota usage (fetched async) — this is the account's 5-hour /
+    // Append the OVERALL plan-quota usage (fetched async) - this is the account's 5-hour /
     // weekly window utilization, not this turn's share (the API gives no absolute budget).
-    /// 턴 아래의 "플랜 …" 줄. 창의 이름과 숫자를 그대로 받는다 — 예전에는 세션/주간
+    /// 턴 아래의 "플랜 …" 줄. 창의 이름과 숫자를 그대로 받는다 - 예전에는 세션/주간
     /// 두 칸이 못 박혀 있어서, Codex 페인에서도 Claude 의 5시간·7일 숫자가 나왔다.
     /// CLI 마다 창이 다르므로(Claude 5시간+7일, Codex 30일) 칸 수를 정하는 건 부르는 쪽이다.
     func setQuota(_ entries: [(label: String, value: Int)]) {
@@ -1435,12 +1435,12 @@ final class SubagentPane: NSView {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg.cgColor
         layer?.borderWidth = 1; layer?.borderColor = Theme.hairline.cgColor
-        // The pane must NOT demand horizontal width from its content — let text wrap instead of
+        // The pane must NOT demand horizontal width from its content - let text wrap instead of
         // growing the column (which was shrinking the conversation area).
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        // Quiet header strip: no filled bar — just a hairline under it (matches the open
+        // Quiet header strip: no filled bar - just a hairline under it (matches the open
         // transcript column, keeps the pane calm).
         let bar = NSView(); bar.translatesAutoresizingMaskIntoConstraints = false
         let sep = NSView(); sep.wantsLayer = true
@@ -1460,7 +1460,7 @@ final class SubagentPane: NSView {
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         [bar, sep, scroll].forEach { addSubview($0) }
-        bar.addSubview(spinner); bar.addSubview(header)   // no ✕ — the dock panel provides close
+        bar.addSubview(spinner); bar.addSubview(header)   // no ✕ - the dock panel provides close
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: topAnchor),
             bar.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1517,7 +1517,7 @@ final class SubagentPane: NSView {
         guard !t.isEmpty else { return }
         add(ChatText.proseMarkdown(t))
     }
-    /// 도구가 돌고 난 출력. 길면 앞부분만 — 서브 팬은 진행을 보는 곳이지 로그 뷰어가 아니다.
+    /// 도구가 돌고 난 출력. 길면 앞부분만 - 서브 팬은 진행을 보는 곳이지 로그 뷰어가 아니다.
     func addToolResult(_ text: String, isError: Bool) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
@@ -1534,7 +1534,7 @@ final class SubagentPane: NSView {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil)
         header.attributedStringValue = SubagentPane.headerText(type: type, desc: t("chat.done"), running: false)
-        // Show the sub-agent's FINAL answer — it arrives in the Agent tool_result and was being
+        // Show the sub-agent's FINAL answer - it arrives in the Agent tool_result and was being
         // dropped, which is why the sub-agent's analysis never appeared in its panel.
         let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
         if !r.isEmpty { add(ChatText.proseMarkdown(r)) }

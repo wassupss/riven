@@ -94,9 +94,9 @@ rm -f "$HOME/.claude/projects/$(echo "$WS" | sed 's/[^a-zA-Z0-9]/-/g')/perfcheck
 
 if [ "$FAIL" -eq 0 ]; then
   date +%s > "$MARKER"
-  say "✅ perf check passed — marker written ($MARKER)"
+  say "✅ perf check passed - marker written ($MARKER)"
 else
   rm -f "$MARKER"
-  say "❌ perf check FAILED — fix before releasing"
+  say "❌ perf check FAILED - fix before releasing"
 fi
 exit "$FAIL"
