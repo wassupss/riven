@@ -278,7 +278,7 @@ final class SupabaseAuth {
         "browserURLs",      // 이 기기에서 보던 주소 (워크스페이스 경로가 들어간다)
         "browserZooms",     // 사이트별 확대 - 어느 사이트에 갔는지가 드러난다
         "browserTabs", "browserActiveTab",   // 이 기기에서 열어 둔 탭
-        "aiApiKey", "session", "aiCompleteEndpoint", "aiProvider",
+        "aiApiKey", "session", "session.backup", "aiCompleteEndpoint", "aiProvider",
         "api.history", "api.collections", "api.environments",
         // 이 기기의 로컬 부기 값 - 동기화하면 안 된다. 특히 lastSeenVersion 이 동기화되면,
         // 한 기기가 업데이트 후 클라우드에 현재 버전을 올리고 → 다른 기기가 그 값을 pull 해

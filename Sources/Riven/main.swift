@@ -1795,6 +1795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             rivenBootStep("restore:dispatch")
             DispatchQueue.main.async {
+                AppDelegate.backupSessionBeforeMigration()   // 마이그레이션 전 원본 1회 백업(안전망)
                 self.migrateGroupKeys()   // 옛 raw-path 그룹 키를 canonical 로 (restore 가 명단을 읽기 전에)
                 self.restoreSession()
                 // Restore's synchronous work is done. Any death after this settle window is
@@ -4475,7 +4476,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // ---- session persistence (open folders + tabs, restored on next launch) ----
+    /// 백업으로 복원한 뒤엔 라이브 상태로 세션을 다시 쓰지 않는다. 안 그러면 종료 때
+    /// persistSession 이 방금 되돌린 디스크의 세션을 현재(마이그레이션된) 상태로 덮어써,
+    /// 복원이 무의미해진다. 복원 -> 재시작 사이 창에서만 켜진다.
+    static var suppressSessionPersist = false
+
     private func persistSession() {
+        guard !AppDelegate.suppressSessionPersist else { return }
         var tabs: [String: Any] = [:]
         var actives: [String: Any] = [:]
         for url in workspaces {
@@ -4554,6 +4561,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         s["v"] = currentSessionVersion
         return s
+    }
+
+    /// 마이그레이션 직전 원본(session + group.*)을 한 번만 백업한다. 이미 꼬여 있던 세션을
+    /// 마이그레이션이 더 망가뜨려도 되돌릴 수 있는 안전망이다. session.backup 이 이미 있으면
+    /// 손대지 않아(가장 오래된 = 마이그레이션 이전 스냅샷을 보존), 두 번째 실행부터는 조용하다.
+    /// 새 사용자(세션 없음)나 이미 최신 버전이면 백업할 게 없어 건너뛴다.
+    static func backupSessionBeforeMigration() {
+        guard Settings.shared.object("session.backup") == nil else { return }
+        guard let session = Settings.shared.object("session") else { return }
+        let fromVersion = (session["v"] as? Int) ?? 0
+        guard fromVersion < currentSessionVersion else { return }
+        var groups: [String: String] = [:]
+        for k in Settings.shared.keys(prefix: "group.") { groups[k] = Settings.shared.string(k, "") }
+        let backup: [String: Any] = [
+            "at": ISO8601DateFormatter().string(from: Date()),
+            "fromVersion": fromVersion,
+            "session": session,
+            "groups": groups,
+        ]
+        Settings.shared.set("session.backup", backup)
+        RLog.log("session backup 생성: v\(fromVersion), 그룹 \(groups.count)개")
+    }
+
+    static func hasSessionBackup() -> Bool { Settings.shared.object("session.backup") != nil }
+
+    /// 백업해 둔 마이그레이션-이전 세션으로 되돌린다. 현재 session/group.* 을 백업 내용으로
+    /// 갈아끼우고 동기 flush 한 뒤, 이후의 persist 를 막는다(위 suppressSessionPersist). 다음
+    /// 실행(재시작) 때 그 상태로 열린다. 되돌린 세션은 다시 v0 이라, 재시작하면 마이그레이션이
+    /// 깨끗한 원본에서 다시 돈다(백업 자체는 그대로 남아 또 되돌릴 수 있다).
+    @discardableResult
+    static func restoreSessionFromBackup() -> Bool {
+        guard let backup = Settings.shared.object("session.backup"),
+              let session = backup["session"] as? [String: Any] else { return false }
+        for k in Settings.shared.keys(prefix: "group.") { Settings.shared.remove(k) }
+        if let groups = backup["groups"] as? [String: String] {
+            for (k, v) in groups { Settings.shared.set(k, v) }
+        }
+        Settings.shared.set("session", session)
+        Settings.shared.flush(sync: true)
+        suppressSessionPersist = true
+        RLog.log("session backup 으로 복원됨")
+        return true
+    }
+
+    /// 앱을 다시 띄운다. 격리 인스턴스(RIVEN_DATA_DIR)에서는 open 이 그 env 를 못 넘겨
+    /// 프로덕션 데이터로 떠 버리므로, 그럴 땐 재실행하지 않고 종료만 한다(데모/테스트 보호).
+    static func relaunch() {
+        if ProcessInfo.processInfo.environment["RIVEN_DATA_DIR"] == nil {
+            let path = Bundle.main.bundlePath
+            Process.launchedProcess(launchPath: "/bin/sh", arguments: ["-c", "sleep 1; open \"\(path)\""])
+        }
+        NSApp.terminate(nil)
     }
 
     private func restoreSession() {

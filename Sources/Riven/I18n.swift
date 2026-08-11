@@ -61,6 +61,17 @@ enum I18n {
     static let dict: [String: (ko: String, en: String)] = [
         // common
         "common.close": ("닫기", "Close"), "common.cancel": ("취소", "Cancel"),
+        "common.later": ("나중에", "Later"),
+        "settings.sessionRestore": ("세션 복원", "Restore session"),
+        "settings.sessionRestoreDesc": ("업데이트로 세션 구조가 바뀌기 전 백업이 있습니다. 워크스페이스·탭·그룹이 꼬였다면 그때로 되돌릴 수 있어요.",
+                                        "There is a backup from before the update changed the session structure. If workspaces, tabs, or groups got tangled, you can roll back to it."),
+        "settings.sessionRestoreBtn": ("백업으로 복원", "Restore backup"),
+        "settings.sessionRestoreConfirm": ("업데이트 이전 세션 상태로 되돌립니다. 그 이후에 연 탭·대화·워크스페이스 변경은 사라집니다. 계속할까요?",
+                                           "This rolls back to the session as it was before the update. Any tabs, chats, or workspace changes made since then will be lost. Continue?"),
+        "settings.sessionRestoreDone": ("복원 준비 완료", "Ready to restore"),
+        "settings.sessionRestoreDoneDesc": ("riven 을 재시작하면 백업된 세션으로 열립니다.",
+                                            "Restart riven to reopen with the backed-up session."),
+        "settings.restartNow": ("지금 재시작", "Restart now"),
         "common.ok": ("확인", "OK"),
         // crash reporting (opt-out disclosure + settings toggle)
         "crash.noticeTitle": ("익명 크래시 리포트", "Anonymous crash reports"),

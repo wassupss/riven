@@ -22,7 +22,7 @@ final class SettingsWindow: NSPanel {
     private static let silentKeys: Set<String> = ["session", "sidebarWidth", "railHeight",
                                                   "railCollapsed", "browserTabs", "browserZooms",
                                                   "browserActiveTab", "lastSeenVersion", "installId",
-                                                  "syncLocalStamp"]          // .rivenAuthChanged → refresh the Account tab
+                                                  "syncLocalStamp", "session.backup"]          // .rivenAuthChanged → refresh the Account tab
     private var langObserver: NSObjectProtocol?   // .rivenLanguageChanged → relabel tabs
     // Remove both observer tokens on teardown so they don't leak per window open (#64).
     deinit {
@@ -990,6 +990,13 @@ final class SettingsWindow: NSPanel {
                secondaryButton(t("settings.reset"), symbol: "arrow.counterclockwise") { [weak self] in
                    self?.confirmResetAll()
                })
+        // 마이그레이션 이전 세션 백업이 있을 때만 보인다. 업데이트로 세션이 꼬였다면 그때로.
+        if AppDelegate.hasSessionBackup() {
+            addRow(t("settings.sessionRestore"), desc: t("settings.sessionRestoreDesc"),
+                   secondaryButton(t("settings.sessionRestoreBtn"), symbol: "clock.arrow.circlepath") { [weak self] in
+                       self?.confirmSessionRestore()
+                   })
+        }
 
         addSection(t("about.links"))
         let landing = secondaryButton(t("about.landing"), symbol: "safari") {
@@ -1188,6 +1195,25 @@ final class SettingsWindow: NSPanel {
         NotificationCenter.default.post(name: .rivenFontSizeChanged, object: nil)
         Theme.apply(id: Settings.shared.string("theme", "ember"))
         showTab(activeTab)
+    }
+
+    /// 업데이트로 세션 구조가 바뀌기 전 백업으로 되돌린다. 되돌리면 그 이후의 변경(새로 연 탭·
+    /// 대화 등)은 사라지므로 반드시 한 번 묻고, 실제 반영은 재시작 후다.
+    private func confirmSessionRestore() {
+        let a = NSAlert()
+        a.messageText = t("settings.sessionRestore")
+        a.informativeText = t("settings.sessionRestoreConfirm")
+        a.alertStyle = .warning
+        a.addButton(withTitle: t("settings.sessionRestoreBtn"))
+        a.addButton(withTitle: t("common.cancel"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        guard AppDelegate.restoreSessionFromBackup() else { return }
+        let done = NSAlert()
+        done.messageText = t("settings.sessionRestoreDone")
+        done.informativeText = t("settings.sessionRestoreDoneDesc")
+        done.addButton(withTitle: t("settings.restartNow"))
+        done.addButton(withTitle: t("common.later"))
+        if done.runModal() == .alertFirstButtonReturn { AppDelegate.relaunch() }
     }
     private let searchCustom = NSTextField()
     private var searchCustomBox: NSView?
