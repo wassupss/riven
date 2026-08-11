@@ -1795,6 +1795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             rivenBootStep("restore:dispatch")
             DispatchQueue.main.async {
+                self.migrateGroupKeys()   // 옛 raw-path 그룹 키를 canonical 로 (restore 가 명단을 읽기 전에)
                 self.restoreSession()
                 // Restore's synchronous work is done. Any death after this settle window is
                 // no longer a boot-time crash, so clear the breadcrumb once we've stayed up a
@@ -4515,6 +4516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 한 번 더 저장하고 restoreSession 에서 나중에 복원해, 기동 초반에 복원한 railHeight 를
         // 곧바로 덮어썼다 (483 로 맞춰둔 레일이 매번 222 쯤으로 되돌아가던 원인).
         var session: [String: Any] = [
+            "v": AppDelegate.currentSessionVersion,   // 스키마 버전 (복원 때 마이그레이션 기준)
             "workspaces": workspaces.map { $0.absoluteString },
             "active": workspace?.absoluteString ?? "",
             "tabs": tabs,
@@ -4533,6 +4535,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                       Int(round(s.redComponent * 255)), Int(round(s.greenComponent * 255)), Int(round(s.blueComponent * 255)))
     }
 
+    /// 저장된 "session" 딕셔너리의 현재 스키마 버전. 구조를 바꿀 때마다 올리고, 아래
+    /// migrateSession 에 그 단계 변환을 더한다. 이 필드가 없던 옛 세션은 v0 으로 본다.
+    static let currentSessionVersion = 1
+    /// 저장된 세션을 현재 스키마로 끌어올린다. "v" 가 없으면 옛 세션(0)으로 보고 0->1->...
+    /// 단계 변환을 순서대로 태운다. 지금 v1 은 "현재 형식"의 기준선이라 0->1 은 형식 변화가
+    /// 없다(옛 세션은 이미 v1 과 호환). 이후 필드/서술자 구조를 바꾸면 여기에 case 를 더한다.
+    /// 이렇게 해 두면 "구조가 바뀐 새 버전 + 옛 세션" 을 암묵적 규약이 아니라 명시적으로 다룬다.
+    static func migrateSession(_ raw: [String: Any]) -> [String: Any] {
+        var s = raw
+        var v = (s["v"] as? Int) ?? 0
+        while v < currentSessionVersion {
+            switch v {
+            case 0: break   // 0 -> 1: 현재 형식이 v1 기준선. 옮길 것 없음.
+            default: break  // 미래 단계는 여기에 (예: case 1: /* 1 -> 2 변환 */)
+            }
+            v += 1
+        }
+        s["v"] = currentSessionVersion
+        return s
+    }
+
     private func restoreSession() {
         if ProcessInfo.processInfo.environment["RIVEN_BOOTTIME"] != nil {
             RLog.log(String(format: "BOOT 복원시작 %.0fms", Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
@@ -4540,8 +4563,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 RLog.log(String(format: "BOOT 복원끝 %.0fms", Date().timeIntervalSince(AppDelegate.launchedAt) * 1000))
             }
         }
-        guard let s = Settings.shared.object("session"),
-              let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); rivenBootComplete(); return }
+        guard let raw = Settings.shared.object("session") else { hideSwitchOverlay(); rivenBootComplete(); return }
+        let s = AppDelegate.migrateSession(raw)
+        guard let keys = s["workspaces"] as? [String], !keys.isEmpty else { hideSwitchOverlay(); rivenBootComplete(); return }
         rivenBootStep("restore:begin \(keys.count)ws")
         let tabs = s["tabs"] as? [String: Any] ?? [:]
         let actives = s["activeTab"] as? [String: Any] ?? [:]
@@ -6509,7 +6533,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let list = (order + rest).compactMap { byName[$0] }
         if let d = try? JSONSerialization.data(withJSONObject: list),
            let json = String(data: d, encoding: .utf8) {
-            Settings.shared.set("group.\(ws.path)|\(group)", json)
+            Settings.shared.set(groupKeyPrefix(ws) + group, json)
         }
     }
     /// 닫힌 그룹 팬의 마지막 상태를 명단에 남긴다.
@@ -6524,20 +6548,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let i = list.firstIndex(where: { $0["name"] == name }) { list[i] = entry } else { list.append(entry) }
         if let d = try? JSONSerialization.data(withJSONObject: list),
            let json = String(data: d, encoding: .utf8) {
-            Settings.shared.set("group.\(ws.path)|\(group)", json)
+            Settings.shared.set(groupKeyPrefix(ws) + group, json)
         }
         teamPanel.refresh()
     }
 
+    /// 그룹 명단 키의 접두사. session 과 같은 canonical 경로를 써서, 심링크나 끝 슬래시가
+    /// 달라도 같은 폴더면 같은 키가 되게 한다. 예전엔 raw ws.path 라 session(canonical)과
+    /// 어긋나, 심링크 경로로 연 워크스페이스에서 그룹이 안 붙는 경우가 있었다.
+    private func groupKeyPrefix(_ ws: URL) -> String {
+        "group.\(AppDelegate.canonicalWorkspacePath(ws.path).path)|"
+    }
+    /// 옛 그룹 키(raw ws.path 기반)를 canonical 경로 키로 한 번 옮긴다. 기동 초반 restore 전에
+    /// 한 번 돈다. 이미 canonical 인 키는 건드리지 않고, 새 키가 이미 있으면(양쪽 존재) 옛 것을
+    /// 버린다(새 것을 최신으로 본다). 존재하지 않는 폴더의 키여도 경로 표준화만 하므로 안전하다.
+    private func migrateGroupKeys() {
+        for key in Settings.shared.keys(prefix: "group.") {
+            let body = String(key.dropFirst("group.".count))     // "<wsPart>|<groupName>"
+            guard let bar = body.firstIndex(of: "|") else { continue }
+            let wsPart = String(body[body.startIndex..<bar])
+            let groupName = String(body[body.index(after: bar)...])
+            let canon = AppDelegate.canonicalWorkspacePath(wsPart).path
+            guard canon != wsPart else { continue }              // 이미 canonical
+            let newKey = "group.\(canon)|\(groupName)"
+            let val = Settings.shared.string(key, "")
+            if !val.isEmpty, Settings.shared.string(newKey, "").isEmpty {
+                Settings.shared.set(newKey, val)
+            }
+            Settings.shared.remove(key)
+            RLog.log("group key 마이그레이션: \(wsPart) -> \(canon)")
+        }
+    }
+
     private func savedRoster(_ ws: URL, _ group: String) -> [[String: String]] {
-        let json = Settings.shared.string("group.\(ws.path)|\(group)", "")
+        let json = Settings.shared.string(groupKeyPrefix(ws) + group, "")
         guard let d = json.data(using: .utf8),
               let list = try? JSONSerialization.jsonObject(with: d) as? [[String: String]] else { return [] }
         return list
     }
     /// 이 워크스페이스에 기록된 모든 그룹 이름.
     private func savedGroupNames(_ ws: URL) -> [String] {
-        Settings.shared.keys(prefix: "group.\(ws.path)|").map { String($0.dropFirst("group.\(ws.path)|".count)) }
+        let prefix = groupKeyPrefix(ws)
+        return Settings.shared.keys(prefix: prefix).map { String($0.dropFirst(prefix.count)) }
     }
 
     /// 에이전트가 워크스페이스 안에 쓴 .md 를 메모 패널의 문서 쪽에서 연다.
@@ -6686,7 +6738,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for i in list.indices where list[i]["parent"] == name { list[i]["parent"] = mainName ?? "" }
         if let d = try? JSONSerialization.data(withJSONObject: list),
            let json = String(data: d, encoding: .utf8) {
-            Settings.shared.set("group.\(ws.path)|\(group)", json)
+            Settings.shared.set(groupKeyPrefix(ws) + group, json)
         }
         refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
     }
@@ -6701,7 +6753,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             p.panel.chatGroup = nil       // 닫기 훅이 명단에 되돌려 넣지 않도록
             dock.removePanel(p.panel)     // onClose → teardown 으로 프로세스 종료
         }
-        Settings.shared.remove("group.\(ws.path)|\(group)")
+        Settings.shared.remove(groupKeyPrefix(ws) + group)
         refreshDockTabs(); refreshRailAgents(); teamPanel.refresh()
         return t("team.groupDeleted", ["group": group, "n": panes.count])
     }
