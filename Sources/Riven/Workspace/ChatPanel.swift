@@ -108,7 +108,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onBusyChange: ((Bool) -> Void)?
     var onAttention: ((Bool) -> Void)?
     var onTitle: ((String) -> Void)?
-    var onSessionId: ((String) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch
+    var onSessionId: ((String?) -> Void)?    // report the CLI session id so the pane can be resumed on relaunch (nil = clear it)
     var onModelChanged: ((String?) -> Void)?  // inline model chip → persist onto the DockPanel (chatModel)
     var onOpenSettings: (() -> Void)?       // /config
     private let attnRing = AttnRingView(frame: .zero)
@@ -930,6 +930,24 @@ final class ChatPanel: NSView, Themable, Scalable {
         onSessionId?(sid)
     }
 
+    /// /clear: 화면만 지우던 게 아니라 실제로 대화 컨텍스트를 리셋한다. 예전엔 뷰만 비워서
+    /// (1) 다음 메시지가 옛 컨텍스트를 그대로 물어 토큰을 낭비했고 (2) 재시작하면 팬의 옛
+    /// sessionId 로 --resume 해 옛 대화가 되살아났다. 이제 claude 세션을 새로(resume 없이) 띄우고
+    /// 팬 sessionId 를 즉시 비운다 - 새 세션의 init 이 새 sessionId 를 채운다.
+    func clearSession() {
+        guard let url = workspace,
+              let cmd = agentKind == .codex ? AgentDiscovery.codexCmd() : AgentDiscovery.claudeCmd() else { return }
+        session?.stop(); session = nil
+        sessionId = nil
+        onSessionId?(nil)   // 팬 sessionId 를 즉시 비운다 (재시작 전에 꺼져도 옛 세션을 resume 안 하게)
+        current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
+        approvalQueue.removeAll(); approvalActive = false
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        pendingHistory = []; loadEarlierBtn = nil
+        startSession(cmd: cmd, cwd: url.path, resume: nil)   // 새 세션 = 컨텍스트 리셋
+        addSystem(t("chat.cleared"))
+    }
+
     // ---- Restart on the current CLI (after it auto-updates mid-session) --------------------
     // The `claude` CLI updates itself in place while riven runs; the already-running headless
     // process keeps the OLD binary in memory (and older builds could spin a dead pipe reader at
@@ -1722,9 +1740,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let cmd = String(text.dropFirst()).split(separator: " ").first.map(String.init) ?? ""
         switch cmd {
         case "clear":
-            stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-            pendingHistory = []; loadEarlierBtn = nil
-            current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll()
+            clearSession()
             return true
         case "resume":
             let sessions = listSessions()
