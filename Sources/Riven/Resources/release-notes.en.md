@@ -1,16 +1,14 @@
-## Serial pipeline groups
+## Search, VSCode-style
 
-You can now build an agent team that runs in stages, one after another. In **Agent group panel → "New group" → [Pipeline]**, set up stages like Plan → Design → Build → QA → Ship, **pin each stage's role with a prompt**, enter a task, and:
+File search now **respects `.gitignore`**, so build output like `.build` and `node_modules` no longer floods the results, you see the code you want right away. The search box also gains **case (Aa), whole-word (W), and regex (.*)** toggles.
 
-- Stages run in order, **auto-executed**, and each stage's output is handed to the next.
-- The last stage produces the overall wrap-up.
-- If you stop a stage midway, the pipeline halts there instead of moving on.
+## Add MCP servers right in the app
 
-You can also just tell an agent "run this as a pipeline."
+Type `/mcp` in a chat to see connected servers and their status (in use / needs auth). **"Add MCP server"** lets you enter a name and a command (or URL), and riven adds it internally and reconnects automatically, no terminal needed.
 
-## Also fixed
+## Change count per workspace
 
-- When a background sub-agent finishes and the conversation continues, the panel correctly shows **in-progress → done** again (it used to stay stuck on "done," so you couldn't tell it had actually finished).
+Each workspace card in the left rail now shows the **number of local changes** next to its branch, like VSCode.
 
 ## Also
 

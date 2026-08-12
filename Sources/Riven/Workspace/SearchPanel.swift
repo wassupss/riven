@@ -12,7 +12,16 @@ final class SearchPanel: NSView, Themable, Scalable {
     private let summary = NSTextField(labelWithString: "")
     private let resultsStack = FlippedStack()
     private let scroll = NSScrollView()
+    private let caseBtn = NSButton()     // Aa  대소문자 구분
+    private let wordBtn = NSButton()     // W   단어 단위
+    private let regexBtn = NSButton()    // .*  정규식
+    private weak var queryBox: NSView?   // 검색 입력 상자(둥근 테두리) - 테마 갱신용
+    private weak var replaceBox: NSView?
     private var root: URL?
+
+    private var searchOptions: Search.Options {
+        .init(caseSensitive: caseBtn.state == .on, wholeWord: wordBtn.state == .on, regex: regexBtn.state == .on)
+    }
 
     // (filePath, line, column) - 1-based, to open + reveal in the editor.
     var onOpen: ((String, Int, Int) -> Void)?
@@ -28,17 +37,43 @@ final class SearchPanel: NSView, Themable, Scalable {
         title.textColor = Theme.fgDim
         title.translatesAutoresizingMaskIntoConstraints = false
 
-        style(queryField, placeholder: t("search.placeholder"))
+        styleField(queryField, placeholder: t("search.placeholder"))
         queryField.target = self; queryField.action = #selector(runSearch)
-        style(replaceField, placeholder: t("search.replacePlaceholder"))
+        styleField(replaceField, placeholder: t("search.replacePlaceholder"))
         replaceField.target = self; replaceField.action = #selector(runReplace)
 
-        replaceBtn.title = t("search.replaceAll")
+        // 모두 교체: 치환 상자 안 오른쪽의 컴팩트 플랫 버튼.
         replaceBtn.target = self; replaceBtn.action = #selector(runReplace)
-        replaceBtn.bezelStyle = .roundRect; replaceBtn.font = UIScale.font(UIScale.small)
-        replaceBtn.controlSize = .small; replaceBtn.translatesAutoresizingMaskIntoConstraints = false
-        // Let the button shrink/truncate when narrow so the replace field keeps room.
-        replaceBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        replaceBtn.isBordered = false
+        replaceBtn.translatesAutoresizingMaskIntoConstraints = false
+        replaceBtn.setContentHuggingPriority(.required, for: .horizontal)
+        styleReplaceBtn()
+
+        // VSCode 처럼 검색 상자 오른쪽에 대소문자(Aa) · 단어 단위(W) · 정규식(.*) 플랫 토글.
+        func toggle(_ b: NSButton, _ label: String, _ tip: String) {
+            b.title = label
+            b.setButtonType(.pushOnPushOff)
+            b.isBordered = false
+            b.toolTip = tip
+            b.target = self; b.action = #selector(toggleChanged)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.setContentHuggingPriority(.required, for: .horizontal)
+            b.widthAnchor.constraint(equalToConstant: UIScale.pt(24)).isActive = true
+            b.heightAnchor.constraint(equalToConstant: UIScale.pt(22)).isActive = true
+            styleToggle(b)
+        }
+        toggle(caseBtn, "Aa", t("search.caseTip"))
+        toggle(wordBtn, "W", t("search.wordTip"))
+        toggle(regexBtn, ".*", t("search.regexTip"))
+        let toggles = NSStackView(views: [caseBtn, wordBtn, regexBtn])
+        toggles.orientation = .horizontal; toggles.spacing = 3; toggles.alignment = .centerY
+        toggles.translatesAutoresizingMaskIntoConstraints = false
+
+        // 입력 상자: 둥근 테두리 + 좌우 패딩. 오른쪽 액세서리(토글 / 모두 교체)를 상자 '안'에
+        // 둬서 두 상자의 폭이 정확히 같다 (예전엔 토글·버튼이 상자 밖에 붙어 위아래 폭이 달랐다).
+        let qBox = makeFieldBox(queryField, accessory: toggles)
+        let rBox = makeFieldBox(replaceField, accessory: replaceBtn)
+        queryBox = qBox; replaceBox = rBox
 
         summary.font = UIScale.font(UIScale.caption); summary.textColor = Theme.fgDim
         summary.translatesAutoresizingMaskIntoConstraints = false
@@ -53,21 +88,19 @@ final class SearchPanel: NSView, Themable, Scalable {
         scroll.hasVerticalScroller = true
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(title); addSubview(queryField); addSubview(replaceField)
-        addSubview(replaceBtn); addSubview(summary); addSubview(scroll)
+        addSubview(title); addSubview(qBox); addSubview(rBox); addSubview(summary); addSubview(scroll)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            queryField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            queryField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            queryField.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
-            replaceField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            replaceField.trailingAnchor.constraint(equalTo: replaceBtn.leadingAnchor, constant: -6),
-            replaceField.topAnchor.constraint(equalTo: queryField.bottomAnchor, constant: 6),
-            replaceBtn.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            replaceBtn.centerYAnchor.constraint(equalTo: replaceField.centerYAnchor),
+            // 두 상자: 같은 좌우 여백 = 같은 폭.
+            qBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            qBox.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            qBox.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            rBox.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            rBox.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            rBox.topAnchor.constraint(equalTo: qBox.bottomAnchor, constant: 6),
             summary.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            summary.topAnchor.constraint(equalTo: replaceField.bottomAnchor, constant: 6),
+            summary.topAnchor.constraint(equalTo: rBox.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: summary.bottomAnchor, constant: 4),
@@ -79,7 +112,7 @@ final class SearchPanel: NSView, Themable, Scalable {
         Theme.register(self); UIScale.register(self)
         langObserver = NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.titleLabel.stringValue = t("title.search")
-            self?.replaceBtn.title = t("search.replaceAll")
+            self?.styleReplaceBtn()
             self?.queryField.placeholderString = t("search.placeholder")
             self?.replaceField.placeholderString = t("search.replacePlaceholder")
         }
@@ -96,38 +129,90 @@ final class SearchPanel: NSView, Themable, Scalable {
 
     func applyTheme() {
         layer?.backgroundColor = Theme.bg2.cgColor
-        style(queryField, placeholder: t("search.placeholder"))
-        style(replaceField, placeholder: t("search.replacePlaceholder"))
+        styleField(queryField, placeholder: t("search.placeholder"))
+        styleField(replaceField, placeholder: t("search.replacePlaceholder"))
+        styleBox(queryBox); styleBox(replaceBox)
+        styleReplaceBtn()
+        [caseBtn, wordBtn, regexBtn].forEach { styleToggle($0) }
         summary.textColor = Theme.fgDim
         renderResults(lastResult)   // recolor existing rows
     }
     func applyScale() {
         titleLabel.font = UIScale.font(UIScale.small, .medium)
         queryField.font = UIScale.font(UIScale.body); replaceField.font = UIScale.font(UIScale.body)
-        replaceBtn.font = UIScale.font(UIScale.small); summary.font = UIScale.font(UIScale.caption)
+        styleReplaceBtn(); summary.font = UIScale.font(UIScale.caption)
         renderResults(lastResult)   // rebuild result rows at the new scale
     }
 
-    private func style(_ tf: NSTextField, placeholder: String) {
+    /// 필드 자체는 투명·테두리 없음 (둥근 테두리·배경은 감싸는 상자가 그린다). 텍스트가 상자
+    /// 가장자리에 붙지 않게 상자 쪽에서 좌측 패딩을 준다. PaddedFieldCell 은 안 쓴다 - 레이아웃
+    /// 전(0x0)에 focusQuery 로 포커스하면 그 셀의 select 가 지오메트리 검증에서 크래시했다.
+    private func styleField(_ tf: NSTextField, placeholder: String) {
         tf.placeholderString = placeholder
         tf.font = UIScale.font(UIScale.body)
         tf.textColor = Theme.fg
-        tf.backgroundColor = Theme.bg3
+        tf.drawsBackground = false
         tf.isBordered = false
-        tf.bezelStyle = .roundedBezel
+        tf.focusRingType = .none
+        tf.lineBreakMode = .byTruncatingTail
         tf.translatesAutoresizingMaskIntoConstraints = false
-        tf.heightAnchor.constraint(equalToConstant: 24).isActive = true
+    }
+    /// 입력 필드를 둥근 테두리 상자로 감싼다. 오른쪽 액세서리(토글/버튼)를 상자 안에 두고,
+    /// 텍스트엔 좌측 패딩(9pt)을 준다. 상자를 쓰는 두 입력칸은 좌우 여백이 같아 폭이 딱 맞는다.
+    private func makeFieldBox(_ field: NSTextField, accessory: NSView) -> NSView {
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.cornerRadius = 6
+        box.layer?.borderWidth = 1
+        box.translatesAutoresizingMaskIntoConstraints = false
+        accessory.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(field); box.addSubview(accessory)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(30)),
+            field.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 9),   // 좌측 패딩
+            field.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            field.trailingAnchor.constraint(equalTo: accessory.leadingAnchor, constant: -6),
+            accessory.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -6),
+            accessory.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        styleBox(box)
+        return box
+    }
+    private func styleReplaceBtn() {
+        replaceBtn.attributedTitle = NSAttributedString(string: t("search.replaceAll"), attributes: [
+            .foregroundColor: Theme.accent, .font: UIScale.font(UIScale.caption, .medium)])
+    }
+    private func styleBox(_ box: NSView?) {
+        box?.layer?.borderColor = Theme.edge.cgColor
+        box?.layer?.backgroundColor = (Theme.isLight ? Theme.bg : Theme.bg3).cgColor
+    }
+    /// 플랫 토글(Aa/W/.*): 켜지면 액센트 배경+글자, 꺼지면 흐릿. 투박한 맥 버튼 대신.
+    private func styleToggle(_ b: NSButton) {
+        let on = b.state == .on
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 5
+        b.layer?.backgroundColor = (on ? Theme.accent.withAlphaComponent(0.22) : NSColor.clear).cgColor
+        b.attributedTitle = NSAttributedString(string: b.title, attributes: [
+            .foregroundColor: on ? Theme.accent : Theme.fgDim,
+            .font: UIScale.mono(UIScale.caption, .semibold)])
     }
 
     private var lastResult: Search.Result?
+
+    @objc private func toggleChanged() {
+        [caseBtn, wordBtn, regexBtn].forEach { styleToggle($0) }
+        runSearch()
+    }
 
     @objc private func runSearch() {
         guard let root else { return }
         let q = queryField.stringValue
         if q.trimmingCharacters(in: .whitespaces).isEmpty { lastResult = nil; renderResults(nil); summary.stringValue = ""; return }
         summary.stringValue = t("search.searching")
+        let opts = searchOptions
         DispatchQueue.global(qos: .userInitiated).async {
-            let res = Search.inFiles(root: root, query: q)
+            let res = Search.inFiles(root: root, query: q, options: opts)
             DispatchQueue.main.async {
                 self.lastResult = res
                 self.renderResults(res)
@@ -139,7 +224,7 @@ final class SearchPanel: NSView, Themable, Scalable {
     }
 
     @objc private func runReplace() {
-        guard let root, !replaceField.stringValue.isEmpty || replaceField.stringValue == "" else { return }
+        guard root != nil else { return }
         let q = queryField.stringValue
         if q.isEmpty || (lastResult?.matches.isEmpty ?? true) { return }
         let fileCount = Set(lastResult?.matches.map { $0.file } ?? []).count
@@ -149,9 +234,12 @@ final class SearchPanel: NSView, Themable, Scalable {
         alert.addButton(withTitle: t("search.replace")); alert.addButton(withTitle: t("common.cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let repl = replaceField.stringValue
+        let opts = searchOptions
+        // 검색으로 실제 매치된 파일에만 치환한다 - .build 같은 무시 대상은 절대 안 건드린다.
+        let files = Array(Set(lastResult?.matches.map { $0.file } ?? []))
         summary.stringValue = t("search.replacing")
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = Search.replaceInFiles(root: root, query: q, replacement: repl)
+            let r = Search.replaceInFiles(files: files, query: q, replacement: repl, options: opts)
             DispatchQueue.main.async {
                 self.summary.stringValue = t("search.replaceDone", ["n": r.replacements, "files": r.files])
                 self.runSearch()
