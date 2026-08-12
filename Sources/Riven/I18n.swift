@@ -89,6 +89,7 @@ enum I18n {
         // panel titles
         "title.editor": ("코드", "Code"), "title.preview": ("브라우저", "Browser"),
         "title.search": ("검색", "Search"), "title.git": ("소스 컨트롤", "Source Control"),
+        "rail.changesTip": ("로컬 변경 파일 수", "Local changes"),
         "title.changes": ("변경 사항", "Changes"), "title.terminal": ("터미널", "Terminal"),
         "title.api": ("API", "API"),
         "title.notes": ("메모", "Notes"),
