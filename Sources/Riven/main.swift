@@ -2951,6 +2951,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return "not a folder: \(path)"
         }
+        chat.onRunInTerminal = { [weak self] cmd in self?.runInTerminal(cmd) }
         queueBind(chat, ws: st.url, resume: resume)
         // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 - 같은 워크스페이스에 Claude 챗과
         // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
