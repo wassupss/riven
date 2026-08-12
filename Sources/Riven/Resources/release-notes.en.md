@@ -1,12 +1,10 @@
-## Manage MCP servers right in the app
+## /clear actually starts a fresh conversation
 
-Type `/mcp` in a chat and you now see the MCP servers configured for this workspace and their status (● in use / ○ needs auth). Right there you can:
+Fixed `/clear` only wiping the visible transcript while the real conversation kept going. Now `/clear` spins up a new session, so messages after it no longer carry the old context, and the cleared conversation does not come back after a restart.
 
-- **Add**: paste whatever goes after `claude mcp add` and riven runs it, including forms like `--transport http ... --header "Authorization: Bearer ..."`.
-- **Authenticate**: pick a server that needs auth and a browser opens to log in, no terminal required.
-- **Remove**: pick a server to remove.
+## Shrinking a panel gives you a scroll
 
-Everything happens in the app, and it reconnects automatically when done.
+The agent group, search, source control, changes, notes, and team panels now scroll when you make them shorter, instead of clipping the content or breaking the layout.
 
 ## Also
 
