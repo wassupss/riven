@@ -12,7 +12,14 @@ final class SearchPanel: NSView, Themable, Scalable {
     private let summary = NSTextField(labelWithString: "")
     private let resultsStack = FlippedStack()
     private let scroll = NSScrollView()
+    private let caseBtn = NSButton()     // Aa  대소문자 구분
+    private let wordBtn = NSButton()     // W   단어 단위
+    private let regexBtn = NSButton()    // .*  정규식
     private var root: URL?
+
+    private var searchOptions: Search.Options {
+        .init(caseSensitive: caseBtn.state == .on, wholeWord: wordBtn.state == .on, regex: regexBtn.state == .on)
+    }
 
     // (filePath, line, column) - 1-based, to open + reveal in the editor.
     var onOpen: ((String, Int, Int) -> Void)?
@@ -40,6 +47,25 @@ final class SearchPanel: NSView, Themable, Scalable {
         // Let the button shrink/truncate when narrow so the replace field keeps room.
         replaceBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        // VSCode 처럼 검색 상자 오른쪽에 대소문자(Aa) · 단어 단위(W) · 정규식(.*) 토글.
+        func toggle(_ b: NSButton, _ label: String, _ tip: String) {
+            b.title = label
+            b.setButtonType(.pushOnPushOff)
+            b.bezelStyle = .roundRect; b.controlSize = .small
+            b.font = UIScale.mono(UIScale.caption, .semibold)
+            b.toolTip = tip
+            b.target = self; b.action = #selector(toggleChanged)
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.setContentHuggingPriority(.required, for: .horizontal)
+            b.widthAnchor.constraint(equalToConstant: UIScale.pt(26)).isActive = true
+        }
+        toggle(caseBtn, "Aa", t("search.caseTip"))
+        toggle(wordBtn, "W", t("search.wordTip"))
+        toggle(regexBtn, ".*", t("search.regexTip"))
+        let toggles = NSStackView(views: [caseBtn, wordBtn, regexBtn])
+        toggles.orientation = .horizontal; toggles.spacing = 2; toggles.alignment = .centerY
+        toggles.translatesAutoresizingMaskIntoConstraints = false
+
         summary.font = UIScale.font(UIScale.caption); summary.textColor = Theme.fgDim
         summary.translatesAutoresizingMaskIntoConstraints = false
 
@@ -54,13 +80,15 @@ final class SearchPanel: NSView, Themable, Scalable {
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(title); addSubview(queryField); addSubview(replaceField)
-        addSubview(replaceBtn); addSubview(summary); addSubview(scroll)
+        addSubview(replaceBtn); addSubview(summary); addSubview(scroll); addSubview(toggles)
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             queryField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            queryField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            queryField.trailingAnchor.constraint(equalTo: toggles.leadingAnchor, constant: -6),
             queryField.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+            toggles.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            toggles.centerYAnchor.constraint(equalTo: queryField.centerYAnchor),
             replaceField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             replaceField.trailingAnchor.constraint(equalTo: replaceBtn.leadingAnchor, constant: -6),
             replaceField.topAnchor.constraint(equalTo: queryField.bottomAnchor, constant: 6),
@@ -121,13 +149,16 @@ final class SearchPanel: NSView, Themable, Scalable {
 
     private var lastResult: Search.Result?
 
+    @objc private func toggleChanged() { runSearch() }
+
     @objc private func runSearch() {
         guard let root else { return }
         let q = queryField.stringValue
         if q.trimmingCharacters(in: .whitespaces).isEmpty { lastResult = nil; renderResults(nil); summary.stringValue = ""; return }
         summary.stringValue = t("search.searching")
+        let opts = searchOptions
         DispatchQueue.global(qos: .userInitiated).async {
-            let res = Search.inFiles(root: root, query: q)
+            let res = Search.inFiles(root: root, query: q, options: opts)
             DispatchQueue.main.async {
                 self.lastResult = res
                 self.renderResults(res)
@@ -139,7 +170,7 @@ final class SearchPanel: NSView, Themable, Scalable {
     }
 
     @objc private func runReplace() {
-        guard let root, !replaceField.stringValue.isEmpty || replaceField.stringValue == "" else { return }
+        guard root != nil else { return }
         let q = queryField.stringValue
         if q.isEmpty || (lastResult?.matches.isEmpty ?? true) { return }
         let fileCount = Set(lastResult?.matches.map { $0.file } ?? []).count
@@ -149,9 +180,12 @@ final class SearchPanel: NSView, Themable, Scalable {
         alert.addButton(withTitle: t("search.replace")); alert.addButton(withTitle: t("common.cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let repl = replaceField.stringValue
+        let opts = searchOptions
+        // 검색으로 실제 매치된 파일에만 치환한다 - .build 같은 무시 대상은 절대 안 건드린다.
+        let files = Array(Set(lastResult?.matches.map { $0.file } ?? []))
         summary.stringValue = t("search.replacing")
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = Search.replaceInFiles(root: root, query: q, replacement: repl)
+            let r = Search.replaceInFiles(files: files, query: q, replacement: repl, options: opts)
             DispatchQueue.main.async {
                 self.summary.stringValue = t("search.replaceDone", ["n": r.replacements, "files": r.files])
                 self.runSearch()
