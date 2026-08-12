@@ -139,13 +139,9 @@ final class SearchPanel: NSView, Themable, Scalable {
     }
 
     private func style(_ tf: NSTextField, placeholder: String) {
-        // 둥근 모서리 + 얇은 테두리 + 좌측 패딩 (riven 의 RivenInput 과 같은 결). 예전엔 패딩·둥근
-        // 모서리 없는 밋밋한 회색 박스라 조잡했다.
-        if !(tf.cell is PaddedFieldCell) {
-            let c = PaddedFieldCell(textCell: "")
-            c.isEditable = true; c.isSelectable = true; c.isScrollable = true; c.wraps = false
-            tf.cell = c
-        }
+        // 둥근 모서리 + 얇은 테두리 (예전엔 밋밋한 회색 박스라 조잡했다). PaddedFieldCell 은
+        // 쓰지 않는다 - 레이아웃 전(0x0)에 focusQuery 로 포커스하면 그 셀의 select 가 지오메트리
+        // 검증에서 크래시했다. 기본 셀 + 레이어 스타일만으로 충분히 정돈된다.
         tf.placeholderString = placeholder
         tf.font = UIScale.font(UIScale.body)
         tf.textColor = Theme.fg
