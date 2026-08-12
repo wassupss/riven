@@ -5518,7 +5518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let status = Git.status(cwd: ws.path)
             DispatchQueue.main.async {
                 self.statusBar.setBranch(branch)
-                self.rail.setBranch(ws, branch)
+                self.rail.setBranch(ws, branch, changes: status.count)   // VSCode 처럼 로컬 변경 파일 수를 카드에
                 self.state(for: ws).explorer?.setGitStatus(status)
                 self.state(for: ws).git?.changes.refresh()   // 열어 둔 소스 컨트롤만 갱신
             }

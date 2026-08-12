@@ -383,7 +383,18 @@ final class WorkspaceRail: NSView, Themable {
         branch.font = UIScale.mono(UIScale.caption); branch.textColor = Theme.fgDim
         branch.lineBreakMode = .byTruncatingTail
         branch.translatesAutoresizingMaskIntoConstraints = false
-        let branchRow = NSStackView(views: [branchIcon, branch])
+        branch.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // 길면 브랜치가 먼저 잘리고 개수는 남는다
+        // VSCode 처럼: 브랜치 옆에 로컬 변경 파일 수. 0 이면 숨긴다.
+        let changes = changeCounts[url] ?? 0
+        let changeLabel = NSTextField(labelWithString: changes > 0 ? "\(changes)" : "")
+        changeLabel.font = UIScale.mono(UIScale.caption, .semibold)
+        changeLabel.textColor = Theme.accent
+        changeLabel.toolTip = t("rail.changesTip")
+        changeLabel.translatesAutoresizingMaskIntoConstraints = false
+        changeLabel.isHidden = changes == 0
+        changeLabel.setContentHuggingPriority(.required, for: .horizontal)
+        changeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let branchRow = NSStackView(views: [branchIcon, branch, changeLabel])
         branchRow.orientation = .horizontal; branchRow.spacing = 4; branchRow.alignment = .centerY
         branchRow.translatesAutoresizingMaskIntoConstraints = false
         let hasBranch = !(branches[url] ?? "").isEmpty
@@ -514,8 +525,13 @@ final class WorkspaceRail: NSView, Themable {
 
     private final class ColorChoice { let url: URL; let color: NSColor?; init(url: URL, color: NSColor?) { self.url = url; self.color = color } }
     private var branches: [URL: String] = [:]
-    func setBranch(_ url: URL, _ branch: String?) {
+    private var changeCounts: [URL: Int] = [:]
+    func setBranch(_ url: URL, _ branch: String?, changes: Int = 0) {
+        // 값이 그대로면 카드를 다시 그리지 않는다 - refreshGit 은 저장·전환마다 도는데, 매번
+        // 레일 전체를 rebuild 하면 헛일이고 스크롤·포커스가 튄다.
+        guard branches[url] != branch || changeCounts[url] != changes else { return }
         branches[url] = branch
+        changeCounts[url] = changes
         rebuild()
     }
 
