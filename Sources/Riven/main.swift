@@ -2952,6 +2952,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "not a folder: \(path)"
         }
         chat.onRunInTerminal = { [weak self] cmd in self?.runInTerminal(cmd) }
+        chat.onAddMCP = { [weak self] name, command, done in self?.addMCPServer(name: name, command: command, done: done) }
         queueBind(chat, ws: st.url, resume: resume)
         // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 - 같은 워크스페이스에 Claude 챗과
         // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
@@ -3246,6 +3247,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Give the agent a moment to boot before pasting the queued context.
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { texts.forEach { tv.sendText($0) } }
     }
+    /// MCP 서버를 내부에서 추가한다: 터미널을 열지 않고 riven 이 `claude mcp add` 를 직접 실행한다.
+    /// 사용자 스코프(--scope user)로 넣어 headless 세션이 재연결 시 자동 병합 로드하게 한다.
+    /// command 가 http(s) 면 HTTP transport, 아니면 stdio 명령으로 붙인다.
+    func addMCPServer(name: String, command: String, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
+        let cwd = workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            var args: [String]
+            if command.hasPrefix("http://") || command.hasPrefix("https://") {
+                args = ["mcp", "add", "--scope", "user", "--transport", "http", name, command]
+            } else {
+                args = ["mcp", "add", "--scope", "user", name, "--"] + command.split(separator: " ").map(String.init)
+            }
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = [claude] + args
+            p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+            var out = ""
+            do {
+                try p.run()
+                let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+                out = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if p.terminationStatus == 0 && out.isEmpty { out = t("chat.mcp.added", ["n": name]) }
+            } catch { out = "\(error)" }
+            DispatchQueue.main.async { done(out) }
+        }
+    }
+
     // Bring the app forward and run a command in a fresh terminal (used by the
     // settings Account tab's "gh auth login").
     func runInTerminal(_ cmd: String) {
