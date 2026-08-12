@@ -1,14 +1,12 @@
-## Search, VSCode-style
+## Manage MCP servers right in the app
 
-File search now **respects `.gitignore`**, so build output like `.build` and `node_modules` no longer floods the results, you see the code you want right away. The search box also gains **case (Aa), whole-word (W), and regex (.*)** toggles.
+Type `/mcp` in a chat and you now see the MCP servers configured for this workspace and their status (● in use / ○ needs auth). Right there you can:
 
-## Add MCP servers right in the app
+- **Add**: paste whatever goes after `claude mcp add` and riven runs it, including forms like `--transport http ... --header "Authorization: Bearer ..."`.
+- **Authenticate**: pick a server that needs auth and a browser opens to log in, no terminal required.
+- **Remove**: pick a server to remove.
 
-Type `/mcp` in a chat to see connected servers and their status (in use / needs auth). **"Add MCP server"** lets you enter a name and a command (or URL), and riven adds it internally and reconnects automatically, no terminal needed.
-
-## Change count per workspace
-
-Each workspace card in the left rail now shows the **number of local changes** next to its branch, like VSCode.
+Everything happens in the app, and it reconnects automatically when done.
 
 ## Also
 
