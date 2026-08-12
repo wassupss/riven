@@ -2952,7 +2952,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "not a folder: \(path)"
         }
         chat.onRunInTerminal = { [weak self] cmd in self?.runInTerminal(cmd) }
-        chat.onAddMCP = { [weak self] name, command, done in self?.addMCPServer(name: name, command: command, done: done) }
+        chat.onAddMCP = { [weak self] argsLine, done in self?.addMCPServer(argsLine: argsLine, cwd: owner.path, done: done) }
+        chat.onListMCP = { [weak self] done in self?.listMCPServers(cwd: owner.path, done: done) }
+        chat.onLoginMCP = { [weak self] name, done in self?.loginMCPServer(name: name, cwd: owner.path, done: done) }
+        chat.onRemoveMCP = { [weak self] name, done in self?.removeMCPServer(name: name, cwd: owner.path, done: done) }
         queueBind(chat, ws: st.url, resume: resume)
         // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 - 같은 워크스페이스에 Claude 챗과
         // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
@@ -3250,30 +3253,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// MCP 서버를 내부에서 추가한다: 터미널을 열지 않고 riven 이 `claude mcp add` 를 직접 실행한다.
     /// 사용자 스코프(--scope user)로 넣어 headless 세션이 재연결 시 자동 병합 로드하게 한다.
     /// command 가 http(s) 면 HTTP transport, 아니면 stdio 명령으로 붙인다.
-    func addMCPServer(name: String, command: String, done: @escaping (String) -> Void) {
+    /// `claude mcp add <argsLine>` 를 그대로 실행한다. argsLine 은 사용자가 넣은 인자 전체
+    /// (이름·명령/URL·--transport·--header "..." 등). 셸처럼 따옴표를 존중해 토큰화한다.
+    /// 스코프는 강제하지 않는다 - 기본(local, 이 워크스페이스 cwd)이라 전역으로 퍼져 CPU 를
+    /// 끌어올리지 않는다(사용자 서버들이 원래 워크스페이스별로 등록돼 있는 것과 같은 결).
+    func addMCPServer(argsLine: String, cwd: String?, done: @escaping (String) -> Void) {
         guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
-        let cwd = workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let tokens = AppDelegate.shellSplit(argsLine)
+        guard !tokens.isEmpty else { done(t("chat.mcp.addEmpty")); return }
         DispatchQueue.global(qos: .userInitiated).async {
-            var args: [String]
-            if command.hasPrefix("http://") || command.hasPrefix("https://") {
-                args = ["mcp", "add", "--scope", "user", "--transport", "http", name, command]
-            } else {
-                args = ["mcp", "add", "--scope", "user", name, "--"] + command.split(separator: " ").map(String.init)
-            }
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            p.arguments = [claude] + args
-            p.currentDirectoryURL = URL(fileURLWithPath: cwd)
-            let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
-            var out = ""
-            do {
-                try p.run()
-                let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
-                out = String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if p.terminationStatus == 0 && out.isEmpty { out = t("chat.mcp.added", ["n": name]) }
-            } catch { out = "\(error)" }
+            let out = self.runClaude(claude, ["mcp", "add"] + tokens, cwd: dir)
+            DispatchQueue.main.async { done(out.isEmpty ? t("chat.mcp.added", ["n": argsLine]) : out) }
+        }
+    }
+    /// `claude mcp list` 로 이 워크스페이스에 설정된 MCP 서버 목록+상태를 가져온다.
+    func listMCPServers(cwd: String?, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(""); return }
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out = self.runClaude(claude, ["mcp", "list"], cwd: dir)
             DispatchQueue.main.async { done(out) }
         }
+    }
+    /// `claude mcp login <name>` - 브라우저가 열려 OAuth 로그인한다. 완료(또는 실패)까지 기다렸다
+    /// 결과를 돌려준다. 백그라운드라 UI 는 안 막힌다. 대화형 REPL 없이 인증이 끝난다.
+    func loginMCPServer(name: String, cwd: String?, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out = self.runClaude(claude, ["mcp", "login", name], cwd: dir)
+            DispatchQueue.main.async { done(out.isEmpty ? t("chat.mcp.loginDone", ["n": name]) : out) }
+        }
+    }
+    /// `claude mcp remove <name>` - 설정에서 서버를 뺀다 (스코프는 있는 곳에서 자동으로).
+    func removeMCPServer(name: String, cwd: String?, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out = self.runClaude(claude, ["mcp", "remove", name], cwd: dir)
+            DispatchQueue.main.async { done(out.isEmpty ? t("chat.mcp.removed", ["n": name]) : out) }
+        }
+    }
+    /// claude 를 한 번 실행하고 stdout+stderr 를 돌려준다 (mcp add/list 처럼 짧은 명령용).
+    private func runClaude(_ claude: String, _ args: [String], cwd: String) -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = [claude] + args
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = pipe
+        do { try p.run() } catch { return "\(error)" }
+        let d = pipe.fileHandleForReading.readDataToEndOfFile(); p.waitUntilExit()
+        return String(data: d, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+    /// 셸처럼 문자열을 인자로 쪼갠다 (큰/작은따옴표, 백슬래시 이스케이프 존중). MCP 추가에서
+    /// --header "Authorization: Bearer x" 같은 따옴표 인자를 그대로 넘기기 위한 것.
+    static func shellSplit(_ s: String) -> [String] {
+        var args: [String] = []; var cur = ""; var has = false
+        var quote: Character? = nil; var esc = false
+        for ch in s {
+            if esc { cur.append(ch); has = true; esc = false; continue }
+            if ch == "\\" && quote != "'" { esc = true; continue }
+            if let q = quote {
+                if ch == q { quote = nil } else { cur.append(ch) }
+                has = true
+            } else if ch == "\"" || ch == "'" {
+                quote = ch; has = true
+            } else if ch == " " || ch == "\t" || ch == "\n" {
+                if has { args.append(cur); cur = ""; has = false }
+            } else { cur.append(ch); has = true }
+        }
+        if has { args.append(cur) }
+        return args
     }
 
     // Bring the app forward and run a command in a fresh terminal (used by the
