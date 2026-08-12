@@ -337,6 +337,7 @@ enum I18n {
         "chat.mode.auto": ("자동 실행", "Auto"),
         "chat.mode.tip": ("권한 모드 (Shift+Tab 으로 전환)", "Permission mode (Shift+Tab to cycle)"),
         "chat.mode.now": ("권한 모드: {m}", "Permission mode: {m}"),
+        "chat.cleared": ("대화를 지웠습니다. 새 세션에서 시작합니다.", "Conversation cleared. Starting a fresh session."),
         "chat.mode.help": ("권한 모드: {m}. Shift+Tab 또는 하단 모드 셀렉터로 전환 (계획/승인 요청/자동 실행).",
                            "Permission mode: {m}. Switch with Shift+Tab or the selector below (Plan / Ask / Auto)."),
         "chat.approve": ("승인", "Approve"), "chat.deny": ("거부", "Deny"),
