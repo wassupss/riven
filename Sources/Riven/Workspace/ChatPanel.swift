@@ -1149,6 +1149,11 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 지금 워크스페이스에 설정된 MCP 서버 목록+상태를 `claude mcp list` 로 조회한다. 세션 캐시는
     /// 첫 대화 전엔 비어 있어(claude 가 init 을 첫 입력 뒤에야 내보냄) 목록이 안 떴다.
     var onListMCP: ((@escaping (String) -> Void) -> Void)?
+    /// MCP 서버 OAuth 인증 (`claude mcp login <name>`). 브라우저가 열려 로그인하면 끝난다 -
+    /// 대화형 REPL(claude 띄우고 /mcp 입력)보다 훨씬 깔끔하다.
+    var onLoginMCP: ((_ name: String, _ done: @escaping (String) -> Void) -> Void)?
+    /// MCP 서버 제거 (`claude mcp remove <name>`).
+    var onRemoveMCP: ((_ name: String, _ done: @escaping (String) -> Void) -> Void)?
     /// riven_note_* - 메모/문서 읽기·쓰기 (앱이 처리하고 결과 문장을 돌려준다).
     var onNoteTool: ((_ tool: String, _ args: [String: Any]) -> String)?
 
@@ -1570,8 +1575,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// `claude mcp list` 출력(각 줄 `이름: 상세 - 상태`)을 파싱해 목록 + 액션을 그린다.
     private func renderMCPList(_ output: String) {
         var lines: [String] = []
-        var count = 0
-        var anyNeedsAuth = false
+        var servers: [(name: String, needsAuth: Bool)] = []
         for raw in output.split(separator: "\n") {
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("Checking") { continue }
@@ -1580,34 +1584,66 @@ final class ChatPanel: NSView, Themable, Scalable {
             let rest = String(line[colon.upperBound...])
             let status = rest.range(of: " - ", options: .backwards).map { String(rest[$0.upperBound...]) } ?? rest
             let low = status.lowercased()
+            let needsAuth = low.contains("auth")
             let mark: String, label: String
             if low.contains("connect") || status.contains("✔") { mark = "●"; label = t("chat.mcp.inUse") }
-            else if low.contains("auth") { mark = "○"; label = t("chat.mcp.needsAuth"); anyNeedsAuth = true }
+            else if needsAuth { mark = "○"; label = t("chat.mcp.needsAuth") }
             else { mark = "·"; label = status }
             lines.append("\(mark) \(name)  · \(label)")
-            count += 1
+            servers.append((name, needsAuth))
         }
-        if count == 0 { lines.append(t("chat.mcp.none")) }
+        if servers.isEmpty { lines.append(t("chat.mcp.none")) }
         addReport(t("chat.mcp.title"), lines)
-        presentMCPActions(needsAuth: anyNeedsAuth)
+        presentMCPActions(servers)
     }
-    private func presentMCPActions(needsAuth: Bool) {
+    private func presentMCPActions(_ servers: [(name: String, needsAuth: Bool)]) {
         var opts: [(String, () -> Void)] = []
         if onAddMCP != nil {
             opts.append((t("chat.mcp.add"), { [weak self] in self?.presentAddMCP() }))
+        }
+        // 인증: 인증 필요한 서버가 있을 때만. 서버를 고르면 `claude mcp login` 이 브라우저를 열어
+        // 로그인한다 (터미널·REPL 없이).
+        let needAuth = servers.filter { $0.needsAuth }.map { $0.name }
+        if !needAuth.isEmpty, onLoginMCP != nil {
+            opts.append((t("chat.mcp.login"), { [weak self] in
+                self?.pickServer(needAuth, t("chat.mcp.loginPick")) { self?.doLoginMCP($0) }
+            }))
+        }
+        // 제거: 어느 서버를 뺄지 고르고 확인하면 `claude mcp remove`.
+        if !servers.isEmpty, onRemoveMCP != nil {
+            let names = servers.map { $0.name }
+            opts.append((t("chat.mcp.remove"), { [weak self] in
+                self?.pickServer(names, t("chat.mcp.removePick")) { self?.confirmRemoveMCP($0) }
+            }))
         }
         opts.append((t("chat.mcp.refresh"), { [weak self] in self?.showMCP() }))
         if agentKind == .claude, session?.sessionId != nil {
             opts.append((t("chat.mcp.reconnect"), { [weak self] in self?.restartOnCurrentCLI() }))
         }
-        if needsAuth, onRunInTerminal != nil {
-            opts.append((t("chat.mcp.authTerminal"), { [weak self] in
-                self?.onRunInTerminal?("claude")
-                self?.addSystem(t("chat.mcp.authHint"))
-            }))
-        }
         // presentChoice 는 승인 machinery 를 안 타므로 팬이 busy 로 안 잡힌다 (취소해도 안 걸림).
         if !opts.isEmpty { presentChoice(t("chat.mcp.actions"), options: opts, allowOther: false) }
+    }
+    private func pickServer(_ names: [String], _ title: String, _ chosen: @escaping (String) -> Void) {
+        presentChoice(title, options: names.map { n in (n, { chosen(n) }) }, allowOther: false)
+    }
+    private func doLoginMCP(_ name: String) {
+        addSystem(t("chat.mcp.loggingIn", ["n": name]))
+        onLoginMCP?(name) { [weak self] result in
+            guard let self else { return }
+            self.addSystem(result)
+            self.restartOnCurrentCLI()   // 인증됐으니 재연결해 반영
+        }
+    }
+    private func confirmRemoveMCP(_ name: String) {
+        confirmDestructive(t("chat.mcp.removeConfirm", ["n": name])) { [weak self] ok in
+            guard let self, ok else { return }
+            self.addSystem(t("chat.mcp.removing", ["n": name]))
+            self.onRemoveMCP?(name) { [weak self] result in
+                guard let self else { return }
+                self.addSystem(result)
+                self.restartOnCurrentCLI()
+            }
+        }
     }
 
     /// MCP 서버 추가 폼. `claude mcp add` 뒤에 올 인자 전체(이름·명령/URL·--transport·--header 등)를

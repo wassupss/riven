@@ -2954,6 +2954,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onRunInTerminal = { [weak self] cmd in self?.runInTerminal(cmd) }
         chat.onAddMCP = { [weak self] argsLine, done in self?.addMCPServer(argsLine: argsLine, cwd: owner.path, done: done) }
         chat.onListMCP = { [weak self] done in self?.listMCPServers(cwd: owner.path, done: done) }
+        chat.onLoginMCP = { [weak self] name, done in self?.loginMCPServer(name: name, cwd: owner.path, done: done) }
+        chat.onRemoveMCP = { [weak self] name, done in self?.removeMCPServer(name: name, cwd: owner.path, done: done) }
         queueBind(chat, ws: st.url, resume: resume)
         // 아이콘·이름은 어느 CLI 인지 한눈에 보여야 한다 - 같은 워크스페이스에 Claude 챗과
         // Codex 챗이 나란히 뜨는데 둘 다 "Claude" 라고 적혀 있으면 구분할 방법이 없다.
@@ -3272,6 +3274,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.global(qos: .userInitiated).async {
             let out = self.runClaude(claude, ["mcp", "list"], cwd: dir)
             DispatchQueue.main.async { done(out) }
+        }
+    }
+    /// `claude mcp login <name>` - 브라우저가 열려 OAuth 로그인한다. 완료(또는 실패)까지 기다렸다
+    /// 결과를 돌려준다. 백그라운드라 UI 는 안 막힌다. 대화형 REPL 없이 인증이 끝난다.
+    func loginMCPServer(name: String, cwd: String?, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out = self.runClaude(claude, ["mcp", "login", name], cwd: dir)
+            DispatchQueue.main.async { done(out.isEmpty ? t("chat.mcp.loginDone", ["n": name]) : out) }
+        }
+    }
+    /// `claude mcp remove <name>` - 설정에서 서버를 뺀다 (스코프는 있는 곳에서 자동으로).
+    func removeMCPServer(name: String, cwd: String?, done: @escaping (String) -> Void) {
+        guard let claude = AgentDiscovery.claudeCmd() else { done(t("chat.mcp.noClaude")); return }
+        let dir = cwd ?? workspace?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
+        DispatchQueue.global(qos: .userInitiated).async {
+            let out = self.runClaude(claude, ["mcp", "remove", name], cwd: dir)
+            DispatchQueue.main.async { done(out.isEmpty ? t("chat.mcp.removed", ["n": name]) : out) }
         }
     }
     /// claude 를 한 번 실행하고 stdout+stderr 를 돌려준다 (mcp add/list 처럼 짧은 명령용).
