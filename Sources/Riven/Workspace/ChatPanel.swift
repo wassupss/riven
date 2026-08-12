@@ -1592,9 +1592,11 @@ final class ChatPanel: NSView, Themable, Scalable {
                 self?.addSystem(t("chat.mcp.authHint"))
             }))
         }
-        opts.append((t("common.close"), { }))
-        if opts.count > 1 {
-            enqueueChoice(title: t("chat.mcp.actions"), detail: "", code: nil, path: nil, options: opts)
+        // presentChoice 는 승인 machinery(approvalActive)를 안 탄다 - /mcp 는 승인이 아니라 메뉴라,
+        // enqueueChoice 를 쓰면 카드가 뜬 동안 팬이 "대기 중(busy)" 으로 잡히고 취소해도 안 풀렸다.
+        // presentChoice 는 취소·Esc 를 자체적으로 처리하고 busy 상태를 만들지 않는다.
+        if !opts.isEmpty {
+            presentChoice(t("chat.mcp.actions"), options: opts, allowOther: false)
         }
     }
 
