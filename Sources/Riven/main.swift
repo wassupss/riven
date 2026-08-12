@@ -3628,6 +3628,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
     /// Move a shared panel view into a workspace's host container (one view; cheap).
+    /// 스크롤로 감싸 담는다: 패널이 충분히 높으면 내용이 꽉 차고(스크롤 없음), 최소 높이보다
+    /// 짧아지면 그 자리에서 세로 스크롤이 생긴다. 예전엔 그냥 프레임에 채우기만 해서, 패널을
+    /// 줄이면 내부 고정 제약(위 헤더 + 아래 버튼)이 안 맞아 오토레이아웃이 깨지고 잘렸다.
+    private func adoptScrollable(_ view: NSView, into host: NSView, minHeight: CGFloat) {
+        let scroll: NSScrollView
+        let doc: NSView
+        if let s = host.subviews.first as? NSScrollView, let d = s.documentView {
+            scroll = s; doc = d
+        } else {
+            host.subviews.forEach { $0.removeFromSuperview() }
+            scroll = NSScrollView()
+            scroll.drawsBackground = false
+            scroll.hasVerticalScroller = true
+            scroll.autohidesScrollers = true
+            scroll.frame = host.bounds
+            scroll.autoresizingMask = [.width, .height]
+            host.addSubview(scroll)
+            let d = FlippedView()   // 위에서부터 채운다
+            d.translatesAutoresizingMaskIntoConstraints = false
+            scroll.documentView = d
+            let fill = d.heightAnchor.constraint(equalTo: scroll.contentView.heightAnchor)
+            fill.priority = .defaultLow   // 자리 있으면 꽉 채운다(스크롤 없음)
+            NSLayoutConstraint.activate([
+                d.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+                d.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+                d.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+                d.heightAnchor.constraint(greaterThanOrEqualToConstant: minHeight),        // 이보다 짧아지면 스크롤
+                d.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
+                fill,
+            ])
+            doc = d
+        }
+        for v in doc.subviews where v !== view { v.removeFromSuperview() }
+        guard view.superview !== doc else { return }
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            view.topAnchor.constraint(equalTo: doc.topAnchor),
+            view.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+        ])
+    }
+
     private func adopt(_ view: NSView, into host: NSView) {
         // 호스트에는 하나만 있어야 한다. 예전 것을 안 걷으면 뷰가 쌓이고, 나중에 붙은 것이
         // 위를 덮는다 - 워크스페이스를 오갈 때 남의 탐색기가 그대로 보이던 원인이다
@@ -6478,7 +6523,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // then never changes on a switch - we only re-parent the content view.
         let st = state(for: ws)
         let host = st.auxHost(id)
-        adopt(content, into: host)
+        // 에이전트 그룹 패널은 위 헤더 + 아래 버튼이 고정이라, 패널을 줄이면 그냥 채우기로는
+        // 레이아웃이 깨졌다. 최소 높이를 둔 스크롤로 감싸 짧아지면 스크롤되게 한다.
+        if id == "team" { adoptScrollable(content, into: host, minHeight: UIScale.pt(440)) }
+        else { adopt(content, into: host) }
         let panel = st.auxPanels[id] ?? DockPanel(id: id, title: title,
             icon: NSImage(systemSymbolName: symbol, accessibilityDescription: nil), content: host)
         panel.title = title
