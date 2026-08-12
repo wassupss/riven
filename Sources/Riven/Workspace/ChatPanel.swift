@@ -1143,9 +1143,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onOpenWorkspace: ((String) -> String)?
     /// 새 터미널을 열고 명령을 실행한다 (OAuth 인증처럼 대화형 브라우저가 필요한 경우에만).
     var onRunInTerminal: ((String) -> Void)?
-    /// MCP 서버를 내부에서(터미널 안 열고) 추가한다: riven 이 `claude mcp add` 를 직접 실행하고
-    /// 결과 문자열을 콜백으로 돌려준다. 끝나면 세션을 재연결해 새 서버를 집어 온다.
-    var onAddMCP: ((_ name: String, _ command: String, _ done: @escaping (String) -> Void) -> Void)?
+    /// MCP 서버를 내부에서(터미널 안 열고) 추가한다: `claude mcp add` 뒤에 올 인자 전체를
+    /// 그대로 받아 riven 이 실행하고 결과를 콜백으로 돌려준다. 끝나면 세션을 재연결한다.
+    var onAddMCP: ((_ argsLine: String, _ done: @escaping (String) -> Void) -> Void)?
+    /// 지금 워크스페이스에 설정된 MCP 서버 목록+상태를 `claude mcp list` 로 조회한다. 세션 캐시는
+    /// 첫 대화 전엔 비어 있어(claude 가 init 을 첫 입력 뒤에야 내보냄) 목록이 안 떴다.
+    var onListMCP: ((@escaping (String) -> Void) -> Void)?
     /// riven_note_* - 메모/문서 읽기·쓰기 (앱이 처리하고 결과 문장을 돌려준다).
     var onNoteTool: ((_ tool: String, _ args: [String: Any]) -> String)?
 
@@ -1556,72 +1559,76 @@ final class ChatPanel: NSView, Themable, Scalable {
         addReport(t("chat.usage.title"), lines)
     }
 
-    // /mcp - which servers are connected and WHAT they give the agent, not just a name list.
+    // /mcp - 워크스페이스에 설정된 MCP 서버 목록 + 상태 (claude mcp list 로 실제 조회).
     private func showMCP() {
-        let servers = session?.mcpServers ?? []
-        let tools = session?.toolList ?? []
+        // 세션 캐시(session.mcpServers)는 첫 대화 전엔 비어 있으므로(claude 가 init 을 첫 입력
+        // 뒤에야 내보낸다), 워크스페이스에 실제로 설정된 서버를 claude mcp list 로 직접 조회한다.
+        guard let list = onListMCP else { renderMCPList(""); return }
+        addSystem(t("chat.mcp.checking"))
+        list { [weak self] output in self?.renderMCPList(output) }
+    }
+    /// `claude mcp list` 출력(각 줄 `이름: 상세 - 상태`)을 파싱해 목록 + 액션을 그린다.
+    private func renderMCPList(_ output: String) {
         var lines: [String] = []
-        for srv in servers.sorted(by: { $0.name < $1.name }) {
-            let mine = tools.filter { $0.hasPrefix("mcp__\(srv.name)__") }
-                .map { $0.replacingOccurrences(of: "mcp__\(srv.name)__", with: "") }
-            let connected = srv.status == "connected"
-            // ● 연결됨(사용 중) / ○ 인증 필요 - 로컬에 실제로 붙어 있는지, 인증이 남았는지를 한눈에.
-            let mark = connected ? "●" : "○"
-            let state = connected ? t("chat.mcp.inUse") : t("chat.mcp.needsAuth")
-            var line = "\(mark) \(srv.name)  · \(state)"
-            if connected, !mine.isEmpty { line += " · \(t("chat.mcp.tools", ["n": mine.count]))" }
-            lines.append(line)
-            if connected, !mine.isEmpty { lines.append("   " + mine.sorted().joined(separator: ", ")) }
+        var count = 0
+        var anyNeedsAuth = false
+        for raw in output.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("Checking") { continue }
+            guard let colon = line.range(of: ": ") else { continue }
+            let name = String(line[..<colon.lowerBound])
+            let rest = String(line[colon.upperBound...])
+            let status = rest.range(of: " - ", options: .backwards).map { String(rest[$0.upperBound...]) } ?? rest
+            let low = status.lowercased()
+            let mark: String, label: String
+            if low.contains("connect") || status.contains("✔") { mark = "●"; label = t("chat.mcp.inUse") }
+            else if low.contains("auth") { mark = "○"; label = t("chat.mcp.needsAuth"); anyNeedsAuth = true }
+            else { mark = "·"; label = status }
+            lines.append("\(mark) \(name)  · \(label)")
+            count += 1
         }
-        if servers.isEmpty { lines.append(t("chat.mcp.none")) }
-        self.addReport(t("chat.mcp.title"), lines)
-        let needsAuth = servers.contains { $0.status != "connected" }
+        if count == 0 { lines.append(t("chat.mcp.none")) }
+        addReport(t("chat.mcp.title"), lines)
+        presentMCPActions(needsAuth: anyNeedsAuth)
+    }
+    private func presentMCPActions(needsAuth: Bool) {
         var opts: [(String, () -> Void)] = []
-        // 추가는 riven 이 내부에서 `claude mcp add` 를 직접 돌리고 재연결한다 (터미널 안 열림).
         if onAddMCP != nil {
             opts.append((t("chat.mcp.add"), { [weak self] in self?.presentAddMCP() }))
         }
+        opts.append((t("chat.mcp.refresh"), { [weak self] in self?.showMCP() }))
         if agentKind == .claude, session?.sessionId != nil {
             opts.append((t("chat.mcp.reconnect"), { [weak self] in self?.restartOnCurrentCLI() }))
         }
-        // OAuth 인증만은 브라우저가 필요해 headless 로 못 한다 - 인증 필요한 서버가 있을 때만
-        // 대화형 claude 를 띄워 준다.
         if needsAuth, onRunInTerminal != nil {
             opts.append((t("chat.mcp.authTerminal"), { [weak self] in
                 self?.onRunInTerminal?("claude")
                 self?.addSystem(t("chat.mcp.authHint"))
             }))
         }
-        // presentChoice 는 승인 machinery(approvalActive)를 안 탄다 - /mcp 는 승인이 아니라 메뉴라,
-        // enqueueChoice 를 쓰면 카드가 뜬 동안 팬이 "대기 중(busy)" 으로 잡히고 취소해도 안 풀렸다.
-        // presentChoice 는 취소·Esc 를 자체적으로 처리하고 busy 상태를 만들지 않는다.
-        if !opts.isEmpty {
-            presentChoice(t("chat.mcp.actions"), options: opts, allowOther: false)
-        }
+        // presentChoice 는 승인 machinery 를 안 타므로 팬이 busy 로 안 잡힌다 (취소해도 안 걸림).
+        if !opts.isEmpty { presentChoice(t("chat.mcp.actions"), options: opts, allowOther: false) }
     }
 
-    /// MCP 서버 추가 폼(이름 + 명령/URL). 확인하면 riven 이 `claude mcp add` 를 내부에서 돌리고
-    /// (터미널 안 열림), 결과를 대화에 남긴 뒤 세션을 재연결해 새 서버를 곧바로 집어 온다.
+    /// MCP 서버 추가 폼. `claude mcp add` 뒤에 올 인자 전체(이름·명령/URL·--transport·--header 등)를
+    /// 한 칸에 그대로 받아 riven 이 내부에서 실행하고(터미널 안 열림), 세션을 재연결한다.
     private func presentAddMCP() {
         let alert = NSAlert()
         alert.messageText = t("chat.mcp.addTitle")
         alert.informativeText = t("chat.mcp.addBody")
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 34, width: 320, height: 24))
-        nameField.placeholderString = t("chat.mcp.addNamePh")
-        let cmdField = NSTextField(frame: NSRect(x: 0, y: 4, width: 320, height: 24))
-        cmdField.placeholderString = t("chat.mcp.addCmdPh")
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 62))
-        box.addSubview(nameField); box.addSubview(cmdField)
-        alert.accessoryView = box
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 46))
+        field.placeholderString = t("chat.mcp.addArgsPh")
+        (field.cell as? NSTextFieldCell)?.wraps = true
+        (field.cell as? NSTextFieldCell)?.usesSingleLineMode = false
+        alert.accessoryView = field
         alert.addButton(withTitle: t("chat.mcp.add"))
         alert.addButton(withTitle: t("common.cancel"))
-        DispatchQueue.main.async { alert.window.makeFirstResponder(nameField) }
+        DispatchQueue.main.async { alert.window.makeFirstResponder(field) }
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
-        let cmd = cmdField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, !cmd.isEmpty, let add = onAddMCP else { return }
-        addSystem(t("chat.mcp.adding", ["n": name]))
-        add(name, cmd) { [weak self] result in
+        let argsLine = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !argsLine.isEmpty, let add = onAddMCP else { return }
+        addSystem(t("chat.mcp.adding", ["n": argsLine]))
+        add(argsLine) { [weak self] result in
             guard let self else { return }
             self.addSystem(result)
             self.restartOnCurrentCLI()   // 새 서버를 집어 오도록 재연결
