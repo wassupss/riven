@@ -46,6 +46,26 @@ enum Git {
         return String(data: data, encoding: .utf8)
     }
 
+    /// `git grep` 결과(줄들). .gitignore 를 존중하고 untracked 파일까지 훑어(VSCode 검색과 같은
+    /// 파일 집합), .build·node_modules 같은 빌드 산출물은 자동 제외된다. 매치 없음(exit 1)은
+    /// 빈 문자열, 저장소가 아니거나 진짜 오류(exit >1)면 nil (호출자가 파일 walk 로 폴백).
+    static func grep(cwd: String, args: [String]) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["git", "grep"] + args
+        p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        p.environment = env
+        let pipe = Pipe(); p.standardOutput = pipe; p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        switch p.terminationStatus {
+        case 0: return String(data: data, encoding: .utf8) ?? ""
+        case 1: return ""          // 매치 없음
+        default: return nil        // 저장소 아님/오류 → 폴백
+        }
+    }
+
     static func branch(cwd: String) -> String? {
         // symbolic-ref works on an unborn branch (fresh git init); SHA fallback.
         if let b = run(["symbolic-ref", "--short", "HEAD"], cwd: cwd)?

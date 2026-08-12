@@ -630,6 +630,9 @@ enum I18n {
         "changes.accept": ("수락", "Accept"), "changes.revert": ("되돌리기", "Revert"),
         // search
         "search.placeholder": ("파일에서 검색", "Search across files"),
+        "search.caseTip": ("대소문자 구분", "Match case"),
+        "search.wordTip": ("단어 단위", "Match whole word"),
+        "search.regexTip": ("정규식", "Use regular expression"),
         "search.searching": ("검색 중…", "Searching…"),
         "search.noResults": ("결과 없음", "No results"),
         "search.replacePlaceholder": ("바꾸기", "Replace with"),
