@@ -47,23 +47,24 @@ final class SearchPanel: NSView, Themable, Scalable {
         // Let the button shrink/truncate when narrow so the replace field keeps room.
         replaceBtn.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        // VSCode 처럼 검색 상자 오른쪽에 대소문자(Aa) · 단어 단위(W) · 정규식(.*) 토글.
+        // VSCode 처럼 검색 상자 오른쪽에 대소문자(Aa) · 단어 단위(W) · 정규식(.*) 플랫 토글.
         func toggle(_ b: NSButton, _ label: String, _ tip: String) {
             b.title = label
             b.setButtonType(.pushOnPushOff)
-            b.bezelStyle = .roundRect; b.controlSize = .small
-            b.font = UIScale.mono(UIScale.caption, .semibold)
+            b.isBordered = false
             b.toolTip = tip
             b.target = self; b.action = #selector(toggleChanged)
             b.translatesAutoresizingMaskIntoConstraints = false
             b.setContentHuggingPriority(.required, for: .horizontal)
-            b.widthAnchor.constraint(equalToConstant: UIScale.pt(26)).isActive = true
+            b.widthAnchor.constraint(equalToConstant: UIScale.pt(24)).isActive = true
+            b.heightAnchor.constraint(equalToConstant: UIScale.pt(22)).isActive = true
+            styleToggle(b)
         }
         toggle(caseBtn, "Aa", t("search.caseTip"))
         toggle(wordBtn, "W", t("search.wordTip"))
         toggle(regexBtn, ".*", t("search.regexTip"))
         let toggles = NSStackView(views: [caseBtn, wordBtn, regexBtn])
-        toggles.orientation = .horizontal; toggles.spacing = 2; toggles.alignment = .centerY
+        toggles.orientation = .horizontal; toggles.spacing = 3; toggles.alignment = .centerY
         toggles.translatesAutoresizingMaskIntoConstraints = false
 
         summary.font = UIScale.font(UIScale.caption); summary.textColor = Theme.fgDim
@@ -126,6 +127,7 @@ final class SearchPanel: NSView, Themable, Scalable {
         layer?.backgroundColor = Theme.bg2.cgColor
         style(queryField, placeholder: t("search.placeholder"))
         style(replaceField, placeholder: t("search.replacePlaceholder"))
+        [caseBtn, wordBtn, regexBtn].forEach { styleToggle($0) }
         summary.textColor = Theme.fgDim
         renderResults(lastResult)   // recolor existing rows
     }
@@ -137,19 +139,46 @@ final class SearchPanel: NSView, Themable, Scalable {
     }
 
     private func style(_ tf: NSTextField, placeholder: String) {
+        // 둥근 모서리 + 얇은 테두리 + 좌측 패딩 (riven 의 RivenInput 과 같은 결). 예전엔 패딩·둥근
+        // 모서리 없는 밋밋한 회색 박스라 조잡했다.
+        if !(tf.cell is PaddedFieldCell) {
+            let c = PaddedFieldCell(textCell: "")
+            c.isEditable = true; c.isSelectable = true; c.isScrollable = true; c.wraps = false
+            tf.cell = c
+        }
         tf.placeholderString = placeholder
         tf.font = UIScale.font(UIScale.body)
         tf.textColor = Theme.fg
-        tf.backgroundColor = Theme.bg3
+        tf.drawsBackground = false
         tf.isBordered = false
-        tf.bezelStyle = .roundedBezel
+        tf.focusRingType = .none
+        tf.wantsLayer = true
+        tf.layer?.cornerRadius = 6
+        tf.layer?.borderWidth = 1
+        tf.layer?.borderColor = Theme.edge.cgColor
+        tf.layer?.backgroundColor = (Theme.isLight ? Theme.bg : Theme.bg3).cgColor
         tf.translatesAutoresizingMaskIntoConstraints = false
-        tf.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        if tf.constraints.allSatisfy({ $0.firstAttribute != .height }) {
+            tf.heightAnchor.constraint(equalToConstant: UIScale.pt(28)).isActive = true
+        }
+    }
+    /// 플랫 토글(Aa/W/.*): 켜지면 액센트 배경+글자, 꺼지면 흐릿. 투박한 맥 버튼 대신.
+    private func styleToggle(_ b: NSButton) {
+        let on = b.state == .on
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 5
+        b.layer?.backgroundColor = (on ? Theme.accent.withAlphaComponent(0.22) : NSColor.clear).cgColor
+        b.attributedTitle = NSAttributedString(string: b.title, attributes: [
+            .foregroundColor: on ? Theme.accent : Theme.fgDim,
+            .font: UIScale.mono(UIScale.caption, .semibold)])
     }
 
     private var lastResult: Search.Result?
 
-    @objc private func toggleChanged() { runSearch() }
+    @objc private func toggleChanged() {
+        [caseBtn, wordBtn, regexBtn].forEach { styleToggle($0) }
+        runSearch()
+    }
 
     @objc private func runSearch() {
         guard let root else { return }
