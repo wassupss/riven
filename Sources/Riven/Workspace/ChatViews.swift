@@ -234,9 +234,9 @@ final class ToolLine: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // A bright band glides left→right over the tool NAME while it runs (same shadcn-style flow
-    // as "생각 중"), stopped when it finishes. Masking the single text label - not the whole
-    // row - makes it read as a directional sweep instead of the whole row blinking.
+    // A bright band glides left→right over the WHOLE tool line (icon + name + detail) while it
+    // runs (same shadcn-style flow as "생각 중"), stopped when it finishes. Masking the row's own
+    // layer makes the entire line shimmer, not just the name.
     private let shimmer = CAGradientLayer()
     private var shimmerOn = false
     func startShimmer() {
@@ -245,7 +245,7 @@ final class ToolLine: NSView {
         shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
         let dim = NSColor.white.withAlphaComponent(0.35).cgColor
         shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        nameLabel.layer?.mask = shimmer
+        layer?.mask = shimmer
         needsLayout = true
         let sweep = CABasicAnimation(keyPath: "locations")
         sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
@@ -255,11 +255,11 @@ final class ToolLine: NSView {
     }
     func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); nameLabel.layer?.mask = nil
+        shimmerOn = false; shimmer.removeAllAnimations(); layer?.mask = nil
     }
     override func layout() {
         super.layout()
-        guard shimmerOn, let host = nameLabel.layer else { return }
+        guard shimmerOn, let host = layer else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
     }
     static func symbol(_ name: String) -> String {
