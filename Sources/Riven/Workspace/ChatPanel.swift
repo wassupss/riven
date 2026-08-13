@@ -131,8 +131,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         layer?.backgroundColor = Theme.bg.cgColor
 
         stack.orientation = .vertical; stack.spacing = 2; stack.alignment = .leading   // 턴 하단 여백 strip 이 간격 역할
-        // 왼쪽 = 여백(16) + 점 + 간격. 점이 패널·글자와 안 붙게. 오른쪽 = 16.
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 38, bottom: 14, right: 16)
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 14, right: 16)   // 좌우 대칭 여백
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
@@ -874,8 +873,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             for (j, v) in views.enumerated() {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
-                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
-                if j == 0 { attachTimelineDot(to: v, user: m.user, centerVertically: m.user) }   // 턴 시작 마커
+                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
             }
         }
     }
@@ -886,7 +884,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.insertArrangedSubview(l, at: 0)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         loadEarlierBtn = l
     }
     private var loadingEarlier = false
@@ -1744,12 +1742,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
         head.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(head)
-        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         let body = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
         body.font = UIScale.mono(UIScale.small); body.textColor = Theme.fgDim; body.isSelectable = true
         body.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(body)
-        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// "2026-08-04T09:00:00Z" → "09:00" (local), for reset times.
@@ -2104,47 +2102,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         let block = TurnBlock()
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
-        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
-        attachTimelineDot(to: block, user: false, centerVertically: false)   // 에이전트 턴 마커
+        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         return block
     }
     /// 왼쪽 여백에 턴 마커 점을 찍는다 (사용자=accent, 에이전트=accent2). 단순 점 - 아이콘 없음.
     /// 아이템의 subview 라 트림/재렌더 때 함께 사라진다 (클릭은 안 받으므로 이걸로 충분).
-    private func attachTimelineDot(to item: NSView, user: Bool, centerVertically: Bool) {
-        let dot = NSView(); dot.wantsLayer = true
-        let d = UIScale.pt(8)
-        dot.layer?.backgroundColor = (user ? Theme.accent : Theme.accent2).cgColor
-        dot.layer?.cornerRadius = d / 2
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        item.addSubview(dot)
-        // 사용자 말풍선은 세로 중앙. 에이전트 답변은 첫 줄의 세로 중앙에 맞춘다.
-        let f = UIScale.font(UIScale.prose)
-        let firstLineCenter = ceil((f.ascender - f.descender) / 2) + UIScale.pt(1)
-        let vert = centerVertically
-            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor)          // 사용자 말풍선 세로 중앙
-            : dot.centerYAnchor.constraint(equalTo: item.topAnchor, constant: firstLineCenter)
-        NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: d),
-            dot.heightAnchor.constraint(equalToConstant: d),
-            // 콘텐츠는 x38 에서 시작. 점 중심은 x20 (왼쪽 여백 16 + 점 반지름) → 패널·글자와 안 붙음.
-            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -18),
-            vert,
-        ])
-        // "하나의 답변" 그룹 표시: 점 아래로 콘텐츠 하단까지 얇은 세로선 (여러 블록으로 된
-        // 에이전트 답변을 하나로 묶어 보인다). 사용자 한 줄 말풍선엔 안 그린다.
-        if !centerVertically {
-            let line = NSView(); line.wantsLayer = true
-            line.layer?.backgroundColor = (user ? Theme.accent : Theme.accent2).withAlphaComponent(0.3).cgColor
-            line.translatesAutoresizingMaskIntoConstraints = false
-            item.addSubview(line)
-            NSLayoutConstraint.activate([
-                line.widthAnchor.constraint(equalToConstant: 2),
-                line.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
-                line.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: UIScale.pt(4)),
-                line.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -UIScale.pt(2)),
-            ])
-        }
-    }
     // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
     // stay in the CLI session/context - only their VIEWS are dropped.
@@ -2250,8 +2212,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let v = UserBubble(text: text, tokens: .init(commands: commandNames, peers: peerNames()))
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
-        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
-        attachTimelineDot(to: v, user: true, centerVertically: true)   // 사용자 턴 마커 (세로 중앙)
+        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
         return v
     }
@@ -2260,7 +2221,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// 세션 경계 표시("이전 세션에서 이어짐", "대화를 지웠습니다" 등)를 타임라인 형태로 - 큰 글씨 +
@@ -2278,7 +2239,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     // A visible, danger-tinted line for turn failures (529, etc.) - not the dim system gray.
@@ -2287,7 +2248,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }

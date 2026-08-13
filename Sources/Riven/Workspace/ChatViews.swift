@@ -977,19 +977,20 @@ enum ChatText {
                                           constant: UIScale.pt(4)),
             ])
         }
-        // 데이터 행 사이 가로 구분선 (행 경계 = 다음 행 셀의 top - 행간격 절반).
+        // 데이터 행 사이 가로 구분선 - 헤더선과 완전히 동일하게 (해당 행 셀 bottom + 4, Theme.edge,
+        // 같은 폭·두께). 예전엔 위치 기준이 달라(행 top - 간격절반) 헤더선과 어긋나 툭 튀어 보였다.
         if rows.count > 2 {
-            for r in 2..<rows.count {
+            for r in 1..<(rows.count - 1) {
                 guard let cell = grid.cell(atColumnIndex: 0, rowIndex: r).contentView else { continue }
                 let h = NSView(); h.wantsLayer = true
-                h.layer?.backgroundColor = Theme.edge.withAlphaComponent(0.5).cgColor
+                h.layer?.backgroundColor = Theme.edge.cgColor
                 h.translatesAutoresizingMaskIntoConstraints = false
                 box.addSubview(h)
                 NSLayoutConstraint.activate([
                     h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
                     h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
                     h.heightAnchor.constraint(equalToConstant: 1),
-                    h.centerYAnchor.constraint(equalTo: cell.topAnchor, constant: -grid.rowSpacing / 2),
+                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: UIScale.pt(4)),
                 ])
             }
         }
