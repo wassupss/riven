@@ -21,6 +21,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let input = ChatInput.make()
     private let workingBar = NSView()                     // 입력창 위 진행 표시 (생각/작성 중)
     private let workingSpinner = NSProgressIndicator()
+    private let workingIcon = NSImageView()               // 승인 대기 때 스피너 자리를 채우는 경고 아이콘
     private let workingLabel = NSTextField(labelWithString: "")
     private var scrollBottomIdle: NSLayoutConstraint!    // 진행 바 숨김: 스크롤 하단 = hairline
     private var scrollBottomWorking: NSLayoutConstraint! // 진행 바 표시: 스크롤 하단 = 진행 바 위
@@ -255,7 +256,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         workingSpinner.translatesAutoresizingMaskIntoConstraints = false
         workingLabel.font = UIScale.font(UIScale.body, .semibold); workingLabel.textColor = Theme.accent2   // 크게
         workingLabel.translatesAutoresizingMaskIntoConstraints = false
-        workingBar.addSubview(workingSpinner); workingBar.addSubview(workingLabel)
+        let wcfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(13), weight: .semibold).applying(.init(paletteColors: [Theme.warning]))
+        workingIcon.image = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: nil)?.withSymbolConfiguration(wcfg)
+        workingIcon.isHidden = true
+        workingIcon.translatesAutoresizingMaskIntoConstraints = false
+        workingBar.addSubview(workingSpinner); workingBar.addSubview(workingIcon); workingBar.addSubview(workingLabel)
         [scroll, subSide, hairline, composer, workingBar, slash, jumpButton, planBadge].forEach { addSubview($0) }
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
@@ -297,6 +302,10 @@ final class ChatPanel: NSView, Themable, Scalable {
             workingSpinner.centerYAnchor.constraint(equalTo: workingBar.centerYAnchor),
             workingSpinner.widthAnchor.constraint(equalToConstant: 14),
             workingSpinner.heightAnchor.constraint(equalToConstant: 14),
+            workingIcon.centerXAnchor.constraint(equalTo: workingSpinner.centerXAnchor),
+            workingIcon.centerYAnchor.constraint(equalTo: workingSpinner.centerYAnchor),
+            workingIcon.widthAnchor.constraint(equalToConstant: 14),
+            workingIcon.heightAnchor.constraint(equalToConstant: 14),
             workingLabel.leadingAnchor.constraint(equalTo: workingSpinner.trailingAnchor, constant: 8),
             workingLabel.trailingAnchor.constraint(equalTo: workingBar.trailingAnchor, constant: -12),
             workingLabel.topAnchor.constraint(equalTo: workingBar.topAnchor, constant: 7),
@@ -2151,8 +2160,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         // 사용자 말풍선은 세로 중앙. 에이전트 답변은 첫 줄의 세로 중앙에 맞춘다.
         let f = UIScale.font(UIScale.prose)
         let firstLineCenter = ceil((f.ascender - f.descender) / 2) + UIScale.pt(1)
+        // 아이템 하단 24px 리저브(hover 액션 자리) 때문에 item 중심이 아래로 밀린다 - 사용자 점은
+        // 리저브 절반만큼 올려 말풍선(카드) 세로 중앙에 맞춘다.
         let vert = centerVertically
-            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor)
+            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor, constant: -UIScale.pt(12))
             : dot.centerYAnchor.constraint(equalTo: item.topAnchor, constant: firstLineCenter)
         NSLayoutConstraint.activate([
             dot.widthAnchor.constraint(equalToConstant: d),
@@ -2253,8 +2264,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func updateWorkingBar(_ block: TurnBlock, _ secs: Int) {
         if block.isWaiting {
             workingLabel.stringValue = t("chat.awaitingApproval"); workingLabel.textColor = Theme.warning
-            workingSpinner.stopAnimation(nil)
+            workingSpinner.stopAnimation(nil); workingIcon.isHidden = false   // 스피너 자리를 경고 아이콘으로 채움
         } else {
+            workingIcon.isHidden = true
             workingSpinner.startAnimation(nil)                    // 대기에서 돌아오면 다시 회전
             var s = block.statusText(secs)
             if liveOut > 0 || liveIn > 0 {                        // CLI 처럼 토큰이 올라가는 게 보이게
