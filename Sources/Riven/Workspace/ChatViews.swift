@@ -1074,8 +1074,9 @@ final class UserBubble: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             // 아래 여백 strip - hover 액션이 말풍선 위가 아니라 여기 뜬다.
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            card.leadingAnchor.constraint(equalTo: leadingAnchor),
-            card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40)
+            // 내 채팅은 오른쪽 정렬 - 오른쪽에 붙이고 왼쪽은 내용만큼만 (최소 40 여백).
+            card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 40)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -1333,6 +1334,9 @@ final class TurnBlock: NSView {
     private var waiting = false         // paused on a permission/choice prompt
     private var finishedAt: Date?       // 완료 시각 (상대시간 표시용)
     private var doneBase = ""           // "완료 · 8초 · ↑10.8k ↓512" (시간 앞부분, refreshTime 이 시간만 갱신)
+    private let shimmer = CAGradientLayer()   // "생각/작성 중" 글자를 훑는 하이라이트
+    private var shimmerOn = false
+    private var statusTopGap: NSLayoutConstraint!
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1354,14 +1358,10 @@ final class TurnBlock: NSView {
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         statusRow.addArrangedSubview(spinner); statusRow.addArrangedSubview(statusIcon)
         statusRow.addArrangedSubview(statusLabel); statusRow.addArrangedSubview(copyBtn)
-        NSLayoutConstraint.activate([
-            spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
-            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
-        ])
-        content.addArrangedSubview(statusRow)   // 항상 첫 줄 - 답변은 그 아래로 붙는다
-        statusRow.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
 
-        addSubview(card)
+        // 상태 행은 답변 아래(footer). 답변이 없을 땐 위쪽에 홀로 떠 "생각 중" 이 그 자리에 뜬다.
+        addSubview(card); card.addSubview(statusRow)
+        statusTopGap = statusRow.topAnchor.constraint(equalTo: content.bottomAnchor, constant: UIScale.pt(2))
         NSLayoutConstraint.activate([
             card.topAnchor.constraint(equalTo: topAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1370,14 +1370,46 @@ final class TurnBlock: NSView {
             content.topAnchor.constraint(equalTo: card.topAnchor),
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
-            content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            statusTopGap,
+            statusRow.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            statusRow.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor),
+            statusRow.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
+            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    // 답변이 생기면 상태 행 위에 간격을 준다 (thinking 중엔 붙여서 위에 뜨게).
+    private func setStatusGap(_ on: Bool) { statusTopGap.constant = on ? UIScale.pt(8) : UIScale.pt(2) }
+
+    // shimmer: "생각/작성 중" 라벨 위를 밝은 띠가 왼→오 훑는다 (원래 있던 애니메이션 복원).
+    private func startShimmer() {
+        guard !shimmerOn else { return }
+        shimmerOn = true
+        statusLabel.wantsLayer = true
+        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
+        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
+        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
+        statusLabel.layer?.mask = shimmer; needsLayout = true
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+        sweep.duration = 1.4; sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shimmer.add(sweep, forKey: "shimmer")
+    }
+    private func stopShimmer() {
+        guard shimmerOn else { return }
+        shimmerOn = false; shimmer.removeAllAnimations(); statusLabel.layer?.mask = nil
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn, let host = statusLabel.layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+    }
 
     private var phase = t("chat.thinking")
     var isWaiting: Bool { waiting }
-    func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); statusLabel.stringValue = phase + "…" }
+    func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); statusLabel.stringValue = phase + "…"; startShimmer() }
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
     private var lastShown = ""
     func tick(_ secs: Int) {
@@ -1387,19 +1419,19 @@ final class TurnBlock: NSView {
         var s = phase + "… " + ChatText.duration(secs)
         if est > 0 { s += " · ↓\(ChatText.tokens(est))" }   // CLI 처럼 출력 토큰이 올라가는 게 보인다
         guard s != lastShown else { return }
-        lastShown = s; statusLabel.stringValue = s
+        lastShown = s; statusLabel.stringValue = s; needsLayout = true   // shimmer 마스크 재맞춤
     }
     // 승인/선택 대기: 진행 표시를 멈추고 대기 문구를 보인다.
     func setWaiting(_ w: Bool) {
         guard !finished else { return }
         waiting = w
         if w {
-            spinner.stopAnimation(nil)
+            spinner.stopAnimation(nil); stopShimmer()
             statusIcon.isHidden = false; statusIcon.image = symbol("hand.raised.fill", Theme.warning)
             statusLabel.stringValue = t("chat.awaitingApproval"); statusLabel.textColor = Theme.warning
         } else {
             statusIcon.isHidden = true; statusLabel.textColor = Theme.accent2; lastShown = ""
-            spinner.startAnimation(nil)
+            spinner.startAnimation(nil); startShimmer()
         }
     }
     private func symbol(_ name: String, _ color: NSColor) -> NSImage? {
@@ -1425,7 +1457,7 @@ final class TurnBlock: NSView {
 
     private(set) var plainText = ""          // 타임라인 노드 복사용 (이 턴의 어시스턴트 텍스트)
     func bufferText(_ t: String) {
-        if !hasText { hasText = true; thinkingSecs = lastSecs }
+        if !hasText { hasText = true; thinkingSecs = lastSecs; setStatusGap(true) }   // 답변이 생겼으니 상태 행은 그 아래로
         plainText += t
         phase = I18n.t("chat.writing")
         stopActiveTool()                     // text arriving ⇒ the previous tool finished
@@ -1451,7 +1483,7 @@ final class TurnBlock: NSView {
     }
 
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
-        closeText()
+        closeText(); setStatusGap(true)   // 도구 줄도 답변 콘텐츠 - 상태 행은 그 아래로
         setPhase(t("chat.running", ["name": name.replacingOccurrences(of: "mcp__riven__", with: "")]))   // shimmer shows the current tool
         stopActiveTool()                     // previous tool finished
         let line = ToolLine(name: name, detail: detail)
@@ -1485,7 +1517,8 @@ final class TurnBlock: NSView {
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }
         closeText(); finished = true
-        stopActiveTool()
+        stopActiveTool(); stopShimmer()
+        if hasText || !content.arrangedSubviews.isEmpty { setStatusGap(true) }   // 답변 아래로 완료 줄
         spinner.stopAnimation(nil)
         statusIcon.isHidden = false; statusIcon.image = symbol("checkmark.circle.fill", Theme.success)
         statusLabel.textColor = Theme.fgDim
