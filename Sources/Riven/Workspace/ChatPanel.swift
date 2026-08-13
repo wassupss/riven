@@ -14,12 +14,14 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let planBadge = PlanBadge()
     private var planPath: String?
     private let stack = FlippedStack()
-    private var timelineNodes: [ObjectIdentifier: NSView] = [:]   // 아이템 → 그 턴의 타임라인 노드
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
     private let subStack = FlippedStack()
     private let input = ChatInput.make()
+    private let workingBar = NSView()                     // 입력창 위 진행 표시 (생각/작성 중)
+    private let workingSpinner = NSProgressIndicator()
+    private let workingLabel = NSTextField(labelWithString: "")
     private lazy var inputScroll = InputScroll(input)     // grows 1→6 lines, then scrolls
     private let sendButton = CircleButton()               // circular ↑ / ■ (send / stop), accent
     private let plusButton = CircleButton()               // circular + (attach a file path)
@@ -131,7 +133,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         layer?.backgroundColor = Theme.bg.cgColor
 
         stack.orientation = .vertical; stack.spacing = 16; stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 24, bottom: 14, right: 16)   // 왼쪽=타임라인 아바타 거터
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 14, right: 16)   // 좌우 대칭 여백
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
@@ -238,7 +240,18 @@ final class ChatPanel: NSView, Themable, Scalable {
         modeChip.addSubview(modePopup)
         modelChip.addSubview(modelPopup)
         [modeChip, modelChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
-        [scroll, subSide, hairline, composer, slash, jumpButton, planBadge].forEach { addSubview($0) }
+        // 입력창 바로 위 진행 바 (생각/작성 중). 턴 아래가 아니라 여기 있어야 잘 보인다.
+        workingBar.wantsLayer = true
+        workingBar.layer?.backgroundColor = Theme.accent2.withAlphaComponent(Theme.isLight ? 0.12 : 0.16).cgColor
+        workingBar.layer?.cornerRadius = 9
+        workingBar.isHidden = true
+        workingBar.translatesAutoresizingMaskIntoConstraints = false
+        workingSpinner.style = .spinning; workingSpinner.controlSize = .small; workingSpinner.isDisplayedWhenStopped = false
+        workingSpinner.translatesAutoresizingMaskIntoConstraints = false
+        workingLabel.font = UIScale.font(UIScale.body, .semibold); workingLabel.textColor = Theme.accent2   // 크게
+        workingLabel.translatesAutoresizingMaskIntoConstraints = false
+        workingBar.addSubview(workingSpinner); workingBar.addSubview(workingLabel)
+        [scroll, subSide, hairline, composer, workingBar, slash, jumpButton, planBadge].forEach { addSubview($0) }
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
             guard let self, let p = self.planPath else { return }
@@ -274,6 +287,17 @@ final class ChatPanel: NSView, Themable, Scalable {
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairline.heightAnchor.constraint(equalToConstant: 1),
             hairline.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -10),
+            // 진행 바: 컴포저 바로 위에 떠 있게 (내용 높이만큼, 왼쪽 정렬)
+            workingBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            workingBar.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -8),
+            workingSpinner.leadingAnchor.constraint(equalTo: workingBar.leadingAnchor, constant: 11),
+            workingSpinner.centerYAnchor.constraint(equalTo: workingBar.centerYAnchor),
+            workingSpinner.widthAnchor.constraint(equalToConstant: 14),
+            workingSpinner.heightAnchor.constraint(equalToConstant: 14),
+            workingLabel.leadingAnchor.constraint(equalTo: workingSpinner.trailingAnchor, constant: 8),
+            workingLabel.trailingAnchor.constraint(equalTo: workingBar.trailingAnchor, constant: -12),
+            workingLabel.topAnchor.constraint(equalTo: workingBar.topAnchor, constant: 7),
+            workingLabel.bottomAnchor.constraint(equalTo: workingBar.bottomAnchor, constant: -7),
             // composer glass card, inset from the panel edges
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -596,7 +620,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.stop(); session = nil
         current = nil; clearSubagents(); stopFlush()
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         commandNames = Set(commands.map { $0.name.lowercased() })
@@ -869,9 +892,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             for (j, v) in views.enumerated() {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
-                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-                if j == 0 { attachTimelineNode(to: v, user: m.user)     // 턴 시작에 노드
-                    attachHoverActions(to: v, date: nil, text: { m.text }) }   // 복원분은 시각 없이 복사만
+                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+                if j == 0 { attachHoverActions(to: v, date: nil, usage: nil, text: { m.text }) }   // 복원분은 복사만
             }
         }
     }
@@ -882,7 +904,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.insertArrangedSubview(l, at: 0)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         loadEarlierBtn = l
     }
     private var loadingEarlier = false
@@ -922,7 +944,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         var drop = subs.count - maxViews
         while drop > 0, let last = subs.last {
             if last === current { break }          // never drop the live turn
-            removeTimelineNode(for: last)
             last.removeFromSuperview()
             subs.removeLast(); drop -= 1
         }
@@ -944,7 +965,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil
         startSession(cmd: cmd, cwd: url.path, resume: sid)
         loadHistory(cwd: url.path, sessionId: sid)
@@ -964,7 +984,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil
         startSession(cmd: cmd, cwd: url.path, resume: nil)   // 새 세션 = 컨텍스트 리셋
         addTimelineMarker(t("chat.cleared"))
@@ -1743,12 +1762,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
         head.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(head)
-        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         let body = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
         body.font = UIScale.mono(UIScale.small); body.textColor = Theme.fgDim; body.isSelectable = true
         body.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(body)
-        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// "2026-08-04T09:00:00Z" → "09:00" (local), for reset times.
@@ -2101,53 +2120,19 @@ final class ChatPanel: NSView, Themable, Scalable {
         let block = TurnBlock()
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
-        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-        attachTimelineNode(to: block, user: false)   // 에이전트 턴: 아바타 노드
-        attachHoverActions(to: block, date: Date(), text: { [weak block] in block?.plainText ?? "" })
+        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        attachHoverActions(to: block, date: Date(), usage: { [weak block] in block?.turnUsage },
+                           text: { [weak block] in block?.plainText ?? "" })
         return block
     }
-    /// 사용자 = 사람 아이콘, 에이전트 = 이 팬 에이전트의 아바타.
-    private func timelineIcon(user: Bool) -> (NSImage?, NSColor) {
-        if user {
-            let tint = Theme.accent
-            let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .semibold)
-                .applying(.init(paletteColors: [tint]))
-            return (NSImage(systemSymbolName: "person.fill", accessibilityDescription: nil)?.withSymbolConfiguration(cfg), tint)
-        }
-        let key = AgentAvatar.key(nickname: nickname, agent: agentPersona,
-                                  kind: agentKind == .codex ? "codex" : "claude") ?? "claude"
-        return (AgentAvatar.image(for: key, size: UIScale.pt(13)), AgentAvatar.color(for: key))
-    }
-    /// 타임라인 노드(아바타 칩)를 왼쪽 거터에 얹는다. STACK 의 subview 로 둔다(거터가 아이템
-    /// bounds 밖이라 아이템 subview 로 두면 hit-test 밖). centerVertically=true 면 세로 중앙(짧은
-    /// 말풍선용), false 면 첫 줄에 맞춘다. 아이템이 트림되면 짝 노드도 같이 지운다(아래 트림).
-    private func attachTimelineNode(to item: NSView, image: NSImage?, tint: NSColor, centerVertically: Bool) {
-        let node = TimelineNode(image: image, tint: tint)
-        stack.addSubview(node)
-        let vertical = centerVertically
-            ? node.centerYAnchor.constraint(equalTo: item.centerYAnchor)
-            : node.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(0))
-        NSLayoutConstraint.activate([
-            node.centerXAnchor.constraint(equalTo: stack.leadingAnchor, constant: 12),   // 거터 중앙
-            vertical,
-        ])
-        timelineNodes[ObjectIdentifier(item)] = node
-    }
-    private func attachTimelineNode(to item: NSView, user: Bool) {
-        let (img, tint) = timelineIcon(user: user)
-        attachTimelineNode(to: item, image: img, tint: tint, centerVertically: user)
-    }
-    private func removeTimelineNode(for item: NSView) {
-        timelineNodes.removeValue(forKey: ObjectIdentifier(item))?.removeFromSuperview()
-    }
-    /// 턴에 hover 액션(오른쪽 아래 fade: 복사 + 상대시각)을 붙인다. 액션은 아이템의 subview 라
-    /// 트림되면 같이 사라진다. 트래킹은 아이템 bounds 를 소유자(액션)에게 전달한다.
-    private func attachHoverActions(to item: NSView, date: Date?, text: @escaping () -> String) {
-        let actions = TurnHoverActions(date: date, textProvider: text)
+    /// 턴에 hover 액션(오른쪽 아래 fade: 토큰 + 복사 + 상대시각)을 붙인다. 액션은 아이템의
+    /// subview 라 트림되면 같이 사라진다. 트래킹은 아이템 bounds 를 소유자(액션)에게 전달한다.
+    private func attachHoverActions(to item: NSView, date: Date?, usage: (() -> ChatUsage?)?, text: @escaping () -> String) {
+        let actions = TurnHoverActions(date: date, usageProvider: usage, textProvider: text)
         item.addSubview(actions)
         NSLayoutConstraint.activate([
-            actions.trailingAnchor.constraint(equalTo: item.trailingAnchor, constant: -2),
-            actions.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -2),
+            actions.trailingAnchor.constraint(equalTo: item.trailingAnchor, constant: -4),
+            actions.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -4),
         ])
         item.addTrackingArea(NSTrackingArea(rect: .zero,
             options: [.inVisibleRect, .mouseEnteredAndExited, .activeInActiveApp], owner: actions, userInfo: nil))
@@ -2161,7 +2146,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let cap = 80
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
-        for v in subs.prefix(subs.count - cap) where v !== current { removeTimelineNode(for: v); v.removeFromSuperview() }
+        for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
     }
 
     // ---- sub-agent panes ----
@@ -2199,20 +2184,34 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func startFlush() {
         flushTimer?.invalidate()
+        workingBar.isHidden = false; workingSpinner.startAnimation(nil)   // 입력창 위 진행 바 켜기
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
             // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work: skip the
             // typewriter reveal, the elapsed relabel, and above all the scroll (which forces a full
             // layout of the whole transcript). The session keeps buffering text; it's revealed when
-            // the pane is shown again. Without this, every background agent's flush pegged the main
-            // thread at 20fps, which is why even the foreground shimmer couldn't animate.
+            // the pane is shown again.
             guard self.window != nil else { return }
             let grew = block.flush()
-            block.tick(Int(Date().timeIntervalSince(start) - self.pausedTotal))   // exclude approval wait
+            let secs = Int(Date().timeIntervalSince(start) - self.pausedTotal)   // exclude approval wait
+            block.tick(secs)
+            self.updateWorkingBar(block, secs)
             if grew { self.autoScroll() }
         }
     }
-    private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil }
+    private func updateWorkingBar(_ block: TurnBlock, _ secs: Int) {
+        if block.isWaiting {
+            workingLabel.stringValue = t("chat.awaitingApproval"); workingLabel.textColor = Theme.warning
+            workingSpinner.stopAnimation(nil)
+        } else {
+            workingSpinner.startAnimation(nil)                    // 대기에서 돌아오면 다시 회전
+            let s = block.statusText(secs)
+            guard s != workingLabel.stringValue else { return }   // 초 단위로만 갱신 (매 프레임 재배치 방지)
+            workingLabel.stringValue = s; workingLabel.textColor = Theme.accent2
+        }
+    }
+    private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil
+        workingBar.isHidden = true; workingSpinner.stopAnimation(nil) }   // 진행 바 끄기
 
     private func endTurn(cost: Double?, usage: ChatUsage?, error: String? = nil) {
         let wasInterrupted = interrupted   // askWaiters drain 전에 초기화되므로 미리 잡아 둔다
@@ -2260,9 +2259,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         let v = UserBubble(text: text, tokens: .init(commands: commandNames, peers: peerNames()))
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
-        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
-        attachTimelineNode(to: v, user: true)   // 사용자 턴: 사람 아이콘
-        attachHoverActions(to: v, date: Date(), text: { text })
+        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        attachHoverActions(to: v, date: Date(), usage: nil, text: { text })
         scrollSoon()
         return v
     }
@@ -2271,7 +2269,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// 세션 경계 표시("이전 세션에서 이어짐", "대화를 지웠습니다" 등)를 타임라인 형태로 - 큰 글씨 +
@@ -2279,13 +2277,17 @@ final class ChatPanel: NSView, Themable, Scalable {
     func addTimelineMarker(_ text: String) {
         let l = NSTextField(labelWithString: text)
         l.font = UIScale.font(UIScale.body, .medium); l.textColor = Theme.fg.withAlphaComponent(0.85)
-        l.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
         let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .semibold)
             .applying(.init(paletteColors: [Theme.fgDim]))
-        let icon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
-        attachTimelineNode(to: l, image: icon, tint: Theme.fgDim, centerVertically: true)
+        if let icon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)?.withSymbolConfiguration(cfg) {
+            let att = NSMutableAttributedString(attachment: { let a = NSTextAttachment(); a.image = icon; return a }())
+            att.append(NSAttributedString(string: "  " + text, attributes: [
+                .font: UIScale.font(UIScale.body, .medium), .foregroundColor: Theme.fg.withAlphaComponent(0.85)]))
+            l.attributedStringValue = att
+        }
+        l.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(l)
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     // A visible, danger-tinted line for turn failures (529, etc.) - not the dim system gray.
@@ -2294,7 +2296,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -40).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }

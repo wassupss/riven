@@ -415,71 +415,47 @@ final class CodeCarrier: NSView {
     var carriedCode: String?
 }
 
-// MARK: - timeline node (an avatar chip on the left gutter marking each turn)
-/// 왼쪽 타임라인의 턴 노드. 사용자 턴은 사람 아이콘, 에이전트 턴은 그 에이전트의 아바타.
-final class TimelineNode: NSView {
-    init(image: NSImage?, tint: NSColor) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        translatesAutoresizingMaskIntoConstraints = false
-        let side = UIScale.pt(22), disc = UIScale.pt(20)
-        let bg = NSView(); bg.wantsLayer = true
-        bg.layer?.backgroundColor = tint.withAlphaComponent(Theme.isLight ? 0.16 : 0.22).cgColor
-        bg.layer?.cornerRadius = disc / 2
-        bg.translatesAutoresizingMaskIntoConstraints = false
-        let iconView = NSImageView()
-        iconView.image = image
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(bg); addSubview(iconView)
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: side),
-            heightAnchor.constraint(equalToConstant: side),
-            bg.widthAnchor.constraint(equalToConstant: disc),
-            bg.heightAnchor.constraint(equalToConstant: disc),
-            bg.centerXAnchor.constraint(equalTo: centerXAnchor),
-            bg.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: UIScale.pt(13)),
-            iconView.heightAnchor.constraint(equalToConstant: UIScale.pt(13)),
-        ])
-    }
-    required init?(coder: NSCoder) { fatalError() }
-}
-
 // MARK: - turn hover actions (fades in at bottom-right on hover: copy + relative time)
 /// 턴에 마우스를 올리면 오른쪽 아래에 fade-in 되는 작은 바 - 복사 버튼 + "35분 전" 상대 시각.
 /// 트래킹 소유자라 host(턴 아이템) 위에 마우스가 들어오면 뜨고 나가면 사라진다.
 final class TurnHoverActions: NSView {
     private let date: Date?
+    private let usageProvider: (() -> ChatUsage?)?
     private let timeLabel = NSTextField(labelWithString: "")
+    private let tokenLabel = NSTextField(labelWithString: "")
     private let copyBtn = NSButton()
-    init(date: Date?, textProvider: @escaping () -> String) {
+    init(date: Date?, usageProvider: (() -> ChatUsage?)?, textProvider: @escaping () -> String) {
         self.date = date
+        self.usageProvider = usageProvider
         super.init(frame: .zero)
         wantsLayer = true
         alphaValue = 0
         translatesAutoresizingMaskIntoConstraints = false
-        layer?.backgroundColor = Theme.bg2.withAlphaComponent(0.96).cgColor
-        layer?.cornerRadius = UIScale.pt(7)
-        layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
-        timeLabel.font = UIScale.font(UIScale.caption); timeLabel.textColor = Theme.fgDim
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 가시성: 불투명 배경 + 또렷한 테두리 + 그림자로 본문 위에서 확실히 떠 보이게.
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg : Theme.bg2).cgColor
+        layer?.cornerRadius = UIScale.pt(8)
+        layer?.borderWidth = 1; layer?.borderColor = Theme.edgeStrong.cgColor
+        shadow = { let s = NSShadow(); s.shadowColor = NSColor.black.withAlphaComponent(0.3); s.shadowBlurRadius = 8; s.shadowOffset = .init(width: 0, height: -1); return s }()
+        for lbl in [timeLabel, tokenLabel] { lbl.font = UIScale.font(UIScale.caption, .medium); lbl.textColor = Theme.fgDim; lbl.translatesAutoresizingMaskIntoConstraints = false }
+        tokenLabel.isHidden = (usageProvider == nil)
+        timeLabel.isHidden = (date == nil)
         copyBtn.bezelStyle = .inline; copyBtn.isBordered = false; copyBtn.imagePosition = .imageOnly
         copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
-        copyBtn.contentTintColor = Theme.fgDim; copyBtn.toolTip = t("chat.copy")
+        copyBtn.contentTintColor = Theme.fg; copyBtn.toolTip = t("chat.copy")
         copyBtn.target = self; copyBtn.action = #selector(doCopy)
         self.copyAction = textProvider
-        timeLabel.isHidden = (date == nil)
-        let row = NSStackView(views: date == nil ? [copyBtn] : [timeLabel, copyBtn]); row.spacing = 8; row.alignment = .centerY
+        var views: [NSView] = []
+        if usageProvider != nil { views.append(tokenLabel) }
+        if date != nil { views.append(timeLabel) }
+        views.append(copyBtn)
+        let row = NSStackView(views: views); row.spacing = 10; row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -499,7 +475,13 @@ final class TurnHoverActions: NSView {
     override func mouseEntered(with e: NSEvent) { show(true) }
     override func mouseExited(with e: NSEvent) { show(false) }
     private func show(_ on: Bool) {
-        if on, let date { timeLabel.stringValue = TurnHoverActions.relative(date) }
+        if on {
+            if let date { timeLabel.stringValue = TurnHoverActions.relative(date) }
+            if let u = usageProvider?() {
+                tokenLabel.stringValue = t("chat.tokens", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])
+                tokenLabel.isHidden = false
+            } else { tokenLabel.isHidden = true }
+        }
         NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.16; animator().alphaValue = on ? 1 : 0 }
     }
     static func relative(_ d: Date) -> String {
@@ -803,31 +785,31 @@ enum ChatText {
     /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
     /// "| a | b |" 가 전부 원문 그대로 보였다.
     static func render(_ text: String, bullet: Bool = true) -> [NSView] {
+        // 코드펜스(```)는 "줄 시작"일 때만 연다/닫는다. 예전엔 텍스트 전체에서 ``` 를 세어
+        // 짝을 맞췄는데, 표 셀 안의 인라인 ``` (마크다운 문법 예시 등)까지 펜스로 세어서
+        // 짝이 어긋났고, 그 아래 인용구·제목이 통째로 코드블록으로 먹혀버렸다.
         var out: [NSView] = []
-        for (i, part) in text.components(separatedBy: "```").enumerated() {
-            if i % 2 == 0 {
-                out += blocks(part)
-            } else {
-                var code = part
-                var lang: String?
-                if let nl = code.firstIndex(of: "\n") {
-                    let first = String(code[..<nl])
-                    if !first.contains(" ") && first.count < 20 {
-                        lang = first.isEmpty ? nil : first
-                        code = String(code[code.index(after: nl)...])
-                    }
+        var proseBuf: [String] = [], codeBuf: [String] = []
+        var inCode = false, lang: String?
+        func flushProse() { if !proseBuf.isEmpty { out += blocks(proseBuf.joined(separator: "\n")); proseBuf = [] } }
+        func flushCode() {
+            let code = codeBuf.joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !code.isEmpty { out.append(codeBlock(code, lang: lang)) }
+            codeBuf = []; lang = nil
+        }
+        for line in text.components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {   // 펜스는 줄 시작만
+                if inCode { flushCode(); inCode = false }
+                else {
+                    flushProse(); inCode = true
+                    let l = line.trimmingCharacters(in: .whitespaces).dropFirst(3).trimmingCharacters(in: .whitespaces)
+                    lang = l.isEmpty ? nil : String(l)
                 }
-                let trimmed = code.trimmingCharacters(in: .newlines)
-                if !trimmed.isEmpty { out.append(codeBlock(trimmed, lang: lang)) }
-            }
+            } else if inCode { codeBuf.append(line) }
+            else { proseBuf.append(line) }
         }
-        if out.isEmpty {
-            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if t.isEmpty { return [] }
-            out.append(proseMarkdown(t))
-        }
-        // 첫 블록만 ⏺ 를 달고 나머지는 같은 들여쓰기로 맞춘다 (블록마다 점을 찍으면 산만하다).
-        return out   // 들여쓰기 없음 - 타임라인 노드가 마커, 본문은 왼쪽 선에 정렬
+        if inCode { flushCode() } else { flushProse() }   // 닫히지 않은 펜스도 코드로 마감
+        return out
     }
 
     /// 스트리밍 꼬리용 (들여쓰기 없음).
@@ -927,7 +909,19 @@ enum ChatText {
         var t = line.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("|") { t.removeFirst() }
         if t.hasSuffix("|") { t.removeLast() }
-        return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        // `\|`(이스케이프 파이프)와 백틱 코드 안의 `|` 는 셀 구분자가 아니다 - 예전엔 그대로 잘라
+        // "| a | b |" 같은 셀이 여러 칸으로 쪼개져 열이 어긋났다.
+        var cells: [String] = [], cur = "", inCode = false, esc = false
+        for ch in t {
+            if esc { cur.append(ch == "|" ? "|" : "\\\(ch)"); esc = false; continue }
+            if ch == "\\" { esc = true; continue }
+            if ch == "`" { inCode.toggle(); cur.append(ch); continue }
+            if ch == "|" && !inCode { cells.append(cur.trimmingCharacters(in: .whitespaces)); cur = ""; continue }
+            cur.append(ch)
+        }
+        if esc { cur.append("\\") }
+        cells.append(cur.trimmingCharacters(in: .whitespaces))
+        return cells
     }
 
     /// 인용구 블록: 왼쪽 accent 바 + 옅은(이탤릭 느낌) 본문.
@@ -1366,17 +1360,12 @@ final class ApprovalCard: NSView {
 final class TurnBlock: NSView {
     private let card = NSView()               // invisible layout container for the content
     private let content = NSStackView()
-    private let spinner = NSProgressIndicator()
-    private let workLabel = NSTextField(labelWithString: "")     // 작업 중에만: 생각/작성 중 shimmer
     private var openText: AssistantText?
     private var finished = false
     private var hasText = false
     private var lastSecs = 0
     private var thinkingSecs: Int?      // seconds until first token
-    private var spinnerW: NSLayoutConstraint!
     private var waiting = false         // paused on a permission/choice prompt
-    private let shimmer = CAGradientLayer()   // sweeping highlight masking workLabel while working
-    private var shimmerOn = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -1384,103 +1373,31 @@ final class TurnBlock: NSView {
         content.orientation = .vertical; content.spacing = 9; content.alignment = .leading
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
-
-        spinner.style = .spinning; spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        workLabel.font = UIScale.font(UIScale.caption, .medium); workLabel.textColor = Theme.accent2
-        workLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        // 완료 푸터(구분선·생각/작성 시간·토큰)는 뺐다 - 대신 팬이 turn 위에 hover 액션(복사·시각)을
-        // 붙인다. 작업 중에만 spinner + workLabel(작성 중… shimmer)을 카드 아래에 담백하게 보인다.
-        [card, spinner, workLabel].forEach { addSubview($0) }
-        spinnerW = spinner.widthAnchor.constraint(equalToConstant: 12)
-        bottomWorking = bottomAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 2)
-        bottomDone = bottomAnchor.constraint(equalTo: card.bottomAnchor)
+        // 진행 표시(생각/작성 중)는 이제 입력창 위의 공용 바가 담당한다 - 턴 아래엔 안 붙는다.
+        // 완료 푸터(시간·토큰)도 없음. 완료 정보는 hover 액션(복사·토큰·시각).
+        addSubview(card)
         NSLayoutConstraint.activate([
             card.topAnchor.constraint(equalTo: topAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor),
             content.topAnchor.constraint(equalTo: card.topAnchor),
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            spinner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            spinner.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 8),
-            spinnerW,
-            spinner.heightAnchor.constraint(equalToConstant: 12),
-            workLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 5),
-            workLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
-            workLabel.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
-            bottomWorking,
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
-    private var bottomWorking: NSLayoutConstraint!
-    private var bottomDone: NSLayoutConstraint!
 
-    private var phase = t("chat.thinking")          // current activity shown in the shimmer label
-    func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); workLabel.stringValue = t("chat.thinking") + "…"; startShimmer() }
-    // Set the current activity (a tool name etc.) - shown shimmering, like "생각 중".
+    private var phase = t("chat.thinking")          // current activity (입력창 위 바가 읽어감)
+    var isWaiting: Bool { waiting }
+    /// 입력창 위 진행 바가 보여줄 문구. 완료·대기 중이면 빈 문자열.
+    func statusText(_ secs: Int) -> String { (finished || waiting) ? "" : phase + "… " + ChatText.duration(secs) }
+    func startWorking() { phase = t("chat.thinking") }
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
-    private var lastRenderedSecs = -1
-    private var lastRenderedPhase = ""
-    func tick(_ secs: Int) {
-        lastSecs = secs
-        guard !finished, !waiting else { return }
-        // The flush timer calls tick() ~20×/s, but the label only ever shows whole seconds. Skip the
-        // relayout unless the second OR the phase actually changed - otherwise we forced a full
-        // needsLayout pass (shimmer mask re-fit) 20×/s for identical text.
-        guard secs != lastRenderedSecs || phase != lastRenderedPhase else { return }
-        lastRenderedSecs = secs; lastRenderedPhase = phase
-        workLabel.stringValue = phase + "… " + ChatText.duration(secs)
-        needsLayout = true              // text width changed → re-fit the shimmer mask
-    }
-    // Pause the "thinking/writing" indicator while the user is being asked to approve/choose -
-    // the agent is idle then, not working.
-    func setWaiting(_ w: Bool) {
-        guard !finished else { return }
-        waiting = w
-        if w { spinner.stopAnimation(nil); stopShimmer(); workLabel.stringValue = t("chat.awaitingApproval"); workLabel.textColor = Theme.warning }
-        else { spinner.startAnimation(nil); workLabel.textColor = Theme.accent2; startShimmer() }
-    }
-
-    // Shimmer (shadcn-style "Thinking…"): a bright band glides left→right over the label,
-    // repeating while the turn works. The gradient is an alpha-only MASK on workLabel's layer,
-    // so only the glyphs shimmer - the text reads dim except where the band passes, and the
-    // effect inherits the label's Theme color (accent2), working in dark AND light themes.
-    private func startShimmer() {
-        guard !shimmerOn else { return }
-        shimmerOn = true
-        workLabel.wantsLayer = true
-        shimmer.startPoint = CGPoint(x: 0, y: 0.5)
-        shimmer.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.4).cgColor   // alpha mask: color irrelevant
-        shimmer.colors = [dim, NSColor.white.cgColor, dim]
-        shimmer.locations = [0, 0.5, 1]
-        workLabel.layer?.mask = shimmer
-        needsLayout = true                                        // size the mask to the label
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]
-        sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        sweep.repeatCount = .infinity
-        shimmer.add(sweep, forKey: "shimmer")
-    }
-    private func stopShimmer() {
-        guard shimmerOn else { return }
-        shimmerOn = false
-        shimmer.removeAllAnimations()                             // no leaked repeating animation
-        workLabel.layer?.mask = nil
-    }
-    override func layout() {
-        super.layout()
-        guard shimmerOn, let host = workLabel.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        shimmer.frame = host.bounds
-        CATransaction.commit()
-    }
+    func tick(_ secs: Int) { lastSecs = secs }   // 표시는 입력창 위 바가 statusText 로 읽어감
+    // Pause the "working" state while the user is being asked to approve/choose (agent is idle then).
+    func setWaiting(_ w: Bool) { guard !finished else { return }; waiting = w }
 
     private weak var activeTool: ToolLine?   // the tool line currently in progress (shimmering)
     private func stopActiveTool() { activeTool?.stopShimmer(); activeTool = nil }
@@ -1544,14 +1461,13 @@ final class TurnBlock: NSView {
             return
         }
     }
+    private(set) var turnUsage: ChatUsage?   // hover 액션의 토큰 표시용
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }
         closeText(); finished = true
-        stopShimmer(); stopActiveTool()
-        spinner.stopAnimation(nil); spinnerW.constant = 0
-        workLabel.stringValue = ""; workLabel.isHidden = true
-        // 완료 푸터(시간·토큰·구분선) 없음 - 카드 바닥으로 접는다. 시각·복사는 hover 액션이 담당.
-        bottomWorking.isActive = false; bottomDone.isActive = true
+        turnUsage = usage
+        stopActiveTool()
+        // 완료 푸터·진행 표시 없음. 정보는 hover 액션(복사·토큰·시각)이 담당.
     }
     // 완료 푸터를 없앴으므로 플랜 사용량 줄도 표시하지 않는다 (호출부 호환용 no-op).
     func setQuota(_ entries: [(label: String, value: Int)]) {}
