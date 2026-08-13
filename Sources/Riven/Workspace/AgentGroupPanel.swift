@@ -1080,8 +1080,10 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
         }
         required init?(coder: NSCoder) { fatalError() }
         func applyTheme() {
-            layer?.backgroundColor = Theme.bg.cgColor
-            layer?.borderColor = (isMain ? Theme.accent.withAlphaComponent(0.5) : Theme.edge).cgColor
+            // A distinct surface (bg2) so each member card reads as its own card off the panel bg -
+            // fill == panel bg left them blending together with only a hairline border.
+            layer?.backgroundColor = Theme.bg2.cgColor
+            layer?.borderColor = (isMain ? Theme.accent.withAlphaComponent(0.5) : Theme.edgeStrong).cgColor
             badge.textColor = isMain ? Theme.accent : Theme.fgDim
             parentLabel.textColor = Theme.fgDim
             modelLabel.textColor = Theme.fgDim
@@ -1121,6 +1123,9 @@ final class AgentGroupPanel: NSView, Themable, Scalable {
 
         for sv in [gridScroll, chartScroll] {
             sv.drawsBackground = false; sv.hasVerticalScroller = true; sv.autohidesScrollers = true
+            // Overlay (floating) scrollers so a visible vertical scroller never eats layout width on
+            // the right - a legacy scroller left the content flush right while the left kept its pad.
+            sv.scrollerStyle = .overlay
             sv.translatesAutoresizingMaskIntoConstraints = false
         }
         gridScroll.documentView = grid

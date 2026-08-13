@@ -433,6 +433,8 @@ enum ChatText {
         let btn = ClosureButton(title: t("chat.openInEditor")) { [weak box] in
             box?.enclosingChatPanel?.openCodeInEditor(code, path: path)
         }
+        btn.attributedTitle = NSAttributedString(string: t("chat.openInEditor"), attributes: [
+            .foregroundColor: Theme.accent2, .font: UIScale.font(UIScale.caption, .medium)])  // accent link, not near-invisible gray
         btn.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(l); box.addSubview(btn)
         NSLayoutConstraint.activate([
@@ -571,6 +573,8 @@ enum ChatText {
                 if isEdit, let path { panel.showEditFromDiff(code, path: path) }
                 else { panel.openCodeInEditor(code, path: path) }
             }
+            btn.attributedTitle = NSAttributedString(string: title, attributes: [
+                .foregroundColor: Theme.accent2, .font: UIScale.font(UIScale.caption, .medium)])  // accent link, not near-invisible gray
             btn.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(btn)
             NSLayoutConstraint.activate([
@@ -879,11 +883,10 @@ final class UserBubble: NSView {
         wantsLayer = true
         let card = NSView()
         card.wantsLayer = true
-        // 옅은 회색 + 얇은 선만으로는 어시스턴트 글과 구분되지 않았다. 또렷한 배경을 준다.
+        // 또렷한 배경(bg3) + 왼쪽 accent 바만으로 어시스턴트 글과 구분한다. 여기에 테두리까지
+        // 두르면 chrome 이 과해 배너처럼 무거워 보였다 - 채움으로 이미 충분히 구분된다.
         card.layer?.backgroundColor = Theme.bg3.cgColor
         card.layer?.cornerRadius = 10
-        card.layer?.borderWidth = 1
-        card.layer?.borderColor = Theme.edge.cgColor
         card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
         card.translatesAutoresizingMaskIntoConstraints = false
         bar.wantsLayer = true
