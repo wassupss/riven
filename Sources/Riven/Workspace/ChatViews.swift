@@ -1350,7 +1350,7 @@ final class TurnBlock: NSView {
         spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         statusIcon.isHidden = true; statusIcon.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIScale.font(UIScale.caption, .medium); statusLabel.textColor = Theme.accent2
+        statusLabel.font = UIScale.font(UIScale.body, .medium); statusLabel.textColor = Theme.accent2
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         copyBtn.bezelStyle = .inline; copyBtn.isBordered = false; copyBtn.imagePosition = .imageOnly
         copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
@@ -1411,7 +1411,7 @@ final class TurnBlock: NSView {
 
     private var phase = t("chat.thinking")
     var isWaiting: Bool { waiting }
-    func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); statusLabel.stringValue = phase + "…"; startShimmer() }
+    func startWorking() { phase = t("chat.thinking"); spinner.isHidden = false; spinner.startAnimation(nil); statusLabel.stringValue = phase + "…"; startShimmer() }
     func setPhase(_ p: String) { guard !finished, !waiting else { return }; phase = p }
     private var lastShown = ""
     func tick(_ secs: Int) {
@@ -1428,12 +1428,12 @@ final class TurnBlock: NSView {
         guard !finished else { return }
         waiting = w
         if w {
-            spinner.stopAnimation(nil); stopShimmer()
+            spinner.isHidden = true; spinner.stopAnimation(nil); stopShimmer()   // 스피너 자리 collapse
             statusIcon.isHidden = false; statusIcon.image = symbol("hand.raised.fill", Theme.warning)
             statusLabel.stringValue = t("chat.awaitingApproval"); statusLabel.textColor = Theme.warning
         } else {
             statusIcon.isHidden = true; statusLabel.textColor = Theme.accent2; lastShown = ""
-            spinner.startAnimation(nil); startShimmer()
+            spinner.isHidden = false; spinner.startAnimation(nil); startShimmer()
         }
     }
     private func symbol(_ name: String, _ color: NSColor) -> NSImage? {
@@ -1521,7 +1521,7 @@ final class TurnBlock: NSView {
         closeText(); finished = true
         stopActiveTool(); stopShimmer()
         if hasText || !content.arrangedSubviews.isEmpty { setStatusGap(true) }   // 답변 아래로 완료 줄
-        spinner.stopAnimation(nil)
+        spinner.isHidden = true; spinner.stopAnimation(nil)   // 완료 시 스피너 자리 collapse (옆 여백 제거)
         statusIcon.isHidden = false; statusIcon.image = symbol("checkmark.circle.fill", Theme.success)
         statusLabel.textColor = Theme.fgDim
         var s = t("chat.done") + " · " + ChatText.duration(secs)
