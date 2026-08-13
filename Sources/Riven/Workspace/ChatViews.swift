@@ -294,8 +294,6 @@ final class AssistantText: NSView {
     private var scanIdx = 0
     private var fenceOpen = false
     private var boundary = 0
-    private let tailShimmer = CAGradientLayer()   // 타이핑 중인 꼬리를 훑는 은은한 sheen
-    private var tailShimmerOn = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -329,14 +327,29 @@ final class AssistantText: NSView {
         // 아직 완성되지 않은 블록 마크다운(코드펜스/표/인용구/제목/목록)과 짝 안 맞는 백틱은
         // 감춘다 → 스트리밍 중 raw ``·|·> 가 잠깐 번쩍이지 않고, 블록은 commit 될 때 제 서식으로 뜬다.
         let tail = AssistantText.safeTail(String(chars[committed..<shownCount]))
-        if tail.isEmpty { streamRow?.isHidden = true; stopTailShimmer() }
+        if tail.isEmpty { streamRow?.isHidden = true }
         else {
             streamRow?.isHidden = false
             // 꼬리도 인라인 마크다운을 입혀서 그린다 (**굵게**·`코드`가 타이핑 중에도 보인다).
-            ensureLabel().attributedStringValue = ChatText.attributedMarkdown(tail)
-            startTailShimmer()   // 타이핑 중인 꼬리에 은은한 sheen
+            // 방금 드러난 끝 글자들은 옅게 시작해 점점 또렷해진다 → 한 글자씩 부드럽게 "써지는" 느낌.
+            let attr = NSMutableAttributedString(attributedString: ChatText.attributedMarkdown(tail))
+            AssistantText.fadeTrailing(attr, chars: shownCount < chars.count ? 10 : 0)
+            ensureLabel().attributedStringValue = attr
         }
         return true
+    }
+
+    /// 꼬리 끝 n글자의 alpha 를 0.15→1.0 으로 램프해 방금 타이핑된 글자가 은은히 나타나게 한다.
+    static func fadeTrailing(_ m: NSMutableAttributedString, chars streaming: Int) {
+        let len = m.length; let k = min(streaming, len)
+        guard k > 1 else { return }
+        for i in 0..<k {
+            let idx = len - k + i
+            let a = 0.15 + 0.85 * (CGFloat(i) / CGFloat(k - 1))
+            let r = NSRange(location: idx, length: 1)
+            let base = (m.attribute(.foregroundColor, at: idx, effectiveRange: nil) as? NSColor) ?? ChatText.proseColor
+            m.addAttribute(.foregroundColor, value: base.withAlphaComponent(a), range: r)
+        }
     }
 
     // 스트리밍 꼬리에서 미완성 블록 마크다운과 짝 없는 인라인 백틱을 잘라낸다.
@@ -402,42 +415,9 @@ final class AssistantText: NSView {
         streaming = l; streamRow = row; return l
     }
 
-    // 타이핑 중인 꼬리 라벨 위를 은은한 밝은 띠가 훑는다 (읽기 방해 없게 0.68~1.0 사이).
-    private func startTailShimmer() {
-        guard let host = streaming?.layer else { return }
-        streaming?.wantsLayer = true
-        if host.mask !== tailShimmer {                 // 직전 블록 commit 후 새로 생긴 꼬리 라벨에 다시 붙인다
-            tailShimmer.startPoint = CGPoint(x: 0, y: 0.5); tailShimmer.endPoint = CGPoint(x: 1, y: 0.5)
-            let dim = NSColor.white.withAlphaComponent(0.68).cgColor
-            tailShimmer.colors = [dim, NSColor.white.cgColor, dim]; tailShimmer.locations = [0, 0.5, 1]
-            host.mask = tailShimmer; tailShimmerOn = false
-        }
-        if !tailShimmerOn {
-            tailShimmerOn = true
-            let sweep = CABasicAnimation(keyPath: "locations")
-            sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-            sweep.duration = 1.6; sweep.repeatCount = .infinity
-            sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            tailShimmer.add(sweep, forKey: "shimmer")
-        }
-        needsLayout = true
-    }
-    private func stopTailShimmer() {
-        guard tailShimmerOn else { return }
-        tailShimmerOn = false; tailShimmer.removeAllAnimations()
-        streaming?.layer?.mask = nil; tailShimmer.removeFromSuperlayer()
-    }
-    override func layout() {
-        super.layout()
-        guard tailShimmerOn, let host = streaming?.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        tailShimmer.frame = host.bounds; CATransaction.commit()
-    }
-
     func renderFinal() {
         guard !finalized else { return }
         finalized = true
-        stopTailShimmer()   // 최종 서식은 sheen 없이 또렷하게
         // 확정된 블록은 그대로 두고 남은 꼬리만 최종 서식으로 바꾼다 - 예전엔 전체를 지우고
         // 다시 그려서 긴 답변이 끝날 때 화면이 통째로 리플로우됐다.
         streamRow?.removeFromSuperview(); streamRow = nil; streaming = nil
@@ -1409,7 +1389,7 @@ final class TurnBlock: NSView {
         spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         statusIcon.isHidden = true; statusIcon.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIScale.font(UIScale.title, .medium); statusLabel.textColor = Theme.accent2
+        statusLabel.font = UIScale.font(13, .medium); statusLabel.textColor = Theme.accent2
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         copyBtn.bezelStyle = .inline; copyBtn.isBordered = false; copyBtn.imagePosition = .imageOnly
         copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
@@ -1436,7 +1416,7 @@ final class TurnBlock: NSView {
             statusRow.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor),
             statusRow.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
-            statusIcon.widthAnchor.constraint(equalToConstant: 15), statusIcon.heightAnchor.constraint(equalToConstant: 15),
+            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -1496,7 +1476,7 @@ final class TurnBlock: NSView {
         }
     }
     private func symbol(_ name: String, _ color: NSColor) -> NSImage? {
-        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(13), weight: .bold).applying(.init(paletteColors: [color]))
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .bold).applying(.init(paletteColors: [color]))
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
     }
     @objc private func copyAnswer() {
