@@ -415,7 +415,106 @@ final class CodeCarrier: NSView {
     var carriedCode: String?
 }
 
+// MARK: - timeline node (a dot on the left rail; hover → copy this turn)
+/// 왼쪽 타임라인 레일 위의 턴 노드. 평소엔 점, 마우스를 올리면 복사 버튼으로 바뀌고
+/// 누르면 이 턴의 텍스트를 클립보드로 복사한다 (잠깐 체크로 피드백).
+final class TimelineNode: NSView {
+    private let dot = NSView()
+    private let icon = NSImageView()
+    private let color: NSColor
+    private let copy: () -> String
+    private var tracking: NSTrackingArea?
+    private var copied = false
+
+    init(color: NSColor, copy: @escaping () -> String) {
+        self.color = color; self.copy = copy
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = UIScale.pt(5)
+        translatesAutoresizingMaskIntoConstraints = false
+        toolTip = t("chat.timelineCopy")
+        let side = UIScale.pt(20), d = UIScale.pt(10)
+        dot.wantsLayer = true
+        dot.layer?.backgroundColor = color.cgColor
+        dot.layer?.cornerRadius = d / 2
+        dot.layer?.borderWidth = 2
+        dot.layer?.borderColor = Theme.bg.cgColor      // 레일선을 끊어 노드가 도드라지게
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
+        icon.contentTintColor = Theme.fg
+        icon.isHidden = true
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot); addSubview(icon)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: side),
+            heightAnchor.constraint(equalToConstant: side),
+            dot.widthAnchor.constraint(equalToConstant: d),
+            dot.heightAnchor.constraint(equalToConstant: d),
+            dot.centerXAnchor.constraint(equalTo: centerXAnchor),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
+            icon.heightAnchor.constraint(equalToConstant: UIScale.pt(12)),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tr = tracking { removeTrackingArea(tr) }
+        let tr = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self, userInfo: nil)
+        addTrackingArea(tr); tracking = tr
+    }
+    override func mouseEntered(with e: NSEvent) { setHover(true); NSCursor.pointingHand.set() }
+    override func mouseExited(with e: NSEvent) { if !copied { setHover(false) }; NSCursor.arrow.set() }
+    private func setHover(_ on: Bool) {
+        layer?.backgroundColor = (on ? Theme.hover : NSColor.clear).cgColor
+        dot.isHidden = on; icon.isHidden = !on
+    }
+    override func mouseDown(with e: NSEvent) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(copy(), forType: .string)
+        copied = true
+        icon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+        icon.contentTintColor = Theme.success
+        dot.isHidden = true; icon.isHidden = false
+        layer?.backgroundColor = Theme.success.withAlphaComponent(0.18).cgColor
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
+            guard let self else { return }
+            self.copied = false
+            self.icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+            self.icon.contentTintColor = Theme.fg
+            self.setHover(false)
+        }
+    }
+}
+
 enum ChatText {
+    /// 코드/명령을 클립보드로 복사하는 작은 아이콘 버튼. 누르면 잠깐 체크로 바뀐다.
+    /// bash·일반 코드조각처럼 "에디터에서 열" 이유가 없는 블록에 붙인다 (실제 변경은 '변경 보기').
+    static func copyButton(_ code: String) -> NSButton {
+        var ref: NSButton?
+        let b = ClosureButton(title: "") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(code, forType: .string)
+            guard let bb = ref else { return }
+            bb.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+            bb.contentTintColor = Theme.success
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak bb] in
+                bb?.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+                bb?.contentTintColor = Theme.fgDim
+            }
+        }
+        ref = b
+        b.imagePosition = .imageOnly
+        b.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
+        b.contentTintColor = Theme.fgDim
+        b.toolTip = t("chat.copy")
+        b.setContentHuggingPriority(.required, for: .horizontal)
+        return b
+    }
+
     /// 한 줄 명령: 상자 하나에 코드와 작은 버튼만. 짧은 명령까지 머리글 달린 카드로 그리면
     /// 대화가 상자 더미가 된다.
     static func compactCode(_ code: String, path: String?) -> NSView {
@@ -430,11 +529,7 @@ enum ChatText {
         l.textColor = Theme.fg
         l.lineBreakMode = .byTruncatingTail
         l.translatesAutoresizingMaskIntoConstraints = false
-        let btn = ClosureButton(title: t("chat.openInEditor")) { [weak box] in
-            box?.enclosingChatPanel?.openCodeInEditor(code, path: path)
-        }
-        btn.attributedTitle = NSAttributedString(string: t("chat.openInEditor"), attributes: [
-            .foregroundColor: Theme.accent2, .font: UIScale.font(UIScale.caption, .medium)])  // accent link, not near-invisible gray
+        let btn = copyButton(code)   // 한 줄 명령/코드조각 → 복사 아이콘
         btn.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(l); box.addSubview(btn)
         NSLayoutConstraint.activate([
@@ -528,20 +623,9 @@ enum ChatText {
     // too, so the text sits at its final position from the first character - previously streaming
     // used a bare full-width label and the whole answer jumped/indented when renderFinal ran.
     static func bulletRow(_ label: NSTextField) -> NSView {
-        let row = NSView()
-        let bullet = NSTextField(labelWithString: "⏺")
-        bullet.font = UIScale.font(8); bullet.textColor = Theme.accent2.withAlphaComponent(0.75)
-        bullet.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(bullet); row.addSubview(label)
-        NSLayoutConstraint.activate([
-            bullet.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 1),
-            bullet.firstBaselineAnchor.constraint(equalTo: label.firstBaselineAnchor),   // align to first text line
-            label.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: UIScale.pt(16)),
-            label.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            label.topAnchor.constraint(equalTo: row.topAnchor),
-            label.bottomAnchor.constraint(equalTo: row.bottomAnchor)
-        ])
-        return row
+        // ⏺ 마커 제거: 왼쪽 타임라인 노드가 턴 시작 마커 역할을 한다 (점 두 개가 중복됐음).
+        // 들여쓰기(16)는 유지해 나머지 블록과 정렬을 맞춘다.
+        indented(label, by: UIScale.pt(16))
     }
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
         // 한 줄짜리 짧은 명령까지 머리글 달린 코드 카드로 그리면 대화가 상자 더미가 된다.
@@ -565,16 +649,20 @@ enum ChatText {
         header.addSubview(langL)
         let isEdit = diff && path != nil
         do {
-            let title = isEdit ? t("chat.viewDiff") : t("chat.openInEditor")
-            // Resolve the owning ChatPanel from the clicked button's view tree (NOT a shared static,
-            // which pointed at the last-created/now-dead pane once more than one chat existed).
-            let btn = ClosureButton(title: title) { [weak box] in
-                guard let panel = box?.enclosingChatPanel else { return }
-                if isEdit, let path { panel.showEditFromDiff(code, path: path) }
-                else { panel.openCodeInEditor(code, path: path) }
+            // 실제 변경(Edit diff)만 '변경 보기'(에디터에서 diff 열기). bash·일반 코드조각은 복사 아이콘.
+            let btn: NSButton
+            if isEdit {
+                let title = t("chat.viewDiff")
+                let b = ClosureButton(title: title) { [weak box] in
+                    guard let panel = box?.enclosingChatPanel, let path else { return }
+                    panel.showEditFromDiff(code, path: path)
+                }
+                b.attributedTitle = NSAttributedString(string: title, attributes: [
+                    .foregroundColor: Theme.accent2, .font: UIScale.font(UIScale.caption, .medium)])
+                btn = b
+            } else {
+                btn = copyButton(code)
             }
-            btn.attributedTitle = NSAttributedString(string: title, attributes: [
-                .foregroundColor: Theme.accent2, .font: UIScale.font(UIScale.caption, .medium)])  // accent link, not near-invisible gray
             btn.translatesAutoresizingMaskIntoConstraints = false
             header.addSubview(btn)
             NSLayoutConstraint.activate([
@@ -855,7 +943,8 @@ enum ChatText {
         box.layer?.borderColor = Theme.edge.cgColor
         box.translatesAutoresizingMaskIntoConstraints = false
         let grid = NSGridView(numberOfColumns: max(1, cols), rows: 0)
-        grid.rowSpacing = UIScale.pt(10); grid.columnSpacing = UIScale.pt(22)
+        // 셀 자체의 여백을 넉넉히 (행/열 간격 = 칸 안쪽 여백). 표 바깥 여백(pad)은 오히려 줄인다.
+        grid.rowSpacing = UIScale.pt(13); grid.columnSpacing = UIScale.pt(28)
         grid.translatesAutoresizingMaskIntoConstraints = false
         for (r, row) in rows.enumerated() {
             let cells: [NSView] = (0..<max(1, cols)).map { c in
@@ -874,7 +963,7 @@ enum ChatText {
         }
         // 헤더 아래 구분선 (NSGridView는 셀 사이 선을 못 그리므로 얇은 뷰를 깐다).
         box.addSubview(grid)
-        let pad = UIScale.pt(15)
+        let pad = UIScale.pt(9)   // 표 바깥 여백은 담백하게 (셀 여백은 행/열 간격으로 준다)
         NSLayoutConstraint.activate([
             grid.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: pad),
             grid.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -pad),
@@ -1315,8 +1404,10 @@ final class TurnBlock: NSView {
     private weak var activeTool: ToolLine?   // the tool line currently in progress (shimmering)
     private func stopActiveTool() { activeTool?.stopShimmer(); activeTool = nil }
 
+    private(set) var plainText = ""          // 타임라인 노드 복사용 (이 턴의 어시스턴트 텍스트)
     func bufferText(_ t: String) {
         if !hasText { hasText = true; thinkingSecs = lastSecs }
+        plainText += t
         phase = I18n.t("chat.writing")
         stopActiveTool()                     // text arriving ⇒ the previous tool finished
         if openText == nil { openText = newText() }

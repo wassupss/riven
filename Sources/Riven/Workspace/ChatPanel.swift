@@ -15,6 +15,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var planPath: String?
     private let stack = FlippedStack()
     private let timelineRail = NSView()                   // 왼쪽 타임라인 세로선 (턴 노드들이 이 위에)
+    private var timelineNodes: [ObjectIdentifier: NSView] = [:]   // 아이템 → 그 턴의 레일 노드
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
@@ -608,6 +609,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.stop(); session = nil
         current = nil; clearSubagents(); stopFlush()
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil        // reset the transcript pager
         commands = ChatPanel.discoverCommands(cwd: url.path)
         commandNames = Set(commands.map { $0.name.lowercased() })
@@ -872,7 +874,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
                 v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
-                if j == 0 { attachTimelineNode(to: v, color: m.user ? Theme.accent : Theme.accent2) }  // 턴 시작에 노드
+                if j == 0 { attachTimelineNode(to: v, color: m.user ? Theme.accent : Theme.accent2, copy: { m.text }) }  // 턴 시작에 노드
             }
         }
     }
@@ -923,6 +925,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         var drop = subs.count - maxViews
         while drop > 0, let last = subs.last {
             if last === current { break }          // never drop the live turn
+            removeTimelineNode(for: last)
             last.removeFromSuperview()
             subs.removeLast(); drop -= 1
         }
@@ -944,6 +947,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil
         startSession(cmd: cmd, cwd: url.path, resume: sid)
         loadHistory(cwd: url.path, sessionId: sid)
@@ -963,6 +967,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         current = nil; clearSubagents(); stopFlush(); turnStart = nil; liveTool = nil; queuedMessages.removeAll(); titleSet = false
         approvalQueue.removeAll(); approvalActive = false
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        timelineNodes.values.forEach { $0.removeFromSuperview() }; timelineNodes.removeAll()   // 레일 노드도 정리
         pendingHistory = []; loadEarlierBtn = nil
         startSession(cmd: cmd, cwd: url.path, resume: nil)   // 새 세션 = 컨텍스트 리셋
         addSystem(t("chat.cleared"))
@@ -2098,26 +2103,23 @@ final class ChatPanel: NSView, Themable, Scalable {
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
-        attachTimelineNode(to: block, color: Theme.accent2)   // 어시스턴트 턴 노드
+        attachTimelineNode(to: block, color: Theme.accent2, copy: { [weak block] in block?.plainText ?? "" })
         return block
     }
-    /// 타임라인 레일 위에 이 아이템의 노드 점을 찍는다. 노드는 아이템의 subview 라서
-    /// 트랜스크립트가 트림/재렌더돼도 아이템과 함께 사라진다 (잔상 없음).
-    private func attachTimelineNode(to item: NSView, color: NSColor) {
-        let dot = NSView(); dot.wantsLayer = true
-        let d = UIScale.pt(7)
-        dot.layer?.backgroundColor = color.cgColor
-        dot.layer?.cornerRadius = d / 2
-        dot.layer?.borderWidth = 2
-        dot.layer?.borderColor = Theme.bg.cgColor      // 레일선을 끊어 노드가 도드라지게
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        item.addSubview(dot)
+    /// 타임라인 레일 위에 이 턴의 노드를 얹는다. 노드는 STACK 의 subview 로 두어(거터가 아이템
+    /// bounds 밖이라 아이템 subview 로 두면 hover/클릭이 hit-test 에 안 잡힌다) 레일(x9) 중앙에
+    /// 두고, 세로 위치만 아이템 top 에 묶는다. 아이템이 트림되면 짝 노드도 같이 지운다(아래 트림).
+    private func attachTimelineNode(to item: NSView, color: NSColor, copy: @escaping () -> String) {
+        let node = TimelineNode(color: color, copy: copy)
+        stack.addSubview(node)
         NSLayoutConstraint.activate([
-            dot.widthAnchor.constraint(equalToConstant: d),
-            dot.heightAnchor.constraint(equalToConstant: d),
-            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -9),  // 아이템 왼쪽(x18) - 9 = 레일(x9)
-            dot.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(7)),
+            node.centerXAnchor.constraint(equalTo: stack.leadingAnchor, constant: 9),   // 레일 중앙
+            node.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(1)),
         ])
+        timelineNodes[ObjectIdentifier(item)] = node
+    }
+    private func removeTimelineNode(for item: NSView) {
+        timelineNodes.removeValue(forKey: ObjectIdentifier(item))?.removeFromSuperview()
     }
     // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
@@ -2128,7 +2130,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let cap = 80
         let subs = stack.arrangedSubviews
         guard subs.count > cap else { return }
-        for v in subs.prefix(subs.count - cap) where v !== current { v.removeFromSuperview() }
+        for v in subs.prefix(subs.count - cap) where v !== current { removeTimelineNode(for: v); v.removeFromSuperview() }
     }
 
     // ---- sub-agent panes ----
@@ -2228,7 +2230,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
-        attachTimelineNode(to: v, color: Theme.accent)   // 사용자 턴 노드
+        attachTimelineNode(to: v, color: Theme.accent, copy: { text })   // 사용자 턴 노드
         scrollSoon()
         return v
     }

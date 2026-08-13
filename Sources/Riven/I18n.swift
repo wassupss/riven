@@ -416,6 +416,8 @@ enum I18n {
         "chat.cardHint": ("←/→ 선택 · Enter 결정", "←/→ choose · Enter confirm"),
         "chat.viewDiff": ("변경 보기", "View diff"),
         "chat.openInEditor": ("에디터에서 보기", "Open in editor"),
+        "chat.copy": ("복사", "Copy"),
+        "chat.timelineCopy": ("클릭해서 이 메시지 복사", "Click to copy this message"),
         "chat.plan": ("플랜 ", "Plan "),
         "common.copy": ("복사", "Copy"),
         // relative time (compact)
