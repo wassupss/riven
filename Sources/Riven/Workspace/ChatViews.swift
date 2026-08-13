@@ -1114,7 +1114,8 @@ final class UserBubble: NSView {
             queuedTag.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -13),
             bottomToText,
             card.topAnchor.constraint(equalTo: topAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // 아래 여백 strip - hover 액션이 말풍선 위가 아니라 여기 뜬다.
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UIScale.pt(24)),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40)
         ])
@@ -1380,7 +1381,8 @@ final class TurnBlock: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // 아래에 여백 strip 을 남긴다 - hover 액션(복사·토큰·시각)이 본문 위가 아니라 여기 뜬다.
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UIScale.pt(24)),
             content.topAnchor.constraint(equalTo: card.topAnchor),
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),

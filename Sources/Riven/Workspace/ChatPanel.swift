@@ -22,6 +22,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let workingBar = NSView()                     // 입력창 위 진행 표시 (생각/작성 중)
     private let workingSpinner = NSProgressIndicator()
     private let workingLabel = NSTextField(labelWithString: "")
+    private var scrollBottomIdle: NSLayoutConstraint!    // 진행 바 숨김: 스크롤 하단 = hairline
+    private var scrollBottomWorking: NSLayoutConstraint! // 진행 바 표시: 스크롤 하단 = 진행 바 위
+    private var subBottomIdle: NSLayoutConstraint!
+    private var subBottomWorking: NSLayoutConstraint!
     private lazy var inputScroll = InputScroll(input)     // grows 1→6 lines, then scrolls
     private let sendButton = CircleButton()               // circular ↑ / ■ (send / stop), accent
     private let plusButton = CircleButton()               // circular + (attach a file path)
@@ -132,7 +136,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg.cgColor
 
-        stack.orientation = .vertical; stack.spacing = 16; stack.alignment = .leading
+        stack.orientation = .vertical; stack.spacing = 2; stack.alignment = .leading   // 턴 하단 여백 strip 이 간격 역할
         // 왼쪽 = 여백(16) + 점 + 간격. 점이 패널·글자와 안 붙게. 오른쪽 = 16.
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 38, bottom: 14, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -271,11 +275,9 @@ final class ChatPanel: NSView, Themable, Scalable {
             planBadge.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6),
             scroll.topAnchor.constraint(equalTo: topAnchor),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor),
             scroll.trailingAnchor.constraint(equalTo: subSide.leadingAnchor),
             subSide.topAnchor.constraint(equalTo: topAnchor),
             subSide.trailingAnchor.constraint(equalTo: trailingAnchor),
-            subSide.bottomAnchor.constraint(equalTo: hairline.topAnchor),
             subWidthHidden,
             stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
             stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
@@ -347,6 +349,12 @@ final class ChatPanel: NSView, Themable, Scalable {
             jumpButton.widthAnchor.constraint(equalToConstant: UIScale.pt(30)),
             jumpButton.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         ])
+        // 스크롤/서브 영역 하단: 평소엔 hairline 위, 진행 바가 뜨면 그 위로 (겹침 방지).
+        scrollBottomIdle = scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor)
+        scrollBottomWorking = scroll.bottomAnchor.constraint(equalTo: workingBar.topAnchor, constant: -8)
+        subBottomIdle = subSide.bottomAnchor.constraint(equalTo: hairline.topAnchor)
+        subBottomWorking = subSide.bottomAnchor.constraint(equalTo: workingBar.topAnchor, constant: -8)
+        scrollBottomIdle.isActive = true; subBottomIdle.isActive = true
         // Follow user scrolling: update stick + pill visibility whenever the clip moves.
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipMoved),
@@ -2214,6 +2222,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     private func startFlush() {
         flushTimer?.invalidate()
         workingBar.isHidden = false; workingSpinner.startAnimation(nil)   // 입력창 위 진행 바 켜기
+        scrollBottomIdle.isActive = false; subBottomIdle.isActive = false
+        scrollBottomWorking.isActive = true; subBottomWorking.isActive = true   // 스크롤이 진행 바를 안 침범
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
             // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work: skip the
@@ -2255,7 +2265,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil
-        workingBar.isHidden = true; workingSpinner.stopAnimation(nil) }   // 진행 바 끄기
+        workingBar.isHidden = true; workingSpinner.stopAnimation(nil)     // 진행 바 끄기
+        scrollBottomWorking.isActive = false; subBottomWorking.isActive = false
+        scrollBottomIdle.isActive = true; subBottomIdle.isActive = true }
 
     private func endTurn(cost: Double?, usage: ChatUsage?, error: String? = nil) {
         let wasInterrupted = interrupted   // askWaiters drain 전에 초기화되므로 미리 잡아 둔다
