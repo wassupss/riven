@@ -133,7 +133,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         layer?.backgroundColor = Theme.bg.cgColor
 
         stack.orientation = .vertical; stack.spacing = 16; stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 14, right: 16)   // 좌우 대칭 여백
+        // 왼쪽 = 여백(16) + 점 + 간격. 점이 패널·글자와 안 붙게. 오른쪽 = 16.
+        stack.edgeInsets = NSEdgeInsets(top: 16, left: 38, bottom: 14, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
@@ -892,7 +893,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             for (j, v) in views.enumerated() {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
-                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
                 if j == 0 { attachTimelineDot(to: v, user: m.user, centerVertically: m.user)
                     attachHoverActions(to: v, date: nil, usage: nil, text: { m.text }) }   // 복원분은 복사만
             }
@@ -905,7 +906,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim; l.alignment = .center
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.insertArrangedSubview(l, at: 0)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         loadEarlierBtn = l
     }
     private var loadingEarlier = false
@@ -1103,6 +1104,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
             self?.current?.bufferText(t); self?.turnText += t
         }
+        s?.onLiveUsage = { [weak self] inp, out, isStart in self?.updateLiveUsage(inp, out, isStart) }
         s?.onMainTool = { [weak self] name, detail, code, path in
             self?.ensureAutoTurn()
             self?.liveTool = name
@@ -1763,12 +1765,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
         head.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(head)
-        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         let body = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
         body.font = UIScale.mono(UIScale.small); body.textColor = Theme.fgDim; body.isSelectable = true
         body.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(body)
-        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         scrollSoon()
     }
     /// "2026-08-04T09:00:00Z" → "09:00" (local), for reset times.
@@ -2092,6 +2094,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         turnText = ""
         current = newBlock()
         current?.startWorking()
+        resetLiveUsage()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil; startFlush()
         setRunning(true)
         onBusyChange?(true)
@@ -2108,6 +2111,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         turnText = ""
         current = newBlock()
         current?.startWorking()
+        resetLiveUsage()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil
         startFlush()
         setRunning(true); onBusyChange?(true)
@@ -2121,7 +2125,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let block = TurnBlock()
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
-        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         attachTimelineDot(to: block, user: false, centerVertically: false)   // 에이전트 턴 마커
         attachHoverActions(to: block, date: Date(), usage: { [weak block] in block?.turnUsage },
                            text: { [weak block] in block?.plainText ?? "" })
@@ -2136,13 +2140,17 @@ final class ChatPanel: NSView, Themable, Scalable {
         dot.layer?.cornerRadius = d / 2
         dot.translatesAutoresizingMaskIntoConstraints = false
         item.addSubview(dot)
+        // 사용자 말풍선은 세로 중앙. 에이전트 답변은 첫 줄의 세로 중앙에 맞춘다.
+        let f = UIScale.font(UIScale.prose)
+        let firstLineCenter = ceil((f.ascender - f.descender) / 2) + UIScale.pt(1)
         let vert = centerVertically
             ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor)
-            : dot.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(8))
+            : dot.centerYAnchor.constraint(equalTo: item.topAnchor, constant: firstLineCenter)
         NSLayoutConstraint.activate([
             dot.widthAnchor.constraint(equalToConstant: d),
             dot.heightAnchor.constraint(equalToConstant: d),
-            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -9),   // 왼쪽 여백(x16)-9 = x7
+            // 콘텐츠는 x38 에서 시작. 점 중심은 x20 (왼쪽 여백 16 + 점 반지름) → 패널·글자와 안 붙음.
+            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -18),
             vert,
         ])
     }
@@ -2220,14 +2228,29 @@ final class ChatPanel: NSView, Themable, Scalable {
             if grew { self.autoScroll() }
         }
     }
+    // ---- 실시간 토큰 (생각/작성 중 표시) ----
+    private var liveIn = 0, liveOut = 0, liveOutBase = 0, liveOutCur = 0
+    func resetLiveUsage() { liveIn = 0; liveOut = 0; liveOutBase = 0; liveOutCur = 0 }
+    private func updateLiveUsage(_ inp: Int, _ out: Int, _ isStart: Bool) {
+        if isStart {                                  // 새 메시지: 이전 메시지 출력을 누계에 확정
+            if inp >= 0 { liveIn += inp }
+            liveOutBase += liveOutCur; liveOutCur = out
+        } else {
+            liveOutCur = out                          // 현재 메시지의 누적 출력
+        }
+        liveOut = liveOutBase + liveOutCur
+    }
     private func updateWorkingBar(_ block: TurnBlock, _ secs: Int) {
         if block.isWaiting {
             workingLabel.stringValue = t("chat.awaitingApproval"); workingLabel.textColor = Theme.warning
             workingSpinner.stopAnimation(nil)
         } else {
             workingSpinner.startAnimation(nil)                    // 대기에서 돌아오면 다시 회전
-            let s = block.statusText(secs)
-            guard s != workingLabel.stringValue else { return }   // 초 단위로만 갱신 (매 프레임 재배치 방지)
+            var s = block.statusText(secs)
+            if liveOut > 0 || liveIn > 0 {                        // CLI 처럼 토큰이 올라가는 게 보이게
+                s += "  ↑\(ChatText.tokens(liveIn)) ↓\(ChatText.tokens(liveOut))"
+            }
+            guard s != workingLabel.stringValue else { return }   // 바뀔 때만 갱신
             workingLabel.stringValue = s; workingLabel.textColor = Theme.accent2
         }
     }
@@ -2280,7 +2303,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let v = UserBubble(text: text, tokens: .init(commands: commandNames, peers: peerNames()))
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
-        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         attachTimelineDot(to: v, user: true, centerVertically: true)   // 사용자 턴 마커 (세로 중앙)
         attachHoverActions(to: v, date: Date(), usage: nil, text: { text })
         scrollSoon()
@@ -2291,7 +2314,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         scrollSoon()
     }
     /// 세션 경계 표시("이전 세션에서 이어짐", "대화를 지웠습니다" 등)를 타임라인 형태로 - 큰 글씨 +
@@ -2309,7 +2332,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         scrollSoon()
     }
     // A visible, danger-tinted line for turn failures (529, etc.) - not the dim system gray.
@@ -2318,7 +2341,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         scrollSoon()
     }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }

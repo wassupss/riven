@@ -29,6 +29,7 @@ final class CodexChatSession: AgentChatSession {
     // 콜백은 전부 메인 스레드로 전달한다 (ClaudeChatSession 과 같은 약속).
     var onInit: ((_ threadId: String, _ model: String?) -> Void)?
     var onTextDelta: ((String) -> Void)?
+    var onLiveUsage: ((Int, Int, Bool) -> Void)?   // Codex 는 아직 실시간 토큰 미제공
     var onMainTool: ((_ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onFileEdited: ((_ path: String) -> Void)?
     var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?, _ error: String?) -> Void)?

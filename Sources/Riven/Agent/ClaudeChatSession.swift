@@ -41,6 +41,9 @@ final class ClaudeChatSession {
     // All callbacks are delivered on the MAIN thread.
     var onInit: ((_ sessionId: String, _ model: String?) -> Void)?
     var onTextDelta: ((String) -> Void)?                       // main assistant streamed token
+    /// 실시간 토큰 (생각/작성 중 표시용). (input, output, isMessageStart). isMessageStart=true 면
+    /// 새 메시지의 입력 토큰, false 면 현재 메시지의 누적 출력 토큰.
+    var onLiveUsage: ((Int, Int, Bool) -> Void)?
     var onMainTool: ((_ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentStart: ((_ id: String, _ type: String, _ desc: String) -> Void)?
     var onSubagentText: ((_ parentId: String, _ text: String) -> Void)?
@@ -216,8 +219,19 @@ final class ClaudeChatSession {
                 main { self.onInit?(sid, model) }
             }
         case "stream_event":
-            guard parent == nil, let ev = o["event"] as? [String: Any],
-                  ev["type"] as? String == "content_block_delta",
+            guard parent == nil, let ev = o["event"] as? [String: Any] else { return }
+            let et = ev["type"] as? String
+            // 실시간 토큰: message_start 에 입력(누적), message_delta 에 출력(현재 메시지 누적).
+            if et == "message_start", let msg = ev["message"] as? [String: Any], let u = msg["usage"] as? [String: Any] {
+                let inp = (u["input_tokens"] as? Int ?? 0) + (u["cache_creation_input_tokens"] as? Int ?? 0) + (u["cache_read_input_tokens"] as? Int ?? 0)
+                main { self.onLiveUsage?(inp, u["output_tokens"] as? Int ?? 0, true) }
+                return
+            }
+            if et == "message_delta", let u = ev["usage"] as? [String: Any] {
+                main { self.onLiveUsage?(-1, u["output_tokens"] as? Int ?? 0, false) }
+                return
+            }
+            guard et == "content_block_delta",
                   let delta = ev["delta"] as? [String: Any],
                   delta["type"] as? String == "text_delta",
                   let t = delta["text"] as? String else { return }
