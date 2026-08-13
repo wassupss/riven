@@ -893,7 +893,8 @@ final class ChatPanel: NSView, Themable, Scalable {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
                 v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-                if j == 0 { attachHoverActions(to: v, date: nil, usage: nil, text: { m.text }) }   // 복원분은 복사만
+                if j == 0 { attachTimelineDot(to: v, user: m.user, centerVertically: m.user)
+                    attachHoverActions(to: v, date: nil, usage: nil, text: { m.text }) }   // 복원분은 복사만
             }
         }
     }
@@ -2121,9 +2122,29 @@ final class ChatPanel: NSView, Themable, Scalable {
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        attachTimelineDot(to: block, user: false, centerVertically: false)   // 에이전트 턴 마커
         attachHoverActions(to: block, date: Date(), usage: { [weak block] in block?.turnUsage },
                            text: { [weak block] in block?.plainText ?? "" })
         return block
+    }
+    /// 왼쪽 여백에 턴 마커 점을 찍는다 (사용자=accent, 에이전트=accent2). 단순 점 - 아이콘 없음.
+    /// 아이템의 subview 라 트림/재렌더 때 함께 사라진다 (클릭은 안 받으므로 이걸로 충분).
+    private func attachTimelineDot(to item: NSView, user: Bool, centerVertically: Bool) {
+        let dot = NSView(); dot.wantsLayer = true
+        let d = UIScale.pt(8)
+        dot.layer?.backgroundColor = (user ? Theme.accent : Theme.accent2).cgColor
+        dot.layer?.cornerRadius = d / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        item.addSubview(dot)
+        let vert = centerVertically
+            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor)
+            : dot.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(8))
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: d),
+            dot.heightAnchor.constraint(equalToConstant: d),
+            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -9),   // 왼쪽 여백(x16)-9 = x7
+            vert,
+        ])
     }
     /// 턴에 hover 액션(오른쪽 아래 fade: 토큰 + 복사 + 상대시각)을 붙인다. 액션은 아이템의
     /// subview 라 트림되면 같이 사라진다. 트래킹은 아이템 bounds 를 소유자(액션)에게 전달한다.
@@ -2260,6 +2281,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        attachTimelineDot(to: v, user: true, centerVertically: true)   // 사용자 턴 마커 (세로 중앙)
         attachHoverActions(to: v, date: Date(), usage: nil, text: { text })
         scrollSoon()
         return v
