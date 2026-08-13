@@ -5969,7 +5969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // writing stdin → deadlock (save spins forever).
         let inData = content.data(using: .utf8) ?? Data()
         DispatchQueue.global(qos: .userInitiated).async {
-            inPipe.fileHandleForWriting.write(inData)
+            try? inPipe.fileHandleForWriting.write(contentsOf: inData)   // broken pipe(포매터 조기 종료) 시 크래시 방지
             try? inPipe.fileHandleForWriting.close()
         }
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()

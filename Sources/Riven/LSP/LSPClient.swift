@@ -48,7 +48,8 @@ final class LSPClient {
         guard let body = try? JSONSerialization.data(withJSONObject: obj) else { return }
         var msg = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
         msg.append(body)
-        inPipe.fileHandleForWriting.write(msg)
+        // LSP 서버가 죽으면 broken pipe - writeData(구 API)는 NSException 을 던져 크래시했다. 던지는 API 로.
+        try? inPipe.fileHandleForWriting.write(contentsOf: msg)
     }
 
     private func feed(_ data: Data) {

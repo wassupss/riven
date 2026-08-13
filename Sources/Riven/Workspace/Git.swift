@@ -242,9 +242,12 @@ enum Git {
         p.standardInput = inPipe; p.standardOutput = outPipe; p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return [:] }
         let query = rels.map { "HEAD:./\($0)\n" }.joined()
-        inPipe.fileHandleForWriting.write(Data(query.utf8))
-        inPipe.fileHandleForWriting.closeFile()
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
+        // git 이 일찍 죽으면(비-git 디렉토리 등) stdin 이 닫혀 broken pipe 가 난다. 예전 writeData 는
+        // NSException(Obj-C)을 던져 Swift do/catch 로 못 잡고 그대로 크래시했다 - 던지는 API 로 바꿔 잡는다.
+        do { try inPipe.fileHandleForWriting.write(contentsOf: Data(query.utf8)) }
+        catch { try? inPipe.fileHandleForWriting.close(); p.terminate(); return [:] }
+        try? inPipe.fileHandleForWriting.close()
+        let data = (try? outPipe.fileHandleForReading.readToEnd()) ?? Data()
         p.waitUntilExit()
 
         var result: [String: String] = [:]
