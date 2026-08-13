@@ -294,6 +294,8 @@ final class AssistantText: NSView {
     private var scanIdx = 0
     private var fenceOpen = false
     private var boundary = 0
+    private let tailShimmer = CAGradientLayer()   // 타이핑 중인 꼬리를 훑는 은은한 sheen
+    private var tailShimmerOn = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -324,14 +326,38 @@ final class AssistantText: NSView {
         // 빈 줄로 끝난 완성 블록은 바로 최종 서식으로 굳힌다 → 제목·표·목록·코드블록이
         // 답변이 끝나기 전에 제 모습으로 나타난다.
         if boundary > committed { commit(upTo: boundary) }
-        let tail = String(chars[committed..<shownCount])
-        if tail.isEmpty { streamRow?.isHidden = true }
+        // 아직 완성되지 않은 블록 마크다운(코드펜스/표/인용구/제목/목록)과 짝 안 맞는 백틱은
+        // 감춘다 → 스트리밍 중 raw ``·|·> 가 잠깐 번쩍이지 않고, 블록은 commit 될 때 제 서식으로 뜬다.
+        let tail = AssistantText.safeTail(String(chars[committed..<shownCount]))
+        if tail.isEmpty { streamRow?.isHidden = true; stopTailShimmer() }
         else {
             streamRow?.isHidden = false
             // 꼬리도 인라인 마크다운을 입혀서 그린다 (**굵게**·`코드`가 타이핑 중에도 보인다).
             ensureLabel().attributedStringValue = ChatText.attributedMarkdown(tail)
+            startTailShimmer()   // 타이핑 중인 꼬리에 은은한 sheen
         }
         return true
+    }
+
+    // 스트리밍 꼬리에서 미완성 블록 마크다운과 짝 없는 인라인 백틱을 잘라낸다.
+    static func safeTail(_ tail: String) -> String {
+        var kept: [String] = []
+        for line in tail.components(separatedBy: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") || t.hasPrefix("|") || t.hasPrefix(">") || t.hasPrefix("#") || isListMarker(t) { break }
+            kept.append(line)
+        }
+        var s = kept.joined(separator: "\n")
+        if s.reduce(0, { $0 + ($1 == "`" ? 1 : 0) }) % 2 == 1, let r = s.range(of: "`", options: .backwards) {
+            s = String(s[..<r.lowerBound])   // 닫히지 않은 인라인 코드( `foo )는 백틱부터 감춘다
+        }
+        return s
+    }
+    private static func isListMarker(_ t: String) -> Bool {
+        if t.hasPrefix("- ") || t.hasPrefix("* ") || t.hasPrefix("+ ") { return true }
+        let head = t.prefix { $0.isNumber }
+        if !head.isEmpty, let sep = t.dropFirst(head.count).first, sep == "." || sep == ")" { return true }
+        return false
     }
 
     /// 새로 드러난 구간만 훑어 "코드펜스 밖의 빈 줄" 위치를 기록한다.
@@ -376,9 +402,42 @@ final class AssistantText: NSView {
         streaming = l; streamRow = row; return l
     }
 
+    // 타이핑 중인 꼬리 라벨 위를 은은한 밝은 띠가 훑는다 (읽기 방해 없게 0.68~1.0 사이).
+    private func startTailShimmer() {
+        guard let host = streaming?.layer else { return }
+        streaming?.wantsLayer = true
+        if host.mask !== tailShimmer {                 // 직전 블록 commit 후 새로 생긴 꼬리 라벨에 다시 붙인다
+            tailShimmer.startPoint = CGPoint(x: 0, y: 0.5); tailShimmer.endPoint = CGPoint(x: 1, y: 0.5)
+            let dim = NSColor.white.withAlphaComponent(0.68).cgColor
+            tailShimmer.colors = [dim, NSColor.white.cgColor, dim]; tailShimmer.locations = [0, 0.5, 1]
+            host.mask = tailShimmer; tailShimmerOn = false
+        }
+        if !tailShimmerOn {
+            tailShimmerOn = true
+            let sweep = CABasicAnimation(keyPath: "locations")
+            sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+            sweep.duration = 1.6; sweep.repeatCount = .infinity
+            sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            tailShimmer.add(sweep, forKey: "shimmer")
+        }
+        needsLayout = true
+    }
+    private func stopTailShimmer() {
+        guard tailShimmerOn else { return }
+        tailShimmerOn = false; tailShimmer.removeAllAnimations()
+        streaming?.layer?.mask = nil; tailShimmer.removeFromSuperlayer()
+    }
+    override func layout() {
+        super.layout()
+        guard tailShimmerOn, let host = streaming?.layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        tailShimmer.frame = host.bounds; CATransaction.commit()
+    }
+
     func renderFinal() {
         guard !finalized else { return }
         finalized = true
+        stopTailShimmer()   // 최종 서식은 sheen 없이 또렷하게
         // 확정된 블록은 그대로 두고 남은 꼬리만 최종 서식으로 바꾼다 - 예전엔 전체를 지우고
         // 다시 그려서 긴 답변이 끝날 때 화면이 통째로 리플로우됐다.
         streamRow?.removeFromSuperview(); streamRow = nil; streaming = nil
@@ -1350,7 +1409,7 @@ final class TurnBlock: NSView {
         spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         statusIcon.isHidden = true; statusIcon.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIScale.font(UIScale.body, .medium); statusLabel.textColor = Theme.accent2
+        statusLabel.font = UIScale.font(UIScale.title, .medium); statusLabel.textColor = Theme.accent2
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         copyBtn.bezelStyle = .inline; copyBtn.isBordered = false; copyBtn.imagePosition = .imageOnly
         copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
@@ -1377,7 +1436,7 @@ final class TurnBlock: NSView {
             statusRow.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor),
             statusRow.bottomAnchor.constraint(equalTo: card.bottomAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
-            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
+            statusIcon.widthAnchor.constraint(equalToConstant: 15), statusIcon.heightAnchor.constraint(equalToConstant: 15),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -1437,7 +1496,7 @@ final class TurnBlock: NSView {
         }
     }
     private func symbol(_ name: String, _ color: NSColor) -> NSImage? {
-        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .semibold).applying(.init(paletteColors: [color]))
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(13), weight: .bold).applying(.init(paletteColors: [color]))
         return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
     }
     @objc private func copyAnswer() {
@@ -1522,7 +1581,7 @@ final class TurnBlock: NSView {
         stopActiveTool(); stopShimmer()
         if hasText || !content.arrangedSubviews.isEmpty { setStatusGap(true) }   // 답변 아래로 완료 줄
         spinner.isHidden = true; spinner.stopAnimation(nil)   // 완료 시 스피너 자리 collapse (옆 여백 제거)
-        statusIcon.isHidden = false; statusIcon.image = symbol("checkmark.circle.fill", Theme.success)
+        statusIcon.isHidden = false; statusIcon.image = symbol("checkmark", Theme.success)   // 초록 원 대신 체크 표시
         statusLabel.textColor = Theme.fgDim
         var s = t("chat.done") + " · " + ChatText.duration(secs)
         if let u = usage {
