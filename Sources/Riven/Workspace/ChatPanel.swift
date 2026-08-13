@@ -2216,12 +2216,32 @@ final class ChatPanel: NSView, Themable, Scalable {
         scrollSoon()
         return v
     }
+    // 짧은 상태 알림(권한 모드 전환, 모델 변경, 위임/도구 상태 등)은 밋밋한 회색 줄 대신
+    // 내용에 딱 맞는 subtle 한 캡슐 칩/마커로 왼쪽에 붙인다.
     private func addSystem(_ text: String) {
+        let chip = NSView(); chip.wantsLayer = true
+        chip.layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.05 : 0.07).cgColor
+        chip.layer?.cornerRadius = UIScale.pt(8)
+        chip.layer?.borderWidth = 1; chip.layer?.borderColor = Theme.edge.withAlphaComponent(0.6).cgColor
+        chip.translatesAutoresizingMaskIntoConstraints = false
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(UIScale.caption); l.textColor = Theme.fgDim
+        l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.fgDim; l.isSelectable = true
         l.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        chip.addSubview(l)
+        let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(chip)
+        NSLayoutConstraint.activate([
+            l.topAnchor.constraint(equalTo: chip.topAnchor, constant: UIScale.pt(4)),
+            l.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -UIScale.pt(4)),
+            l.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: UIScale.pt(9)),
+            l.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -UIScale.pt(9)),
+            chip.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            chip.topAnchor.constraint(equalTo: row.topAnchor),
+            chip.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            chip.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),   // 내용에 맞춰 hug, 넘치면 wrap
+        ])
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// 세션 경계 표시("이전 세션에서 이어짐", "대화를 지웠습니다" 등)를 타임라인 형태로 - 큰 글씨 +
