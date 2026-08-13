@@ -2154,7 +2154,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func startFlush() {
         flushTimer?.invalidate()
-        flushTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        flushTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
             // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work.
             guard self.window != nil else { return }
@@ -2255,7 +2255,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // FORCED pin to the live edge (user sent / resumed / tapped the pill): also resumes following.
     private func scrollToBottom() {
         guard window != nil else { return }   // offscreen: don't force a layout; viewDidMoveToWindow handles it
-        layoutSubtreeIfNeeded()
+        stack.layoutSubtreeIfNeeded()         // 트랜스크립트만 배치 (매 틱 composer 등 전체 재배치 X)
         let clip = scroll.contentView
         let y = max(0, stack.frame.height - clip.bounds.height)
         clip.setBoundsOrigin(NSPoint(x: 0, y: y))

@@ -316,7 +316,9 @@ final class AssistantText: NSView {
     @discardableResult func advance() -> Bool {
         guard !finalized, shownCount < chars.count else { return false }
         let remaining = chars.count - shownCount
-        let step = max(3, remaining / 5)                 // ease-out: bigger jumps when behind
+        // 매끄러운 타이핑: 프레임당 조금씩(가벼운 ease-out), 큰 버스트도 한 번에 튀지 않게 상한을 둔다
+        // (예전엔 remaining/5 라 버스트가 오면 한 프레임에 수십~수백 자를 확 뿌려 딱딱 끊겼다).
+        let step = min(max(2, remaining / 6), 24)
         shownCount = min(chars.count, shownCount + step)
         scanForBoundary()
         // 빈 줄로 끝난 완성 블록은 바로 최종 서식으로 굳힌다 → 제목·표·목록·코드블록이
