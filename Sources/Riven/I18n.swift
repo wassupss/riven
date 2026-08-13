@@ -418,6 +418,12 @@ enum I18n {
         "chat.openInEditor": ("에디터에서 보기", "Open in editor"),
         "chat.copy": ("복사", "Copy"),
         "chat.timelineCopy": ("클릭해서 이 메시지 복사", "Click to copy this message"),
+        "chat.otherPlaceholder": ("직접 입력하고 Enter", "Type your answer, press Enter"),
+        "chat.otherHint": ("직접 입력 후 Enter", "Type your answer, then Enter"),
+        "chat.time.now": ("방금", "just now"),
+        "chat.time.min": ("{n}분 전", "{n}m ago"),
+        "chat.time.hour": ("{n}시간 전", "{n}h ago"),
+        "chat.time.day": ("{n}일 전", "{n}d ago"),
         "chat.plan": ("플랜 ", "Plan "),
         "common.copy": ("복사", "Copy"),
         // relative time (compact)

@@ -415,78 +415,125 @@ final class CodeCarrier: NSView {
     var carriedCode: String?
 }
 
-// MARK: - timeline node (a dot on the left rail; hover → copy this turn)
-/// 왼쪽 타임라인 레일 위의 턴 노드. 평소엔 점, 마우스를 올리면 복사 버튼으로 바뀌고
-/// 누르면 이 턴의 텍스트를 클립보드로 복사한다 (잠깐 체크로 피드백).
+// MARK: - timeline node (an avatar chip on the left gutter marking each turn)
+/// 왼쪽 타임라인의 턴 노드. 사용자 턴은 사람 아이콘, 에이전트 턴은 그 에이전트의 아바타.
 final class TimelineNode: NSView {
-    private let dot = NSView()
-    private let icon = NSImageView()
-    private let color: NSColor
-    private let copy: () -> String
-    private var tracking: NSTrackingArea?
-    private var copied = false
-
-    init(color: NSColor, copy: @escaping () -> String) {
-        self.color = color; self.copy = copy
+    init(image: NSImage?, tint: NSColor) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.cornerRadius = UIScale.pt(5)
         translatesAutoresizingMaskIntoConstraints = false
-        toolTip = t("chat.timelineCopy")
-        let side = UIScale.pt(20), d = UIScale.pt(10)
-        dot.wantsLayer = true
-        dot.layer?.backgroundColor = color.cgColor
-        dot.layer?.cornerRadius = d / 2
-        dot.layer?.borderWidth = 2
-        dot.layer?.borderColor = Theme.bg.cgColor      // 레일선을 끊어 노드가 도드라지게
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
-        icon.contentTintColor = Theme.fg
-        icon.isHidden = true
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(dot); addSubview(icon)
+        let side = UIScale.pt(22), disc = UIScale.pt(20)
+        let bg = NSView(); bg.wantsLayer = true
+        bg.layer?.backgroundColor = tint.withAlphaComponent(Theme.isLight ? 0.16 : 0.22).cgColor
+        bg.layer?.cornerRadius = disc / 2
+        bg.translatesAutoresizingMaskIntoConstraints = false
+        let iconView = NSImageView()
+        iconView.image = image
+        iconView.imageScaling = .scaleProportionallyUpOrDown
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(bg); addSubview(iconView)
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: side),
             heightAnchor.constraint(equalToConstant: side),
-            dot.widthAnchor.constraint(equalToConstant: d),
-            dot.heightAnchor.constraint(equalToConstant: d),
-            dot.centerXAnchor.constraint(equalTo: centerXAnchor),
-            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(12)),
-            icon.heightAnchor.constraint(equalToConstant: UIScale.pt(12)),
+            bg.widthAnchor.constraint(equalToConstant: disc),
+            bg.heightAnchor.constraint(equalToConstant: disc),
+            bg.centerXAnchor.constraint(equalTo: centerXAnchor),
+            bg.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: UIScale.pt(13)),
+            iconView.heightAnchor.constraint(equalToConstant: UIScale.pt(13)),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+}
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tr = tracking { removeTrackingArea(tr) }
-        let tr = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp], owner: self, userInfo: nil)
-        addTrackingArea(tr); tracking = tr
+// MARK: - turn hover actions (fades in at bottom-right on hover: copy + relative time)
+/// 턴에 마우스를 올리면 오른쪽 아래에 fade-in 되는 작은 바 - 복사 버튼 + "35분 전" 상대 시각.
+/// 트래킹 소유자라 host(턴 아이템) 위에 마우스가 들어오면 뜨고 나가면 사라진다.
+final class TurnHoverActions: NSView {
+    private let date: Date?
+    private let timeLabel = NSTextField(labelWithString: "")
+    private let copyBtn = NSButton()
+    init(date: Date?, textProvider: @escaping () -> String) {
+        self.date = date
+        super.init(frame: .zero)
+        wantsLayer = true
+        alphaValue = 0
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.backgroundColor = Theme.bg2.withAlphaComponent(0.96).cgColor
+        layer?.cornerRadius = UIScale.pt(7)
+        layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
+        timeLabel.font = UIScale.font(UIScale.caption); timeLabel.textColor = Theme.fgDim
+        timeLabel.translatesAutoresizingMaskIntoConstraints = false
+        copyBtn.bezelStyle = .inline; copyBtn.isBordered = false; copyBtn.imagePosition = .imageOnly
+        copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: t("chat.copy"))
+        copyBtn.contentTintColor = Theme.fgDim; copyBtn.toolTip = t("chat.copy")
+        copyBtn.target = self; copyBtn.action = #selector(doCopy)
+        self.copyAction = textProvider
+        timeLabel.isHidden = (date == nil)
+        let row = NSStackView(views: date == nil ? [copyBtn] : [timeLabel, copyBtn]); row.spacing = 8; row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
+        ])
     }
-    override func mouseEntered(with e: NSEvent) { setHover(true); NSCursor.pointingHand.set() }
-    override func mouseExited(with e: NSEvent) { if !copied { setHover(false) }; NSCursor.arrow.set() }
-    private func setHover(_ on: Bool) {
-        layer?.backgroundColor = (on ? Theme.hover : NSColor.clear).cgColor
-        dot.isHidden = on; icon.isHidden = !on
-    }
-    override func mouseDown(with e: NSEvent) {
+    required init?(coder: NSCoder) { fatalError() }
+    private var copyAction: (() -> String)?
+    @objc private func doCopy() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(copy(), forType: .string)
-        copied = true
-        icon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
-        icon.contentTintColor = Theme.success
-        dot.isHidden = true; icon.isHidden = false
-        layer?.backgroundColor = Theme.success.withAlphaComponent(0.18).cgColor
+        NSPasteboard.general.setString(copyAction?() ?? "", forType: .string)
+        copyBtn.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)
+        copyBtn.contentTintColor = Theme.success
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { [weak self] in
-            guard let self else { return }
-            self.copied = false
-            self.icon.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
-            self.icon.contentTintColor = Theme.fg
-            self.setHover(false)
+            self?.copyBtn.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+            self?.copyBtn.contentTintColor = Theme.fgDim
         }
+    }
+    // 페이드 아웃 상태에선 클릭을 가로채지 않는다 (아래 본문 선택/버튼이 살아있게).
+    override func hitTest(_ point: NSPoint) -> NSView? { alphaValue < 0.05 ? nil : super.hitTest(point) }
+    override func mouseEntered(with e: NSEvent) { show(true) }
+    override func mouseExited(with e: NSEvent) { show(false) }
+    private func show(_ on: Bool) {
+        if on, let date { timeLabel.stringValue = TurnHoverActions.relative(date) }
+        NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.16; animator().alphaValue = on ? 1 : 0 }
+    }
+    static func relative(_ d: Date) -> String {
+        let s = Int(max(0, Date().timeIntervalSince(d)))
+        if s < 60 { return t("chat.time.now") }
+        if s < 3600 { return t("chat.time.min", ["n": s / 60]) }
+        if s < 86400 { return t("chat.time.hour", ["n": s / 3600]) }
+        return t("chat.time.day", ["n": s / 86400])
+    }
+}
+
+// MARK: - link-aware label (routes link clicks to the riven browser panel, not the OS browser)
+final class LinkLabel: NSTextField {
+    override func mouseDown(with e: NSEvent) {
+        if let url = linkAt(convert(e.locationInWindow, from: nil)) {
+            enclosingChatPanel?.handleLinkClick(url); return
+        }
+        super.mouseDown(with: e)
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    private func linkAt(_ point: NSPoint) -> String? {
+        let attr = attributedStringValue
+        guard attr.length > 0 else { return nil }
+        let storage = NSTextStorage(attributedString: attr)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: bounds.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 2                       // NSTextField 기본 여백에 맞춤
+        layout.addTextContainer(container); storage.addLayoutManager(layout)
+        let flipped = NSPoint(x: point.x, y: bounds.height - point.y)   // 텍스트뷰는 top-left 원점
+        let idx = layout.characterIndex(for: flipped, in: container, fractionOfDistanceBetweenInsertionPoints: nil)
+        guard idx < attr.length else { return nil }
+        let v = attr.attribute(.link, at: idx, effectiveRange: nil)
+        if let u = v as? URL { return u.absoluteString }
+        return v as? String
     }
 }
 
@@ -550,7 +597,7 @@ enum ChatText {
     static var proseColor: NSColor { Theme.fg.withAlphaComponent(0.80) }   // regular text (calmer)
     static var proseStrong: NSColor { Theme.fg }                           // emphasized text (brighter)
     static func prose(_ s: String) -> NSTextField {
-        let l = NSTextField(wrappingLabelWithString: s)
+        let l = LinkLabel(wrappingLabelWithString: s)   // 링크 클릭 → 리븐 브라우저 (외부 브라우저 대신)
         l.font = UIScale.font(proseSize); l.textColor = proseColor
         l.translatesAutoresizingMaskIntoConstraints = false; l.isSelectable = true
         // Without this, clicking a selectable label makes the field editor STRIP rich attributes
@@ -611,9 +658,25 @@ enum ChatText {
                                      .foregroundColor: Theme.accent2], range: r)
                 }
             }
+            linkifyBareURLs(m)
             return m
         }
         return attributedProse(s)
+    }
+    // 맨 URL(http/https)에 .link + accent 밑줄을 입힌다. [md](링크) 는 이미 .link 라 건드리지 않는다.
+    // LinkLabel 이 클릭을 리븐 브라우저로 보낸다.
+    private static let urlRe = try? NSRegularExpression(pattern: "https?://[^\\s)\\]}\"'<>]+")
+    static func linkifyBareURLs(_ m: NSMutableAttributedString) {
+        guard let re = urlRe else { return }
+        let s = m.string
+        for match in re.matches(in: s, range: NSRange(s.startIndex..., in: s)).reversed() {
+            if m.attribute(.link, at: match.range.location, effectiveRange: nil) != nil { continue }  // 이미 링크
+            var url = (s as NSString).substring(with: match.range)
+            while let last = url.last, ".,;:!?".contains(last) { url.removeLast() }   // 문장부호 제외
+            let r = NSRange(location: match.range.location, length: url.utf16.count)
+            m.addAttributes([.link: url, .foregroundColor: Theme.accent2,
+                             .underlineStyle: NSUnderlineStyle.single.rawValue], range: r)
+        }
     }
     // A prose paragraph with a CLI-style bullet marker in the left gutter.
     static func proseParagraph(_ text: String) -> NSView {
@@ -623,9 +686,9 @@ enum ChatText {
     // too, so the text sits at its final position from the first character - previously streaming
     // used a bare full-width label and the whole answer jumped/indented when renderFinal ran.
     static func bulletRow(_ label: NSTextField) -> NSView {
-        // ⏺ 마커 제거: 왼쪽 타임라인 노드가 턴 시작 마커 역할을 한다 (점 두 개가 중복됐음).
-        // 들여쓰기(16)는 유지해 나머지 블록과 정렬을 맞춘다.
-        indented(label, by: UIScale.pt(16))
+        // ⏺ 마커·들여쓰기 모두 제거: 왼쪽 타임라인 노드가 턴 마커. 어시스턴트 글은 들여쓰지 않고
+        // 사용자 말풍선과 같은 왼쪽 선에 맞춘다.
+        label
     }
     static func codeBlock(_ code: String, diff: Bool = false, path: String? = nil, lang: String? = nil) -> NSView {
         // 한 줄짜리 짧은 명령까지 머리글 달린 코드 카드로 그리면 대화가 상자 더미가 된다.
@@ -764,14 +827,11 @@ enum ChatText {
             out.append(proseMarkdown(t))
         }
         // 첫 블록만 ⏺ 를 달고 나머지는 같은 들여쓰기로 맞춘다 (블록마다 점을 찍으면 산만하다).
-        return out.enumerated().map { i, v in
-            if i == 0, bullet, let label = v as? NSTextField { return bulletRow(label) }
-            return indented(v, by: UIScale.pt(16))
-        }
+        return out   // 들여쓰기 없음 - 타임라인 노드가 마커, 본문은 왼쪽 선에 정렬
     }
 
-    /// 본문 블록과 같은 왼쪽 여백을 가진 컨테이너 (스트리밍 꼬리용).
-    static func indentedProse(_ v: NSView) -> NSView { indented(v, by: UIScale.pt(16)) }
+    /// 스트리밍 꼬리용 (들여쓰기 없음).
+    static func indentedProse(_ v: NSView) -> NSView { v }
 
     private static func indented(_ v: NSView, by x: CGFloat) -> NSView {
         let row = NSView()
@@ -1019,7 +1079,7 @@ enum ChatText {
 /// 사용자가 보낸 말. 왼쪽 얇은 선 하나로는 어시스턴트 글과 구분되지 않아서, 옅은 배경과
 /// 둥근 모서리를 준다 (읽는 사람은 "누가 한 말인지" 를 색·모양으로 먼저 읽는다).
 final class UserBubble: NSView {
-    private let bar = NSView()
+    private let card = NSView()
     private let queuedTag = NSTextField(labelWithString: t("chat.queuedTag"))
     /// 색을 입힐 토큰 정보 (실재하는 명령/스킬, 같은 그룹 동료). 입력창에서 보던 색이 보낸
     /// 뒤에도 그대로 남게 한다.
@@ -1027,18 +1087,12 @@ final class UserBubble: NSView {
     init(text: String, tokens: Tokens? = nil) {
         super.init(frame: .zero)
         wantsLayer = true
-        let card = NSView()
         card.wantsLayer = true
-        // 또렷한 배경(bg3) + 왼쪽 accent 바만으로 어시스턴트 글과 구분한다. 여기에 테두리까지
-        // 두르면 chrome 이 과해 배너처럼 무거워 보였다 - 채움으로 이미 충분히 구분된다.
-        card.layer?.backgroundColor = Theme.bg3.cgColor
+        // 왼쪽 accent 바 없이 테마 accent 를 옅게 깐 배경만으로 "내가 한 말" 을 나타낸다.
+        card.layer?.backgroundColor = Theme.accent.withAlphaComponent(Theme.isLight ? 0.10 : 0.14).cgColor
         card.layer?.cornerRadius = 10
-        card.layer?.masksToBounds = true          // clip the accent bar to the rounded corners
+        card.layer?.masksToBounds = true
         card.translatesAutoresizingMaskIntoConstraints = false
-        bar.wantsLayer = true
-        bar.layer?.backgroundColor = Theme.accent.withAlphaComponent(0.8).cgColor
-        bar.layer?.cornerRadius = 1.5
-        bar.translatesAutoresizingMaskIntoConstraints = false
         let l = NSTextField(wrappingLabelWithString: text)
         l.font = UIScale.font(UIScale.prose); l.textColor = Theme.fg; l.isSelectable = true
         let p = NSMutableParagraphStyle(); p.lineSpacing = 4
@@ -1051,23 +1105,19 @@ final class UserBubble: NSView {
         queuedTag.font = UIScale.font(UIScale.caption, .medium); queuedTag.textColor = Theme.warning
         queuedTag.isHidden = true
         queuedTag.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(bar); card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
+        card.addSubview(l); card.addSubview(queuedTag); addSubview(card)
         // The tag sits on its OWN line BELOW the message (it used to be pinned top-right, overlapping
         // the text). Two card-bottom constraints toggle so the card only reserves the tag's row while
         // queued - otherwise it collapses to hug the text.
-        bottomToText = card.bottomAnchor.constraint(equalTo: l.bottomAnchor, constant: 8)
-        bottomToTag = card.bottomAnchor.constraint(equalTo: queuedTag.bottomAnchor, constant: 8)
+        bottomToText = card.bottomAnchor.constraint(equalTo: l.bottomAnchor, constant: 9)
+        bottomToTag = card.bottomAnchor.constraint(equalTo: queuedTag.bottomAnchor, constant: 9)
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
-            bar.topAnchor.constraint(equalTo: card.topAnchor),
-            bar.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            bar.widthAnchor.constraint(equalToConstant: 3),
-            l.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
-            l.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 11),
-            l.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            l.topAnchor.constraint(equalTo: card.topAnchor, constant: 9),
+            l.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 13),
+            l.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -13),
             queuedTag.topAnchor.constraint(equalTo: l.bottomAnchor, constant: 3),
             queuedTag.leadingAnchor.constraint(equalTo: l.leadingAnchor),
-            queuedTag.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -12),
+            queuedTag.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -13),
             bottomToText,
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -1092,7 +1142,6 @@ final class UserBubble: NSView {
         bottomToText.isActive = !q       // reserve the tag's row only while queued
         bottomToTag.isActive = q
         alphaValue = q ? 0.55 : 1
-        bar.layer?.backgroundColor = (q ? Theme.warning : Theme.accent.withAlphaComponent(0.8)).cgColor
     }
 }
 
@@ -1108,9 +1157,17 @@ final class ApprovalCard: NSView {
     /// Esc / the 취소 button. Nil means the card can't be dismissed (a permission prompt must be
     /// answered), so only riven's own choice cards set it.
     var onCancel: (() -> Void)?
+    /// "기타" 를 골라 직접 입력한 답 (선택지 대신). nil 이면 기타 옵션을 안 보인다.
+    private let onCustom: ((String) -> Void)?
+    private let hasCustom: Bool
+    private let customField = NSTextField()
+    private var itemCount: Int { options.count + (hasCustom ? 1 : 0) }
 
-    init(title: String, detail: String, code: String?, path: String?, options: [(String, () -> Void)]) {
+    init(title: String, detail: String, code: String?, path: String?,
+         options: [(String, () -> Void)], custom: ((String) -> Void)? = nil) {
         self.options = options
+        self.onCustom = custom
+        self.hasCustom = custom != nil
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Theme.warning.withAlphaComponent(0.07).cgColor
@@ -1128,6 +1185,13 @@ final class ApprovalCard: NSView {
             let b = NSButton(); b.title = opt.0; b.bezelStyle = .rounded
             b.wantsLayer = true; b.layer?.cornerRadius = 6
             b.tag = i; b.target = self; b.action = #selector(tap(_:))
+            b.translatesAutoresizingMaskIntoConstraints = false
+            buttons.append(b)
+        }
+        if hasCustom {                                   // "기타" 버튼 (직접 입력)
+            let b = NSButton(); b.title = t("chat.other"); b.bezelStyle = .rounded
+            b.wantsLayer = true; b.layer?.cornerRadius = 6
+            b.tag = options.count; b.target = self; b.action = #selector(tap(_:))
             b.translatesAutoresizingMaskIntoConstraints = false
             buttons.append(b)
         }
@@ -1184,6 +1248,15 @@ final class ApprovalCard: NSView {
                 b.alignment = .left
             }
         }
+        if hasCustom {                                   // 직접 입력 필드 (기타 선택 시 노출)
+            customField.placeholderString = t("chat.otherPlaceholder")
+            customField.font = UIScale.font(UIScale.body)
+            customField.isHidden = true
+            customField.target = self; customField.action = #selector(submitCustom)
+            customField.translatesAutoresizingMaskIntoConstraints = false
+            col.addArrangedSubview(customField)
+            customField.widthAnchor.constraint(equalTo: col.widthAnchor).isActive = true
+        }
         let metaRow = NSStackView(views: [hint, statusLabel]); metaRow.spacing = 8
         metaRow.translatesAutoresizingMaskIntoConstraints = false
         col.addArrangedSubview(metaRow)
@@ -1212,11 +1285,12 @@ final class ApprovalCard: NSView {
     }
 
     override func keyDown(with e: NSEvent) {
+        let n = max(1, itemCount)
         switch e.keyCode {
-        case 123, 126: sel = (sel - 1 + options.count) % options.count; restyleSel()   // ← / ↑
-        case 124, 125: sel = (sel + 1) % options.count; restyleSel()                    // → / ↓
-        case 36, 76, 49: pick(sel)                                                       // return / enter / space
-        case 53: onCancel?()                                                             // esc - back out
+        case 123, 126: sel = (sel - 1 + n) % n; restyleSel()   // ← / ↑
+        case 124, 125: sel = (sel + 1) % n; restyleSel()        // → / ↓
+        case 36, 76, 49: pick(sel)                              // return / enter / space
+        case 53: onCancel?()                                    // esc - back out
         default: super.keyDown(with: e)
         }
     }
@@ -1228,14 +1302,33 @@ final class ApprovalCard: NSView {
     }
     @objc private func tap(_ b: NSButton) { pick(b.tag) }
     private func pick(_ i: Int) {
-        guard !decided, options.indices.contains(i) else { return }
+        guard !decided else { return }
+        if hasCustom, i == options.count { revealCustom(); return }   // "기타" → 입력 노출
+        guard options.indices.contains(i) else { return }
         decided = true
-        buttons.forEach { $0.isHidden = true }; hint.isHidden = true
+        buttons.forEach { $0.isHidden = true }; hint.isHidden = true; customField.isHidden = true
         statusLabel.isHidden = false
         statusLabel.stringValue = "✓ " + options[i].0
         statusLabel.textColor = Theme.success
         layer?.borderColor = Theme.success.withAlphaComponent(0.4).cgColor
         options[i].1()
+    }
+    private func revealCustom() {
+        customField.isHidden = false
+        buttons.forEach { $0.isHidden = true }
+        hint.stringValue = t("chat.otherHint")
+        DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(self?.customField) }
+    }
+    @objc private func submitCustom() {
+        let text = customField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !decided, !text.isEmpty else { return }
+        decided = true
+        customField.isHidden = true; hint.isHidden = true
+        statusLabel.isHidden = false
+        statusLabel.stringValue = "✓ " + (text.count > 40 ? String(text.prefix(40)) + "…" : text)
+        statusLabel.textColor = Theme.success
+        layer?.borderColor = Theme.success.withAlphaComponent(0.4).cgColor
+        onCustom?(text)
     }
     func debugStatus() -> String {
         (statusLabel.isHidden ? "(표시 없음)" : statusLabel.stringValue)
@@ -1273,16 +1366,13 @@ final class ApprovalCard: NSView {
 final class TurnBlock: NSView {
     private let card = NSView()               // invisible layout container for the content
     private let content = NSStackView()
-    private let rule = NSView()               // hairline end-of-turn separator
     private let spinner = NSProgressIndicator()
-    private let workLabel = NSTextField(labelWithString: "")     // left: 생각/작성 중 · times
-    private let tokenLabel = NSTextField(labelWithString: "")    // right: tokens · context% · quota
+    private let workLabel = NSTextField(labelWithString: "")     // 작업 중에만: 생각/작성 중 shimmer
     private var openText: AssistantText?
     private var finished = false
     private var hasText = false
     private var lastSecs = 0
     private var thinkingSecs: Int?      // seconds until first token
-    private var tokenBase = ""          // token summary before quota is appended
     private var spinnerW: NSLayoutConstraint!
     private var waiting = false         // paused on a permission/choice prompt
     private let shimmer = CAGradientLayer()   // sweeping highlight masking workLabel while working
@@ -1295,21 +1385,18 @@ final class TurnBlock: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(content)
 
-        rule.wantsLayer = true
-        rule.layer?.backgroundColor = Theme.hairline.cgColor
-        rule.translatesAutoresizingMaskIntoConstraints = false
-
         spinner.style = .spinning; spinner.controlSize = .small
         spinner.isDisplayedWhenStopped = false
         spinner.translatesAutoresizingMaskIntoConstraints = false
         workLabel.font = UIScale.font(UIScale.caption, .medium); workLabel.textColor = Theme.accent2
         workLabel.translatesAutoresizingMaskIntoConstraints = false
-        tokenLabel.font = UIScale.font(UIScale.caption); tokenLabel.textColor = Theme.fgDim; tokenLabel.alignment = .right
-        tokenLabel.lineBreakMode = .byTruncatingTail
-        tokenLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        [card, rule, spinner, workLabel, tokenLabel].forEach { addSubview($0) }
+        // 완료 푸터(구분선·생각/작성 시간·토큰)는 뺐다 - 대신 팬이 turn 위에 hover 액션(복사·시각)을
+        // 붙인다. 작업 중에만 spinner + workLabel(작성 중… shimmer)을 카드 아래에 담백하게 보인다.
+        [card, spinner, workLabel].forEach { addSubview($0) }
         spinnerW = spinner.widthAnchor.constraint(equalToConstant: 12)
+        bottomWorking = bottomAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 2)
+        bottomDone = bottomAnchor.constraint(equalTo: card.bottomAnchor)
         NSLayoutConstraint.activate([
             card.topAnchor.constraint(equalTo: topAnchor),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1318,25 +1405,19 @@ final class TurnBlock: NSView {
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             content.bottomAnchor.constraint(equalTo: card.bottomAnchor),
-            // hairline rule closes the turn, then the dim footer: spinner + workLabel left,
-            // tokenLabel right.
-            rule.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 12),
-            rule.leadingAnchor.constraint(equalTo: leadingAnchor),
-            rule.trailingAnchor.constraint(equalTo: trailingAnchor),
-            rule.heightAnchor.constraint(equalToConstant: 1),
             spinner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 1),
-            spinner.topAnchor.constraint(equalTo: rule.bottomAnchor, constant: 7),
+            spinner.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 8),
             spinnerW,
             spinner.heightAnchor.constraint(equalToConstant: 12),
             workLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 5),
+            workLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
             workLabel.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
-            tokenLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -1),
-            tokenLabel.centerYAnchor.constraint(equalTo: spinner.centerYAnchor),
-            tokenLabel.leadingAnchor.constraint(greaterThanOrEqualTo: workLabel.trailingAnchor, constant: 8),
-            bottomAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 2)
+            bottomWorking,
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+    private var bottomWorking: NSLayoutConstraint!
+    private var bottomDone: NSLayoutConstraint!
 
     private var phase = t("chat.thinking")          // current activity shown in the shimmer label
     func startWorking() { phase = t("chat.thinking"); spinner.startAnimation(nil); workLabel.stringValue = t("chat.thinking") + "…"; startShimmer() }
@@ -1445,12 +1526,12 @@ final class TurnBlock: NSView {
     }
     @discardableResult
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
-                     options: [(String, () -> Void)]) -> ApprovalCard {
+                     options: [(String, () -> Void)], custom: ((String) -> Void)? = nil) -> ApprovalCard {
         closeText()
         // 바로 위에 같은 명령을 보여 준 도구 줄이 있으면 그걸 걷는다. 카드가 같은 내용을
         // 다시 담고 있어서, 화면에는 같은 명령이 두 번·"에디터에서 보기" 버튼도 두 번 나왔다.
         if let code, !code.isEmpty { dropDuplicateToolBlock(code) }
-        let card = ApprovalCard(title: title, detail: detail, code: code, path: path, options: options)
+        let card = ApprovalCard(title: title, detail: detail, code: code, path: path, options: options, custom: custom)
         add(card)
         return card
     }
@@ -1467,35 +1548,13 @@ final class TurnBlock: NSView {
         guard !finished else { return }
         closeText(); finished = true
         stopShimmer(); stopActiveTool()
-        spinner.stopAnimation(nil); spinnerW.constant = 0   // reclaim the hidden spinner's gap
-        // left: thinking/writing times. "생각 0초" 는 노이즈라 생각 시간이 실제로 있을 때만
-        // 나눠 보이고, 없으면 총 소요만 담백하게 보인다.
-        var times: [String] = []
-        if let think = thinkingSecs, think > 0 {
-            times.append(t("chat.thinkFor", ["d": ChatText.duration(think)]))
-            if secs > think { times.append(t("chat.writeFor", ["d": ChatText.duration(secs - think)])) }
-        } else {
-            times.append(ChatText.duration(secs))
-        }
-        workLabel.stringValue = "✓ " + times.joined(separator: " · ")
-        workLabel.textColor = Theme.fgDim
-        // right: tokens actually consumed THIS turn (new input incl. cache-write, + output).
-        // cacheRead is excluded - it's context re-read, summed across tool iterations, not work.
-        if let u = usage {
-            tokenBase = t("chat.tokens", ["in": ChatText.tokens(u.input + u.cacheWrite), "out": ChatText.tokens(u.output)])
-        }
-        tokenLabel.stringValue = tokenBase
+        spinner.stopAnimation(nil); spinnerW.constant = 0
+        workLabel.stringValue = ""; workLabel.isHidden = true
+        // 완료 푸터(시간·토큰·구분선) 없음 - 카드 바닥으로 접는다. 시각·복사는 hover 액션이 담당.
+        bottomWorking.isActive = false; bottomDone.isActive = true
     }
-    // Append the OVERALL plan-quota usage (fetched async) - this is the account's 5-hour /
-    // weekly window utilization, not this turn's share (the API gives no absolute budget).
-    /// 턴 아래의 "플랜 …" 줄. 창의 이름과 숫자를 그대로 받는다 - 예전에는 세션/주간
-    /// 두 칸이 못 박혀 있어서, Codex 페인에서도 Claude 의 5시간·7일 숫자가 나왔다.
-    /// CLI 마다 창이 다르므로(Claude 5시간+7일, Codex 30일) 칸 수를 정하는 건 부르는 쪽이다.
-    func setQuota(_ entries: [(label: String, value: Int)]) {
-        guard !entries.isEmpty else { return }
-        let quota = t("chat.plan") + entries.map { "\($0.label) \($0.value)%" }.joined(separator: " · ")
-        tokenLabel.stringValue = tokenBase.isEmpty ? quota : tokenBase + "  ·  " + quota
-    }
+    // 완료 푸터를 없앴으므로 플랜 사용량 줄도 표시하지 않는다 (호출부 호환용 no-op).
+    func setQuota(_ entries: [(label: String, value: Int)]) {}
 }
 
 // MARK: - sub-agent lane card
