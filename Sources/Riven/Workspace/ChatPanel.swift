@@ -19,14 +19,6 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
     private let subStack = FlippedStack()
     private let input = ChatInput.make()
-    private let workingBar = NSView()                     // 입력창 위 진행 표시 (생각/작성 중)
-    private let workingSpinner = NSProgressIndicator()
-    private let workingIcon = NSImageView()               // 승인 대기 때 스피너 자리를 채우는 경고 아이콘
-    private let workingLabel = NSTextField(labelWithString: "")
-    private var scrollBottomIdle: NSLayoutConstraint!    // 진행 바 숨김: 스크롤 하단 = hairline
-    private var scrollBottomWorking: NSLayoutConstraint! // 진행 바 표시: 스크롤 하단 = 진행 바 위
-    private var subBottomIdle: NSLayoutConstraint!
-    private var subBottomWorking: NSLayoutConstraint!
     private lazy var inputScroll = InputScroll(input)     // grows 1→6 lines, then scrolls
     private let sendButton = CircleButton()               // circular ↑ / ■ (send / stop), accent
     private let plusButton = CircleButton()               // circular + (attach a file path)
@@ -53,6 +45,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
     private var turnStart: Date?
     private var flushTimer: Timer?
+    private var timeTimer: Timer?    // 완료 턴 상대시간 갱신 (1분마다)
     private var model: String?
     /// Model this pane was started with ("opus"/"sonnet"/... , nil = account default). Set before
     /// the session starts (agent groups pick one per agent) and persisted with the layout.
@@ -246,22 +239,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         modeChip.addSubview(modePopup)
         modelChip.addSubview(modelPopup)
         [modeChip, modelChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
-        // 입력창 바로 위 진행 바 (생각/작성 중). 턴 아래가 아니라 여기 있어야 잘 보인다.
-        workingBar.wantsLayer = true
-        workingBar.layer?.backgroundColor = Theme.accent2.withAlphaComponent(Theme.isLight ? 0.12 : 0.16).cgColor
-        workingBar.layer?.cornerRadius = 9
-        workingBar.isHidden = true
-        workingBar.translatesAutoresizingMaskIntoConstraints = false
-        workingSpinner.style = .spinning; workingSpinner.controlSize = .small; workingSpinner.isDisplayedWhenStopped = false
-        workingSpinner.translatesAutoresizingMaskIntoConstraints = false
-        workingLabel.font = UIScale.font(UIScale.body, .semibold); workingLabel.textColor = Theme.accent2   // 크게
-        workingLabel.translatesAutoresizingMaskIntoConstraints = false
-        let wcfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(13), weight: .semibold).applying(.init(paletteColors: [Theme.warning]))
-        workingIcon.image = NSImage(systemSymbolName: "hand.raised.fill", accessibilityDescription: nil)?.withSymbolConfiguration(wcfg)
-        workingIcon.isHidden = true
-        workingIcon.translatesAutoresizingMaskIntoConstraints = false
-        workingBar.addSubview(workingSpinner); workingBar.addSubview(workingIcon); workingBar.addSubview(workingLabel)
-        [scroll, subSide, hairline, composer, workingBar, slash, jumpButton, planBadge].forEach { addSubview($0) }
+        [scroll, subSide, hairline, composer, slash, jumpButton, planBadge].forEach { addSubview($0) }
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
             guard let self, let p = self.planPath else { return }
@@ -295,21 +273,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairline.heightAnchor.constraint(equalToConstant: 1),
             hairline.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -10),
-            // 진행 바: 컴포저 바로 위에 떠 있게 (내용 높이만큼, 왼쪽 정렬)
-            workingBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            workingBar.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -8),
-            workingSpinner.leadingAnchor.constraint(equalTo: workingBar.leadingAnchor, constant: 11),
-            workingSpinner.centerYAnchor.constraint(equalTo: workingBar.centerYAnchor),
-            workingSpinner.widthAnchor.constraint(equalToConstant: 14),
-            workingSpinner.heightAnchor.constraint(equalToConstant: 14),
-            workingIcon.centerXAnchor.constraint(equalTo: workingSpinner.centerXAnchor),
-            workingIcon.centerYAnchor.constraint(equalTo: workingSpinner.centerYAnchor),
-            workingIcon.widthAnchor.constraint(equalToConstant: 14),
-            workingIcon.heightAnchor.constraint(equalToConstant: 14),
-            workingLabel.leadingAnchor.constraint(equalTo: workingSpinner.trailingAnchor, constant: 8),
-            workingLabel.trailingAnchor.constraint(equalTo: workingBar.trailingAnchor, constant: -12),
-            workingLabel.topAnchor.constraint(equalTo: workingBar.topAnchor, constant: 7),
-            workingLabel.bottomAnchor.constraint(equalTo: workingBar.bottomAnchor, constant: -7),
+            scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor),
+            subSide.bottomAnchor.constraint(equalTo: hairline.topAnchor),
             // composer glass card, inset from the panel edges
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -358,16 +323,15 @@ final class ChatPanel: NSView, Themable, Scalable {
             jumpButton.widthAnchor.constraint(equalToConstant: UIScale.pt(30)),
             jumpButton.heightAnchor.constraint(equalToConstant: UIScale.pt(30))
         ])
-        // 스크롤/서브 영역 하단: 평소엔 hairline 위, 진행 바가 뜨면 그 위로 (겹침 방지).
-        scrollBottomIdle = scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor)
-        scrollBottomWorking = scroll.bottomAnchor.constraint(equalTo: workingBar.topAnchor, constant: -8)
-        subBottomIdle = subSide.bottomAnchor.constraint(equalTo: hairline.topAnchor)
-        subBottomWorking = subSide.bottomAnchor.constraint(equalTo: workingBar.topAnchor, constant: -8)
-        scrollBottomIdle.isActive = true; subBottomIdle.isActive = true
         // Follow user scrolling: update stick + pill visibility whenever the clip moves.
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(clipMoved),
             name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        // 완료 턴의 상대시간(방금/N분 전)을 1분마다 갱신 (보일 때만).
+        timeTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self, self.window != nil else { return }
+            for v in self.stack.arrangedSubviews { (v as? TurnBlock)?.refreshTime() }
+        }
         // Same travelling-ember state ring as agent terminal panes, driven by setRingState.
         attnRing.frame = bounds; attnRing.autoresizingMask = [.width, .height]
         addSubview(attnRing)
@@ -390,7 +354,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     required init?(coder: NSCoder) { fatalError() }
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")
@@ -911,8 +875,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
                 v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
-                if j == 0 { attachTimelineDot(to: v, user: m.user, centerVertically: m.user)
-                    attachHoverActions(to: v, date: nil, usage: nil, text: { m.text }) }   // 복원분은 복사만
+                if j == 0 { attachTimelineDot(to: v, user: m.user, centerVertically: m.user) }   // 턴 시작 마커
             }
         }
     }
@@ -1121,7 +1084,6 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
             self?.current?.bufferText(t); self?.turnText += t
         }
-        s?.onLiveUsage = { [weak self] inp, out, isStart in self?.updateLiveUsage(inp, out, isStart) }
         s?.onMainTool = { [weak self] name, detail, code, path in
             self?.ensureAutoTurn()
             self?.liveTool = name
@@ -2144,8 +2106,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         attachTimelineDot(to: block, user: false, centerVertically: false)   // 에이전트 턴 마커
-        attachHoverActions(to: block, date: Date(), usage: { [weak block] in block?.turnUsage },
-                           text: { [weak block] in block?.plainText ?? "" })
         return block
     }
     /// 왼쪽 여백에 턴 마커 점을 찍는다 (사용자=accent, 에이전트=accent2). 단순 점 - 아이콘 없음.
@@ -2160,10 +2120,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         // 사용자 말풍선은 세로 중앙. 에이전트 답변은 첫 줄의 세로 중앙에 맞춘다.
         let f = UIScale.font(UIScale.prose)
         let firstLineCenter = ceil((f.ascender - f.descender) / 2) + UIScale.pt(1)
-        // 아이템 하단 리저브(hover 액션 자리) 때문에 item 중심이 아래로 밀린다 - 사용자 점은
-        // 리저브 절반만큼 올려 말풍선(카드) 세로 중앙에 맞춘다.
         let vert = centerVertically
-            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor, constant: -ChatMetrics.turnBottomReserve / 2)
+            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor)          // 사용자 말풍선 세로 중앙
             : dot.centerYAnchor.constraint(equalTo: item.topAnchor, constant: firstLineCenter)
         NSLayoutConstraint.activate([
             dot.widthAnchor.constraint(equalToConstant: d),
@@ -2183,21 +2141,9 @@ final class ChatPanel: NSView, Themable, Scalable {
                 line.widthAnchor.constraint(equalToConstant: 2),
                 line.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
                 line.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: UIScale.pt(4)),
-                line.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -ChatMetrics.turnBottomReserve),
+                line.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -UIScale.pt(2)),
             ])
         }
-    }
-    /// 턴에 hover 액션(오른쪽 아래 fade: 토큰 + 복사 + 상대시각)을 붙인다. 액션은 아이템의
-    /// subview 라 트림되면 같이 사라진다. 트래킹은 아이템 bounds 를 소유자(액션)에게 전달한다.
-    private func attachHoverActions(to item: NSView, date: Date?, usage: (() -> ChatUsage?)?, text: @escaping () -> String) {
-        let actions = TurnHoverActions(date: date, usageProvider: usage, textProvider: text)
-        item.addSubview(actions)
-        NSLayoutConstraint.activate([
-            actions.trailingAnchor.constraint(equalTo: item.trailingAnchor, constant: -4),
-            actions.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -4),
-        ])
-        item.addTrackingArea(NSTrackingArea(rect: .zero,
-            options: [.inVisibleRect, .mouseEnteredAndExited, .activeInActiveApp], owner: actions, userInfo: nil))
     }
     // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
@@ -2246,51 +2192,17 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func startFlush() {
         flushTimer?.invalidate()
-        workingBar.isHidden = false; workingSpinner.startAnimation(nil)   // 입력창 위 진행 바 켜기
-        scrollBottomIdle.isActive = false; subBottomIdle.isActive = false
-        scrollBottomWorking.isActive = true; subBottomWorking.isActive = true   // 스크롤이 진행 바를 안 침범
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
-            // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work: skip the
-            // typewriter reveal, the elapsed relabel, and above all the scroll (which forces a full
-            // layout of the whole transcript). The session keeps buffering text; it's revealed when
-            // the pane is shown again.
+            // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work.
             guard self.window != nil else { return }
             let grew = block.flush()
-            let secs = Int(Date().timeIntervalSince(start) - self.pausedTotal)   // exclude approval wait
-            block.tick(secs)
-            self.updateWorkingBar(block, secs)
+            block.tick(Int(Date().timeIntervalSince(start) - self.pausedTotal))   // 인라인 상태 행 갱신
             if grew { self.autoScroll() }
         }
     }
-    // ---- 실시간 토큰 (생각/작성 중 표시) ----
-    // 입력(↑)은 message_start 에서 정확히(누적) 받고, 출력(↓)은 message_delta 가 턴 끝에 한 번만
-    // 오므로 스트리밍 텍스트로 추정해 올린다 (최종 hover 엔 정확값 표시).
-    private var liveIn = 0
-    func resetLiveUsage() { liveIn = 0 }
-    private func updateLiveUsage(_ inp: Int, _ out: Int, _ isStart: Bool) {
-        if isStart, inp >= 0 { liveIn += inp }
-    }
-    private func updateWorkingBar(_ block: TurnBlock, _ secs: Int) {
-        if block.isWaiting {
-            workingLabel.stringValue = t("chat.awaitingApproval"); workingLabel.textColor = Theme.warning
-            workingSpinner.stopAnimation(nil); workingIcon.isHidden = false   // 스피너 자리를 경고 아이콘으로 채움
-        } else {
-            workingIcon.isHidden = true
-            workingSpinner.startAnimation(nil)                    // 대기에서 돌아오면 다시 회전
-            var s = block.statusText(secs)
-            let liveOut = ChatText.estimateTokens(turnText)       // 스트리밍 텍스트로 추정 → 계속 올라감
-            if liveOut > 0 || liveIn > 0 {
-                s += "  ↑\(ChatText.tokens(liveIn)) ↓\(ChatText.tokens(liveOut))"
-            }
-            guard s != workingLabel.stringValue else { return }   // 바뀔 때만 갱신
-            workingLabel.stringValue = s; workingLabel.textColor = Theme.accent2
-        }
-    }
-    private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil
-        workingBar.isHidden = true; workingSpinner.stopAnimation(nil)     // 진행 바 끄기
-        scrollBottomWorking.isActive = false; subBottomWorking.isActive = false
-        scrollBottomIdle.isActive = true; subBottomIdle.isActive = true }
+    func resetLiveUsage() {}   // (호환용 - 실시간 토큰은 이제 TurnBlock 이 자체 추정)
+    private func stopFlush() { flushTimer?.invalidate(); flushTimer = nil }
 
     private func endTurn(cost: Double?, usage: ChatUsage?, error: String? = nil) {
         let wasInterrupted = interrupted   // askWaiters drain 전에 초기화되므로 미리 잡아 둔다
@@ -2340,7 +2252,6 @@ final class ChatPanel: NSView, Themable, Scalable {
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -54).isActive = true
         attachTimelineDot(to: v, user: true, centerVertically: true)   // 사용자 턴 마커 (세로 중앙)
-        attachHoverActions(to: v, date: Date(), usage: nil, text: { text })
         scrollSoon()
         return v
     }
