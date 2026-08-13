@@ -223,6 +223,7 @@ final class ToolLine: NSView {
         row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 7
         row.setCustomSpacing(8, after: nameLabel)
         row.translatesAutoresizingMaskIntoConstraints = false
+        rowStack = row
         addSubview(row)
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: UIScale.pt(14)),
@@ -234,9 +235,9 @@ final class ToolLine: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    // A bright band glides left→right over the WHOLE tool line (icon + name + detail) while it
-    // runs (same shadcn-style flow as "생각 중"), stopped when it finishes. Masking the row's own
-    // layer makes the entire line shimmer, not just the name.
+    // A bright band glides left→right over the tool NAME while it runs (same shadcn-style flow as
+    // "생각 중"), stopped when it finishes. Masking the short label - not the whole row - reads as
+    // a directional sweep instead of a wide blink. (ToolGroup shimmers its header the same way.)
     private let shimmer = CAGradientLayer()
     private var shimmerOn = false
     func startShimmer() {
@@ -245,7 +246,7 @@ final class ToolLine: NSView {
         shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
         let dim = NSColor.white.withAlphaComponent(0.35).cgColor
         shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        layer?.mask = shimmer
+        nameLabel.layer?.mask = shimmer
         needsLayout = true
         let sweep = CABasicAnimation(keyPath: "locations")
         sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
@@ -255,13 +256,23 @@ final class ToolLine: NSView {
     }
     func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); layer?.mask = nil
+        shimmerOn = false; shimmer.removeAllAnimations(); nameLabel.layer?.mask = nil
     }
     override func layout() {
         super.layout()
-        guard shimmerOn, let host = layer else { return }
+        guard shimmerOn, let host = nameLabel.layer else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
     }
+    // ToolGroup 이 코드-보유 줄에 클릭 어포던스(오른쪽 작은 chevron)를 붙일 때 쓴다.
+    func markExpandable() {
+        let chev = NSImageView()
+        chev.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chev.contentTintColor = Theme.fgDim.withAlphaComponent(0.7)
+        chev.symbolConfiguration = .init(pointSize: UIScale.pt(8), weight: .semibold)
+        chev.translatesAutoresizingMaskIntoConstraints = false
+        rowStack?.addArrangedSubview(chev)
+    }
+    var rowStack: NSStackView?
     static func symbol(_ name: String) -> String {
         switch name {
         case "Read": return "doc.text"
@@ -274,6 +285,165 @@ final class ToolLine: NSView {
         case "TodoWrite": return "checklist"
         default: return "wrench.and.screwdriver"
         }
+    }
+}
+
+// MARK: - tool group (collapsible accordion)
+// 한 턴에서 연속으로 실행되는 도구 호출(Read/Bash/Grep/Edit…)을 한 줄짜리 아코디언으로 묶는다.
+// 도구가 많아도 대화 흐름을 흩뜨리지 않게 접어 두고, 헤더를 누르면 펼쳐 전부 보여준다.
+// 코드가 있는 항목(Bash/Edit 등)은 그 줄을 눌러 코드블록을 펼친다. 실행 중엔 헤더 글자에
+// shimmer 를 건다 ("생각 중"과 같은 짧은-텍스트 sweep - 줄 전체를 훑던 예전 방식보다 깔끔).
+final class ToolGroup: NSView {
+    private let header = NSView()
+    private let chevron = NSImageView()
+    private let icon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let body = NSStackView()
+    private var expanded = false
+    private var running = true
+    private var count = 0
+    private var latestName = ""
+    private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
+    private var openedCode: [ObjectIdentifier: NSView] = [:]
+    private let shimmer = CAGradientLayer()
+    private var shimmerOn = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)
+        icon.contentTintColor = Theme.fgDim
+        icon.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .medium)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIScale.font(UIScale.small, .medium); titleLabel.textColor = Theme.accent2
+        titleLabel.wantsLayer = true
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        let hrow = NSStackView(views: [chevron, icon, titleLabel])
+        hrow.orientation = .horizontal; hrow.alignment = .centerY; hrow.spacing = 7
+        hrow.translatesAutoresizingMaskIntoConstraints = false
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(hrow)
+        body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
+        body.translatesAutoresizingMaskIntoConstraints = false
+        body.isHidden = true
+        addSubview(header); addSubview(body)
+        NSLayoutConstraint.activate([
+            chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
+            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(14)),
+            hrow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
+            hrow.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
+            hrow.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
+            hrow.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
+            header.topAnchor.constraint(equalTo: topAnchor),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(16)),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+            body.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
+        updateTitle()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    var isEmpty: Bool { count == 0 }
+
+    @objc private func toggle() { setExpanded(!expanded); enclosingChatPanel?.accordionRelayout() }
+    func setExpanded(_ on: Bool) {
+        expanded = on
+        body.isHidden = !expanded
+        chevron.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+    }
+
+    func addTool(_ name: String, _ detail: String, code: String?, path: String?) {
+        count += 1
+        latestName = name.replacingOccurrences(of: "mcp__riven__", with: "")
+        let line = ToolLine(name: name, detail: detail)
+        line.translatesAutoresizingMaskIntoConstraints = false
+        body.addArrangedSubview(line)
+        line.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        if let code, !code.isEmpty {
+            codeFor[ObjectIdentifier(line)] = (code, path, name == "Edit" || name == "MultiEdit")
+            line.markExpandable()
+            line.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(lineClicked(_:))))
+        }
+        updateTitle()
+    }
+
+    @objc private func lineClicked(_ g: NSClickGestureRecognizer) {
+        guard let line = g.view as? ToolLine else { return }
+        let key = ObjectIdentifier(line)
+        if let opened = openedCode[key] {
+            opened.removeFromSuperview(); openedCode[key] = nil
+        } else if let e = codeFor[key] {
+            let block = ChatText.codeBlock(e.code, diff: e.diff, path: e.path)
+            block.translatesAutoresizingMaskIntoConstraints = false
+            let idx = (body.arrangedSubviews.firstIndex(of: line)).map { $0 + 1 } ?? body.arrangedSubviews.count
+            body.insertArrangedSubview(block, at: idx)
+            block.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+            openedCode[key] = block
+        }
+        enclosingChatPanel?.accordionRelayout()
+    }
+
+    /// 승인 카드가 같은 명령을 다시 보여줄 때, 그룹에서 방금 넣은 중복 줄을 걷는다.
+    @discardableResult func removeLastMatching(_ code: String) -> Bool {
+        for line in body.arrangedSubviews.reversed().compactMap({ $0 as? ToolLine }) {
+            let key = ObjectIdentifier(line)
+            if codeFor[key]?.code == code {
+                openedCode[key]?.removeFromSuperview(); openedCode[key] = nil
+                codeFor[key] = nil; line.removeFromSuperview()
+                count = max(0, count - 1); updateTitle()
+                return true
+            }
+        }
+        return false
+    }
+
+    private func updateTitle() {
+        if running {
+            titleLabel.stringValue = count <= 1
+                ? t("chat.tools.running1", ["name": latestName.isEmpty ? t("chat.tools.cmd") : latestName])
+                : t("chat.tools.runningN", ["n": "\(count)"])
+            titleLabel.textColor = Theme.accent2
+        } else {
+            titleLabel.stringValue = t("chat.tools.count", ["n": "\(count)"])
+            titleLabel.textColor = Theme.fgDim
+        }
+        needsLayout = true
+    }
+
+    func endRun() { running = false; stopShimmer(); updateTitle() }
+
+    func startShimmer() {
+        guard !shimmerOn else { return }
+        shimmerOn = true
+        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
+        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
+        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
+        titleLabel.layer?.mask = shimmer; needsLayout = true
+        let sweep = CABasicAnimation(keyPath: "locations")
+        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
+        sweep.duration = 1.4; sweep.repeatCount = .infinity
+        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shimmer.add(sweep, forKey: "shimmer")
+    }
+    private func stopShimmer() {
+        guard shimmerOn else { return }
+        shimmerOn = false; shimmer.removeAllAnimations(); titleLabel.layer?.mask = nil
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn, let host = titleLabel.layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
     }
 }
 
@@ -1467,6 +1637,7 @@ final class TurnBlock: NSView {
         guard !finished else { return }
         waiting = w
         if w {
+            closeToolGroup(); statusRow.isHidden = false   // 대기 문구는 footer 에 - 반드시 보인다
             spinner.isHidden = true; spinner.stopAnimation(nil); stopShimmer()   // 스피너 자리 collapse
             statusIcon.isHidden = false; statusIcon.image = symbol("hand.raised.fill", Theme.warning)
             statusLabel.stringValue = t("chat.awaitingApproval"); statusLabel.textColor = Theme.warning
@@ -1493,15 +1664,17 @@ final class TurnBlock: NSView {
         statusLabel.stringValue = doneBase + " · " + ChatText.relative(at)
     }
 
-    private weak var activeTool: ToolLine?   // the tool line currently in progress (shimmering)
-    private func stopActiveTool() { activeTool?.stopShimmer(); activeTool = nil }
+    private(set) var toolGroup: ToolGroup?   // 연속 도구 호출을 묶는 현재 아코디언 그룹
+    // 도구 실행 중엔 그룹 헤더가 진행 표시를 맡으므로 상태 footer 는 숨긴다 (중복 방지).
+    private func closeToolGroup() { toolGroup?.endRun(); toolGroup = nil }
 
     private(set) var plainText = ""          // 타임라인 노드 복사용 (이 턴의 어시스턴트 텍스트)
     func bufferText(_ t: String) {
         if !hasText { hasText = true; thinkingSecs = lastSecs; setStatusGap(true) }   // 답변이 생겼으니 상태 행은 그 아래로
         plainText += t
         phase = I18n.t("chat.writing")
-        stopActiveTool()                     // text arriving ⇒ the previous tool finished
+        closeToolGroup()                     // text arriving ⇒ the tool run finished
+        statusRow.isHidden = false; startShimmer()   // footer 다시 노출 ("작성 중")
         if openText == nil { openText = newText() }
         openText?.receive(t)
     }
@@ -1524,41 +1697,31 @@ final class TurnBlock: NSView {
     }
 
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
-        closeText(); setStatusGap(true)   // 도구 줄도 답변 콘텐츠 - 상태 행은 그 아래로
-        setPhase(t("chat.running", ["name": name.replacingOccurrences(of: "mcp__riven__", with: "")]))   // shimmer shows the current tool
-        stopActiveTool()                     // previous tool finished
-        let line = ToolLine(name: name, detail: detail)
-        add(line)
-        line.startShimmer(); activeTool = line   // shimmer THIS tool while it runs
-        if let code, !code.isEmpty {
-            add(ChatText.codeBlock(code, diff: name == "Edit" || name == "MultiEdit", path: path))
-            content.setCustomSpacing(5, after: line)   // the block belongs to its tool line
+        closeText(); setStatusGap(true)   // 도구 그룹도 답변 콘텐츠 - 상태 행은 그 아래로
+        // 연속 도구는 한 아코디언 그룹으로. 그룹 헤더 shimmer 가 진행 표시 → footer 는 숨긴다.
+        if toolGroup == nil {
+            stopShimmer()
+            let g = ToolGroup(); add(g); toolGroup = g; g.startShimmer()
+            if !hasText { statusRow.isHidden = true }
         }
+        toolGroup?.addTool(name, detail, code: code, path: path)
     }
     @discardableResult
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
                      options: [(String, () -> Void)], custom: ((String) -> Void)? = nil) -> ApprovalCard {
         closeText()
-        // 바로 위에 같은 명령을 보여 준 도구 줄이 있으면 그걸 걷는다. 카드가 같은 내용을
-        // 다시 담고 있어서, 화면에는 같은 명령이 두 번·"에디터에서 보기" 버튼도 두 번 나왔다.
-        if let code, !code.isEmpty { dropDuplicateToolBlock(code) }
+        // 승인 카드가 같은 명령을 다시 보여주므로, 방금 그룹에 넣은 중복 도구 줄을 걷는다.
+        if let code, !code.isEmpty { toolGroup?.removeLastMatching(code) }
+        if toolGroup?.isEmpty == true { toolGroup?.removeFromSuperview() }
+        closeToolGroup(); statusRow.isHidden = false   // 승인 대기 중엔 footer 복원
         let card = ApprovalCard(title: title, detail: detail, code: code, path: path, options: options, custom: custom)
         add(card)
         return card
     }
-    /// 방금 그린 도구 줄이 같은 코드를 담고 있으면 지운다 (승인 카드가 그 자리를 대신한다).
-    private func dropDuplicateToolBlock(_ code: String) {
-        let tail = content.arrangedSubviews.suffix(3)
-        for v in tail where (v as? CodeCarrier)?.carriedCode == code {
-            v.removeFromSuperview()
-            if let line = content.arrangedSubviews.last as? ToolLine { line.removeFromSuperview() }
-            return
-        }
-    }
     func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
         guard !finished else { return }
         closeText(); finished = true
-        stopActiveTool(); stopShimmer()
+        closeToolGroup(); stopShimmer(); statusRow.isHidden = false   // 완료 줄은 반드시 보인다
         if hasText || !content.arrangedSubviews.isEmpty { setStatusGap(true) }   // 답변 아래로 완료 줄
         spinner.isHidden = true; spinner.stopAnimation(nil)   // 완료 시 스피너 자리 collapse (옆 여백 제거)
         statusIcon.isHidden = false; statusIcon.image = symbol("checkmark", Theme.success)   // 초록 원 대신 체크 표시

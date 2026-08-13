@@ -332,6 +332,11 @@ enum I18n {
         "chat.updateApplies": ("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.",
                                "The updated CLI applies to new chats (or after a restart)."),
         "chat.runFailed": ("실행 실패", "Failed to run"),
+        // tool accordion group
+        "chat.tools.cmd": ("명령", "command"),
+        "chat.tools.running1": ("{name} 실행 중", "Running {name}"),
+        "chat.tools.runningN": ("명령 {n}개 실행 중", "Running {n} commands"),
+        "chat.tools.count": ("명령 {n}개", "{n} commands"),
         // permission modes + approval
         "chat.mode.plan": ("계획", "Plan"), "chat.mode.ask": ("승인 요청", "Ask"),
         "chat.mode.auto": ("자동 실행", "Auto"),

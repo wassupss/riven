@@ -2304,6 +2304,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         addChip(l, tone: .danger)
     }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }
+    /// 도구 아코디언을 펼치거나 접었을 때 트랜스크립트 높이를 즉시 다시 잡는다 (스크롤은 강제 안 함).
+    func accordionRelayout() { stack.layoutSubtreeIfNeeded() }
     // FORCED pin to the live edge (user sent / resumed / tapped the pill): also resumes following.
     private func scrollToBottom() {
         guard window != nil else { return }   // offscreen: don't force a layout; viewDidMoveToWindow handles it
