@@ -1079,6 +1079,17 @@ enum ChatText {
 
     // token formatting: 1234 → "1.2k"
     static func tokens(_ n: Int) -> String { n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }
+    // 실시간 출력 토큰 추정 (message_delta 는 턴 끝에 한 번만 오므로, 스트리밍 텍스트로 어림한다).
+    // CJK 는 토큰 밀도가 높아 글자당 ~1.6, 그 외는 ~4글자당 1토큰으로 잡는다. 끝에 정확값으로 대체.
+    static func estimateTokens(_ s: String) -> Int {
+        var cjk = 0, other = 0
+        for u in s.unicodeScalars {
+            let v = u.value
+            if (0xAC00...0xD7A3).contains(v) || (0x3040...0x30FF).contains(v) || (0x4E00...0x9FFF).contains(v) { cjk += 1 }
+            else { other += 1 }
+        }
+        return Int(Double(cjk) * 1.6 + Double(other) / 4.0)
+    }
     // elapsed: seconds → "45초" / "2분 5초" / "1시간 3분"
     static func duration(_ secs: Int) -> String {
         if secs < 60 { return t("chat.dur.sec", ["n": secs]) }

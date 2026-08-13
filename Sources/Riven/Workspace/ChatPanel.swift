@@ -2264,16 +2264,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     // ---- 실시간 토큰 (생각/작성 중 표시) ----
-    private var liveIn = 0, liveOut = 0, liveOutBase = 0, liveOutCur = 0
-    func resetLiveUsage() { liveIn = 0; liveOut = 0; liveOutBase = 0; liveOutCur = 0 }
+    // 입력(↑)은 message_start 에서 정확히(누적) 받고, 출력(↓)은 message_delta 가 턴 끝에 한 번만
+    // 오므로 스트리밍 텍스트로 추정해 올린다 (최종 hover 엔 정확값 표시).
+    private var liveIn = 0
+    func resetLiveUsage() { liveIn = 0 }
     private func updateLiveUsage(_ inp: Int, _ out: Int, _ isStart: Bool) {
-        if isStart {                                  // 새 메시지: 이전 메시지 출력을 누계에 확정
-            if inp >= 0 { liveIn += inp }
-            liveOutBase += liveOutCur; liveOutCur = out
-        } else {
-            liveOutCur = out                          // 현재 메시지의 누적 출력
-        }
-        liveOut = liveOutBase + liveOutCur
+        if isStart, inp >= 0 { liveIn += inp }
     }
     private func updateWorkingBar(_ block: TurnBlock, _ secs: Int) {
         if block.isWaiting {
@@ -2283,7 +2279,8 @@ final class ChatPanel: NSView, Themable, Scalable {
             workingIcon.isHidden = true
             workingSpinner.startAnimation(nil)                    // 대기에서 돌아오면 다시 회전
             var s = block.statusText(secs)
-            if liveOut > 0 || liveIn > 0 {                        // CLI 처럼 토큰이 올라가는 게 보이게
+            let liveOut = ChatText.estimateTokens(turnText)       // 스트리밍 텍스트로 추정 → 계속 올라감
+            if liveOut > 0 || liveIn > 0 {
                 s += "  ↑\(ChatText.tokens(liveIn)) ↓\(ChatText.tokens(liveOut))"
             }
             guard s != workingLabel.stringValue else { return }   // 바뀔 때만 갱신

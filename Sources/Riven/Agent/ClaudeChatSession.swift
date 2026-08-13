@@ -221,9 +221,11 @@ final class ClaudeChatSession {
         case "stream_event":
             guard parent == nil, let ev = o["event"] as? [String: Any] else { return }
             let et = ev["type"] as? String
-            // 실시간 토큰: message_start 에 입력(누적), message_delta 에 출력(현재 메시지 누적).
+            // 실시간 토큰: message_start 에 입력, message_delta 에 출력(현재 메시지 누적).
+            // 입력은 최종 표시와 같은 기준(input + cache_write) - cache_read 는 컨텍스트 재읽기라
+            // 뺀다. 예전엔 cache_read(수만 토큰)를 넣어 실시간 ↑ 가 최종값과 딴판이었다.
             if et == "message_start", let msg = ev["message"] as? [String: Any], let u = msg["usage"] as? [String: Any] {
-                let inp = (u["input_tokens"] as? Int ?? 0) + (u["cache_creation_input_tokens"] as? Int ?? 0) + (u["cache_read_input_tokens"] as? Int ?? 0)
+                let inp = (u["input_tokens"] as? Int ?? 0) + (u["cache_creation_input_tokens"] as? Int ?? 0)
                 main { self.onLiveUsage?(inp, u["output_tokens"] as? Int ?? 0, true) }
                 return
             }
