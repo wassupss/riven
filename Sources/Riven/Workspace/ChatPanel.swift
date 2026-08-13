@@ -1945,6 +1945,7 @@ final class ChatPanel: NSView, Themable, Scalable {
                       options: options.map { o in (o, {}) })
     }
 
+
     /// 되돌리기 어려운 작업은 대화에 확인 카드를 띄우고, 사용자가 고른 뒤에 진행한다.
     /// eval 을 계속 허용하기로 한 출처들 (이 대화 안에서만 기억한다).
     private var evalAllowedOrigins: Set<String> = []

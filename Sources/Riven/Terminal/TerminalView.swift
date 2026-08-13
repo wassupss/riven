@@ -343,11 +343,11 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         }
     }
 
-    // ghostty in this build does NOT emit GHOSTTY_ACTION_RENDER, so we draw every
-    // display-link frame like ghostty's own POC (≈4% CPU for one terminal). needsDraw
-    // is kept as a harmless hint but not gated on - the real CPU hog was elsewhere
-    // (Usage.today() created an ISO8601DateFormatter per log line). To keep many/hidden
-    // terminals cheap the link is PAUSED while occluded (setOccluded).
+    // ghostty in this framework build does NOT emit GHOSTTY_ACTION_RENDER (verified: even during
+    // active output the action never fires), so we can't gate painting on a dirty signal - we draw
+    // every display-link frame like ghostty's own POC. To keep this from pegging CPU: the link is
+    // PAUSED while the surface is occluded/off-window AND while the whole app is inactive (see
+    // app-active observers) - a backgrounded or hidden terminal renders nothing.
     private var needsDraw = true
     func setNeedsDraw() { needsDraw = true }
     private func drawIfNeeded() {
@@ -391,6 +391,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
             return kCVReturnSuccess
         }, Unmanaged.passUnretained(self).toOpaque())
         // Intentionally not started here - see the note above. viewDidMoveToWindow starts it.
+        NotificationCenter.default.addObserver(self, selector: #selector(appBecameActive),
+                                               name: NSApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appResignedActive),
+                                               name: NSApplication.didResignActiveNotification, object: nil)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -410,15 +414,28 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         // Pause the GPU draw loop (and ghostty occlusion) whenever this terminal leaves
         // the window - a hidden dock tab or an inactive workspace's terminal must not
         // keep rendering every frame (that's what multiplied idle CPU across terminals).
-        if window == nil {
-            if let l = link { CVDisplayLinkStop(l) }
-            if let s = surface { ghostty_surface_set_occlusion(s, false) }
-        } else {
-            if let s = surface { ghostty_surface_set_occlusion(s, true) }
-            if let l = link, CVDisplayLinkIsRunning(l) == false { CVDisplayLinkStart(l) }
-            syncSize()
+        if let s = surface { ghostty_surface_set_occlusion(s, window != nil) }
+        if window != nil { syncSize() }
+        updateLinkState()
+    }
+    // Draw only when this terminal is actually on screen AND the app is frontmost. ghostty
+    // doesn't emit a dirty signal here, so we poll every frame while running - which means a
+    // visible terminal renders continuously. Pausing it while the app is in the background (the
+    // user is in another app) or the tab is hidden reclaims that CPU with zero visible cost (the
+    // pty keeps reading; we force a fresh draw the moment it becomes visible again).
+    private var isOccluded = false
+    private var appActive = NSApp?.isActive ?? true
+    private func updateLinkState() {
+        guard let l = link else { return }
+        let shouldRun = window != nil && !isOccluded && appActive
+        if shouldRun {
+            if CVDisplayLinkIsRunning(l) == false { needsDraw = true; CVDisplayLinkStart(l) }
+        } else if CVDisplayLinkIsRunning(l) {
+            CVDisplayLinkStop(l)
         }
     }
+    @objc private func appBecameActive() { appActive = true; updateLinkState() }
+    @objc private func appResignedActive() { appActive = false; updateLinkState() }
     private func syncSize() {
         needsDraw = true
         guard let s = surface, bounds.width > 1, bounds.height > 1 else { return }
@@ -514,14 +531,17 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
     // Pause/resume drawing when this terminal is hidden behind another tab.
     func setOccluded(_ occluded: Bool) {
         guard let s = surface else { return }
+        isOccluded = occluded
         ghostty_surface_set_occlusion(s, !occluded)
-        if occluded { CVDisplayLinkStop(link!) } else if let l = link { CVDisplayLinkStart(l) }
+        updateLinkState()
     }
 
     // Tear down when the terminal panel is closed: stop the display link first
     // (so its callback can't touch a freed surface), then free the surface.
     func dispose() {
         busyProbe?.invalidate(); busyProbe = nil   // 팬을 닫으면 타이머도 같이 간다
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSApplication.didResignActiveNotification, object: nil)
         if let o = fontObserver { NotificationCenter.default.removeObserver(o); fontObserver = nil }
         if let l = link { CVDisplayLinkStop(l) }
         link = nil
