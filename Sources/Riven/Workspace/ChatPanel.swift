@@ -2160,10 +2160,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         // 사용자 말풍선은 세로 중앙. 에이전트 답변은 첫 줄의 세로 중앙에 맞춘다.
         let f = UIScale.font(UIScale.prose)
         let firstLineCenter = ceil((f.ascender - f.descender) / 2) + UIScale.pt(1)
-        // 아이템 하단 24px 리저브(hover 액션 자리) 때문에 item 중심이 아래로 밀린다 - 사용자 점은
+        // 아이템 하단 리저브(hover 액션 자리) 때문에 item 중심이 아래로 밀린다 - 사용자 점은
         // 리저브 절반만큼 올려 말풍선(카드) 세로 중앙에 맞춘다.
         let vert = centerVertically
-            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor, constant: -UIScale.pt(12))
+            ? dot.centerYAnchor.constraint(equalTo: item.centerYAnchor, constant: -ChatMetrics.turnBottomReserve / 2)
             : dot.centerYAnchor.constraint(equalTo: item.topAnchor, constant: firstLineCenter)
         NSLayoutConstraint.activate([
             dot.widthAnchor.constraint(equalToConstant: d),
@@ -2172,6 +2172,20 @@ final class ChatPanel: NSView, Themable, Scalable {
             dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -18),
             vert,
         ])
+        // "하나의 답변" 그룹 표시: 점 아래로 콘텐츠 하단까지 얇은 세로선 (여러 블록으로 된
+        // 에이전트 답변을 하나로 묶어 보인다). 사용자 한 줄 말풍선엔 안 그린다.
+        if !centerVertically {
+            let line = NSView(); line.wantsLayer = true
+            line.layer?.backgroundColor = (user ? Theme.accent : Theme.accent2).withAlphaComponent(0.3).cgColor
+            line.translatesAutoresizingMaskIntoConstraints = false
+            item.addSubview(line)
+            NSLayoutConstraint.activate([
+                line.widthAnchor.constraint(equalToConstant: 2),
+                line.centerXAnchor.constraint(equalTo: dot.centerXAnchor),
+                line.topAnchor.constraint(equalTo: dot.bottomAnchor, constant: UIScale.pt(4)),
+                line.bottomAnchor.constraint(equalTo: item.bottomAnchor, constant: -ChatMetrics.turnBottomReserve),
+            ])
+        }
     }
     /// 턴에 hover 액션(오른쪽 아래 fade: 토큰 + 복사 + 상대시각)을 붙인다. 액션은 아이템의
     /// subview 라 트림되면 같이 사라진다. 트래킹은 아이템 bounds 를 소유자(액션)에게 전달한다.

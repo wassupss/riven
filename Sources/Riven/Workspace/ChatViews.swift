@@ -415,6 +415,9 @@ final class CodeCarrier: NSView {
     var carriedCode: String?
 }
 
+// 턴 아래 hover 액션(복사·토큰·시각)을 위한 여백 strip 높이. TurnBlock·UserBubble·타임라인 선이 공유.
+enum ChatMetrics { static var turnBottomReserve: CGFloat { UIScale.pt(16) } }
+
 // MARK: - turn hover actions (fades in at bottom-right on hover: copy + relative time)
 /// 턴에 마우스를 올리면 오른쪽 아래에 fade-in 되는 작은 바 - 복사 버튼 + "35분 전" 상대 시각.
 /// 트래킹 소유자라 host(턴 아이템) 위에 마우스가 들어오면 뜨고 나가면 사라진다.
@@ -452,10 +455,10 @@ final class TurnHoverActions: NSView {
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -9),
-            row.topAnchor.constraint(equalTo: topAnchor, constant: 5),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -5),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -1055,6 +1058,22 @@ enum ChatText {
                                           constant: UIScale.pt(4)),
             ])
         }
+        // 데이터 행 사이 가로 구분선 (행 경계 = 다음 행 셀의 top - 행간격 절반).
+        if rows.count > 2 {
+            for r in 2..<rows.count {
+                guard let cell = grid.cell(atColumnIndex: 0, rowIndex: r).contentView else { continue }
+                let h = NSView(); h.wantsLayer = true
+                h.layer?.backgroundColor = Theme.edge.withAlphaComponent(0.5).cgColor
+                h.translatesAutoresizingMaskIntoConstraints = false
+                box.addSubview(h)
+                NSLayoutConstraint.activate([
+                    h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+                    h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+                    h.heightAnchor.constraint(equalToConstant: 1),
+                    h.centerYAnchor.constraint(equalTo: cell.topAnchor, constant: -grid.rowSpacing / 2),
+                ])
+            }
+        }
         return box
     }
 
@@ -1115,7 +1134,7 @@ final class UserBubble: NSView {
             bottomToText,
             card.topAnchor.constraint(equalTo: topAnchor),
             // 아래 여백 strip - hover 액션이 말풍선 위가 아니라 여기 뜬다.
-            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UIScale.pt(24)),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -ChatMetrics.turnBottomReserve),
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40)
         ])
@@ -1382,7 +1401,7 @@ final class TurnBlock: NSView {
             card.leadingAnchor.constraint(equalTo: leadingAnchor),
             card.trailingAnchor.constraint(equalTo: trailingAnchor),
             // 아래에 여백 strip 을 남긴다 - hover 액션(복사·토큰·시각)이 본문 위가 아니라 여기 뜬다.
-            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -UIScale.pt(24)),
+            card.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -ChatMetrics.turnBottomReserve),
             content.topAnchor.constraint(equalTo: card.topAnchor),
             content.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: card.trailingAnchor),
