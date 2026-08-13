@@ -14,6 +14,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private let planBadge = PlanBadge()
     private var planPath: String?
     private let stack = FlippedStack()
+    private let timelineRail = NSView()                   // 왼쪽 타임라인 세로선 (턴 노드들이 이 위에)
     private let subSide = NSScrollView()                  // right side: sub-agent panes
     private var subWidthShown: NSLayoutConstraint!        // sub area = 45% (when sub-agents run)
     private var subWidthHidden: NSLayoutConstraint!       // sub area = 0 (default)
@@ -137,6 +138,20 @@ final class ChatPanel: NSView, Themable, Scalable {
         scroll.drawsBackground = false; scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay   // floating scroller - never steals content width (no reflow on click/scroll)
         scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        // 왼쪽 타임라인 레일: 대화 전체를 잇는 얇은 세로선 (edgeInsets 로 비워둔 왼쪽 거터 안,
+        // 콘텐츠와 안 겹친다). 각 턴은 자기 아이템에 붙은 노드 점으로 이 선 위에 표시된다
+        // (노드가 아이템의 subview 라서 트랜스크립트가 잘려도 같이 사라진다 - 잔상 없음).
+        timelineRail.wantsLayer = true
+        timelineRail.layer?.backgroundColor = Theme.edge.cgColor
+        timelineRail.translatesAutoresizingMaskIntoConstraints = false
+        stack.addSubview(timelineRail)
+        NSLayoutConstraint.activate([
+            timelineRail.widthAnchor.constraint(equalToConstant: 1.5),
+            timelineRail.centerXAnchor.constraint(equalTo: stack.leadingAnchor, constant: 9),
+            timelineRail.topAnchor.constraint(equalTo: stack.topAnchor, constant: 16),
+            timelineRail.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: -14),
+        ])
 
         // Sub-agents render as EQUAL columns (riven-style panes) in a right-side area. It's laid
         // out with a plain width constraint (NOT an NSSplitView) - the split view was toggling
@@ -853,10 +868,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         var idx = atTop ? (loadEarlierBtn != nil ? 1 : 0) : stack.arrangedSubviews.count
         for m in msgs {
             let views: [NSView] = m.user ? [UserBubble(text: m.text)] : ChatText.render(m.text)
-            for v in views {
+            for (j, v) in views.enumerated() {
                 v.translatesAutoresizingMaskIntoConstraints = false
                 stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
                 v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+                if j == 0 { attachTimelineNode(to: v, color: m.user ? Theme.accent : Theme.accent2) }  // 턴 시작에 노드
             }
         }
     }
@@ -2082,7 +2098,26 @@ final class ChatPanel: NSView, Themable, Scalable {
         block.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        attachTimelineNode(to: block, color: Theme.accent2)   // 어시스턴트 턴 노드
         return block
+    }
+    /// 타임라인 레일 위에 이 아이템의 노드 점을 찍는다. 노드는 아이템의 subview 라서
+    /// 트랜스크립트가 트림/재렌더돼도 아이템과 함께 사라진다 (잔상 없음).
+    private func attachTimelineNode(to item: NSView, color: NSColor) {
+        let dot = NSView(); dot.wantsLayer = true
+        let d = UIScale.pt(7)
+        dot.layer?.backgroundColor = color.cgColor
+        dot.layer?.cornerRadius = d / 2
+        dot.layer?.borderWidth = 2
+        dot.layer?.borderColor = Theme.bg.cgColor      // 레일선을 끊어 노드가 도드라지게
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        item.addSubview(dot)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: d),
+            dot.heightAnchor.constraint(equalToConstant: d),
+            dot.centerXAnchor.constraint(equalTo: item.leadingAnchor, constant: -9),  // 아이템 왼쪽(x18) - 9 = 레일(x9)
+            dot.topAnchor.constraint(equalTo: item.topAnchor, constant: UIScale.pt(7)),
+        ])
     }
     // Keep the rendered transcript bounded: full relayouts/rescales (mode change, ⌘+/−, scroll,
     // theme) walk every view, so an unbounded transcript makes those O(n) ops lag. Old messages
@@ -2162,19 +2197,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         // 턴 아래에 플랜 소진도를 붙인다. 어느 CLI 의 계정인지가 중요하다 - 예전에는 Codex
         // 페인에서도 Claude 의 OAuth 사용량(5시간·7일)을 불러 붙였다. Codex 로 돌린 턴 밑에
         // Claude 눈금이 붙으면, 그 숫자를 보고 Codex 한도를 판단하게 된다.
+        // Claude 의 플랜 세션·주간 사용량은 턴 푸터에서 뺐다 (계정 전체 5시간/7일 수치라 이 턴과
+        // 무관하고 푸터만 어수선했다). Codex 는 30일 창 하나라 그대로 둔다.
         if agentKind == .codex {
             let cx = CodexUsage.scan()
             if let l = cx.limits {
                 block?.setQuota([(CodexUsage.windowLabel(l.windowMinutes), UsageUI.shown(l.remainingPercent))])
-            }
-        } else {
-            Usage.limits { lim in
-                DispatchQueue.main.async {
-                    var e: [(label: String, value: Int)] = []
-                    if let s = lim.sessionRemaining { e.append((t("chat.quota.sessionLabel"), UsageUI.shown(s))) }
-                    if let w = lim.weeklyRemaining { e.append((t("chat.quota.weekLabel"), UsageUI.shown(w))) }
-                    block?.setQuota(e)
-                }
             }
         }
         // Hand this turn's answer to any agent that delegated work here (riven_ask_agent).
@@ -2200,6 +2228,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         v.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -24).isActive = true
+        attachTimelineNode(to: v, color: Theme.accent)   // 사용자 턴 노드
         scrollSoon()
         return v
     }

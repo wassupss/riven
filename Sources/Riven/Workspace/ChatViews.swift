@@ -739,6 +739,20 @@ enum ChatText {
                 out.append(tableBlock(rows))
                 continue
             }
+            // 인용구: > 로 시작하는 연속 줄. accent 바 + 옅은 글자로 그린다 (예전엔 "> " 가
+            // 원문 그대로 보였다).
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                flushPara()
+                var quote: [String] = []
+                while i < lines.count, lines[i].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                    var t = lines[i].trimmingCharacters(in: .whitespaces)
+                    t.removeFirst()                          // ">"
+                    if t.hasPrefix(" ") { t.removeFirst() }
+                    quote.append(t); i += 1
+                }
+                out.append(blockquoteBlock(quote.joined(separator: "\n")))
+                continue
+            }
             if let m = match(headingRe, line) {
                 flushPara()
                 out.append(heading(m[2], level: m[1].count))
@@ -766,6 +780,32 @@ enum ChatText {
         if t.hasPrefix("|") { t.removeFirst() }
         if t.hasSuffix("|") { t.removeLast() }
         return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// 인용구 블록: 왼쪽 accent 바 + 옅은(이탤릭 느낌) 본문.
+    private static func blockquoteBlock(_ text: String) -> NSView {
+        let row = NSView()
+        let bar = NSView(); bar.wantsLayer = true
+        bar.layer?.backgroundColor = Theme.accent2.withAlphaComponent(0.55).cgColor
+        bar.layer?.cornerRadius = 1.5
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let l = prose(text)
+        let m = NSMutableAttributedString(attributedString: attributedMarkdown(text))
+        m.addAttribute(.foregroundColor, value: Theme.fgDim, range: NSRange(location: 0, length: m.length))
+        l.attributedStringValue = m
+        l.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(bar); row.addSubview(l)
+        NSLayoutConstraint.activate([
+            bar.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            bar.topAnchor.constraint(equalTo: row.topAnchor, constant: 1),
+            bar.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -1),
+            bar.widthAnchor.constraint(equalToConstant: 3),
+            l.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: UIScale.pt(10)),
+            l.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            l.topAnchor.constraint(equalTo: row.topAnchor, constant: 1),
+            l.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -1),
+        ])
+        return row
     }
 
     private static func heading(_ text: String, level: Int) -> NSView {
@@ -815,7 +855,7 @@ enum ChatText {
         box.layer?.borderColor = Theme.edge.cgColor
         box.translatesAutoresizingMaskIntoConstraints = false
         let grid = NSGridView(numberOfColumns: max(1, cols), rows: 0)
-        grid.rowSpacing = UIScale.pt(7); grid.columnSpacing = UIScale.pt(14)
+        grid.rowSpacing = UIScale.pt(10); grid.columnSpacing = UIScale.pt(22)
         grid.translatesAutoresizingMaskIntoConstraints = false
         for (r, row) in rows.enumerated() {
             let cells: [NSView] = (0..<max(1, cols)).map { c in
@@ -834,13 +874,30 @@ enum ChatText {
         }
         // 헤더 아래 구분선 (NSGridView는 셀 사이 선을 못 그리므로 얇은 뷰를 깐다).
         box.addSubview(grid)
-        let pad = UIScale.pt(12)
+        let pad = UIScale.pt(15)
         NSLayoutConstraint.activate([
             grid.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: pad),
             grid.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -pad),
             grid.topAnchor.constraint(equalTo: box.topAnchor, constant: pad),
             grid.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -pad),
         ])
+        // 열 사이 세로 구분선. 셀은 좌측정렬이라 각 열의 왼쪽 경계 = 그 열 셀의 leading.
+        // 다음 열 leading 에서 열간격 절반만큼 왼쪽에 얇은 선을 둔다 (내용 폭과 무관하게 안정적).
+        if cols > 1 {
+            for c in 1..<cols {
+                guard let next = grid.cell(atColumnIndex: c, rowIndex: 0).contentView else { continue }
+                let v = NSView(); v.wantsLayer = true
+                v.layer?.backgroundColor = Theme.edge.cgColor
+                v.translatesAutoresizingMaskIntoConstraints = false
+                box.addSubview(v)
+                NSLayoutConstraint.activate([
+                    v.widthAnchor.constraint(equalToConstant: 1),
+                    v.centerXAnchor.constraint(equalTo: next.leadingAnchor, constant: -grid.columnSpacing / 2),
+                    v.topAnchor.constraint(equalTo: grid.topAnchor),
+                    v.bottomAnchor.constraint(equalTo: grid.bottomAnchor),
+                ])
+            }
+        }
         if rows.count > 1 {
             let hair = NSView(); hair.wantsLayer = true
             hair.layer?.backgroundColor = Theme.edge.cgColor
@@ -1320,10 +1377,15 @@ final class TurnBlock: NSView {
         closeText(); finished = true
         stopShimmer(); stopActiveTool()
         spinner.stopAnimation(nil); spinnerW.constant = 0   // reclaim the hidden spinner's gap
-        // left: thinking/writing times
+        // left: thinking/writing times. "생각 0초" 는 노이즈라 생각 시간이 실제로 있을 때만
+        // 나눠 보이고, 없으면 총 소요만 담백하게 보인다.
         var times: [String] = []
-        if let think = thinkingSecs { times.append(t("chat.thinkFor", ["d": ChatText.duration(think)])); if secs > think { times.append(t("chat.writeFor", ["d": ChatText.duration(secs - think)])) } }
-        else { times.append(ChatText.duration(secs)) }
+        if let think = thinkingSecs, think > 0 {
+            times.append(t("chat.thinkFor", ["d": ChatText.duration(think)]))
+            if secs > think { times.append(t("chat.writeFor", ["d": ChatText.duration(secs - think)])) }
+        } else {
+            times.append(ChatText.duration(secs))
+        }
         workLabel.stringValue = "✓ " + times.joined(separator: " · ")
         workLabel.textColor = Theme.fgDim
         // right: tokens actually consumed THIS turn (new input incl. cache-write, + output).
