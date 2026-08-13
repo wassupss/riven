@@ -823,6 +823,10 @@ final class ChatPanel: NSView, Themable, Scalable {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let type = o["type"] as? String, let msg = o["message"] as? [String: Any] else { continue }
+            // CLI 가 대화를 자동 압축할 때 주입하는 "This session is being continued…" 요약 메시지
+            // (top-level isCompactSummary). CLI 는 컨텍스트로만 쓰고, 우리가 이걸 일반 말풍선으로
+            // 그리는 바람에 재기동 복원마다 거대한 "요약 채팅"이 떴다. 메타 엔트리는 렌더에서 뺀다.
+            if o["isCompactSummary"] as? Bool == true || o["isMeta"] as? Bool == true { continue }
             let s = ChatPanel.contentText(msg["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
             if s.isEmpty { continue }
             if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
