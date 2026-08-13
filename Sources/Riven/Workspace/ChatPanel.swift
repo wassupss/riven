@@ -1736,18 +1736,36 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         addReport(t("chat.status.title"), lines)
     }
-    /// A titled, monospaced block - readable columns instead of one dim run-on line.
+    /// A titled, monospaced report inside a subtle rounded card - matches the chip language.
     private func addReport(_ title: String, _ lines: [String]) {
+        let card = NSView(); card.wantsLayer = true
+        card.layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.04 : 0.05).cgColor
+        card.layer?.cornerRadius = UIScale.pt(10); card.layer?.borderWidth = 1
+        card.layer?.borderColor = Theme.edge.withAlphaComponent(0.6).cgColor
+        card.translatesAutoresizingMaskIntoConstraints = false
         let head = NSTextField(labelWithString: title)
         head.font = UIScale.font(UIScale.body, .semibold); head.textColor = Theme.fg
         head.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(head)
-        head.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         let body = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
         body.font = UIScale.mono(UIScale.small); body.textColor = Theme.fgDim; body.isSelectable = true
         body.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(body)
-        body.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        card.addSubview(head); card.addSubview(body)
+        let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false; row.addSubview(card)
+        NSLayoutConstraint.activate([
+            head.topAnchor.constraint(equalTo: card.topAnchor, constant: UIScale.pt(9)),
+            head.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: UIScale.pt(12)),
+            head.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -UIScale.pt(12)),
+            body.topAnchor.constraint(equalTo: head.bottomAnchor, constant: UIScale.pt(5)),
+            body.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: UIScale.pt(12)),
+            body.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -UIScale.pt(12)),
+            body.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -UIScale.pt(9)),
+            card.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+            card.topAnchor.constraint(equalTo: row.topAnchor),
+            card.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+        ])
+        stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
     }
     /// "2026-08-04T09:00:00Z" → "09:00" (local), for reset times.
@@ -2216,60 +2234,74 @@ final class ChatPanel: NSView, Themable, Scalable {
         scrollSoon()
         return v
     }
-    // 짧은 상태 알림(권한 모드 전환, 모델 변경, 위임/도구 상태 등)은 밋밋한 회색 줄 대신
-    // 내용에 딱 맞는 subtle 한 캡슐 칩/마커로 왼쪽에 붙인다.
-    private func addSystem(_ text: String) {
+    // 채팅에 뜨는 모든 알림 문구는 밋밋한 회색 줄 대신 내용에 hug 하는 subtle 캡슐 칩으로 통일한다.
+    // tone 으로 중립(상태)·위험(에러)·마커(세션 경계)를 구분, centered 는 세션 경계용.
+    private enum ChipTone { case neutral, danger, marker }
+    private func addChip(_ label: NSTextField, tone: ChipTone, centered: Bool = false) {
         let chip = NSView(); chip.wantsLayer = true
-        chip.layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.05 : 0.07).cgColor
-        chip.layer?.cornerRadius = UIScale.pt(8)
-        chip.layer?.borderWidth = 1; chip.layer?.borderColor = Theme.edge.withAlphaComponent(0.6).cgColor
+        chip.layer?.cornerRadius = UIScale.pt(8); chip.layer?.borderWidth = 1
+        switch tone {
+        case .neutral:
+            chip.layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.05 : 0.07).cgColor
+            chip.layer?.borderColor = Theme.edge.withAlphaComponent(0.6).cgColor
+        case .danger:
+            chip.layer?.backgroundColor = Theme.danger.withAlphaComponent(0.12).cgColor
+            chip.layer?.borderColor = Theme.danger.withAlphaComponent(0.4).cgColor
+        case .marker:
+            chip.layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.04 : 0.06).cgColor
+            chip.layer?.borderColor = Theme.edge.withAlphaComponent(0.5).cgColor
+        }
         chip.translatesAutoresizingMaskIntoConstraints = false
-        let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.fgDim; l.isSelectable = true
-        l.translatesAutoresizingMaskIntoConstraints = false
-        chip.addSubview(l)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        chip.addSubview(label)
         let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
         row.addSubview(chip)
-        NSLayoutConstraint.activate([
-            l.topAnchor.constraint(equalTo: chip.topAnchor, constant: UIScale.pt(4)),
-            l.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -UIScale.pt(4)),
-            l.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: UIScale.pt(9)),
-            l.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -UIScale.pt(9)),
-            chip.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+        var cs = [
+            label.topAnchor.constraint(equalTo: chip.topAnchor, constant: UIScale.pt(4)),
+            label.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -UIScale.pt(4)),
+            label.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: UIScale.pt(9)),
+            label.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -UIScale.pt(9)),
             chip.topAnchor.constraint(equalTo: row.topAnchor),
             chip.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            chip.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),   // 내용에 맞춰 hug, 넘치면 wrap
-        ])
+        ]
+        if centered {
+            cs.append(chip.centerXAnchor.constraint(equalTo: row.centerXAnchor))
+            cs.append(chip.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor))
+        } else {
+            cs.append(chip.leadingAnchor.constraint(equalTo: row.leadingAnchor))
+            cs.append(chip.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor))   // hug, 넘치면 wrap
+        }
+        NSLayoutConstraint.activate(cs)
         stack.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         scrollSoon()
+    }
+    private func addSystem(_ text: String) {
+        let l = NSTextField(wrappingLabelWithString: text)
+        l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.fgDim; l.isSelectable = true
+        addChip(l, tone: .neutral)
     }
     /// 세션 경계 표시("이전 세션에서 이어짐", "대화를 지웠습니다" 등)를 타임라인 형태로 - 큰 글씨 +
     /// 왼쪽에 시계 노드. 잔잔한 시스템 회색줄과 달리 눈에 띄는 이정표로 보인다.
     func addTimelineMarker(_ text: String) {
         let l = NSTextField(labelWithString: text)
-        l.font = UIScale.font(UIScale.body, .medium); l.textColor = Theme.fg.withAlphaComponent(0.85)
-        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .semibold)
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(11), weight: .semibold)
             .applying(.init(paletteColors: [Theme.fgDim]))
         if let icon = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: nil)?.withSymbolConfiguration(cfg) {
             let att = NSMutableAttributedString(attachment: { let a = NSTextAttachment(); a.image = icon; return a }())
             att.append(NSAttributedString(string: "  " + text, attributes: [
-                .font: UIScale.font(UIScale.body, .medium), .foregroundColor: Theme.fg.withAlphaComponent(0.85)]))
+                .font: UIScale.font(UIScale.caption, .medium), .foregroundColor: Theme.fgDim]))
             l.attributedStringValue = att
+        } else {
+            l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.fgDim
         }
-        l.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-        scrollSoon()
+        addChip(l, tone: .marker, centered: true)   // 세션 경계: 가운데 정렬 이정표 칩
     }
-    // A visible, danger-tinted line for turn failures (529, etc.) - not the dim system gray.
+    // A visible, danger-tinted chip for turn failures (529, etc.) - not the dim system gray.
     private func addError(_ text: String) {
         let l = NSTextField(wrappingLabelWithString: text)
-        l.font = UIScale.font(UIScale.small, .medium); l.textColor = Theme.danger; l.isSelectable = true
-        l.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(l)
-        l.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-        scrollSoon()
+        l.font = UIScale.font(UIScale.caption, .medium); l.textColor = Theme.danger; l.isSelectable = true
+        addChip(l, tone: .danger)
     }
     private func scrollSoon() { DispatchQueue.main.async { [weak self] in self?.scrollToBottom() } }
     // FORCED pin to the live edge (user sent / resumed / tapped the pill): also resumes following.
