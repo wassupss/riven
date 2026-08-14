@@ -34,6 +34,8 @@ final class ChatInput: NSTextView {
     var onTextChange: (() -> Void)?
     var onFocus: (() -> Void)?           // gained keyboard focus (click/tab) → pane is being looked at
     var placeholder = "" { didSet { needsDisplay = true } }
+    // 다음 작업 제안(ghost text). 입력이 비어 있을 때 흐리게 뜨고, Tab 으로 채운다(실행은 안 함).
+    var ghost = "" { didSet { needsDisplay = true } }
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok { onFocus?() }
@@ -59,12 +61,20 @@ final class ChatInput: NSTextView {
     }
     override func didChangeText() {
         super.didChangeText()
+        if !string.isEmpty { ghost = "" }                       // 타이핑 시작 → 제안 접기
         enclosingScrollView?.invalidateIntrinsicContentSize()   // regrow up to the 6-line cap
         scrollRangeToVisible(selectedRange())                   // keep the cursor on screen past the cap
         needsDisplay = true
         onTextChange?()
     }
     override func doCommand(by selector: Selector) {
+        // Tab: 제안(ghost)이 떠 있고 입력이 비어 있으면 그걸 채운다 (실행은 안 함).
+        if selector == #selector(insertTab(_:)), string.isEmpty, !ghost.isEmpty {
+            stringValue = ghost; ghost = ""
+            setSelectedRange(NSRange(location: string.count, length: 0))
+            onTextChange?()
+            return
+        }
         if let onKey, onKey(selector) { return }           // popup / mode-cycle first
         if selector == #selector(insertNewline(_:)) {
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { super.insertNewline(nil) }  // Shift+Enter = newline
@@ -75,9 +85,18 @@ final class ChatInput: NSTextView {
     }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard string.isEmpty, !placeholder.isEmpty else { return }
-        (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
-            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(ChatInput.fontSize)])
+        guard string.isEmpty else { return }
+        let f = font ?? UIScale.font(ChatInput.fontSize)
+        let origin = NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height)
+        if !ghost.isEmpty {
+            // 제안 문구 + 오른쪽에 "⇥ Tab" 힌트.
+            (ghost as NSString).draw(at: origin, withAttributes: [.foregroundColor: Theme.accent2.withAlphaComponent(0.85), .font: f])
+            let w = (ghost as NSString).size(withAttributes: [.font: f]).width
+            ("  ⇥ Tab" as NSString).draw(at: NSPoint(x: origin.x + w, y: origin.y),
+                withAttributes: [.foregroundColor: Theme.fgDim.withAlphaComponent(0.7), .font: UIScale.font(UIScale.caption)])
+        } else if !placeholder.isEmpty {
+            (placeholder as NSString).draw(at: origin, withAttributes: [.foregroundColor: Theme.fgDim, .font: f])
+        }
     }
 
     // Paste an IMAGE (a Cmd-Shift-4 screenshot on the clipboard, or copied image files) like the
@@ -296,68 +315,83 @@ final class ToolLine: NSView {
 final class ToolGroup: NSView {
     private let header = NSView()
     private let chevron = NSImageView()
-    private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let body = NSStackView()
-    private var expanded = true               // 기본 펼침 (도구 줄은 보이고, 코드블록은 클릭해야 열림)
+    private var expanded = false              // 기본 닫힘 (헤더에 진행 상황·카운트만)
     private var running = true
     private var count = 0
-    private var latestName = ""
+    private var changed = 0                   // 파일 변경 도구 수 (Edit/Write/MultiEdit/NotebookEdit)
+    private var latestName = "", latestDetail = ""
     private var added = 0, removed = 0        // Edit/MultiEdit 변경 라인 합계 (+/-)
     private struct Spec { let name: String; let detail: String; let code: String?; let path: String?; let diff: Bool }
-    private var specs: [Spec] = []            // 도구 명세 (dedup·재계산용)
-    private var built = true                  // 기본 펼침이라 도구 줄을 즉시 만든다
+    private var specs: [Spec] = []            // 도구 명세 (뷰는 펼칠 때 lazy 생성)
+    private var built = false                 // 본문 줄을 실제로 만들었는지 (기본 닫힘 → lazy)
     private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
     private var openedCode: [ObjectIdentifier: NSView] = [:]
-    private let shimmer = CAGradientLayer()
     private var shimmerOn = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        // 명령 아코디언을 패널처럼 테두리 박스로. 실행 중엔 테두리가 accent 로 맥동, 끝나면 초록.
+        layer?.cornerRadius = UIScale.pt(9)
+        layer?.borderWidth = 1
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.03 : 0.04).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)   // 기본 펼침
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)   // 기본 닫힘
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
-        icon.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)
-        icon.contentTintColor = Theme.fgDim
-        icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIScale.font(UIScale.body, .medium); titleLabel.textColor = Theme.accent2
+        titleLabel.font = UIScale.font(UIScale.prose, .medium); titleLabel.textColor = Theme.accent2   // 답변과 동일 크기
+        titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)  // 길면 truncate
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // chevron 은 "명령 N개" 오른쪽에 (아이콘·글자 다음).
-        let hrow = NSStackView(views: [icon, titleLabel, chevron])
-        hrow.orientation = .horizontal; hrow.alignment = .centerY; hrow.spacing = 7
-        hrow.translatesAutoresizingMaskIntoConstraints = false
+        [titleLabel, chevron].forEach { header.addSubview($0) }   // 아이콘은 titleLabel 안 인라인 첨부로
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(hrow)
         body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
         body.translatesAutoresizingMaskIntoConstraints = false
-        body.isHidden = false                 // 기본 펼침
+        body.isHidden = true                  // 기본 닫힘
         addSubview(header); addSubview(body)
         // 접힘/펼침에 따라 그룹 바닥을 헤더 or 본문에 묶는다. isHidden 만으론 본문이 Auto Layout
         // 에서 사라지지 않아 접어도 펼친 높이를 그대로 차지했다(다음 답변이 한참 아래로 밀림).
-        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
-        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
-        expandedBottom.isActive = true        // 기본 펼침
+        let padH = UIScale.pt(11), padV = UIScale.pt(7)   // 테두리 안쪽 여백
+        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padV)
+        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padV)
+        collapsedBottom.isActive = true       // 기본 닫힘
+        // 헤더: [아이콘 제목 chevron] - 테두리 안쪽 여백만큼 들여쓴다.
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: padV),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
+            titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
+            chevron.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),   // 제목 바로 옆
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
-            hrow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
-            hrow.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
-            hrow.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
-            hrow.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
-            header.topAnchor.constraint(equalTo: topAnchor),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor),
-            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor),   // 들여쓰기 없음 - 답변과 같은 왼쪽 선
-            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+            chevron.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
+            chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH),
         ])
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
         updateTitle()
+    }
+    // 도구명 → 한글 진행 표현 (실행 타이틀이 영어로만 보이던 것 수정).
+    private static func verb(_ name: String) -> String {
+        switch name {
+        case "Read", "LS": return t("chat.tools.read")
+        case "Edit", "Write", "MultiEdit", "NotebookEdit": return t("chat.tools.edit")
+        case "Bash", "BashOutput": return t("chat.tools.run")
+        case "Grep", "Glob": return t("chat.tools.search")
+        case "WebFetch", "WebSearch": return t("chat.tools.web")
+        case "TodoWrite": return t("chat.tools.todo")
+        default: return t("chat.tools.run")
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -382,7 +416,8 @@ final class ToolGroup: NSView {
     func addTool(_ name: String, _ detail: String, code: String?, path: String?) {
         count += 1
         let clean = name.replacingOccurrences(of: "mcp__riven__", with: "")
-        latestName = clean
+        latestName = clean; latestDetail = detail
+        if ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(name) { changed += 1 }   // 파일 변경 수
         let spec = Spec(name: clean, detail: detail, code: (code?.isEmpty == false) ? code : nil,
                         path: path, diff: name == "Edit" || name == "MultiEdit")
         specs.append(spec)
@@ -444,48 +479,81 @@ final class ToolGroup: NSView {
         updateTitle(); return true
     }
 
+    // 렌치 아이콘을 제목 라벨 안 인라인 첨부로 (별도 이미지뷰를 centerY 맞추면 글자 optical
+    // 중앙과 살짝 어긋나 보였다 - 같은 줄 안에 넣으면 baseline 기준으로 딱 맞는다).
+    private static func iconPrefix() -> NSAttributedString {
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(11), weight: .medium)
+            .applying(.init(paletteColors: [Theme.fgDim]))
+        guard let img = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return NSAttributedString(string: "") }
+        let att = NSTextAttachment(); att.image = img
+        let font = UIScale.font(UIScale.prose, .medium)
+        let y = (font.capHeight - img.size.height) / 2   // 글자 cap 중앙에 아이콘을 맞춘다
+        att.bounds = CGRect(x: 0, y: y, width: img.size.width, height: img.size.height)
+        let m = NSMutableAttributedString(attachment: att)
+        m.append(NSAttributedString(string: "  "))
+        return m
+    }
     private func updateTitle() {
-        let main = running
-            ? (count <= 1 ? t("chat.tools.running1", ["name": latestName.isEmpty ? t("chat.tools.cmd") : latestName])
-                          : t("chat.tools.runningN", ["n": "\(count)"]))
-            : t("chat.tools.count", ["n": "\(count)"])
-        let m = NSMutableAttributedString(string: main, attributes: [
-            .foregroundColor: running ? Theme.accent2 : Theme.fgDim,
-            .font: UIScale.font(UIScale.body, .medium)])
-        // Edit 변경량을 "명령 N개" 옆에 +A -R 로 (초록/빨강).
-        if added > 0 || removed > 0 {
-            m.append(NSAttributedString(string: "  "))
-            let f = UIScale.font(UIScale.small, .semibold)
-            if added > 0 { m.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: f])) }
-            if removed > 0 { m.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: f])) }
+        // 헤더 전체를 왼쪽 한 줄로: 실행 중이면 "<한글 동작> · <현재 명령>",
+        // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
+        let m = NSMutableAttributedString()
+        m.append(ToolGroup.iconPrefix())   // 렌치 아이콘 (글자와 baseline 정렬)
+        let f = UIScale.font(UIScale.prose, .medium)
+        if running {
+            let verb = ToolGroup.verb(latestName)
+            m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
+                                        attributes: [.foregroundColor: Theme.accent2, .font: f]))
+        } else {
+            m.append(NSAttributedString(string: t("chat.tools.count", ["n": "\(count)"]),
+                                        attributes: [.foregroundColor: Theme.fgDim, .font: f]))
+            if changed > 0 {
+                m.append(NSAttributedString(string: " · " + t("chat.tools.changed", ["n": "\(changed)"]),
+                                            attributes: [.foregroundColor: Theme.fgDim, .font: f]))
+            }
+            if added > 0 || removed > 0 {
+                let sf = UIScale.font(UIScale.small, .semibold)
+                m.append(NSAttributedString(string: "  "))
+                if added > 0 { m.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: sf])) }
+                if removed > 0 { m.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: sf])) }
+            }
         }
         titleLabel.attributedStringValue = m
         needsLayout = true
     }
 
-    func endRun() { running = false; stopShimmer(); updateTitle() }
+    func endRun() {
+        running = false; stopShimmer(); updateTitle()
+        // 완료: 테두리 맥동 멈추고 초록(성공) 테두리로.
+        layer?.removeAnimation(forKey: "borderPulse")
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor
+    }
 
+    // 실행 중 표시는 제목 글자의 opacity 를 은은히 맥동시킨다. 예전엔 그라디언트 mask sweep 을
+    // 썼는데, 제목이 길어지거나(현재 명령) 자주 바뀌면 mask 프레임이 실제 라벨보다 작게 남아
+    // 글자 대부분이 마스크 밖으로 나가 사라지고 조각("|")만 보였다. opacity 맥동은 프레임 동기화가
+    // 필요 없어 항상 온전히 읽힌다. 동시에 테두리도 accent 로 맥동시켜 "패널이 도는" 느낌을 준다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
-        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
-        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        titleLabel.layer?.mask = shimmer; needsLayout = true
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4; sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        shimmer.add(sweep, forKey: "shimmer")
+        titleLabel.wantsLayer = true
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0; pulse.toValue = 0.5
+        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        titleLabel.layer?.add(pulse, forKey: "pulse")
+        // 테두리 맥동 (accent ↔ 옅은 accent).
+        layer?.borderColor = Theme.accent2.cgColor
+        let bp = CABasicAnimation(keyPath: "borderColor")
+        bp.fromValue = Theme.accent2.cgColor
+        bp.toValue = Theme.accent2.withAlphaComponent(0.25).cgColor
+        bp.duration = 0.9; bp.autoreverses = true; bp.repeatCount = .infinity
+        bp.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(bp, forKey: "borderPulse")
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); titleLabel.layer?.mask = nil
-    }
-    override func layout() {
-        super.layout()
-        guard shimmerOn, let host = titleLabel.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+        shimmerOn = false; titleLabel.layer?.removeAnimation(forKey: "pulse"); titleLabel.alphaValue = 1.0
     }
 }
 
@@ -542,26 +610,12 @@ final class AssistantText: NSView {
         if tail.isEmpty { streamRow?.isHidden = true }
         else {
             streamRow?.isHidden = false
-            // 꼬리도 인라인 마크다운을 입혀서 그린다 (**굵게**·`코드`가 타이핑 중에도 보인다).
-            // 방금 드러난 끝 글자들은 옅게 시작해 점점 또렷해진다 → 한 글자씩 부드럽게 "써지는" 느낌.
-            let attr = NSMutableAttributedString(attributedString: ChatText.attributedMarkdown(tail))
-            AssistantText.fadeTrailing(attr, chars: shownCount < chars.count ? 10 : 0)
-            ensureLabel().attributedStringValue = attr
+            // 꼬리는 인라인 마크다운만 입혀 그대로 그린다 (**굵게**·`코드` 는 타이핑 중에도 보인다).
+            // 예전엔 끝 글자에 alpha 페이드를 걸었는데, 그게 끝에서 반짝이는 띠(shimmer)처럼 보이고
+            // 스텝 공개와 겹쳐 "뚝뚝 + 반짝" 으로 거슬렸다 → 페이드 제거, 그냥 흐르듯 나오게.
+            ensureLabel().attributedStringValue = ChatText.attributedMarkdown(tail)
         }
         return true
-    }
-
-    /// 꼬리 끝 n글자의 alpha 를 0.15→1.0 으로 램프해 방금 타이핑된 글자가 은은히 나타나게 한다.
-    static func fadeTrailing(_ m: NSMutableAttributedString, chars streaming: Int) {
-        let len = m.length; let k = min(streaming, len)
-        guard k > 1 else { return }
-        for i in 0..<k {
-            let idx = len - k + i
-            let a = 0.15 + 0.85 * (CGFloat(i) / CGFloat(k - 1))
-            let r = NSRange(location: idx, length: 1)
-            let base = (m.attribute(.foregroundColor, at: idx, effectiveRange: nil) as? NSColor) ?? ChatText.proseColor
-            m.addAttribute(.foregroundColor, value: base.withAlphaComponent(a), range: r)
-        }
     }
 
     // 스트리밍 꼬리에서 미완성 블록 마크다운과 짝 없는 인라인 백틱을 잘라낸다.
@@ -890,14 +944,21 @@ enum ChatText {
                 btn.centerYAnchor.constraint(equalTo: header.centerYAnchor)
             ])
         }
-        let l = NSTextField(wrappingLabelWithString: code)
-        l.font = UIScale.mono(UIScale.body); l.textColor = Theme.fg; l.isSelectable = true
-        l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
-        l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
-        l.translatesAutoresizingMaskIntoConstraints = false
-        if diff { l.attributedStringValue = diffColored(code) }
-        else { l.attributedStringValue = highlight(code) }
-        [header, l].forEach { box.addSubview($0) }
+        // diff(Edit): 줄 전체에 옅은 초록/빨강 배경 밴드 + 에디터식 syntax 색. 그 외: 일반 하이라이트 라벨.
+        let body: NSView
+        if diff {
+            body = diffBlock(code); box.layer?.masksToBounds = true   // 밴드가 둥근 모서리 안에서 잘리게
+        } else {
+            let l = NSTextField(wrappingLabelWithString: code)
+            l.font = UIScale.mono(UIScale.body); l.textColor = Theme.fg; l.isSelectable = true
+            l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
+            l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
+            l.attributedStringValue = highlight(code)
+            body = l
+        }
+        body.translatesAutoresizingMaskIntoConstraints = false
+        [header, body].forEach { box.addSubview($0) }
+        let inset: CGFloat = diff ? 1 : 12   // diff 는 밴드가 폭을 꽉 채우도록 여백 최소
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
@@ -905,10 +966,10 @@ enum ChatText {
             header.heightAnchor.constraint(equalToConstant: 16),
             langL.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             langL.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            l.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
-            l.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
-            l.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            l.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12)
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            body.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: diff ? -1 : -10),
+            body.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: inset),
+            body.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -inset)
         ])
         return box
     }
@@ -943,18 +1004,40 @@ enum ChatText {
         return m
     }
     // Edits open the real file (see the applied change); snippets go to a temp file.
-    private static func diffColored(_ code: String) -> NSAttributedString {
-        let m = NSMutableAttributedString()
-        let font = UIScale.mono(UIScale.body)
-        let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        for (i, line) in code.components(separatedBy: "\n").enumerated() {
-            if i > 0 { m.append(NSAttributedString(string: "\n")) }
-            let color: NSColor = line.hasPrefix("+") ? Theme.gitAdded
-                               : line.hasPrefix("-") ? Theme.gitDeleted : Theme.fgDim
-            m.append(NSAttributedString(string: line,
-                attributes: [.foregroundColor: color, .font: font, .paragraphStyle: p]))
+    // Edit diff: 줄마다 옅은 초록(+)/빨강(-) 전체폭 배경 밴드를 깔고, 글자는 에디터처럼 syntax
+    // 하이라이트. 예전엔 글자 전체를 통짜 빨강/초록으로 칠해 코드가 안 읽혔다.
+    static func diffBlock(_ code: String) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let mono = UIScale.mono(UIScale.body)
+        for line in code.components(separatedBy: "\n") {
+            let added = line.hasPrefix("+"), removed = line.hasPrefix("-")
+            let row = NSView(); row.wantsLayer = true
+            row.layer?.backgroundColor = (added ? Theme.gitAdded.withAlphaComponent(0.16)
+                                        : removed ? Theme.gitDeleted.withAlphaComponent(0.16)
+                                        : .clear).cgColor
+            row.translatesAutoresizingMaskIntoConstraints = false
+            let content = (added || removed) ? String(line.dropFirst()) : line
+            let lbl = NSTextField(labelWithString: "")
+            lbl.font = mono; lbl.isSelectable = true; lbl.allowsEditingTextAttributes = true
+            lbl.lineBreakMode = .byCharWrapping; lbl.maximumNumberOfLines = 0
+            let m = NSMutableAttributedString(string: (added ? "+" : removed ? "-" : " ") + " ",
+                attributes: [.font: mono, .foregroundColor: added ? Theme.gitAdded : removed ? Theme.gitDeleted : Theme.fgDim])
+            m.append(highlight(content))     // 에디터식 syntax 색 (추가/삭제/문맥 모두)
+            lbl.attributedStringValue = m
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(lbl)
+            stack.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: stack.widthAnchor),
+                lbl.topAnchor.constraint(equalTo: row.topAnchor, constant: 2),
+                lbl.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -2),
+                lbl.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 11),
+                lbl.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -11),
+            ])
         }
-        return m
+        return stack
     }
     /// 코드펜스로 먼저 자르고, 산문 구간은 블록 단위(제목·표·목록·문단)로 파싱한다.
     /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
@@ -1175,15 +1258,22 @@ enum ChatText {
         // 셀 자체의 여백을 넉넉히 (행/열 간격 = 칸 안쪽 여백). 표 바깥 여백(pad)은 오히려 줄인다.
         grid.rowSpacing = UIScale.pt(13); grid.columnSpacing = UIScale.pt(28)
         grid.translatesAutoresizingMaskIntoConstraints = false
+        // 셀 문단 스타일: paragraphSpacing 을 두지 않는다. 예전엔 데이터 셀이 attributedMarkdown 의
+        // para(뒤 여백 6)를 물어 셀 bottom 이 글자 아래로 밀렸고, 헤더 셀엔 그게 없어 위/아래 여백이
+        // 달라 보였다(위만 많고 아래는 없음). 헤더·데이터 모두 같은 tight 스타일로 통일한다.
+        let cellPara = NSMutableParagraphStyle(); cellPara.lineSpacing = 3
         for (r, row) in rows.enumerated() {
             let cells: [NSView] = (0..<max(1, cols)).map { c in
                 let text = c < row.count ? row[c] : ""
                 let l = prose(text)
                 if r == 0 {
                     l.attributedStringValue = NSAttributedString(string: text, attributes: [
-                        .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong])
+                        .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong,
+                        .paragraphStyle: cellPara])
                 } else {
-                    l.attributedStringValue = attributedMarkdown(text)
+                    let m = NSMutableAttributedString(attributedString: attributedMarkdown(text))
+                    m.addAttribute(.paragraphStyle, value: cellPara, range: NSRange(location: 0, length: m.length))
+                    l.attributedStringValue = m
                 }
                 l.maximumNumberOfLines = 0
                 return l
@@ -1227,7 +1317,7 @@ enum ChatText {
                 hair.trailingAnchor.constraint(equalTo: box.trailingAnchor),
                 hair.heightAnchor.constraint(equalToConstant: 1),
                 hair.topAnchor.constraint(equalTo: headerRow.cell(at: 0).contentView!.bottomAnchor,
-                                          constant: UIScale.pt(4)),
+                                          constant: grid.rowSpacing / 2),   // 행 간격 정중앙 → 위/아래 여백 대칭
             ])
         }
         // 데이터 행 사이 가로 구분선 - 헤더선과 완전히 동일하게 (해당 행 셀 bottom + 4, Theme.edge,
@@ -1243,7 +1333,7 @@ enum ChatText {
                     h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
                     h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
                     h.heightAnchor.constraint(equalToConstant: 1),
-                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: UIScale.pt(4)),
+                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: grid.rowSpacing / 2),   // 정중앙
                 ])
             }
         }
@@ -1327,9 +1417,9 @@ final class UserBubble: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             // 아래 여백 strip - hover 액션이 말풍선 위가 아니라 여기 뜬다.
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // 내 채팅은 오른쪽 정렬 - 오른쪽에 붙이고 왼쪽은 내용만큼만 (최소 40 여백).
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 40)
+            // 내 채팅은 왼쪽 정렬 - 왼쪽에 붙이고 오른쪽은 내용만큼만 (최소 40 여백).
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -1587,7 +1677,6 @@ final class TurnBlock: NSView {
     private var waiting = false         // paused on a permission/choice prompt
     private var finishedAt: Date?       // 완료 시각 (상대시간 표시용)
     private var doneBase = ""           // "완료 · 8초 · ↑10.8k ↓512" (시간 앞부분, refreshTime 이 시간만 갱신)
-    private let shimmer = CAGradientLayer()   // "생각/작성 중" 글자를 훑는 하이라이트
     private var shimmerOn = false
     private var statusTopGap: NSLayoutConstraint!
 
@@ -1635,29 +1724,22 @@ final class TurnBlock: NSView {
     // 답변이 생기면 상태 행 위에 간격을 준다 (thinking 중엔 붙여서 위에 뜨게).
     private func setStatusGap(_ on: Bool) { statusTopGap.constant = on ? UIScale.pt(8) : UIScale.pt(2) }
 
-    // shimmer: "생각/작성 중" 라벨 위를 밝은 띠가 왼→오 훑는다 (원래 있던 애니메이션 복원).
+    // "생각/작성 중" 진행 표시: 라벨 opacity 를 은은히 맥동. 예전엔 그라디언트 mask sweep 이었는데,
+    // 라벨 글자(시간·토큰)가 tick 마다 바뀌면 mask 프레임이 어긋나 shimmer 가 될 때 안 될 때가
+    // 생겼다("작성 중" 이 반짝일 때 안 할 때 차이). opacity 맥동은 프레임 동기화가 필요 없어 항상 돈다.
     private func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
         statusLabel.wantsLayer = true
-        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
-        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        statusLabel.layer?.mask = shimmer; needsLayout = true
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4; sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        shimmer.add(sweep, forKey: "shimmer")
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0; pulse.toValue = 0.5
+        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        statusLabel.layer?.add(pulse, forKey: "pulse")
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); statusLabel.layer?.mask = nil
-    }
-    override func layout() {
-        super.layout()
-        guard shimmerOn, let host = statusLabel.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+        shimmerOn = false; statusLabel.layer?.removeAnimation(forKey: "pulse"); statusLabel.alphaValue = 1.0
     }
 
     private var phase = t("chat.thinking")
@@ -1980,6 +2062,170 @@ final class SubagentPane: NSView {
     private static func headerText(type: String, desc: String, running: Bool) -> NSAttributedString {
         let m = NSMutableAttributedString()
         m.append(NSAttributedString(string: type,
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.small, .semibold)]))
+        if !desc.isEmpty {
+            m.append(NSAttributedString(string: "  ·  " + desc,
+                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.caption)]))
+        }
+        return m
+    }
+}
+
+// MARK: - consolidated sub-agent list (one panel, accordion rows)
+// 서브에이전트마다 별도 컬럼을 띄우면 여러 개일 때 우측이 컬럼 더미가 된다. 대신 한 패널에
+// 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
+final class SubagentListView: NSView {
+    private let scroll = NSScrollView()
+    private let stack = FlippedStack()
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = Theme.bg.cgColor
+        layer?.borderWidth = 1; layer?.borderColor = Theme.hairline.cgColor
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = stack
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true; scroll.hasHorizontalScroller = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func addEntry(_ e: SubagentEntry) {
+        e.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(e)
+        e.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        e.onRelayout = { [weak self] in self?.stack.layoutSubtreeIfNeeded() }
+    }
+}
+
+// 한 서브에이전트 = 접이식 행 (헤더: 상태 + 이름·설명 / 본문: 그 작업 전사).
+final class SubagentEntry: NSView {
+    private let header = NSView()
+    private let chevron = NSImageView()
+    private let spinner = NSProgressIndicator()
+    private let statusIcon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let body = NSStackView()
+    private let type: String
+    private var expanded = true
+    private var done = false
+    private var collapsedBottom: NSLayoutConstraint!
+    private var expandedBottom: NSLayoutConstraint!
+    var onRelayout: (() -> Void)?
+
+    init(type: String, desc: String) {
+        self.type = type
+        super.init(frame: .zero)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.isHidden = true; statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: desc)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        [chevron, spinner, statusIcon, titleLabel].forEach { header.addSubview($0) }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        body.orientation = .vertical; body.spacing = 8; body.alignment = .leading
+        body.edgeInsets = NSEdgeInsets(top: 6, left: 24, bottom: 8, right: 12)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header); addSubview(body)
+        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
+        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
+        expandedBottom.isActive = true       // 실행 중 기본 펼침
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: topAnchor),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 28),
+            chevron.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 9),
+            chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+            spinner.leadingAnchor.constraint(equalTo: chevron.trailingAnchor, constant: 7),
+            spinner.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
+            statusIcon.centerXAnchor.constraint(equalTo: spinner.centerXAnchor),
+            statusIcon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
+            titleLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 7),
+            titleLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
+        spinner.startAnimation(nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func toggle() { setExpanded(!expanded); onRelayout?() }
+    private func setExpanded(_ on: Bool) {
+        expanded = on
+        body.isHidden = !on
+        collapsedBottom.isActive = !on; expandedBottom.isActive = on
+        chevron.image = NSImage(systemSymbolName: on ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+    }
+    private func add(_ v: NSView) {
+        v.translatesAutoresizingMaskIntoConstraints = false
+        body.addArrangedSubview(v)
+        v.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -(24 + 12)).isActive = true
+        onRelayout?()
+    }
+    func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
+        add(ToolLine(name: name, detail: detail))
+        if let code, !code.isEmpty { add(ChatText.codeBlock(code, diff: name == "Edit" || name == "MultiEdit", path: path)) }
+    }
+    func addText(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let l = NSTextField(wrappingLabelWithString: t)
+        l.font = UIScale.font(UIScale.small); l.textColor = Theme.fgDim; l.isSelectable = true
+        add(l)
+    }
+    func addToolResult(_ text: String, isError: Bool) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let shown = t.count > 1200 ? String(t.prefix(1200)) + "\n…" : t
+        let label = NSTextField(labelWithString: shown)
+        label.font = UIScale.mono(UIScale.caption)
+        label.textColor = isError ? Theme.danger : Theme.fgDim
+        label.lineBreakMode = .byWordWrapping; label.maximumNumberOfLines = 12
+        label.translatesAutoresizingMaskIntoConstraints = false
+        add(label)
+    }
+    func finish(_ result: String) {
+        guard !done else { return }
+        done = true; spinner.stopAnimation(nil); spinner.isHidden = true
+        statusIcon.isHidden = false
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .bold).applying(.init(paletteColors: [Theme.success]))
+        statusIcon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: t("chat.done"))
+        let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !r.isEmpty { add(ChatText.proseMarkdown(r)) }
+        setExpanded(false)                   // 끝나면 접어 목록을 깔끔하게
+        onRelayout?()
+    }
+    private static func titleText(type: String, desc: String) -> NSAttributedString {
+        let m = NSMutableAttributedString()
+        m.append(NSAttributedString(string: type.isEmpty ? "sub-agent" : type,
             attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.small, .semibold)]))
         if !desc.isEmpty {
             m.append(NSAttributedString(string: "  ·  " + desc,

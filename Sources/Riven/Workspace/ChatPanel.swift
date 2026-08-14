@@ -42,7 +42,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
-    private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
+    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row
+    private var subagentList: SubagentListView?           // one consolidated panel for all sub-agents
     private var turnStart: Date?
     private var flushTimer: Timer?
     private var timeTimer: Timer?    // 완료 턴 상대시간 갱신 (1분마다)
@@ -353,7 +354,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     required init?(coder: NSCoder) { fatalError() }
-    deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate() }
+    deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
+        SuggestionService.shared.cancel() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")
@@ -1513,13 +1515,15 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
     func stopTurn() { interruptTurn() }
 
-    private func interruptTurn() {
+    // restoreText: 중단한 메시지를 입력창으로 되돌린다(Esc/정지). note: "중단됨" 시스템 줄.
+    // keepQueue: 대기 메시지를 남긴다(#4 끼어들기 - 중단 후 대기 메시지를 이어서 보낸다).
+    private func interruptTurn(restoreText: Bool = true, note: Bool = true, keepQueue: Bool = false) {
         guard turnStart != nil else { return }
         interrupted = true                 // suppress the error line for the result WE cancelled
         session?.interrupt()
         // Like the CLI: the interrupted message returns to the input for editing/resending. Remove
         // its bubble from the transcript and put the text back (don't clobber anything typed since).
-        if let text = currentTurnText {
+        if restoreText, let text = currentTurnText {
             currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
@@ -1527,9 +1531,11 @@ final class ChatPanel: NSView, Themable, Scalable {
             input.window?.makeFirstResponder(input)
         }
         currentTurnText = nil; currentTurnBubble = nil
-        queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
-        queuedMessages.removeAll()            // stop = cancel everything pending
-        addSystem(t("chat.interrupted"))
+        if !keepQueue {
+            queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
+            queuedMessages.removeAll()            // stop = cancel everything pending
+        }
+        if note { addSystem(t("chat.interrupted")) }
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
@@ -1564,14 +1570,31 @@ final class ChatPanel: NSView, Themable, Scalable {
         if text.hasPrefix("/"), handleSlash(text) { return }   // riven-handled slash commands
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }   // rail/tab title
         let bubble = addUser(text)
-        // A turn is still running (or awaiting approval): QUEUE this message (shown dimmed +
-        // "대기 중", like the CLI acknowledging it) and send it when the current turn finishes.
-        if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)); return }
+        // #4(A): 턴이 진행 중이면 그 턴을 끊고 이 메시지로 곧바로 다시 답한다 (CLI 처럼 - 세션 맥락은
+        // 유지되므로 이전 메시지까지 합쳐 답한다). 대기 큐에 넣고 interrupt 하면, 중단된 턴의 endTurn
+        // 이 큐를 비우며 새 턴을 시작한다. 승인 대기(카드) 중일 땐 끊지 않고 그대로 큐에 쌓는다.
+        if turnStart != nil {
+            bubble.setQueued(true); queuedMessages.append((text, bubble))
+            if pendingCard == nil { interruptTurn(restoreText: false, note: false, keepQueue: true) }
+            return
+        }
         beginTurn(text, bubble: bubble)
     }
     private var queuedMessages: [(text: String, bubble: UserBubble)] = []
     var onResumeRequest: (() -> Void)?
     private var lastUsage: ChatUsage?
+
+    // MARK: - #2 다음 작업 제안 (웜 Haiku 세션 → 입력창 ghost text, Tab 으로 채움)
+    // 생성은 SuggestionService(앱 전체 웜 세션 하나, 유휴 시 종료)가 담당 - 콜드 스타트 회피.
+    private func cancelSuggestion() { SuggestionService.shared.cancel(); input.ghost = "" }
+    private func requestSuggestion(user: String, answer: String) {
+        // 기본 꺼짐(opt-in): 토큰을 조금 더 쓴다. codex 대화에서도 동작(생성은 독립 haiku).
+        guard Settings.shared.bool("chatSuggest", false), input.stringValue.isEmpty, turnStart == nil else { return }
+        SuggestionService.shared.suggest(user: user, answer: answer) { [weak self] line in
+            guard let self, self.input.stringValue.isEmpty, self.turnStart == nil else { return }
+            self.input.ghost = line
+        }
+    }
 
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
     // commands, passthrough built-ins) return false and go to the CLI as a normal message.
@@ -2118,6 +2141,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Do NOT close the previous turn's sub-agent panels here - the user wants to keep viewing
         // them (and closing them while one was still running lost visibility). They're real dock
         // panels now: they stay open until the user closes them (or the workspace changes).
+        cancelSuggestion()                                   // 새 턴 시작 → 이전 제안 취소
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
         turnText = ""
         current = newBlock()
@@ -2187,21 +2211,28 @@ final class ChatPanel: NSView, Themable, Scalable {
         addSystem(t("chat.subagentDone", ["n": name]))
     }
 
+    private static let subListKey = "__subagents__"   // 하나의 통합 서브에이전트 패널 id
     private func addSubagentPane(_ id: String, type: String, desc: String) {
         subNames[id] = type.isEmpty ? "sub-agent" : type
         addSystem(t("chat.subagentStart", ["n": subNames[id] ?? "", "d": desc]))
-        let pane = SubagentPane(type: type, desc: desc)
-        pane.onClose = { [weak self] in self?.subToPane[id] = nil; self?.onCloseSubagentPanes?([id]) }
-        subToPane[id] = pane
-        onOpenSubagentPane?(id, pane, type.isEmpty ? "Sub-agent" : type)
+        // 서브에이전트마다 컬럼을 열지 않고, 하나의 목록 패널에 접이식 행으로 쌓는다.
+        if subagentList == nil {
+            let list = SubagentListView(); subagentList = list
+            onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents"))
+        }
+        let entry = SubagentEntry(type: type, desc: desc)
+        subagentList?.addEntry(entry)
+        subToPane[id] = entry
     }
     private func clearSubagents() {
-        let ids = Array(subToPane.keys)
         subToPane.removeAll()
-        if !ids.isEmpty { onCloseSubagentPanes?(ids) }
+        if subagentList != nil { subagentList = nil; onCloseSubagentPanes?([ChatPanel.subListKey]) }
     }
-    // The user closed a sub-agent's dock panel directly - drop our view reference.
-    func clearSubagentRef(_ id: String) { subToPane[id] = nil }
+    // The user closed the sub-agent list dock panel directly - drop all references.
+    func clearSubagentRef(_ id: String) {
+        if id == ChatPanel.subListKey { subToPane.removeAll(); subagentList = nil }
+        else { subToPane[id] = nil }
+    }
 
     private func startFlush() {
         flushTimer?.invalidate()
@@ -2251,7 +2282,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         refreshAITitle()   // adopt the CLI's summarized title if it produced one this turn
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text, bubble: q.bubble) }
-        else { setRunning(false); onBusyChange?(false) }
+        else {
+            setRunning(false); onBusyChange?(false)
+            // #2: 턴이 끝나면 다음 작업 제안(ghost)을 초경량 모델로 뽑는다 (성공·비중단·입력 빈 경우만).
+            if error == nil && !wasInterrupted { requestSuggestion(user: currentTurnText ?? "", answer: turnText) }
+        }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
         // to a 5k-token turn. Per-turn quota % isn't derivable (no absolute budget from the API).
@@ -2384,6 +2419,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func inputChanged() {
         highlightInput()
+        if !input.stringValue.isEmpty { cancelSuggestion() }   // 타이핑 시작 → 제안 취소
         let s = input.stringValue
         // 1) 맨 앞의 /명령 - 지금까지와 같다.
         if s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") {

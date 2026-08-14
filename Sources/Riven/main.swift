@@ -6526,7 +6526,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 고정 헤더/버튼이 있는 패널은 그냥 프레임에 채우면, 패널을 줄일 때 레이아웃이 깨지고
         // 잘렸다. 최소 높이를 둔 스크롤로 감싸 짧아지면 스크롤되게 한다. preview(웹뷰)·api(스플릿)
         // 는 자체적으로 줄어들므로 감싸지 않는다.
-        let scrollMin: [String: CGFloat] = ["team": 440, "search": 220, "git": 280, "changes": 220, "notes": 240]
+        // team: 파이프라인 폼(단계 120 + 태스크 64 + 버튼들)까지 항상 활성이라 필요한 최소 높이가
+        // 크다. 440 이면 짧게 줄일 때 그만큼을 못 담아 저우선 제약이 깨져 탭·입력이 겹쳤다 → 600 으로.
+        let scrollMin: [String: CGFloat] = ["team": 600, "search": 220, "git": 280, "changes": 220, "notes": 240]
         if let m = scrollMin[id] { adoptScrollable(content, into: host, minHeight: UIScale.pt(m)) }
         else { adopt(content, into: host) }
         let panel = st.auxPanels[id] ?? DockPanel(id: id, title: title,
