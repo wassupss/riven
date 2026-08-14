@@ -315,7 +315,6 @@ final class ToolLine: NSView {
 final class ToolGroup: NSView {
     private let header = NSView()
     private let chevron = NSImageView()
-    private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let body = NSStackView()
     private var expanded = false              // 기본 닫힘 (헤더에 진행 상황·카운트만)
@@ -344,17 +343,13 @@ final class ToolGroup: NSView {
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
-        icon.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)
-        icon.contentTintColor = Theme.fgDim
-        icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
-        icon.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIScale.font(UIScale.prose, .medium); titleLabel.textColor = Theme.accent2   // 답변과 동일 크기
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)  // 길면 truncate
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        [icon, titleLabel, chevron].forEach { header.addSubview($0) }
+        [titleLabel, chevron].forEach { header.addSubview($0) }   // 아이콘은 titleLabel 안 인라인 첨부로
         header.translatesAutoresizingMaskIntoConstraints = false
         body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -371,10 +366,7 @@ final class ToolGroup: NSView {
             header.topAnchor.constraint(equalTo: topAnchor, constant: padV),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
             header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH),
-            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            icon.leadingAnchor.constraint(equalTo: header.leadingAnchor),
-            icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
@@ -487,10 +479,26 @@ final class ToolGroup: NSView {
         updateTitle(); return true
     }
 
+    // 렌치 아이콘을 제목 라벨 안 인라인 첨부로 (별도 이미지뷰를 centerY 맞추면 글자 optical
+    // 중앙과 살짝 어긋나 보였다 - 같은 줄 안에 넣으면 baseline 기준으로 딱 맞는다).
+    private static func iconPrefix() -> NSAttributedString {
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(11), weight: .medium)
+            .applying(.init(paletteColors: [Theme.fgDim]))
+        guard let img = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return NSAttributedString(string: "") }
+        let att = NSTextAttachment(); att.image = img
+        let font = UIScale.font(UIScale.prose, .medium)
+        let y = (font.capHeight - img.size.height) / 2   // 글자 cap 중앙에 아이콘을 맞춘다
+        att.bounds = CGRect(x: 0, y: y, width: img.size.width, height: img.size.height)
+        let m = NSMutableAttributedString(attachment: att)
+        m.append(NSAttributedString(string: "  "))
+        return m
+    }
     private func updateTitle() {
         // 헤더 전체를 왼쪽 한 줄로: 실행 중이면 "<한글 동작> · <현재 명령>",
         // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
         let m = NSMutableAttributedString()
+        m.append(ToolGroup.iconPrefix())   // 렌치 아이콘 (글자와 baseline 정렬)
         let f = UIScale.font(UIScale.prose, .medium)
         if running {
             let verb = ToolGroup.verb(latestName)
