@@ -343,7 +343,7 @@ final class ToolGroup: NSView {
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIScale.font(UIScale.prose, .medium); titleLabel.textColor = Theme.accent2   // 답변과 동일 크기
+        titleLabel.font = UIScale.font(UIScale.prose); titleLabel.textColor = Theme.accent2   // 답변과 완전 동일(크기·굵기)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
@@ -499,7 +499,7 @@ final class ToolGroup: NSView {
         // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
         let m = NSMutableAttributedString()
         m.append(ToolGroup.iconPrefix())   // 렌치 아이콘 (글자와 baseline 정렬)
-        let f = UIScale.font(UIScale.prose, .medium)
+        let f = UIScale.font(UIScale.prose)   // 답변 본문과 동일(크기·굵기)
         if running {
             let verb = ToolGroup.verb(latestName)
             m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
@@ -522,38 +522,58 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
+    // 실행 중: 테두리를 따라 밝은 accent 조각이 한 바퀴 도는 애니메이션. 완료되면 초록 정적 테두리.
+    // 회전 그라디언트+마스크는 리사이즈 때 프레임이 어긋나 깨졌다 → CAShapeLayer 스트로크의
+    // lineDashPhase 이동으로 대체(프레임 충돌 없음, 둘레만 갱신).
+    private let borderAnim = CAShapeLayer()
+    private var lastPeri: CGFloat = -1
+
     func endRun() {
         running = false; stopShimmer(); updateTitle()
-        // 완료: 테두리 맥동 멈추고 초록(성공) 테두리로.
-        layer?.removeAnimation(forKey: "borderPulse")
-        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 정적 테두리
     }
 
-    // 실행 중 표시는 제목 글자의 opacity 를 은은히 맥동시킨다. 예전엔 그라디언트 mask sweep 을
-    // 썼는데, 제목이 길어지거나(현재 명령) 자주 바뀌면 mask 프레임이 실제 라벨보다 작게 남아
-    // 글자 대부분이 마스크 밖으로 나가 사라지고 조각("|")만 보였다. opacity 맥동은 프레임 동기화가
-    // 필요 없어 항상 온전히 읽힌다. 동시에 테두리도 accent 로 맥동시켜 "패널이 도는" 느낌을 준다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
-        titleLabel.wantsLayer = true
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0; pulse.toValue = 0.5
-        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        titleLabel.layer?.add(pulse, forKey: "pulse")
-        // 테두리 맥동 (accent ↔ 옅은 accent).
-        layer?.borderColor = Theme.accent2.cgColor
-        let bp = CABasicAnimation(keyPath: "borderColor")
-        bp.fromValue = Theme.accent2.cgColor
-        bp.toValue = Theme.accent2.withAlphaComponent(0.25).cgColor
-        bp.duration = 0.9; bp.autoreverses = true; bp.repeatCount = .infinity
-        bp.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(bp, forKey: "borderPulse")
+        layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
+        borderAnim.fillColor = NSColor.clear.cgColor
+        borderAnim.strokeColor = Theme.accent2.cgColor
+        borderAnim.lineWidth = 1.5
+        borderAnim.lineCap = .round
+        // 부드러운 글로우 - 딱딱한 대시가 아니라 은은히 빛나며 흐르게.
+        borderAnim.shadowColor = Theme.accent2.cgColor
+        borderAnim.shadowRadius = 4; borderAnim.shadowOpacity = 0.9; borderAnim.shadowOffset = .zero
+        layer?.addSublayer(borderAnim)
+        lastPeri = -1; needsLayout = true   // layout 이 path·대시·애니메이션을 건다
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; titleLabel.layer?.removeAnimation(forKey: "pulse"); titleLabel.alphaValue = 1.0
+        shimmerOn = false
+        borderAnim.removeAllAnimations(); borderAnim.removeFromSuperlayer()
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn else { return }
+        let r = UIScale.pt(9)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        borderAnim.frame = bounds
+        borderAnim.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
+                                 cornerWidth: r, cornerHeight: r, transform: nil)
+        CATransaction.commit()
+        // 둘레가 바뀔 때만 대시·애니메이션 재설정(매 layout 재설정하면 끊긴다).
+        let peri = 2 * (bounds.width + bounds.height)
+        if abs(peri - lastPeri) > 0.5, peri > 1 {
+            lastPeri = peri
+            let seg: CGFloat = 90                      // 길고 부드러운 빛 조각
+            borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]   // 조각 하나만 보이게
+            borderAnim.removeAnimation(forKey: "travel")
+            let a = CABasicAnimation(keyPath: "lineDashPhase")
+            a.fromValue = 0; a.toValue = -(seg + peri)  // 한 바퀴
+            a.duration = 3.4; a.repeatCount = .infinity   // 느리게 = 차분/고급
+            a.timingFunction = CAMediaTimingFunction(name: .linear)
+            borderAnim.add(a, forKey: "travel")
+        }
     }
 }
 
@@ -1830,6 +1850,14 @@ final class TurnBlock: NSView {
         }
         toolGroup?.addTool(name, detail, code: code, path: path)
     }
+    // 서브에이전트를 채팅 안 인라인 아코디언으로 추가 (사이드 패널 대신). 명령 아코디언과 같은 결.
+    func addSubagent(_ id: String, type: String, desc: String) -> SubagentEntry {
+        closeText(); setStatusGap(true)
+        let e = SubagentEntry(type: type, desc: desc)
+        add(e)
+        e.onRelayout = { [weak e] in e?.enclosingChatPanel?.accordionRelayout() }
+        return e
+    }
     @discardableResult
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
                      options: [(String, () -> Void)], custom: ((String) -> Void)? = nil) -> ApprovalCard {
@@ -2074,6 +2102,79 @@ final class SubagentPane: NSView {
 // MARK: - consolidated sub-agent list (one panel, accordion rows)
 // 서브에이전트마다 별도 컬럼을 띄우면 여러 개일 때 우측이 컬럼 더미가 된다. 대신 한 패널에
 // 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
+// 입력창 오른쪽 위에 떠 있는 서브에이전트 목록. 각 에이전트가 뭘 하는지(타입·설명) 한 줄씩
+// 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
+final class SubagentIndicator: NSView {
+    private let stack = NSStackView()
+    private var rows: [String: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)] = [:]
+    var onClick: (() -> Void)?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = UIScale.pt(9)
+        layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical; stack.spacing = UIScale.pt(3); stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: UIScale.pt(6), left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            widthAnchor.constraint(equalToConstant: UIScale.pt(250)),   // 고정 폭 - 행 추가돼도 안 흔들림
+        ])
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    @objc private func tap() { onClick?() }
+
+    // 에이전트 한 줄 추가/갱신. title = "타입 · 설명".
+    // 실행 중 = 스피너(도는 게 눈에 확실히 보임), 완료 = 초록 체크. 점+펄스는 도는지
+    // 애매해 "처음부터 완료처럼" 보였다 → 아코디언 헤더와 같은 스피너/체크로 통일.
+    func upsert(id: String, title: String, running: Bool) {
+        let r: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)
+        if let ex = rows[id] { r = ex; r.label.stringValue = title }
+        else {
+            let spin = NSProgressIndicator()
+            spin.style = .spinning; spin.controlSize = .small; spin.isDisplayedWhenStopped = false
+            spin.translatesAutoresizingMaskIntoConstraints = false
+            let check = NSImageView()
+            check.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+            check.contentTintColor = Theme.success
+            check.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .semibold)
+            check.isHidden = true; check.translatesAutoresizingMaskIntoConstraints = false
+            let lbl = NSTextField(labelWithString: title)
+            lbl.font = UIScale.font(UIScale.small, .medium); lbl.lineBreakMode = .byTruncatingTail
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(spin); row.addSubview(check); row.addSubview(lbl)
+            NSLayoutConstraint.activate([
+                row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(18)),
+                spin.leadingAnchor.constraint(equalTo: row.leadingAnchor), spin.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                spin.widthAnchor.constraint(equalToConstant: 12), spin.heightAnchor.constraint(equalToConstant: 12),
+                check.centerXAnchor.constraint(equalTo: spin.centerXAnchor), check.centerYAnchor.constraint(equalTo: spin.centerYAnchor),
+                check.widthAnchor.constraint(equalToConstant: 13), check.heightAnchor.constraint(equalToConstant: 13),
+                lbl.leadingAnchor.constraint(equalTo: spin.trailingAnchor, constant: 7),
+                lbl.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+                lbl.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            ])
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(UIScale.pt(10) * 2)).isActive = true
+            rows[id] = (row, spin, check, lbl); r = (row, spin, check, lbl)
+        }
+        if running {
+            r.check.isHidden = true; r.spinner.isHidden = false; r.spinner.startAnimation(nil); r.label.textColor = Theme.fg
+        } else {
+            r.spinner.stopAnimation(nil); r.spinner.isHidden = true; r.check.isHidden = false; r.label.textColor = Theme.fgDim
+        }
+        isHidden = rows.isEmpty
+    }
+    func reset() { rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
+}
+
 final class SubagentListView: NSView {
     private let scroll = NSScrollView()
     private let stack = FlippedStack()
@@ -2103,6 +2204,15 @@ final class SubagentListView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     func addEntry(_ e: SubagentEntry) {
+        // 항목 사이 얇은 구분선 (첫 항목 앞엔 안 넣는다) - 목록이 구분돼 깔끔하게 보인다.
+        if !stack.arrangedSubviews.isEmpty {
+            let sep = NSView(); sep.wantsLayer = true
+            sep.layer?.backgroundColor = Theme.hairline.cgColor
+            sep.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(sep)
+            sep.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         e.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(e)
         e.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -2129,6 +2239,11 @@ final class SubagentEntry: NSView {
         self.type = type
         super.init(frame: .zero)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        wantsLayer = true   // 채팅 인라인 아코디언 - 도구 그룹처럼 테두리 박스
+        layer?.cornerRadius = UIScale.pt(9)
+        layer?.borderWidth = 1
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.03 : 0.04).cgColor
         chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
@@ -2187,7 +2302,8 @@ final class SubagentEntry: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -(24 + 12)).isActive = true
-        onRelayout?()
+        // 성능: 매 추가마다 전체 목록을 강제 레이아웃하지 않는다(서브 여럿이 스트리밍하면 O(n²) 렉).
+        // Auto Layout 이 다음 사이클에 알아서 반영한다. onRelayout 은 사용자 토글에만.
     }
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         add(ToolLine(name: name, detail: detail))
@@ -2196,9 +2312,9 @@ final class SubagentEntry: NSView {
     func addText(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
-        let l = NSTextField(wrappingLabelWithString: t)
-        l.font = UIScale.font(UIScale.small); l.textColor = Theme.fgDim; l.isSelectable = true
-        add(l)
+        // 메인 답변처럼 마크다운으로 파싱해 그린다 (제목·목록·코드·표). 예전엔 plain 라벨이라
+        // 서브에이전트 답변의 마크다운이 raw 로 보였다("파싱 안 됨").
+        for v in ChatText.render(t, bullet: false) { add(v) }
     }
     func addToolResult(_ text: String, isError: Bool) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2214,12 +2330,13 @@ final class SubagentEntry: NSView {
     func finish(_ result: String) {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil); spinner.isHidden = true
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 테두리 (명령 그룹과 동일)
         statusIcon.isHidden = false
         let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .bold).applying(.init(paletteColors: [Theme.success]))
         statusIcon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
         titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: t("chat.done"))
         let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !r.isEmpty { add(ChatText.proseMarkdown(r)) }
+        if !r.isEmpty { for v in ChatText.render(r, bullet: false) { add(v) } }   // 최종 답변도 마크다운 렌더
         setExpanded(false)                   // 끝나면 접어 목록을 깔끔하게
         onRelayout?()
     }
