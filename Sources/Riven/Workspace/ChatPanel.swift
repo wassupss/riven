@@ -835,7 +835,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let url = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/projects/\(enc)/\(sessionId).jsonl")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        var msgs: [(user: Bool, text: String)] = []
+        var items: [HistItem] = []
         for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let d = line.data(using: .utf8),
                   let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
@@ -844,38 +844,71 @@ final class ChatPanel: NSView, Themable, Scalable {
             // (top-level isCompactSummary). CLI 는 컨텍스트로만 쓰고, 우리가 이걸 일반 말풍선으로
             // 그리는 바람에 재기동 복원마다 거대한 "요약 채팅"이 떴다. 메타 엔트리는 렌더에서 뺀다.
             if o["isCompactSummary"] as? Bool == true || o["isMeta"] as? Bool == true { continue }
-            let s = ChatPanel.contentText(msg["content"]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if s.isEmpty { continue }
-            if type == "user" { if s.hasPrefix("/") || s.hasPrefix("<") { continue }; msgs.append((true, s)) }
-            else if type == "assistant" { msgs.append((false, s)) }
+            let parent = o["parent_tool_use_id"]
+            let isMain = parent == nil || parent is NSNull     // 서브에이전트 스레드의 도구는 복원에서 뺀다
+            let content = msg["content"]
+            if type == "user" {
+                let s = ChatPanel.contentText(content).trimmingCharacters(in: .whitespacesAndNewlines)
+                if s.isEmpty || s.hasPrefix("/") || s.hasPrefix("<") { continue }
+                items.append(.user(s))
+            } else if type == "assistant" {
+                if let arr = content as? [[String: Any]] {
+                    // 메시지 안 블록을 순서대로: text → 답변, tool_use → 도구(라이브와 동일 파싱).
+                    for block in arr {
+                        let bt = block["type"] as? String
+                        if bt == "text", let t = (block["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                            items.append(.asst(t))
+                        } else if bt == "tool_use", isMain, let name = block["name"] as? String,
+                                  name != "Task", name != "Agent" {
+                            let input = block["input"] as? [String: Any] ?? [:]
+                            let p = ClaudeChatSession.toolParts(name, input)
+                            items.append(.tool(name: name, detail: p.detail, code: p.code, path: p.path))
+                        }
+                    }
+                } else if let s = (content as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                    items.append(.asst(s))
+                }
+            }
         }
-        // Render only the LAST N messages; keep the older ones as data behind a "load earlier"
+        // Render only the LAST N items; keep the older ones as data behind a "load earlier"
         // pager. Rendering the WHOLE conversation exploded on launch - a big session = thousands of
         // autolayout views, and DockManager.restore()'s synchronous constraint pass pegged the CPU
         // (profiled). Paging keeps the live view count bounded no matter how long the history is.
+        // 도구는 접힌 아코디언 한 뷰로 묶이고 줄/코드블록은 펼칠 때 lazy 생성이라 복원 비용이 작다.
         let cap = 50
-        if msgs.count > cap {
-            pendingHistory = Array(msgs.dropLast(cap))   // older, oldest-first
-            msgs = Array(msgs.suffix(cap))
+        if items.count > cap {
+            pendingHistory = Array(items.dropLast(cap))   // older, oldest-first
+            items = Array(items.suffix(cap))
             addLoadEarlierButton()
         }
-        renderMessages(msgs, atTop: false)
+        renderItems(items, atTop: false)
         addTimelineMarker(t("chat.resumed"))
         scrollSoon()
     }
     // ---- transcript paging (see loadHistory) ----
-    private var pendingHistory: [(user: Bool, text: String)] = []   // older msgs not yet rendered
+    private enum HistItem { case user(String); case asst(String); case tool(name: String, detail: String, code: String?, path: String?) }
+    private var pendingHistory: [HistItem] = []   // older items not yet rendered (oldest-first)
     private var loadEarlierBtn: NSView?
-    private func renderMessages(_ msgs: [(user: Bool, text: String)], atTop: Bool) {
+    // 연속된 도구 항목은 라이브와 똑같이 하나의 접이식 ToolGroup 으로 묶어 그린다.
+    private func renderItems(_ items: [HistItem], atTop: Bool) {
         var idx = atTop ? (loadEarlierBtn != nil ? 1 : 0) : stack.arrangedSubviews.count
-        for m in msgs {
-            let views: [NSView] = m.user ? [UserBubble(text: m.text)] : ChatText.render(m.text)
-            for (j, v) in views.enumerated() {
-                v.translatesAutoresizingMaskIntoConstraints = false
-                stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
-                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        func insert(_ v: NSView) {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            stack.insertArrangedSubview(v, at: min(idx, stack.arrangedSubviews.count)); idx += 1
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
+        }
+        var group: ToolGroup?
+        func closeGroup() { group?.endRun(); group = nil }   // 복원 그룹은 "명령 N개" (done) 상태
+        for it in items {
+            switch it {
+            case .tool(let n, let d, let c, let p):
+                if group == nil { let g = ToolGroup(); insert(g); group = g }
+                group?.addTool(n, d, code: c, path: p)
+            case .user(let s): closeGroup(); insert(UserBubble(text: s))
+            case .asst(let s): closeGroup(); ChatText.render(s).forEach(insert)
             }
         }
+        closeGroup()
     }
     // A non-interactive marker at the very top telling the reader there's more above; scrolling to
     // the top auto-loads it (see clipMoved). Not a button - the load is scroll-driven.
@@ -903,7 +936,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         let oldH = stack.frame.height, oldY = scroll.contentView.bounds.origin.y
         loadEarlierBtn?.removeFromSuperview(); loadEarlierBtn = nil
         if !pendingHistory.isEmpty { addLoadEarlierButton() }
-        renderMessages(batch, atTop: true)
+        renderItems(batch, atTop: true)
         trimBottomIfNeeded()
         layoutSubtreeIfNeeded()
         let dy = stack.frame.height - oldH

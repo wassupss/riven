@@ -303,6 +303,9 @@ final class ToolGroup: NSView {
     private var running = true
     private var count = 0
     private var latestName = ""
+    private struct Spec { let name: String; let detail: String; let code: String?; let path: String?; let diff: Bool }
+    private var specs: [Spec] = []            // 도구 명세 (뷰는 펼칠 때 lazy 생성)
+    private var built = false                 // 본문 줄을 실제로 만들었는지
     private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
     private var openedCode: [ObjectIdentifier: NSView] = [:]
     private let shimmer = CAGradientLayer()
@@ -364,6 +367,7 @@ final class ToolGroup: NSView {
     @objc private func toggle() { setExpanded(!expanded); enclosingChatPanel?.accordionRelayout() }
     func setExpanded(_ on: Bool) {
         expanded = on
+        if on && !built { buildRows() }         // 펼칠 때 처음으로 도구 줄을 만든다 (그전엔 헤더만 = 가볍다)
         body.isHidden = !expanded
         collapsedBottom.isActive = !expanded    // 접힘=헤더 높이만, 펼침=본문까지
         expandedBottom.isActive = expanded
@@ -372,19 +376,29 @@ final class ToolGroup: NSView {
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
     }
 
+    // 성능: 도구 줄(ToolLine)·코드블록은 뷰를 즉시 만들지 않고 spec 으로만 쌓아 둔다. 그룹은
+    // 기본 접힘이라, 라이브 스팸이든 세션 복원이든 펼치기 전엔 헤더 하나만 존재한다.
     func addTool(_ name: String, _ detail: String, code: String?, path: String?) {
         count += 1
-        latestName = name.replacingOccurrences(of: "mcp__riven__", with: "")
-        let line = ToolLine(name: name, detail: detail)
+        let clean = name.replacingOccurrences(of: "mcp__riven__", with: "")
+        latestName = clean
+        let spec = Spec(name: clean, detail: detail, code: (code?.isEmpty == false) ? code : nil,
+                        path: path, diff: name == "Edit" || name == "MultiEdit")
+        specs.append(spec)
+        if built { appendRow(spec) }            // 이미 펼쳐진 상태면 새 줄도 바로 붙인다
+        updateTitle()
+    }
+    private func buildRows() { specs.forEach(appendRow); built = true }
+    private func appendRow(_ spec: Spec) {
+        let line = ToolLine(name: spec.name, detail: spec.detail)
         line.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(line)
         line.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
-        if let code, !code.isEmpty {
-            codeFor[ObjectIdentifier(line)] = (code, path, name == "Edit" || name == "MultiEdit")
+        if let code = spec.code {
+            codeFor[ObjectIdentifier(line)] = (code, spec.path, spec.diff)
             line.markExpandable()
             line.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(lineClicked(_:))))
         }
-        updateTitle()
     }
 
     @objc private func lineClicked(_ g: NSClickGestureRecognizer) {
@@ -403,18 +417,20 @@ final class ToolGroup: NSView {
         enclosingChatPanel?.accordionRelayout()
     }
 
-    /// 승인 카드가 같은 명령을 다시 보여줄 때, 그룹에서 방금 넣은 중복 줄을 걷는다.
+    /// 승인 카드가 같은 명령을 다시 보여줄 때, 그룹에서 방금 넣은 중복 항목을 걷는다.
     @discardableResult func removeLastMatching(_ code: String) -> Bool {
-        for line in body.arrangedSubviews.reversed().compactMap({ $0 as? ToolLine }) {
-            let key = ObjectIdentifier(line)
-            if codeFor[key]?.code == code {
-                openedCode[key]?.removeFromSuperview(); openedCode[key] = nil
-                codeFor[key] = nil; line.removeFromSuperview()
-                count = max(0, count - 1); updateTitle()
-                return true
+        guard let i = specs.lastIndex(where: { $0.code == code }) else { return false }
+        specs.remove(at: i); count = max(0, count - 1)
+        if built {                              // 이미 뷰가 만들어졌으면 해당 줄도 제거
+            for line in body.arrangedSubviews.reversed().compactMap({ $0 as? ToolLine }) {
+                let key = ObjectIdentifier(line)
+                if codeFor[key]?.code == code {
+                    openedCode[key]?.removeFromSuperview(); openedCode[key] = nil
+                    codeFor[key] = nil; line.removeFromSuperview(); break
+                }
             }
         }
-        return false
+        updateTitle(); return true
     }
 
     private func updateTitle() {
