@@ -2103,6 +2103,15 @@ final class SubagentListView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
     func addEntry(_ e: SubagentEntry) {
+        // 항목 사이 얇은 구분선 (첫 항목 앞엔 안 넣는다) - 목록이 구분돼 깔끔하게 보인다.
+        if !stack.arrangedSubviews.isEmpty {
+            let sep = NSView(); sep.wantsLayer = true
+            sep.layer?.backgroundColor = Theme.hairline.cgColor
+            sep.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(sep)
+            sep.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            sep.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         e.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(e)
         e.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -2187,7 +2196,8 @@ final class SubagentEntry: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(v)
         v.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -(24 + 12)).isActive = true
-        onRelayout?()
+        // 성능: 매 추가마다 전체 목록을 강제 레이아웃하지 않는다(서브 여럿이 스트리밍하면 O(n²) 렉).
+        // Auto Layout 이 다음 사이클에 알아서 반영한다. onRelayout 은 사용자 토글에만.
     }
     func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
         add(ToolLine(name: name, detail: detail))
@@ -2196,9 +2206,9 @@ final class SubagentEntry: NSView {
     func addText(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { return }
-        let l = NSTextField(wrappingLabelWithString: t)
-        l.font = UIScale.font(UIScale.small); l.textColor = Theme.fgDim; l.isSelectable = true
-        add(l)
+        // 메인 답변처럼 마크다운으로 파싱해 그린다 (제목·목록·코드·표). 예전엔 plain 라벨이라
+        // 서브에이전트 답변의 마크다운이 raw 로 보였다("파싱 안 됨").
+        for v in ChatText.render(t, bullet: false) { add(v) }
     }
     func addToolResult(_ text: String, isError: Bool) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2219,7 +2229,7 @@ final class SubagentEntry: NSView {
         statusIcon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
         titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: t("chat.done"))
         let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !r.isEmpty { add(ChatText.proseMarkdown(r)) }
+        if !r.isEmpty { for v in ChatText.render(r, bullet: false) { add(v) } }   // 최종 답변도 마크다운 렌더
         setExpanded(false)                   // 끝나면 접어 목록을 깔끔하게
         onRelayout?()
     }

@@ -131,7 +131,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         wantsLayer = true
         layer?.backgroundColor = Theme.bg.cgColor
 
-        stack.orientation = .vertical; stack.spacing = 14; stack.alignment = .leading
+        stack.orientation = .vertical; stack.spacing = 20; stack.alignment = .leading   // 완료·유저채팅·답변 사이 간격
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 14, right: 16)   // 좌우 대칭 여백
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
@@ -1126,7 +1126,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         s?.onSubagentStart = { [weak self] id, type, desc in
             if ChatPanel.subBench { RLog.log("SUB 시작 id=\(id.suffix(8)) type=\(type) desc=\(desc.prefix(40))") }
-            self?.ensureAutoTurn()
+            // ensureAutoTurn 을 호출하지 않는다: 서브에이전트는 항상 활성 메인 턴 안에서 생기므로
+            // 여기서 턴을 새로 세울 필요가 없다. 예전엔 메인 result 뒤 늦게 온 서브 이벤트가 유령
+            // "생각 중" 턴을 띄웠고, result 가 안 와 영영 안 풀렸다(Esc 로도).
             self?.addSubagentPane(id, type: type, desc: desc)
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
@@ -1146,9 +1148,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onSubagentDone = { [weak self] id, result in
             if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self?.subToPane[id] != nil)") }
             self?.subToPane[id]?.finish(result)
-            // 메인 대화에도 흔적을 남긴다. 서브의 결과는 옆 패널에만 들어가서, 이쪽만 보고
-            // 있으면 아무 일도 안 일어난 것처럼 보였다 (사용자가 다시 물어보게 되던 지점).
-            self?.noteSubagentFinished(id)
+            // 완료 알림 칩은 안 띄운다 - 서브에이전트 패널 항목이 ✓ 완료로 바뀌어 상태를 보여준다.
         }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
@@ -1537,6 +1537,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         if note { addSystem(t("chat.interrupted")) }
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
+        // 안전망: 세션이 이미 idle(유령 턴 등)이라 result 가 안 오면 위 interrupt 로는 안 풀린다.
+        // 1.5초 뒤에도 여전히 이 턴이 걸려 있으면 UI 를 강제로 마감한다("생각 중" 무한 대기 방지).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.turnStart != nil, self.interrupted else { return }
+            self.endTurn(cost: nil, usage: nil)
+        }
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
     // "+" - attach file path(s) to the message (the agent reads them). Same intent as a drag-drop.
@@ -2206,15 +2212,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 외부(파이프라인 등)에서 이 팬 대화에 회색 시스템 한 줄을 남긴다.
     func systemNote(_ text: String) { addSystem(text) }
 
-    private func noteSubagentFinished(_ id: String) {
-        let name = subNames[id] ?? "sub-agent"
-        addSystem(t("chat.subagentDone", ["n": name]))
-    }
-
     private static let subListKey = "__subagents__"   // 하나의 통합 서브에이전트 패널 id
     private func addSubagentPane(_ id: String, type: String, desc: String) {
         subNames[id] = type.isEmpty ? "sub-agent" : type
-        addSystem(t("chat.subagentStart", ["n": subNames[id] ?? "", "d": desc]))
+        // 시작/완료 알림을 메인 채팅 칩으로 또 띄우지 않는다 - 서브에이전트 패널이 상태를 다 보여준다.
         // 서브에이전트마다 컬럼을 열지 않고, 하나의 목록 패널에 접이식 행으로 쌓는다.
         if subagentList == nil {
             let list = SubagentListView(); subagentList = list
