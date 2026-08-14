@@ -343,7 +343,7 @@ final class ToolGroup: NSView {
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIScale.font(UIScale.prose, .medium); titleLabel.textColor = Theme.accent2   // 답변과 동일 크기
+        titleLabel.font = UIScale.font(UIScale.prose); titleLabel.textColor = Theme.accent2   // 답변과 완전 동일(크기·굵기)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
@@ -499,7 +499,7 @@ final class ToolGroup: NSView {
         // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
         let m = NSMutableAttributedString()
         m.append(ToolGroup.iconPrefix())   // 렌치 아이콘 (글자와 baseline 정렬)
-        let f = UIScale.font(UIScale.prose, .medium)
+        let f = UIScale.font(UIScale.prose)   // 답변 본문과 동일(크기·굵기)
         if running {
             let verb = ToolGroup.verb(latestName)
             m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
@@ -522,38 +522,55 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
+    // 실행 중 테두리를 도는 빛(회전 콘 그라디언트). 완료되면 멈추고 초록 테두리.
+    private let glowContainer = CALayer()
+    private let glow = CAGradientLayer()
+    private let glowMask = CAShapeLayer()
+
     func endRun() {
         running = false; stopShimmer(); updateTitle()
-        // 완료: 테두리 맥동 멈추고 초록(성공) 테두리로.
-        layer?.removeAnimation(forKey: "borderPulse")
-        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 정적 테두리
     }
 
-    // 실행 중 표시는 제목 글자의 opacity 를 은은히 맥동시킨다. 예전엔 그라디언트 mask sweep 을
-    // 썼는데, 제목이 길어지거나(현재 명령) 자주 바뀌면 mask 프레임이 실제 라벨보다 작게 남아
-    // 글자 대부분이 마스크 밖으로 나가 사라지고 조각("|")만 보였다. opacity 맥동은 프레임 동기화가
-    // 필요 없어 항상 온전히 읽힌다. 동시에 테두리도 accent 로 맥동시켜 "패널이 도는" 느낌을 준다.
+    // 실행 중: 테두리를 따라 accent 빛이 한 바퀴 도는 애니메이션(회전 콘 그라디언트). 제목 글자
+    // 깜빡임(opacity 맥동)은 거슬려서 뺐다 - 테두리 애니메이션이 진행 표시를 맡는다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
-        titleLabel.wantsLayer = true
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0; pulse.toValue = 0.5
-        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        titleLabel.layer?.add(pulse, forKey: "pulse")
-        // 테두리 맥동 (accent ↔ 옅은 accent).
-        layer?.borderColor = Theme.accent2.cgColor
-        let bp = CABasicAnimation(keyPath: "borderColor")
-        bp.fromValue = Theme.accent2.cgColor
-        bp.toValue = Theme.accent2.withAlphaComponent(0.25).cgColor
-        bp.duration = 0.9; bp.autoreverses = true; bp.repeatCount = .infinity
-        bp.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer?.add(bp, forKey: "borderPulse")
+        layer?.borderColor = Theme.accent2.withAlphaComponent(0.28).cgColor   // 은은한 베이스 테두리
+        glow.type = .conic
+        glow.startPoint = CGPoint(x: 0.5, y: 0.5); glow.endPoint = CGPoint(x: 1, y: 0.5)
+        let a = Theme.accent2
+        glow.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0).cgColor,
+                       a.cgColor, a.withAlphaComponent(0).cgColor]
+        glow.locations = [0, 0.55, 0.78, 1.0]           // 한 지점만 밝은 아크
+        glowMask.fillColor = NSColor.clear.cgColor
+        glowMask.strokeColor = NSColor.black.cgColor    // mask 는 알파만 씀
+        glowMask.lineWidth = 2
+        glowContainer.mask = glowMask                   // 컨테이너는 테두리 스트로크에만 보이게
+        glowContainer.addSublayer(glow)
+        layer?.addSublayer(glowContainer)
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0; spin.toValue = 2 * Double.pi
+        spin.duration = 2.4; spin.repeatCount = .infinity
+        glow.add(spin, forKey: "spin")                  // 콘 그라디언트만 회전(마스크는 고정)
+        needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; titleLabel.layer?.removeAnimation(forKey: "pulse"); titleLabel.alphaValue = 1.0
+        shimmerOn = false
+        glow.removeAllAnimations(); glowContainer.removeFromSuperlayer()
+    }
+    override func layout() {
+        super.layout()
+        guard shimmerOn else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        glowContainer.frame = bounds
+        glow.frame = bounds                             // anchor 0.5,0.5 → bounds 중심으로 회전
+        glowMask.frame = bounds
+        glowMask.path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
+                               cornerWidth: UIScale.pt(9), cornerHeight: UIScale.pt(9), transform: nil)
+        CATransaction.commit()
     }
 }
 
