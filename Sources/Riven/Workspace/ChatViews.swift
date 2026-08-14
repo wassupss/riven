@@ -318,7 +318,6 @@ final class ToolGroup: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let body = NSStackView()
-    private let badge = NSTextField(labelWithString: "")   // 우측: N 실행 · M 변경 (+A -B)
     private var expanded = false              // 기본 닫힘 (헤더에 진행 상황·카운트만)
     private var running = true
     private var count = 0
@@ -349,11 +348,7 @@ final class ToolGroup: NSView {
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        badge.font = UIScale.font(UIScale.small, .medium); badge.textColor = Theme.fgDim
-        badge.setContentHuggingPriority(.required, for: .horizontal)
-        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        [icon, titleLabel, badge, chevron].forEach { header.addSubview($0) }
+        [icon, titleLabel, chevron].forEach { header.addSubview($0) }
         header.translatesAutoresizingMaskIntoConstraints = false
         body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -376,9 +371,7 @@ final class ToolGroup: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8),
-            badge.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
-            badge.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
             chevron.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -2),
             chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -488,31 +481,29 @@ final class ToolGroup: NSView {
     }
 
     private func updateTitle() {
-        // 제목(왼쪽): 실행 중이면 "<한글 동작> · <현재 명령>", 끝나면 "명령".
+        // 헤더 전체를 왼쪽 한 줄로: 실행 중이면 "<한글 동작> · <현재 명령>",
+        // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
+        let m = NSMutableAttributedString()
+        let f = UIScale.font(UIScale.body, .medium)
         if running {
             let verb = ToolGroup.verb(latestName)
-            titleLabel.stringValue = latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)"
-            titleLabel.textColor = Theme.accent2
+            m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
+                                        attributes: [.foregroundColor: Theme.accent2, .font: f]))
         } else {
-            titleLabel.stringValue = t("chat.tools.cmd")
-            titleLabel.textColor = Theme.fgDim
+            m.append(NSAttributedString(string: t("chat.tools.count", ["n": "\(count)"]),
+                                        attributes: [.foregroundColor: Theme.fgDim, .font: f]))
+            if changed > 0 {
+                m.append(NSAttributedString(string: " · " + t("chat.tools.changed", ["n": "\(changed)"]),
+                                            attributes: [.foregroundColor: Theme.fgDim, .font: f]))
+            }
+            if added > 0 || removed > 0 {
+                let sf = UIScale.font(UIScale.small, .semibold)
+                m.append(NSAttributedString(string: "  "))
+                if added > 0 { m.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: sf])) }
+                if removed > 0 { m.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: sf])) }
+            }
         }
-        // 배지(오른쪽): N 실행 · M 변경 (+A -B).
-        let b = NSMutableAttributedString()
-        let bf = UIScale.font(UIScale.small, .medium)
-        b.append(NSAttributedString(string: t("chat.tools.ran", ["n": "\(count)"]),
-                                    attributes: [.foregroundColor: Theme.fgDim, .font: bf]))
-        if changed > 0 {
-            b.append(NSAttributedString(string: " · " + t("chat.tools.changed", ["n": "\(changed)"]),
-                                        attributes: [.foregroundColor: Theme.fgDim, .font: bf]))
-        }
-        if added > 0 || removed > 0 {
-            let f = UIScale.font(UIScale.small, .semibold)
-            b.append(NSAttributedString(string: "  "))
-            if added > 0 { b.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: f])) }
-            if removed > 0 { b.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: f])) }
-        }
-        badge.attributedStringValue = b
+        titleLabel.attributedStringValue = m
         needsLayout = true
     }
 

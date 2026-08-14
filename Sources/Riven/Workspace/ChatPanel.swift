@@ -1597,19 +1597,22 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard !ans.isEmpty, let cmd = AgentDiscovery.claudeCmd() else { return }
         cancelSuggestion()
         let prompt = """
-        아래는 코딩 에이전트와의 마지막 대화다. 사용자가 이어서 보낼 법한 '다음 지시' 한 줄을 제안하라.
-        규칙: 사용자의 언어로, 명령형 한 줄, 40자 이내, 따옴표·설명 없이 그 문장만. 마땅한 게 없으면 빈 줄.
+        너는 사용자가 코딩 에이전트에게 다음에 보낼 메시지를 예측하는 자동완성이다. 마지막 대화를 보고 \
+        사용자가 이어서 칠 법한 지시 딱 한 줄만 출력해라. 사용자의 언어로, 명령형, 40자 이내. \
+        인사·설명·따옴표·머리말 절대 금지, 그 문장만.
 
-        [사용자] \(user.prefix(500))
-        [에이전트] \(ans.prefix(1500))
+        사용자: \(user.prefix(500))
+        에이전트: \(ans.prefix(1500))
 
-        다음 지시:
+        사용자가 다음에 칠 메시지:
         """
         let p = Process()
         p.executableURL = URL(fileURLWithPath: cmd)
+        // 프롬프트는 stdin 으로 (positional 로 주면 변수인수 --mcp-config 가 삼켜 버린다).
         // 전역 MCP(devhub 등)·훅을 로드하지 않게 빈 MCP + strict → 가볍고 Bun 워커 CPU 스핀 방지.
         p.arguments = ["-p", "--model", "haiku", "--output-format", "text",
-                       "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", prompt]
+                       "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}"]
+        let inPipe = Pipe(); p.standardInput = inPipe
         let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
         p.terminationHandler = { [weak self] proc in
             let data = out.fileHandleForReading.readDataToEndOfFile()
@@ -1625,7 +1628,11 @@ final class ChatPanel: NSView, Themable, Scalable {
             }
         }
         suggestProc = p
-        do { try p.run() } catch { suggestProc = nil }
+        do {
+            try p.run()
+            try? inPipe.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
+            try? inPipe.fileHandleForWriting.close()   // EOF → CLI 가 프롬프트를 읽고 답한다
+        } catch { suggestProc = nil }
     }
 
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
