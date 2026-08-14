@@ -1,10 +1,14 @@
-## /clear actually starts a fresh conversation
+## A refreshed agent chat
 
-Fixed `/clear` only wiping the visible transcript while the real conversation kept going. Now `/clear` spins up a new session, so messages after it no longer carry the old context, and the cleared conversation does not come back after a restart.
+Streamed answers now appear smoothly, character by character, and raw markdown no longer flashes before tables, blockquotes, and code render. The done line shows a check with the elapsed time and token counts, and notices like a permission-mode switch or model change are now small chips.
 
-## Shrinking a panel gives you a scroll
+## Commands are grouped together
 
-The agent group, search, source control, changes, notes, and team panels now scroll when you make them shorter, instead of clipping the content or breaking the layout.
+Tool calls like Read, Bash, and Edit are collected into an "N commands" accordion so they no longer clutter the conversation. Expand it to see each command; commands with code open their code block on click. Edits show how much changed with +/- counts. When a session is restored after a restart, this command history comes back too.
+
+## Stability and performance
+
+Fixed a rare crash (broken pipe) while recording file changes, and the terminal now pauses drawing when the app is in the background or its tab is hidden, saving CPU.
 
 ## Also
 
