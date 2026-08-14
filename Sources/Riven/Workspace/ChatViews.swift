@@ -207,14 +207,14 @@ final class ToolLine: NSView {
         let icon = NSImageView()
         icon.image = NSImage(systemSymbolName: ToolLine.symbol(name), accessibilityDescription: nil)
         icon.contentTintColor = Theme.fgDim
-        icon.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .medium)
+        icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = UIScale.font(UIScale.small, .medium); nameLabel.textColor = Theme.fg
+        nameLabel.font = UIScale.font(UIScale.body, .medium); nameLabel.textColor = Theme.fg
         nameLabel.wantsLayer = true
         nameLabel.setContentHuggingPriority(.required, for: .horizontal)
         nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         let detailLabel = NSTextField(labelWithString: detail)
-        detailLabel.font = UIScale.mono(UIScale.caption); detailLabel.textColor = Theme.fgDim
+        detailLabel.font = UIScale.mono(UIScale.small); detailLabel.textColor = Theme.fgDim
         detailLabel.lineBreakMode = .byTruncatingMiddle
         detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // A single horizontal stack pinned to the row's edges - the row height always wraps its
@@ -314,16 +314,17 @@ final class ToolGroup: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevron.contentTintColor = Theme.fgDim
-        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
         icon.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: nil)
         icon.contentTintColor = Theme.fgDim
-        icon.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .medium)
+        icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIScale.font(UIScale.small, .medium); titleLabel.textColor = Theme.accent2
+        titleLabel.font = UIScale.font(UIScale.body, .medium); titleLabel.textColor = Theme.accent2
         titleLabel.wantsLayer = true
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        let hrow = NSStackView(views: [chevron, icon, titleLabel])
+        // chevron 은 "명령 N개" 오른쪽에 (아이콘·글자 다음).
+        let hrow = NSStackView(views: [icon, titleLabel, chevron])
         hrow.orientation = .horizontal; hrow.alignment = .centerY; hrow.spacing = 7
         hrow.translatesAutoresizingMaskIntoConstraints = false
         header.translatesAutoresizingMaskIntoConstraints = false
@@ -332,9 +333,14 @@ final class ToolGroup: NSView {
         body.translatesAutoresizingMaskIntoConstraints = false
         body.isHidden = true
         addSubview(header); addSubview(body)
+        // 접힘/펼침에 따라 그룹 바닥을 헤더 or 본문에 묶는다. isHidden 만으론 본문이 Auto Layout
+        // 에서 사라지지 않아 접어도 펼친 높이를 그대로 차지했다(다음 답변이 한참 아래로 밀림).
+        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
+        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
+        collapsedBottom.isActive = true
         NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
-            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(14)),
             hrow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
             hrow.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
             hrow.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
@@ -345,22 +351,25 @@ final class ToolGroup: NSView {
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
             body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(16)),
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
-            body.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
         updateTitle()
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    private var collapsedBottom: NSLayoutConstraint!
+    private var expandedBottom: NSLayoutConstraint!
     var isEmpty: Bool { count == 0 }
 
     @objc private func toggle() { setExpanded(!expanded); enclosingChatPanel?.accordionRelayout() }
     func setExpanded(_ on: Bool) {
         expanded = on
         body.isHidden = !expanded
+        collapsedBottom.isActive = !expanded    // 접힘=헤더 높이만, 펼침=본문까지
+        expandedBottom.isActive = expanded
         chevron.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
         chevron.contentTintColor = Theme.fgDim
-        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
     }
 
     func addTool(_ name: String, _ detail: String, code: String?, path: String?) {
