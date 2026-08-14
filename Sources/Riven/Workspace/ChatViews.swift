@@ -1202,15 +1202,22 @@ enum ChatText {
         // 셀 자체의 여백을 넉넉히 (행/열 간격 = 칸 안쪽 여백). 표 바깥 여백(pad)은 오히려 줄인다.
         grid.rowSpacing = UIScale.pt(13); grid.columnSpacing = UIScale.pt(28)
         grid.translatesAutoresizingMaskIntoConstraints = false
+        // 셀 문단 스타일: paragraphSpacing 을 두지 않는다. 예전엔 데이터 셀이 attributedMarkdown 의
+        // para(뒤 여백 6)를 물어 셀 bottom 이 글자 아래로 밀렸고, 헤더 셀엔 그게 없어 위/아래 여백이
+        // 달라 보였다(위만 많고 아래는 없음). 헤더·데이터 모두 같은 tight 스타일로 통일한다.
+        let cellPara = NSMutableParagraphStyle(); cellPara.lineSpacing = 3
         for (r, row) in rows.enumerated() {
             let cells: [NSView] = (0..<max(1, cols)).map { c in
                 let text = c < row.count ? row[c] : ""
                 let l = prose(text)
                 if r == 0 {
                     l.attributedStringValue = NSAttributedString(string: text, attributes: [
-                        .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong])
+                        .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong,
+                        .paragraphStyle: cellPara])
                 } else {
-                    l.attributedStringValue = attributedMarkdown(text)
+                    let m = NSMutableAttributedString(attributedString: attributedMarkdown(text))
+                    m.addAttribute(.paragraphStyle, value: cellPara, range: NSRange(location: 0, length: m.length))
+                    l.attributedStringValue = m
                 }
                 l.maximumNumberOfLines = 0
                 return l
@@ -1254,7 +1261,7 @@ enum ChatText {
                 hair.trailingAnchor.constraint(equalTo: box.trailingAnchor),
                 hair.heightAnchor.constraint(equalToConstant: 1),
                 hair.topAnchor.constraint(equalTo: headerRow.cell(at: 0).contentView!.bottomAnchor,
-                                          constant: UIScale.pt(4)),
+                                          constant: grid.rowSpacing / 2),   // 행 간격 정중앙 → 위/아래 여백 대칭
             ])
         }
         // 데이터 행 사이 가로 구분선 - 헤더선과 완전히 동일하게 (해당 행 셀 bottom + 4, Theme.edge,
@@ -1270,7 +1277,7 @@ enum ChatText {
                     h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
                     h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
                     h.heightAnchor.constraint(equalToConstant: 1),
-                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: UIScale.pt(4)),
+                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: grid.rowSpacing / 2),   // 정중앙
                 ])
             }
         }
@@ -1354,9 +1361,9 @@ final class UserBubble: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             // 아래 여백 strip - hover 액션이 말풍선 위가 아니라 여기 뜬다.
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
-            // 내 채팅은 오른쪽 정렬 - 오른쪽에 붙이고 왼쪽은 내용만큼만 (최소 40 여백).
-            card.trailingAnchor.constraint(equalTo: trailingAnchor),
-            card.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 40)
+            // 내 채팅은 왼쪽 정렬 - 왼쪽에 붙이고 오른쪽은 내용만큼만 (최소 40 여백).
+            card.leadingAnchor.constraint(equalTo: leadingAnchor),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -40)
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
