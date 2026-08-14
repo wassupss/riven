@@ -1513,13 +1513,15 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
     func stopTurn() { interruptTurn() }
 
-    private func interruptTurn() {
+    // restoreText: 중단한 메시지를 입력창으로 되돌린다(Esc/정지). note: "중단됨" 시스템 줄.
+    // keepQueue: 대기 메시지를 남긴다(#4 끼어들기 - 중단 후 대기 메시지를 이어서 보낸다).
+    private func interruptTurn(restoreText: Bool = true, note: Bool = true, keepQueue: Bool = false) {
         guard turnStart != nil else { return }
         interrupted = true                 // suppress the error line for the result WE cancelled
         session?.interrupt()
         // Like the CLI: the interrupted message returns to the input for editing/resending. Remove
         // its bubble from the transcript and put the text back (don't clobber anything typed since).
-        if let text = currentTurnText {
+        if restoreText, let text = currentTurnText {
             currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
@@ -1527,9 +1529,11 @@ final class ChatPanel: NSView, Themable, Scalable {
             input.window?.makeFirstResponder(input)
         }
         currentTurnText = nil; currentTurnBubble = nil
-        queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
-        queuedMessages.removeAll()            // stop = cancel everything pending
-        addSystem(t("chat.interrupted"))
+        if !keepQueue {
+            queuedMessages.forEach { $0.bubble.setQueued(false) }   // un-mark cancelled queued msgs
+            queuedMessages.removeAll()            // stop = cancel everything pending
+        }
+        if note { addSystem(t("chat.interrupted")) }
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
     }
     @objc private func sendOrStop() { if turnStart != nil { interruptTurn() } else { sendFromInput() } }
@@ -1564,9 +1568,14 @@ final class ChatPanel: NSView, Themable, Scalable {
         if text.hasPrefix("/"), handleSlash(text) { return }   // riven-handled slash commands
         if !titleSet { titleSet = true; onTitle?(ChatPanel.shortTitle(text)) }   // rail/tab title
         let bubble = addUser(text)
-        // A turn is still running (or awaiting approval): QUEUE this message (shown dimmed +
-        // "대기 중", like the CLI acknowledging it) and send it when the current turn finishes.
-        if turnStart != nil { bubble.setQueued(true); queuedMessages.append((text, bubble)); return }
+        // #4(A): 턴이 진행 중이면 그 턴을 끊고 이 메시지로 곧바로 다시 답한다 (CLI 처럼 - 세션 맥락은
+        // 유지되므로 이전 메시지까지 합쳐 답한다). 대기 큐에 넣고 interrupt 하면, 중단된 턴의 endTurn
+        // 이 큐를 비우며 새 턴을 시작한다. 승인 대기(카드) 중일 땐 끊지 않고 그대로 큐에 쌓는다.
+        if turnStart != nil {
+            bubble.setQueued(true); queuedMessages.append((text, bubble))
+            if pendingCard == nil { interruptTurn(restoreText: false, note: false, keepQueue: true) }
+            return
+        }
         beginTurn(text, bubble: bubble)
     }
     private var queuedMessages: [(text: String, bubble: UserBubble)] = []
