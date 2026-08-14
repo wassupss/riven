@@ -2122,7 +2122,7 @@ final class SubagentIndicator: NSView {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            widthAnchor.constraint(lessThanOrEqualToConstant: UIScale.pt(320)),
+            widthAnchor.constraint(equalToConstant: UIScale.pt(250)),   // 고정 폭 - 행 추가돼도 안 흔들림
         ])
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
     }

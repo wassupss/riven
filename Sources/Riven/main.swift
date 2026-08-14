@@ -2709,6 +2709,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.wantsLayer = true; host.layer?.backgroundColor = Theme.bg.cgColor
         panel.content.frame = host.bounds
         panel.content.autoresizingMask = [.width, .height]
+        // detach()→remove() hides the content (deferred-remove path); undo it or the
+        // popped-out window shows a blank panel until it's re-docked.
+        panel.content.isHidden = false
         host.addSubview(panel.content)
         let win = NSWindow(contentRect: host.bounds, styleMask: [.titled, .closable, .resizable, .miniaturizable],
                            backing: .buffered, defer: false)
