@@ -334,6 +334,11 @@ final class ToolGroup: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        // 명령 아코디언을 패널처럼 테두리 박스로. 실행 중엔 테두리가 accent 로 맥동, 끝나면 초록.
+        layer?.cornerRadius = UIScale.pt(9)
+        layer?.borderWidth = 1
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.03 : 0.04).cgColor
         translatesAutoresizingMaskIntoConstraints = false
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)   // 기본 닫힘
         chevron.contentTintColor = Theme.fgDim
@@ -357,16 +362,17 @@ final class ToolGroup: NSView {
         addSubview(header); addSubview(body)
         // 접힘/펼침에 따라 그룹 바닥을 헤더 or 본문에 묶는다. isHidden 만으론 본문이 Auto Layout
         // 에서 사라지지 않아 접어도 펼친 높이를 그대로 차지했다(다음 답변이 한참 아래로 밀림).
-        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
-        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
+        let padH = UIScale.pt(11), padV = UIScale.pt(7)   // 테두리 안쪽 여백
+        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padV)
+        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padV)
         collapsedBottom.isActive = true       // 기본 닫힘
-        // 헤더: [아이콘 제목  ……  배지 chevron] - 제목은 왼쪽, 카운트 배지+chevron 은 오른쪽.
+        // 헤더: [아이콘 제목 chevron] - 테두리 안쪽 여백만큼 들여쓴다.
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: topAnchor),
-            header.leadingAnchor.constraint(equalTo: leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            header.topAnchor.constraint(equalTo: topAnchor, constant: padV),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH),
             icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
+            icon.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
@@ -374,11 +380,11 @@ final class ToolGroup: NSView {
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
             chevron.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),   // 제목 바로 옆
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
-            chevron.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -8),
+            chevron.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
             chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor),   // 들여쓰기 없음 - 답변과 같은 왼쪽 선
-            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padH),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padH),
         ])
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
         updateTitle()
@@ -508,12 +514,17 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    func endRun() { running = false; stopShimmer(); updateTitle() }
+    func endRun() {
+        running = false; stopShimmer(); updateTitle()
+        // 완료: 테두리 맥동 멈추고 초록(성공) 테두리로.
+        layer?.removeAnimation(forKey: "borderPulse")
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor
+    }
 
     // 실행 중 표시는 제목 글자의 opacity 를 은은히 맥동시킨다. 예전엔 그라디언트 mask sweep 을
     // 썼는데, 제목이 길어지거나(현재 명령) 자주 바뀌면 mask 프레임이 실제 라벨보다 작게 남아
     // 글자 대부분이 마스크 밖으로 나가 사라지고 조각("|")만 보였다. opacity 맥동은 프레임 동기화가
-    // 필요 없어 항상 온전히 읽힌다.
+    // 필요 없어 항상 온전히 읽힌다. 동시에 테두리도 accent 로 맥동시켜 "패널이 도는" 느낌을 준다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
@@ -523,6 +534,14 @@ final class ToolGroup: NSView {
         pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
         pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         titleLabel.layer?.add(pulse, forKey: "pulse")
+        // 테두리 맥동 (accent ↔ 옅은 accent).
+        layer?.borderColor = Theme.accent2.cgColor
+        let bp = CABasicAnimation(keyPath: "borderColor")
+        bp.fromValue = Theme.accent2.cgColor
+        bp.toValue = Theme.accent2.withAlphaComponent(0.25).cgColor
+        bp.duration = 0.9; bp.autoreverses = true; bp.repeatCount = .infinity
+        bp.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer?.add(bp, forKey: "borderPulse")
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
