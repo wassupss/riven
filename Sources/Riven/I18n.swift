@@ -332,6 +332,11 @@ enum I18n {
         "chat.updateApplies": ("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.",
                                "The updated CLI applies to new chats (or after a restart)."),
         "chat.runFailed": ("실행 실패", "Failed to run"),
+        // tool accordion group
+        "chat.tools.cmd": ("명령", "command"),
+        "chat.tools.running1": ("{name} 실행 중", "Running {name}"),
+        "chat.tools.runningN": ("명령 {n}개 실행 중", "Running {n} commands"),
+        "chat.tools.count": ("명령 {n}개", "{n} commands"),
         // permission modes + approval
         "chat.mode.plan": ("계획", "Plan"), "chat.mode.ask": ("승인 요청", "Ask"),
         "chat.mode.auto": ("자동 실행", "Auto"),
@@ -416,6 +421,14 @@ enum I18n {
         "chat.cardHint": ("←/→ 선택 · Enter 결정", "←/→ choose · Enter confirm"),
         "chat.viewDiff": ("변경 보기", "View diff"),
         "chat.openInEditor": ("에디터에서 보기", "Open in editor"),
+        "chat.copy": ("복사", "Copy"),
+        "chat.timelineCopy": ("클릭해서 이 메시지 복사", "Click to copy this message"),
+        "chat.otherPlaceholder": ("직접 입력하고 Enter", "Type your answer, press Enter"),
+        "chat.otherHint": ("직접 입력 후 Enter", "Type your answer, then Enter"),
+        "chat.time.now": ("방금", "just now"),
+        "chat.time.min": ("{n}분 전", "{n}m ago"),
+        "chat.time.hour": ("{n}시간 전", "{n}h ago"),
+        "chat.time.day": ("{n}일 전", "{n}d ago"),
         "chat.plan": ("플랜 ", "Plan "),
         "common.copy": ("복사", "Copy"),
         // relative time (compact)

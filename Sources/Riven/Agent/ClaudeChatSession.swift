@@ -41,6 +41,9 @@ final class ClaudeChatSession {
     // All callbacks are delivered on the MAIN thread.
     var onInit: ((_ sessionId: String, _ model: String?) -> Void)?
     var onTextDelta: ((String) -> Void)?                       // main assistant streamed token
+    /// 실시간 토큰 (생각/작성 중 표시용). (input, output, isMessageStart). isMessageStart=true 면
+    /// 새 메시지의 입력 토큰, false 면 현재 메시지의 누적 출력 토큰.
+    var onLiveUsage: ((Int, Int, Bool) -> Void)?
     var onMainTool: ((_ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)?
     var onSubagentStart: ((_ id: String, _ type: String, _ desc: String) -> Void)?
     var onSubagentText: ((_ parentId: String, _ text: String) -> Void)?
@@ -104,9 +107,9 @@ final class ClaudeChatSession {
         // Do NOT set ANTHROPIC_API_KEY or pass --bare (that path is API-key only).
         perm?.onRequest = { [weak self] id, name, input in
             guard let self else { return }
-            let d = self.toolDetail(name, input)
-            let code = self.toolCode(name, input)
-            let path = self.toolPath(name, input)
+            let d = Self.toolDetail(name, input)
+            let code = Self.toolCode(name, input)
+            let path = Self.toolPath(name, input)
             DispatchQueue.main.async { self.onPermissionRequest?(id, name, d, code, path) }
         }
         ask?.onExpire = { [weak self] id, reason in self?.onAskExpired?(id, reason) }
@@ -216,8 +219,21 @@ final class ClaudeChatSession {
                 main { self.onInit?(sid, model) }
             }
         case "stream_event":
-            guard parent == nil, let ev = o["event"] as? [String: Any],
-                  ev["type"] as? String == "content_block_delta",
+            guard parent == nil, let ev = o["event"] as? [String: Any] else { return }
+            let et = ev["type"] as? String
+            // 실시간 토큰: message_start 에 입력, message_delta 에 출력(현재 메시지 누적).
+            // 입력은 최종 표시와 같은 기준(input + cache_write) - cache_read 는 컨텍스트 재읽기라
+            // 뺀다. 예전엔 cache_read(수만 토큰)를 넣어 실시간 ↑ 가 최종값과 딴판이었다.
+            if et == "message_start", let msg = ev["message"] as? [String: Any], let u = msg["usage"] as? [String: Any] {
+                let inp = (u["input_tokens"] as? Int ?? 0) + (u["cache_creation_input_tokens"] as? Int ?? 0)
+                main { self.onLiveUsage?(inp, u["output_tokens"] as? Int ?? 0, true) }
+                return
+            }
+            if et == "message_delta", let u = ev["usage"] as? [String: Any] {
+                main { self.onLiveUsage?(-1, u["output_tokens"] as? Int ?? 0, false) }
+                return
+            }
+            guard et == "content_block_delta",
                   let delta = ev["delta"] as? [String: Any],
                   delta["type"] as? String == "text_delta",
                   let t = delta["text"] as? String else { return }
@@ -235,10 +251,10 @@ final class ClaudeChatSession {
                             ?? (input["prompt"] as? String).map { String($0.prefix(80)) } ?? ""
                         main { self.onSubagentStart?(id, type, desc) }
                     } else if let parent {                            // sub-agent's own tool call
-                        let d = self.toolDetail(name, input); let c = self.toolCode(name, input); let p = self.toolPath(name, input)
+                        let d = Self.toolDetail(name, input); let c = Self.toolCode(name, input); let p = Self.toolPath(name, input)
                         main { self.onSubagentTool?(parent, name, d, c, p) }
                     } else {                                          // main thread tool call
-                        let d = self.toolDetail(name, input); let c = self.toolCode(name, input); let p = self.toolPath(name, input)
+                        let d = Self.toolDetail(name, input); let c = Self.toolCode(name, input); let p = Self.toolPath(name, input)
                         // Remember file-editing calls so we can report them to the Changes panel once
                         // the tool_result confirms the edit landed (the native chat has no PostToolUse
                         // hook, so this stream is how it feeds recordAgentFileEdit).
@@ -308,7 +324,11 @@ final class ClaudeChatSession {
     private func main(_ f: @escaping () -> Void) { DispatchQueue.main.async(execute: f) }
 
     // Human-readable target of a tool call ("Read → math.js", "Bash → npm test").
-    private func toolDetail(_ name: String, _ input: [String: Any]) -> String {
+    // 라이브 도구 줄과 세션 복원(loadHistory)이 동일하게 파싱하도록 한 곳에 모은 static 헬퍼.
+    static func toolParts(_ name: String, _ input: [String: Any]) -> (detail: String, code: String?, path: String?) {
+        (toolDetail(name, input), toolCode(name, input), toolPath(name, input))
+    }
+    static func toolDetail(_ name: String, _ input: [String: Any]) -> String {
         func s(_ k: String) -> String? { (input[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
         let raw: String?
         switch name {
@@ -327,7 +347,7 @@ final class ClaudeChatSession {
     }
 
     // A code/diff body to show under the tool line (edits & writes), else nil.
-    private func toolCode(_ name: String, _ input: [String: Any]) -> String? {
+    static func toolCode(_ name: String, _ input: [String: Any]) -> String? {
         func s(_ k: String) -> String? { input[k] as? String }
         switch name {
         case "Edit": return Self.diff(s("old_string"), s("new_string"))
@@ -357,13 +377,13 @@ final class ClaudeChatSession {
     }
     // Raw (absolute) file path a tool acts on, for opening it in riven's editor - nil for
     // tools without a file target.
-    private func toolPath(_ name: String, _ input: [String: Any]) -> String? {
+    static func toolPath(_ name: String, _ input: [String: Any]) -> String? {
         switch name {
         case "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "LS": return input["file_path"] as? String ?? input["path"] as? String
         default: return nil
         }
     }
-    private func shortenPath(_ p: String) -> String {
+    static func shortenPath(_ p: String) -> String {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let short = p.hasPrefix(home) ? "~" + p.dropFirst(home.count) : p
         return String(short)

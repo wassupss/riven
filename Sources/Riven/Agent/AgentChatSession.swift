@@ -34,6 +34,7 @@ protocol AgentChatSession: AnyObject {
     // 콜백은 전부 메인 스레드로 온다.
     var onInit: ((_ sessionId: String, _ model: String?) -> Void)? { get set }
     var onTextDelta: ((String) -> Void)? { get set }
+    var onLiveUsage: ((Int, Int, Bool) -> Void)? { get set }   // 실시간 토큰 (input, output, isMessageStart)
     var onMainTool: ((_ name: String, _ detail: String, _ code: String?, _ path: String?) -> Void)? { get set }
     var onFileEdited: ((_ path: String) -> Void)? { get set }
     var onTurnDone: ((_ costUSD: Double?, _ sessionId: String?, _ usage: ChatUsage?, _ error: String?) -> Void)? { get set }
