@@ -522,55 +522,54 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중 테두리를 도는 빛(회전 콘 그라디언트). 완료되면 멈추고 초록 테두리.
-    private let glowContainer = CALayer()
-    private let glow = CAGradientLayer()
-    private let glowMask = CAShapeLayer()
+    // 실행 중: 테두리를 따라 밝은 accent 조각이 한 바퀴 도는 애니메이션. 완료되면 초록 정적 테두리.
+    // 회전 그라디언트+마스크는 리사이즈 때 프레임이 어긋나 깨졌다 → CAShapeLayer 스트로크의
+    // lineDashPhase 이동으로 대체(프레임 충돌 없음, 둘레만 갱신).
+    private let borderAnim = CAShapeLayer()
+    private var lastPeri: CGFloat = -1
 
     func endRun() {
         running = false; stopShimmer(); updateTitle()
         layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 정적 테두리
     }
 
-    // 실행 중: 테두리를 따라 accent 빛이 한 바퀴 도는 애니메이션(회전 콘 그라디언트). 제목 글자
-    // 깜빡임(opacity 맥동)은 거슬려서 뺐다 - 테두리 애니메이션이 진행 표시를 맡는다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
-        layer?.borderColor = Theme.accent2.withAlphaComponent(0.28).cgColor   // 은은한 베이스 테두리
-        glow.type = .conic
-        glow.startPoint = CGPoint(x: 0.5, y: 0.5); glow.endPoint = CGPoint(x: 1, y: 0.5)
-        let a = Theme.accent2
-        glow.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0).cgColor,
-                       a.cgColor, a.withAlphaComponent(0).cgColor]
-        glow.locations = [0, 0.55, 0.78, 1.0]           // 한 지점만 밝은 아크
-        glowMask.fillColor = NSColor.clear.cgColor
-        glowMask.strokeColor = NSColor.black.cgColor    // mask 는 알파만 씀
-        glowMask.lineWidth = 2
-        glowContainer.mask = glowMask                   // 컨테이너는 테두리 스트로크에만 보이게
-        glowContainer.addSublayer(glow)
-        layer?.addSublayer(glowContainer)
-        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-        spin.fromValue = 0; spin.toValue = 2 * Double.pi
-        spin.duration = 2.4; spin.repeatCount = .infinity
-        glow.add(spin, forKey: "spin")                  // 콘 그라디언트만 회전(마스크는 고정)
-        needsLayout = true
+        layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
+        borderAnim.fillColor = NSColor.clear.cgColor
+        borderAnim.strokeColor = Theme.accent2.cgColor
+        borderAnim.lineWidth = 1.5
+        borderAnim.lineCap = .round
+        layer?.addSublayer(borderAnim)
+        lastPeri = -1; needsLayout = true   // layout 이 path·대시·애니메이션을 건다
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
         shimmerOn = false
-        glow.removeAllAnimations(); glowContainer.removeFromSuperlayer()
+        borderAnim.removeAllAnimations(); borderAnim.removeFromSuperlayer()
     }
     override func layout() {
         super.layout()
         guard shimmerOn else { return }
+        let r = UIScale.pt(9)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        glowContainer.frame = bounds
-        glow.frame = bounds                             // anchor 0.5,0.5 → bounds 중심으로 회전
-        glowMask.frame = bounds
-        glowMask.path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                               cornerWidth: UIScale.pt(9), cornerHeight: UIScale.pt(9), transform: nil)
+        borderAnim.frame = bounds
+        borderAnim.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
+                                 cornerWidth: r, cornerHeight: r, transform: nil)
         CATransaction.commit()
+        // 둘레가 바뀔 때만 대시·애니메이션 재설정(매 layout 재설정하면 끊긴다).
+        let peri = 2 * (bounds.width + bounds.height)
+        if abs(peri - lastPeri) > 0.5, peri > 1 {
+            lastPeri = peri
+            let seg: CGFloat = 46                      // 도는 밝은 조각 길이
+            borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]   // 조각 하나만 보이게
+            borderAnim.removeAnimation(forKey: "travel")
+            let a = CABasicAnimation(keyPath: "lineDashPhase")
+            a.fromValue = 0; a.toValue = -(seg + peri)  // 한 바퀴
+            a.duration = 2.2; a.repeatCount = .infinity
+            borderAnim.add(a, forKey: "travel")
+        }
     }
 }
 
