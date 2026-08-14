@@ -1847,6 +1847,14 @@ final class TurnBlock: NSView {
         }
         toolGroup?.addTool(name, detail, code: code, path: path)
     }
+    // 서브에이전트를 채팅 안 인라인 아코디언으로 추가 (사이드 패널 대신). 명령 아코디언과 같은 결.
+    func addSubagent(_ id: String, type: String, desc: String) -> SubagentEntry {
+        closeText(); setStatusGap(true)
+        let e = SubagentEntry(type: type, desc: desc)
+        add(e)
+        e.onRelayout = { [weak e] in e?.enclosingChatPanel?.accordionRelayout() }
+        return e
+    }
     @discardableResult
     func addApproval(_ title: String, _ detail: String, _ code: String?, _ path: String?,
                      options: [(String, () -> Void)], custom: ((String) -> Void)? = nil) -> ApprovalCard {
@@ -2155,6 +2163,11 @@ final class SubagentEntry: NSView {
         self.type = type
         super.init(frame: .zero)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        wantsLayer = true   // 채팅 인라인 아코디언 - 도구 그룹처럼 테두리 박스
+        layer?.cornerRadius = UIScale.pt(9)
+        layer?.borderWidth = 1
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = Theme.fg.withAlphaComponent(Theme.isLight ? 0.03 : 0.04).cgColor
         chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
@@ -2241,6 +2254,7 @@ final class SubagentEntry: NSView {
     func finish(_ result: String) {
         guard !done else { return }
         done = true; spinner.stopAnimation(nil); spinner.isHidden = true
+        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 테두리 (명령 그룹과 동일)
         statusIcon.isHidden = false
         let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .bold).applying(.init(paletteColors: [Theme.success]))
         statusIcon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)

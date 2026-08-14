@@ -42,8 +42,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
-    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row
-    private var subagentList: SubagentListView?           // one consolidated panel for all sub-agents
+    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its inline accordion (in a TurnBlock)
     private var turnStart: Date?
     private var flushTimer: Timer?
     private var timeTimer: Timer?    // 완료 턴 상대시간 갱신 (1분마다)
@@ -1129,7 +1128,10 @@ final class ChatPanel: NSView, Themable, Scalable {
             // ensureAutoTurn 을 호출하지 않는다: 서브에이전트는 항상 활성 메인 턴 안에서 생기므로
             // 여기서 턴을 새로 세울 필요가 없다. 예전엔 메인 result 뒤 늦게 온 서브 이벤트가 유령
             // "생각 중" 턴을 띄웠고, result 가 안 와 영영 안 풀렸다(Esc 로도).
-            self?.addSubagentPane(id, type: type, desc: desc)
+            guard let self else { return }
+            self.subNames[id] = type.isEmpty ? "sub-agent" : type
+            // 사이드 패널 대신 채팅 안 인라인 아코디언으로 (명령 아코디언과 같은 결).
+            if let e = self.current?.addSubagent(id, type: type, desc: desc) { self.subToPane[id] = e }
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
             if ChatPanel.subBench {
@@ -2212,28 +2214,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 외부(파이프라인 등)에서 이 팬 대화에 회색 시스템 한 줄을 남긴다.
     func systemNote(_ text: String) { addSystem(text) }
 
-    private static let subListKey = "__subagents__"   // 하나의 통합 서브에이전트 패널 id
-    private func addSubagentPane(_ id: String, type: String, desc: String) {
-        subNames[id] = type.isEmpty ? "sub-agent" : type
-        // 시작/완료 알림을 메인 채팅 칩으로 또 띄우지 않는다 - 서브에이전트 패널이 상태를 다 보여준다.
-        // 서브에이전트마다 컬럼을 열지 않고, 하나의 목록 패널에 접이식 행으로 쌓는다.
-        if subagentList == nil {
-            let list = SubagentListView(); subagentList = list
-            onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents"))
-        }
-        let entry = SubagentEntry(type: type, desc: desc)
-        subagentList?.addEntry(entry)
-        subToPane[id] = entry
-    }
-    private func clearSubagents() {
-        subToPane.removeAll()
-        if subagentList != nil { subagentList = nil; onCloseSubagentPanes?([ChatPanel.subListKey]) }
-    }
-    // The user closed the sub-agent list dock panel directly - drop all references.
-    func clearSubagentRef(_ id: String) {
-        if id == ChatPanel.subListKey { subToPane.removeAll(); subagentList = nil }
-        else { subToPane[id] = nil }
-    }
+    // 서브에이전트는 이제 채팅 안 인라인 아코디언(TurnBlock.addSubagent)으로 그린다 - 사이드 패널 없음.
+    // 엔트리는 각자의 TurnBlock 안에 살아 있으므로 여기선 라우팅 참조만 정리한다.
+    private func clearSubagents() { subToPane.removeAll() }
+    func clearSubagentRef(_ id: String) { subToPane[id] = nil }
 
     private func startFlush() {
         flushTimer?.invalidate()
