@@ -299,14 +299,16 @@ final class ToolGroup: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let body = NSStackView()
-    private var expanded = true               // 기본 펼침 (도구 줄은 보이고, 코드블록은 클릭해야 열림)
+    private let badge = NSTextField(labelWithString: "")   // 우측: N 실행 · M 변경 (+A -B)
+    private var expanded = false              // 기본 닫힘 (헤더에 진행 상황·카운트만)
     private var running = true
     private var count = 0
-    private var latestName = ""
+    private var changed = 0                   // 파일 변경 도구 수 (Edit/Write/MultiEdit/NotebookEdit)
+    private var latestName = "", latestDetail = ""
     private var added = 0, removed = 0        // Edit/MultiEdit 변경 라인 합계 (+/-)
     private struct Spec { let name: String; let detail: String; let code: String?; let path: String?; let diff: Bool }
-    private var specs: [Spec] = []            // 도구 명세 (dedup·재계산용)
-    private var built = true                  // 기본 펼침이라 도구 줄을 즉시 만든다
+    private var specs: [Spec] = []            // 도구 명세 (뷰는 펼칠 때 lazy 생성)
+    private var built = false                 // 본문 줄을 실제로 만들었는지 (기본 닫힘 → lazy)
     private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
     private var openedCode: [ObjectIdentifier: NSView] = [:]
     private let shimmer = CAGradientLayer()
@@ -316,7 +318,7 @@ final class ToolGroup: NSView {
         super.init(frame: frame)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
-        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)   // 기본 펼침
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)   // 기본 닫힘
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -325,39 +327,60 @@ final class ToolGroup: NSView {
         icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIScale.font(UIScale.body, .medium); titleLabel.textColor = Theme.accent2
+        titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // chevron 은 "명령 N개" 오른쪽에 (아이콘·글자 다음).
-        let hrow = NSStackView(views: [icon, titleLabel, chevron])
-        hrow.orientation = .horizontal; hrow.alignment = .centerY; hrow.spacing = 7
-        hrow.translatesAutoresizingMaskIntoConstraints = false
+        badge.font = UIScale.font(UIScale.small, .medium); badge.textColor = Theme.fgDim
+        badge.setContentHuggingPriority(.required, for: .horizontal)
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        [icon, titleLabel, badge, chevron].forEach { header.addSubview($0) }
         header.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(hrow)
         body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
         body.translatesAutoresizingMaskIntoConstraints = false
-        body.isHidden = false                 // 기본 펼침
+        body.isHidden = true                  // 기본 닫힘
         addSubview(header); addSubview(body)
         // 접힘/펼침에 따라 그룹 바닥을 헤더 or 본문에 묶는다. isHidden 만으론 본문이 Auto Layout
         // 에서 사라지지 않아 접어도 펼친 높이를 그대로 차지했다(다음 답변이 한참 아래로 밀림).
         collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
         expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
-        expandedBottom.isActive = true        // 기본 펼침
+        collapsedBottom.isActive = true       // 기본 닫힘
+        // 헤더: [아이콘 제목  ……  배지 chevron] - 제목은 왼쪽, 카운트 배지+chevron 은 오른쪽.
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
-            chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
-            hrow.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
-            hrow.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor),
-            hrow.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
-            hrow.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
             header.topAnchor.constraint(equalTo: topAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor),
             header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
+            icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 1),
+            icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
+            titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8),
+            badge.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
+            badge.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
+            chevron.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -2),
+            chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
             body.leadingAnchor.constraint(equalTo: leadingAnchor),   // 들여쓰기 없음 - 답변과 같은 왼쪽 선
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
         updateTitle()
+    }
+    // 도구명 → 한글 진행 표현 (실행 타이틀이 영어로만 보이던 것 수정).
+    private static func verb(_ name: String) -> String {
+        switch name {
+        case "Read", "LS": return t("chat.tools.read")
+        case "Edit", "Write", "MultiEdit", "NotebookEdit": return t("chat.tools.edit")
+        case "Bash", "BashOutput": return t("chat.tools.run")
+        case "Grep", "Glob": return t("chat.tools.search")
+        case "WebFetch", "WebSearch": return t("chat.tools.web")
+        case "TodoWrite": return t("chat.tools.todo")
+        default: return t("chat.tools.run")
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -382,7 +405,8 @@ final class ToolGroup: NSView {
     func addTool(_ name: String, _ detail: String, code: String?, path: String?) {
         count += 1
         let clean = name.replacingOccurrences(of: "mcp__riven__", with: "")
-        latestName = clean
+        latestName = clean; latestDetail = detail
+        if ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(name) { changed += 1 }   // 파일 변경 수
         let spec = Spec(name: clean, detail: detail, code: (code?.isEmpty == false) ? code : nil,
                         path: path, diff: name == "Edit" || name == "MultiEdit")
         specs.append(spec)
@@ -445,21 +469,31 @@ final class ToolGroup: NSView {
     }
 
     private func updateTitle() {
-        let main = running
-            ? (count <= 1 ? t("chat.tools.running1", ["name": latestName.isEmpty ? t("chat.tools.cmd") : latestName])
-                          : t("chat.tools.runningN", ["n": "\(count)"]))
-            : t("chat.tools.count", ["n": "\(count)"])
-        let m = NSMutableAttributedString(string: main, attributes: [
-            .foregroundColor: running ? Theme.accent2 : Theme.fgDim,
-            .font: UIScale.font(UIScale.body, .medium)])
-        // Edit 변경량을 "명령 N개" 옆에 +A -R 로 (초록/빨강).
-        if added > 0 || removed > 0 {
-            m.append(NSAttributedString(string: "  "))
-            let f = UIScale.font(UIScale.small, .semibold)
-            if added > 0 { m.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: f])) }
-            if removed > 0 { m.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: f])) }
+        // 제목(왼쪽): 실행 중이면 "<한글 동작> · <현재 명령>", 끝나면 "명령".
+        if running {
+            let verb = ToolGroup.verb(latestName)
+            titleLabel.stringValue = latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)"
+            titleLabel.textColor = Theme.accent2
+        } else {
+            titleLabel.stringValue = t("chat.tools.cmd")
+            titleLabel.textColor = Theme.fgDim
         }
-        titleLabel.attributedStringValue = m
+        // 배지(오른쪽): N 실행 · M 변경 (+A -B).
+        let b = NSMutableAttributedString()
+        let bf = UIScale.font(UIScale.small, .medium)
+        b.append(NSAttributedString(string: t("chat.tools.ran", ["n": "\(count)"]),
+                                    attributes: [.foregroundColor: Theme.fgDim, .font: bf]))
+        if changed > 0 {
+            b.append(NSAttributedString(string: " · " + t("chat.tools.changed", ["n": "\(changed)"]),
+                                        attributes: [.foregroundColor: Theme.fgDim, .font: bf]))
+        }
+        if added > 0 || removed > 0 {
+            let f = UIScale.font(UIScale.small, .semibold)
+            b.append(NSAttributedString(string: "  "))
+            if added > 0 { b.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: f])) }
+            if removed > 0 { b.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: f])) }
+        }
+        badge.attributedStringValue = b
         needsLayout = true
     }
 
