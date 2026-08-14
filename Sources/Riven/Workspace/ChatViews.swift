@@ -343,7 +343,7 @@ final class ToolGroup: NSView {
         icon.contentTintColor = Theme.fgDim
         icon.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .medium)
         icon.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIScale.font(UIScale.body, .medium); titleLabel.textColor = Theme.accent2
+        titleLabel.font = UIScale.font(UIScale.prose, .medium); titleLabel.textColor = Theme.accent2   // 답변과 동일 크기
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
         titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
@@ -485,7 +485,7 @@ final class ToolGroup: NSView {
         // 헤더 전체를 왼쪽 한 줄로: 실행 중이면 "<한글 동작> · <현재 명령>",
         // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
         let m = NSMutableAttributedString()
-        let f = UIScale.font(UIScale.body, .medium)
+        let f = UIScale.font(UIScale.prose, .medium)
         if running {
             let verb = ToolGroup.verb(latestName)
             m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
@@ -917,14 +917,21 @@ enum ChatText {
                 btn.centerYAnchor.constraint(equalTo: header.centerYAnchor)
             ])
         }
-        let l = NSTextField(wrappingLabelWithString: code)
-        l.font = UIScale.mono(UIScale.body); l.textColor = Theme.fg; l.isSelectable = true
-        l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
-        l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
-        l.translatesAutoresizingMaskIntoConstraints = false
-        if diff { l.attributedStringValue = diffColored(code) }
-        else { l.attributedStringValue = highlight(code) }
-        [header, l].forEach { box.addSubview($0) }
+        // diff(Edit): 줄 전체에 옅은 초록/빨강 배경 밴드 + 에디터식 syntax 색. 그 외: 일반 하이라이트 라벨.
+        let body: NSView
+        if diff {
+            body = diffBlock(code); box.layer?.masksToBounds = true   // 밴드가 둥근 모서리 안에서 잘리게
+        } else {
+            let l = NSTextField(wrappingLabelWithString: code)
+            l.font = UIScale.mono(UIScale.body); l.textColor = Theme.fg; l.isSelectable = true
+            l.allowsEditingTextAttributes = true     // keep attributes when clicked (no revert-to-plain)
+            l.lineBreakMode = .byCharWrapping        // long unbroken code lines wrap, not overflow
+            l.attributedStringValue = highlight(code)
+            body = l
+        }
+        body.translatesAutoresizingMaskIntoConstraints = false
+        [header, body].forEach { box.addSubview($0) }
+        let inset: CGFloat = diff ? 1 : 12   // diff 는 밴드가 폭을 꽉 채우도록 여백 최소
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: box.topAnchor, constant: 8),
             header.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
@@ -932,10 +939,10 @@ enum ChatText {
             header.heightAnchor.constraint(equalToConstant: 16),
             langL.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             langL.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            l.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
-            l.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -10),
-            l.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 12),
-            l.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -12)
+            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6),
+            body.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: diff ? -1 : -10),
+            body.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: inset),
+            body.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -inset)
         ])
         return box
     }
@@ -970,18 +977,40 @@ enum ChatText {
         return m
     }
     // Edits open the real file (see the applied change); snippets go to a temp file.
-    private static func diffColored(_ code: String) -> NSAttributedString {
-        let m = NSMutableAttributedString()
-        let font = UIScale.mono(UIScale.body)
-        let p = NSMutableParagraphStyle(); p.lineSpacing = 3
-        for (i, line) in code.components(separatedBy: "\n").enumerated() {
-            if i > 0 { m.append(NSAttributedString(string: "\n")) }
-            let color: NSColor = line.hasPrefix("+") ? Theme.gitAdded
-                               : line.hasPrefix("-") ? Theme.gitDeleted : Theme.fgDim
-            m.append(NSAttributedString(string: line,
-                attributes: [.foregroundColor: color, .font: font, .paragraphStyle: p]))
+    // Edit diff: 줄마다 옅은 초록(+)/빨강(-) 전체폭 배경 밴드를 깔고, 글자는 에디터처럼 syntax
+    // 하이라이트. 예전엔 글자 전체를 통짜 빨강/초록으로 칠해 코드가 안 읽혔다.
+    static func diffBlock(_ code: String) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let mono = UIScale.mono(UIScale.body)
+        for line in code.components(separatedBy: "\n") {
+            let added = line.hasPrefix("+"), removed = line.hasPrefix("-")
+            let row = NSView(); row.wantsLayer = true
+            row.layer?.backgroundColor = (added ? Theme.gitAdded.withAlphaComponent(0.16)
+                                        : removed ? Theme.gitDeleted.withAlphaComponent(0.16)
+                                        : .clear).cgColor
+            row.translatesAutoresizingMaskIntoConstraints = false
+            let content = (added || removed) ? String(line.dropFirst()) : line
+            let lbl = NSTextField(labelWithString: "")
+            lbl.font = mono; lbl.isSelectable = true; lbl.allowsEditingTextAttributes = true
+            lbl.lineBreakMode = .byCharWrapping; lbl.maximumNumberOfLines = 0
+            let m = NSMutableAttributedString(string: (added ? "+" : removed ? "-" : " ") + " ",
+                attributes: [.font: mono, .foregroundColor: added ? Theme.gitAdded : removed ? Theme.gitDeleted : Theme.fgDim])
+            m.append(highlight(content))     // 에디터식 syntax 색 (추가/삭제/문맥 모두)
+            lbl.attributedStringValue = m
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(lbl)
+            stack.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: stack.widthAnchor),
+                lbl.topAnchor.constraint(equalTo: row.topAnchor, constant: 2),
+                lbl.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -2),
+                lbl.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 11),
+                lbl.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -11),
+            ])
         }
-        return m
+        return stack
     }
     /// 코드펜스로 먼저 자르고, 산문 구간은 블록 단위(제목·표·목록·문단)로 파싱한다.
     /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
@@ -1621,7 +1650,6 @@ final class TurnBlock: NSView {
     private var waiting = false         // paused on a permission/choice prompt
     private var finishedAt: Date?       // 완료 시각 (상대시간 표시용)
     private var doneBase = ""           // "완료 · 8초 · ↑10.8k ↓512" (시간 앞부분, refreshTime 이 시간만 갱신)
-    private let shimmer = CAGradientLayer()   // "생각/작성 중" 글자를 훑는 하이라이트
     private var shimmerOn = false
     private var statusTopGap: NSLayoutConstraint!
 
@@ -1669,29 +1697,22 @@ final class TurnBlock: NSView {
     // 답변이 생기면 상태 행 위에 간격을 준다 (thinking 중엔 붙여서 위에 뜨게).
     private func setStatusGap(_ on: Bool) { statusTopGap.constant = on ? UIScale.pt(8) : UIScale.pt(2) }
 
-    // shimmer: "생각/작성 중" 라벨 위를 밝은 띠가 왼→오 훑는다 (원래 있던 애니메이션 복원).
+    // "생각/작성 중" 진행 표시: 라벨 opacity 를 은은히 맥동. 예전엔 그라디언트 mask sweep 이었는데,
+    // 라벨 글자(시간·토큰)가 tick 마다 바뀌면 mask 프레임이 어긋나 shimmer 가 될 때 안 될 때가
+    // 생겼다("작성 중" 이 반짝일 때 안 할 때 차이). opacity 맥동은 프레임 동기화가 필요 없어 항상 돈다.
     private func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
         statusLabel.wantsLayer = true
-        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
-        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        statusLabel.layer?.mask = shimmer; needsLayout = true
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4; sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        shimmer.add(sweep, forKey: "shimmer")
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0; pulse.toValue = 0.5
+        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        statusLabel.layer?.add(pulse, forKey: "pulse")
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); statusLabel.layer?.mask = nil
-    }
-    override func layout() {
-        super.layout()
-        guard shimmerOn, let host = statusLabel.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+        shimmerOn = false; statusLabel.layer?.removeAnimation(forKey: "pulse"); statusLabel.alphaValue = 1.0
     }
 
     private var phase = t("chat.thinking")
