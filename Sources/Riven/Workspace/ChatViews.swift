@@ -346,6 +346,8 @@ final class ToolGroup: NSView {
         titleLabel.font = UIScale.font(UIScale.body, .medium); titleLabel.textColor = Theme.accent2
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.wantsLayer = true
+        titleLabel.setContentHuggingPriority(.required, for: .horizontal)          // 내용 폭만 - chevron 이 바로 붙게
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)  // 길면 truncate
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         [icon, titleLabel, chevron].forEach { header.addSubview($0) }
         header.translatesAutoresizingMaskIntoConstraints = false
@@ -370,9 +372,9 @@ final class ToolGroup: NSView {
             titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 3),
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -3),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            chevron.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 6),   // 제목 바로 옆
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
-            chevron.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -2),
+            chevron.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -8),
             chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
             body.leadingAnchor.constraint(equalTo: leadingAnchor),   // 들여쓰기 없음 - 답변과 같은 왼쪽 선

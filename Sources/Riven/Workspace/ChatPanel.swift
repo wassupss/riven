@@ -1592,6 +1592,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         input.ghost = ""
     }
     private func requestSuggestion(user: String, answer: String) {
+        // 기본 꺼짐: 매 턴 초경량 모델(Haiku)을 호출해 사용자 토큰을 더 쓰므로 opt-in.
+        guard Settings.shared.bool("chatSuggest", false) else { return }
         guard agentKind == .claude, input.stringValue.isEmpty, turnStart == nil else { return }
         let ans = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ans.isEmpty, let cmd = AgentDiscovery.claudeCmd() else { return }

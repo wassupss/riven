@@ -48,6 +48,7 @@ final class SettingsWindow: NSPanel {
     private let minimap = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let ligatures = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let agentNative = NSButton(checkboxWithTitle: "AI 에이전트를 네이티브 UI로 열기 (⌘O, 끄면 CLI 터미널)", target: nil, action: nil)
+    private let chatSuggest = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private var swatches: [NSView] = []
     // 라이브 테마 전환에서 다시 칠해야 하는 창 자체의 크롬 (배경 · 제목 · 닫기 · 헤어라인).
     private var rootView: NSView!
@@ -417,6 +418,7 @@ final class SettingsWindow: NSPanel {
         NotificationCenter.default.post(name: .rivenFormatOnSaveChanged, object: nil)
     }
     @objc private func saveAgentUI() { Settings.shared.set("agentUI", agentNative.state == .on ? "native" : "cli") }
+    @objc private func saveChatSuggest() { Settings.shared.set("chatSuggest", chatSuggest.state == .on) }
     @objc private func changeLanguage(_ seg: NSSegmentedControl) {
         I18n.setLanguage(seg.selectedSegment == 1 ? .en : .ko)
     }
@@ -566,6 +568,12 @@ final class SettingsWindow: NSPanel {
         agentNative.target = self; agentNative.action = #selector(saveAgentUI)
         agentNative.contentTintColor = Theme.fg
         addRow(t("settings.agentNative"), desc: t("settings.agentNativeDesc"), agentNative)
+
+        chatSuggest.title = ""
+        chatSuggest.state = s.bool("chatSuggest", false) ? .on : .off
+        chatSuggest.target = self; chatSuggest.action = #selector(saveChatSuggest)
+        chatSuggest.contentTintColor = Theme.fg
+        addRow(t("settings.chatSuggest"), desc: t("settings.chatSuggestDesc"), chatSuggest)
 
         // 설치된 CLI 를 그대로 보여 준다. 예전에는 못 찾으면 채팅 안에 "CLI 없음" 한 줄이
         // 뜰 뿐이라, 어디를 고쳐야 하는지 알 수 없었다.
