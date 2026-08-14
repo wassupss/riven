@@ -583,26 +583,12 @@ final class AssistantText: NSView {
         if tail.isEmpty { streamRow?.isHidden = true }
         else {
             streamRow?.isHidden = false
-            // 꼬리도 인라인 마크다운을 입혀서 그린다 (**굵게**·`코드`가 타이핑 중에도 보인다).
-            // 방금 드러난 끝 글자들은 옅게 시작해 점점 또렷해진다 → 한 글자씩 부드럽게 "써지는" 느낌.
-            let attr = NSMutableAttributedString(attributedString: ChatText.attributedMarkdown(tail))
-            AssistantText.fadeTrailing(attr, chars: shownCount < chars.count ? 10 : 0)
-            ensureLabel().attributedStringValue = attr
+            // 꼬리는 인라인 마크다운만 입혀 그대로 그린다 (**굵게**·`코드` 는 타이핑 중에도 보인다).
+            // 예전엔 끝 글자에 alpha 페이드를 걸었는데, 그게 끝에서 반짝이는 띠(shimmer)처럼 보이고
+            // 스텝 공개와 겹쳐 "뚝뚝 + 반짝" 으로 거슬렸다 → 페이드 제거, 그냥 흐르듯 나오게.
+            ensureLabel().attributedStringValue = ChatText.attributedMarkdown(tail)
         }
         return true
-    }
-
-    /// 꼬리 끝 n글자의 alpha 를 0.15→1.0 으로 램프해 방금 타이핑된 글자가 은은히 나타나게 한다.
-    static func fadeTrailing(_ m: NSMutableAttributedString, chars streaming: Int) {
-        let len = m.length; let k = min(streaming, len)
-        guard k > 1 else { return }
-        for i in 0..<k {
-            let idx = len - k + i
-            let a = 0.15 + 0.85 * (CGFloat(i) / CGFloat(k - 1))
-            let r = NSRange(location: idx, length: 1)
-            let base = (m.attribute(.foregroundColor, at: idx, effectiveRange: nil) as? NSColor) ?? ChatText.proseColor
-            m.addAttribute(.foregroundColor, value: base.withAlphaComponent(a), range: r)
-        }
     }
 
     // 스트리밍 꼬리에서 미완성 블록 마크다운과 짝 없는 인라인 백틱을 잘라낸다.
