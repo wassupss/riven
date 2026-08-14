@@ -541,6 +541,9 @@ final class ToolGroup: NSView {
         borderAnim.strokeColor = Theme.accent2.cgColor
         borderAnim.lineWidth = 1.5
         borderAnim.lineCap = .round
+        // 부드러운 글로우 - 딱딱한 대시가 아니라 은은히 빛나며 흐르게.
+        borderAnim.shadowColor = Theme.accent2.cgColor
+        borderAnim.shadowRadius = 4; borderAnim.shadowOpacity = 0.9; borderAnim.shadowOffset = .zero
         layer?.addSublayer(borderAnim)
         lastPeri = -1; needsLayout = true   // layout 이 path·대시·애니메이션을 건다
     }
@@ -562,12 +565,13 @@ final class ToolGroup: NSView {
         let peri = 2 * (bounds.width + bounds.height)
         if abs(peri - lastPeri) > 0.5, peri > 1 {
             lastPeri = peri
-            let seg: CGFloat = 46                      // 도는 밝은 조각 길이
+            let seg: CGFloat = 90                      // 길고 부드러운 빛 조각
             borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]   // 조각 하나만 보이게
             borderAnim.removeAnimation(forKey: "travel")
             let a = CABasicAnimation(keyPath: "lineDashPhase")
             a.fromValue = 0; a.toValue = -(seg + peri)  // 한 바퀴
-            a.duration = 2.2; a.repeatCount = .infinity
+            a.duration = 3.4; a.repeatCount = .infinity   // 느리게 = 차분/고급
+            a.timingFunction = CAMediaTimingFunction(name: .linear)
             borderAnim.add(a, forKey: "travel")
         }
     }
@@ -2098,56 +2102,75 @@ final class SubagentPane: NSView {
 // MARK: - consolidated sub-agent list (one panel, accordion rows)
 // 서브에이전트마다 별도 컬럼을 띄우면 여러 개일 때 우측이 컬럼 더미가 된다. 대신 한 패널에
 // 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
-// 채팅 오른쪽 위에 떠 있는 작은 서브에이전트 표시. 클릭하면 목록 패널을 연다.
+// 입력창 오른쪽 위에 떠 있는 서브에이전트 목록. 각 에이전트가 뭘 하는지(타입·설명) 한 줄씩
+// 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
 final class SubagentIndicator: NSView {
-    private let label = NSTextField(labelWithString: "")
-    private let dot = NSView()
+    private let stack = NSStackView()
+    private var rows: [String: (row: NSView, dot: NSView, label: NSTextField)] = [:]
     var onClick: (() -> Void)?
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        layer?.cornerRadius = UIScale.pt(11)
+        layer?.cornerRadius = UIScale.pt(9)
         layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
-        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.95).cgColor
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
         translatesAutoresizingMaskIntoConstraints = false
-        dot.wantsLayer = true; dot.layer?.cornerRadius = 3
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIScale.font(UIScale.small, .medium); label.textColor = Theme.fg
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(dot); addSubview(label)
+        stack.orientation = .vertical; stack.spacing = UIScale.pt(3); stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: UIScale.pt(6), left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
         NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: UIScale.pt(23)),
-            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(9)),
-            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 6), dot.heightAnchor.constraint(equalToConstant: 6),
-            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(10)),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            widthAnchor.constraint(lessThanOrEqualToConstant: UIScale.pt(320)),
         ])
         addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
     }
     required init?(coder: NSCoder) { fatalError() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     @objc private func tap() { onClick?() }
-    func update(running: Int, total: Int) {
-        isHidden = total == 0
-        guard total > 0 else { stopPulse(); return }
-        if running > 0 {
-            label.stringValue = t("chat.subs.running", ["n": "\(running)"])
-            dot.layer?.backgroundColor = Theme.accent2.cgColor; startPulse()
-        } else {
-            label.stringValue = t("chat.subs.count", ["n": "\(total)"])
-            dot.layer?.backgroundColor = Theme.success.cgColor; stopPulse()
+
+    // 에이전트 한 줄 추가/갱신. title = "타입 · 설명".
+    func upsert(id: String, title: String, running: Bool) {
+        let r: (row: NSView, dot: NSView, label: NSTextField)
+        if let ex = rows[id] { r = ex; r.label.stringValue = title }
+        else {
+            let dot = NSView(); dot.wantsLayer = true; dot.layer?.cornerRadius = 3
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            let lbl = NSTextField(labelWithString: title)
+            lbl.font = UIScale.font(UIScale.small, .medium); lbl.lineBreakMode = .byTruncatingTail
+            lbl.translatesAutoresizingMaskIntoConstraints = false
+            lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
+            row.addSubview(dot); row.addSubview(lbl)
+            NSLayoutConstraint.activate([
+                row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(18)),
+                dot.leadingAnchor.constraint(equalTo: row.leadingAnchor), dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                dot.widthAnchor.constraint(equalToConstant: 6), dot.heightAnchor.constraint(equalToConstant: 6),
+                lbl.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+                lbl.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+                lbl.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            ])
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(UIScale.pt(10) * 2)).isActive = true
+            rows[id] = (row, dot, lbl); r = (row, dot, lbl)
         }
+        if running {
+            r.dot.layer?.backgroundColor = Theme.accent2.cgColor; r.label.textColor = Theme.fg; pulse(r.dot, true)
+        } else {
+            r.dot.layer?.backgroundColor = Theme.success.cgColor; r.label.textColor = Theme.fgDim; pulse(r.dot, false)
+        }
+        isHidden = rows.isEmpty
     }
-    private var pulsing = false
-    private func startPulse() {
-        guard !pulsing else { return }; pulsing = true; dot.wantsLayer = true
-        let a = CABasicAnimation(keyPath: "opacity")
-        a.fromValue = 1; a.toValue = 0.3; a.duration = 0.7; a.autoreverses = true; a.repeatCount = .infinity
-        dot.layer?.add(a, forKey: "pulse")
+    func reset() { rows.values.forEach { $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
+    private func pulse(_ v: NSView, _ on: Bool) {
+        if on {
+            guard v.layer?.animation(forKey: "p") == nil else { return }
+            let a = CABasicAnimation(keyPath: "opacity")
+            a.fromValue = 1; a.toValue = 0.3; a.duration = 0.7; a.autoreverses = true; a.repeatCount = .infinity
+            v.layer?.add(a, forKey: "p")
+        } else { v.layer?.removeAnimation(forKey: "p"); v.alphaValue = 1 }
     }
-    private func stopPulse() { pulsing = false; dot.layer?.removeAnimation(forKey: "pulse"); dot.alphaValue = 1 }
 }
 
 final class SubagentListView: NSView {

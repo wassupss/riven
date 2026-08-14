@@ -44,8 +44,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var current: TurnBlock?
     private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row (in the list panel)
     private var subagentList: SubagentListView?           // 목록 패널 (인디케이터 클릭 시 도킹)
-    private var subIndicator: SubagentIndicator?          // 채팅 오른쪽 위 작은 표시
-    private var subRunning = 0, subTotal = 0
+    private var subIndicator: SubagentIndicator?          // 입력창 오른쪽 위 에이전트별 목록 표시
     private var subPanelOpen = false
     private static let subListKey = "__subagents__"
     private var turnStart: Date?
@@ -1154,8 +1153,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             guard let self else { return }
             if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self.subToPane[id] != nil)") }
             self.subToPane[id]?.finish(result)
-            self.subRunning = max(0, self.subRunning - 1)
-            self.subIndicator?.update(running: self.subRunning, total: self.subTotal)
+            self.subIndicator?.upsert(id: id, title: self.subTitle[id] ?? (self.subNames[id] ?? "sub-agent"), running: false)
         }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
@@ -2221,24 +2219,30 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     // 서브에이전트: 채팅 오른쪽 위 작은 인디케이터로 요약하고(항상 보임), 클릭하면 목록 패널로 펼친다.
     // 인라인으로 크게 띄우면 스크롤해야 확인 가능 + 빠른 서브가 뜨자마자 완료로 크게 보이던 문제 → 인디케이터로.
+    private var subTitle: [String: String] = [:]
+    private func subLabel(_ type: String, _ desc: String) -> String {
+        let ty = type.isEmpty ? "sub-agent" : type
+        return desc.isEmpty ? ty : "\(ty) · \(desc)"
+    }
     private func addSubagentPane(_ id: String, type: String, desc: String) {
         subNames[id] = type.isEmpty ? "sub-agent" : type
         if subagentList == nil { subagentList = SubagentListView() }
         let e = SubagentEntry(type: type, desc: desc)
         subagentList?.addEntry(e)
         subToPane[id] = e
-        subTotal += 1; subRunning += 1
+        let title = subLabel(type, desc); subTitle[id] = title
         ensureSubIndicator()
-        subIndicator?.update(running: subRunning, total: subTotal)
+        subIndicator?.upsert(id: id, title: title, running: true)   // 실행 중 (각 에이전트 한 줄)
     }
+    // 인디케이터는 "채팅 입력창 오른쪽 위"에 띄운다 (스크롤과 무관, 항상 보임).
     private func ensureSubIndicator() {
         guard subIndicator == nil else { return }
         let ind = SubagentIndicator(frame: .zero)
         ind.onClick = { [weak self] in self?.openSubagentPanel() }
-        addSubview(ind)   // 채팅 위에 떠 있게 (스크롤과 무관, 항상 보임)
+        addSubview(ind)
         NSLayoutConstraint.activate([
-            ind.topAnchor.constraint(equalTo: topAnchor, constant: UIScale.pt(8)),
-            ind.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(14)),
+            ind.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -UIScale.pt(8)),
+            ind.trailingAnchor.constraint(equalTo: composer.trailingAnchor),
         ])
         subIndicator = ind
     }
@@ -2247,8 +2251,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         if !subPanelOpen { onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents")); subPanelOpen = true }
     }
     private func clearSubagents() {
-        subToPane.removeAll(); subagentList = nil; subRunning = 0; subTotal = 0
-        subIndicator?.update(running: 0, total: 0)   // 숨김
+        subToPane.removeAll(); subTitle.removeAll(); subagentList = nil
+        subIndicator?.reset()   // 숨김
         if subPanelOpen { onCloseSubagentPanes?([ChatPanel.subListKey]); subPanelOpen = false }
     }
     // 사용자가 서브에이전트 목록 패널을 직접 닫음 - 다시 열 수 있게 플래그만 내린다(목록은 유지).
