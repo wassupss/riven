@@ -354,7 +354,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
     }
     required init?(coder: NSCoder) { fatalError() }
-    deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate() }
+    deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
+        suggestProc?.terminationHandler = nil; suggestProc?.terminate() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")
@@ -1583,6 +1584,50 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onResumeRequest: (() -> Void)?
     private var lastUsage: ChatUsage?
 
+    // MARK: - #2 다음 작업 제안 (초경량 Haiku 원샷 → 입력창 ghost text, Tab 으로 채움)
+    private var suggestProc: Process?
+    private func cancelSuggestion() {
+        suggestProc?.terminationHandler = nil
+        suggestProc?.terminate(); suggestProc = nil
+        input.ghost = ""
+    }
+    private func requestSuggestion(user: String, answer: String) {
+        guard agentKind == .claude, input.stringValue.isEmpty, turnStart == nil else { return }
+        let ans = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ans.isEmpty, let cmd = AgentDiscovery.claudeCmd() else { return }
+        cancelSuggestion()
+        let prompt = """
+        아래는 코딩 에이전트와의 마지막 대화다. 사용자가 이어서 보낼 법한 '다음 지시' 한 줄을 제안하라.
+        규칙: 사용자의 언어로, 명령형 한 줄, 40자 이내, 따옴표·설명 없이 그 문장만. 마땅한 게 없으면 빈 줄.
+
+        [사용자] \(user.prefix(500))
+        [에이전트] \(ans.prefix(1500))
+
+        다음 지시:
+        """
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: cmd)
+        // 전역 MCP(devhub 등)·훅을 로드하지 않게 빈 MCP + strict → 가볍고 Bun 워커 CPU 스핀 방지.
+        p.arguments = ["-p", "--model", "haiku", "--output-format", "text",
+                       "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}", prompt]
+        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
+        p.terminationHandler = { [weak self] proc in
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            var line = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            line = line.components(separatedBy: "\n").first ?? line
+            if line.count > 1, line.hasPrefix("\""), line.hasSuffix("\"") { line = String(line.dropFirst().dropLast()) }
+            DispatchQueue.main.async {
+                guard let self, self.suggestProc === proc else { return }   // 취소·교체됨 → 무시
+                self.suggestProc = nil
+                guard self.input.stringValue.isEmpty, self.turnStart == nil,
+                      line.count >= 1, line.count <= 80 else { return }
+                self.input.ghost = line
+            }
+        }
+        suggestProc = p
+        do { try p.run() } catch { suggestProc = nil }
+    }
+
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
     // commands, passthrough built-ins) return false and go to the CLI as a normal message.
     // ---- richer slash-command reports -------------------------------------------------
@@ -2128,6 +2173,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Do NOT close the previous turn's sub-agent panels here - the user wants to keep viewing
         // them (and closing them while one was still running lost visibility). They're real dock
         // panels now: they stay open until the user closes them (or the workspace changes).
+        cancelSuggestion()                                   // 새 턴 시작 → 이전 제안 취소
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
         turnText = ""
         current = newBlock()
@@ -2268,7 +2314,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         refreshAITitle()   // adopt the CLI's summarized title if it produced one this turn
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text, bubble: q.bubble) }
-        else { setRunning(false); onBusyChange?(false) }
+        else {
+            setRunning(false); onBusyChange?(false)
+            // #2: 턴이 끝나면 다음 작업 제안(ghost)을 초경량 모델로 뽑는다 (성공·비중단·입력 빈 경우만).
+            if error == nil && !wasInterrupted { requestSuggestion(user: currentTurnText ?? "", answer: turnText) }
+        }
         // NOTE: no plan-quota % here. The OAuth usage API gives only account-wide 5-hour/weekly
         // utilization (e.g. 36%/9%), which is NOT this turn's share and reads as misleading next
         // to a 5k-token turn. Per-turn quota % isn't derivable (no absolute budget from the API).
@@ -2401,6 +2451,7 @@ final class ChatPanel: NSView, Themable, Scalable {
 
     private func inputChanged() {
         highlightInput()
+        if !input.stringValue.isEmpty { cancelSuggestion() }   // 타이핑 시작 → 제안 취소
         let s = input.stringValue
         // 1) 맨 앞의 /명령 - 지금까지와 같다.
         if s.hasPrefix("/"), !s.contains(" "), !s.contains("\n") {

@@ -34,6 +34,8 @@ final class ChatInput: NSTextView {
     var onTextChange: (() -> Void)?
     var onFocus: (() -> Void)?           // gained keyboard focus (click/tab) → pane is being looked at
     var placeholder = "" { didSet { needsDisplay = true } }
+    // 다음 작업 제안(ghost text). 입력이 비어 있을 때 흐리게 뜨고, Tab 으로 채운다(실행은 안 함).
+    var ghost = "" { didSet { needsDisplay = true } }
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
         if ok { onFocus?() }
@@ -59,12 +61,20 @@ final class ChatInput: NSTextView {
     }
     override func didChangeText() {
         super.didChangeText()
+        if !string.isEmpty { ghost = "" }                       // 타이핑 시작 → 제안 접기
         enclosingScrollView?.invalidateIntrinsicContentSize()   // regrow up to the 6-line cap
         scrollRangeToVisible(selectedRange())                   // keep the cursor on screen past the cap
         needsDisplay = true
         onTextChange?()
     }
     override func doCommand(by selector: Selector) {
+        // Tab: 제안(ghost)이 떠 있고 입력이 비어 있으면 그걸 채운다 (실행은 안 함).
+        if selector == #selector(insertTab(_:)), string.isEmpty, !ghost.isEmpty {
+            stringValue = ghost; ghost = ""
+            setSelectedRange(NSRange(location: string.count, length: 0))
+            onTextChange?()
+            return
+        }
         if let onKey, onKey(selector) { return }           // popup / mode-cycle first
         if selector == #selector(insertNewline(_:)) {
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { super.insertNewline(nil) }  // Shift+Enter = newline
@@ -75,9 +85,18 @@ final class ChatInput: NSTextView {
     }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard string.isEmpty, !placeholder.isEmpty else { return }
-        (placeholder as NSString).draw(at: NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height),
-            withAttributes: [.foregroundColor: Theme.fgDim, .font: font ?? UIScale.font(ChatInput.fontSize)])
+        guard string.isEmpty else { return }
+        let f = font ?? UIScale.font(ChatInput.fontSize)
+        let origin = NSPoint(x: textContainerInset.width + 4, y: textContainerInset.height)
+        if !ghost.isEmpty {
+            // 제안 문구 + 오른쪽에 "⇥ Tab" 힌트.
+            (ghost as NSString).draw(at: origin, withAttributes: [.foregroundColor: Theme.accent2.withAlphaComponent(0.85), .font: f])
+            let w = (ghost as NSString).size(withAttributes: [.font: f]).width
+            ("  ⇥ Tab" as NSString).draw(at: NSPoint(x: origin.x + w, y: origin.y),
+                withAttributes: [.foregroundColor: Theme.fgDim.withAlphaComponent(0.7), .font: UIScale.font(UIScale.caption)])
+        } else if !placeholder.isEmpty {
+            (placeholder as NSString).draw(at: origin, withAttributes: [.foregroundColor: Theme.fgDim, .font: f])
+        }
     }
 
     // Paste an IMAGE (a Cmd-Shift-4 screenshot on the clipboard, or copied image files) like the
