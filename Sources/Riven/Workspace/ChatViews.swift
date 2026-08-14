@@ -329,7 +329,6 @@ final class ToolGroup: NSView {
     private var built = false                 // 본문 줄을 실제로 만들었는지 (기본 닫힘 → lazy)
     private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
     private var openedCode: [ObjectIdentifier: NSView] = [:]
-    private let shimmer = CAGradientLayer()
     private var shimmerOn = false
 
     override init(frame: NSRect) {
@@ -509,27 +508,23 @@ final class ToolGroup: NSView {
 
     func endRun() { running = false; stopShimmer(); updateTitle() }
 
+    // 실행 중 표시는 제목 글자의 opacity 를 은은히 맥동시킨다. 예전엔 그라디언트 mask sweep 을
+    // 썼는데, 제목이 길어지거나(현재 명령) 자주 바뀌면 mask 프레임이 실제 라벨보다 작게 남아
+    // 글자 대부분이 마스크 밖으로 나가 사라지고 조각("|")만 보였다. opacity 맥동은 프레임 동기화가
+    // 필요 없어 항상 온전히 읽힌다.
     func startShimmer() {
         guard !shimmerOn else { return }
         shimmerOn = true
-        shimmer.startPoint = CGPoint(x: 0, y: 0.5); shimmer.endPoint = CGPoint(x: 1, y: 0.5)
-        let dim = NSColor.white.withAlphaComponent(0.35).cgColor
-        shimmer.colors = [dim, NSColor.white.cgColor, dim]; shimmer.locations = [0, 0.5, 1]
-        titleLabel.layer?.mask = shimmer; needsLayout = true
-        let sweep = CABasicAnimation(keyPath: "locations")
-        sweep.fromValue = [-1.0, -0.5, 0.0]; sweep.toValue = [1.0, 1.5, 2.0]
-        sweep.duration = 1.4; sweep.repeatCount = .infinity
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        shimmer.add(sweep, forKey: "shimmer")
+        titleLabel.wantsLayer = true
+        let pulse = CABasicAnimation(keyPath: "opacity")
+        pulse.fromValue = 1.0; pulse.toValue = 0.5
+        pulse.duration = 0.85; pulse.autoreverses = true; pulse.repeatCount = .infinity
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        titleLabel.layer?.add(pulse, forKey: "pulse")
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false; shimmer.removeAllAnimations(); titleLabel.layer?.mask = nil
-    }
-    override func layout() {
-        super.layout()
-        guard shimmerOn, let host = titleLabel.layer else { return }
-        CATransaction.begin(); CATransaction.setDisableActions(true); shimmer.frame = host.bounds; CATransaction.commit()
+        shimmerOn = false; titleLabel.layer?.removeAnimation(forKey: "pulse"); titleLabel.alphaValue = 1.0
     }
 }
 
