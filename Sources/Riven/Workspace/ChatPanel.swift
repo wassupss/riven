@@ -42,7 +42,12 @@ final class ChatPanel: NSView, Themable, Scalable {
     var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
-    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its inline accordion (in a TurnBlock)
+    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row (in the list panel)
+    private var subagentList: SubagentListView?           // 목록 패널 (인디케이터 클릭 시 도킹)
+    private var subIndicator: SubagentIndicator?          // 채팅 오른쪽 위 작은 표시
+    private var subRunning = 0, subTotal = 0
+    private var subPanelOpen = false
+    private static let subListKey = "__subagents__"
     private var turnStart: Date?
     private var flushTimer: Timer?
     private var timeTimer: Timer?    // 완료 턴 상대시간 갱신 (1분마다)
@@ -1129,9 +1134,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 여기서 턴을 새로 세울 필요가 없다. 예전엔 메인 result 뒤 늦게 온 서브 이벤트가 유령
             // "생각 중" 턴을 띄웠고, result 가 안 와 영영 안 풀렸다(Esc 로도).
             guard let self else { return }
-            self.subNames[id] = type.isEmpty ? "sub-agent" : type
-            // 사이드 패널 대신 채팅 안 인라인 아코디언으로 (명령 아코디언과 같은 결).
-            if let e = self.current?.addSubagent(id, type: type, desc: desc) { self.subToPane[id] = e }
+            self.addSubagentPane(id, type: type, desc: desc)
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
             if ChatPanel.subBench {
@@ -1148,9 +1151,11 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.subToPane[pid]?.addToolResult(text, isError: isErr)
         }
         s?.onSubagentDone = { [weak self] id, result in
-            if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self?.subToPane[id] != nil)") }
-            self?.subToPane[id]?.finish(result)
-            // 완료 알림 칩은 안 띄운다 - 서브에이전트 패널 항목이 ✓ 완료로 바뀌어 상태를 보여준다.
+            guard let self else { return }
+            if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self.subToPane[id] != nil)") }
+            self.subToPane[id]?.finish(result)
+            self.subRunning = max(0, self.subRunning - 1)
+            self.subIndicator?.update(running: self.subRunning, total: self.subTotal)
         }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
@@ -2214,10 +2219,42 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 외부(파이프라인 등)에서 이 팬 대화에 회색 시스템 한 줄을 남긴다.
     func systemNote(_ text: String) { addSystem(text) }
 
-    // 서브에이전트는 이제 채팅 안 인라인 아코디언(TurnBlock.addSubagent)으로 그린다 - 사이드 패널 없음.
-    // 엔트리는 각자의 TurnBlock 안에 살아 있으므로 여기선 라우팅 참조만 정리한다.
-    private func clearSubagents() { subToPane.removeAll() }
-    func clearSubagentRef(_ id: String) { subToPane[id] = nil }
+    // 서브에이전트: 채팅 오른쪽 위 작은 인디케이터로 요약하고(항상 보임), 클릭하면 목록 패널로 펼친다.
+    // 인라인으로 크게 띄우면 스크롤해야 확인 가능 + 빠른 서브가 뜨자마자 완료로 크게 보이던 문제 → 인디케이터로.
+    private func addSubagentPane(_ id: String, type: String, desc: String) {
+        subNames[id] = type.isEmpty ? "sub-agent" : type
+        if subagentList == nil { subagentList = SubagentListView() }
+        let e = SubagentEntry(type: type, desc: desc)
+        subagentList?.addEntry(e)
+        subToPane[id] = e
+        subTotal += 1; subRunning += 1
+        ensureSubIndicator()
+        subIndicator?.update(running: subRunning, total: subTotal)
+    }
+    private func ensureSubIndicator() {
+        guard subIndicator == nil else { return }
+        let ind = SubagentIndicator(frame: .zero)
+        ind.onClick = { [weak self] in self?.openSubagentPanel() }
+        addSubview(ind)   // 채팅 위에 떠 있게 (스크롤과 무관, 항상 보임)
+        NSLayoutConstraint.activate([
+            ind.topAnchor.constraint(equalTo: topAnchor, constant: UIScale.pt(8)),
+            ind.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(14)),
+        ])
+        subIndicator = ind
+    }
+    private func openSubagentPanel() {
+        guard let list = subagentList else { return }
+        if !subPanelOpen { onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents")); subPanelOpen = true }
+    }
+    private func clearSubagents() {
+        subToPane.removeAll(); subagentList = nil; subRunning = 0; subTotal = 0
+        subIndicator?.update(running: 0, total: 0)   // 숨김
+        if subPanelOpen { onCloseSubagentPanes?([ChatPanel.subListKey]); subPanelOpen = false }
+    }
+    // 사용자가 서브에이전트 목록 패널을 직접 닫음 - 다시 열 수 있게 플래그만 내린다(목록은 유지).
+    func clearSubagentRef(_ id: String) {
+        if id == ChatPanel.subListKey { subPanelOpen = false } else { subToPane[id] = nil }
+    }
 
     private func startFlush() {
         flushTimer?.invalidate()

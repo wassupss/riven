@@ -2098,6 +2098,58 @@ final class SubagentPane: NSView {
 // MARK: - consolidated sub-agent list (one panel, accordion rows)
 // 서브에이전트마다 별도 컬럼을 띄우면 여러 개일 때 우측이 컬럼 더미가 된다. 대신 한 패널에
 // 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
+// 채팅 오른쪽 위에 떠 있는 작은 서브에이전트 표시. 클릭하면 목록 패널을 연다.
+final class SubagentIndicator: NSView {
+    private let label = NSTextField(labelWithString: "")
+    private let dot = NSView()
+    var onClick: (() -> Void)?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = UIScale.pt(11)
+        layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.95).cgColor
+        translatesAutoresizingMaskIntoConstraints = false
+        dot.wantsLayer = true; dot.layer?.cornerRadius = 3
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIScale.font(UIScale.small, .medium); label.textColor = Theme.fg
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(dot); addSubview(label)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: UIScale.pt(23)),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(9)),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 6), dot.heightAnchor.constraint(equalToConstant: 6),
+            label.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(10)),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    @objc private func tap() { onClick?() }
+    func update(running: Int, total: Int) {
+        isHidden = total == 0
+        guard total > 0 else { stopPulse(); return }
+        if running > 0 {
+            label.stringValue = t("chat.subs.running", ["n": "\(running)"])
+            dot.layer?.backgroundColor = Theme.accent2.cgColor; startPulse()
+        } else {
+            label.stringValue = t("chat.subs.count", ["n": "\(total)"])
+            dot.layer?.backgroundColor = Theme.success.cgColor; stopPulse()
+        }
+    }
+    private var pulsing = false
+    private func startPulse() {
+        guard !pulsing else { return }; pulsing = true; dot.wantsLayer = true
+        let a = CABasicAnimation(keyPath: "opacity")
+        a.fromValue = 1; a.toValue = 0.3; a.duration = 0.7; a.autoreverses = true; a.repeatCount = .infinity
+        dot.layer?.add(a, forKey: "pulse")
+    }
+    private func stopPulse() { pulsing = false; dot.layer?.removeAnimation(forKey: "pulse"); dot.alphaValue = 1 }
+}
+
 final class SubagentListView: NSView {
     private let scroll = NSScrollView()
     private let stack = FlippedStack()
