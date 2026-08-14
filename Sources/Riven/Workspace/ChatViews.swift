@@ -299,13 +299,14 @@ final class ToolGroup: NSView {
     private let icon = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let body = NSStackView()
-    private var expanded = false
+    private var expanded = true               // 기본 펼침 (도구 줄은 보이고, 코드블록은 클릭해야 열림)
     private var running = true
     private var count = 0
     private var latestName = ""
+    private var added = 0, removed = 0        // Edit/MultiEdit 변경 라인 합계 (+/-)
     private struct Spec { let name: String; let detail: String; let code: String?; let path: String?; let diff: Bool }
-    private var specs: [Spec] = []            // 도구 명세 (뷰는 펼칠 때 lazy 생성)
-    private var built = false                 // 본문 줄을 실제로 만들었는지
+    private var specs: [Spec] = []            // 도구 명세 (dedup·재계산용)
+    private var built = true                  // 기본 펼침이라 도구 줄을 즉시 만든다
     private var codeFor: [ObjectIdentifier: (code: String, path: String?, diff: Bool)] = [:]
     private var openedCode: [ObjectIdentifier: NSView] = [:]
     private let shimmer = CAGradientLayer()
@@ -315,7 +316,7 @@ final class ToolGroup: NSView {
         super.init(frame: frame)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
-        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)   // 기본 펼침
         chevron.contentTintColor = Theme.fgDim
         chevron.symbolConfiguration = .init(pointSize: UIScale.pt(10), weight: .semibold)
         chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -334,13 +335,13 @@ final class ToolGroup: NSView {
         header.addSubview(hrow)
         body.orientation = .vertical; body.alignment = .leading; body.spacing = 3
         body.translatesAutoresizingMaskIntoConstraints = false
-        body.isHidden = true
+        body.isHidden = false                 // 기본 펼침
         addSubview(header); addSubview(body)
         // 접힘/펼침에 따라 그룹 바닥을 헤더 or 본문에 묶는다. isHidden 만으론 본문이 Auto Layout
         // 에서 사라지지 않아 접어도 펼친 높이를 그대로 차지했다(다음 답변이 한참 아래로 밀림).
         collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
         expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
-        collapsedBottom.isActive = true
+        expandedBottom.isActive = true        // 기본 펼침
         NSLayoutConstraint.activate([
             icon.widthAnchor.constraint(equalToConstant: UIScale.pt(15)),
             chevron.widthAnchor.constraint(equalToConstant: UIScale.pt(10)),
@@ -352,7 +353,7 @@ final class ToolGroup: NSView {
             header.leadingAnchor.constraint(equalTo: leadingAnchor),
             header.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
-            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(16)),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor),   // 들여쓰기 없음 - 답변과 같은 왼쪽 선
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
         header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
@@ -385,8 +386,17 @@ final class ToolGroup: NSView {
         let spec = Spec(name: clean, detail: detail, code: (code?.isEmpty == false) ? code : nil,
                         path: path, diff: name == "Edit" || name == "MultiEdit")
         specs.append(spec)
+        if spec.diff, let c = spec.code { let (a, r) = ToolGroup.countDiff(c); added += a; removed += r }
         if built { appendRow(spec) }            // 이미 펼쳐진 상태면 새 줄도 바로 붙인다
         updateTitle()
+    }
+    // diff 코드조각("- old"/"+ new")에서 추가/삭제 라인 수를 센다.
+    static func countDiff(_ s: String) -> (Int, Int) {
+        var a = 0, r = 0
+        for line in s.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("+") { a += 1 } else if line.hasPrefix("-") { r += 1 }
+        }
+        return (a, r)
     }
     private func buildRows() { specs.forEach(appendRow); built = true }
     private func appendRow(_ spec: Spec) {
@@ -420,7 +430,8 @@ final class ToolGroup: NSView {
     /// 승인 카드가 같은 명령을 다시 보여줄 때, 그룹에서 방금 넣은 중복 항목을 걷는다.
     @discardableResult func removeLastMatching(_ code: String) -> Bool {
         guard let i = specs.lastIndex(where: { $0.code == code }) else { return false }
-        specs.remove(at: i); count = max(0, count - 1)
+        let removedSpec = specs.remove(at: i); count = max(0, count - 1)
+        if removedSpec.diff { let (a, r) = ToolGroup.countDiff(code); added = max(0, added - a); removed = max(0, removed - r) }
         if built {                              // 이미 뷰가 만들어졌으면 해당 줄도 제거
             for line in body.arrangedSubviews.reversed().compactMap({ $0 as? ToolLine }) {
                 let key = ObjectIdentifier(line)
@@ -434,15 +445,21 @@ final class ToolGroup: NSView {
     }
 
     private func updateTitle() {
-        if running {
-            titleLabel.stringValue = count <= 1
-                ? t("chat.tools.running1", ["name": latestName.isEmpty ? t("chat.tools.cmd") : latestName])
-                : t("chat.tools.runningN", ["n": "\(count)"])
-            titleLabel.textColor = Theme.accent2
-        } else {
-            titleLabel.stringValue = t("chat.tools.count", ["n": "\(count)"])
-            titleLabel.textColor = Theme.fgDim
+        let main = running
+            ? (count <= 1 ? t("chat.tools.running1", ["name": latestName.isEmpty ? t("chat.tools.cmd") : latestName])
+                          : t("chat.tools.runningN", ["n": "\(count)"]))
+            : t("chat.tools.count", ["n": "\(count)"])
+        let m = NSMutableAttributedString(string: main, attributes: [
+            .foregroundColor: running ? Theme.accent2 : Theme.fgDim,
+            .font: UIScale.font(UIScale.body, .medium)])
+        // Edit 변경량을 "명령 N개" 옆에 +A -R 로 (초록/빨강).
+        if added > 0 || removed > 0 {
+            m.append(NSAttributedString(string: "  "))
+            let f = UIScale.font(UIScale.small, .semibold)
+            if added > 0 { m.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: Theme.gitAdded, .font: f])) }
+            if removed > 0 { m.append(NSAttributedString(string: (added > 0 ? " " : "") + "-\(removed)", attributes: [.foregroundColor: Theme.gitDeleted, .font: f])) }
         }
+        titleLabel.attributedStringValue = m
         needsLayout = true
     }
 
