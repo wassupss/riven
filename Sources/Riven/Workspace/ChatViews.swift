@@ -2106,7 +2106,7 @@ final class SubagentPane: NSView {
 // 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
 final class SubagentIndicator: NSView {
     private let stack = NSStackView()
-    private var rows: [String: (row: NSView, dot: NSView, label: NSTextField)] = [:]
+    private var rows: [String: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)] = [:]
     var onClick: (() -> Void)?
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -2131,46 +2131,48 @@ final class SubagentIndicator: NSView {
     @objc private func tap() { onClick?() }
 
     // 에이전트 한 줄 추가/갱신. title = "타입 · 설명".
+    // 실행 중 = 스피너(도는 게 눈에 확실히 보임), 완료 = 초록 체크. 점+펄스는 도는지
+    // 애매해 "처음부터 완료처럼" 보였다 → 아코디언 헤더와 같은 스피너/체크로 통일.
     func upsert(id: String, title: String, running: Bool) {
-        let r: (row: NSView, dot: NSView, label: NSTextField)
+        let r: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)
         if let ex = rows[id] { r = ex; r.label.stringValue = title }
         else {
-            let dot = NSView(); dot.wantsLayer = true; dot.layer?.cornerRadius = 3
-            dot.translatesAutoresizingMaskIntoConstraints = false
+            let spin = NSProgressIndicator()
+            spin.style = .spinning; spin.controlSize = .small; spin.isDisplayedWhenStopped = false
+            spin.translatesAutoresizingMaskIntoConstraints = false
+            let check = NSImageView()
+            check.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)
+            check.contentTintColor = Theme.success
+            check.symbolConfiguration = .init(pointSize: UIScale.pt(11), weight: .semibold)
+            check.isHidden = true; check.translatesAutoresizingMaskIntoConstraints = false
             let lbl = NSTextField(labelWithString: title)
             lbl.font = UIScale.font(UIScale.small, .medium); lbl.lineBreakMode = .byTruncatingTail
             lbl.translatesAutoresizingMaskIntoConstraints = false
             lbl.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let row = NSView(); row.translatesAutoresizingMaskIntoConstraints = false
-            row.addSubview(dot); row.addSubview(lbl)
+            row.addSubview(spin); row.addSubview(check); row.addSubview(lbl)
             NSLayoutConstraint.activate([
                 row.heightAnchor.constraint(greaterThanOrEqualToConstant: UIScale.pt(18)),
-                dot.leadingAnchor.constraint(equalTo: row.leadingAnchor), dot.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                dot.widthAnchor.constraint(equalToConstant: 6), dot.heightAnchor.constraint(equalToConstant: 6),
-                lbl.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+                spin.leadingAnchor.constraint(equalTo: row.leadingAnchor), spin.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                spin.widthAnchor.constraint(equalToConstant: 12), spin.heightAnchor.constraint(equalToConstant: 12),
+                check.centerXAnchor.constraint(equalTo: spin.centerXAnchor), check.centerYAnchor.constraint(equalTo: spin.centerYAnchor),
+                check.widthAnchor.constraint(equalToConstant: 13), check.heightAnchor.constraint(equalToConstant: 13),
+                lbl.leadingAnchor.constraint(equalTo: spin.trailingAnchor, constant: 7),
                 lbl.trailingAnchor.constraint(equalTo: row.trailingAnchor),
                 lbl.centerYAnchor.constraint(equalTo: row.centerYAnchor),
             ])
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -(UIScale.pt(10) * 2)).isActive = true
-            rows[id] = (row, dot, lbl); r = (row, dot, lbl)
+            rows[id] = (row, spin, check, lbl); r = (row, spin, check, lbl)
         }
         if running {
-            r.dot.layer?.backgroundColor = Theme.accent2.cgColor; r.label.textColor = Theme.fg; pulse(r.dot, true)
+            r.check.isHidden = true; r.spinner.isHidden = false; r.spinner.startAnimation(nil); r.label.textColor = Theme.fg
         } else {
-            r.dot.layer?.backgroundColor = Theme.success.cgColor; r.label.textColor = Theme.fgDim; pulse(r.dot, false)
+            r.spinner.stopAnimation(nil); r.spinner.isHidden = true; r.check.isHidden = false; r.label.textColor = Theme.fgDim
         }
         isHidden = rows.isEmpty
     }
-    func reset() { rows.values.forEach { $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
-    private func pulse(_ v: NSView, _ on: Bool) {
-        if on {
-            guard v.layer?.animation(forKey: "p") == nil else { return }
-            let a = CABasicAnimation(keyPath: "opacity")
-            a.fromValue = 1; a.toValue = 0.3; a.duration = 0.7; a.autoreverses = true; a.repeatCount = .infinity
-            v.layer?.add(a, forKey: "p")
-        } else { v.layer?.removeAnimation(forKey: "p"); v.alphaValue = 1 }
-    }
+    func reset() { rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
 }
 
 final class SubagentListView: NSView {
