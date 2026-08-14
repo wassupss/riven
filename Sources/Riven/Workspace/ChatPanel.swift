@@ -355,7 +355,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
-        suggestProc?.terminationHandler = nil; suggestProc?.terminate() }
+        SuggestionService.shared.cancel() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")
@@ -1584,57 +1584,16 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onResumeRequest: (() -> Void)?
     private var lastUsage: ChatUsage?
 
-    // MARK: - #2 다음 작업 제안 (초경량 Haiku 원샷 → 입력창 ghost text, Tab 으로 채움)
-    private var suggestProc: Process?
-    private func cancelSuggestion() {
-        suggestProc?.terminationHandler = nil
-        suggestProc?.terminate(); suggestProc = nil
-        input.ghost = ""
-    }
+    // MARK: - #2 다음 작업 제안 (웜 Haiku 세션 → 입력창 ghost text, Tab 으로 채움)
+    // 생성은 SuggestionService(앱 전체 웜 세션 하나, 유휴 시 종료)가 담당 - 콜드 스타트 회피.
+    private func cancelSuggestion() { SuggestionService.shared.cancel(); input.ghost = "" }
     private func requestSuggestion(user: String, answer: String) {
-        // 기본 꺼짐: 매 턴 초경량 모델(Haiku)을 호출해 사용자 토큰을 더 쓰므로 opt-in.
-        guard Settings.shared.bool("chatSuggest", false) else { return }
-        guard agentKind == .claude, input.stringValue.isEmpty, turnStart == nil else { return }
-        let ans = answer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !ans.isEmpty, let cmd = AgentDiscovery.claudeCmd() else { return }
-        cancelSuggestion()
-        let prompt = """
-        너는 사용자가 코딩 에이전트에게 다음에 보낼 메시지를 예측하는 자동완성이다. 마지막 대화를 보고 \
-        사용자가 이어서 칠 법한 지시 딱 한 줄만 출력해라. 사용자의 언어로, 명령형, 40자 이내. \
-        인사·설명·따옴표·머리말 절대 금지, 그 문장만.
-
-        사용자: \(user.prefix(500))
-        에이전트: \(ans.prefix(1500))
-
-        사용자가 다음에 칠 메시지:
-        """
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: cmd)
-        // 프롬프트는 stdin 으로 (positional 로 주면 변수인수 --mcp-config 가 삼켜 버린다).
-        // 전역 MCP(devhub 등)·훅을 로드하지 않게 빈 MCP + strict → 가볍고 Bun 워커 CPU 스핀 방지.
-        p.arguments = ["-p", "--model", "haiku", "--output-format", "text",
-                       "--strict-mcp-config", "--mcp-config", "{\"mcpServers\":{}}"]
-        let inPipe = Pipe(); p.standardInput = inPipe
-        let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { [weak self] proc in
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            var line = (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            line = line.components(separatedBy: "\n").first ?? line
-            if line.count > 1, line.hasPrefix("\""), line.hasSuffix("\"") { line = String(line.dropFirst().dropLast()) }
-            DispatchQueue.main.async {
-                guard let self, self.suggestProc === proc else { return }   // 취소·교체됨 → 무시
-                self.suggestProc = nil
-                guard self.input.stringValue.isEmpty, self.turnStart == nil,
-                      line.count >= 1, line.count <= 80 else { return }
-                self.input.ghost = line
-            }
+        // 기본 꺼짐(opt-in): 토큰을 조금 더 쓴다. codex 대화에서도 동작(생성은 독립 haiku).
+        guard Settings.shared.bool("chatSuggest", false), input.stringValue.isEmpty, turnStart == nil else { return }
+        SuggestionService.shared.suggest(user: user, answer: answer) { [weak self] line in
+            guard let self, self.input.stringValue.isEmpty, self.turnStart == nil else { return }
+            self.input.ghost = line
         }
-        suggestProc = p
-        do {
-            try p.run()
-            try? inPipe.fileHandleForWriting.write(contentsOf: Data(prompt.utf8))
-            try? inPipe.fileHandleForWriting.close()   // EOF → CLI 가 프롬프트를 읽고 답한다
-        } catch { suggestProc = nil }
     }
 
     // Handle riven's client-side slash commands; return true if consumed. Others (custom
