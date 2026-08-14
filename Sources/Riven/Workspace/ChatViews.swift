@@ -2023,6 +2023,170 @@ final class SubagentPane: NSView {
     }
 }
 
+// MARK: - consolidated sub-agent list (one panel, accordion rows)
+// 서브에이전트마다 별도 컬럼을 띄우면 여러 개일 때 우측이 컬럼 더미가 된다. 대신 한 패널에
+// 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
+final class SubagentListView: NSView {
+    private let scroll = NSScrollView()
+    private let stack = FlippedStack()
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = Theme.bg.cgColor
+        layer?.borderWidth = 1; layer?.borderColor = Theme.hairline.cgColor
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        stack.orientation = .vertical; stack.spacing = 0; stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = stack
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true; scroll.hasHorizontalScroller = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    func addEntry(_ e: SubagentEntry) {
+        e.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(e)
+        e.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        e.onRelayout = { [weak self] in self?.stack.layoutSubtreeIfNeeded() }
+    }
+}
+
+// 한 서브에이전트 = 접이식 행 (헤더: 상태 + 이름·설명 / 본문: 그 작업 전사).
+final class SubagentEntry: NSView {
+    private let header = NSView()
+    private let chevron = NSImageView()
+    private let spinner = NSProgressIndicator()
+    private let statusIcon = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let body = NSStackView()
+    private let type: String
+    private var expanded = true
+    private var done = false
+    private var collapsedBottom: NSLayoutConstraint!
+    private var expandedBottom: NSLayoutConstraint!
+    var onRelayout: (() -> Void)?
+
+    init(type: String, desc: String) {
+        self.type = type
+        super.init(frame: .zero)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.isHidden = true; statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: desc)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        [chevron, spinner, statusIcon, titleLabel].forEach { header.addSubview($0) }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        body.orientation = .vertical; body.spacing = 8; body.alignment = .leading
+        body.edgeInsets = NSEdgeInsets(top: 6, left: 24, bottom: 8, right: 12)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header); addSubview(body)
+        collapsedBottom = header.bottomAnchor.constraint(equalTo: bottomAnchor)
+        expandedBottom = body.bottomAnchor.constraint(equalTo: bottomAnchor)
+        expandedBottom.isActive = true       // 실행 중 기본 펼침
+        NSLayoutConstraint.activate([
+            header.topAnchor.constraint(equalTo: topAnchor),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 28),
+            chevron.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 9),
+            chevron.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+            spinner.leadingAnchor.constraint(equalTo: chevron.trailingAnchor, constant: 7),
+            spinner.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 12), spinner.heightAnchor.constraint(equalToConstant: 12),
+            statusIcon.centerXAnchor.constraint(equalTo: spinner.centerXAnchor),
+            statusIcon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            statusIcon.widthAnchor.constraint(equalToConstant: 13), statusIcon.heightAnchor.constraint(equalToConstant: 13),
+            titleLabel.leadingAnchor.constraint(equalTo: spinner.trailingAnchor, constant: 7),
+            titleLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -10),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            body.topAnchor.constraint(equalTo: header.bottomAnchor),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor),
+            body.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        header.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(toggle)))
+        spinner.startAnimation(nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func toggle() { setExpanded(!expanded); onRelayout?() }
+    private func setExpanded(_ on: Bool) {
+        expanded = on
+        body.isHidden = !on
+        collapsedBottom.isActive = !on; expandedBottom.isActive = on
+        chevron.image = NSImage(systemSymbolName: on ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+        chevron.contentTintColor = Theme.fgDim
+        chevron.symbolConfiguration = .init(pointSize: UIScale.pt(9), weight: .semibold)
+    }
+    private func add(_ v: NSView) {
+        v.translatesAutoresizingMaskIntoConstraints = false
+        body.addArrangedSubview(v)
+        v.widthAnchor.constraint(equalTo: body.widthAnchor, constant: -(24 + 12)).isActive = true
+        onRelayout?()
+    }
+    func addTool(_ name: String, _ detail: String, _ code: String?, _ path: String?) {
+        add(ToolLine(name: name, detail: detail))
+        if let code, !code.isEmpty { add(ChatText.codeBlock(code, diff: name == "Edit" || name == "MultiEdit", path: path)) }
+    }
+    func addText(_ text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let l = NSTextField(wrappingLabelWithString: t)
+        l.font = UIScale.font(UIScale.small); l.textColor = Theme.fgDim; l.isSelectable = true
+        add(l)
+    }
+    func addToolResult(_ text: String, isError: Bool) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        let shown = t.count > 1200 ? String(t.prefix(1200)) + "\n…" : t
+        let label = NSTextField(labelWithString: shown)
+        label.font = UIScale.mono(UIScale.caption)
+        label.textColor = isError ? Theme.danger : Theme.fgDim
+        label.lineBreakMode = .byWordWrapping; label.maximumNumberOfLines = 12
+        label.translatesAutoresizingMaskIntoConstraints = false
+        add(label)
+    }
+    func finish(_ result: String) {
+        guard !done else { return }
+        done = true; spinner.stopAnimation(nil); spinner.isHidden = true
+        statusIcon.isHidden = false
+        let cfg = NSImage.SymbolConfiguration(pointSize: UIScale.pt(12), weight: .bold).applying(.init(paletteColors: [Theme.success]))
+        statusIcon.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?.withSymbolConfiguration(cfg)
+        titleLabel.attributedStringValue = SubagentEntry.titleText(type: type, desc: t("chat.done"))
+        let r = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !r.isEmpty { add(ChatText.proseMarkdown(r)) }
+        setExpanded(false)                   // 끝나면 접어 목록을 깔끔하게
+        onRelayout?()
+    }
+    private static func titleText(type: String, desc: String) -> NSAttributedString {
+        let m = NSMutableAttributedString()
+        m.append(NSAttributedString(string: type.isEmpty ? "sub-agent" : type,
+            attributes: [.foregroundColor: Theme.fg, .font: UIScale.font(UIScale.small, .semibold)]))
+        if !desc.isEmpty {
+            m.append(NSAttributedString(string: "  ·  " + desc,
+                attributes: [.foregroundColor: Theme.fgDim, .font: UIScale.font(UIScale.caption)]))
+        }
+        return m
+    }
+}
+
 // MARK: - slash-command autocomplete popup (scrollable, shows all matches)
 struct SlashCommand { let name: String; let desc: String }
 

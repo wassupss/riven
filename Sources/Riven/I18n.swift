@@ -332,6 +332,7 @@ enum I18n {
         "chat.updateApplies": ("업데이트된 CLI는 새 챗(또는 재시작)부터 적용됩니다.",
                                "The updated CLI applies to new chats (or after a restart)."),
         "chat.runFailed": ("실행 실패", "Failed to run"),
+        "chat.subagents": ("서브에이전트", "Sub-agents"),
         // tool accordion group
         "chat.tools.cmd": ("명령", "Commands"),
         "chat.tools.ran": ("{n} 실행", "{n} run"),

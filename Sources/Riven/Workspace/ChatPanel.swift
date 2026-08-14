@@ -42,7 +42,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     var debugOnApproval: ((_ name: String, _ detail: String) -> Void)?
     private var workspace: URL?
     private var current: TurnBlock?
-    private var subToPane: [String: SubagentPane] = [:]   // sub-agent id → its split pane
+    private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row
+    private var subagentList: SubagentListView?           // one consolidated panel for all sub-agents
     private var turnStart: Date?
     private var flushTimer: Timer?
     private var timeTimer: Timer?    // 완료 턴 상대시간 갱신 (1분마다)
@@ -2196,21 +2197,28 @@ final class ChatPanel: NSView, Themable, Scalable {
         addSystem(t("chat.subagentDone", ["n": name]))
     }
 
+    private static let subListKey = "__subagents__"   // 하나의 통합 서브에이전트 패널 id
     private func addSubagentPane(_ id: String, type: String, desc: String) {
         subNames[id] = type.isEmpty ? "sub-agent" : type
         addSystem(t("chat.subagentStart", ["n": subNames[id] ?? "", "d": desc]))
-        let pane = SubagentPane(type: type, desc: desc)
-        pane.onClose = { [weak self] in self?.subToPane[id] = nil; self?.onCloseSubagentPanes?([id]) }
-        subToPane[id] = pane
-        onOpenSubagentPane?(id, pane, type.isEmpty ? "Sub-agent" : type)
+        // 서브에이전트마다 컬럼을 열지 않고, 하나의 목록 패널에 접이식 행으로 쌓는다.
+        if subagentList == nil {
+            let list = SubagentListView(); subagentList = list
+            onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents"))
+        }
+        let entry = SubagentEntry(type: type, desc: desc)
+        subagentList?.addEntry(entry)
+        subToPane[id] = entry
     }
     private func clearSubagents() {
-        let ids = Array(subToPane.keys)
         subToPane.removeAll()
-        if !ids.isEmpty { onCloseSubagentPanes?(ids) }
+        if subagentList != nil { subagentList = nil; onCloseSubagentPanes?([ChatPanel.subListKey]) }
     }
-    // The user closed a sub-agent's dock panel directly - drop our view reference.
-    func clearSubagentRef(_ id: String) { subToPane[id] = nil }
+    // The user closed the sub-agent list dock panel directly - drop all references.
+    func clearSubagentRef(_ id: String) {
+        if id == ChatPanel.subListKey { subToPane.removeAll(); subagentList = nil }
+        else { subToPane[id] = nil }
+    }
 
     private func startFlush() {
         flushTimer?.invalidate()
