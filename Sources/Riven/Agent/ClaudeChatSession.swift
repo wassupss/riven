@@ -35,6 +35,13 @@ final class ClaudeChatSession {
     private let queue = DispatchQueue(label: "com.riven.chat.claude")
     private var agentToolIds = Set<String>()   // ids of `Agent`/`Task` tool_uses = sub-agent launches
     private var editPaths: [String: String] = [:]   // main-thread edit tool_use id → file path
+    // 서브에이전트 완료 신호: 최신 CLI 는 Agent 의 tool_result 를 "시작 시점"에 placeholder 로
+    // 보내고, 실제 완료는 `system`/task_notification(status=completed)로 알린다. 그래서 tool_result
+    // 로 완료를 판정하면 "돌자마자 완료"로 뜬다. task 이벤트를 쓰는 CLI 에선 그걸 신호로 삼고,
+    // 안 쓰는 구버전에서만 tool_result 를 완료로 쓴다(fallback).
+    private var taskAwareIds = Set<String>()        // task_started 를 본 Agent id (= task 이벤트 CLI)
+    private var taskIdToTool: [String: String] = [:] // task_id → Agent tool_use id (task_updated 해소용)
+    private var subDoneFired = Set<String>()         // onSubagentDone 중복 방지
     private let perm: ChatPermissionServer?
     private let ask: ChatAskServer?
 
@@ -204,8 +211,36 @@ final class ClaudeChatSession {
         }
     }
 
+    // 서브에이전트 완료를 한 번만 발화 (task_notification / task_updated / 구버전 tool_result 중
+    // 먼저 오는 것 하나로).
+    private func finishSub(_ id: String, _ result: String) {
+        guard !subDoneFired.contains(id) else { return }
+        subDoneFired.insert(id)
+        main { self.onSubagentDone?(id, result) }
+    }
+
+    static let rawDump = ProcessInfo.processInfo.environment["RIVEN_RAWDUMP"] != nil
     private func handle(_ o: [String: Any]) {
         let parent = o["parent_tool_use_id"] as? String   // nil = main thread
+        if ClaudeChatSession.rawDump {
+            let ty = o["type"] as? String ?? "?"
+            var extra = ""
+            if ty == "system", let sub = o["subtype"] as? String, sub.hasPrefix("task") {
+                let tid = String((o["tool_use_id"] as? String ?? "").suffix(6))
+                let st = (o["status"] as? String) ?? ((o["patch"] as? [String: Any])?["status"] as? String) ?? ""
+                RLog.log("RAW system/\(sub) [task=\(String((o["task_id"] as? String ?? "").suffix(6))) tuid=\(tid) status=\(st)]")
+            }
+            if ty == "assistant" || ty == "user", let msg = o["message"] as? [String: Any],
+               let bs = msg["content"] as? [[String: Any]] {
+                extra = bs.map { b -> String in
+                    let bt = b["type"] as? String ?? "?"
+                    if bt == "tool_use" { return "tool_use(\(b["name"] as? String ?? "?"),\(String((b["id"] as? String ?? "").suffix(6))))" }
+                    if bt == "tool_result" { return "tool_result(tuid=\(String((b["tool_use_id"] as? String ?? "").suffix(6))),err=\(b["is_error"] as? Bool ?? false))" }
+                    return bt
+                }.joined(separator: ",")
+            }
+            RLog.log("RAW \(ty) parent=\(parent?.suffix(6).description ?? "-") [\(extra)]")
+        }
         switch o["type"] as? String {
         case "system":
             if o["subtype"] as? String == "init" {
@@ -217,6 +252,24 @@ final class ClaudeChatSession {
                     mcpServers = servers.map { (name: $0["name"] as? String ?? "?", status: $0["status"] as? String ?? "?") }
                 }
                 main { self.onInit?(sid, model) }
+            }
+            // 서브에이전트 라이프사이클 (최신 CLI). tool_result 대신 이걸로 완료를 판정한다.
+            switch o["subtype"] as? String {
+            case "task_started":
+                if let tid = o["tool_use_id"] as? String {
+                    taskAwareIds.insert(tid)
+                    if let taskId = o["task_id"] as? String { taskIdToTool[taskId] = tid }
+                }
+            case "task_notification":
+                if (o["status"] as? String) == "completed", let tid = o["tool_use_id"] as? String {
+                    finishSub(tid, "")   // 최종 답변은 이미 parent 텍스트로 스트리밍돼 본문에 있음
+                }
+            case "task_updated":
+                if ((o["patch"] as? [String: Any])?["status"] as? String) == "completed",
+                   let taskId = o["task_id"] as? String, let tid = taskIdToTool[taskId] {
+                    finishSub(tid, "")
+                }
+            default: break
             }
         case "stream_event":
             guard parent == nil, let ev = o["event"] as? [String: Any] else { return }
@@ -282,10 +335,16 @@ final class ClaudeChatSession {
                     }
                     continue
                 }
-                let text = resultText(block["content"])
-                main { self.onSubagentDone?(tid, text) }
+                // task 이벤트를 쓰는 CLI 에선 이 tool_result 는 시작 시점 placeholder → 무시.
+                // task_notification 이 진짜 완료를 알린다. task 이벤트가 없는 구버전만 여기서 완료.
+                if !taskAwareIds.contains(tid) {
+                    finishSub(tid, resultText(block["content"]))
+                }
             }
         case "result":
+            // 안전망: 완료 이벤트를 못 받은 채 턴이 끝났으면(중단·kill·이벤트 누락) 남은
+            // 서브에이전트를 여기서 완료 처리해 "영영 실행 중"으로 안 남게 한다.
+            for id in agentToolIds where !subDoneFired.contains(id) { finishSub(id, "") }
             let cost = o["total_cost_usd"] as? Double
             let sid = o["session_id"] as? String
             let u = usage(o["usage"] as? [String: Any])
