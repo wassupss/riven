@@ -30,7 +30,11 @@ final class LSPClient {
         proc.environment = e
         outPipe.fileHandleForReading.readabilityHandler = { [weak self] h in
             let d = h.availableData
-            if d.isEmpty { return }
+            // EOF (tsserver exited/crashed): availableData is empty AND the fd stays signalled, so
+            // this handler is re-invoked in a TIGHT LOOP pegging a worker thread at 100% forever.
+            // MUST detach here (same runaway-pipe-reader bug fixed in ClaudeChatSession). A tsserver
+            // that dies under load would otherwise leave riven spinning at 100%.
+            if d.isEmpty { h.readabilityHandler = nil; return }
             self?.queue.async { self?.feed(d) }
         }
         do { try proc.run() } catch { return nil }

@@ -743,7 +743,7 @@ final class CodeCarrier: NSView {
 }
 
 // MARK: - link-aware label (routes link clicks to the riven browser panel, not the OS browser)
-final class LinkLabel: NSTextField {
+class LinkLabel: NSTextField {
     override func mouseDown(with e: NSEvent) {
         if let url = linkAt(convert(e.locationInWindow, from: nil)) {
             enclosingChatPanel?.handleLinkClick(url); return
@@ -765,6 +765,31 @@ final class LinkLabel: NSTextField {
         let v = attr.attribute(.link, at: idx, effectiveRange: nil)
         if let u = v as? URL { return u.absoluteString }
         return v as? String
+    }
+}
+
+// 표 셀 라벨: 열 폭이 정해지면 그 폭 기준으로 높이를 다시 계산한다. NSGridView 에서
+// preferredMaxLayoutWidth 없이 두면 줄바꿈된 셀이 한 줄 높이로 보고돼, 두 줄이 되는 셀이
+// 다음 행에 겹쳐 그려졌다. layout 에서 폭에 맞춰 intrinsic 높이를 무효화해 행이 늘어나게 한다.
+final class TableCellLabel: LinkLabel {
+    override func layout() {
+        super.layout()
+        if abs(preferredMaxLayoutWidth - bounds.width) > 0.5 {
+            preferredMaxLayoutWidth = bounds.width
+            invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+// 수평선(--- / *** / ___). 어느 스택에 담기든 그 스택의 전체 폭으로 뻗도록 슈퍼뷰 폭에 맞춘다
+// (마크다운 미리보기 스택은 항목에 폭 제약을 안 걸어줘서, 안 그러면 폭 0 으로 안 보였다).
+final class HRuleView: NSView {
+    private var pinned = false
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        guard !pinned, let sv = superview else { return }
+        pinned = true
+        widthAnchor.constraint(equalTo: sv.widthAnchor).isActive = true
     }
 }
 
@@ -1166,6 +1191,9 @@ enum ChatText {
                 out.append(heading(m[2], level: m[1].count))
                 i += 1; continue
             }
+            // 수평선(thematic break): --- / *** / ___ (3개 이상, 같은 문자). 표 구분선은 위에서
+            // 이미 소비되므로 여기 오는 --- 는 진짜 수평선이다. 예전엔 문단으로 떨어져 "---" 가 그대로 보였다.
+            if isThematicBreak(line) { flushPara(); out.append(hrule()); i += 1; continue }
             if match(listRe, line) != nil {
                 flushPara()
                 var items: [String] = []
@@ -1181,6 +1209,29 @@ enum ChatText {
         }
         flushPara()
         return out
+    }
+
+    // --- / *** / ___ (같은 문자 3개 이상, 사이 공백 허용). 표 구분선(|---|)은 이미 위에서 처리됨.
+    private static func isThematicBreak(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard let f = t.first, "-*_".contains(f) else { return false }
+        let stripped = t.filter { !$0.isWhitespace }
+        return stripped.count >= 3 && stripped.allSatisfy { $0 == f }
+    }
+    // 수평선 뷰: 얇은 선 + 위아래 여백. 담긴 스택 전체 폭으로 뻗는다(HRuleView 가 슈퍼뷰 폭에 맞춤).
+    private static func hrule() -> NSView {
+        let box = HRuleView(); box.translatesAutoresizingMaskIntoConstraints = false
+        let line = NSView(); line.wantsLayer = true; line.layer?.backgroundColor = Theme.edge.cgColor
+        line.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(line)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: UIScale.pt(14)),
+            line.heightAnchor.constraint(equalToConstant: 1),
+            line.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            line.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+        ])
+        return box
     }
 
     private static func tableCells(_ line: String) -> [String] {
@@ -1285,7 +1336,14 @@ enum ChatText {
         for (r, row) in rows.enumerated() {
             let cells: [NSView] = (0..<max(1, cols)).map { c in
                 let text = c < row.count ? row[c] : ""
-                let l = prose(text)
+                let l = TableCellLabel()
+                l.isEditable = false; l.isBezeled = false; l.isBordered = false
+                l.drawsBackground = false; l.backgroundColor = .clear
+                l.isSelectable = true; l.allowsEditingTextAttributes = true
+                l.lineBreakMode = .byWordWrapping; l.maximumNumberOfLines = 0
+                l.cell?.wraps = true; l.cell?.usesSingleLineMode = false; l.cell?.isScrollable = false
+                l.translatesAutoresizingMaskIntoConstraints = false
+                l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)   // 열 폭 안에서 줄바꿈
                 if r == 0 {
                     l.attributedStringValue = NSAttributedString(string: text, attributes: [
                         .font: UIScale.font(proseSize, .semibold), .foregroundColor: proseStrong,
@@ -1295,7 +1353,6 @@ enum ChatText {
                     m.addAttribute(.paragraphStyle, value: cellPara, range: NSRange(location: 0, length: m.length))
                     l.attributedStringValue = m
                 }
-                l.maximumNumberOfLines = 0
                 return l
             }
             grid.addRow(with: cells)
