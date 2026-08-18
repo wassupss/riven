@@ -1159,6 +1159,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onSubagentDone = { [weak self] id, result in
             guard let self else { return }
             if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self.subToPane[id] != nil)") }
+            self.runningSubs.remove(id); self.notifyBusy()   // 서브 하나 끝남 → busy 재계산(마지막이면 완료로)
             // /clear 와 경쟁: 이미 비운 서브에이전트의 늦은 완료 콜백이면 무시한다. 안 그러면
             // upsert 가 모르는 id 에도 행을 만들어 비워진 인디케이터에 유령 초록체크가 생긴다.
             guard let title = self.subTitle[id] else { return }
@@ -1553,9 +1554,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         if note { addSystem(t("chat.interrupted")) }
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
         // 안전망: 세션이 이미 idle(유령 턴 등)이라 result 가 안 오면 위 interrupt 로는 안 풀린다.
-        // 1.5초 뒤에도 여전히 이 턴이 걸려 있으면 UI 를 강제로 마감한다("생각 중" 무한 대기 방지).
+        // 1.5초 뒤에도 여전히 "이 턴"이 걸려 있으면 UI 를 강제로 마감한다("생각 중" 무한 대기 방지).
+        // turnStart(턴별 고유 Date)로 이 턴을 식별한다 - 그 사이 새 턴이 시작됐으면(끼어들기로
+        // 다음 메시지가 벌써 돌기 시작) 새 턴을 잘못 끝내지 않게 무시한다.
+        let myTurn = turnStart
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self, self.turnStart != nil, self.interrupted else { return }
+            guard let self, self.turnStart == myTurn, self.interrupted else { return }
             self.endTurn(cost: nil, usage: nil)
         }
     }
@@ -2150,13 +2154,19 @@ final class ChatPanel: NSView, Themable, Scalable {
         addSystem(t("chat.model.set", ["m": item.title]))
         focusInput(force: true)
     }
+    // 현재 돌고 있는 서브에이전트 id. 메인 턴이 끝나도(백그라운드 Explore 등) 이게 비어야 진짜
+    // "완료". 워크스페이스 상태(레일/뱃지)는 메인 턴 OR 서브에이전트 실행 중이면 busy 로 잡는다.
+    private var runningSubs = Set<String>()
+    // 워크스페이스 busy 신호 = 메인 턴 진행 중이거나 서브에이전트가 아직 도는 중.
+    private func notifyBusy() { onBusyChange?(turnStart != nil || !runningSubs.isEmpty) }
+
     private func beginTurn(_ text: String, bubble: UserBubble? = nil) {
         // Dead session (crashed / bad resume / exited) → don't start a turn that can never complete
         // (it would hang on "생각 중" forever). Surface it and offer recovery.
         if session == nil || session?.isAlive == false {
             bubble?.setQueued(false)
             addError(t("chat.sessionEnded"))
-            setRunning(false); onBusyChange?(false)
+            setRunning(false); notifyBusy()
             return
         }
         // Do NOT close the previous turn's sub-agent panels here - the user wants to keep viewing
@@ -2170,7 +2180,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         resetLiveUsage()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil; startFlush()
         setRunning(true)
-        onBusyChange?(true)
+        notifyBusy()
         session?.send(text)
         scrollSoon()
     }
@@ -2187,7 +2197,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         resetLiveUsage()
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil
         startFlush()
-        setRunning(true); onBusyChange?(true)
+        setRunning(true); notifyBusy()
     }
     private var currentTurnText: String?
     private var turnText = ""                                   // assistant text of the running turn
@@ -2242,6 +2252,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         subToPane[id] = e
         let title = subLabel(type, desc); subTitle[id] = title
         subIndicator.upsert(id: id, title: title, running: true)   // 실행 중 (각 에이전트 한 줄)
+        runningSubs.insert(id); notifyBusy()   // 서브 실행 중 → 워크스페이스 busy 유지(메인 턴 끝나도)
     }
     private func openSubagentPanel() {
         guard let list = subagentList else { return }
@@ -2249,6 +2260,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private func clearSubagents() {
         subToPane.removeAll(); subTitle.removeAll(); subNames.removeAll(); subagentList = nil
+        runningSubs.removeAll(); notifyBusy()   // 서브 상태도 초기화 → busy 재계산
         subIndicator.reset()   // 접힘
         if subPanelOpen { onCloseSubagentPanes?([ChatPanel.subListKey]); subPanelOpen = false }
     }
@@ -2306,7 +2318,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // Send the next queued user message (typed while this turn was running).
         if !queuedMessages.isEmpty { let q = queuedMessages.removeFirst(); q.bubble.setQueued(false); beginTurn(q.text, bubble: q.bubble) }
         else {
-            setRunning(false); onBusyChange?(false)
+            setRunning(false); notifyBusy()   // 서브에이전트가 백그라운드로 돌면 notifyBusy 가 계속 busy 로 잡는다
             // #2: 턴이 끝나면 다음 작업 제안(ghost)을 초경량 모델로 뽑는다 (성공·비중단·입력 빈 경우만).
             if error == nil && !wasInterrupted { requestSuggestion(user: currentTurnText ?? "", answer: turnText) }
         }

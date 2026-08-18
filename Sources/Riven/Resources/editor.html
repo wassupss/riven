@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <style>
-  :root { --bg: #101113; --accent: #ff7847; --accent-2: #a18fff; }  /* set live by native from the theme */
+  :root { --bg: #101113; --accent: #ff7847; --accent-2: #a18fff; --danger: #e5484d; --warning: #d99a2b; }  /* set live by native from the theme */
   html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; background: var(--bg); }
   /* Editor GROUPS (VS Code-style split): a flex row of groups, each a column with its
      own HTML tab strip + a Monaco container. */
@@ -34,6 +34,9 @@
   .etab .name { overflow: hidden; text-overflow: ellipsis; }
   .etab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); display: none; }
   .etab.dirty .dot { display: block; }
+  /* 린트/LSP 진단: 탭 파일명을 error=red / warning=amber 로 (활성 탭이어도 유지). error 우선. */
+  .etab.has-warn .name  { color: var(--warning); }
+  .etab.has-error .name { color: var(--danger); }
   .etab .x { width: 15px; height: 15px; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center;
     color: rgba(227,229,234,0.55); font-size: 13px; }
   .etab .x:hover { background: rgba(255,255,255,0.12); color: #ff6b63; }
@@ -439,7 +442,8 @@ function wireEd(g) {
 function tabEl(g, path) {
   const name = path.split('/').pop() || path;
   const t = document.createElement('div');
-  t.className = 'etab' + (path === g.active ? ' active' : '') + (isDirty(path) ? ' dirty' : '');
+  t.className = 'etab' + (path === g.active ? ' active' : '') + (isDirty(path) ? ' dirty' : '')
+             + (diagSev[path] === 1 ? ' has-error' : diagSev[path] === 2 ? ' has-warn' : '');
   t.title = path;
   t.setAttribute('draggable', 'true');
   const n = document.createElement('span'); n.className = 'name'; n.textContent = name; t.appendChild(n);
@@ -472,6 +476,17 @@ function renderTabs(g) {
 // stay O(groups showing path), not O(all tabs) like a renderTabs() call would be.
 function setTabDirty(path, dirty) {
   for (const g of groups) { const el = g.tabEls && g.tabEls[path]; if (el) el.classList.toggle('dirty', dirty); }
+}
+// 진단 심각도 캐시 (path -> 1=error / 2=warning). renderTabs 가 tabEl 에서 이걸 읽어 클래스를 붙인다.
+const diagSev = {};
+// dirty 와 같은 핫패스가 아니라 부분 갱신(전체 rebuild X). 조상 폴더 색은 네이티브 탐색기 쪽에서 처리.
+function setTabDiag(path) {
+  const sev = diagSev[path];
+  for (const g of groups) {
+    const el = g.tabEls && g.tabEls[path]; if (!el) continue;
+    el.classList.toggle('has-error', sev === 1);
+    el.classList.toggle('has-warn', sev === 2);
+  }
 }
 // Non-hot-path resync (called after save / reload, where a full recompute is cheap
 // and correctness matters more than micro-perf): recompute dirty and sync the class
@@ -882,6 +897,14 @@ require(['vs/editor/editor.main'], async function () {
     }
   });
   window.rivenDiagnostics = function (path, diags) {
+    // 이 파일의 최고 심각도 → 탭 색 (모델이 아직 없어도 탭은 있을 수 있으니 markers 앞에서 처리).
+    let worst = 0;   // 1=error, 2=warning
+    for (const d of (diags || [])) {
+      if (d && d.severity === 1) { worst = 1; break; }
+      if (d && d.severity === 2) worst = 2;
+    }
+    if (worst) diagSev[path] = worst; else delete diagSev[path];
+    setTabDiag(path);
     const m = models[path]; if (!m) return;
     const markers = (diags || []).map(d => {
       // A misbehaving server may emit a diagnostic without a well-formed range; skip it
@@ -943,11 +966,13 @@ require(['vs/editor/editor.main'], async function () {
 // ---- native → web API ----
 // Live theme switch: set Monaco's editor theme + the page/well background so
 // edges match (Monaco paints its own bg, but html/body would flash otherwise).
-window.rivenSetTheme = function (name, bg, accent, accent2) {
+window.rivenSetTheme = function (name, bg, accent, accent2, danger, warning) {
   currentTheme = name;   // a Shiki theme name (dark-plus / night-owl / kanagawa-wave / …)
   const root = document.documentElement.style;
   if (accent) root.setProperty('--accent', accent);     // active-tab underline + drop indicator
   if (accent2) root.setProperty('--accent-2', accent2); // dirty dot
+  if (danger) root.setProperty('--danger', danger);     // tab: file with lint errors
+  if (warning) root.setProperty('--warning', warning);  // tab: file with lint warnings
   if (bg) {
     // --bg is the NATIVE canvas token (matches the dock chrome). Monaco's editor
     // background is forced to it via CSS, so editor + tab strips + native chrome are

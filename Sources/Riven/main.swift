@@ -2131,12 +2131,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         wireEditor(editor, tabBar, secondary: false)
         // LSP diagnostics → Monaco markers (both editor groups).
         lsp.onDiagnostics = { [weak self] uri, diags in
+            guard let self else { return }
             // Servers echo a percent-encoded URI (file:///Users/x/my%20project/a.ts); decode
             // so it matches the raw Monaco model key, else diagnostics are dropped for any
             // path with a space / non-ASCII char.
             let stripped = uri.replacingOccurrences(of: "file://", with: "")
             let path = stripped.removingPercentEncoding ?? stripped
-            self?.editor.setDiagnostics(path: path, diags: diags)
+            self.editor.setDiagnostics(path: path, diags: diags)   // Monaco markers + 탭 색 (rivenDiagnostics)
+            // 탐색기 파일명 색: 이 파일의 최고 심각도 (1=error 우선, 없으면 2=warning, info/hint 는 색 없음).
+            var worst: Int? = nil
+            for d in diags { guard let s = d["severity"] as? Int else { continue }
+                if s == 1 { worst = 1; break }; if s == 2, worst == nil { worst = 2 } }
+            // 이 경로를 담은 (이미 만들어진) 워크스페이스 탐색기에만 반영.
+            for (root, st) in self.states {
+                guard let ex = st.explorer, path.hasPrefix(root.path + "/") else { continue }
+                ex.setDiagnostic(path: path, severity: worst)
+            }
         }
         // The editor fills the whole pane - file tabs are rendered INSIDE the WebView
         // (one strip per split group). `tabBar` stays as a headless state tracker
@@ -7810,7 +7820,8 @@ extension AppDelegate: Themable {
     // Called from Settings: switch theme live across all chrome + the editor.
     func switchTheme(_ id: String) {
         Theme.apply(id: id) { [weak self] shiki in
-            self?.editor.setEditorTheme(shiki: shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2)
+            self?.editor.setEditorTheme(shiki: shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2,
+                                        danger: Theme.current.danger, warning: Theme.current.warning)
         }
     }
     // Re-apply all settings-driven state after a cloud pull overwrote the settings dict.
