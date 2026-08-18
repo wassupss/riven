@@ -498,12 +498,20 @@ function refreshDirty(path) {
 }
 
 const docVersion = {};   // path -> last LSP document version sent
+const syncedVer = {};    // path -> model alternativeVersionId at last sync (skip redundant re-parses)
 function bumpVersion(path) { docVersion[path] = (docVersion[path] || 1) + 1; return docVersion[path]; }
 // Push the model's CURRENT text to the server immediately (before an on-demand
 // request like definition/references) so the server never answers on a stale
 // buffer - this is why references/imports were being missed.
+// BUT skip when the buffer is already in sync: completion re-triggers (typing after a
+// trigger char, arrowing the list) called this on every request, forcing tsserver to
+// re-parse the WHOLE file each time even when nothing changed - a big chunk of the node
+// CPU spikes on large projects. Only full-sync when the content actually changed.
 function flushChange(path) {
   const m = models[path]; if (!m) return;
+  const v = m.getAlternativeVersionId();
+  if (syncedVer[path] === v) return;   // already synced this exact content → no re-parse
+  syncedVer[path] = v;
   post({ type: 'lspSync', path, version: bumpVersion(path), text: m.getValue() });
 }
 function ensureModel(path, content) {
@@ -532,7 +540,10 @@ function ensureModel(path, content) {
     // Full-document sync stays debounced at 300ms - do NOT post the full text here
     // synchronously per keystroke.
     clearTimeout(syncTimer);
-    syncTimer = setTimeout(() => post({ type: 'lspSync', path, version: bumpVersion(path), text: model.getValue() }), 300);
+    syncTimer = setTimeout(() => {
+      syncedVer[path] = model.getAlternativeVersionId();   // keep flushChange's skip-check in step
+      post({ type: 'lspSync', path, version: bumpVersion(path), text: model.getValue() });
+    }, 300);
   });
   models[path] = model;
 }
