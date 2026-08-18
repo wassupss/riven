@@ -781,6 +781,52 @@ final class TableCellLabel: LinkLabel {
     }
 }
 
+// 마크다운 표 컨테이너: 담긴 NSGridView 의 각 열 폭을 "가용 폭"에 맞춰 확정한다. 열 폭이
+// 확정돼야 셀(TableCellLabel)이 그 폭에서 줄바꿈된 실제 높이를 보고하고 행이 늘어난다.
+// 예전엔 열 폭이 압축으로만 정해져(확정 폭 없음) 셀이 한 줄 높이로 보고 → 두 줄 셀이 다음
+// 행에 겹쳤다(v0.1.73 의 TableCellLabel 만으론 이 확정 폭이 없어 안 먹었다).
+final class MDTable: NSView {
+    private let grid: NSGridView
+    private let cols: Int
+    private let colNat: [CGFloat]      // 열별 자연폭(줄바꿈 없는 한 줄 폭)
+    private let pad: CGFloat
+    private var appliedWidth: CGFloat = -1
+    init(grid: NSGridView, cols: Int, colNat: [CGFloat], pad: CGFloat) {
+        self.grid = grid; self.cols = cols; self.colNat = colNat; self.pad = pad
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    // 열 폭 분배(water-filling): 자연폭 합이 가용 폭에 들어가면 그대로. 넘치면, "공평몫(avail/n)보다
+    // 좁은 열"은 자연폭을 지키고, "넓은 열"만 남는 폭을 자연폭 비율대로 나눈다. → 짧은 열(예: 상태)이
+    // 긴 설명 열 때문에 과도하게 눌려 불필요하게 줄바꿈되던 것 방지.
+    static func distribute(_ nat: [CGFloat], avail: CGFloat) -> [CGFloat] {
+        let n = nat.count
+        guard n > 0, avail > 0 else { return nat }
+        let sum = nat.reduce(0, +)
+        if sum <= avail { return nat }
+        let fair = avail / CGFloat(n)
+        let underUsed = nat.filter { $0 <= fair }.reduce(0, +)
+        let overNat = nat.filter { $0 > fair }.reduce(0, +)
+        let remain = max(0, avail - underUsed)
+        let minW = UIScale.pt(28)
+        return nat.map { c in
+            if c <= fair { return c }                                   // 좁은 열: 자연폭 유지
+            return overNat > 0 ? max(minW, c / overNat * remain) : fair // 넓은 열: 남는 폭 비율 배분
+        }
+    }
+    override func layout() {
+        let w = bounds.width
+        if w > 1, cols > 0, abs(w - appliedWidth) > 0.5 {
+            appliedWidth = w
+            let spacing = grid.columnSpacing * CGFloat(max(0, cols - 1))
+            let avail = max(1, w - pad * 2 - spacing)
+            let colW = Self.distribute(colNat, avail: avail)
+            for c in 0..<min(cols, colW.count) { grid.column(at: c).width = colW[c] }
+        }
+        super.layout()
+    }
+}
+
 // 수평선(--- / *** / ___). 어느 스택에 담기든 그 스택의 전체 폭으로 뻗도록 슈퍼뷰 폭에 맞춘다
 // (마크다운 미리보기 스택은 항목에 폭 제약을 안 걸어줘서, 안 그러면 폭 0 으로 안 보였다).
 final class HRuleView: NSView {
@@ -1318,17 +1364,11 @@ enum ChatText {
     /// 마크다운 표 → 실제 표. 헤더는 굵게 + 옅은 바탕, 행 사이에 hairline.
     private static func tableBlock(_ rows: [[String]]) -> NSView {
         let cols = rows.map { $0.count }.max() ?? 0
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.backgroundColor = Theme.bg3.withAlphaComponent(0.5).cgColor
-        box.layer?.cornerRadius = 8
-        box.layer?.borderWidth = 1
-        box.layer?.borderColor = Theme.edge.cgColor
-        box.translatesAutoresizingMaskIntoConstraints = false
         let grid = NSGridView(numberOfColumns: max(1, cols), rows: 0)
         // 셀 자체의 여백을 넉넉히 (행/열 간격 = 칸 안쪽 여백). 표 바깥 여백(pad)은 오히려 줄인다.
         grid.rowSpacing = UIScale.pt(13); grid.columnSpacing = UIScale.pt(28)
         grid.translatesAutoresizingMaskIntoConstraints = false
+        var colNat = [CGFloat](repeating: 0, count: max(1, cols))   // 열별 자연폭 (열 폭 확정에 사용)
         // 셀 문단 스타일: paragraphSpacing 을 두지 않는다. 예전엔 데이터 셀이 attributedMarkdown 의
         // para(뒤 여백 6)를 물어 셀 bottom 이 글자 아래로 밀렸고, 헤더 셀엔 그게 없어 위/아래 여백이
         // 달라 보였다(위만 많고 아래는 없음). 헤더·데이터 모두 같은 tight 스타일로 통일한다.
@@ -1353,13 +1393,26 @@ enum ChatText {
                     m.addAttribute(.paragraphStyle, value: cellPara, range: NSRange(location: 0, length: m.length))
                     l.attributedStringValue = m
                 }
+                colNat[c] = max(colNat[c], ceil(l.attributedStringValue.size().width) + UIScale.pt(4))   // 한 줄 자연폭
                 return l
             }
             grid.addRow(with: cells)
         }
+        // 셀이 열 폭을 꽉 채우게(.fill) 한다. 안 그러면 셀이 내용 폭으로 좁게 자리잡아, 확정한 열 폭을
+        // 못 받고 오래된 좁은 폭에서 줄바꿈된 채로 남는다("perf-check" 가 3줄 되던 원인). yPlacement 는
+        // top 으로 맞춰 여러 열의 첫 줄이 나란히 시작하게 한다.
+        for c in 0..<max(1, cols) { grid.column(at: c).xPlacement = .fill }
+        for r in 0..<rows.count { grid.row(at: r).yPlacement = .top }
+        let pad = UIScale.pt(9)   // 표 바깥 여백은 담백하게 (셀 여백은 행/열 간격으로 준다)
+        let box = MDTable(grid: grid, cols: max(1, cols), colNat: colNat, pad: pad)
+        box.wantsLayer = true
+        box.layer?.backgroundColor = Theme.bg3.withAlphaComponent(0.5).cgColor
+        box.layer?.cornerRadius = 8
+        box.layer?.borderWidth = 1
+        box.layer?.borderColor = Theme.edge.cgColor
+        box.translatesAutoresizingMaskIntoConstraints = false
         // 헤더 아래 구분선 (NSGridView는 셀 사이 선을 못 그리므로 얇은 뷰를 깐다).
         box.addSubview(grid)
-        let pad = UIScale.pt(9)   // 표 바깥 여백은 담백하게 (셀 여백은 행/열 간격으로 준다)
         NSLayoutConstraint.activate([
             grid.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: pad),
             grid.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -pad),

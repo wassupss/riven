@@ -66,6 +66,9 @@ final class MarkdownView: NSView, Themable, Scalable {
         for v in ChatText.render(trimmed, bullet: false) {
             stripChatActions(v)
             stack.addArrangedSubview(v)
+            // 항목을 스택(=패널) 폭에 맞춘다. 안 그러면 표(MDTable)가 자연폭으로 커져 가로로
+            // 넘치고, 줄바꿈/열폭 계산도 패널 폭을 못 받는다. 문단·수평선도 패널 폭으로 정렬된다.
+            v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
     }
 
