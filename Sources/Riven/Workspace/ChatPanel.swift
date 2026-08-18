@@ -1554,9 +1554,12 @@ final class ChatPanel: NSView, Themable, Scalable {
         if note { addSystem(t("chat.interrupted")) }
         // the CLI emits a result → endTurn finalizes the UI (busy off, times, etc.)
         // 안전망: 세션이 이미 idle(유령 턴 등)이라 result 가 안 오면 위 interrupt 로는 안 풀린다.
-        // 1.5초 뒤에도 여전히 이 턴이 걸려 있으면 UI 를 강제로 마감한다("생각 중" 무한 대기 방지).
+        // 1.5초 뒤에도 여전히 "이 턴"이 걸려 있으면 UI 를 강제로 마감한다("생각 중" 무한 대기 방지).
+        // turnStart(턴별 고유 Date)로 이 턴을 식별한다 - 그 사이 새 턴이 시작됐으면(끼어들기로
+        // 다음 메시지가 벌써 돌기 시작) 새 턴을 잘못 끝내지 않게 무시한다.
+        let myTurn = turnStart
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            guard let self, self.turnStart != nil, self.interrupted else { return }
+            guard let self, self.turnStart == myTurn, self.interrupted else { return }
             self.endTurn(cost: nil, usage: nil)
         }
     }
@@ -1597,8 +1600,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // 이 큐를 비우며 새 턴을 시작한다. 승인 대기(카드) 중일 땐 끊지 않고 그대로 큐에 쌓는다.
         if turnStart != nil {
             bubble.setQueued(true); queuedMessages.append((text, bubble))
-            // 진행 중 턴을 실제로 끊는 경우에만 미완 표식을 다음 턴에 붙인다(승인 대기 중엔 안 끊음).
-            if pendingCard == nil { pendingInterruptNote = true; interruptTurn(restoreText: false, note: false, keepQueue: true) }
+            if pendingCard == nil { interruptTurn(restoreText: false, note: false, keepQueue: true) }
             return
         }
         beginTurn(text, bubble: bubble)
@@ -2155,13 +2157,6 @@ final class ChatPanel: NSView, Themable, Scalable {
     // 현재 돌고 있는 서브에이전트 id. 메인 턴이 끝나도(백그라운드 Explore 등) 이게 비어야 진짜
     // "완료". 워크스페이스 상태(레일/뱃지)는 메인 턴 OR 서브에이전트 실행 중이면 busy 로 잡는다.
     private var runningSubs = Set<String>()
-    // 끼어들기(#4)로 진행 중 턴을 끊고 보낸 다음 메시지에는, 직전 작업이 미완이라는 표식을 앞에
-    // 붙여 보낸다. 같은 세션이라 이전 맥락은 그대로 있고, 이 한 줄로 에이전트가 "이어서 끝낼지 /
-    // 새 작업으로 갈지"를 스스로 판단한다(예전엔 표식이 없어 이전 걸 완료한 척 넘어갔다).
-    private var pendingInterruptNote = false
-    private static let interruptNote =
-        "[시스템 안내] 직전 작업은 사용자가 중간에 중단했습니다(완료되지 않음). 아래 사용자 메시지를 보고, "
-        + "그 작업을 이어서 끝낼지 새 작업으로 전환할지 스스로 판단해 진행하세요. 이어서 한다면 어디까지 했는지 먼저 짧게 알려주세요.\n\n사용자 메시지:\n"
     // 워크스페이스 busy 신호 = 메인 턴 진행 중이거나 서브에이전트가 아직 도는 중.
     private func notifyBusy() { onBusyChange?(turnStart != nil || !runningSubs.isEmpty) }
 
@@ -2186,10 +2181,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         turnStart = Date(); pausedTotal = 0; pauseStart = nil; liveTool = nil; startFlush()
         setRunning(true)
         notifyBusy()
-        // 끼어들기로 시작한 턴이면 CLI 에 보내는 본문 앞에만 미완 표식을 붙인다(화면 버블은 원문 그대로).
-        let sent = pendingInterruptNote ? (ChatPanel.interruptNote + text) : text
-        pendingInterruptNote = false
-        session?.send(sent)
+        session?.send(text)
         scrollSoon()
     }
     /// 사용자가 보낸 게 아니라 세션이 스스로 새 턴을 시작한 경우 턴 상태를 세운다. 백그라운드
