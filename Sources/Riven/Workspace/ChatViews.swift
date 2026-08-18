@@ -2104,10 +2104,20 @@ final class SubagentPane: NSView {
 // 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
 // 입력창 오른쪽 위에 떠 있는 서브에이전트 목록. 각 에이전트가 뭘 하는지(타입·설명) 한 줄씩
 // 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
-final class SubagentIndicator: NSView {
-    private let stack = NSStackView()
+// 채팅 입력창 바로 위에 풀 width 로 얹히는 서브에이전트 목록. 헤더(캡션+닫기)는 고정,
+// 목록은 최대 ~2.5줄까지만 보이고 그 이상은 스크롤. 비면 높이 0 으로 접혀 대화가 그 자리를 되찾는다.
+final class SubagentIndicator: NSView, NSGestureRecognizerDelegate, Themable {
+    private let stack = FlippedStack()
+    private let scroll = NSScrollView()
+    private let closeBtn = CircleButton()
+    private let caption = NSTextField(labelWithString: t("chat.subagents"))
     private var rows: [String: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)] = [:]
     var onClick: (() -> Void)?
+    var onClose: (() -> Void)?               // 닫기(×) - 입력창을 가리지 않게 인디케이터를 치운다
+    private var dismissed = false            // 닫으면 이번 세션 동안 계속 숨김 (reset 시 해제)
+    private var heightC: NSLayoutConstraint!  // 전체 높이 (헤더 + min(내용, 최대))
+    private let headerH = UIScale.pt(21)
+    private let maxListH = UIScale.pt(56)     // 목록 최대 높이 (~2.5줄), 그 이상은 스크롤
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -2115,20 +2125,73 @@ final class SubagentIndicator: NSView {
         layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
         layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
         translatesAutoresizingMaskIntoConstraints = false
+        clipsToBounds = true
+        // 헤더: 캡션 + 닫기(×).
+        let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
+        caption.font = UIScale.font(UIScale.caption, .semibold); caption.textColor = Theme.fgDim
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: t("common.close"))?
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(8), weight: .bold))
+        closeBtn.imagePosition = .imageOnly; closeBtn.isBordered = false
+        closeBtn.contentTintColor = Theme.fgDim
+        closeBtn.target = self; closeBtn.action = #selector(closeTapped)
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(caption); header.addSubview(closeBtn)
         stack.orientation = .vertical; stack.spacing = UIScale.pt(3); stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: UIScale.pt(6), left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
+        stack.edgeInsets = NSEdgeInsets(top: UIScale.pt(2), left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        scroll.documentView = stack
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true; scroll.hasHorizontalScroller = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header); addSubview(scroll)
+        heightC = heightAnchor.constraint(equalToConstant: 0)
+        heightC.isActive = true
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            widthAnchor.constraint(equalToConstant: UIScale.pt(250)),   // 고정 폭 - 행 추가돼도 안 흔들림
+            header.topAnchor.constraint(equalTo: topAnchor), header.heightAnchor.constraint(equalToConstant: headerH),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(10)),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(6)),
+            caption.leadingAnchor.constraint(equalTo: header.leadingAnchor), caption.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor), closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(15)), closeBtn.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor), scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor), scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
+        let gr = NSClickGestureRecognizer(target: self, action: #selector(tap))
+        gr.delegate = self                       // 닫기 버튼 위 클릭은 제스처가 안 먹게 (버튼이 처리)
+        addGestureRecognizer(gr)
+        Theme.register(self)                     // 다크↔라이트 전환 시 색 갱신 (패널이 eager 라 stale 방지)
     }
     required init?(coder: NSCoder) { fatalError() }
+    // 테마 전환 시 색 재적용 (컨테이너 border/bg, 캡션, 닫기, 행 라벨/체크).
+    func applyTheme() {
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
+        caption.textColor = Theme.fgDim
+        closeBtn.contentTintColor = Theme.fgDim
+        for (_, r) in rows {
+            r.check.contentTintColor = Theme.success
+            r.label.textColor = r.spinner.isHidden ? Theme.fgDim : Theme.fg   // 스피너 숨김=완료→fgDim, 도는 중→fg
+        }
+    }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     @objc private func tap() { onClick?() }
+    @objc private func closeTapped() { dismissed = true; refreshHeight(); onClose?() }
+    // 닫기 버튼 위에서 시작한 클릭이면 컨테이너 제스처(패널 열기)를 무시한다.
+    func gestureRecognizer(_ g: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        !closeBtn.bounds.contains(closeBtn.convert(event.locationInWindow, from: nil))
+    }
+    // 비었거나 닫혔으면 높이 0(접힘), 아니면 헤더 + min(목록 내용, 최대). 목록이 최대를 넘으면 스크롤.
+    private func refreshHeight() {
+        if dismissed || rows.isEmpty { isHidden = true; heightC.constant = 0; return }
+        isHidden = false
+        stack.layoutSubtreeIfNeeded()
+        let content = stack.fittingSize.height
+        heightC.constant = headerH + min(content, maxListH)
+    }
 
     // 에이전트 한 줄 추가/갱신. title = "타입 · 설명".
     // 실행 중 = 스피너(도는 게 눈에 확실히 보임), 완료 = 초록 체크. 점+펄스는 도는지
@@ -2137,6 +2200,8 @@ final class SubagentIndicator: NSView {
         let r: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)
         if let ex = rows[id] { r = ex; r.label.stringValue = title }
         else {
+            dismissed = false   // 새 서브에이전트가 시작하면 (×로 닫았어도) 다시 보여준다 - 안 그러면 세션 내내 못 연다
+
             let spin = NSProgressIndicator()
             spin.style = .spinning; spin.controlSize = .small; spin.isDisplayedWhenStopped = false
             spin.translatesAutoresizingMaskIntoConstraints = false
@@ -2170,9 +2235,12 @@ final class SubagentIndicator: NSView {
         } else {
             r.spinner.stopAnimation(nil); r.spinner.isHidden = true; r.check.isHidden = false; r.label.textColor = Theme.fgDim
         }
-        isHidden = rows.isEmpty
+        refreshHeight()
     }
-    func reset() { rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
+    func reset() {
+        rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }
+        rows.removeAll(); dismissed = false; refreshHeight()
+    }
 }
 
 final class SubagentListView: NSView {

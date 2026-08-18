@@ -12,6 +12,14 @@ let rivenCrashPath: String = {
     return p
 }()
 
+// Async-signal-safe crash-write state, set up ONCE at install (never allocated in the handler).
+// A signal handler must not malloc: on a heap-corruption crash (e.g. a data race that trips
+// libmalloc's SIGABRT) any allocation re-crashes or hangs the handler, so crash.txt never gets
+// written and the report is silently lost - the "크래시가 났는데 리포트가 안 온다" symptom.
+// So the handler uses only open()/write()/close()/backtrace_symbols_fd on these pre-made globals.
+private var gCrashPathC: UnsafeMutablePointer<CChar>? = nil          // strdup'd crash path (malloc once, at install)
+private let gCrashFrames = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 128)
+
 // ---- Boot breadcrumb (crash diagnostics) --------------------------------------------------
 // v0.1.57 crash-looped on some machines during session restore, and the deaths left NO
 // artifact - no crash.txt, no .ghosttycrash, no OS corpse (a silent exit()/kill, not a
@@ -1954,16 +1962,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // NSSetUncaughtExceptionHandler needs a context-free C function pointer, so the
         // version/time are looked up INSIDE the closure (no captures allowed).
         NSSetUncaughtExceptionHandler { ex in
+            // ObjC exceptions unwind with an intact heap, so String/Foundation is fine here.
             let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
             let hdr = "v\(ver) \(Date())\n"   // version + time so a report has context
             let s = hdr + "EXCEPTION: \(ex.name.rawValue): \(ex.reason ?? "")\n\(ex.callStackSymbols.joined(separator: "\n"))"
             try? s.write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
         }
+        // Pre-resolve the path as a C string ONCE (strdup mallocs now, at install - never in the handler).
+        gCrashPathC = strdup(rivenCrashPath)
         for sig in [SIGSEGV, SIGABRT, SIGILL, SIGBUS, SIGTRAP] {
             signal(sig) { s in
-                let syms = Thread.callStackSymbols.joined(separator: "\n")
-                try? "SIGNAL \(s)\n\(syms)".write(toFile: rivenCrashPath, atomically: true, encoding: .utf8)
-                exit(1)
+                // Async-signal-safe ONLY: no Swift String, no Foundation, no malloc. Capture the
+                // native backtrace into the pre-allocated buffer and let backtrace_symbols_fd write
+                // it straight to a freshly-opened fd (it symbolicates without allocating on our heap).
+                let n = backtrace(gCrashFrames, 128)
+                if let path = gCrashPathC {
+                    let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+                    if fd >= 0 {
+                        _ = withUnsafeTemporaryAllocation(of: CChar.self, capacity: 16) { buf -> Int in
+                            var i = 0
+                            for c in "SIGNAL ".utf8 { buf[i] = CChar(bitPattern: c); i += 1 }
+                            var v = Int(s), start = i
+                            if v == 0 { buf[i] = 48; i += 1 } else {
+                                while v > 0 { buf[i] = CChar(48 + Int8(v % 10)); v /= 10; i += 1 }
+                                var a = start, b = i - 1
+                                while a < b { let t = buf[a]; buf[a] = buf[b]; buf[b] = t; a += 1; b -= 1 }  // reverse digits
+                            }
+                            buf[i] = 10; i += 1   // '\n'
+                            return write(fd, buf.baseAddress, i)
+                        }
+                        backtrace_symbols_fd(gCrashFrames, n, fd)
+                        close(fd)
+                    }
+                }
+                // Re-raise on the default handler so the OS also records a proper crash report.
+                signal(s, SIG_DFL); raise(s)
             }
         }
     }
