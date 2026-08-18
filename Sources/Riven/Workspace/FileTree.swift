@@ -70,6 +70,8 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     private let outline = RivenOutlineView()
     private var root: FileNode?
     private var gitStatus: [String: Git.Status] = [:]
+    // 린트/LSP 진단: path → 최고 심각도 (1=error, 2=warning). 파일명 색으로 표시(에디터 탭과 동일).
+    private var diagSeverity: [String: Int] = [:]
     var onOpenFile: ((URL) -> Void)?
     /// .md 를 메모 패널에서 연다 (탐색기 우클릭 → 메모로 열기).
     var onOpenAsNote: ((URL) -> Void)?
@@ -80,6 +82,21 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     func setGitStatus(_ s: [String: Git.Status]) {
         gitStatus = s
         outline.reloadData()
+    }
+
+    // 한 파일의 진단 심각도를 갱신한다. severity=nil 이면 지운다. 바뀐 행 + 조상 폴더 행만
+    // 다시 그린다(전체 reloadData 는 편집마다 오는 진단엔 과하다).
+    func setDiagnostic(path: String, severity: Int?) {
+        let old = diagSeverity[path]
+        if severity == old { return }
+        if let severity { diagSeverity[path] = severity } else { diagSeverity[path] = nil }
+        var items: [FileNode] = []
+        for r in 0..<outline.numberOfRows {
+            guard let n = outline.item(atRow: r) as? FileNode else { continue }
+            let p = n.url.path
+            if p == path || (n.isDir && path.hasPrefix(p + "/")) { items.append(n) }   // 파일 + 조상 폴더
+        }
+        for n in items { outline.reloadItem(n, reloadChildren: false) }
     }
 
     override init(frame: NSRect) {
@@ -673,6 +690,12 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
             cell.label.textColor = node.isDir ? Theme.fg : Theme.fgDim   // theme-aware (was a fixed light gray, invisible in light themes)
             cell.badge.isHidden = true
         }
+        // 린트/LSP 진단이 있으면 파일명을 error=red / warning=amber 로 (git 색보다 우선 - 오류가 더 급하다).
+        // 폴더는 하위에 오류가 있으면 폴더명도 같은 색으로(VS Code 처럼 조상까지 전파).
+        let sev = node.isDir ? dirMinSeverity(node.url.path) : diagSeverity[node.url.path]
+        if let sev {
+            cell.label.textColor = sev == 1 ? Theme.danger : Theme.warning
+        }
         return cell
     }
 
@@ -690,6 +713,16 @@ final class FileTreeView: NSView, NSOutlineViewDataSource, NSOutlineViewDelegate
     }
     private func gitContainsChange(_ dirPath: String) -> Bool {
         gitStatus.keys.contains { $0.hasPrefix(dirPath + "/") }
+    }
+    // 이 폴더 아래 어떤 파일의 최고 심각도 (1=error 우선, 없으면 2=warning, 없으면 nil).
+    private func dirMinSeverity(_ dirPath: String) -> Int? {
+        let prefix = dirPath + "/"
+        var best: Int? = nil
+        for (p, s) in diagSeverity where p.hasPrefix(prefix) {
+            if s == 1 { return 1 }
+            if best == nil { best = s }
+        }
+        return best
     }
 }
 

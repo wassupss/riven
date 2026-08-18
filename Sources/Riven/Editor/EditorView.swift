@@ -118,8 +118,8 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     // Switch Monaco's syntax theme (shiki name) + the page background + accent (active-tab
     // underline / drop indicator) to match a riven color theme. Safe before ready.
-    func setEditorTheme(shiki: String, bg: String, accent: String, accent2: String) {
-        web.evaluateJavaScript("window.rivenSetTheme(\(jsString(shiki)), \(jsString(bg)), \(jsString(accent)), \(jsString(accent2)))", completionHandler: nil)
+    func setEditorTheme(shiki: String, bg: String, accent: String, accent2: String, danger: String, warning: String) {
+        web.evaluateJavaScript("window.rivenSetTheme(\(jsString(shiki)), \(jsString(bg)), \(jsString(accent)), \(jsString(accent2)), \(jsString(danger)), \(jsString(warning)))", completionHandler: nil)
     }
     // Live-set the Monaco font size (⌘+/⌘-/⌘0). Stashed so it survives a WKWebView
     // reload (re-applied on "ready") - this also keeps the peek/references list sized.
@@ -292,7 +292,8 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
         switch type {
         case "ready":
             ready = true
-            setEditorTheme(shiki: Theme.current.shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2)
+            setEditorTheme(shiki: Theme.current.shiki, bg: Theme.current.bg, accent: Theme.current.accent, accent2: Theme.current.accent2,
+                           danger: Theme.current.danger, warning: Theme.current.warning)
             setFontSize(fontSize)
             applyEditorOptions()          // 탭 크기·미니맵·줄바꿈·합자 (웹뷰 리로드에도 다시 적용)
             setFormatOnSave(formatOnSave)
