@@ -2104,10 +2104,13 @@ final class SubagentPane: NSView {
 // 목록으로 쌓고, 각 항목을 아코디언으로: 실행 중인 건 펼쳐서 라이브로 보고, 끝나면 접힌다.
 // 입력창 오른쪽 위에 떠 있는 서브에이전트 목록. 각 에이전트가 뭘 하는지(타입·설명) 한 줄씩
 // 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
-final class SubagentIndicator: NSView {
+final class SubagentIndicator: NSView, NSGestureRecognizerDelegate {
     private let stack = NSStackView()
+    private let closeBtn = CircleButton()
     private var rows: [String: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)] = [:]
     var onClick: (() -> Void)?
+    var onClose: (() -> Void)?               // 닫기(×) - 입력창을 가리지 않게 인디케이터를 치운다
+    private var dismissed = false            // 닫으면 이번 세션 동안 계속 숨김 (reset 시 해제)
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -2115,20 +2118,45 @@ final class SubagentIndicator: NSView {
         layer?.borderWidth = 1; layer?.borderColor = Theme.edge.cgColor
         layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
         translatesAutoresizingMaskIntoConstraints = false
+        // 헤더: 캡션 + 닫기(×). 닫기로 인디케이터를 치울 수 있어 입력 텍스트를 안 가린다.
+        let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
+        let caption = NSTextField(labelWithString: t("chat.subagents"))
+        caption.font = UIScale.font(UIScale.caption, .semibold); caption.textColor = Theme.fgDim
+        caption.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: t("common.close"))?
+            .withSymbolConfiguration(.init(pointSize: UIScale.pt(8), weight: .bold))
+        closeBtn.imagePosition = .imageOnly; closeBtn.isBordered = false
+        closeBtn.contentTintColor = Theme.fgDim
+        closeBtn.target = self; closeBtn.action = #selector(closeTapped)
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(caption); header.addSubview(closeBtn)
         stack.orientation = .vertical; stack.spacing = UIScale.pt(3); stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: UIScale.pt(6), left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: UIScale.pt(10), bottom: UIScale.pt(6), right: UIScale.pt(10))
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        addSubview(header); addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            header.topAnchor.constraint(equalTo: topAnchor), header.heightAnchor.constraint(equalToConstant: UIScale.pt(20)),
+            header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: UIScale.pt(10)),
+            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -UIScale.pt(6)),
+            caption.leadingAnchor.constraint(equalTo: header.leadingAnchor), caption.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.trailingAnchor.constraint(equalTo: header.trailingAnchor), closeBtn.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            closeBtn.widthAnchor.constraint(equalToConstant: UIScale.pt(15)), closeBtn.heightAnchor.constraint(equalToConstant: UIScale.pt(15)),
+            stack.topAnchor.constraint(equalTo: header.bottomAnchor), stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             widthAnchor.constraint(equalToConstant: UIScale.pt(250)),   // 고정 폭 - 행 추가돼도 안 흔들림
         ])
-        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(tap)))
+        let gr = NSClickGestureRecognizer(target: self, action: #selector(tap))
+        gr.delegate = self                       // 닫기 버튼 위 클릭은 제스처가 안 먹게 (버튼이 처리)
+        addGestureRecognizer(gr)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     @objc private func tap() { onClick?() }
+    @objc private func closeTapped() { dismissed = true; isHidden = true; onClose?() }
+    // 닫기 버튼 위에서 시작한 클릭이면 컨테이너 제스처(패널 열기)를 무시한다.
+    func gestureRecognizer(_ g: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        !closeBtn.bounds.contains(closeBtn.convert(event.locationInWindow, from: nil))
+    }
 
     // 에이전트 한 줄 추가/갱신. title = "타입 · 설명".
     // 실행 중 = 스피너(도는 게 눈에 확실히 보임), 완료 = 초록 체크. 점+펄스는 도는지
@@ -2170,9 +2198,12 @@ final class SubagentIndicator: NSView {
         } else {
             r.spinner.stopAnimation(nil); r.spinner.isHidden = true; r.check.isHidden = false; r.label.textColor = Theme.fgDim
         }
-        isHidden = rows.isEmpty
+        isHidden = dismissed || rows.isEmpty
     }
-    func reset() { rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }; rows.removeAll(); isHidden = true }
+    func reset() {
+        rows.values.forEach { $0.spinner.stopAnimation(nil); $0.row.removeFromSuperview() }
+        rows.removeAll(); dismissed = false; isHidden = true
+    }
 }
 
 final class SubagentListView: NSView {

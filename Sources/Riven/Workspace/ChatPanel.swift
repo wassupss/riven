@@ -2239,6 +2239,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard subIndicator == nil else { return }
         let ind = SubagentIndicator(frame: .zero)
         ind.onClick = { [weak self] in self?.openSubagentPanel() }
+        ind.onClose = { [weak self] in self?.subIndicator?.isHidden = true }   // 입력창 가리지 않게 치운다(목록은 유지, 새 서브 뜨면 다시 보임)
         addSubview(ind)
         NSLayoutConstraint.activate([
             ind.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -UIScale.pt(8)),
