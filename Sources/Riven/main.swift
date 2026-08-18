@@ -3070,8 +3070,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onBusyChange = { [weak self, weak p, weak chat] busy in
             guard let self, let p else { return }
             if busy {
-                if p.badge != "attn" { p.badge = "busy" }
-                WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true)
+                // 새 턴이 돌기 시작하면 이전 턴의 attn(주목 필요)을 반드시 지운다. 안 그러면
+                // rollup 이 attn 을 busy 보다 먼저 봐서 .done("완료")을 돌려줘, 작업 중인데도
+                // 상태가 "완료"로 뜬다(특히 인터럽트 후 새 턴 - 인터럽트 종료가 attn 을 세웠을 때).
+                p.badge = "busy"
+                WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: true, attn: false)
             } else {
                 WorkspaceStatus.shared.setPane(ws: wsPath, pane: paneId, busy: false)
                 // 턴이 끝났으니 사용량을 다시 읽는다 (60초 폴링만으로는 답을 받고도 한동안
