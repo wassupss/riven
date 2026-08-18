@@ -39,9 +39,13 @@ final class ClaudeChatSession {
     // 보내고, 실제 완료는 `system`/task_notification(status=completed)로 알린다. 그래서 tool_result
     // 로 완료를 판정하면 "돌자마자 완료"로 뜬다. task 이벤트를 쓰는 CLI 에선 그걸 신호로 삼고,
     // 안 쓰는 구버전에서만 tool_result 를 완료로 쓴다(fallback).
-    private var taskAwareIds = Set<String>()        // task_started 를 본 Agent id (= task 이벤트 CLI)
+    // 이 CLI 가 task 라이프사이클 이벤트(task_started/notification)를 쓰는가 하는 capability 플래그.
+    // per-id 로 두면 task_started 하나가 늦거나 누락됐을 때 그 Agent 의 placeholder tool_result 를
+    // 완료로 오인한다(= "돌자마자 완료" 재발). 한 번이라도 task_started 를 보면 이 세션의 모든
+    // Agent tool_result 는 시작 placeholder 로 취급하고 완료는 task_notification 으로만 잡는다.
+    private var taskAware = false
     private var taskIdToTool: [String: String] = [:] // task_id → Agent tool_use id (task_updated 해소용)
-    private var subDoneFired = Set<String>()         // onSubagentDone 중복 방지
+    private var subDoneFired = Set<String>()         // onSubagentDone 중복 방지 (queue 위에서만 변형)
     private let perm: ChatPermissionServer?
     private let ask: ChatAskServer?
 
@@ -135,9 +139,11 @@ final class ClaudeChatSession {
         }
         proc.terminationHandler = { [weak self] p in
             self?.perm?.stop(); self?.ask?.stop()
-            // 프로세스가 죽으면 남은 서브에이전트(백그라운드 포함)는 더 이상 진행 못 하므로
-            // 완료 처리해 인디케이터가 "영영 실행 중"으로 안 남게 한다.
-            if let self { for id in self.agentToolIds where !self.subDoneFired.contains(id) { self.finishSub(id, "") } }
+            // 프로세스가 죽으면 남은 서브에이전트(백그라운드 포함)는 더 이상 진행 못 하므로 완료 처리.
+            // 반드시 queue 위에서: agentToolIds/subDoneFired 는 다른 곳에서 전부 queue 에서만 변형되는데,
+            // 이 핸들러는 Process 소유 스레드에서 돌아 마지막 feed 와 겹친다 → Set 동시변형 크래시(데이터
+            // 레이스). queue.async 로 직렬화하면 마지막 feed 이후에 안전하게 정리된다.
+            self?.queue.async { self?.finishAllSubs() }
             DispatchQueue.main.async { self?.onExit?(p.terminationStatus) }
         }
         do { try proc.run() } catch { perm?.stop(); ask?.stop(); return nil }
@@ -214,12 +220,19 @@ final class ClaudeChatSession {
         }
     }
 
-    // 서브에이전트 완료를 한 번만 발화 (task_notification / task_updated / 구버전 tool_result 중
-    // 먼저 오는 것 하나로).
+    // 서브에이전트 완료를 한 번만 발화 (task_notification / task_updated / tool_result 중 먼저 온 것).
+    // 반드시 `queue` 위에서만 호출한다 (subDoneFired Set 을 변형하므로).
     private func finishSub(_ id: String, _ result: String) {
         guard !subDoneFired.contains(id) else { return }
         subDoneFired.insert(id)
         main { self.onSubagentDone?(id, result) }
+    }
+    // 남은 서브에이전트를 모두 완료 처리 (finishSub 가 dedupe 하므로 이미 끝난 건 무시).
+    private func finishAllSubs() { for id in agentToolIds { finishSub(id, "") } }
+    // task status 가 "아직 도는 중"인지. 그 외(completed/failed/cancelled/error 등)는 terminal.
+    private func isRunningStatus(_ s: String?) -> Bool {
+        guard let s else { return false }
+        return ["in_progress", "running", "pending", "queued", "started"].contains(s)
     }
 
     private func handle(_ o: [String: Any]) {
@@ -239,16 +252,19 @@ final class ClaudeChatSession {
             // 서브에이전트 라이프사이클 (최신 CLI). tool_result 대신 이걸로 완료를 판정한다.
             switch o["subtype"] as? String {
             case "task_started":
-                if let tid = o["tool_use_id"] as? String {
-                    taskAwareIds.insert(tid)
-                    if let taskId = o["task_id"] as? String { taskIdToTool[taskId] = tid }
+                taskAware = true                 // 이 CLI 는 task 이벤트를 쓴다 (capability)
+                if let tid = o["tool_use_id"] as? String, let taskId = o["task_id"] as? String {
+                    taskIdToTool[taskId] = tid
                 }
             case "task_notification":
-                if (o["status"] as? String) == "completed", let tid = o["tool_use_id"] as? String {
+                // completed 뿐 아니라 failed/cancelled 등 terminal status 도 완료 처리 (안 그러면
+                // 실패/취소된 서브에이전트가 인디케이터에서 영영 스핀).
+                if let tid = o["tool_use_id"] as? String,
+                   let st = o["status"] as? String, !isRunningStatus(st) {
                     finishSub(tid, "")   // 최종 답변은 이미 parent 텍스트로 스트리밍돼 본문에 있음
                 }
             case "task_updated":
-                if ((o["patch"] as? [String: Any])?["status"] as? String) == "completed",
+                if let st = (o["patch"] as? [String: Any])?["status"] as? String, !isRunningStatus(st),
                    let taskId = o["task_id"] as? String, let tid = taskIdToTool[taskId] {
                     finishSub(tid, "")
                 }
@@ -318,9 +334,11 @@ final class ClaudeChatSession {
                     }
                     continue
                 }
-                // task 이벤트를 쓰는 CLI 에선 이 tool_result 는 시작 시점 placeholder → 무시.
-                // task_notification 이 진짜 완료를 알린다. task 이벤트가 없는 구버전만 여기서 완료.
-                if !taskAwareIds.contains(tid) {
+                // task 이벤트 CLI 에선 이 tool_result 는 시작 시점 placeholder(err=false)라 완료로 안 쓴다
+                // (task_notification 이 진짜 완료). 단 err=true 는 실패 신호라 그때는 닫는다.
+                // task 이벤트가 없는 구버전 CLI 는 항상 여기서 완료.
+                let isErr = (block["is_error"] as? Bool) ?? false
+                if !taskAware || isErr {
                     finishSub(tid, resultText(block["content"]))
                 }
             }
@@ -340,9 +358,7 @@ final class ClaudeChatSession {
             // 안전망은 에러/중단 result 에서만: 그때는 백그라운드 서브도 함께 죽으므로 정리한다.
             // 성공 result 에선 건드리지 않는다 - Explore 등은 백그라운드로 result 이후에도 계속
             // 돌다가 각자 task_notification 으로 끝난다(그걸 완료로 잡으면 안 되는 이유).
-            if err != nil {
-                for id in agentToolIds where !subDoneFired.contains(id) { finishSub(id, "") }
-            }
+            if err != nil { finishAllSubs() }
             main { self.onTurnDone?(cost, sid, u, err) }
         default: break
         }

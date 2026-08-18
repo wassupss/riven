@@ -2106,10 +2106,11 @@ final class SubagentPane: NSView {
 // 모두 보여준다(실행 중 accent 점 깜빡 / 완료 초록 점). 클릭하면 전체 패널을 연다.
 // 채팅 입력창 바로 위에 풀 width 로 얹히는 서브에이전트 목록. 헤더(캡션+닫기)는 고정,
 // 목록은 최대 ~2.5줄까지만 보이고 그 이상은 스크롤. 비면 높이 0 으로 접혀 대화가 그 자리를 되찾는다.
-final class SubagentIndicator: NSView, NSGestureRecognizerDelegate {
+final class SubagentIndicator: NSView, NSGestureRecognizerDelegate, Themable {
     private let stack = FlippedStack()
     private let scroll = NSScrollView()
     private let closeBtn = CircleButton()
+    private let caption = NSTextField(labelWithString: t("chat.subagents"))
     private var rows: [String: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)] = [:]
     var onClick: (() -> Void)?
     var onClose: (() -> Void)?               // 닫기(×) - 입력창을 가리지 않게 인디케이터를 치운다
@@ -2127,7 +2128,6 @@ final class SubagentIndicator: NSView, NSGestureRecognizerDelegate {
         clipsToBounds = true
         // 헤더: 캡션 + 닫기(×).
         let header = NSView(); header.translatesAutoresizingMaskIntoConstraints = false
-        let caption = NSTextField(labelWithString: t("chat.subagents"))
         caption.font = UIScale.font(UIScale.caption, .semibold); caption.textColor = Theme.fgDim
         caption.translatesAutoresizingMaskIntoConstraints = false
         closeBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: t("common.close"))?
@@ -2163,8 +2163,20 @@ final class SubagentIndicator: NSView, NSGestureRecognizerDelegate {
         let gr = NSClickGestureRecognizer(target: self, action: #selector(tap))
         gr.delegate = self                       // 닫기 버튼 위 클릭은 제스처가 안 먹게 (버튼이 처리)
         addGestureRecognizer(gr)
+        Theme.register(self)                     // 다크↔라이트 전환 시 색 갱신 (패널이 eager 라 stale 방지)
     }
     required init?(coder: NSCoder) { fatalError() }
+    // 테마 전환 시 색 재적용 (컨테이너 border/bg, 캡션, 닫기, 행 라벨/체크).
+    func applyTheme() {
+        layer?.borderColor = Theme.edge.cgColor
+        layer?.backgroundColor = (Theme.isLight ? Theme.bg2 : Theme.bg3).withAlphaComponent(0.97).cgColor
+        caption.textColor = Theme.fgDim
+        closeBtn.contentTintColor = Theme.fgDim
+        for (_, r) in rows {
+            r.check.contentTintColor = Theme.success
+            r.label.textColor = r.spinner.isHidden ? Theme.fgDim : Theme.fg   // 스피너 숨김=완료→fgDim, 도는 중→fg
+        }
+    }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
     @objc private func tap() { onClick?() }
     @objc private func closeTapped() { dismissed = true; refreshHeight(); onClose?() }
@@ -2188,6 +2200,8 @@ final class SubagentIndicator: NSView, NSGestureRecognizerDelegate {
         let r: (row: NSView, spinner: NSProgressIndicator, check: NSImageView, label: NSTextField)
         if let ex = rows[id] { r = ex; r.label.stringValue = title }
         else {
+            dismissed = false   // 새 서브에이전트가 시작하면 (×로 닫았어도) 다시 보여준다 - 안 그러면 세션 내내 못 연다
+
             let spin = NSProgressIndicator()
             spin.style = .spinning; spin.controlSize = .small; spin.isDisplayedWhenStopped = false
             spin.translatesAutoresizingMaskIntoConstraints = false

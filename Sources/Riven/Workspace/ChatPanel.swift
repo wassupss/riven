@@ -244,7 +244,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         [modeChip, modelChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
         [scroll, subSide, hairline, composer, slash, jumpButton, planBadge, subIndicator].forEach { addSubview($0) }
         subIndicator.onClick = { [weak self] in self?.openSubagentPanel() }
-        subIndicator.onClose = { [weak self] in self?.autoScroll() }   // 접힌 만큼 대화가 자리 되찾음
+        subIndicator.onClose = { [weak self] in self?.autoScrollSoon() }   // 레이아웃 갱신 후 스크롤(빈 공간 방지)
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
             guard let self, let p = self.planPath else { return }
@@ -1159,8 +1159,11 @@ final class ChatPanel: NSView, Themable, Scalable {
         s?.onSubagentDone = { [weak self] id, result in
             guard let self else { return }
             if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self.subToPane[id] != nil)") }
+            // /clear 와 경쟁: 이미 비운 서브에이전트의 늦은 완료 콜백이면 무시한다. 안 그러면
+            // upsert 가 모르는 id 에도 행을 만들어 비워진 인디케이터에 유령 초록체크가 생긴다.
+            guard let title = self.subTitle[id] else { return }
             self.subToPane[id]?.finish(result)
-            self.subIndicator.upsert(id: id, title: self.subTitle[id] ?? (self.subNames[id] ?? "sub-agent"), running: false)
+            self.subIndicator.upsert(id: id, title: title, running: false)
         }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
@@ -2245,7 +2248,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         if !subPanelOpen { onOpenSubagentPane?(ChatPanel.subListKey, list, t("chat.subagents")); subPanelOpen = true }
     }
     private func clearSubagents() {
-        subToPane.removeAll(); subTitle.removeAll(); subagentList = nil
+        subToPane.removeAll(); subTitle.removeAll(); subNames.removeAll(); subagentList = nil
         subIndicator.reset()   // 접힘
         if subPanelOpen { onCloseSubagentPanes?([ChatPanel.subListKey]); subPanelOpen = false }
     }
