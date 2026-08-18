@@ -44,7 +44,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var current: TurnBlock?
     private var subToPane: [String: SubagentEntry] = [:]  // sub-agent id → its accordion row (in the list panel)
     private var subagentList: SubagentListView?           // 목록 패널 (인디케이터 클릭 시 도킹)
-    private var subIndicator: SubagentIndicator?          // 입력창 오른쪽 위 에이전트별 목록 표시
+    private let subIndicator = SubagentIndicator(frame: .zero)   // 입력창 바로 위, 풀 width 목록 (비면 접힘)
     private var subPanelOpen = false
     private static let subListKey = "__subagents__"
     private var turnStart: Date?
@@ -242,7 +242,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         modeChip.addSubview(modePopup)
         modelChip.addSubview(modelPopup)
         [modeChip, modelChip, plusButton, inputScroll, sendButton].forEach { composer.addSubview($0) }
-        [scroll, subSide, hairline, composer, slash, jumpButton, planBadge].forEach { addSubview($0) }
+        [scroll, subSide, hairline, composer, slash, jumpButton, planBadge, subIndicator].forEach { addSubview($0) }
+        subIndicator.onClick = { [weak self] in self?.openSubagentPanel() }
+        subIndicator.onClose = { [weak self] in self?.autoScroll() }   // 접힌 만큼 대화가 자리 되찾음
         planBadge.isHidden = true
         planBadge.onOpen = { [weak self] in
             guard let self, let p = self.planPath else { return }
@@ -276,8 +278,13 @@ final class ChatPanel: NSView, Themable, Scalable {
             hairline.trailingAnchor.constraint(equalTo: trailingAnchor),
             hairline.heightAnchor.constraint(equalToConstant: 1),
             hairline.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -10),
-            scroll.bottomAnchor.constraint(equalTo: hairline.topAnchor),
-            subSide.bottomAnchor.constraint(equalTo: hairline.topAnchor),
+            // 서브에이전트 목록: 입력창 바로 위, 풀 width. 비면 높이 0 으로 접혀 대화가 자리 되찾음.
+            subIndicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            subIndicator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            subIndicator.bottomAnchor.constraint(equalTo: hairline.topAnchor),
+            // 대화 최하단은 목록 위로 보인다 (목록에 안 가림).
+            scroll.bottomAnchor.constraint(equalTo: subIndicator.topAnchor, constant: -6),
+            subSide.bottomAnchor.constraint(equalTo: subIndicator.topAnchor, constant: -6),
             // composer glass card, inset from the panel edges
             composer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             composer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -1153,7 +1160,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             guard let self else { return }
             if ChatPanel.subBench { RLog.log("SUB 완료 id=\(id.suffix(8)) \(result.count)자 팬있음=\(self.subToPane[id] != nil)") }
             self.subToPane[id]?.finish(result)
-            self.subIndicator?.upsert(id: id, title: self.subTitle[id] ?? (self.subNames[id] ?? "sub-agent"), running: false)
+            self.subIndicator.upsert(id: id, title: self.subTitle[id] ?? (self.subNames[id] ?? "sub-agent"), running: false)
         }
         s?.onFileEdited = { [weak self] path in self?.onEditedFile?(path) }
         s?.onTurnDone = { [weak self] cost, _, usage, error in self?.endTurn(cost: cost, usage: usage, error: error) }
@@ -2231,21 +2238,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         subagentList?.addEntry(e)
         subToPane[id] = e
         let title = subLabel(type, desc); subTitle[id] = title
-        ensureSubIndicator()
-        subIndicator?.upsert(id: id, title: title, running: true)   // 실행 중 (각 에이전트 한 줄)
-    }
-    // 인디케이터는 "채팅 입력창 오른쪽 위"에 띄운다 (스크롤과 무관, 항상 보임).
-    private func ensureSubIndicator() {
-        guard subIndicator == nil else { return }
-        let ind = SubagentIndicator(frame: .zero)
-        ind.onClick = { [weak self] in self?.openSubagentPanel() }
-        ind.onClose = { [weak self] in self?.subIndicator?.isHidden = true }   // 입력창 가리지 않게 치운다(목록은 유지, 새 서브 뜨면 다시 보임)
-        addSubview(ind)
-        NSLayoutConstraint.activate([
-            ind.bottomAnchor.constraint(equalTo: composer.topAnchor, constant: -UIScale.pt(8)),
-            ind.trailingAnchor.constraint(equalTo: composer.trailingAnchor),
-        ])
-        subIndicator = ind
+        subIndicator.upsert(id: id, title: title, running: true)   // 실행 중 (각 에이전트 한 줄)
     }
     private func openSubagentPanel() {
         guard let list = subagentList else { return }
@@ -2253,7 +2246,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     private func clearSubagents() {
         subToPane.removeAll(); subTitle.removeAll(); subagentList = nil
-        subIndicator?.reset()   // 숨김
+        subIndicator.reset()   // 접힘
         if subPanelOpen { onCloseSubagentPanes?([ChatPanel.subListKey]); subPanelOpen = false }
     }
     // 사용자가 서브에이전트 목록 패널을 직접 닫음 - 다시 열 수 있게 플래그만 내린다(목록은 유지).

@@ -135,6 +135,9 @@ final class ClaudeChatSession {
         }
         proc.terminationHandler = { [weak self] p in
             self?.perm?.stop(); self?.ask?.stop()
+            // 프로세스가 죽으면 남은 서브에이전트(백그라운드 포함)는 더 이상 진행 못 하므로
+            // 완료 처리해 인디케이터가 "영영 실행 중"으로 안 남게 한다.
+            if let self { for id in self.agentToolIds where !self.subDoneFired.contains(id) { self.finishSub(id, "") } }
             DispatchQueue.main.async { self?.onExit?(p.terminationStatus) }
         }
         do { try proc.run() } catch { perm?.stop(); ask?.stop(); return nil }
@@ -219,28 +222,8 @@ final class ClaudeChatSession {
         main { self.onSubagentDone?(id, result) }
     }
 
-    static let rawDump = ProcessInfo.processInfo.environment["RIVEN_RAWDUMP"] != nil
     private func handle(_ o: [String: Any]) {
         let parent = o["parent_tool_use_id"] as? String   // nil = main thread
-        if ClaudeChatSession.rawDump {
-            let ty = o["type"] as? String ?? "?"
-            var extra = ""
-            if ty == "system", let sub = o["subtype"] as? String, sub.hasPrefix("task") {
-                let tid = String((o["tool_use_id"] as? String ?? "").suffix(6))
-                let st = (o["status"] as? String) ?? ((o["patch"] as? [String: Any])?["status"] as? String) ?? ""
-                RLog.log("RAW system/\(sub) [task=\(String((o["task_id"] as? String ?? "").suffix(6))) tuid=\(tid) status=\(st)]")
-            }
-            if ty == "assistant" || ty == "user", let msg = o["message"] as? [String: Any],
-               let bs = msg["content"] as? [[String: Any]] {
-                extra = bs.map { b -> String in
-                    let bt = b["type"] as? String ?? "?"
-                    if bt == "tool_use" { return "tool_use(\(b["name"] as? String ?? "?"),\(String((b["id"] as? String ?? "").suffix(6))))" }
-                    if bt == "tool_result" { return "tool_result(tuid=\(String((b["tool_use_id"] as? String ?? "").suffix(6))),err=\(b["is_error"] as? Bool ?? false))" }
-                    return bt
-                }.joined(separator: ",")
-            }
-            RLog.log("RAW \(ty) parent=\(parent?.suffix(6).description ?? "-") [\(extra)]")
-        }
         switch o["type"] as? String {
         case "system":
             if o["subtype"] as? String == "init" {
@@ -342,9 +325,6 @@ final class ClaudeChatSession {
                 }
             }
         case "result":
-            // 안전망: 완료 이벤트를 못 받은 채 턴이 끝났으면(중단·kill·이벤트 누락) 남은
-            // 서브에이전트를 여기서 완료 처리해 "영영 실행 중"으로 안 남게 한다.
-            for id in agentToolIds where !subDoneFired.contains(id) { finishSub(id, "") }
             let cost = o["total_cost_usd"] as? Double
             let sid = o["session_id"] as? String
             let u = usage(o["usage"] as? [String: Any])
@@ -356,6 +336,12 @@ final class ClaudeChatSession {
                 let sub = o["subtype"] as? String ?? "error"
                 let msg = (o["result"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? sub
                 err = msg
+            }
+            // 안전망은 에러/중단 result 에서만: 그때는 백그라운드 서브도 함께 죽으므로 정리한다.
+            // 성공 result 에선 건드리지 않는다 - Explore 등은 백그라운드로 result 이후에도 계속
+            // 돌다가 각자 task_notification 으로 끝난다(그걸 완료로 잡으면 안 되는 이유).
+            if err != nil {
+                for id in agentToolIds where !subDoneFired.contains(id) { finishSub(id, "") }
             }
             main { self.onTurnDone?(cost, sid, u, err) }
         default: break
