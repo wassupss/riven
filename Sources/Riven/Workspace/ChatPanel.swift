@@ -1123,12 +1123,14 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.restorePlanBadge(sid)
         }
         s?.onTextDelta = { [weak self] t in
-            if !t.isEmpty { self?.ensureAutoTurn() }  // 세션이 스스로 재개한 턴이면 상태를 세운다
+            if !t.isEmpty { self?.ensureAutoTurn(); self?.turnProducedOutput = true }  // 답변 시작 = 뭔가 함
+
             self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
             self?.current?.bufferText(t); self?.turnText += t
         }
         s?.onMainTool = { [weak self] name, detail, code, path in
             self?.ensureAutoTurn()
+            self?.turnProducedOutput = true   // 명령(툴) 실행 = 뭔가 함
             self?.liveTool = name
             self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
             // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 - 조금 기다렸다 집어서 배지로.
@@ -1140,6 +1142,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 여기서 턴을 새로 세울 필요가 없다. 예전엔 메인 result 뒤 늦게 온 서브 이벤트가 유령
             // "생각 중" 턴을 띄웠고, result 가 안 와 영영 안 풀렸다(Esc 로도).
             guard let self else { return }
+            self.turnProducedOutput = true   // 서브에이전트 실행 = 뭔가 함
             self.addSubagentPane(id, type: type, desc: desc)
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
@@ -1528,6 +1531,9 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ---- send / turn lifecycle ----
     // Interrupt the running turn (Esc / the stop button) - like the CLI's Esc.
     private var interrupted = false
+    // 이번 턴에 에이전트가 뭔가 했는지(툴 실행·답변·서브에이전트). 중단 시 이게 false 일 때만
+    // 내 메시지를 입력창으로 되돌린다(아무것도 안 했으면 되돌리고, 명령/답변이 왔으면 그대로 둔다).
+    private var turnProducedOutput = false
     /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
     func stopTurn() { interruptTurn() }
 
@@ -1539,7 +1545,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         session?.interrupt()
         // Like the CLI: the interrupted message returns to the input for editing/resending. Remove
         // its bubble from the transcript and put the text back (don't clobber anything typed since).
-        if restoreText, let text = currentTurnText {
+        // 단, 에이전트가 이미 뭔가 했으면(명령/답변/서브에이전트) 되돌리지 않는다 - 그 메시지는
+        // 실제로 처리가 시작됐으니 대화에 남긴다.
+        if restoreText, !turnProducedOutput, let text = currentTurnText {
             currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
@@ -2174,7 +2182,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // panels now: they stay open until the user closes them (or the workspace changes).
         cancelSuggestion()                                   // 새 턴 시작 → 이전 제안 취소
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
-        turnText = ""
+        turnText = ""; turnProducedOutput = false            // 이번 턴 산출물 추적 초기화
         current = newBlock()
         current?.startWorking()
         resetLiveUsage()
@@ -2289,7 +2297,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         stopFlush()
         lastUsage = usage
         let block = current
-        block?.finish(secs: secs, cost: cost, usage: usage, model: model)
+        block?.finish(secs: secs, cost: cost, usage: usage, model: model, interrupted: wasInterrupted)
         turnStart = nil; liveTool = nil
         // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" -
         // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).

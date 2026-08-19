@@ -494,9 +494,9 @@ final class ToolGroup: NSView {
         m.append(NSAttributedString(string: "  "))
         return m
     }
-    private func updateTitle() {
+    private func updateTitle(interrupted: Bool = false) {
         // 헤더 전체를 왼쪽 한 줄로: 실행 중이면 "<한글 동작> · <현재 명령>",
-        // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로).
+        // 끝나면 "명령 N개 · M 변경 +A -B" (제목·카운트를 나누지 않고 한 덩어리로). 중단이면 "중단 · " 접두.
         let m = NSMutableAttributedString()
         m.append(ToolGroup.iconPrefix())   // 렌치 아이콘 (글자와 baseline 정렬)
         let f = UIScale.font(UIScale.prose)   // 답변 본문과 동일(크기·굵기)
@@ -505,6 +505,9 @@ final class ToolGroup: NSView {
             m.append(NSAttributedString(string: latestDetail.isEmpty ? verb : "\(verb) · \(latestDetail)",
                                         attributes: [.foregroundColor: Theme.accent2, .font: f]))
         } else {
+            if interrupted {
+                m.append(NSAttributedString(string: t("chat.stopped") + " · ", attributes: [.foregroundColor: Theme.fgDim, .font: f]))
+            }
             m.append(NSAttributedString(string: t("chat.tools.count", ["n": "\(count)"]),
                                         attributes: [.foregroundColor: Theme.fgDim, .font: f]))
             if changed > 0 {
@@ -522,15 +525,17 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중: 테두리를 따라 밝은 accent 조각이 한 바퀴 도는 애니메이션. 완료되면 초록 정적 테두리.
-    // 회전 그라디언트+마스크는 리사이즈 때 프레임이 어긋나 깨졌다 → CAShapeLayer 스트로크의
-    // lineDashPhase 이동으로 대체(프레임 충돌 없음, 둘레만 갱신).
+    // 실행 중: 테두리를 따라 부드러운 accent 빛점이 흐르는 shimmer.
+    // conic 그라디언트는 원형 각도 기반이라 사각 테두리에서 한쪽으로 뭉쳐 이상하다 → 둘레를
+    // 정확히 따라가는 짧은 빛점(lineDashPhase) + 큰 소프트 글로우로, 딱딱한 막대가 아니라
+    // 은은한 comet 이 테두리를 도는 느낌. 리사이즈 깨짐은 둘레 바뀔 때만 대시/애니를 다시 건다.
     private let borderAnim = CAShapeLayer()
     private var lastPeri: CGFloat = -1
 
-    func endRun() {
-        running = false; stopShimmer(); updateTitle()
-        layer?.borderColor = Theme.success.withAlphaComponent(0.5).cgColor   // 완료: 초록 정적 테두리
+    func endRun(interrupted: Bool = false) {
+        running = false; stopShimmer(); updateTitle(interrupted: interrupted)
+        // 완료 = 초록 테두리 / 중단 = 회색 테두리 (완료와 구분).
+        layer?.borderColor = (interrupted ? Theme.fgDim.withAlphaComponent(0.35) : Theme.success.withAlphaComponent(0.5)).cgColor
     }
 
     func startShimmer() {
@@ -539,13 +544,14 @@ final class ToolGroup: NSView {
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
         borderAnim.fillColor = NSColor.clear.cgColor
         borderAnim.strokeColor = Theme.accent2.cgColor
-        borderAnim.lineWidth = 1.5
+        borderAnim.lineWidth = 2
         borderAnim.lineCap = .round
-        // 부드러운 글로우 - 딱딱한 대시가 아니라 은은히 빛나며 흐르게.
+        // 큰 소프트 글로우 = 딱딱한 대시가 아니라 은은히 번지는 빛점으로 보이게.
         borderAnim.shadowColor = Theme.accent2.cgColor
-        borderAnim.shadowRadius = 4; borderAnim.shadowOpacity = 0.9; borderAnim.shadowOffset = .zero
+        borderAnim.shadowRadius = 9; borderAnim.shadowOpacity = 1; borderAnim.shadowOffset = .zero
+        borderAnim.masksToBounds = false
         layer?.addSublayer(borderAnim)
-        lastPeri = -1; needsLayout = true   // layout 이 path·대시·애니메이션을 건다
+        lastPeri = -1; needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
@@ -558,19 +564,18 @@ final class ToolGroup: NSView {
         let r = UIScale.pt(9)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         borderAnim.frame = bounds
-        borderAnim.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
+        borderAnim.path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
                                  cornerWidth: r, cornerHeight: r, transform: nil)
         CATransaction.commit()
-        // 둘레가 바뀔 때만 대시·애니메이션 재설정(매 layout 재설정하면 끊긴다).
         let peri = 2 * (bounds.width + bounds.height)
         if abs(peri - lastPeri) > 0.5, peri > 1 {
             lastPeri = peri
-            let seg: CGFloat = 90                      // 길고 부드러운 빛 조각
-            borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]   // 조각 하나만 보이게
+            let seg: CGFloat = 28                       // 부드러운 빛 줄기 (양끝은 round cap + 글로우로 뭉개짐)
+            borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]
             borderAnim.removeAnimation(forKey: "travel")
             let a = CABasicAnimation(keyPath: "lineDashPhase")
-            a.fromValue = 0; a.toValue = -(seg + peri)  // 한 바퀴
-            a.duration = 3.4; a.repeatCount = .infinity   // 느리게 = 차분/고급
+            a.fromValue = 0; a.toValue = -(seg + peri)
+            a.duration = 3.0; a.repeatCount = .infinity
             a.timingFunction = CAMediaTimingFunction(name: .linear)
             borderAnim.add(a, forKey: "travel")
         }
@@ -1920,7 +1925,7 @@ final class TurnBlock: NSView {
 
     private(set) var toolGroup: ToolGroup?   // 연속 도구 호출을 묶는 현재 아코디언 그룹
     // 도구 실행 중엔 그룹 헤더가 진행 표시를 맡으므로 상태 footer 는 숨긴다 (중복 방지).
-    private func closeToolGroup() { toolGroup?.endRun(); toolGroup = nil }
+    private func closeToolGroup(interrupted: Bool = false) { toolGroup?.endRun(interrupted: interrupted); toolGroup = nil }
 
     private(set) var plainText = ""          // 타임라인 노드 복사용 (이 턴의 어시스턴트 텍스트)
     func bufferText(_ t: String) {
@@ -1980,15 +1985,17 @@ final class TurnBlock: NSView {
         add(card)
         return card
     }
-    func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?) {
+    func finish(secs: Int, cost: Double?, usage: ChatUsage?, model: String?, interrupted: Bool = false) {
         guard !finished else { return }
         closeText(); finished = true
-        closeToolGroup(); stopShimmer(); statusRow.isHidden = false   // 완료 줄은 반드시 보인다
+        closeToolGroup(interrupted: interrupted); stopShimmer(); statusRow.isHidden = false   // 완료/중단 줄은 반드시 보인다
         if hasText || !content.arrangedSubviews.isEmpty { setStatusGap(true) }   // 답변 아래로 완료 줄
         spinner.isHidden = true; spinner.stopAnimation(nil)   // 완료 시 스피너 자리 collapse (옆 여백 제거)
-        statusIcon.isHidden = false; statusIcon.image = symbol("checkmark", Theme.success)   // 초록 원 대신 체크 표시
+        statusIcon.isHidden = false
+        // 중단이면 완료 체크가 아니라 중단 표시(회색)로 - 완료와 명확히 구분한다.
+        statusIcon.image = interrupted ? symbol("stop.fill", Theme.fgDim) : symbol("checkmark", Theme.success)
         statusLabel.textColor = Theme.fgDim
-        var s = t("chat.done") + " · " + ChatText.duration(secs)
+        var s = (interrupted ? t("chat.stopped") : t("chat.done")) + " · " + ChatText.duration(secs)
         if let u = usage {
             s += " · ↑\(ChatText.tokens(u.input + u.cacheWrite)) ↓\(ChatText.tokens(u.output))"
         }
