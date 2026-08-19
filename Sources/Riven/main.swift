@@ -4298,7 +4298,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { step(0) }
     }
 
+    static let perfLog = ProcessInfo.processInfo.environment["RIVEN_PERFLOG"] != nil
     private func activate(_ url: URL, focusPaneId: String? = nil) {
+        let _perf0 = DispatchTime.now()
+        let _wasNew = (state(for: url).dock == nil)
+        defer {
+            if AppDelegate.perfLog {
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - _perf0.uptimeNanoseconds) / 1e6
+                RLog.log(String(format: "PERF activate(%@) %.1fms firstVisit=%@", url.lastPathComponent, ms, _wasNew ? "예" : "아니오"))
+            }
+        }
         if workspace != nil, workspace != url { showSwitchOverlay() }
         suppressAutoFocus = true   // don't let restored panels (editor/aux) steal focus; applied at the end
         if !workspaces.contains(url) { workspaces.append(url) }
