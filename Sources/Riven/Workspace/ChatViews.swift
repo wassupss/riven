@@ -525,12 +525,14 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중: 테두리를 따라 부드러운 accent 빛점이 흐르는 shimmer.
-    // conic 그라디언트는 원형 각도 기반이라 사각 테두리에서 한쪽으로 뭉쳐 이상하다 → 둘레를
-    // 정확히 따라가는 짧은 빛점(lineDashPhase) + 큰 소프트 글로우로, 딱딱한 막대가 아니라
-    // 은은한 comet 이 테두리를 도는 느낌. 리사이즈 깨짐은 둘레 바뀔 때만 대시/애니를 다시 건다.
-    private let borderAnim = CAShapeLayer()
-    private var lastPeri: CGFloat = -1
+    // 실행 중: 에이전트 패널의 travelling-ember 링(AttnRingView.attn)과 동일한 기법.
+    // 회전하는 conic 그라디언트를 테두리 링으로 마스크 - 대부분 아주 옅고(0.06) 끝에서 밝게
+    // 타오르는 머리(dim tail + bright head)라 자연스럽게 흐른다. 예전 conic 이 이상했던 건 밝은
+    // 아크가 좌우대칭이라서였고, 이 ember stop 이 정답. 색만 working accent2 로.
+    private let shimmerHost = CALayer()        // 테두리 링으로 마스크되는 컨테이너 (회전 안 함)
+    private let shimmerGrad = CAGradientLayer() // 그 안에서 도는 ember conic (오버사이즈)
+    private let shimmerMask = CAShapeLayer()    // 둥근 사각 링 스트로크 = 마스크
+    private var lastShimmerSize: CGSize = .zero
 
     func endRun(interrupted: Bool = false) {
         running = false; stopShimmer(); updateTitle(interrupted: interrupted)
@@ -542,43 +544,50 @@ final class ToolGroup: NSView {
         guard !shimmerOn else { return }
         shimmerOn = true
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
-        borderAnim.fillColor = NSColor.clear.cgColor
-        borderAnim.strokeColor = Theme.accent2.cgColor
-        borderAnim.lineWidth = 2
-        borderAnim.lineCap = .round
-        // 큰 소프트 글로우 = 딱딱한 대시가 아니라 은은히 번지는 빛점으로 보이게.
-        borderAnim.shadowColor = Theme.accent2.cgColor
-        borderAnim.shadowRadius = 9; borderAnim.shadowOpacity = 1; borderAnim.shadowOffset = .zero
-        borderAnim.masksToBounds = false
-        layer?.addSublayer(borderAnim)
-        lastPeri = -1; needsLayout = true
+        let a = Theme.accent2
+        shimmerGrad.type = .conic
+        shimmerGrad.locations = [0.0, 0.56, 0.83, 0.97, 1.0]                   // AttnRingView 와 동일한 ember stop
+        shimmerGrad.colors = [a.withAlphaComponent(0.06).cgColor, a.withAlphaComponent(0.06).cgColor,
+                              a.withAlphaComponent(0.55).cgColor, a.cgColor, a.withAlphaComponent(0.06).cgColor]
+        shimmerGrad.startPoint = CGPoint(x: 0.5, y: 0.5)
+        shimmerGrad.endPoint = CGPoint(x: 0.5, y: 0.0)
+        shimmerGrad.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        shimmerMask.fillColor = NSColor.clear.cgColor
+        shimmerMask.strokeColor = NSColor.black.cgColor   // 불투명 = 보이는 링 밴드(마스크는 알파만)
+        shimmerMask.lineWidth = 1.5
+        shimmerHost.mask = shimmerMask
+        shimmerHost.addSublayer(shimmerGrad)
+        layer?.addSublayer(shimmerHost)
+        if shimmerGrad.animation(forKey: "spin") == nil {
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0; spin.toValue = 2 * Double.pi
+            spin.duration = 2.2; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
+            shimmerGrad.add(spin, forKey: "spin")
+        }
+        lastShimmerSize = .zero; needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
         shimmerOn = false
-        borderAnim.removeAllAnimations(); borderAnim.removeFromSuperlayer()
+        shimmerGrad.removeAllAnimations()
+        shimmerHost.mask = nil
+        shimmerGrad.removeFromSuperlayer(); shimmerHost.removeFromSuperlayer()
     }
     override func layout() {
         super.layout()
-        guard shimmerOn else { return }
+        guard shimmerOn, bounds.width > 1, bounds.height > 1, bounds.size != lastShimmerSize else { return }
+        lastShimmerSize = bounds.size
         let r = UIScale.pt(9)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        borderAnim.frame = bounds
-        borderAnim.path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1),
-                                 cornerWidth: r, cornerHeight: r, transform: nil)
+        shimmerHost.frame = bounds
+        shimmerMask.frame = bounds
+        shimmerMask.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
+                                  cornerWidth: r, cornerHeight: r, transform: nil)
+        // 회전해도 링 밴드를 늘 덮게 오버사이즈(중앙 정렬) - 정사각형이면 회전 시 모서리가 빈다.
+        let side = max(bounds.width, bounds.height) * 1.6
+        shimmerGrad.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        shimmerGrad.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
-        let peri = 2 * (bounds.width + bounds.height)
-        if abs(peri - lastPeri) > 0.5, peri > 1 {
-            lastPeri = peri
-            let seg: CGFloat = 28                       // 부드러운 빛 줄기 (양끝은 round cap + 글로우로 뭉개짐)
-            borderAnim.lineDashPattern = [seg as NSNumber, peri as NSNumber]
-            borderAnim.removeAnimation(forKey: "travel")
-            let a = CABasicAnimation(keyPath: "lineDashPhase")
-            a.fromValue = 0; a.toValue = -(seg + peri)
-            a.duration = 3.0; a.repeatCount = .infinity
-            a.timingFunction = CAMediaTimingFunction(name: .linear)
-            borderAnim.add(a, forKey: "travel")
-        }
     }
 }
 
