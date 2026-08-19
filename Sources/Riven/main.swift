@@ -4564,6 +4564,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func scheduleEditorReload(_ path: String) {
         DispatchQueue.main.async {
             guard let ws = self.workspace, self.state(for: ws).openTabs.contains(path) else { return }
+            // 방금 우리가 저장한 파일이면 리로드 안 한다(FSEvents 지연 대비 3초 창). 안 그러면
+            // ⌘S 저장이 곧바로 모델 재설정을 유발해 커서가 파일 맨 위로 튀었다. 에이전트가 쓴
+            // 외부 편집은 selfWriteAt 에 없으므로 그대로 리로드된다.
+            if let t = self.selfWriteAt[path], Date().timeIntervalSince(t) < 3.0 { return }
             self.pendingReload.insert(path)
             self.reloadTimer?.invalidate()
             self.reloadTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
@@ -5981,6 +5985,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.runEslintFix(root: root, path: path)   // in-place on the file
                 let final = (try? String(contentsOfFile: path, encoding: .utf8)) ?? text
                 DispatchQueue.main.async {
+                    self.noteSelfWrite(path)   // 포맷 저장도 우리 쓰기 → FS 중복 리로드 억제
                     self.editor.markSaved(path: path)
                     if final != content { self.editor.open(path: path, content: final) }
                     AgentEdits.shared.updateBaseline(path, final)
@@ -6003,9 +6008,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
+    // riven 이 스스로 쓴 파일 경로 → 시각. FSEvents 는 누가 썼는지 못 구분해서, 사용자의 ⌘S
+    // 저장도 "외부 변경"으로 보고 에디터를 reloadIfOpen(=모델 재설정)해 커서가 맨 위로 튀었다.
+    // 우리 저장은 여기 기록하고 잠깐 동안의 FS 리로드를 건너뛴다(에이전트가 쓴 편집은 기록되지
+    // 않으므로 그대로 리로드된다).
+    private var selfWriteAt: [String: Date] = [:]
+    private func noteSelfWrite(_ path: String) { selfWriteAt[path] = Date() }
     private func writeAndMark(path: String, content: String) {
         do {
             try content.write(toFile: path, atomically: true, encoding: .utf8)
+            noteSelfWrite(path)                               // 우리 저장 → FS 리로드 억제(커서 유지)
             editor.markSaved(path: path)
             AgentEdits.shared.updateBaseline(path, content)   // our own save isn't an agent edit
             refreshGit()
