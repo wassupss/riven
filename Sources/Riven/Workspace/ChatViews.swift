@@ -525,15 +525,15 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중: 테두리 path 를 따라 그려지는 dashed stroke 로 "긴 옅은 꼬리 + 밝은 머리"(ember)를
-    // lineDashPhase 로 흘려보낸다. stroke 는 path 를 그대로 따라 둥근 모서리를 감싸고(직선 빛줄기가
-    // 모서리에서 떨어지던 문제 해결), lineDashPhase 는 둘레 길이 기준 등속(각도 아님)이라 넓은
-    // 박스에서도 속도가 균일하고 CA 가 부드럽게 보간해 안 끊긴다. 꼬리 길이는 tailLen 으로 조절.
-    private let tailStroke = CAShapeLayer()   // 길고 옅은 꼬리
-    private let headStroke = CAShapeLayer()   // 짧고 밝은 머리 (꼬리 앞끝)
-    private var lastPeri: CGFloat = -1
-    private let tailLen: CGFloat = 150         // 꼬리 길이(길쭉)
-    private let headLen: CGFloat = 22          // 밝은 머리 길이
+    // 실행 중: 패널 링(AttnRingView.attn)과 동일한 conic ember 를 테두리 "링 마스크"에 씌운다 -
+    // 대부분 아주 옅고(0.06) 끝에서 밝게 타오르는 머리. 마스크가 링 모양이라 둥근 모서리를 완벽히
+    // 감싼다(직선/dash 로는 모서리가 어긋났음). 넓은 박스의 속도 편차(각속도 일정 문제)는 회전을
+    // "둘레 등길이" keyframe 로 재타이밍해 균일하게, 애니는 딱 한 번만 걸어(리사이즈마다 재생성=
+    // 끊김 방지) 매끄럽게 흐른다.
+    private let shimmerHost = CALayer()
+    private let shimmerGrad = CAGradientLayer()
+    private let shimmerMask = CAShapeLayer()
+    private var rotationBuilt = false
 
     func endRun(interrupted: Bool = false) {
         running = false; stopShimmer(); updateTitle(interrupted: interrupted)
@@ -543,53 +543,76 @@ final class ToolGroup: NSView {
 
     func startShimmer() {
         guard !shimmerOn else { return }
-        shimmerOn = true
+        shimmerOn = true; rotationBuilt = false
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
         let a = Theme.accent2
-        tailStroke.fillColor = NSColor.clear.cgColor
-        tailStroke.strokeColor = a.withAlphaComponent(0.5).cgColor
-        tailStroke.lineWidth = 1.6; tailStroke.lineCap = .round
-        tailStroke.shadowColor = a.cgColor; tailStroke.shadowRadius = 5; tailStroke.shadowOpacity = 0.7; tailStroke.shadowOffset = .zero
-        tailStroke.masksToBounds = false
-        headStroke.fillColor = NSColor.clear.cgColor
-        headStroke.strokeColor = a.cgColor
-        headStroke.lineWidth = 2.0; headStroke.lineCap = .round
-        headStroke.shadowColor = a.cgColor; headStroke.shadowRadius = 7; headStroke.shadowOpacity = 1; headStroke.shadowOffset = .zero
-        headStroke.masksToBounds = false
-        layer?.addSublayer(tailStroke); layer?.addSublayer(headStroke)
-        lastPeri = -1; needsLayout = true
+        shimmerGrad.type = .conic
+        shimmerGrad.locations = [0.0, 0.56, 0.83, 0.97, 1.0]                  // AttnRingView 와 동일한 ember stop
+        shimmerGrad.colors = [a.withAlphaComponent(0.06).cgColor, a.withAlphaComponent(0.06).cgColor,
+                              a.withAlphaComponent(0.55).cgColor, a.cgColor, a.withAlphaComponent(0.06).cgColor]
+        shimmerGrad.startPoint = CGPoint(x: 0.5, y: 0.5)
+        shimmerGrad.endPoint = CGPoint(x: 0.5, y: 0.0)
+        shimmerGrad.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        shimmerMask.fillColor = NSColor.clear.cgColor
+        shimmerMask.strokeColor = NSColor.black.cgColor   // 불투명 = 보이는 링(마스크는 알파만)
+        shimmerMask.lineWidth = 1.6
+        shimmerHost.mask = shimmerMask
+        shimmerHost.addSublayer(shimmerGrad)
+        layer?.addSublayer(shimmerHost)
+        needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
-        shimmerOn = false
-        tailStroke.removeAllAnimations(); headStroke.removeAllAnimations()
-        tailStroke.removeFromSuperlayer(); headStroke.removeFromSuperlayer()
+        shimmerOn = false; rotationBuilt = false
+        shimmerGrad.removeAllAnimations()
+        shimmerHost.mask = nil
+        shimmerGrad.removeFromSuperlayer(); shimmerHost.removeFromSuperlayer()
+    }
+    // 사각형 둘레를 등길이로 샘플한 각 지점의 각도(단조증가 0→2π). keyframe 값으로 주고 keyTimes 를
+    // 균등히 주면 각속도가 아니라 "둘레 길이"가 일정하게 돌아 머리가 일정 속도로 흐른다.
+    private static func perimeterAngles(a: CGFloat, b: CGFloat, count: Int) -> [NSNumber] {
+        guard a > 0, b > 0 else { return [0, NSNumber(value: 2 * Double.pi)] }
+        let P = 4 * (a + b)
+        func point(_ raw: CGFloat) -> CGPoint {
+            var s = raw.truncatingRemainder(dividingBy: P); if s < 0 { s += P }
+            if s < b { return CGPoint(x: a, y: s) }
+            s -= b; if s < 2 * a { return CGPoint(x: a - s, y: b) }
+            s -= 2 * a; if s < 2 * b { return CGPoint(x: -a, y: b - s) }
+            s -= 2 * b; if s < 2 * a { return CGPoint(x: -a + s, y: -b) }
+            s -= 2 * a; return CGPoint(x: a, y: -b + s)
+        }
+        var out: [NSNumber] = []; var prev: CGFloat = -.greatestFiniteMagnitude
+        for i in 0...count {
+            let p = point(P * CGFloat(i) / CGFloat(count))
+            var ang = atan2(p.y, p.x); while ang < prev { ang += 2 * .pi }; prev = ang
+            out.append(NSNumber(value: Double(ang)))
+        }
+        return out
     }
     override func layout() {
         super.layout()
         guard shimmerOn, bounds.width > 1, bounds.height > 1 else { return }
-        let peri = 2 * (bounds.width + bounds.height)
-        guard abs(peri - lastPeri) > 0.5 else { return }   // 크기 안 바뀌면 애니 유지(재생성=끊김 방지)
-        lastPeri = peri
         let r = UIScale.pt(9)
-        let path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerWidth: r, cornerHeight: r, transform: nil)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for s in [tailStroke, headStroke] { s.frame = bounds; s.path = path }
-        tailStroke.lineDashPattern = [tailLen as NSNumber, peri as NSNumber]
-        headStroke.lineDashPattern = [headLen as NSNumber, peri as NSNumber]
+        shimmerHost.frame = bounds
+        shimmerMask.frame = bounds
+        shimmerMask.path = CGPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), cornerWidth: r, cornerHeight: r, transform: nil)
+        let side = max(bounds.width, bounds.height) * 1.6   // 회전해도 링을 늘 덮게 오버사이즈
+        shimmerGrad.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        shimmerGrad.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
-        // 두 겹을 같은 거리(-peri)만큼 이동시켜 잠금(속도 다르면 어긋난다). 머리는 꼬리의 앞끝에
-        // 오도록 (tailLen-headLen) 만큼 위상 오프셋. duration 동안 한 바퀴, 등속.
-        let dur: CFTimeInterval = 3.2
-        addTravel(tailStroke, base: 0, peri: peri, dur: dur)
-        addTravel(headStroke, base: -(tailLen - headLen), peri: peri, dur: dur)
-    }
-    private func addTravel(_ s: CAShapeLayer, base: CGFloat, peri: CGFloat, dur: CFTimeInterval) {
-        let a = CABasicAnimation(keyPath: "lineDashPhase")
-        a.fromValue = base; a.toValue = base - peri     // -방향 = 진행(둘레 등속)
-        a.duration = dur; a.repeatCount = .infinity
-        a.timingFunction = CAMediaTimingFunction(name: .linear)
-        s.removeAnimation(forKey: "travel"); s.add(a, forKey: "travel")
+        // 회전은 딱 한 번만 건다(리사이즈마다 다시 걸면 재시작돼 끊긴다). 크기가 바뀌어도 위 프레임/
+        // 마스크만 갱신되고 회전은 계속 돈다(pacing 은 최초 크기 기준이라 미세하게만 어긋난다).
+        if !rotationBuilt {
+            rotationBuilt = true
+            let angles = ToolGroup.perimeterAngles(a: bounds.width / 2, b: bounds.height / 2, count: 120)
+            let spin = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+            spin.values = angles
+            spin.keyTimes = (0..<angles.count).map { NSNumber(value: Double($0) / Double(angles.count - 1)) }
+            spin.calculationMode = .linear
+            spin.duration = 3.0; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
+            shimmerGrad.add(spin, forKey: "spin")
+        }
     }
 }
 
