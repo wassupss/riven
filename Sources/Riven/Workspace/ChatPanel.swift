@@ -1571,11 +1571,10 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard turnStart != nil else { return }
         interrupted = true                 // suppress the error line for the result WE cancelled
         session?.interrupt()
-        // 중단한 메시지는 잃지 않게 입력창에 되돌려 넣는다(편집/재전송용). 대화 기록의 버블은
-        // 에이전트가 아무것도 안 했을 때만 뺀다 - 뭔가 했으면(명령/답변) 그 산출물이 딸려 있으니
-        // 대화엔 그대로 남긴다. 어느 경우든 텍스트는 입력창에 보인다.
-        if restoreText, let text = currentTurnText {
-            if !turnProducedOutput { currentTurnBubble?.removeFromSuperview() }
+        // 에이전트가 아무것도 안 했을 때만 중단한 메시지를 입력창으로 되돌린다(대화 버블 제거 +
+        // 입력창 복구). 뭔가 했으면(명령/답변/서브에이전트) 되돌리지 않고 대화에 그대로 남긴다.
+        if restoreText, !turnProducedOutput, let text = currentTurnText {
+            currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
             inputChanged()
