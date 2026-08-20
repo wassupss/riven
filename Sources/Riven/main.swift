@@ -5658,7 +5658,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.async {
                     guard self.workspace == ws, let cur = ws.map({ self.state(for: $0) }) else { return }
                     for (p, content) in loaded where cur.openTabs.contains(p) {
-                        if p == cur.activeTab { self.editor.open(path: p, content: content) }
+                        // 복원은 포커스를 안 뺏는다: activate() 가 정한 포커스(터미널/챗 등)를 이 async
+                        // 로딩이 나중에 에디터로 되돌리던 버그. 명시적 파일 열기만 포커스를 옮긴다.
+                        if p == cur.activeTab { self.editor.open(path: p, content: content, focus: false) }
                         else { self.editor.openBackground(path: p, content: content) }
                     }
                     self.editor.setTabs(cur.openTabs, active: cur.activeTab) { _ in }   // keep the user's order
@@ -6619,7 +6621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let ws = workspace, state(for: ws).openTabs.contains(path),
               let content = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         editor.close(path: path)
-        editor.open(path: path, content: content)
+        editor.open(path: path, content: content, focus: false)   // 백그라운드 리로드: 포커스 안 뺏음
     }
 
     /// Build a group of agent panes the way the user describes it: the MAIN agent owns one whole

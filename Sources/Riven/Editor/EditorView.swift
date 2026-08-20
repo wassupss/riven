@@ -87,14 +87,16 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var currentOpen: (path: String, content: String)?
 
     // Open a file in the editor (queued until Monaco signals ready).
-    func open(path: String, content: String) {
+    // focus: 사용자가 명시적으로 연 경우만 에디터로 포커스를 옮긴다. 백그라운드 리로드(에이전트
+    // 편집→FS 리로드, 포맷 저장)는 focus:false 여야 포커스를 안 뺏는다(터미널/챗에 있던 포커스 유지).
+    func open(path: String, content: String, focus: Bool = true) {
         currentOpen = (path, content)
-        if ready { push(path: path, content: content) }
+        if ready { push(path: path, content: content, focus: focus) }
         else { pending = (path, content) }
     }
-    private func push(path: String, content: String) {
+    private func push(path: String, content: String, focus: Bool = true) {
         let p = jsString(path), c = jsString(content)
-        web.evaluateJavaScript("window.rivenOpen(\(p), \(c))", completionHandler: nil)
+        web.evaluateJavaScript("window.rivenOpen(\(p), \(c), \(focus))", completionHandler: nil)
     }
     // Move the cursor to (line, column) - 1-based - and center it. The reveal is
     // queued a beat after open() so Monaco's model/layout exists first.
