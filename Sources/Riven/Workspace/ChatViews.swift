@@ -839,6 +839,17 @@ final class MDTable: NSView {
         }
         super.layout()
     }
+    // 세션 복원 때 이 표가 아직 좁은(오프스크린/분할 초기) 폭에서 한 번 레이아웃되면 그 좁은 폭이
+    // appliedWidth 에 박혀 컬럼이 눌린 채로 남았다(표가 왼쪽으로 쏠려 보이던 버그). 실제 윈도에
+    // 들어오거나 프레임 폭이 바뀌면 캐시를 무효화하고 재레이아웃을 확실히 예약해 실폭에서 다시 분배한다.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { appliedWidth = -1; needsLayout = true }
+    }
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        if abs(newSize.width - appliedWidth) > 0.5 { needsLayout = true }
+    }
 }
 
 // 수평선(--- / *** / ___). 어느 스택에 담기든 그 스택의 전체 폭으로 뻗도록 슈퍼뷰 폭에 맞춘다
