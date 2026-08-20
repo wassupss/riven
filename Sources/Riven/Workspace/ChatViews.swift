@@ -525,12 +525,15 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중: 접선 방향 빛줄기(머리 밝고 꼬리 옅은 그라디언트)를 실제 테두리 path 를 따라
-    // .paced(둘레 등속) + .rotateAuto(접선 정렬)로 흘려보낸다. conic 회전은 각속도 일정이라 넓은
-    // 박스에서 속도가 들쭉날쭉(모서리 zip)했고, 그걸 keyframe 로 보정하면 조각조각 끊겼다. path
-    // .paced 는 둘레 길이 기준 등속을 CA 가 부드럽게 보간해줘 균일 + 매끄럽다.
-    private let head = CAGradientLayer()
+    // 실행 중: 테두리 path 를 따라 그려지는 dashed stroke 로 "긴 옅은 꼬리 + 밝은 머리"(ember)를
+    // lineDashPhase 로 흘려보낸다. stroke 는 path 를 그대로 따라 둥근 모서리를 감싸고(직선 빛줄기가
+    // 모서리에서 떨어지던 문제 해결), lineDashPhase 는 둘레 길이 기준 등속(각도 아님)이라 넓은
+    // 박스에서도 속도가 균일하고 CA 가 부드럽게 보간해 안 끊긴다. 꼬리 길이는 tailLen 으로 조절.
+    private let tailStroke = CAShapeLayer()   // 길고 옅은 꼬리
+    private let headStroke = CAShapeLayer()   // 짧고 밝은 머리 (꼬리 앞끝)
     private var lastPeri: CGFloat = -1
+    private let tailLen: CGFloat = 150         // 꼬리 길이(길쭉)
+    private let headLen: CGFloat = 22          // 밝은 머리 길이
 
     func endRun(interrupted: Bool = false) {
         running = false; stopShimmer(); updateTitle(interrupted: interrupted)
@@ -543,21 +546,24 @@ final class ToolGroup: NSView {
         shimmerOn = true
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
         let a = Theme.accent2
-        // 진행 방향(→)으로 꼬리(투명) → 머리(밝음) 그라디언트. rotateAuto 로 접선에 맞춰 돈다.
-        head.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0.35).cgColor, a.cgColor]
-        head.locations = [0.0, 0.72, 1.0]      // 긴 꼬리(투명) → 끝에 밝은 머리
-        head.startPoint = CGPoint(x: 0, y: 0.5); head.endPoint = CGPoint(x: 1, y: 0.5)
-        head.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        head.bounds = CGRect(x: 0, y: 0, width: 120, height: 2.5)   // 빛줄기 길이(꼬리 길게)
-        head.shadowColor = a.cgColor; head.shadowRadius = 6; head.shadowOpacity = 0.9; head.shadowOffset = .zero
-        head.masksToBounds = false
-        layer?.addSublayer(head)
+        tailStroke.fillColor = NSColor.clear.cgColor
+        tailStroke.strokeColor = a.withAlphaComponent(0.5).cgColor
+        tailStroke.lineWidth = 1.6; tailStroke.lineCap = .round
+        tailStroke.shadowColor = a.cgColor; tailStroke.shadowRadius = 5; tailStroke.shadowOpacity = 0.7; tailStroke.shadowOffset = .zero
+        tailStroke.masksToBounds = false
+        headStroke.fillColor = NSColor.clear.cgColor
+        headStroke.strokeColor = a.cgColor
+        headStroke.lineWidth = 2.0; headStroke.lineCap = .round
+        headStroke.shadowColor = a.cgColor; headStroke.shadowRadius = 7; headStroke.shadowOpacity = 1; headStroke.shadowOffset = .zero
+        headStroke.masksToBounds = false
+        layer?.addSublayer(tailStroke); layer?.addSublayer(headStroke)
         lastPeri = -1; needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
         shimmerOn = false
-        head.removeAllAnimations(); head.removeFromSuperlayer()
+        tailStroke.removeAllAnimations(); headStroke.removeAllAnimations()
+        tailStroke.removeFromSuperlayer(); headStroke.removeFromSuperlayer()
     }
     override func layout() {
         super.layout()
@@ -567,13 +573,23 @@ final class ToolGroup: NSView {
         lastPeri = peri
         let r = UIScale.pt(9)
         let path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerWidth: r, cornerHeight: r, transform: nil)
-        let anim = CAKeyframeAnimation(keyPath: "position")
-        anim.path = path
-        anim.calculationMode = .paced          // 둘레 길이 기준 등속
-        anim.rotationMode = .rotateAuto        // 접선 방향으로 자동 회전(머리가 진행방향을 향함)
-        anim.duration = 3.0; anim.repeatCount = .infinity; anim.isRemovedOnCompletion = false
-        head.removeAnimation(forKey: "flow")
-        head.add(anim, forKey: "flow")
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for s in [tailStroke, headStroke] { s.frame = bounds; s.path = path }
+        tailStroke.lineDashPattern = [tailLen as NSNumber, peri as NSNumber]
+        headStroke.lineDashPattern = [headLen as NSNumber, peri as NSNumber]
+        CATransaction.commit()
+        // 두 겹을 같은 거리(-peri)만큼 이동시켜 잠금(속도 다르면 어긋난다). 머리는 꼬리의 앞끝에
+        // 오도록 (tailLen-headLen) 만큼 위상 오프셋. duration 동안 한 바퀴, 등속.
+        let dur: CFTimeInterval = 3.2
+        addTravel(tailStroke, base: 0, peri: peri, dur: dur)
+        addTravel(headStroke, base: -(tailLen - headLen), peri: peri, dur: dur)
+    }
+    private func addTravel(_ s: CAShapeLayer, base: CGFloat, peri: CGFloat, dur: CFTimeInterval) {
+        let a = CABasicAnimation(keyPath: "lineDashPhase")
+        a.fromValue = base; a.toValue = base - peri     // -방향 = 진행(둘레 등속)
+        a.duration = dur; a.repeatCount = .infinity
+        a.timingFunction = CAMediaTimingFunction(name: .linear)
+        s.removeAnimation(forKey: "travel"); s.add(a, forKey: "travel")
     }
 }
 
