@@ -213,6 +213,10 @@ final class CodexChatSession: AgentChatSession {
         proc.terminate()
     }
 
+    // Backstop: releasing a Process does not kill its child. If the session is dropped without
+    // stop() (a close path that misses teardown), the codex app-server would orphan. Idempotent.
+    deinit { stop() }
+
     /// 모델 바꾸기는 다음 스레드부터 적용된다 - app-server 에는 진행 중 스레드의 모델을
     /// 갈아 끼우는 요청이 없다 (Claude 의 set_model 컨트롤 메시지와 다르다).
     func setModel(_ model: String) { self.model = model }

@@ -1026,13 +1026,13 @@ window.rivenSetFont = function (size, family) {
   document.documentElement.style.setProperty('--riven-font-size', size + 'px');
   document.documentElement.style.setProperty('--riven-font-family', stack);
 };
-window.rivenOpen = function (path, content) {
+window.rivenOpen = function (path, content, focus) {
   // If already open in some group, reveal there; else open in the active group.
   const owner = groups.find(g => g.tabs.includes(path));
   const g = owner || activeGroup();
   if (owner) setActiveGroup(owner.idx);
   openInGroup(g, path, content);
-  g.ed.focus();
+  if (focus !== false) g.ed.focus();   // 백그라운드 리로드는 포커스를 안 뺏는다
 };
 // Reveal a line/column (1-based) in the given file - used by search results.
 window.rivenReveal = function (path, line, column) {

@@ -1,6 +1,35 @@
 import AppKit
 import WebKit
 
+// Monaco 를 담는 WKWebView. 기본 WKWebView 는 ⌘-단축키를 performKeyEquivalent 에서 삼켜(true 반환)
+// 메인 메뉴가 처리하기 전에 웹 콘텐츠(Monaco)로 넘긴다. 그래서 에디터가 포커스된 동안엔 riven 의
+// 앱 단축키(⌘S 저장, ⌘P 빠른열기, ⌘B 사이드바 ...)가 하나도 안 먹었다.
+// riven 의 앱(=riven cat) 단축키에 해당하는 키면 false 를 돌려 메인 메뉴가 먼저 처리하게 하고,
+// 그 외(⌘C/⌘V/⌘Z/⌘A/⌘F/⌘D/⌘K 등 에디터 편집 키)는 그대로 Monaco 가 처리하게 둔다.
+final class EditorWebView: WKWebView {
+    private static let appChords: Set<String> = {
+        var s = Set<String>()
+        for a in Keys.actions where a.cat == "riven" {
+            let (k, m) = Keys.resolve(Keys.effective(a.id))
+            if !k.isEmpty { s.insert(chordKey(m, k)) }
+        }
+        return s
+    }()
+    private static func chordKey(_ mods: NSEvent.ModifierFlags, _ key: String) -> String {
+        "\(mods.intersection([.command, .shift, .option, .control]).rawValue)|\(key.lowercased())"
+    }
+    // riven 앱(riven cat) 단축키면 true → 웹뷰가 삼키지 말고 메인 메뉴가 처리하게 한다.
+    static func isAppShortcut(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.contains(.command),
+              let chars = event.charactersIgnoringModifiers, !chars.isEmpty else { return false }
+        return appChords.contains(chordKey(event.modifierFlags, chars))
+    }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if EditorWebView.isAppShortcut(event) { return false }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 // Monaco editor hosted in a WKWebView, with a native <-> web message bridge for
 // file open/save + dirty state. This is the "editor stays Monaco" half of the
 // hybrid - riven's editor assets reused as-is instead of reimplemented natively.
@@ -31,7 +60,7 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
             console.log=p('log');console.warn=p('warn');console.error=p('err');
             window.onerror=function(m,s,l,c){try{window.webkit.messageHandlers.log.postMessage('ONERROR: '+m+' @'+l+':'+c)}catch(e){}};})();
             """, injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        web = WKWebView(frame: bounds, configuration: cfg)
+        web = EditorWebView(frame: bounds, configuration: cfg)
         web.autoresizingMask = [.width, .height]
         web.navigationDelegate = self
         web.setValue(false, forKey: "drawsBackground")
@@ -58,14 +87,16 @@ final class EditorView: NSView, WKScriptMessageHandler, WKNavigationDelegate {
     private var currentOpen: (path: String, content: String)?
 
     // Open a file in the editor (queued until Monaco signals ready).
-    func open(path: String, content: String) {
+    // focus: 사용자가 명시적으로 연 경우만 에디터로 포커스를 옮긴다. 백그라운드 리로드(에이전트
+    // 편집→FS 리로드, 포맷 저장)는 focus:false 여야 포커스를 안 뺏는다(터미널/챗에 있던 포커스 유지).
+    func open(path: String, content: String, focus: Bool = true) {
         currentOpen = (path, content)
-        if ready { push(path: path, content: content) }
+        if ready { push(path: path, content: content, focus: focus) }
         else { pending = (path, content) }
     }
-    private func push(path: String, content: String) {
+    private func push(path: String, content: String, focus: Bool = true) {
         let p = jsString(path), c = jsString(content)
-        web.evaluateJavaScript("window.rivenOpen(\(p), \(c))", completionHandler: nil)
+        web.evaluateJavaScript("window.rivenOpen(\(p), \(c), \(focus))", completionHandler: nil)
     }
     // Move the cursor to (line, column) - 1-based - and center it. The reveal is
     // queued a beat after open() so Monaco's model/layout exists first.

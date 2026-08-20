@@ -4298,7 +4298,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { step(0) }
     }
 
+    static let perfLog = ProcessInfo.processInfo.environment["RIVEN_PERFLOG"] != nil
     private func activate(_ url: URL, focusPaneId: String? = nil) {
+        let _perf0 = DispatchTime.now()
+        let _wasNew = (state(for: url).dock == nil)
+        defer {
+            if AppDelegate.perfLog {
+                let ms = Double(DispatchTime.now().uptimeNanoseconds - _perf0.uptimeNanoseconds) / 1e6
+                RLog.log(String(format: "PERF activate(%@) %.1fms firstVisit=%@", url.lastPathComponent, ms, _wasNew ? "예" : "아니오"))
+            }
+        }
         if workspace != nil, workspace != url { showSwitchOverlay() }
         suppressAutoFocus = true   // don't let restored panels (editor/aux) steal focus; applied at the end
         if !workspaces.contains(url) { workspaces.append(url) }
@@ -4555,6 +4564,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func scheduleEditorReload(_ path: String) {
         DispatchQueue.main.async {
             guard let ws = self.workspace, self.state(for: ws).openTabs.contains(path) else { return }
+            // 방금 우리가 저장한 파일이면 리로드 안 한다(FSEvents 지연 대비 3초 창). 안 그러면
+            // ⌘S 저장이 곧바로 모델 재설정을 유발해 커서가 파일 맨 위로 튀었다. 에이전트가 쓴
+            // 외부 편집은 selfWriteAt 에 없으므로 그대로 리로드된다.
+            if let t = self.selfWriteAt[path], Date().timeIntervalSince(t) < 3.0 { return }
             self.pendingReload.insert(path)
             self.reloadTimer?.invalidate()
             self.reloadTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
@@ -5645,7 +5658,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.async {
                     guard self.workspace == ws, let cur = ws.map({ self.state(for: $0) }) else { return }
                     for (p, content) in loaded where cur.openTabs.contains(p) {
-                        if p == cur.activeTab { self.editor.open(path: p, content: content) }
+                        // 복원은 포커스를 안 뺏는다: activate() 가 정한 포커스(터미널/챗 등)를 이 async
+                        // 로딩이 나중에 에디터로 되돌리던 버그. 명시적 파일 열기만 포커스를 옮긴다.
+                        if p == cur.activeTab { self.editor.open(path: p, content: content, focus: false) }
                         else { self.editor.openBackground(path: p, content: content) }
                     }
                     self.editor.setTabs(cur.openTabs, active: cur.activeTab) { _ in }   // keep the user's order
@@ -5972,6 +5987,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.runEslintFix(root: root, path: path)   // in-place on the file
                 let final = (try? String(contentsOfFile: path, encoding: .utf8)) ?? text
                 DispatchQueue.main.async {
+                    self.noteSelfWrite(path)   // 포맷 저장도 우리 쓰기 → FS 중복 리로드 억제
                     self.editor.markSaved(path: path)
                     if final != content { self.editor.open(path: path, content: final) }
                     AgentEdits.shared.updateBaseline(path, final)
@@ -5994,9 +6010,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
     }
+    // riven 이 스스로 쓴 파일 경로 → 시각. FSEvents 는 누가 썼는지 못 구분해서, 사용자의 ⌘S
+    // 저장도 "외부 변경"으로 보고 에디터를 reloadIfOpen(=모델 재설정)해 커서가 맨 위로 튀었다.
+    // 우리 저장은 여기 기록하고 잠깐 동안의 FS 리로드를 건너뛴다(에이전트가 쓴 편집은 기록되지
+    // 않으므로 그대로 리로드된다).
+    private var selfWriteAt: [String: Date] = [:]
+    private func noteSelfWrite(_ path: String) { selfWriteAt[path] = Date() }
     private func writeAndMark(path: String, content: String) {
         do {
             try content.write(toFile: path, atomically: true, encoding: .utf8)
+            noteSelfWrite(path)                               // 우리 저장 → FS 리로드 억제(커서 유지)
             editor.markSaved(path: path)
             AgentEdits.shared.updateBaseline(path, content)   // our own save isn't an agent edit
             refreshGit()
@@ -6598,7 +6621,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let ws = workspace, state(for: ws).openTabs.contains(path),
               let content = try? String(contentsOfFile: path, encoding: .utf8) else { return }
         editor.close(path: path)
-        editor.open(path: path, content: content)
+        editor.open(path: path, content: content, focus: false)   // 백그라운드 리로드: 포커스 안 뺏음
     }
 
     /// Build a group of agent panes the way the user describes it: the MAIN agent owns one whole

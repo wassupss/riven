@@ -301,6 +301,7 @@ enum I18n {
         "chat.thinking": ("생각 중", "Thinking"), "chat.done": ("완료", "Done"),
         "chat.queued": ("대기 중", "Queued"),
         "chat.interrupted": ("⏹ 중단됨", "⏹ Stopped"),
+        "chat.stopped": ("중단", "Stopped"),
         "chat.resumed": ("이전 세션에서 이어짐", "continued from a previous session"),
         "chat.olderNote": ("⋯ 이전 대화 {n}개 (위로 스크롤해 불러오기)",
                            "⋯ {n} earlier messages (scroll up to load)"),

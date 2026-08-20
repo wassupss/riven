@@ -365,7 +365,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
-        SuggestionService.shared.cancel() }
+        SuggestionService.shared.cancel()
+        // Backstop for any close path that deallocs the panel without teardown(): stop the
+        // headless agent process and the 33ms flush timer so neither outlives the panel.
+        session?.stop(); stopFlush() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")
@@ -1123,12 +1126,14 @@ final class ChatPanel: NSView, Themable, Scalable {
             self?.restorePlanBadge(sid)
         }
         s?.onTextDelta = { [weak self] t in
-            if !t.isEmpty { self?.ensureAutoTurn() }  // 세션이 스스로 재개한 턴이면 상태를 세운다
+            if !t.isEmpty { self?.ensureAutoTurn(); self?.turnProducedOutput = true }  // 답변 시작 = 뭔가 함
+
             self?.liveTool = nil                      // 텍스트가 다시 흐른다 = 도구는 끝났다
             self?.current?.bufferText(t); self?.turnText += t
         }
         s?.onMainTool = { [weak self] name, detail, code, path in
             self?.ensureAutoTurn()
+            self?.turnProducedOutput = true   // 명령(툴) 실행 = 뭔가 함
             self?.liveTool = name
             self?.current?.addTool(name, detail, code, path); self?.autoScrollSoon()
             // 계획 모드를 빠져나오는 순간 CLI가 계획 .md 를 쓴다 - 조금 기다렸다 집어서 배지로.
@@ -1140,6 +1145,7 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 여기서 턴을 새로 세울 필요가 없다. 예전엔 메인 result 뒤 늦게 온 서브 이벤트가 유령
             // "생각 중" 턴을 띄웠고, result 가 안 와 영영 안 풀렸다(Esc 로도).
             guard let self else { return }
+            self.turnProducedOutput = true   // 서브에이전트 실행 = 뭔가 함
             self.addSubagentPane(id, type: type, desc: desc)
         }
         s?.onSubagentTool = { [weak self] pid, name, detail, code, path in
@@ -1528,6 +1534,37 @@ final class ChatPanel: NSView, Themable, Scalable {
     // ---- send / turn lifecycle ----
     // Interrupt the running turn (Esc / the stop button) - like the CLI's Esc.
     private var interrupted = false
+    // 이번 턴에 에이전트가 뭔가 했는지(툴 실행·답변·서브에이전트). 중단 시 대화 버블 제거 여부 결정.
+    private var turnProducedOutput = false
+    // 입력 기록(방향키 위/아래로 이전·다음 보낸 메시지 재호출 - 셸처럼).
+    private var inputHistory: [String] = []       // 보낸 메시지 (오래된 → 최근)
+    private var historyIdx: Int? = nil            // nil=탐색 안 함, 아니면 inputHistory 인덱스
+    private var historyDraft = ""                 // 탐색 시작 때의 입력창 초안(끝까지 내려오면 복귀)
+    private var settingHistory = false            // 프로그램이 입력을 바꾸는 중(inputChanged 의 리셋 방지)
+    private func noteHistory(_ text: String) {
+        if inputHistory.last != text { inputHistory.append(text) }   // 연속 중복만 제거
+        if inputHistory.count > 300 { inputHistory.removeFirst(inputHistory.count - 300) }
+        historyIdx = nil
+    }
+    // delta<0 = 이전(위), delta>0 = 다음(아래). 끝까지 내려오면 원래 초안 복귀.
+    private func recallHistory(_ delta: Int) {
+        guard !inputHistory.isEmpty else { return }
+        if historyIdx == nil {
+            guard delta < 0 else { return }        // 탐색 시작은 위로만
+            historyDraft = input.stringValue
+            historyIdx = inputHistory.count
+        }
+        let ni = (historyIdx ?? inputHistory.count) + delta
+        settingHistory = true; defer { settingHistory = false }
+        if ni >= inputHistory.count {              // 맨 아래 지나면 원래 초안 복귀
+            historyIdx = nil; input.stringValue = historyDraft
+        } else {                                   // 위로는 0 에서 멈춤
+            historyIdx = max(0, ni); input.stringValue = inputHistory[historyIdx!]
+        }
+        inputChanged()
+        input.window?.makeFirstResponder(input)
+        input.setSelectedRange(NSRange(location: input.string.count, length: 0))   // 커서 끝으로
+    }
     /// 그룹 삭제처럼 앱이 강제로 턴을 끊어야 할 때.
     func stopTurn() { interruptTurn() }
 
@@ -1537,9 +1574,9 @@ final class ChatPanel: NSView, Themable, Scalable {
         guard turnStart != nil else { return }
         interrupted = true                 // suppress the error line for the result WE cancelled
         session?.interrupt()
-        // Like the CLI: the interrupted message returns to the input for editing/resending. Remove
-        // its bubble from the transcript and put the text back (don't clobber anything typed since).
-        if restoreText, let text = currentTurnText {
+        // 에이전트가 아무것도 안 했을 때만 중단한 메시지를 입력창으로 되돌린다(대화 버블 제거 +
+        // 입력창 복구). 뭔가 했으면(명령/답변/서브에이전트) 되돌리지 않고 대화에 그대로 남긴다.
+        if restoreText, !turnProducedOutput, let text = currentTurnText {
             currentTurnBubble?.removeFromSuperview()
             let typed = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             input.stringValue = typed.isEmpty ? text : (text + "\n" + typed)
@@ -1588,6 +1625,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         if !slash.isHidden { acceptSlash(); return }
         let text = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, session != nil else { return }
+        noteHistory(text)   // 방향키 재호출용 기록
         // @동료가 있으면 이 패널의 에이전트가 아니라 그 동료들에게 간다. 그룹이 아닌 패널에서는
         // peerNames() 가 비어 있어 여기 걸리지 않는다 (@ 는 평범한 글자).
         if delegateToMentions(text) { input.stringValue = ""; hideSlash(); inputChanged(); return }
@@ -2174,7 +2212,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         // panels now: they stay open until the user closes them (or the workspace changes).
         cancelSuggestion()                                   // 새 턴 시작 → 이전 제안 취소
         currentTurnText = text; currentTurnBubble = bubble   // for interrupt → restore to input
-        turnText = ""
+        turnText = ""; turnProducedOutput = false            // 이번 턴 산출물 추적 초기화
         current = newBlock()
         current?.startWorking()
         resetLiveUsage()
@@ -2289,7 +2327,7 @@ final class ChatPanel: NSView, Themable, Scalable {
         stopFlush()
         lastUsage = usage
         let block = current
-        block?.finish(secs: secs, cost: cost, usage: usage, model: model)
+        block?.finish(secs: secs, cost: cost, usage: usage, model: model, interrupted: wasInterrupted)
         turnStart = nil; liveTool = nil
         // Surface a failed turn (529 Overloaded, max-turns, etc.) instead of silently "완료" -
         // unless WE interrupted it (interruptTurn already printed ⏹ 중단됨).
@@ -2453,6 +2491,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     private var mentionRange: NSRange?
 
     private func inputChanged() {
+        if !settingHistory { historyIdx = nil }   // 사용자가 직접 편집하면 기록 탐색 모드 해제
         highlightInput()
         if !input.stringValue.isEmpty { cancelSuggestion() }   // 타이핑 시작 → 제안 취소
         let s = input.stringValue
@@ -2549,6 +2588,15 @@ final class ChatPanel: NSView, Themable, Scalable {
         }
         // Esc with no popup → interrupt the running turn (like the CLI).
         if sel == #selector(NSResponder.cancelOperation(_:)), turnStart != nil { interruptTurn(); return true }
+        // 방향키 위/아래로 이전·다음 보낸 메시지 재호출(셸처럼). 여러 줄 초안 중엔 커서 이동을
+        // 방해하지 않게 - 위: 입력이 비었거나/한 줄이거나/이미 탐색 중일 때만. 아래: 탐색 중일 때만.
+        if sel == #selector(NSResponder.moveUp(_:)),
+           input.stringValue.isEmpty || historyIdx != nil || !input.string.contains("\n") {
+            recallHistory(-1); return true
+        }
+        if sel == #selector(NSResponder.moveDown(_:)), historyIdx != nil {
+            recallHistory(1); return true
+        }
         return false
     }
     private func showSlash(_ list: [SlashCommand]) {

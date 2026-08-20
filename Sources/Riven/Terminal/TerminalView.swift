@@ -322,6 +322,7 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
         if let wd = workdir { sc.working_directory = dup(wd) }
         if let cmd = command { sc.command = dup(cmd) }
         var envArr = env.map { ghostty_env_var_s(key: dup($0.key), value: dup($0.value)) }
+        let _t0 = DispatchTime.now()
         if envArr.isEmpty {
             surface = ghostty_surface_new(app, &sc)
         } else {
@@ -330,6 +331,10 @@ final class TerminalView: NSView, NSMenuItemValidation, Themable {
                 sc.env_var_count = buf.count
                 surface = ghostty_surface_new(app, &sc)
             }
+        }
+        if ProcessInfo.processInfo.environment["RIVEN_PERFLOG"] != nil {
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - _t0.uptimeNanoseconds) / 1e6
+            RLog.log(String(format: "PERF ghostty_surface_new %.1fms cmd=%@", ms, command ?? "shell"))
         }
         owned.forEach { free($0) }
         if let s = surface {
