@@ -568,27 +568,6 @@ final class ToolGroup: NSView {
         shimmerHost.mask = nil
         shimmerGrad.removeFromSuperlayer(); shimmerHost.removeFromSuperlayer()
     }
-    // 사각형 둘레를 등길이로 샘플한 각 지점의 각도(단조증가 0→2π). keyframe 값으로 주고 keyTimes 를
-    // 균등히 주면 각속도가 아니라 "둘레 길이"가 일정하게 돌아 머리가 일정 속도로 흐른다.
-    private static func perimeterAngles(a: CGFloat, b: CGFloat, count: Int) -> [NSNumber] {
-        guard a > 0, b > 0 else { return [0, NSNumber(value: 2 * Double.pi)] }
-        let P = 4 * (a + b)
-        func point(_ raw: CGFloat) -> CGPoint {
-            var s = raw.truncatingRemainder(dividingBy: P); if s < 0 { s += P }
-            if s < b { return CGPoint(x: a, y: s) }
-            s -= b; if s < 2 * a { return CGPoint(x: a - s, y: b) }
-            s -= 2 * a; if s < 2 * b { return CGPoint(x: -a, y: b - s) }
-            s -= 2 * b; if s < 2 * a { return CGPoint(x: -a + s, y: -b) }
-            s -= 2 * a; return CGPoint(x: a, y: -b + s)
-        }
-        var out: [NSNumber] = []; var prev: CGFloat = -.greatestFiniteMagnitude
-        for i in 0...count {
-            let p = point(P * CGFloat(i) / CGFloat(count))
-            var ang = atan2(p.y, p.x); while ang < prev { ang += 2 * .pi }; prev = ang
-            out.append(NSNumber(value: Double(ang)))
-        }
-        return out
-    }
     override func layout() {
         super.layout()
         guard shimmerOn, bounds.width > 1, bounds.height > 1 else { return }
@@ -601,16 +580,12 @@ final class ToolGroup: NSView {
         shimmerGrad.bounds = CGRect(x: 0, y: 0, width: side, height: side)
         shimmerGrad.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
-        // 회전은 딱 한 번만 건다(리사이즈마다 다시 걸면 재시작돼 끊긴다). 크기가 바뀌어도 위 프레임/
-        // 마스크만 갱신되고 회전은 계속 돈다(pacing 은 최초 크기 기준이라 미세하게만 어긋난다).
+        // AttnRingView.attn 과 완전히 동일: 상수 각속도 회전(멈춤/끊김 없음). 딱 한 번만 건다.
         if !rotationBuilt {
             rotationBuilt = true
-            let angles = ToolGroup.perimeterAngles(a: bounds.width / 2, b: bounds.height / 2, count: 120)
-            let spin = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-            spin.values = angles
-            spin.keyTimes = (0..<angles.count).map { NSNumber(value: Double($0) / Double(angles.count - 1)) }
-            spin.calculationMode = .linear
-            spin.duration = 3.0; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0; spin.toValue = 2 * Double.pi
+            spin.duration = 2.4; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
             shimmerGrad.add(spin, forKey: "spin")
         }
     }
