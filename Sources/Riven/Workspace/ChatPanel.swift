@@ -365,7 +365,10 @@ final class ChatPanel: NSView, Themable, Scalable {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
-        SuggestionService.shared.cancel() }
+        SuggestionService.shared.cancel()
+        // Backstop for any close path that deallocs the panel without teardown(): stop the
+        // headless agent process and the 33ms flush timer so neither outlives the panel.
+        session?.stop(); stopFlush() }
 
     private func relocalize() {
         input.placeholder = t("chat.placeholder")

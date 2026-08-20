@@ -209,6 +209,11 @@ final class ClaudeChatSession {
         if proc.isRunning { proc.terminate() }
     }
 
+    // Backstop: a released Process does NOT kill its child, so if the session object is ever
+    // dropped without stop() (any close path that misses teardown), the headless `claude`
+    // would orphan and live until riven quits. Always terminate on dealloc. Idempotent.
+    deinit { stop() }
+
     // ---- line-delimited JSON framing ----
     private func feed(_ data: Data) {
         buffer.append(data)
