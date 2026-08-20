@@ -544,11 +544,11 @@ final class ToolGroup: NSView {
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
         let a = Theme.accent2
         // 진행 방향(→)으로 꼬리(투명) → 머리(밝음) 그라디언트. rotateAuto 로 접선에 맞춰 돈다.
-        head.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0.5).cgColor, a.cgColor]
-        head.locations = [0.0, 0.75, 1.0]
+        head.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0.35).cgColor, a.cgColor]
+        head.locations = [0.0, 0.72, 1.0]      // 긴 꼬리(투명) → 끝에 밝은 머리
         head.startPoint = CGPoint(x: 0, y: 0.5); head.endPoint = CGPoint(x: 1, y: 0.5)
         head.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        head.bounds = CGRect(x: 0, y: 0, width: 56, height: 2.5)   // 짧은 빛줄기
+        head.bounds = CGRect(x: 0, y: 0, width: 120, height: 2.5)   // 빛줄기 길이(꼬리 길게)
         head.shadowColor = a.cgColor; head.shadowRadius = 6; head.shadowOpacity = 0.9; head.shadowOffset = .zero
         head.masksToBounds = false
         layer?.addSublayer(head)
