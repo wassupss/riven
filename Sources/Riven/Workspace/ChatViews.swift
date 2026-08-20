@@ -525,14 +525,12 @@ final class ToolGroup: NSView {
         needsLayout = true
     }
 
-    // 실행 중: 에이전트 패널의 travelling-ember 링(AttnRingView.attn)과 동일한 기법.
-    // 회전하는 conic 그라디언트를 테두리 링으로 마스크 - 대부분 아주 옅고(0.06) 끝에서 밝게
-    // 타오르는 머리(dim tail + bright head)라 자연스럽게 흐른다. 예전 conic 이 이상했던 건 밝은
-    // 아크가 좌우대칭이라서였고, 이 ember stop 이 정답. 색만 working accent2 로.
-    private let shimmerHost = CALayer()        // 테두리 링으로 마스크되는 컨테이너 (회전 안 함)
-    private let shimmerGrad = CAGradientLayer() // 그 안에서 도는 ember conic (오버사이즈)
-    private let shimmerMask = CAShapeLayer()    // 둥근 사각 링 스트로크 = 마스크
-    private var lastShimmerSize: CGSize = .zero
+    // 실행 중: 접선 방향 빛줄기(머리 밝고 꼬리 옅은 그라디언트)를 실제 테두리 path 를 따라
+    // .paced(둘레 등속) + .rotateAuto(접선 정렬)로 흘려보낸다. conic 회전은 각속도 일정이라 넓은
+    // 박스에서 속도가 들쭉날쭉(모서리 zip)했고, 그걸 keyframe 로 보정하면 조각조각 끊겼다. path
+    // .paced 는 둘레 길이 기준 등속을 CA 가 부드럽게 보간해줘 균일 + 매끄럽다.
+    private let head = CAGradientLayer()
+    private var lastPeri: CGFloat = -1
 
     func endRun(interrupted: Bool = false) {
         running = false; stopShimmer(); updateTitle(interrupted: interrupted)
@@ -545,75 +543,37 @@ final class ToolGroup: NSView {
         shimmerOn = true
         layer?.borderColor = Theme.accent2.withAlphaComponent(0.22).cgColor   // 은은한 베이스 테두리
         let a = Theme.accent2
-        shimmerGrad.type = .conic
-        shimmerGrad.locations = [0.0, 0.56, 0.83, 0.97, 1.0]                   // AttnRingView 와 동일한 ember stop
-        shimmerGrad.colors = [a.withAlphaComponent(0.06).cgColor, a.withAlphaComponent(0.06).cgColor,
-                              a.withAlphaComponent(0.55).cgColor, a.cgColor, a.withAlphaComponent(0.06).cgColor]
-        shimmerGrad.startPoint = CGPoint(x: 0.5, y: 0.5)
-        shimmerGrad.endPoint = CGPoint(x: 0.5, y: 0.0)
-        shimmerGrad.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        shimmerMask.fillColor = NSColor.clear.cgColor
-        shimmerMask.strokeColor = NSColor.black.cgColor   // 불투명 = 보이는 링 밴드(마스크는 알파만)
-        shimmerMask.lineWidth = 1.5
-        shimmerHost.mask = shimmerMask
-        shimmerHost.addSublayer(shimmerGrad)
-        layer?.addSublayer(shimmerHost)
-        lastShimmerSize = .zero; needsLayout = true   // 회전(arc-paced)은 layout 에서 크기 맞춰 건다
-    }
-    // 사각형 둘레를 등길이로 샘플한 각 지점의 각도(단조증가 0→2π). 이걸 keyframe 값으로 주고
-    // keyTimes 를 균등히 주면, 각속도가 아니라 "둘레 길이"가 일정하게 돌아 머리가 일정 속도로 흐른다.
-    private static func perimeterAngles(a: CGFloat, b: CGFloat, count: Int) -> [NSNumber] {
-        guard a > 0, b > 0 else { return [0, NSNumber(value: 2 * Double.pi)] }
-        let P = 4 * (a + b)
-        func point(_ raw: CGFloat) -> CGPoint {
-            var s = raw.truncatingRemainder(dividingBy: P); if s < 0 { s += P }
-            if s < b { return CGPoint(x: a, y: s) }                  // 오른쪽 변 위로
-            s -= b; if s < 2 * a { return CGPoint(x: a - s, y: b) }  // 윗변 왼쪽으로
-            s -= 2 * a; if s < 2 * b { return CGPoint(x: -a, y: b - s) }   // 왼쪽 변 아래로
-            s -= 2 * b; if s < 2 * a { return CGPoint(x: -a + s, y: -b) }  // 아랫변 오른쪽으로
-            s -= 2 * a; return CGPoint(x: a, y: -b + s)              // 오른쪽 변 위로(시작점까지)
-        }
-        var out: [NSNumber] = []; var prev: CGFloat = -.greatestFiniteMagnitude
-        for i in 0...count {
-            let p = point(P * CGFloat(i) / CGFloat(count))
-            var ang = atan2(p.y, p.x)
-            while ang < prev { ang += 2 * .pi }   // 단조증가로 unwrap
-            prev = ang
-            out.append(NSNumber(value: Double(ang)))
-        }
-        return out
+        // 진행 방향(→)으로 꼬리(투명) → 머리(밝음) 그라디언트. rotateAuto 로 접선에 맞춰 돈다.
+        head.colors = [a.withAlphaComponent(0).cgColor, a.withAlphaComponent(0.5).cgColor, a.cgColor]
+        head.locations = [0.0, 0.75, 1.0]
+        head.startPoint = CGPoint(x: 0, y: 0.5); head.endPoint = CGPoint(x: 1, y: 0.5)
+        head.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        head.bounds = CGRect(x: 0, y: 0, width: 56, height: 2.5)   // 짧은 빛줄기
+        head.shadowColor = a.cgColor; head.shadowRadius = 6; head.shadowOpacity = 0.9; head.shadowOffset = .zero
+        head.masksToBounds = false
+        layer?.addSublayer(head)
+        lastPeri = -1; needsLayout = true
     }
     private func stopShimmer() {
         guard shimmerOn else { return }
         shimmerOn = false
-        shimmerGrad.removeAllAnimations()
-        shimmerHost.mask = nil
-        shimmerGrad.removeFromSuperlayer(); shimmerHost.removeFromSuperlayer()
+        head.removeAllAnimations(); head.removeFromSuperlayer()
     }
     override func layout() {
         super.layout()
-        guard shimmerOn, bounds.width > 1, bounds.height > 1, bounds.size != lastShimmerSize else { return }
-        lastShimmerSize = bounds.size
+        guard shimmerOn, bounds.width > 1, bounds.height > 1 else { return }
+        let peri = 2 * (bounds.width + bounds.height)
+        guard abs(peri - lastPeri) > 0.5 else { return }   // 크기 안 바뀌면 애니 유지(재생성=끊김 방지)
+        lastPeri = peri
         let r = UIScale.pt(9)
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        shimmerHost.frame = bounds
-        shimmerMask.frame = bounds
-        shimmerMask.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75),
-                                  cornerWidth: r, cornerHeight: r, transform: nil)
-        // 회전해도 링 밴드를 늘 덮게 오버사이즈(중앙 정렬) - 정사각형이면 회전 시 모서리가 빈다.
-        let side = max(bounds.width, bounds.height) * 1.6
-        shimmerGrad.bounds = CGRect(x: 0, y: 0, width: side, height: side)
-        shimmerGrad.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        CATransaction.commit()
-        // arc-paced 회전: 각속도 일정이면 넓은 박스에서 느려졌다 빨라진다 → 둘레 길이 기준으로 재타이밍.
-        let angles = ToolGroup.perimeterAngles(a: bounds.width / 2, b: bounds.height / 2, count: 96)
-        let spin = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-        spin.values = angles
-        spin.keyTimes = (0..<angles.count).map { NSNumber(value: Double($0) / Double(angles.count - 1)) }
-        spin.calculationMode = .linear
-        spin.duration = 2.8; spin.repeatCount = .infinity; spin.isRemovedOnCompletion = false
-        shimmerGrad.removeAnimation(forKey: "spin")
-        shimmerGrad.add(spin, forKey: "spin")
+        let path = CGPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerWidth: r, cornerHeight: r, transform: nil)
+        let anim = CAKeyframeAnimation(keyPath: "position")
+        anim.path = path
+        anim.calculationMode = .paced          // 둘레 길이 기준 등속
+        anim.rotationMode = .rotateAuto        // 접선 방향으로 자동 회전(머리가 진행방향을 향함)
+        anim.duration = 3.0; anim.repeatCount = .infinity; anim.isRemovedOnCompletion = false
+        head.removeAnimation(forKey: "flow")
+        head.add(anim, forKey: "flow")
     }
 }
 
