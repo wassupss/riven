@@ -835,7 +835,23 @@ final class MDTable: NSView {
             let spacing = grid.columnSpacing * CGFloat(max(0, cols - 1))
             let avail = max(1, w - pad * 2 - spacing)
             let colW = Self.distribute(colNat, avail: avail)
-            for c in 0..<min(cols, colW.count) { grid.column(at: c).width = colW[c] }
+            let rows = grid.numberOfRows
+            for c in 0..<min(cols, colW.count) {
+                grid.column(at: c).width = colW[c]
+                // 각 셀의 줄바꿈 폭을 확정된 열 폭으로 직접 지정한다. 셀 자신의 layout() 타이밍에
+                // 맡기면 NSGridView 가 행 높이를 먼저 1줄로 재고 나서야 셀 폭이 정해져 두 줄 셀이
+                // 다음 행에 겹쳤다. 여기서 미리 박아 그리드가 처음부터 올바른 다중행 높이를 재게 한다.
+                // 실제 렌더 폭보다 살짝 좁게 잡아(-2) 높이를 넉넉히 → 겹침 대신 여유.
+                let wrapW = max(1, colW[c] - 2)
+                for r in 0..<rows {
+                    guard let lbl = grid.cell(atColumnIndex: c, rowIndex: r).contentView as? TableCellLabel else { continue }
+                    if abs(lbl.preferredMaxLayoutWidth - wrapW) > 0.5 {
+                        lbl.preferredMaxLayoutWidth = wrapW
+                        lbl.invalidateIntrinsicContentSize()
+                    }
+                }
+            }
+            grid.needsLayout = true
         }
         super.layout()
     }
@@ -1155,6 +1171,7 @@ enum ChatText {
         }
         return stack
     }
+
     /// 코드펜스로 먼저 자르고, 산문 구간은 블록 단위(제목·표·목록·문단)로 파싱한다.
     /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
     /// "| a | b |" 가 전부 원문 그대로 보였다.
