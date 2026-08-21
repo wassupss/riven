@@ -7317,6 +7317,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // 터미널 에이전트가 브라우저 내용 읽기/조작·HTTP 요청을 계속 허용하기로 한 출처들(앱 세션 동안).
+    // 네이티브 챗의 origin 별 1회 승인과 같은 근거 - 로그인 세션을 든 인증 사이트의 유출/변경을
+    // 자동 승인에 맡기지 않는다. 대화 카드가 없으므로 모달로 묻는다.
+    private var termBrowserAllowedOrigins: Set<String> = []
+    private var termApiAllowedOrigins: Set<String> = []
+    /// 자동 허용(로컬·이미 승인)이면 true. 아니면 모달을 띄워 허용/계속허용/거부를 받는다.
+    private func termOriginGate(_ origin: String, remembered: inout Set<String>, title: String, detail: String) -> Bool {
+        if origin.isEmpty || ChatPanel.isLocalOrigin(origin) || remembered.contains(origin) { return true }
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = detail
+        a.addButton(withTitle: t("common.confirm"))
+        a.addButton(withTitle: t("browser.eval.always"))
+        a.addButton(withTitle: t("common.cancel"))
+        switch a.runModal() {
+        case .alertFirstButtonReturn: return true
+        case .alertSecondButtonReturn: remembered.insert(origin); return true
+        default: return false
+        }
+    }
+
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
     // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
     // asks with a modal (the terminal agent is blocked waiting for the answer either way).
@@ -7343,39 +7364,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             srv.resolve(id, result: "opened \(p) in riven editor")
         case "riven_open_browser":
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            guard PreviewPanel.agentWebURL(s("url")) != nil else {
+                srv.resolve(id, result: "refused: only http/https URLs are allowed for agent navigation (got: \(s("url")))"); return
+            }
             ensureAux("preview", in: ws)
             preview(for: ws).openURLString(s("url"))
             srv.resolve(id, result: "opened \(s("url")) in riven preview panel")
         case "riven_screenshot":
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            let u = args["url"] as? String
+            if let u, PreviewPanel.agentWebURL(u) == nil {
+                srv.resolve(id, result: "refused: only http/https URLs are allowed for agent navigation (got: \(u))"); return
+            }
             ensureAux("preview", in: ws)
             let p = preview(for: ws)
-            let u = args["url"] as? String
             if let u { p.openURLString(u) }
             DispatchQueue.main.asyncAfter(deadline: .now() + (u == nil ? 0.2 : 1.6)) {
                 p.capture { path in
                     srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             }
-        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
-             "riven_browser_tab",
-             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
-             "riven_browser_eval":
-            // 터미널 에이전트에는 승인 카드를 띄울 대화창이 없다. eval 만 모달로 묻는다.
-            if tool == "riven_browser_eval" {
-                let a = NSAlert()
-                a.messageText = t("browser.eval.confirm", ["o": owner.map { preview(for: $0).currentOrigin } ?? ""])
-                a.informativeText = String((args["js"] as? String ?? "").prefix(400))
-                a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
-                guard a.runModal() == .alertFirstButtonReturn else {
-                    srv.resolve(id, result: t("browser.eval.denied")); return
-                }
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go",
+             "riven_browser_tab", "riven_browser_wait", "riven_browser_scroll":
+            // 이동·조회성 동작은 그대로 실행.
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+        case "riven_browser_read", "riven_browser_click", "riven_browser_fill":
+            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인.
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            let origin = preview(for: ws).currentOrigin
+            guard termOriginGate(origin, remembered: &termBrowserAllowedOrigins,
+                                 title: t("browser.act.confirm", ["o": origin]),
+                                 detail: tool) else {
+                srv.resolve(id, result: t("browser.act.denied")); return
+            }
+            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+        case "riven_browser_eval":
+            // 임의 자바스크립트 - 늘 모달로 묻는다(로그인 세션 위에서 무엇이든 가능).
+            let origin = owner.map { preview(for: $0).currentOrigin } ?? ""
+            let a = NSAlert()
+            a.messageText = t("browser.eval.confirm", ["o": origin])
+            a.informativeText = String((args["js"] as? String ?? "").prefix(400))
+            a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else {
+                srv.resolve(id, result: t("browser.eval.denied")); return
             }
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인.
+            let apiOrigin: String = { guard let u = URL(string: s("url")), let h = u.host else { return "" }
+                                      return "\(u.scheme ?? "https")://\(h)" }()
+            guard termOriginGate(apiOrigin, remembered: &termApiAllowedOrigins,
+                                 title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
+                                 detail: s("method") + " " + s("url")) else {
+                srv.resolve(id, result: t("api.req.denied")); return
+            }
             ensureAux("api", in: ws)
             api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
             srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")

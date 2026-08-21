@@ -612,6 +612,17 @@ enum I18n {
         "browser.eval.always": ("이 페이지는 계속 허용", "Always allow on this page"),
         "browser.eval.denied": ("사용자가 자바스크립트 실행을 거부했습니다.",
                                 "The user declined to run JavaScript."),
+        // 브라우저 내용 읽기/조작(read·click·fill) 승인 카드 - 인증된 외부 사이트에서만 뜬다
+        "browser.act.confirm": ("에이전트가 {o} 페이지의 내용을 읽거나 조작하려 합니다. 허용할까요?",
+                                "The agent wants to read or interact with {o}. Allow it?"),
+        "browser.act.denied": ("사용자가 브라우저 동작을 거부했습니다.",
+                               "The user declined the browser action."),
+        // riven_api_request(임의 HTTP) 승인 카드
+        "api.req.confirm": ("에이전트가 {o} 로 HTTP 요청을 보내려 합니다. 허용할까요?",
+                            "The agent wants to send an HTTP request to {o}. Allow it?"),
+        "api.req.always": ("이 호스트는 계속 허용", "Always allow this host"),
+        "api.req.denied": ("사용자가 HTTP 요청을 거부했습니다.",
+                           "The user declined the HTTP request."),
         "chat.browserAction": ("브라우저: {a}", "Browser: {a}"),
         // API client panel
         "api.services": ("서비스", "Services"), "api.templates": ("템플릿", "Templates"),

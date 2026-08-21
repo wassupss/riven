@@ -1274,15 +1274,38 @@ final class ChatPanel: NSView, Themable, Scalable {
             addSystem(t("chat.openedEditor", ["p": p]))
             session?.respondTool(id, "opened \(p) in riven editor")
         case "riven_open_browser":
+            guard PreviewPanel.agentWebURL(s("url")) != nil else {
+                session?.respondTool(id, "refused: only http/https URLs are allowed for agent navigation (got: \(s("url")))"); return
+            }
             onOpenBrowser?(s("url"))
             addSystem(t("chat.openedPreview", ["u": s("url")]))
             session?.respondTool(id, "opened \(s("url")) in riven preview panel")
-        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
-             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
-             "riven_browser_tab":
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go",
+             "riven_browser_wait", "riven_browser_scroll", "riven_browser_tab":
+            // 이동·조회성 동작은 그대로. 페이지 내용을 읽거나(유출) 조작하는(변경) read/click/fill 은
+            // 아래에서 origin 당 1회 승인을 받는다.
             guard let onBrowser else { reply("browser panel unavailable"); return }
             addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
             onBrowser(tool, args) { reply($0) }
+        case "riven_browser_read", "riven_browser_click", "riven_browser_fill":
+            // 로그인된 외부 사이트의 내용을 조용히 유출하거나(read) 폼을 조작·제출(click/fill)하는
+            // confused-deputy·프롬프트 인젝션 벡터. eval 과 동일하게 origin 당 1회 승인. localhost·
+            // 이미 승인한 origin 은 자동 허용.
+            guard let onBrowser else { reply("browser panel unavailable"); return }
+            let origin = onBrowserOrigin?() ?? ""
+            let runBrowser: () -> Void = { [weak self] in
+                self?.addSystem(t("chat.browserAction", ["a": ChatPanel.browserSummary(tool, args)]))
+                onBrowser(tool, args) { reply($0) }
+            }
+            if origin.isEmpty || ChatPanel.isLocalOrigin(origin) || browserAllowedOrigins.contains(origin) {
+                runBrowser(); return
+            }
+            enqueueChoice(title: t("browser.act.confirm", ["o": origin]),
+                          detail: ChatPanel.browserSummary(tool, args), code: nil, path: nil, options: [
+                (t("common.confirm"), runBrowser),
+                (t("browser.eval.always"), { [weak self] in self?.browserAllowedOrigins.insert(origin); runBrowser() }),
+                (t("chat.deny"), { reply(t("browser.act.denied")) }),
+            ])
         case "riven_browser_eval":
             // 임의 자바스크립트만 승인을 받는다. 나머지 도구는 사람이 마우스로 할 수 있는 범위
             // 안이지만, eval 은 그 페이지에서 무엇이든 할 수 있다 - 브라우저가 로그인 세션을
@@ -1310,6 +1333,9 @@ final class ChatPanel: NSView, Themable, Scalable {
             ])
         case "riven_screenshot":
             let url = args["url"] as? String
+            if let url, PreviewPanel.agentWebURL(url) == nil {
+                session?.respondTool(id, "refused: only http/https URLs are allowed for agent navigation (got: \(url))"); return
+            }
             addSystem(t("chat.capturing"))
             if let onScreenshot {
                 onScreenshot(url) { [weak self] path in
@@ -1317,11 +1343,26 @@ final class ChatPanel: NSView, Themable, Scalable {
                 }
             } else { session?.respondTool(id, "screenshot unavailable") }
         case "riven_api_request":
-            // Show it in the API panel AND return the body to the agent.
+            // 임의 HTTP(헤더·본문 포함) = 조용한 유출/SSRF 벡터. 대상 호스트별 1회 승인.
+            // localhost·이미 승인한 호스트는 자동 허용.
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
-            onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
-            addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
-            apiRequest(args) { result in reply(result) }
+            let apiOrigin: String = { guard let u = URL(string: s("url")), let h = u.host else { return "" }
+                                      return "\(u.scheme ?? "https")://\(h)" }()
+            let runApi: () -> Void = { [weak self] in
+                guard let self else { return }
+                self.onApiRequest?(s("method").isEmpty ? "GET" : s("method"), s("url"), hdrs, s("body"))
+                self.addSystem(t("chat.apiPanel", ["s": s("method") + " " + s("url")]))
+                self.apiRequest(args) { result in reply(result) }
+            }
+            if !apiOrigin.isEmpty, ChatPanel.isLocalOrigin(apiOrigin) || apiAllowedOrigins.contains(apiOrigin) {
+                runApi(); return
+            }
+            enqueueChoice(title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
+                          detail: s("method") + " " + s("url"), code: nil, path: nil, options: [
+                (t("common.confirm"), runApi),
+                (t("api.req.always"), { [weak self] in if !apiOrigin.isEmpty { self?.apiAllowedOrigins.insert(apiOrigin) }; runApi() }),
+                (t("chat.deny"), { reply(t("api.req.denied")) }),
+            ])
         case let n where n.hasPrefix("riven_note_") || n == "riven_doc_write":
             let result = onNoteTool?(tool, args) ?? "notes unavailable"
             // 메모를 만들거나 고쳤으면 대화에도 한 줄 남긴다 - 패널을 안 보고 있어도
@@ -2105,6 +2146,16 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// 되돌리기 어려운 작업은 대화에 확인 카드를 띄우고, 사용자가 고른 뒤에 진행한다.
     /// eval 을 계속 허용하기로 한 출처들 (이 대화 안에서만 기억한다).
     private var evalAllowedOrigins: Set<String> = []
+    /// 브라우저 내용 읽기/조작(read·click·fill)·HTTP 요청을 계속 허용하기로 한 출처들.
+    /// eval 과 같은 근거: 브라우저·API 는 로그인 세션을 들고 있어, 인증된 외부 사이트에서
+    /// 유출/변경을 자동 승인에 맡길 수 없다(confused-deputy·프롬프트 인젝션 차단). 대화 안에서만 기억.
+    private var browserAllowedOrigins: Set<String> = []
+    private var apiAllowedOrigins: Set<String> = []
+    /// localhost 계열(주로 dev 서버)은 인증 세션이 아니라 자동 허용한다.
+    static func isLocalOrigin(_ origin: String) -> Bool {
+        guard let h = URL(string: origin)?.host?.lowercased() else { return false }
+        return h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "[::1]"
+    }
     /// 패널에 남길 한 줄 - 무엇을 했는지 사람이 읽을 수 있게.
     static func browserSummary(_ tool: String, _ args: [String: Any]) -> String {
         let verb = tool.replacingOccurrences(of: "riven_browser_", with: "")

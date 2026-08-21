@@ -1776,8 +1776,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         s.count <= limit ? s : String(s.prefix(limit)) + "\n…(truncated, \(s.count) chars total)"
     }
 
+    // 에이전트가 넘긴 URL 은 웹(http/https)만 허용한다. file://·data:·blob:·javascript: 등은
+    // 로컬 파일 읽기(예: file:///~/.ssh/id_rsa 를 연 뒤 riven_browser_read 로 회수)나 스크립트
+    // 주입 통로가 되므로 막는다 - 에이전트 브라우징에는 웹 스킴만 있으면 된다. (주소창에 사람이
+    // 직접 치는 건 명시적 행위라 제한하지 않는다.)
+    static func agentWebURL(_ raw: String) -> URL? {
+        guard let u = BrowserTab.resolve(raw), let s = u.scheme?.lowercased() else { return nil }
+        return (s == "http" || s == "https") ? u : nil
+    }
+
     func agentNavigate(_ urlString: String, newTab wantsNew: Bool, profile: String = "") -> String {
-        guard let url = BrowserTab.resolve(urlString) else { return "invalid url: \(urlString)" }
+        guard let url = Self.agentWebURL(urlString) else {
+            return "refused: only http/https URLs are allowed for agent navigation (got: \(urlString))"
+        }
         // 프로필을 주면 언제나 새 탭이다 - 로그인 묶음이 다르니 지금 탭을 재사용할 수 없다.
         if wantsNew || !profile.isEmpty { newTab(url, activate: true, profile: profile) }
         else { urlField.stringValue = url.absoluteString; load(url) }
