@@ -691,6 +691,21 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 방금 닫은 탭들 (⌘⇧T 로 되돌린다). 실수로 닫는 일이 잦아 열 개까지 쌓아 둔다.
     private var closedURLs: [String] = []
 
+    // 워크스페이스를 닫을 때 호출한다. userContentController.add(self, name:) 가 self 를 강하게 잡아
+    // PreviewPanel ↔ WKWebView 리테인 사이클을 만든다(deinit 이 영영 안 돎). 스크립트 핸들러를
+    // 명시적으로 떼지 않으면 패널과 살아있던 모든 탭의 웹콘텐츠 프로세스(탭당 50~150MB)가 영구히
+    // 남아 RSS 가 단조 증가한다. 닫히는 시점에 전부 끊어 준다. (navigation/uiDelegate 는 weak 라 무관)
+    func teardown() {
+        for tb in tabs {
+            tb.web.stopLoading()
+            let ucc = tb.web.configuration.userContentController
+            ucc.removeScriptMessageHandler(forName: "prevfocus")
+            ucc.removeScriptMessageHandler(forName: "rivenconsole")
+            tb.web.removeFromSuperview()
+        }
+        tabs.removeAll()
+    }
+
     private func closeTab(_ i: Int) {
         guard tabs.indices.contains(i) else { return }
         if tabs.count == 1 {

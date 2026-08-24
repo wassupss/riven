@@ -351,20 +351,25 @@ final class ChatPanel: NSView, Themable, Scalable {
         UIScale.register(self)
         // Live language switch: re-label the chrome that was built once at init (the transcript
         // keeps the language each message was written in, like the rest of the app).
-        NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
+        // 블록 기반 옵저버는 removeObserver(self) 로 안 떼진다(토큰으로 등록되므로). 토큰을 모아
+        // deinit 에서 명시적으로 제거하지 않으면, 팬을 열고닫을 때마다 죽은 옵저버가 전역
+        // NotificationCenter 에 쌓여 언어 전환·분할 드래그 브로드캐스트 비용이 계속 커진다.
+        notifTokens.append(NotificationCenter.default.addObserver(forName: .rivenLanguageChanged, object: nil, queue: .main) { [weak self] _ in
             self?.relocalize()
-        }
+        })
         // A divider drag re-wraps every rendered message on every frame (~15ms measured). Freeze the
         // transcript width for the drag and reflow once when it ends.
-        NotificationCenter.default.addObserver(forName: .rivenDividerDragBegan, object: nil, queue: .main) { [weak self] _ in
+        notifTokens.append(NotificationCenter.default.addObserver(forName: .rivenDividerDragBegan, object: nil, queue: .main) { [weak self] _ in
             self?.freezeTranscriptWidth()
-        }
-        NotificationCenter.default.addObserver(forName: .rivenDividerDragEnded, object: nil, queue: .main) { [weak self] _ in
+        })
+        notifTokens.append(NotificationCenter.default.addObserver(forName: .rivenDividerDragEnded, object: nil, queue: .main) { [weak self] _ in
             self?.thawTranscriptWidth()
-        }
+        })
     }
     required init?(coder: NSCoder) { fatalError() }
+    private var notifTokens: [NSObjectProtocol] = []
     deinit { NotificationCenter.default.removeObserver(self); timeTimer?.invalidate()
+        notifTokens.forEach { NotificationCenter.default.removeObserver($0) }
         SuggestionService.shared.cancel()
         // Backstop for any close path that deallocs the panel without teardown(): stop the
         // headless agent process and the 33ms flush timer so neither outlives the panel.
@@ -2362,8 +2367,13 @@ final class ChatPanel: NSView, Themable, Scalable {
         flushTimer?.invalidate()
         flushTimer = Timer.scheduledTimer(withTimeInterval: 0.033, repeats: true) { [weak self] _ in
             guard let self, let block = self.current, let start = self.turnStart else { return }
-            // OFFSCREEN (a chat pane whose workspace isn't the active one) → do NO UI work.
-            guard self.window != nil else { return }
+            // 안 보이면 UI 작업을 전혀 하지 않는다. `window != nil` 만으로는 부족했다 - 워크스페이스
+            // 전환은 나가는 dock 을 detach 하지 않고 isHidden 으로만 두므로 hidden 서브트리 안에서도
+            // window 는 non-nil 이라, 백그라운드 워크스페이스에서 스트리밍 중인 채팅이 안 보이는데도
+            // 초당 30번 전체 레이아웃+오토스크롤을 돌렸다. 숨김/가림이면 건너뛴다(타이머는 계속 tick
+            // 하므로 다시 보이는 즉시 다음 tick 이 밀린 내용을 flush, 턴이 끝나면 endTurn 이 확정 렌더).
+            guard let win = self.window, !self.isHiddenOrHasHiddenAncestor,
+                  win.occlusionState.contains(.visible) else { return }
             let grew = block.flush()
             block.tick(Int(Date().timeIntervalSince(start) - self.pausedTotal))   // 인라인 상태 행 갱신
             if grew { self.autoScroll() }

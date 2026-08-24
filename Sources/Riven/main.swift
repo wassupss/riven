@@ -4553,7 +4553,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // exactly what riven's own agents edited - NOT git pull, the user's own edits, or
             // another tool (cmux etc.) touching the folder. FSEvents can't tell who wrote a
             // file, so it no longer records changes here; it only refreshes the file tree.
-            if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
+            // 무시 경로(node_modules·.next·.build 등)는 여기서 통째로 걸러 낸다. 예전엔 reload 가
+            // 이 게이트 밖이라, 빌드/설치가 그 폴더에 수천 파일을 쓰면 경로마다 메인큐 클로저가
+            // 쌓였다(트리에 보이지도 않는 파일인데). 열린 에디터 탭은 사실상 그런 폴더 안에 없다.
+            guard !FileNode.isIgnoredPath(path) else { return }
+            self?.scheduleExplorerRefresh()
             self?.scheduleEditorReload(path)   // agent edited a file → refresh it if it's open
         }
     }
@@ -4603,7 +4607,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] {
                 (p.content as? TerminalView)?.dispose()
                 (p.content as? ChatPanel)?.teardown()
+                (p.content as? PreviewPanel)?.teardown()
             }
+            // 브라우저 패널은 dock 패널이 아닐 수도 있게 st.preview 로도 캐시된다 - WKWebView 리테인
+            // 사이클(웹콘텐츠 프로세스 누수)을 끊으려면 여기서도 명시적으로 teardown 한다.
+            st.preview?.teardown()
         }
         editor.disposePaths(st0?.openTabs ?? [])   // models stay resident across switches now
         states[url] = nil
@@ -7639,7 +7647,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.headerUsagePopover?.isShown == true { self.rebuildUsagePopover() }
         }
         refreshUsage()
-        usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
+        usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            // 앱이 백그라운드(다른 앱이 앞)일 땐 60초 idle 폴링을 건너뛴다 - 이게 ~/.claude 를
+            // 훑고 api.anthropic.com 을 매분 깨우는 유일한 idle 드레인이었다. 턴 종료 갱신
+            // (refreshUsageAfterTurn)은 그대로 돌고, 앱으로 돌아오면 아래 옵저버가 즉시 채운다.
+            guard NSApp?.isActive == true else { return }
+            self?.refreshUsage()
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.refreshUsage()   // 20s 최소간격 가드가 있어 과호출 안 됨
+        }
     }
     /// 턴이 끝날 때마다 부른다. 여러 팬이 거의 동시에 끝나면 API 를 그만큼 두드리게 되므로
     /// 3초 안의 요청은 하나로 합친다 (버튼으로 부를 때는 force 로 즉시).
