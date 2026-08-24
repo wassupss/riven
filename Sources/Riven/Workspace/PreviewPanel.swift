@@ -691,6 +691,21 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
     /// 방금 닫은 탭들 (⌘⇧T 로 되돌린다). 실수로 닫는 일이 잦아 열 개까지 쌓아 둔다.
     private var closedURLs: [String] = []
 
+    // 워크스페이스를 닫을 때 호출한다. userContentController.add(self, name:) 가 self 를 강하게 잡아
+    // PreviewPanel ↔ WKWebView 리테인 사이클을 만든다(deinit 이 영영 안 돎). 스크립트 핸들러를
+    // 명시적으로 떼지 않으면 패널과 살아있던 모든 탭의 웹콘텐츠 프로세스(탭당 50~150MB)가 영구히
+    // 남아 RSS 가 단조 증가한다. 닫히는 시점에 전부 끊어 준다. (navigation/uiDelegate 는 weak 라 무관)
+    func teardown() {
+        for tb in tabs {
+            tb.web.stopLoading()
+            let ucc = tb.web.configuration.userContentController
+            ucc.removeScriptMessageHandler(forName: "prevfocus")
+            ucc.removeScriptMessageHandler(forName: "rivenconsole")
+            tb.web.removeFromSuperview()
+        }
+        tabs.removeAll()
+    }
+
     private func closeTab(_ i: Int) {
         guard tabs.indices.contains(i) else { return }
         if tabs.count == 1 {
@@ -1776,8 +1791,19 @@ final class PreviewPanel: NSView, Themable, Scalable, WKScriptMessageHandler,
         s.count <= limit ? s : String(s.prefix(limit)) + "\n…(truncated, \(s.count) chars total)"
     }
 
+    // 에이전트가 넘긴 URL 은 웹(http/https)만 허용한다. file://·data:·blob:·javascript: 등은
+    // 로컬 파일 읽기(예: file:///~/.ssh/id_rsa 를 연 뒤 riven_browser_read 로 회수)나 스크립트
+    // 주입 통로가 되므로 막는다 - 에이전트 브라우징에는 웹 스킴만 있으면 된다. (주소창에 사람이
+    // 직접 치는 건 명시적 행위라 제한하지 않는다.)
+    static func agentWebURL(_ raw: String) -> URL? {
+        guard let u = BrowserTab.resolve(raw), let s = u.scheme?.lowercased() else { return nil }
+        return (s == "http" || s == "https") ? u : nil
+    }
+
     func agentNavigate(_ urlString: String, newTab wantsNew: Bool, profile: String = "") -> String {
-        guard let url = BrowserTab.resolve(urlString) else { return "invalid url: \(urlString)" }
+        guard let url = Self.agentWebURL(urlString) else {
+            return "refused: only http/https URLs are allowed for agent navigation (got: \(urlString))"
+        }
         // 프로필을 주면 언제나 새 탭이다 - 로그인 묶음이 다르니 지금 탭을 재사용할 수 없다.
         if wantsNew || !profile.isEmpty { newTab(url, activate: true, profile: profile) }
         else { urlField.stringValue = url.absoluteString; load(url) }

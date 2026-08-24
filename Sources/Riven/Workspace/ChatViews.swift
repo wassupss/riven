@@ -835,7 +835,23 @@ final class MDTable: NSView {
             let spacing = grid.columnSpacing * CGFloat(max(0, cols - 1))
             let avail = max(1, w - pad * 2 - spacing)
             let colW = Self.distribute(colNat, avail: avail)
-            for c in 0..<min(cols, colW.count) { grid.column(at: c).width = colW[c] }
+            let rows = grid.numberOfRows
+            for c in 0..<min(cols, colW.count) {
+                grid.column(at: c).width = colW[c]
+                // 각 셀의 줄바꿈 폭을 확정된 열 폭으로 직접 지정한다. 셀 자신의 layout() 타이밍에
+                // 맡기면 NSGridView 가 행 높이를 먼저 1줄로 재고 나서야 셀 폭이 정해져 두 줄 셀이
+                // 다음 행에 겹쳤다. 여기서 미리 박아 그리드가 처음부터 올바른 다중행 높이를 재게 한다.
+                // 실제 렌더 폭보다 살짝 좁게 잡아(-2) 높이를 넉넉히 → 겹침 대신 여유.
+                let wrapW = max(1, colW[c] - 2)
+                for r in 0..<rows {
+                    guard let lbl = grid.cell(atColumnIndex: c, rowIndex: r).contentView as? TableCellLabel else { continue }
+                    if abs(lbl.preferredMaxLayoutWidth - wrapW) > 0.5 {
+                        lbl.preferredMaxLayoutWidth = wrapW
+                        lbl.invalidateIntrinsicContentSize()
+                    }
+                }
+            }
+            grid.needsLayout = true
         }
         super.layout()
     }
@@ -1155,6 +1171,7 @@ enum ChatText {
         }
         return stack
     }
+
     /// 코드펜스로 먼저 자르고, 산문 구간은 블록 단위(제목·표·목록·문단)로 파싱한다.
     /// 예전에는 산문 전체를 인라인 마크다운 라벨 하나로 그려서 "## 제목", "- 항목",
     /// "| a | b |" 가 전부 원문 그대로 보였다.
@@ -1461,37 +1478,25 @@ enum ChatText {
                 ])
             }
         }
-        if rows.count > 1 {
-            let hair = NSView(); hair.wantsLayer = true
-            hair.layer?.backgroundColor = Theme.edge.cgColor
-            hair.translatesAutoresizingMaskIntoConstraints = false
-            box.addSubview(hair)
-            let headerRow = grid.row(at: 0)
+        // 가로 구분선은 "행 경계"에 놓아야 한다. 예전엔 첫 열(col0) 셀의 bottom 에 앵커했는데,
+        // col0 가 1줄이고 다른 열이 2줄이면(yPlacement=.top) col0.bottom 은 행 한가운데라 구분선이
+        // 2줄 셀을 가로질러 글자가 셀 밖으로 튀어 보였다. 대신 "다음 행 col0 셀의 top"(= 이 행의
+        // 진짜 바닥, 어느 열이 제일 크든 무관) 에서 행간격 절반만큼 위에 그어 항상 행 사이에 둔다.
+        func rowDivider(above nextRow: Int) {
+            guard let nextCell = grid.cell(atColumnIndex: 0, rowIndex: nextRow).contentView else { return }
+            let h = NSView(); h.wantsLayer = true
+            h.layer?.backgroundColor = Theme.edge.cgColor
+            h.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(h)
             NSLayoutConstraint.activate([
-                hair.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-                hair.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-                hair.heightAnchor.constraint(equalToConstant: 1),
-                hair.topAnchor.constraint(equalTo: headerRow.cell(at: 0).contentView!.bottomAnchor,
-                                          constant: grid.rowSpacing / 2),   // 행 간격 정중앙 → 위/아래 여백 대칭
+                h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+                h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+                h.heightAnchor.constraint(equalToConstant: 1),
+                h.topAnchor.constraint(equalTo: nextCell.topAnchor, constant: -grid.rowSpacing / 2),
             ])
         }
-        // 데이터 행 사이 가로 구분선 - 헤더선과 완전히 동일하게 (해당 행 셀 bottom + 4, Theme.edge,
-        // 같은 폭·두께). 예전엔 위치 기준이 달라(행 top - 간격절반) 헤더선과 어긋나 툭 튀어 보였다.
-        if rows.count > 2 {
-            for r in 1..<(rows.count - 1) {
-                guard let cell = grid.cell(atColumnIndex: 0, rowIndex: r).contentView else { continue }
-                let h = NSView(); h.wantsLayer = true
-                h.layer?.backgroundColor = Theme.edge.cgColor
-                h.translatesAutoresizingMaskIntoConstraints = false
-                box.addSubview(h)
-                NSLayoutConstraint.activate([
-                    h.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-                    h.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-                    h.heightAnchor.constraint(equalToConstant: 1),
-                    h.topAnchor.constraint(equalTo: cell.bottomAnchor, constant: grid.rowSpacing / 2),   // 정중앙
-                ])
-            }
-        }
+        if rows.count > 1 { rowDivider(above: 1) }                       // 헤더 아래
+        for r in 2..<max(2, rows.count) { rowDivider(above: r) }         // 데이터 행 사이
         return box
     }
 

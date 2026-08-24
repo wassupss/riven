@@ -90,39 +90,53 @@ enum Theme {
                        blue: CGFloat(v & 0xff) / 255, alpha: 1)
     }
 
-    // Token accessors - computed so they follow `current` after a live switch.
-    static var bg: NSColor      { hex(current.bg) }
-    static var bg2: NSColor     { hex(current.bg2) }
-    static var bg3: NSColor     { hex(current.bg3) }
-    static var border: NSColor  { hex(current.border) }
-    static var fg: NSColor      { hex(current.fg) }
-    static var fgDim: NSColor   { hex(current.fgDim) }
-    static var accent: NSColor  { hex(current.accent) }
-    static var accent2: NSColor { hex(current.accent2) }
-    static var success: NSColor { hex(current.success) }
-    static var warning: NSColor { hex(current.warning) }
-    static var danger: NSColor  { hex(current.danger) }
-    static var info: NSColor    { hex(current.info) }
+    // 토큰 색을 테마별로 캐시한다. 예전엔 모든 토큰이 접근할 때마다 hex 파싱(문자열 split +
+    // UInt32 + NSColor alloc)을 다시 했다 - FileTree 가 행마다 ~5개를 읽고 reloadData/스크롤로
+    // 셀을 다시 그리면 큰 트리에서 초당 수백 번 재파싱. `current` 는 테마 전환·프리뷰 임시 스왑
+    // 때만 바뀌므로 current.id 를 키로 캐시하면 정확하다(스왑 시엔 id 가 달라져 자동 무효화).
+    // 캐시는 메인스레드에서만 쓴다(오프메인 접근은 그냥 계산해 데이터 레이스를 피한다).
+    private static var colorCache: [String: NSColor] = [:]
+    private static var colorCacheThemeId = ""
+    private static func cached(_ key: String, _ make: () -> NSColor) -> NSColor {
+        guard Thread.isMainThread else { return make() }
+        if colorCacheThemeId != current.id { colorCache.removeAll(); colorCacheThemeId = current.id }
+        if let c = colorCache[key] { return c }
+        let c = make(); colorCache[key] = c; return c
+    }
+
+    // Token accessors - computed so they follow `current` after a live switch (now memoized).
+    static var bg: NSColor      { cached("bg") { hex(current.bg) } }
+    static var bg2: NSColor     { cached("bg2") { hex(current.bg2) } }
+    static var bg3: NSColor     { cached("bg3") { hex(current.bg3) } }
+    static var border: NSColor  { cached("border") { hex(current.border) } }
+    static var fg: NSColor      { cached("fg") { hex(current.fg) } }
+    static var fgDim: NSColor   { cached("fgDim") { hex(current.fgDim) } }
+    static var accent: NSColor  { cached("accent") { hex(current.accent) } }
+    static var accent2: NSColor { cached("accent2") { hex(current.accent2) } }
+    static var success: NSColor { cached("success") { hex(current.success) } }
+    static var warning: NSColor { cached("warning") { hex(current.warning) } }
+    static var danger: NSColor  { cached("danger") { hex(current.danger) } }
+    static var info: NSColor    { cached("info") { hex(current.info) } }
     static var isLight: Bool    { current.mode == "light" }
 
     // Derived tokens (riven mixes these from the primitives in styles.css).
-    static var accentMuted: NSColor { accent.withAlphaComponent(0.13) }            // --accent-muted
-    static var accentBorder: NSColor { accent.withAlphaComponent(0.42) }          // --accent-border
-    static var accent2Border: NSColor { accent2.withAlphaComponent(0.42) }        // --accent-2-border
-    static var hoverStrong: NSColor { fg.withAlphaComponent(isLight ? 0.10 : 0.09) } // --hover-strong
-    static var edgeStrong: NSColor { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.18 : 0.14) } // --edge-strong
-    static var hover: NSColor   { fg.withAlphaComponent(isLight ? 0.06 : 0.05) }  // --hover
-    static var hairline: NSColor { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.08 : 0.06) } // --hairline
-    static var edge: NSColor    { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.12 : 0.09) }  // --edge
+    static var accentMuted: NSColor { cached("accentMuted") { accent.withAlphaComponent(0.13) } }            // --accent-muted
+    static var accentBorder: NSColor { cached("accentBorder") { accent.withAlphaComponent(0.42) } }          // --accent-border
+    static var accent2Border: NSColor { cached("accent2Border") { accent2.withAlphaComponent(0.42) } }        // --accent-2-border
+    static var hoverStrong: NSColor { cached("hoverStrong") { fg.withAlphaComponent(isLight ? 0.10 : 0.09) } } // --hover-strong
+    static var edgeStrong: NSColor { cached("edgeStrong") { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.18 : 0.14) } } // --edge-strong
+    static var hover: NSColor   { cached("hover") { fg.withAlphaComponent(isLight ? 0.06 : 0.05) } }  // --hover
+    static var hairline: NSColor { cached("hairline") { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.08 : 0.06) } } // --hairline
+    static var edge: NSColor    { cached("edge") { (isLight ? NSColor.black : .white).withAlphaComponent(isLight ? 0.12 : 0.09) } }  // --edge
 
     // git decoration colors - riven's exact --git-* tokens (VSCode-style working-tree
     // colours), not the generic semantic palette (untracked/renamed are GREEN, not blue).
-    static var gitModified: NSColor  { isLight ? hex("#8f6a1e") : hex("#d3a45f") }  // amber
-    static var gitAdded: NSColor     { isLight ? hex("#227d3f") : hex("#6cc08b") }  // green
+    static var gitModified: NSColor  { cached("gitModified") { isLight ? hex("#8f6a1e") : hex("#d3a45f") } }  // amber
+    static var gitAdded: NSColor     { cached("gitAdded") { isLight ? hex("#227d3f") : hex("#6cc08b") } }  // green
     static var gitUntracked: NSColor { gitAdded }                                   // green
     static var gitRenamed: NSColor   { gitAdded }                                   // green
-    static var gitDeleted: NSColor   { isLight ? hex("#a13a2a") : hex("#d16d5a") }  // red
-    static var gitConflict: NSColor  { isLight ? hex("#c0393d") : hex("#e4676b") }  // strong red
+    static var gitDeleted: NSColor   { cached("gitDeleted") { isLight ? hex("#a13a2a") : hex("#d16d5a") } }  // red
+    static var gitConflict: NSColor  { cached("gitConflict") { isLight ? hex("#c0393d") : hex("#e4676b") } }  // strong red
 
     static let editorFont = "Monaco"
     static let uiFontSize: CGFloat = 12

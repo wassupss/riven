@@ -4553,7 +4553,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // exactly what riven's own agents edited - NOT git pull, the user's own edits, or
             // another tool (cmux etc.) touching the folder. FSEvents can't tell who wrote a
             // file, so it no longer records changes here; it only refreshes the file tree.
-            if !FileNode.isIgnoredPath(path) { self?.scheduleExplorerRefresh() }
+            // 무시 경로(node_modules·.next·.build 등)는 여기서 통째로 걸러 낸다. 예전엔 reload 가
+            // 이 게이트 밖이라, 빌드/설치가 그 폴더에 수천 파일을 쓰면 경로마다 메인큐 클로저가
+            // 쌓였다(트리에 보이지도 않는 파일인데). 열린 에디터 탭은 사실상 그런 폴더 안에 없다.
+            guard !FileNode.isIgnoredPath(path) else { return }
+            self?.scheduleExplorerRefresh()
             self?.scheduleEditorReload(path)   // agent edited a file → refresh it if it's open
         }
     }
@@ -4603,7 +4607,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             for p in st.dock?.groups.flatMap({ $0.panels }) ?? [] {
                 (p.content as? TerminalView)?.dispose()
                 (p.content as? ChatPanel)?.teardown()
+                (p.content as? PreviewPanel)?.teardown()
             }
+            // 브라우저 패널은 dock 패널이 아닐 수도 있게 st.preview 로도 캐시된다 - WKWebView 리테인
+            // 사이클(웹콘텐츠 프로세스 누수)을 끊으려면 여기서도 명시적으로 teardown 한다.
+            st.preview?.teardown()
         }
         editor.disposePaths(st0?.openTabs ?? [])   // models stay resident across switches now
         states[url] = nil
@@ -7317,6 +7325,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    // 터미널 에이전트가 브라우저 내용 읽기/조작·HTTP 요청을 계속 허용하기로 한 출처들(앱 세션 동안).
+    // 네이티브 챗의 origin 별 1회 승인과 같은 근거 - 로그인 세션을 든 인증 사이트의 유출/변경을
+    // 자동 승인에 맡기지 않는다. 대화 카드가 없으므로 모달로 묻는다.
+    private var termBrowserAllowedOrigins: Set<String> = []
+    private var termApiAllowedOrigins: Set<String> = []
+    /// 자동 허용(로컬·이미 승인)이면 true. 아니면 모달을 띄워 허용/계속허용/거부를 받는다.
+    private func termOriginGate(_ origin: String, remembered: inout Set<String>, title: String, detail: String) -> Bool {
+        if origin.isEmpty || ChatPanel.isLocalOrigin(origin) || remembered.contains(origin) { return true }
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = detail
+        a.addButton(withTitle: t("common.confirm"))
+        a.addButton(withTitle: t("browser.eval.always"))
+        a.addButton(withTitle: t("common.cancel"))
+        switch a.runModal() {
+        case .alertFirstButtonReturn: return true
+        case .alertSecondButtonReturn: remembered.insert(origin); return true
+        default: return false
+        }
+    }
+
     // riven tools called by the CLI running in a TERMINAL pane. The actions are app-level, so this
     // reuses the same verbs the native chat exposes; `ask_user` has no chat card to draw here, so it
     // asks with a modal (the terminal agent is blocked waiting for the answer either way).
@@ -7343,39 +7372,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             srv.resolve(id, result: "opened \(p) in riven editor")
         case "riven_open_browser":
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            guard PreviewPanel.agentWebURL(s("url")) != nil else {
+                srv.resolve(id, result: "refused: only http/https URLs are allowed for agent navigation (got: \(s("url")))"); return
+            }
             ensureAux("preview", in: ws)
             preview(for: ws).openURLString(s("url"))
             srv.resolve(id, result: "opened \(s("url")) in riven preview panel")
         case "riven_screenshot":
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            let u = args["url"] as? String
+            if let u, PreviewPanel.agentWebURL(u) == nil {
+                srv.resolve(id, result: "refused: only http/https URLs are allowed for agent navigation (got: \(u))"); return
+            }
             ensureAux("preview", in: ws)
             let p = preview(for: ws)
-            let u = args["url"] as? String
             if let u { p.openURLString(u) }
             DispatchQueue.main.asyncAfter(deadline: .now() + (u == nil ? 0.2 : 1.6)) {
                 p.capture { path in
                     srv.resolve(id, result: path.map { "screenshot saved to \($0) (read it with the Read tool)" } ?? "screenshot failed")
                 }
             }
-        case "riven_browser_open", "riven_browser_state", "riven_browser_go", "riven_browser_read",
-             "riven_browser_tab",
-             "riven_browser_click", "riven_browser_fill", "riven_browser_wait", "riven_browser_scroll",
-             "riven_browser_eval":
-            // 터미널 에이전트에는 승인 카드를 띄울 대화창이 없다. eval 만 모달로 묻는다.
-            if tool == "riven_browser_eval" {
-                let a = NSAlert()
-                a.messageText = t("browser.eval.confirm", ["o": owner.map { preview(for: $0).currentOrigin } ?? ""])
-                a.informativeText = String((args["js"] as? String ?? "").prefix(400))
-                a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
-                guard a.runModal() == .alertFirstButtonReturn else {
-                    srv.resolve(id, result: t("browser.eval.denied")); return
-                }
+        case "riven_browser_open", "riven_browser_state", "riven_browser_go",
+             "riven_browser_tab", "riven_browser_wait", "riven_browser_scroll":
+            // 이동·조회성 동작은 그대로 실행.
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+        case "riven_browser_read", "riven_browser_click", "riven_browser_fill":
+            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인.
+            guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            let origin = preview(for: ws).currentOrigin
+            guard termOriginGate(origin, remembered: &termBrowserAllowedOrigins,
+                                 title: t("browser.act.confirm", ["o": origin]),
+                                 detail: tool) else {
+                srv.resolve(id, result: t("browser.act.denied")); return
+            }
+            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+        case "riven_browser_eval":
+            // 임의 자바스크립트 - 늘 모달로 묻는다(로그인 세션 위에서 무엇이든 가능).
+            let origin = owner.map { preview(for: $0).currentOrigin } ?? ""
+            let a = NSAlert()
+            a.messageText = t("browser.eval.confirm", ["o": origin])
+            a.informativeText = String((args["js"] as? String ?? "").prefix(400))
+            a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else {
+                srv.resolve(id, result: t("browser.eval.denied")); return
             }
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
+            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인.
+            let apiOrigin: String = { guard let u = URL(string: s("url")), let h = u.host else { return "" }
+                                      return "\(u.scheme ?? "https")://\(h)" }()
+            guard termOriginGate(apiOrigin, remembered: &termApiAllowedOrigins,
+                                 title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
+                                 detail: s("method") + " " + s("url")) else {
+                srv.resolve(id, result: t("api.req.denied")); return
+            }
             ensureAux("api", in: ws)
             api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
             srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
@@ -7593,7 +7647,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.headerUsagePopover?.isShown == true { self.rebuildUsagePopover() }
         }
         refreshUsage()
-        usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refreshUsage() }
+        usageTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            // 앱이 백그라운드(다른 앱이 앞)일 땐 60초 idle 폴링을 건너뛴다 - 이게 ~/.claude 를
+            // 훑고 api.anthropic.com 을 매분 깨우는 유일한 idle 드레인이었다. 턴 종료 갱신
+            // (refreshUsageAfterTurn)은 그대로 돌고, 앱으로 돌아오면 아래 옵저버가 즉시 채운다.
+            guard NSApp?.isActive == true else { return }
+            self?.refreshUsage()
+        }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.refreshUsage()   // 20s 최소간격 가드가 있어 과호출 안 됨
+        }
     }
     /// 턴이 끝날 때마다 부른다. 여러 팬이 거의 동시에 끝나면 API 를 그만큼 두드리게 되므로
     /// 3초 안의 요청은 하나로 합친다 (버튼으로 부를 때는 force 로 즉시).
