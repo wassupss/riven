@@ -2241,7 +2241,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // earlier bug saved the MAX (480 / 693), which then reopened the sidebar full-wide.
             let sw = CGFloat(Settings.shared.double("sidebarWidth", 220))
             let sr = CGFloat(Settings.shared.double("railHeight", 190))
-            let w = (sw >= 160 && sw <= 400) ? sw : 220     // out of range = corrupt (480 artifact) → default
+            let w = (sw >= 160 && sw <= Self.sidebarMaxWidth) ? sw : 220   // out of range = corrupt → default (상한은 드래그 상한과 동일)
             let rh = (sr >= 96 && sr <= 500) ? sr : 190     // (693 artifact) → default
             // Clean a corrupt stored value in place so it stops reverting every launch - otherwise
             // a stuck 480 keeps failing the range check and restoring 220 forever.
@@ -7937,11 +7937,12 @@ extension AppDelegate: NSSplitViewDelegate {
         if sv === sidebarSplit && i == 0 { return 96 }   // rail never smaller than one card
         return p
     }
+    static let sidebarMaxWidth: CGFloat = 700   // 드래그 상한 = 복원 허용 상한 (둘이 같아야 dead zone 없음)
     func splitView(_ sv: NSSplitView, constrainMaxCoordinate p: CGFloat, ofSubviewAt i: Int) -> CGFloat {
-        // 400 == the save/restore cap. Previously this allowed 480 while save/restore capped at 400,
-        // so dragging into (400,480] was silently NOT persisted (dead zone) and any old 480 artifact
-        // restored as the 220 default - the sidebar kept "reverting" to a width the user never set.
-        if sv === bodySplit && i == 0 { return 400 }
+        // 사이드바 최대 폭: 창 폭의 60%까지 허용하되 절대 상한 700(에디터/터미널이 최소한의 자리를
+        // 남기도록). 예전엔 400 고정이라 깊은 트리·긴 파일명에서 "더 못 늘린다"는 제보가 있었다.
+        // 드래그 상한과 복원 허용 상한(아래 restore 검증)을 같은 700 으로 맞춰 dead zone 을 없앤다.
+        if sv === bodySplit && i == 0 { return min(Self.sidebarMaxWidth, max(400, sv.bounds.width * 0.6)) }
         // 레일 높이에는 인위적인 상한을 두지 않는다 - 아래 탐색기가 사라지지 않을
         // 최소치(120pt)만 남기고 사이드바 거의 전체 높이까지 끌어올릴 수 있다.
         if sv === sidebarSplit && i == 0 { return max(96, sv.bounds.height - 120) }
