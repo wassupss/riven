@@ -7330,19 +7330,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 자동 승인에 맡기지 않는다. 대화 카드가 없으므로 모달로 묻는다.
     private var termBrowserAllowedOrigins: Set<String> = []
     private var termApiAllowedOrigins: Set<String> = []
-    /// 자동 허용(로컬·이미 승인)이면 true. 아니면 모달을 띄워 허용/계속허용/거부를 받는다.
-    private func termOriginGate(_ origin: String, remembered: inout Set<String>, title: String, detail: String) -> Bool {
-        if origin.isEmpty || ChatPanel.isLocalOrigin(origin) || remembered.contains(origin) { return true }
+    // CLI 에이전트의 선택/확인 팝업을 앱-전체 모달(NSAlert.runModal)이 아니라 riven 창에 붙는
+    // sheet 로 띄운다. (1) 앱 전체가 얼지 않고(다른 앱 조작 가능) 다이얼로그로 명확히 보여 "앱이
+    // 죽은 줄" 오해가 없다, (2) 창에 붙어 앱을 활성화하면 같이 전면으로 올라온다, (3) 위치가 창
+    // 기준이라 딴 디스플레이/마우스 위치로 새지 않는다, (4) owner 워크스페이스로 전환해 맥락을
+    // 보여 준다(다른 워크스페이스 팝업이 갑툭튀하던 것 완화). 완료 시 고른 버튼 인덱스를 콜백.
+    private func presentChoiceSheet(message: String, informative: String = "", buttons: [String],
+                                    warning: Bool = false, activateWorkspace ws: URL? = nil,
+                                    _ done: @escaping (Int) -> Void) {
+        if let ws, ws != workspace, workspaces.contains(ws) { activate(ws) }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
         let a = NSAlert()
-        a.messageText = title
-        a.informativeText = detail
-        a.addButton(withTitle: t("common.confirm"))
-        a.addButton(withTitle: t("browser.eval.always"))
-        a.addButton(withTitle: t("common.cancel"))
-        switch a.runModal() {
-        case .alertFirstButtonReturn: return true
-        case .alertSecondButtonReturn: remembered.insert(origin); return true
-        default: return false
+        a.messageText = message
+        if !informative.isEmpty { a.informativeText = informative }
+        a.alertStyle = warning ? .warning : .informational
+        for b in buttons { a.addButton(withTitle: b) }
+        a.beginSheetModal(for: window) { resp in
+            done(resp.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+        }
+    }
+    /// origin 별 1회 승인 게이트 (sheet 판). 자동 허용(로컬·이미 승인)이면 즉시 done(true).
+    private func termOriginGateSheet(_ origin: String, remembered: @escaping (String) -> Void,
+                                     allowed: Bool, title: String, detail: String,
+                                     ws: URL?, _ done: @escaping (Bool) -> Void) {
+        if allowed { done(true); return }
+        presentChoiceSheet(message: title, informative: detail,
+                           buttons: [t("common.confirm"), t("browser.eval.always"), t("common.cancel")],
+                           activateWorkspace: ws) { idx in
+            switch idx {
+            case 0: done(true)
+            case 1: remembered(origin); done(true)
+            default: done(false)
+            }
         }
     }
 
@@ -7358,13 +7378,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch tool {
         case "ask_user":
             let opts = args["options"] as? [String] ?? []
-            let a = NSAlert()
-            a.messageText = s("question").isEmpty ? t("title.terminal") : s("question")
-            a.alertStyle = .informational
-            for o in opts.prefix(3) { a.addButton(withTitle: o) }
-            if opts.isEmpty { a.addButton(withTitle: t("common.ok")) }
-            let idx = a.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            srv.resolve(id, result: opts.indices.contains(idx) ? opts[idx] : (opts.first ?? "ok"))
+            let btns = opts.isEmpty ? [t("common.ok")] : Array(opts.prefix(3))
+            presentChoiceSheet(message: s("question").isEmpty ? t("title.terminal") : s("question"),
+                               buttons: btns, activateWorkspace: owner) { idx in
+                srv.resolve(id, result: opts.indices.contains(idx) ? opts[idx] : (opts.first ?? "ok"))
+            }
         case "riven_open_file":
             let p = s("path")
             let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
@@ -7398,41 +7416,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_browser_read", "riven_browser_click", "riven_browser_fill":
-            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인.
+            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인(sheet).
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             let origin = preview(for: ws).currentOrigin
-            guard termOriginGate(origin, remembered: &termBrowserAllowedOrigins,
-                                 title: t("browser.act.confirm", ["o": origin]),
-                                 detail: tool) else {
-                srv.resolve(id, result: t("browser.act.denied")); return
+            let allowed = origin.isEmpty || ChatPanel.isLocalOrigin(origin) || termBrowserAllowedOrigins.contains(origin)
+            termOriginGateSheet(origin, remembered: { [weak self] o in self?.termBrowserAllowedOrigins.insert(o) },
+                                allowed: allowed, title: t("browser.act.confirm", ["o": origin]),
+                                detail: tool, ws: owner) { [weak self] ok in
+                if ok { self?.handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) } }
+                else { srv.resolve(id, result: t("browser.act.denied")) }
             }
-            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_browser_eval":
-            // 임의 자바스크립트 - 늘 모달로 묻는다(로그인 세션 위에서 무엇이든 가능).
-            let origin = owner.map { preview(for: $0).currentOrigin } ?? ""
-            let a = NSAlert()
-            a.messageText = t("browser.eval.confirm", ["o": origin])
-            a.informativeText = String((args["js"] as? String ?? "").prefix(400))
-            a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
-            guard a.runModal() == .alertFirstButtonReturn else {
-                srv.resolve(id, result: t("browser.eval.denied")); return
-            }
+            // 임의 자바스크립트 - 늘 sheet 로 묻는다(로그인 세션 위에서 무엇이든 가능).
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
-            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+            let origin = preview(for: ws).currentOrigin
+            presentChoiceSheet(message: t("browser.eval.confirm", ["o": origin]),
+                               informative: String((args["js"] as? String ?? "").prefix(400)),
+                               buttons: [t("common.confirm"), t("common.cancel")],
+                               activateWorkspace: owner) { [weak self] idx in
+                if idx == 0 { self?.handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) } }
+                else { srv.resolve(id, result: t("browser.eval.denied")) }
+            }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
-            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인.
+            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인(sheet). 호스트를 못 구하면(빈 origin) 승인을 받는다.
             let apiOrigin: String = { guard let u = URL(string: s("url")), let h = u.host else { return "" }
                                       return "\(u.scheme ?? "https")://\(h)" }()
-            guard termOriginGate(apiOrigin, remembered: &termApiAllowedOrigins,
-                                 title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
-                                 detail: s("method") + " " + s("url")) else {
-                srv.resolve(id, result: t("api.req.denied")); return
+            let allowed = !apiOrigin.isEmpty && (ChatPanel.isLocalOrigin(apiOrigin) || termApiAllowedOrigins.contains(apiOrigin))
+            termOriginGateSheet(apiOrigin, remembered: { [weak self] o in if !o.isEmpty { self?.termApiAllowedOrigins.insert(o) } },
+                                allowed: allowed, title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
+                                detail: s("method") + " " + s("url"), ws: owner) { [weak self] ok in
+                guard let self else { return }
+                guard ok else { srv.resolve(id, result: t("api.req.denied")); return }
+                self.ensureAux("api", in: ws)
+                self.api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
+                srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
             }
-            ensureAux("api", in: ws)
-            api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
-            srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
         case "riven_panels":
             guard let ws = owner, let dock = state(for: ws).dock else { srv.resolve(id, result: "(no dock)"); return }
             var out: [String] = []
