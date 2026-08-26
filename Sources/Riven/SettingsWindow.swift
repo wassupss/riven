@@ -656,8 +656,18 @@ final class SettingsWindow: NSPanel {
         // riven MCP 도구 개별 on/off. 끈 도구는 relay 광고에서 빠져 에이전트에게 아예 안 보인다.
         addSection(t("settings.mcpTools"))
         addNote(t("settings.mcpToolsDesc"))
-        // 토글은 새 세션부터 반영되므로, 실행 중 대화에 바로 적용하려면 전체 재시작.
-        addWideRow(primaryButton(t("settings.mcpRestartAll"), #selector(restartAllChatsFromSettings)))
+        // 토글은 새 세션부터 반영되므로, 실행 중 대화에 바로 적용하려면 전체 재시작. 결과(재시작한
+        // 대화 수)를 버튼에 바로 표시한다 - 예전엔 피드백이 채팅에만 떠서 "안 눌린다"고 느꼈다.
+        let restartBtn = PadButton(title: t("settings.mcpRestartAll"), font: UIScale.font(UIScale.body, .semibold),
+            textColor: Theme.isLight ? .white : Theme.hex(Theme.current.bg), bg: Theme.accent, border: .clear,
+            radius: 7, hPad: 16, height: 30)
+        restartBtn.onClick = { [weak restartBtn] in
+            let n = (NSApp.delegate as? AppDelegate)?.restartAllChatsOnCurrentCLI() ?? 0
+            restartBtn?.setTitle(n > 0 ? t("settings.mcpRestarted", ["n": String(n)]) : t("settings.mcpNoChats"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { restartBtn?.setTitle(t("settings.mcpRestartAll")) }
+        }
+        let restartWrap = NSStackView(views: [restartBtn]); restartWrap.orientation = .horizontal
+        addWideRow(restartWrap)
         for (i, tool) in ChatAskServer.allTools.enumerated() {
             let cb = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleMcpTool(_:)))
             cb.state = ChatAskServer.toolEnabled(tool.name) ? .on : .off
@@ -669,9 +679,6 @@ final class SettingsWindow: NSPanel {
     @objc private func toggleMcpTool(_ b: NSButton) {
         guard ChatAskServer.allTools.indices.contains(b.tag) else { return }
         Settings.shared.set("mcp.\(ChatAskServer.allTools[b.tag].name)", b.state == .on)
-    }
-    @objc private func restartAllChatsFromSettings() {
-        (NSApp.delegate as? AppDelegate)?.restartAllChatsOnCurrentCLI()
     }
     private let snippetPrefix = NSTextField()
     private let snippetBody = NSTextField()

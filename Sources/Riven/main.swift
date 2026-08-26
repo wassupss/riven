@@ -107,13 +107,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Restart every chat in the active workspace on the current CLI, resuming each conversation.
     /// Staggered so we don't exec N headless `claude` processes at the same instant. A chat that's
     /// mid-turn skips itself (restarting would drop the turn) - /restart it when it's idle.
-    func restartAllChatsOnCurrentCLI() {
-        let chats = (activeDock?.groups ?? []).flatMap { $0.panels }.compactMap { $0.content as? ChatPanel }
-        for (i, chat) in chats.enumerated() {
+    @discardableResult
+    func restartAllChatsOnCurrentCLI() -> Int {
+        let eligible = (activeDock?.groups ?? []).flatMap { $0.panels }
+            .compactMap { $0.content as? ChatPanel }.filter { $0.canRestartOnCLI }
+        for (i, chat) in eligible.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.4) { [weak chat] in
                 chat?.restartOnCurrentCLI()
             }
         }
+        return eligible.count
     }
     var window: NSWindow!
     var rail: WorkspaceRail!
