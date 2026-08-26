@@ -63,7 +63,10 @@ final class SettingsWindow: NSPanel {
                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         title = t("settings.title")
         backgroundColor = Theme.bg2
-        isFloatingPanel = true
+        // 항상 위(floating)가 아니라 일반 창처럼 riven 앱을 따라가야 한다 - 다른 앱을 앞세우면
+        // 설정창도 뒤로 가고, riven 을 다시 활성화하면 함께 올라온다(applicationDidBecomeActive).
+        isFloatingPanel = false
+        level = .normal
         isMovableByWindowBackground = true
         hidesOnDeactivate = false
         titlebarAppearsTransparent = true
@@ -578,12 +581,25 @@ final class SettingsWindow: NSPanel {
         // 설치된 CLI 를 그대로 보여 준다. 예전에는 못 찾으면 채팅 안에 "CLI 없음" 한 줄이
         // 뜰 뿐이라, 어디를 고쳐야 하는지 알 수 없었다.
         addSection(t("settings.cliSection"))
+        let app = NSApp.delegate as? AppDelegate
         for a in AgentDiscovery.available() {
             let ver = a.name == "Claude Code" ? AgentDiscovery.claudeVersion() : nil
-            addRow(a.name, desc: a.cmd, statusChip(ver.map { "v\($0)" } ?? t("settings.cliFound"), ok: true))
+            let chip = statusChip(ver.map { "v\($0)" } ?? t("settings.cliFound"), ok: true)
+            // 업데이트는 CLI 자신의 update 서브커맨드를 터미널에서 실행(claude update / codex update).
+            // 결과가 터미널에 그대로 보이고, 새 버전은 "대화 재시작"으로 실행 중 세션에 적용된다.
+            let upd = PadButton(title: t("settings.cliUpdate"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fg, bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
+            upd.onClick = { [weak app] in app?.runInTerminal("\(a.cmd) update") }
+            let rst = PadButton(title: t("settings.cliRestart"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fgDim, bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
+            rst.onClick = { [weak app] in app?.restartAllChatsOnCurrentCLI() }
+            let controls = NSStackView(views: [chip, upd, rst]); controls.spacing = 8
+            addRow(a.name, desc: a.cmd, controls)
         }
         if AgentDiscovery.available().isEmpty {
             addNote(t("settings.cliNone"))
+        } else {
+            addNote(t("settings.cliUpdateDesc"))
         }
 
         // Codex 는 처음 보는 훅을 실행하기 전에 자기 화면에서 한 번 물어본다. 그걸 모르면
@@ -636,6 +652,33 @@ final class SettingsWindow: NSPanel {
         addRow(t("settings.snippetPrefix"), desc: t("settings.snippetsHint"), field(snippetPrefix, width: 140))
         addRow(t("settings.snippetBody"), desc: nil, field(snippetBody, width: 260))
         addWideRow(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
+
+        // riven MCP 도구 개별 on/off. 끈 도구는 relay 광고에서 빠져 에이전트에게 아예 안 보인다.
+        addSection(t("settings.mcpTools"))
+        addNote(t("settings.mcpToolsDesc"))
+        // 토글은 새 세션부터 반영되므로, 실행 중 대화에 바로 적용하려면 전체 재시작. 결과(재시작한
+        // 대화 수)를 버튼에 바로 표시한다 - 예전엔 피드백이 채팅에만 떠서 "안 눌린다"고 느꼈다.
+        let restartBtn = PadButton(title: t("settings.mcpRestartAll"), font: UIScale.font(UIScale.body, .semibold),
+            textColor: Theme.isLight ? .white : Theme.hex(Theme.current.bg), bg: Theme.accent, border: .clear,
+            radius: 7, hPad: 16, height: 30)
+        restartBtn.onClick = { [weak restartBtn] in
+            let n = (NSApp.delegate as? AppDelegate)?.restartAllChatsOnCurrentCLI() ?? 0
+            restartBtn?.setTitle(n > 0 ? t("settings.mcpRestarted", ["n": String(n)]) : t("settings.mcpNoChats"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { restartBtn?.setTitle(t("settings.mcpRestartAll")) }
+        }
+        let restartWrap = NSStackView(views: [restartBtn]); restartWrap.orientation = .horizontal
+        addWideRow(restartWrap)
+        for (i, tool) in ChatAskServer.allTools.enumerated() {
+            let cb = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleMcpTool(_:)))
+            cb.state = ChatAskServer.toolEnabled(tool.name) ? .on : .off
+            cb.tag = i
+            cb.contentTintColor = Theme.fg
+            addRow(I18n.current == .en ? tool.en : tool.ko, desc: tool.name, cb)
+        }
+    }
+    @objc private func toggleMcpTool(_ b: NSButton) {
+        guard ChatAskServer.allTools.indices.contains(b.tag) else { return }
+        Settings.shared.set("mcp.\(ChatAskServer.allTools[b.tag].name)", b.state == .on)
     }
     private let snippetPrefix = NSTextField()
     private let snippetBody = NSTextField()
@@ -1045,8 +1088,9 @@ final class SettingsWindow: NSPanel {
         isFloatingPanel = on
         level = on ? .floating : .normal
     }
-    override func close() { setFloating(true); super.close() }
-    override func orderOut(_ sender: Any?) { setFloating(true); super.orderOut(sender) }
+    // child window 로 붙어 있으면 닫을 때 부모에서 떼어낸다(안 그러면 부모가 계속 참조/재오픈 꼬임).
+    override func close() { parent?.removeChildWindow(self); super.close() }
+    override func orderOut(_ sender: Any?) { parent?.removeChildWindow(self); super.orderOut(sender) }
     private func syncUpdateStatus() {
         guard let l = updateStatusLabel else { return }
         l.stringValue = Updater.shared.isChecking ? t("about.checking") : t("about.checkHint")

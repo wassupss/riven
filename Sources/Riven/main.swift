@@ -100,23 +100,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               activeDock?.activeGroup?.activePanel?.content is ChatPanel else { return }
         lastCLIVersionCheck = Date()
         // `claude --version` spawns a process (~100ms) - off the main thread so focus never hitches.
-        DispatchQueue.global(qos: .utility).async {
-            _ = AgentDiscovery.claudeVersion(fresh: true)   // refresh the cached on-disk version
-            DispatchQueue.main.async { [weak self] in
-                (self?.activeDock?.activeGroup?.activePanel?.content as? ChatPanel)?.offerCLIUpgradeIfStale()
-            }
-        }
+        // 예전엔 여기서 활성 챗에 "재시작할래?" 팝업을 대화에 끼워 넣었는데, 전역 설정이라 대화에
+        // 끼어드는 게 맞지 않아 없앴다. 버전만 갱신해 설정 → AI 의 CLI 섹션이 최신 버전을 보이게 한다.
+        DispatchQueue.global(qos: .utility).async { _ = AgentDiscovery.claudeVersion(fresh: true) }
     }
     /// Restart every chat in the active workspace on the current CLI, resuming each conversation.
     /// Staggered so we don't exec N headless `claude` processes at the same instant. A chat that's
     /// mid-turn skips itself (restarting would drop the turn) - /restart it when it's idle.
-    func restartAllChatsOnCurrentCLI() {
-        let chats = (activeDock?.groups ?? []).flatMap { $0.panels }.compactMap { $0.content as? ChatPanel }
-        for (i, chat) in chats.enumerated() {
+    @discardableResult
+    func restartAllChatsOnCurrentCLI() -> Int {
+        let eligible = (activeDock?.groups ?? []).flatMap { $0.panels }
+            .compactMap { $0.content as? ChatPanel }.filter { $0.canRestartOnCLI }
+        for (i, chat) in eligible.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.4) { [weak chat] in
                 chat?.restartOnCurrentCLI()
             }
         }
+        return eligible.count
     }
     var window: NSWindow!
     var rail: WorkspaceRail!
@@ -2929,6 +2929,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
+        // /login·/logout: 터미널 팬에서 `claude auth login|logout` 실행(브라우저 OAuth). 헤드리스
+        // 네이티브 챗은 대화형 로그인이 안 되므로, 로그인 자격증명은 이 CLI 흐름으로 만들어 공유한다.
+        chat.onAuth = { [weak self] sub in
+            guard let self else { return }
+            let cmd = AgentDiscovery.claudeCmd() ?? "claude"
+            self.runInTerminal("\(cmd) auth \(sub)")
+        }
         chat.onOpenSettings = { [weak self] in self?.settingsMenu() }
         // riven tools: open a URL / capture the preview panel for the agent.
         chat.onOpenBrowser = { [weak self] url in
@@ -6293,7 +6300,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWin: SettingsWindow?
     @objc private func settingsMenu() {
         if settingsWin == nil { settingsWin = SettingsWindow() }
-        settingsWin?.center(); settingsWin?.makeKeyAndOrderFront(nil)
+        guard let sw = settingsWin else { return }
+        if sw.parent == nil { sw.center() }
+        // 메인 창의 child(ordered: .above)로 붙인다 → macOS 가 항상 메인 위에 유지하고, 앱을
+        // 활성화/비활성화할 때 부모(메인)를 따라 함께 올라오고 내려간다. 포커스 이동이 메인을
+        // 앞세워도 child 는 그 위에 남는다(예전엔 독립 창이라 메인 밑으로 깔렸다).
+        window.addChildWindow(sw, ordered: .above)
+        sw.makeKeyAndOrderFront(nil)
     }
 
     private var commandPalette: CommandPalette?
@@ -7330,19 +7343,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // 자동 승인에 맡기지 않는다. 대화 카드가 없으므로 모달로 묻는다.
     private var termBrowserAllowedOrigins: Set<String> = []
     private var termApiAllowedOrigins: Set<String> = []
-    /// 자동 허용(로컬·이미 승인)이면 true. 아니면 모달을 띄워 허용/계속허용/거부를 받는다.
-    private func termOriginGate(_ origin: String, remembered: inout Set<String>, title: String, detail: String) -> Bool {
-        if origin.isEmpty || ChatPanel.isLocalOrigin(origin) || remembered.contains(origin) { return true }
+    // CLI 에이전트의 선택/확인 팝업을 앱-전체 모달(NSAlert.runModal)이 아니라 riven 창에 붙는
+    // sheet 로 띄운다. (1) 앱 전체가 얼지 않고(다른 앱 조작 가능) 다이얼로그로 명확히 보여 "앱이
+    // 죽은 줄" 오해가 없다, (2) 창에 붙어 앱을 활성화하면 같이 전면으로 올라온다, (3) 위치가 창
+    // 기준이라 딴 디스플레이/마우스 위치로 새지 않는다, (4) owner 워크스페이스로 전환해 맥락을
+    // 보여 준다(다른 워크스페이스 팝업이 갑툭튀하던 것 완화). 완료 시 고른 버튼 인덱스를 콜백.
+    private func presentChoiceSheet(message: String, informative: String = "", buttons: [String],
+                                    warning: Bool = false, activateWorkspace ws: URL? = nil,
+                                    _ done: @escaping (Int) -> Void) {
+        if let ws, ws != workspace, workspaces.contains(ws) { activate(ws) }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
         let a = NSAlert()
-        a.messageText = title
-        a.informativeText = detail
-        a.addButton(withTitle: t("common.confirm"))
-        a.addButton(withTitle: t("browser.eval.always"))
-        a.addButton(withTitle: t("common.cancel"))
-        switch a.runModal() {
-        case .alertFirstButtonReturn: return true
-        case .alertSecondButtonReturn: remembered.insert(origin); return true
-        default: return false
+        a.messageText = message
+        if !informative.isEmpty { a.informativeText = informative }
+        a.alertStyle = warning ? .warning : .informational
+        for b in buttons { a.addButton(withTitle: b) }
+        a.beginSheetModal(for: window) { resp in
+            done(resp.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+        }
+    }
+    /// origin 별 1회 승인 게이트 (sheet 판). 자동 허용(로컬·이미 승인)이면 즉시 done(true).
+    private func termOriginGateSheet(_ origin: String, remembered: @escaping (String) -> Void,
+                                     allowed: Bool, title: String, detail: String,
+                                     ws: URL?, _ done: @escaping (Bool) -> Void) {
+        if allowed { done(true); return }
+        presentChoiceSheet(message: title, informative: detail,
+                           buttons: [t("common.confirm"), t("browser.eval.always"), t("common.cancel")],
+                           activateWorkspace: ws) { idx in
+            switch idx {
+            case 0: done(true)
+            case 1: remembered(origin); done(true)
+            default: done(false)
+            }
         }
     }
 
@@ -7355,16 +7388,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 부른 CLI 의 작업 폴더로 워크스페이스를 정한다. 릴레이가 이 값을 실어 보내므로,
         // 사용자가 지금 다른 워크스페이스를 보고 있어도 그쪽 화면을 건드리지 않는다.
         let owner = workspaceContaining(cwd) ?? workspace
+        // 설정에서 끈 도구는 relay 광고에서 빠지지만, 방어적으로 여기서도 거부.
+        if ChatAskServer.allTools.contains(where: { $0.name == tool }), !ChatAskServer.toolEnabled(tool) {
+            srv.resolve(id, result: t("mcp.toolDisabled")); return
+        }
         switch tool {
         case "ask_user":
             let opts = args["options"] as? [String] ?? []
-            let a = NSAlert()
-            a.messageText = s("question").isEmpty ? t("title.terminal") : s("question")
-            a.alertStyle = .informational
-            for o in opts.prefix(3) { a.addButton(withTitle: o) }
-            if opts.isEmpty { a.addButton(withTitle: t("common.ok")) }
-            let idx = a.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
-            srv.resolve(id, result: opts.indices.contains(idx) ? opts[idx] : (opts.first ?? "ok"))
+            let btns = opts.isEmpty ? [t("common.ok")] : Array(opts.prefix(3))
+            presentChoiceSheet(message: s("question").isEmpty ? t("title.terminal") : s("question"),
+                               buttons: btns, activateWorkspace: owner) { idx in
+                srv.resolve(id, result: opts.indices.contains(idx) ? opts[idx] : (opts.first ?? "ok"))
+            }
         case "riven_open_file":
             let p = s("path")
             let line = (args["line"] as? NSNumber)?.intValue ?? (args["line"] as? Int) ?? 1
@@ -7398,41 +7433,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_browser_read", "riven_browser_click", "riven_browser_fill":
-            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인.
+            // 페이지 내용 유출(read)·조작(click/fill) - 인증된 외부 사이트에서 origin 당 1회 승인(sheet).
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
             let origin = preview(for: ws).currentOrigin
-            guard termOriginGate(origin, remembered: &termBrowserAllowedOrigins,
-                                 title: t("browser.act.confirm", ["o": origin]),
-                                 detail: tool) else {
-                srv.resolve(id, result: t("browser.act.denied")); return
+            let allowed = origin.isEmpty || ChatPanel.isLocalOrigin(origin) || termBrowserAllowedOrigins.contains(origin)
+            termOriginGateSheet(origin, remembered: { [weak self] o in self?.termBrowserAllowedOrigins.insert(o) },
+                                allowed: allowed, title: t("browser.act.confirm", ["o": origin]),
+                                detail: tool, ws: owner) { [weak self] ok in
+                if ok { self?.handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) } }
+                else { srv.resolve(id, result: t("browser.act.denied")) }
             }
-            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
         case "riven_browser_eval":
-            // 임의 자바스크립트 - 늘 모달로 묻는다(로그인 세션 위에서 무엇이든 가능).
-            let origin = owner.map { preview(for: $0).currentOrigin } ?? ""
-            let a = NSAlert()
-            a.messageText = t("browser.eval.confirm", ["o": origin])
-            a.informativeText = String((args["js"] as? String ?? "").prefix(400))
-            a.addButton(withTitle: t("common.confirm")); a.addButton(withTitle: t("common.cancel"))
-            guard a.runModal() == .alertFirstButtonReturn else {
-                srv.resolve(id, result: t("browser.eval.denied")); return
-            }
+            // 임의 자바스크립트 - 늘 sheet 로 묻는다(로그인 세션 위에서 무엇이든 가능).
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
-            handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) }
+            let origin = preview(for: ws).currentOrigin
+            presentChoiceSheet(message: t("browser.eval.confirm", ["o": origin]),
+                               informative: String((args["js"] as? String ?? "").prefix(400)),
+                               buttons: [t("common.confirm"), t("common.cancel")],
+                               activateWorkspace: owner) { [weak self] idx in
+                if idx == 0 { self?.handleBrowserTool(tool, args, in: ws) { srv.resolve(id, result: $0) } }
+                else { srv.resolve(id, result: t("browser.eval.denied")) }
+            }
         case "riven_api_request":
             let hdrs = (args["headers"] as? [String: Any])?.map { "\($0.key): \($0.value)" }.joined(separator: "\n") ?? ""
             guard let ws = owner else { srv.resolve(id, result: "no workspace"); return }
-            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인.
+            // 임의 HTTP(유출/SSRF) - 대상 호스트별 1회 승인(sheet). 호스트를 못 구하면(빈 origin) 승인을 받는다.
             let apiOrigin: String = { guard let u = URL(string: s("url")), let h = u.host else { return "" }
                                       return "\(u.scheme ?? "https")://\(h)" }()
-            guard termOriginGate(apiOrigin, remembered: &termApiAllowedOrigins,
-                                 title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
-                                 detail: s("method") + " " + s("url")) else {
-                srv.resolve(id, result: t("api.req.denied")); return
+            let allowed = !apiOrigin.isEmpty && (ChatPanel.isLocalOrigin(apiOrigin) || termApiAllowedOrigins.contains(apiOrigin))
+            termOriginGateSheet(apiOrigin, remembered: { [weak self] o in if !o.isEmpty { self?.termApiAllowedOrigins.insert(o) } },
+                                allowed: allowed, title: t("api.req.confirm", ["o": apiOrigin.isEmpty ? s("url") : apiOrigin]),
+                                detail: s("method") + " " + s("url"), ws: owner) { [weak self] ok in
+                guard let self else { return }
+                guard ok else { srv.resolve(id, result: t("api.req.denied")); return }
+                self.ensureAux("api", in: ws)
+                self.api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
+                srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
             }
-            ensureAux("api", in: ws)
-            api(for: ws).run(method: s("method").isEmpty ? "GET" : s("method"), url: s("url"), headers: hdrs, body: s("body"))
-            srv.resolve(id, result: "ran \(s("method")) \(s("url")) in riven's API panel")
         case "riven_panels":
             guard let ws = owner, let dock = state(for: ws).dock else { srv.resolve(id, result: "(no dock)"); return }
             var out: [String] = []
@@ -7860,6 +7897,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // 앱을 (독 아이콘·⌘Tab 으로) 활성화하면 열려 있던 riven 창을 전부 전면으로 올린다. 설정창·릴리즈
+    // 노트·팝업 등이 뒤에 숨어 못 찾던 것 방지. 핵심: 메인 창을 먼저 올린 뒤 그 "위에" 보조 창들을
+    // 올려야 보조 창이 메인에 가리지 않는다(예전엔 OS 가 메인을 이미 앞세운 뒤라 메인이 설정창을
+    // 덮었다). OS 의 활성화 창-올리기가 끝난 다음에 돌도록 async 로 미룬다. sheet(부모 있음)는 제외.
+    private func bringAllWindowsFront() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.window?.orderFront(nil)   // 메인을 먼저 (앱 스택 바닥)
+            for w in NSApp.orderedWindows.reversed()
+            where w.isVisible && w.parent == nil && w !== self.window {
+                w.orderFront(nil)          // 보조 창을 메인 위로 (원래 z-순서 유지)
+            }
+        }
+    }
+    func applicationDidBecomeActive(_ n: Notification) { bringAllWindowsFront() }
+    func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if hasVisibleWindows { bringAllWindowsFront() } else { window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
+    // Cmd+Q 는 열린 탭·세션을 통째로 닫으므로 실수 종료를 한 번 막아 준다. "다시 묻지 않기" 를
+    // 고르면 confirmQuit=false 로 저장돼 이후엔 바로 종료한다. 에이전트가 작업 중이면 그 사실을 알린다.
+    func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
+        guard Settings.shared.bool("confirmQuit", true) else { return .terminateNow }
+        let busy = states.values.contains { st in
+            (st.dock?.groups.flatMap { $0.panels } ?? []).contains { ($0.content as? ChatPanel)?.isBusy == true }
+        }
+        let a = NSAlert()
+        a.messageText = t("quit.confirm.title")
+        a.informativeText = busy ? t("quit.confirm.busy") : t("quit.confirm.body")
+        a.alertStyle = busy ? .warning : .informational
+        a.addButton(withTitle: t("quit.confirm"))     // 종료
+        a.addButton(withTitle: t("common.cancel"))
+        a.showsSuppressionButton = true
+        a.suppressionButton?.title = t("quit.confirm.dontAsk")
+        let r = a.runModal()
+        if a.suppressionButton?.state == .on { Settings.shared.set("confirmQuit", false) }
+        return r == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
     func applicationWillTerminate(_ n: Notification) {
         notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
         SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다

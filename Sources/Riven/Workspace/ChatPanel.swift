@@ -84,6 +84,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onEditedFile: ((String) -> Void)?   // agent edited a file → record it in the Changes panel
     var onListAgents: (() -> [String])?         // .claude/agents names (project + user)
     var onOpenAgentChat: ((String?) -> Void)?   // open a NEW chat pane running `claude --agent <name>`
+    var onAuth: ((String) -> Void)?             // "login"/"logout" → 터미널 팬에서 `claude auth <sub>`
     var onAgentPanes: (() -> String)?                                     // peers this agent can talk to
     var onAskAgent: ((String, String, @escaping (String) -> Void) -> Void)?  // delegate work to a peer
     /// Fan out to several peers at once; the callback fires when every one of them has answered.
@@ -678,6 +679,8 @@ final class ChatPanel: NSView, Themable, Scalable {
     // 남아 있으면, 아무 일도 안 하는 멤버가 riven_agents/조직도에 "작업 중" 으로 잘못 뜬다
     // (사용자가 "대기인데 왜 작업중?" 이라고 본 것). 죽은 세션은 busy 로 세지 않는다.
     var isBusy: Bool { turnStart != nil && session?.isAlive != false }
+    /// 새 CLI 버전/설정(MCP 토글 등)을 적용하려 재시작할 수 있는 대화인가 (claude·세션 있음·유휴).
+    var canRestartOnCLI: Bool { agentKind == .claude && (sessionId != nil || session?.sessionId != nil) && !isBusy }
 
     /// 이 팬에 지금 위임을 보내도 되는지 (세션이 떠 있는지). 파이프라인이 갓 만든 멤버 팬은
     /// claude 프로세스가 뜨는 데 잠깐 걸리므로, 보내기 전에 이 값으로 준비됨을 확인한다.
@@ -1057,7 +1060,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// there's no session yet or a turn is in flight (restarting mid-turn would drop it).
     @discardableResult
     func restartOnCurrentCLI() -> Bool {
-        guard agentKind == .claude, let sid = session?.sessionId else { return false }
+        guard agentKind == .claude, let sid = session?.sessionId ?? sessionId else { return false }
         guard !isBusy else { addSystem(t("chat.cliRestartBusy")); return false }
         cliUpgradeOfferedFor = nil
         switchSession(to: sid)   // stop → current claudeCmd() --resume sid → replay history
@@ -1268,6 +1271,10 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 이미 만료·취소된 요청이면 조용히 사라지지 않고 대화에 남긴다 - 예전엔 카드를
             // 눌러도 아무 일이 없어서 클릭이 씹힌 건지 알 수 없었다.
             if asker?.respondTool(id, text) != true { addSystem(t("chat.tool.expired")) }
+        }
+        // 설정에서 끈 도구는 relay 광고에서 이미 빠지지만, 혹시 호출되면 방어적으로 거부한다.
+        if ChatAskServer.allTools.contains(where: { $0.name == tool }), !ChatAskServer.toolEnabled(tool) {
+            reply(t("mcp.toolDisabled")); return
         }
         switch tool {
         case "ask_user":
@@ -1947,6 +1954,16 @@ final class ChatPanel: NSView, Themable, Scalable {
         switch cmd {
         case "clear":
             clearSession()
+            return true
+        case "login":
+            // claude 구독 로그인. 네이티브 챗은 헤드리스라 대화형 로그인이 안 되므로, 터미널 팬에서
+            // `claude auth login`(브라우저 OAuth)을 연다. 완료하면 이 자격증명을 헤드리스 세션이 쓴다.
+            addSystem(t("chat.loginOpening"))
+            onAuth?("login")
+            return true
+        case "logout":
+            addSystem(t("chat.logoutOpening"))
+            onAuth?("logout")
             return true
         case "resume":
             let sessions = listSessions()
@@ -2638,6 +2655,18 @@ final class ChatPanel: NSView, Themable, Scalable {
     // if consumed (so ChatInput doesn't also act on the key).
     private func inputKey(_ sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertBacktab(_:)) { cycleMode(); return true }
+        // 승인/선택 카드가 대기 중이고 입력이 비어 있으면 방향키/Enter/Esc 를 카드로 보낸다. 카드가
+        // 포커스를 못 잡아도(다른 워크스페이스·에디터가 포커스 가져감) 키가 항상 먹게 - "가끔
+        // 위아래 안 움직여 마우스로 눌러야" 하던 것 수정. 입력에 뭔가 쳤으면 편집을 방해하지 않는다.
+        if let card = pendingCard, !card.isDecided, input.stringValue.isEmpty {
+            switch sel {
+            case #selector(NSResponder.moveUp(_:)):          card.moveSelection(-1); return true
+            case #selector(NSResponder.moveDown(_:)):        card.moveSelection(1);  return true
+            case #selector(NSResponder.insertNewline(_:)):   card.pickSelected();    return true
+            case #selector(NSResponder.cancelOperation(_:)): card.cancelChoice();    return true
+            default: break
+            }
+        }
         if !slash.isHidden {
             switch sel {
             case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true
@@ -2707,6 +2736,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         .init(name: "review", desc: t("chat.cmd.review")),
         .init(name: "config", desc: t("chat.cmd.config")),
         .init(name: "update", desc: t("chat.cmd.update")),
+        .init(name: "login", desc: t("chat.cmd.login")),
+        .init(name: "logout", desc: t("chat.cmd.logout")),
         .init(name: "help", desc: t("chat.cmd.help"))
     ]
     private static func discoverCommands(cwd: String) -> [SlashCommand] {
