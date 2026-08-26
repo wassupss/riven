@@ -7889,10 +7889,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
     // 앱을 (독 아이콘·⌘Tab 으로) 활성화하면 열려 있던 riven 창을 전부 전면으로 올린다. 설정창·릴리즈
-    // 노트·팝업·팝아웃 등이 뒤에 숨어 "떠 있는 줄 모르고" 못 찾던 것 방지. sheet(부모에 붙은 창)는
-    // 부모를 올리면 따라오므로 최상위(parent==nil) 창만, 원래 z-순서 유지하도록 뒤→앞으로 orderFront.
+    // 노트·팝업 등이 뒤에 숨어 못 찾던 것 방지. 핵심: 메인 창을 먼저 올린 뒤 그 "위에" 보조 창들을
+    // 올려야 보조 창이 메인에 가리지 않는다(예전엔 OS 가 메인을 이미 앞세운 뒤라 메인이 설정창을
+    // 덮었다). OS 의 활성화 창-올리기가 끝난 다음에 돌도록 async 로 미룬다. sheet(부모 있음)는 제외.
     private func bringAllWindowsFront() {
-        for w in NSApp.orderedWindows.reversed() where w.isVisible && w.parent == nil { w.orderFront(nil) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.window?.orderFront(nil)   // 메인을 먼저 (앱 스택 바닥)
+            for w in NSApp.orderedWindows.reversed()
+            where w.isVisible && w.parent == nil && w !== self.window {
+                w.orderFront(nil)          // 보조 창을 메인 위로 (원래 z-순서 유지)
+            }
+        }
     }
     func applicationDidBecomeActive(_ n: Notification) { bringAllWindowsFront() }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
