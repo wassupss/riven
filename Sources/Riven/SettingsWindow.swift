@@ -63,7 +63,10 @@ final class SettingsWindow: NSPanel {
                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         title = t("settings.title")
         backgroundColor = Theme.bg2
-        isFloatingPanel = true
+        // 항상 위(floating)가 아니라 일반 창처럼 riven 앱을 따라가야 한다 - 다른 앱을 앞세우면
+        // 설정창도 뒤로 가고, riven 을 다시 활성화하면 함께 올라온다(applicationDidBecomeActive).
+        isFloatingPanel = false
+        level = .normal
         isMovableByWindowBackground = true
         hidesOnDeactivate = false
         titlebarAppearsTransparent = true
@@ -1078,8 +1081,8 @@ final class SettingsWindow: NSPanel {
         isFloatingPanel = on
         level = on ? .floating : .normal
     }
-    override func close() { setFloating(true); super.close() }
-    override func orderOut(_ sender: Any?) { setFloating(true); super.orderOut(sender) }
+    override func close() { setFloating(false); super.close() }
+    override func orderOut(_ sender: Any?) { setFloating(false); super.orderOut(sender) }
     private func syncUpdateStatus() {
         guard let l = updateStatusLabel else { return }
         l.stringValue = Updater.shared.isChecking ? t("about.checking") : t("about.checkHint")
