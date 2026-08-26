@@ -84,6 +84,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     var onEditedFile: ((String) -> Void)?   // agent edited a file → record it in the Changes panel
     var onListAgents: (() -> [String])?         // .claude/agents names (project + user)
     var onOpenAgentChat: ((String?) -> Void)?   // open a NEW chat pane running `claude --agent <name>`
+    var onAuth: ((String) -> Void)?             // "login"/"logout" → 터미널 팬에서 `claude auth <sub>`
     var onAgentPanes: (() -> String)?                                     // peers this agent can talk to
     var onAskAgent: ((String, String, @escaping (String) -> Void) -> Void)?  // delegate work to a peer
     /// Fan out to several peers at once; the callback fires when every one of them has answered.
@@ -1952,6 +1953,16 @@ final class ChatPanel: NSView, Themable, Scalable {
         case "clear":
             clearSession()
             return true
+        case "login":
+            // claude 구독 로그인. 네이티브 챗은 헤드리스라 대화형 로그인이 안 되므로, 터미널 팬에서
+            // `claude auth login`(브라우저 OAuth)을 연다. 완료하면 이 자격증명을 헤드리스 세션이 쓴다.
+            addSystem(t("chat.loginOpening"))
+            onAuth?("login")
+            return true
+        case "logout":
+            addSystem(t("chat.logoutOpening"))
+            onAuth?("logout")
+            return true
         case "resume":
             let sessions = listSessions()
             if sessions.isEmpty { addSystem(t("chat.sessions.none")); return true }
@@ -2723,6 +2734,8 @@ final class ChatPanel: NSView, Themable, Scalable {
         .init(name: "review", desc: t("chat.cmd.review")),
         .init(name: "config", desc: t("chat.cmd.config")),
         .init(name: "update", desc: t("chat.cmd.update")),
+        .init(name: "login", desc: t("chat.cmd.login")),
+        .init(name: "logout", desc: t("chat.cmd.logout")),
         .init(name: "help", desc: t("chat.cmd.help"))
     ]
     private static func discoverCommands(cwd: String) -> [SlashCommand] {

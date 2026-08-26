@@ -2929,6 +2929,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onFocused = { [weak self, weak chat] in self?.focusGroup(containing: chat) }
         chat.onShowEdit = { [weak self] url, old, new in self?.showChatEdit(url, oldString: old, newString: new) }
         chat.onResumeRequest = { [weak self] in self?.resumeChatSession() }
+        // /login·/logout: 터미널 팬에서 `claude auth login|logout` 실행(브라우저 OAuth). 헤드리스
+        // 네이티브 챗은 대화형 로그인이 안 되므로, 로그인 자격증명은 이 CLI 흐름으로 만들어 공유한다.
+        chat.onAuth = { [weak self] sub in
+            guard let self else { return }
+            let cmd = AgentDiscovery.claudeCmd() ?? "claude"
+            self.newTerminalRunning("\(cmd) auth \(sub)")
+        }
         chat.onOpenSettings = { [weak self] in self?.settingsMenu() }
         // riven tools: open a URL / capture the preview panel for the agent.
         chat.onOpenBrowser = { [weak self] url in
