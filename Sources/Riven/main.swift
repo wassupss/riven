@@ -6297,7 +6297,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWin: SettingsWindow?
     @objc private func settingsMenu() {
         if settingsWin == nil { settingsWin = SettingsWindow() }
-        settingsWin?.center(); settingsWin?.makeKeyAndOrderFront(nil)
+        guard let sw = settingsWin else { return }
+        if sw.parent == nil { sw.center() }
+        // 메인 창의 child(ordered: .above)로 붙인다 → macOS 가 항상 메인 위에 유지하고, 앱을
+        // 활성화/비활성화할 때 부모(메인)를 따라 함께 올라오고 내려간다. 포커스 이동이 메인을
+        // 앞세워도 child 는 그 위에 남는다(예전엔 독립 창이라 메인 밑으로 깔렸다).
+        window.addChildWindow(sw, ordered: .above)
+        sw.makeKeyAndOrderFront(nil)
     }
 
     private var commandPalette: CommandPalette?

@@ -1081,8 +1081,9 @@ final class SettingsWindow: NSPanel {
         isFloatingPanel = on
         level = on ? .floating : .normal
     }
-    override func close() { setFloating(false); super.close() }
-    override func orderOut(_ sender: Any?) { setFloating(false); super.orderOut(sender) }
+    // child window 로 붙어 있으면 닫을 때 부모에서 떼어낸다(안 그러면 부모가 계속 참조/재오픈 꼬임).
+    override func close() { parent?.removeChildWindow(self); super.close() }
+    override func orderOut(_ sender: Any?) { parent?.removeChildWindow(self); super.orderOut(sender) }
     private func syncUpdateStatus() {
         guard let l = updateStatusLabel else { return }
         l.stringValue = Updater.shared.isChecking ? t("about.checking") : t("about.checkHint")
