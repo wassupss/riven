@@ -7375,6 +7375,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 부른 CLI 의 작업 폴더로 워크스페이스를 정한다. 릴레이가 이 값을 실어 보내므로,
         // 사용자가 지금 다른 워크스페이스를 보고 있어도 그쪽 화면을 건드리지 않는다.
         let owner = workspaceContaining(cwd) ?? workspace
+        // 설정에서 끈 도구는 relay 광고에서 빠지지만, 방어적으로 여기서도 거부.
+        if ChatAskServer.allTools.contains(where: { $0.name == tool }), !ChatAskServer.toolEnabled(tool) {
+            srv.resolve(id, result: t("mcp.toolDisabled")); return
+        }
         switch tool {
         case "ask_user":
             let opts = args["options"] as? [String] ?? []

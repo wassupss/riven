@@ -1269,6 +1269,10 @@ final class ChatPanel: NSView, Themable, Scalable {
             // 눌러도 아무 일이 없어서 클릭이 씹힌 건지 알 수 없었다.
             if asker?.respondTool(id, text) != true { addSystem(t("chat.tool.expired")) }
         }
+        // 설정에서 끈 도구는 relay 광고에서 이미 빠지지만, 혹시 호출되면 방어적으로 거부한다.
+        if ChatAskServer.allTools.contains(where: { $0.name == tool }), !ChatAskServer.toolEnabled(tool) {
+            reply(t("mcp.toolDisabled")); return
+        }
         switch tool {
         case "ask_user":
             presentAsk(id, s("question"), args["options"] as? [String] ?? [], reply)

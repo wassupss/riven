@@ -636,6 +636,21 @@ final class SettingsWindow: NSPanel {
         addRow(t("settings.snippetPrefix"), desc: t("settings.snippetsHint"), field(snippetPrefix, width: 140))
         addRow(t("settings.snippetBody"), desc: nil, field(snippetBody, width: 260))
         addWideRow(primaryButton(t("settings.addSnippet"), #selector(addSnippet)))
+
+        // riven MCP 도구 개별 on/off. 끈 도구는 relay 광고에서 빠져 에이전트에게 아예 안 보인다.
+        addSection(t("settings.mcpTools"))
+        addNote(t("settings.mcpToolsDesc"))
+        for (i, tool) in ChatAskServer.allTools.enumerated() {
+            let cb = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleMcpTool(_:)))
+            cb.state = ChatAskServer.toolEnabled(tool.name) ? .on : .off
+            cb.tag = i
+            cb.contentTintColor = Theme.fg
+            addRow(I18n.current == .en ? tool.en : tool.ko, desc: tool.name, cb)
+        }
+    }
+    @objc private func toggleMcpTool(_ b: NSButton) {
+        guard ChatAskServer.allTools.indices.contains(b.tag) else { return }
+        Settings.shared.set("mcp.\(ChatAskServer.allTools[b.tag].name)", b.state == .on)
     }
     private let snippetPrefix = NSTextField()
     private let snippetBody = NSTextField()

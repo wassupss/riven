@@ -629,6 +629,10 @@ enum I18n {
         "api.req.denied": ("사용자가 HTTP 요청을 거부했습니다.",
                            "The user declined the HTTP request."),
         "chat.browserAction": ("브라우저: {a}", "Browser: {a}"),
+        "mcp.toolDisabled": ("이 도구는 riven 설정에서 꺼져 있습니다.", "This tool is disabled in riven settings."),
+        "settings.mcpTools": ("riven 도구 (MCP)", "riven tools (MCP)"),
+        "settings.mcpToolsDesc": ("에이전트가 쓸 수 있는 riven 도구를 개별로 켜고 끕니다. 끈 도구는 에이전트에게 아예 안 보입니다(새 세션부터 반영).",
+                                  "Toggle each riven tool available to agents. Disabled tools are hidden from the agent (applies to new sessions)."),
         // API client panel
         "api.services": ("서비스", "Services"), "api.templates": ("템플릿", "Templates"),
         "api.env": ("환경", "Env"), "api.history": ("요청 기록", "History"),

@@ -39,11 +39,54 @@ final class ChatAskServer {
         guard writeServer(), start() else { return nil }
     }
 
-    // Value for `--mcp-config`: a stdio MCP server that relays to our socket.
+    // riven MCP 도구 전체 (name, 한/영 라벨). 설정에서 개별 on/off. 기본 ON. 라벨은 설정 UI 용.
+    static let allTools: [(name: String, ko: String, en: String)] = [
+        ("ask_user", "답변 선택 팝업", "Ask-user popup"),
+        ("riven_open_file", "에디터에 파일 열기", "Open file in editor"),
+        ("riven_open_browser", "브라우저에 URL 열기", "Open URL in browser"),
+        ("riven_screenshot", "브라우저 스크린샷", "Browser screenshot"),
+        ("riven_browser_open", "브라우저: 열기", "Browser: open"),
+        ("riven_browser_tab", "브라우저: 탭 전환/닫기", "Browser: tabs"),
+        ("riven_browser_state", "브라우저: 상태 읽기", "Browser: state"),
+        ("riven_browser_go", "브라우저: 뒤로/앞으로/새로고침", "Browser: navigate"),
+        ("riven_browser_read", "브라우저: 페이지 내용 읽기", "Browser: read page"),
+        ("riven_browser_click", "브라우저: 클릭", "Browser: click"),
+        ("riven_browser_fill", "브라우저: 입력/제출", "Browser: fill"),
+        ("riven_browser_wait", "브라우저: 대기", "Browser: wait"),
+        ("riven_browser_scroll", "브라우저: 스크롤", "Browser: scroll"),
+        ("riven_browser_eval", "브라우저: 자바스크립트 실행", "Browser: eval JS"),
+        ("riven_api_request", "HTTP 요청 실행", "HTTP request"),
+        ("riven_panels", "패널 목록", "List panels"),
+        ("riven_open_panel", "패널 열기", "Open panel"),
+        ("riven_close_panel", "패널 닫기", "Close panel"),
+        ("riven_agents", "에이전트 목록", "List agents"),
+        ("riven_ask_agent", "에이전트에 위임", "Delegate to an agent"),
+        ("riven_ask_agents", "여러 에이전트에 위임", "Delegate to agents"),
+        ("riven_group_add_agent", "그룹에 에이전트 추가", "Add agent to group"),
+        ("riven_group_remove_agent", "그룹에서 에이전트 제거", "Remove agent from group"),
+        ("riven_group_delete", "그룹 삭제", "Delete group"),
+        ("riven_start_pipeline", "직렬 파이프라인 실행", "Start pipeline"),
+        ("riven_workspaces", "워크스페이스 목록", "List workspaces"),
+        ("riven_open_workspace", "워크스페이스 열기", "Open workspace"),
+        ("riven_note_list", "메모 목록", "List notes"),
+        ("riven_note_read", "메모 읽기", "Read note"),
+        ("riven_note_write", "메모 쓰기", "Write note"),
+        ("riven_note_append", "메모 이어쓰기", "Append note"),
+        ("riven_doc_write", "문서(.md) 쓰기", "Write doc"),
+        ("riven_note_save_file", "메모를 파일로 저장", "Save note to file"),
+    ]
+    static func toolEnabled(_ name: String) -> Bool { Settings.shared.bool("mcp.\(name)", true) }
+    static func enabledToolNames() -> [String] { allTools.map { $0.name }.filter { toolEnabled($0.self) } }
+
+    // Value for `--mcp-config`: a stdio MCP server that relays to our socket. The 4th arg is the
+    // JSON list of ENABLED tool names - the relay advertises only those (설정에서 끈 도구는 아예
+    // agent 에게 안 보인다). 세션 시작 시점의 설정이 굳으므로 토글은 새 세션/턴부터 반영된다.
     func mcpConfigJSON() -> String? {
+        let enabled = Self.enabledToolNames()
+        let enabledJSON = (try? String(data: JSONSerialization.data(withJSONObject: enabled), encoding: .utf8)) ?? "[]"
         let cfg: [String: Any] = ["mcpServers": ["riven": [
             "command": "/usr/bin/env",
-            "args": ["python3", serverPath, path]
+            "args": ["python3", serverPath, path, enabledJSON]
         ]]]
         guard let d = try? JSONSerialization.data(withJSONObject: cfg) else { return nil }
         return String(data: d, encoding: .utf8)
@@ -213,6 +256,9 @@ final class ChatAskServer {
         #!/usr/bin/env python3
         import sys, json, socket, threading, os
         SOCK = sys.argv[1]
+        # argv[2] (있으면) = 켜진 도구 이름 JSON 배열. 그것만 광고한다(설정에서 끈 도구는 숨김).
+        try: ENABLED = set(json.loads(sys.argv[2])) if len(sys.argv) > 2 else None
+        except Exception: ENABLED = None
         _out = threading.Lock()
         def send(m):
             with _out:
@@ -340,7 +386,8 @@ final class ChatAskServer {
             if m == "initialize":
                 send({"jsonrpc": "2.0", "id": mid, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "riven", "version": "1.0"}}})
             elif m == "tools/list":
-                send({"jsonrpc": "2.0", "id": mid, "result": {"tools": TOOLS}})
+                shown = TOOLS if ENABLED is None else [t for t in TOOLS if t["name"] in ENABLED]
+                send({"jsonrpc": "2.0", "id": mid, "result": {"tools": shown}})
             elif m == "tools/call":
                 # 호출마다 스레드. 예전엔 stdin 루프가 한 번에 하나씩만 처리해서, 모델이 한
                 # 메시지에 도구를 여러 개(riven_ask_agent ×3) 내보내도 우리가 줄을 세웠다 -
