@@ -7860,6 +7860,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // Cmd+Q 는 열린 탭·세션을 통째로 닫으므로 실수 종료를 한 번 막아 준다. "다시 묻지 않기" 를
+    // 고르면 confirmQuit=false 로 저장돼 이후엔 바로 종료한다. 에이전트가 작업 중이면 그 사실을 알린다.
+    func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
+        guard Settings.shared.bool("confirmQuit", true) else { return .terminateNow }
+        let busy = states.values.contains { st in
+            (st.dock?.groups.flatMap { $0.panels } ?? []).contains { ($0.content as? ChatPanel)?.isBusy == true }
+        }
+        let a = NSAlert()
+        a.messageText = t("quit.confirm.title")
+        a.informativeText = busy ? t("quit.confirm.busy") : t("quit.confirm.body")
+        a.alertStyle = busy ? .warning : .informational
+        a.addButton(withTitle: t("quit.confirm"))     // 종료
+        a.addButton(withTitle: t("common.cancel"))
+        a.showsSuppressionButton = true
+        a.suppressionButton?.title = t("quit.confirm.dontAsk")
+        let r = a.runModal()
+        if a.suppressionButton?.state == .on { Settings.shared.set("confirmQuit", false) }
+        return r == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    }
     func applicationWillTerminate(_ n: Notification) {
         notesPanel?.flush(); persistSession(); Settings.shared.flush(sync: true)
         SupabaseAuth.shared.flushOnQuit()   // 클라우드에는 나가는 길에 한 번만 올린다

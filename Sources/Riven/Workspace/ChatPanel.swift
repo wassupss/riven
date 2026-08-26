@@ -2638,6 +2638,18 @@ final class ChatPanel: NSView, Themable, Scalable {
     // if consumed (so ChatInput doesn't also act on the key).
     private func inputKey(_ sel: Selector) -> Bool {
         if sel == #selector(NSResponder.insertBacktab(_:)) { cycleMode(); return true }
+        // 승인/선택 카드가 대기 중이고 입력이 비어 있으면 방향키/Enter/Esc 를 카드로 보낸다. 카드가
+        // 포커스를 못 잡아도(다른 워크스페이스·에디터가 포커스 가져감) 키가 항상 먹게 - "가끔
+        // 위아래 안 움직여 마우스로 눌러야" 하던 것 수정. 입력에 뭔가 쳤으면 편집을 방해하지 않는다.
+        if let card = pendingCard, !card.isDecided, input.stringValue.isEmpty {
+            switch sel {
+            case #selector(NSResponder.moveUp(_:)):          card.moveSelection(-1); return true
+            case #selector(NSResponder.moveDown(_:)):        card.moveSelection(1);  return true
+            case #selector(NSResponder.insertNewline(_:)):   card.pickSelected();    return true
+            case #selector(NSResponder.cancelOperation(_:)): card.cancelChoice();    return true
+            default: break
+            }
+        }
         if !slash.isHidden {
             switch sel {
             case #selector(NSResponder.moveUp(_:)):          slash.move(-1); return true

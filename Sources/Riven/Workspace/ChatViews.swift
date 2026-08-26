@@ -1751,6 +1751,12 @@ final class ApprovalCard: NSView {
         default: super.keyDown(with: e)
         }
     }
+    // 입력창에 포커스가 남아 있어도 카드를 조작할 수 있게 (ChatPanel.inputKey 에서 라우팅) - 카드가
+    // 포커스 경쟁에서 밀려 화살표가 "가끔 안 먹던" 것 방지.
+    var isDecided: Bool { decided }
+    func moveSelection(_ d: Int) { let n = max(1, itemCount); sel = (sel + d + n) % n; restyleSel() }
+    func pickSelected() { pick(sel) }
+    func cancelChoice() { onCancel?() }
     private func restyleSel() {
         for (i, b) in buttons.enumerated() {
             b.layer?.borderWidth = i == sel ? 2 : 0
