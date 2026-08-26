@@ -100,12 +100,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
               activeDock?.activeGroup?.activePanel?.content is ChatPanel else { return }
         lastCLIVersionCheck = Date()
         // `claude --version` spawns a process (~100ms) - off the main thread so focus never hitches.
-        DispatchQueue.global(qos: .utility).async {
-            _ = AgentDiscovery.claudeVersion(fresh: true)   // refresh the cached on-disk version
-            DispatchQueue.main.async { [weak self] in
-                (self?.activeDock?.activeGroup?.activePanel?.content as? ChatPanel)?.offerCLIUpgradeIfStale()
-            }
-        }
+        // 예전엔 여기서 활성 챗에 "재시작할래?" 팝업을 대화에 끼워 넣었는데, 전역 설정이라 대화에
+        // 끼어드는 게 맞지 않아 없앴다. 버전만 갱신해 설정 → AI 의 CLI 섹션이 최신 버전을 보이게 한다.
+        DispatchQueue.global(qos: .utility).async { _ = AgentDiscovery.claudeVersion(fresh: true) }
     }
     /// Restart every chat in the active workspace on the current CLI, resuming each conversation.
     /// Staggered so we don't exec N headless `claude` processes at the same instant. A chat that's
@@ -2934,7 +2931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chat.onAuth = { [weak self] sub in
             guard let self else { return }
             let cmd = AgentDiscovery.claudeCmd() ?? "claude"
-            self.newTerminalRunning("\(cmd) auth \(sub)")
+            self.runInTerminal("\(cmd) auth \(sub)")
         }
         chat.onOpenSettings = { [weak self] in self?.settingsMenu() }
         // riven tools: open a URL / capture the preview panel for the agent.

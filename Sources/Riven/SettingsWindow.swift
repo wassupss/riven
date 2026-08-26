@@ -578,12 +578,25 @@ final class SettingsWindow: NSPanel {
         // 설치된 CLI 를 그대로 보여 준다. 예전에는 못 찾으면 채팅 안에 "CLI 없음" 한 줄이
         // 뜰 뿐이라, 어디를 고쳐야 하는지 알 수 없었다.
         addSection(t("settings.cliSection"))
+        let app = NSApp.delegate as? AppDelegate
         for a in AgentDiscovery.available() {
             let ver = a.name == "Claude Code" ? AgentDiscovery.claudeVersion() : nil
-            addRow(a.name, desc: a.cmd, statusChip(ver.map { "v\($0)" } ?? t("settings.cliFound"), ok: true))
+            let chip = statusChip(ver.map { "v\($0)" } ?? t("settings.cliFound"), ok: true)
+            // 업데이트는 CLI 자신의 update 서브커맨드를 터미널에서 실행(claude update / codex update).
+            // 결과가 터미널에 그대로 보이고, 새 버전은 "대화 재시작"으로 실행 중 세션에 적용된다.
+            let upd = PadButton(title: t("settings.cliUpdate"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fg, bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
+            upd.onClick = { [weak app] in app?.runInTerminal("\(a.cmd) update") }
+            let rst = PadButton(title: t("settings.cliRestart"), font: UIScale.font(UIScale.small),
+                                textColor: Theme.fgDim, bg: Theme.hover, border: Theme.edge, radius: 5, hPad: 8, height: 22)
+            rst.onClick = { [weak app] in app?.restartAllChatsOnCurrentCLI() }
+            let controls = NSStackView(views: [chip, upd, rst]); controls.spacing = 8
+            addRow(a.name, desc: a.cmd, controls)
         }
         if AgentDiscovery.available().isEmpty {
             addNote(t("settings.cliNone"))
+        } else {
+            addNote(t("settings.cliUpdateDesc"))
         }
 
         // Codex 는 처음 보는 훅을 실행하기 전에 자기 화면에서 한 번 물어본다. 그걸 모르면
