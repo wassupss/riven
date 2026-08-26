@@ -638,6 +638,7 @@ enum I18n {
         "settings.mcpTools": ("riven 도구 (MCP)", "riven tools (MCP)"),
         "settings.mcpToolsDesc": ("에이전트가 쓸 수 있는 riven 도구를 개별로 켜고 끕니다. 끈 도구는 에이전트에게 아예 안 보입니다(새 세션부터 반영).",
                                   "Toggle each riven tool available to agents. Disabled tools are hidden from the agent (applies to new sessions)."),
+        "settings.mcpRestartAll": ("변경 적용: 전체 대화 재시작", "Apply changes: restart all chats"),
         // API client panel
         "api.services": ("서비스", "Services"), "api.templates": ("템플릿", "Templates"),
         "api.env": ("환경", "Env"), "api.history": ("요청 기록", "History"),

@@ -7888,6 +7888,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // 앱을 (독 아이콘·⌘Tab 으로) 활성화하면 열려 있던 riven 창을 전부 전면으로 올린다. 설정창·릴리즈
+    // 노트·팝업·팝아웃 등이 뒤에 숨어 "떠 있는 줄 모르고" 못 찾던 것 방지. sheet(부모에 붙은 창)는
+    // 부모를 올리면 따라오므로 최상위(parent==nil) 창만, 원래 z-순서 유지하도록 뒤→앞으로 orderFront.
+    private func bringAllWindowsFront() {
+        for w in NSApp.orderedWindows.reversed() where w.isVisible && w.parent == nil { w.orderFront(nil) }
+    }
+    func applicationDidBecomeActive(_ n: Notification) { bringAllWindowsFront() }
+    func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if hasVisibleWindows { bringAllWindowsFront() } else { window?.makeKeyAndOrderFront(nil) }
+        return true
+    }
     // Cmd+Q 는 열린 탭·세션을 통째로 닫으므로 실수 종료를 한 번 막아 준다. "다시 묻지 않기" 를
     // 고르면 confirmQuit=false 로 저장돼 이후엔 바로 종료한다. 에이전트가 작업 중이면 그 사실을 알린다.
     func applicationShouldTerminate(_ s: NSApplication) -> NSApplication.TerminateReply {
