@@ -680,7 +680,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     // (사용자가 "대기인데 왜 작업중?" 이라고 본 것). 죽은 세션은 busy 로 세지 않는다.
     var isBusy: Bool { turnStart != nil && session?.isAlive != false }
     /// 새 CLI 버전/설정(MCP 토글 등)을 적용하려 재시작할 수 있는 대화인가 (claude·세션 있음·유휴).
-    var canRestartOnCLI: Bool { agentKind == .claude && session?.sessionId != nil && !isBusy }
+    var canRestartOnCLI: Bool { agentKind == .claude && (sessionId != nil || session?.sessionId != nil) && !isBusy }
 
     /// 이 팬에 지금 위임을 보내도 되는지 (세션이 떠 있는지). 파이프라인이 갓 만든 멤버 팬은
     /// claude 프로세스가 뜨는 데 잠깐 걸리므로, 보내기 전에 이 값으로 준비됨을 확인한다.
@@ -1060,7 +1060,7 @@ final class ChatPanel: NSView, Themable, Scalable {
     /// there's no session yet or a turn is in flight (restarting mid-turn would drop it).
     @discardableResult
     func restartOnCurrentCLI() -> Bool {
-        guard agentKind == .claude, let sid = session?.sessionId else { return false }
+        guard agentKind == .claude, let sid = session?.sessionId ?? sessionId else { return false }
         guard !isBusy else { addSystem(t("chat.cliRestartBusy")); return false }
         cliUpgradeOfferedFor = nil
         switchSession(to: sid)   // stop → current claudeCmd() --resume sid → replay history
