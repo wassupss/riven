@@ -14,8 +14,10 @@ interface PaneStatus {
 
 interface WorkspaceStatusState {
   panes: Record<string, PaneStatus>
-  setPane: (workspace: string, paneId: number, patch: Partial<Omit<PaneStatus, 'workspace'>>) => void
-  clearPane: (workspace: string, paneId: number) => void
+  // paneId is a terminal's numeric id OR a chat pane's key (chat-N) — the rollup
+  // treats both the same, so a native chat agent's busy state also lights the card.
+  setPane: (workspace: string, paneId: number | string, patch: Partial<Omit<PaneStatus, 'workspace'>>) => void
+  clearPane: (workspace: string, paneId: number | string) => void
 }
 
 export const useWorkspaceStatus = create<WorkspaceStatusState>((set) => ({

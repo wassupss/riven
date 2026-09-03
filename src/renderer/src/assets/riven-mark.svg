@@ -1,12 +1,17 @@
-<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024' viewBox='0 0 1024 1024'><defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1d21"/><stop offset="1" stop-color="#0b0c0e"/></linearGradient>
-  <linearGradient id="ember" gradientUnits="userSpaceOnUse" x1="512" y1="300" x2="512" y2="720"><stop offset="0" stop-color="#ffbf72"/><stop offset="0.5" stop-color="#ff7a3c"/><stop offset="1" stop-color="#e14f27"/></linearGradient>
-  <linearGradient id="core" gradientUnits="userSpaceOnUse" x1="512" y1="300" x2="512" y2="720"><stop offset="0" stop-color="#ffe6cf"/><stop offset="1" stop-color="#ffb184"/></linearGradient>
-  <clipPath id="tile"><rect width="1024" height="1024" rx="228"/></clipPath>
-  <filter id="g" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="16"/></filter>
-  <filter id="gs" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7"/></filter>
-</defs><g clip-path='url(#tile)'><rect width="1024" height="1024" fill="url(#bg)"/><path d="M0 0 L470 0 L406 452 L452 1024 L0 1024 Z" fill="#08090b"/>
-   <g fill="none" stroke="url(#ember)" stroke-width="120" stroke-linecap="round" stroke-linejoin="round">
-     <g filter="url(#g)" opacity="0.4"><path d="M402 316 L402 706"/><path d="M402 452 C424 372 524 348 632 398"/></g>
-     <path d="M402 316 L402 706"/><path d="M402 452 C424 372 524 348 632 398"/></g>
-   <g stroke="url(#core)" stroke-width="26" stroke-linecap="round" fill="none" filter="url(#gs)" opacity="0.85"><path d="M402 340 L402 690"/></g><rect x="4" y="4" width="1016" height="1016" rx="224" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="3"/></g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="riven" xmlns:c2pa="http://c2pa.org/manifest">
+  <defs>
+    <clipPath id="rv-tile"><rect width="1024" height="1024" rx="228"></rect></clipPath>
+    <clipPath id="rv-0"><rect x="0" y="0" width="491" height="491" rx="51"></rect></clipPath>
+    <clipPath id="rv-1"><rect x="533" y="0" width="491" height="491" rx="51"></rect></clipPath>
+    <clipPath id="rv-2"><rect x="0" y="533" width="491" height="491" rx="51"></rect></clipPath>
+    <clipPath id="rv-3"><rect x="533" y="533" width="491" height="491" rx="51"></rect></clipPath>
+    <path id="rv-r" fill="#ffffff" d="M319.5 254 L553 254 L569.3 255.1 L581.9 256.7 L600.2 260.6 L614.4 264.9 L614.9 265.5 L616.6 265.7 L617.1 266.3 L623.4 268.5 L624.5 269.3 L625.3 269.3 L626.9 270.4 L627.8 270.4 L640.9 277.2 L641.1 277.8 L645.8 280.2 L646.1 280.8 L649.9 282.9 L650.4 283.8 L651.8 284.3 L652.3 285.1 L653.7 285.7 L654.5 286.8 L655.1 286.8 L660 291.1 L660.5 291.1 L662.2 293 L662.7 293 L672.5 302.9 L672.5 303.4 L674.4 305.1 L674.4 305.6 L675.8 306.7 L675.8 307.2 L676.9 308.1 L676.9 308.6 L678 309.4 L678 310 L681.3 313.8 L681.3 314.3 L685.1 319.5 L685.4 320.6 L686.5 321.7 L688.1 325.3 L688.6 325.5 L694.6 338.1 L699.8 353.7 L702.6 366.5 L704.2 381.2 L704.5 405 L703.1 423.3 L700.7 436.6 L696.8 449.5 L696.3 450 L694.1 456.3 L692.5 459 L692.5 459.9 L688.1 467.8 L686.5 469.7 L685.1 472.4 L681.8 476.2 L681.8 476.8 L676.9 482.2 L676.9 482.8 L674.4 485 L674.4 485.5 L666.3 493.7 L665.7 493.7 L663.8 495.9 L663.3 495.9 L658.9 500 L658.3 500 L654.5 503.3 L653.1 503.8 L652.6 504.6 L648.2 507.1 L647.1 508.2 L646.1 508.5 L645.8 509 L644.7 509.3 L644.4 509.8 L643.3 510.1 L643 510.6 L633.5 515.5 L627.8 517.7 L627.8 531.1 L638.7 532.2 L648.5 534.7 L657.5 538.5 L657.8 539 L660 539.8 L660.2 540.4 L664.1 542.6 L664.6 543.4 L665.2 543.4 L665.7 544.2 L666.3 544.2 L673.4 551 L673.4 551.6 L674.7 552.7 L674.7 553.2 L675.5 553.8 L675.5 554.3 L678.8 558.4 L683.2 566.6 L686.7 576.7 L688.6 585.7 L689.7 597.7 L689.7 770 L592.3 770 L592.3 610.6 L591.2 602.9 L589.5 597.5 L587.1 592 L586.5 591.7 L584.3 587.9 L583.5 587.4 L583.5 586.8 L578.6 582.2 L573.4 579.2 L567.1 577 L561.4 575.9 L553.8 575.3 L417 575.3 L417 770 L319.5 770Z M417 342.5 L417 486.9 L539.3 486.9 L553.5 485.2 L566.9 481.4 L574 478.1 L574.2 477.6 L579.4 474.9 L580 474.1 L583.8 471.6 L584.9 470.2 L585.4 470.2 L591.2 464.5 L591.2 463.9 L592.5 462.9 L592.5 462.3 L593.6 461.5 L593.6 460.9 L596.9 456.9 L601.3 448.7 L601.3 447.8 L602.9 444.6 L604.6 439.4 L606.2 431.5 L607 423.5 L607 405.8 L605.9 396 L602.6 383.7 L600.2 378.8 L600.2 377.9 L597.5 373 L596.9 372.8 L594.7 368.9 L593.9 368.4 L593.9 367.8 L591.4 365.4 L591.4 364.8 L585.4 358.8 L584.9 358.8 L583.8 357.5 L583.3 357.5 L578.9 353.9 L571.5 349.8 L562.2 346.3 L553.2 344.1 L542.9 342.7Z"></path>
+  </defs>
+  <g clip-path="url(#rv-tile)">
+    <rect width="1024" height="1024" fill="#080706"></rect>
+    <g transform="translate(-12,-8)"><rect x="0" y="0" width="491" height="491" rx="51" fill="#ff7847"></rect><g clip-path="url(#rv-0)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(14,-4)"><rect x="533" y="0" width="491" height="491" rx="51" fill="#1c1613"></rect><g clip-path="url(#rv-1)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(-10,12)"><rect x="0" y="533" width="491" height="491" rx="51" fill="#201914"></rect><g clip-path="url(#rv-2)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(8,15)"><rect x="533" y="533" width="491" height="491" rx="51" fill="#14100d"></rect><g clip-path="url(#rv-3)"><use href="#rv-r"></use></g></g>
+  </g>
+</svg>

@@ -53,6 +53,15 @@ class ContextBus {
     if (workspace) this.pending.delete(workspace)
   }
 
+  // Take (and clear) the queued send-to-LLM text — used when routing to a native
+  // chat panel instead of a terminal, so the sent code becomes the first message.
+  takePending(workspace: string | null): string | null {
+    if (!workspace) return null
+    const text = this.pending.get(workspace)
+    if (text) this.pending.delete(workspace)
+    return text ?? null
+  }
+
   private flushPending(workspace: string): void {
     const text = this.pending.get(workspace)
     if (!text || !this.agentSink(workspace)) return

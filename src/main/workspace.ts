@@ -7,6 +7,7 @@ export interface DirEntry {
   name: string
   path: string
   isDirectory: boolean
+  isSymlink?: boolean
 }
 
 const IGNORED = new Set([
@@ -75,17 +76,30 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:readDir', async (_event, dir: string): Promise<DirEntry[]> => {
     const entries = await fs.readdir(dir, { withFileTypes: true })
-    return entries
-      .filter((e) => !isHidden(e.name))
-      .map((e) => ({
-        name: e.name,
-        path: path.join(dir, e.name),
-        isDirectory: e.isDirectory()
-      }))
-      .sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
+    const mapped = await Promise.all(
+      entries
+        .filter((e) => !isHidden(e.name))
+        .map(async (e) => {
+          const full = path.join(dir, e.name)
+          let isDirectory = e.isDirectory()
+          const isSymlink = e.isSymbolicLink()
+          // A symlink's Dirent reports isDirectory()===false; resolve the target
+          // so a directory symlink renders (and expands) as a directory. Broken
+          // links fall back to a plain (non-expandable) entry.
+          if (isSymlink) {
+            try {
+              isDirectory = (await fs.stat(full)).isDirectory()
+            } catch {
+              isDirectory = false
+            }
+          }
+          return { name: e.name, path: full, isDirectory, isSymlink }
+        })
+    )
+    return mapped.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
   })
 
   ipcMain.handle('workspace:readFile', async (_event, file: string): Promise<string> => {

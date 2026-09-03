@@ -27,6 +27,18 @@ interface Session {
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
+  // Coalesce PTY output: a flood command (cat huge file, yes, a runaway build)
+  // fires onData many times per frame; batching into one IPC per ~frame instead
+  // of one-IPC-per-chunk keeps the main↔renderer channel from saturating.
+  dataBuf: string
+  flushTimer: ReturnType<typeof setTimeout> | null
+  // Flow control: bytes sent to the renderer but not yet acked (xterm-processed).
+  // A flood (yes / cat huge file / runaway build) produces data far faster than
+  // xterm can render; without backpressure the un-drained IPC messages pile up in
+  // the main process and RSS explodes (measured 14GB). We pause the PTY above a
+  // high-water mark and resume once the renderer has caught up.
+  outstanding: number
+  paused: boolean
   // "A user submitted a line (Enter) and we're waiting for the agent's reply."
   // Gates the done-notification to one per user-initiated turn (so idle TUI
   // redraws don't fire it), and turnBuf accumulates that turn's output so we can
@@ -37,6 +49,13 @@ interface Session {
 
 const sessions = new Map<string, Session>()
 const BUFFER_CAP = 200_000
+const FLUSH_MS = 8 // batch onData chunks into ~one IPC per frame
+const FLUSH_MAX = 256 * 1024 // flush immediately once a batch reaches this size
+// Flow-control water marks (bytes in-flight to the renderer). Pause the PTY above
+// HIGH so main memory stays bounded under a flood; resume below LOW so throughput
+// stays smooth. ~4MB/512KB keeps a healthy pipeline without stalling normal use.
+const HIGH_WATER = 4 * 1024 * 1024
+const LOW_WATER = 512 * 1024
 const POLL_MS = 900
 const IDLE_POLL_MS = 5000 // skip the pgrep/ps child-process probe after this much silence
 const ACTIVE_MS = 800 // output must flow within this window to count as "working"
@@ -92,6 +111,29 @@ async function agentRunning(shellPid: number): Promise<string | null> {
 
 function send(s: Session, channel: string, ...args: unknown[]): void {
   if (!s.sender.isDestroyed()) s.sender.send(channel, ...args)
+}
+
+// Send any buffered PTY output as a single IPC message and clear the batch.
+function flushData(s: Session): void {
+  if (s.flushTimer) {
+    clearTimeout(s.flushTimer)
+    s.flushTimer = null
+  }
+  if (!s.dataBuf) return
+  const data = s.dataBuf
+  s.dataBuf = ''
+  s.outstanding += data.length
+  send(s, `pty:data:${s.key}`, data)
+  // Above the high-water mark of un-acked data: pause the source so main memory
+  // can't grow unbounded while the renderer catches up.
+  if (!s.paused && s.outstanding >= HIGH_WATER) {
+    s.paused = true
+    try {
+      s.proc.pause()
+    } catch {
+      /* pause unsupported — best effort */
+    }
+  }
 }
 
 // Best-effort plain-text snippet of an agent's reply, pulled from the raw PTY
@@ -161,6 +203,7 @@ export function registerPtyHandlers(): void {
     for (const [, s] of sessions) {
       if (s.poll) clearInterval(s.poll)
       if (s.activeTimer) clearTimeout(s.activeTimer)
+      if (s.flushTimer) clearTimeout(s.flushTimer)
       try {
         s.proc.kill()
       } catch {
@@ -193,11 +236,17 @@ export function registerPtyHandlers(): void {
       }
 
       const shell = defaultShell()
-      // For a launch command, have the (login/interactive) shell run it directly,
-      // then drop back to an interactive shell — reliable vs. typing into stdin.
+      // Spawn a LOGIN + INTERACTIVE shell like every real terminal emulator
+      // (ghostty/Terminal.app) so the full init runs (.zprofile + .zshrc): PATH,
+      // homebrew, and prompt daemons such as powerlevel10k's gitstatusd. A bare
+      // interactive shell (no -l) skipped enough of that init that gitstatusd
+      // never came up, so p10k fell back to synchronous git and every prompt was
+      // slow (the "lag / blank rows while holding Enter"). For a launch command,
+      // run it in that login/interactive shell, then drop back to one.
+      const loginInteractive = ['-l', '-i']
       const args = opts.initialCommand
-        ? ['-i', '-l', '-c', `${opts.initialCommand}; exec ${shell} -il`]
-        : []
+        ? [...loginInteractive, '-c', `${opts.initialCommand}; exec ${shell} -il`]
+        : loginInteractive
 
       let proc: pty.IPty
       try {
@@ -230,13 +279,20 @@ export function registerPtyHandlers(): void {
         lastData: Date.now(),
         poll: null,
         polling: false,
-        activeTimer: null
+        activeTimer: null,
+        dataBuf: '',
+        flushTimer: null,
+        outstanding: 0,
+        paused: false
       }
       sessions.set(key, s)
 
       proc.onData((data) => {
         s.lastData = Date.now()
-        send(s, `pty:data:${key}`, data)
+        // Coalesce output into one IPC per frame instead of one per chunk.
+        s.dataBuf += data
+        if (s.dataBuf.length >= FLUSH_MAX) flushData(s)
+        else if (!s.flushTimer) s.flushTimer = setTimeout(() => flushData(s), FLUSH_MS)
         if (data.includes('\x07')) send(s, 'pty:bell', { key })
         // While waiting for a reply, accumulate the turn's output (capped) so the
         // done-notification can preview it.
@@ -276,9 +332,11 @@ export function registerPtyHandlers(): void {
       }, POLL_MS)
 
       proc.onExit(({ exitCode }) => {
+        flushData(s) // don't drop the final output batch
         send(s, `pty:exit:${key}`, exitCode)
         if (s.poll) clearInterval(s.poll)
         if (s.activeTimer) clearTimeout(s.activeTimer)
+        if (s.flushTimer) clearTimeout(s.flushTimer)
         sessions.delete(key)
       })
 
@@ -297,6 +355,40 @@ export function registerPtyHandlers(): void {
       s.turnBuf = ''
     }
     s.proc.write(data)
+  })
+
+  // The renderer acks bytes once xterm has parsed them; drain the in-flight count
+  // and resume the PTY when we're back below the low-water mark.
+  ipcMain.on('pty:ack', (_event, key: string, bytes: number) => {
+    const s = sessions.get(key)
+    if (!s) return
+    s.outstanding = Math.max(0, s.outstanding - bytes)
+    if (s.paused && s.outstanding <= LOW_WATER) {
+      s.paused = false
+      try {
+        s.proc.resume()
+      } catch {
+        /* resume unsupported — best effort */
+      }
+    }
+  })
+
+  // The renderer became visible again (was buffering while hidden): clear the
+  // in-flight count and resume the PTY unconditionally. Safe because on show the
+  // pane replays its buffered screen and then fits, so main's outstanding estimate
+  // can be reset without losing display state.
+  ipcMain.on('pty:resume', (_event, key: string) => {
+    const s = sessions.get(key)
+    if (!s) return
+    s.outstanding = 0
+    if (s.paused) {
+      s.paused = false
+      try {
+        s.proc.resume()
+      } catch {
+        /* best effort */
+      }
+    }
   })
 
   ipcMain.on('pty:snapshot', (_event, key: string, data: string) => {
@@ -320,6 +412,7 @@ export function registerPtyHandlers(): void {
     if (s) {
       if (s.poll) clearInterval(s.poll)
       if (s.activeTimer) clearTimeout(s.activeTimer)
+      if (s.flushTimer) clearTimeout(s.flushTimer)
       try {
         s.proc.kill()
       } catch {

@@ -5,6 +5,10 @@ export interface Settings {
   editorKeymap: string
   editorFontFamily: string
   editorFontSize: number
+  editorTabSize: number
+  editorWordWrap: boolean
+  editorMinimap: boolean
+  editorLigatures: boolean
   terminalFontFamily: string
   terminalFontSize: number
   terminalBackground: string
@@ -25,13 +29,42 @@ export interface Settings {
   terminalProfiles: Array<{ name: string; command: string }>
   // Editor snippets: typing `prefix` offers `body` (supports ${1} tab stops).
   snippets: Array<{ prefix: string; body: string }>
+  // Launch AI agents in the native chat panel (streaming UI) instead of a raw CLI
+  // terminal. Only Claude has a native chat driver so far; others fall back to a
+  // terminal regardless.
+  agentChatUI: boolean
+  // A fixed instruction appended to every agent chat (like CLAUDE.md but app-wide).
+  // Mirrors native's `prompt.global`.
+  globalPrompt: string
+  // riven MCP tools that are turned OFF (all are on by default, so we store the
+  // disabled set — an empty list means every tool is available to the agent).
+  mcpDisabledTools: string[]
+  // Browser panel's default search engine (a URL template with `{q}`).
+  browserSearch: string
+  // Default model + permission mode new agent chats start on.
+  defaultChatModel: string
+  defaultPermissionMode: string
+  // Desktop notifications when a background agent turn finishes.
+  notifications: boolean
+  // Send anonymous crash reports (stored pref; parity with native).
+  crashReporting: boolean
+  // Whole-UI zoom factor (native UIScale; ⌘+/-/0).
+  uiScale: number
+  // Show USED % instead of remaining % in the usage widget.
+  usageShowUsed: boolean
+  // Offer message suggestions in the agent chat.
+  chatSuggest: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'ember',
   editorKeymap: 'vscode',
   editorFontFamily: 'Menlo, Monaco, "Courier New", monospace',
-  editorFontSize: 13,
+  editorFontSize: 12,
+  editorTabSize: 2,
+  editorWordWrap: false,
+  editorMinimap: true,
+  editorLigatures: false,
   aiComplete: false,
   aiProvider: 'ollama',
   aiCompleteEndpoint: 'http://localhost:11434',
@@ -43,12 +76,23 @@ export const DEFAULT_SETTINGS: Settings = {
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
-  // ONE unified face for both scripts (Nanum Gothic Coding covers Latin + Korean),
-  // so there's no weight/shape mismatch between a Latin font and a separate CJK
-  // fallback. System name first (instant if installed), then the bundled web
-  // copy, then D2Coding as a last resort.
+  agentChatUI: true,
+  globalPrompt: '',
+  mcpDisabledTools: [],
+  browserSearch: 'https://www.google.com/search?q={q}',
+  defaultChatModel: 'default',
+  defaultPermissionMode: 'acceptEdits',
+  notifications: true,
+  crashReporting: true,
+  uiScale: 1,
+  usageShowUsed: true,
+  chatSuggest: false,
+  // JetBrains Mono for Latin (matches Ghostty/cmux — the native terminal look),
+  // with D2Coding picking up Korean glyphs JetBrains Mono lacks. System name first
+  // (instant if installed), then the bundled web copy, so it resolves even with no
+  // system install.
   terminalFontFamily:
-    '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace',
+    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -71,15 +115,15 @@ interface SettingsState {
 const LEGACY_TERMINAL_FONTS = new Set([
   '"MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
   '"D2Coding", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
-  // The previous D2Coding-first default — migrate existing users to the new
+  // The previous D2Coding-first default — migrate existing users to the current
   // JetBrains Mono (cmux/Ghostty-style) default.
   '"D2Coding", "D2Coding Web", "MesloLGS NF", "FiraCode Nerd Font", "JetBrainsMono Nerd Font", Menlo, Monaco, monospace',
-  // The intermediate JetBrains+D2Coding default — re-migrate to the system-Korean
-  // fallback so CJK renders naturally like Ghostty/cmux.
-  '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
-  // The JetBrains+system-Korean default — re-migrate to the unified Nanum Gothic
-  // Coding face (same font for Latin and Korean, no weight mismatch).
-  '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding Web", Menlo, Monaco, monospace'
+  // The JetBrains+system-Korean default — superseded by the JetBrains+D2Coding
+  // (bundled) current default.
+  '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding Web", Menlo, Monaco, monospace',
+  // The interim unified Nanum Gothic Coding default — migrate back to the
+  // JetBrains Mono + D2Coding (Ghostty/native) look.
+  '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace'
 ])
 
 export const useSettings = create<SettingsState>((set) => ({
@@ -89,6 +133,10 @@ export const useSettings = create<SettingsState>((set) => ({
     const merged = { ...DEFAULT_SETTINGS, ...partial }
     if (partial.terminalFontFamily && LEGACY_TERMINAL_FONTS.has(partial.terminalFontFamily))
       merged.terminalFontFamily = DEFAULT_SETTINGS.terminalFontFamily
+    // Unify font sizes to 12px: migrate the old per-panel defaults (editor 13,
+    // terminal 11) for users who never customized them.
+    if (partial.editorFontSize === 13) merged.editorFontSize = 12
+    if (partial.terminalFontSize === 11) merged.terminalFontSize = 12
     set({ settings: merged, ready: true })
   },
   set: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),

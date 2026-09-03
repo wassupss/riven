@@ -109,13 +109,17 @@ export default function TerminalPane({
         fontWeightBold: '700',
         // No extra letter spacing (Ghostty adds none); a touch of line height.
         letterSpacing: 0,
-        lineHeight: 1.4,
+        lineHeight: 1.25,
         cursorBlink: true,
         cursorStyle: 'block',
         cursorInactiveStyle: 'outline',
         allowProposedApi: true,
         scrollback: 5000,
-        minimumContrastRatio: 4.5,
+        // minimumContrastRatio > 1 makes xterm recompute a contrast-adjusted color
+        // for every cell on every render (documented CPU/memory cost) — it was the
+        // cause of the lag on a busy prompt redraw. Ghostty does no runtime contrast
+        // adjustment either, so 1 (disabled) matches native and renders far faster.
+        minimumContrastRatio: 1,
         drawBoldTextInBrightColors: true,
         macOptionClickForcesSelection: true,
         scrollSensitivity: 1.15,
@@ -134,23 +138,42 @@ export default function TerminalPane({
       searchRef.current = search
       refocusRef.current = () => term.focus()
       term.unicode.activeVersion = '11'
-      term.open(container)
-      // Expose the terminal font to CSS so the IME composition overlay (a separate
-      // DOM element xterm doesn't font-style) matches the grid — otherwise Korean
-      // shows a fallback font while composing and only snaps to D2Coding on commit.
-      container.style.setProperty('--term-font', cfg.terminalFontFamily)
-      container.style.setProperty('--term-font-size', `${cfg.terminalFontSize}px`)
 
-      // The canvas/webgl renderer measures glyphs at init; if a bundled webfont
-      // (D2Coding) isn't loaded yet it measures the fallback and Korean looks off
-      // until a reflow. Re-render once fonts are ready so it picks up the real
-      // metrics. (No-op when the font is already installed/loaded.)
-      document.fonts?.ready
-        .then(() => {
-          if (!container.isConnected) return
-          term.refresh(0, term.rows - 1)
-        })
-        .catch(() => {})
+      // Defer term.open() until the pane actually has size. Opening into a 0-size
+      // container (a stacked/background dock panel, or before dockview lays it out)
+      // makes xterm's renderer schedule a paint with no measured dimensions and
+      // throw in its viewport sync. We open on the first non-zero size instead;
+      // until then onData buffers (see isRenderable/pendingHidden below).
+      let opened = false
+      // Returns true only on the call that actually opens, so the caller can defer
+      // the first resize by a frame — xterm measures its render dimensions on the
+      // first paint (async), and resizing before that throws in syncScrollArea.
+      const ensureOpened = (): boolean => {
+        if (opened || !container.isConnected || !container.clientWidth || !container.clientHeight)
+          return false
+        opened = true
+        term.open(container)
+        // Expose the terminal font to CSS so the IME composition overlay (a separate
+        // DOM element xterm doesn't font-style) matches the grid — otherwise Korean
+        // shows a fallback font while composing and only snaps to D2Coding on commit.
+        container.style.setProperty('--term-font', cfg.terminalFontFamily)
+        container.style.setProperty('--term-font-size', `${cfg.terminalFontSize}px`)
+        // The canvas/webgl renderer measures glyphs at init; if a bundled webfont
+        // (D2Coding) isn't loaded yet it measures the fallback and Korean looks off
+        // until a reflow. Re-render once fonts are ready so it picks up the real
+        // metrics. (No-op when the font is already installed/loaded.)
+        document.fonts?.ready
+          .then(() => {
+            if (!opened || !container.isConnected) return
+            try {
+              term.refresh(0, term.rows - 1)
+            } catch {
+              /* repainted by a later fit */
+            }
+          })
+          .catch(() => {})
+        return true
+      }
 
       // ⌘F opens the in-terminal find box (don't forward the key to the shell).
       term.attachCustomKeyEventHandler((e) => {
@@ -184,6 +207,14 @@ export default function TerminalPane({
       let webglTried = false
       const tryAttachWebgl = (): void => {
         if (webglTried || torn) return
+        // DIAGNOSTIC: skip WebGL to isolate whether the "blank rows on fast scroll"
+        // artifact is the WebGL renderer. Toggle in devtools:
+        //   localStorage.setItem('riven.noWebgl','1')  → DOM renderer, then ⌘R
+        //   localStorage.removeItem('riven.noWebgl')   → WebGL again, then ⌘R
+        if (localStorage.getItem('riven.noWebgl') === '1') {
+          webglTried = true
+          return
+        }
         if (!container.clientWidth || !container.clientHeight) return
         webglTried = true
         try {
@@ -220,9 +251,43 @@ export default function TerminalPane({
         window.api.pty.resize(ptyId, term.cols, term.rows)
       }
 
+      // While the pane is hidden (0-size, e.g. a stacked/background dock panel) we
+      // must NOT write to xterm: it throws in its viewport sync (no render
+      // dimensions) and, worse, rendering there can't keep up with a flood so the
+      // main->renderer IPC queue explodes (measured 16GB). Instead we hold recent
+      // output in a capped ring and ack immediately — main stays drained and a
+      // background agent keeps running — then replay it once the pane is shown.
+      const HIDDEN_CAP = 256 * 1024
+      let pendingHidden = ''
+      const isRenderable = (): boolean =>
+        opened && container.isConnected && container.clientWidth > 0 && container.clientHeight > 0
+      const flushHidden = (): void => {
+        if (!isRenderable()) return
+        if (pendingHidden) {
+          const b = pendingHidden
+          pendingHidden = ''
+          try {
+            term.write(b, () => term.scrollToBottom())
+          } catch {
+            /* will retry on the next fit once measured */
+          }
+        }
+        // We withheld acks while hidden (backpressure paused the PTY at the source);
+        // now that we're visible again, drain the in-flight count and resume.
+        if (ptyId) window.api.pty.resume(ptyId)
+      }
+
       const safeFit = (): void => {
         const rect = container.getBoundingClientRect()
         if (rect.width < 48 || rect.height < 24) return
+        // Now sized — open if we deferred it. On the opening frame, let xterm paint
+        // once (so its render dimensions exist) before resizing, else syncScrollArea
+        // throws. The rAF/timers/ResizeObserver below re-run this to finish the fit.
+        if (ensureOpened()) {
+          requestAnimationFrame(safeFit)
+          return
+        }
+        if (!opened) return
         let dims: { cols: number; rows: number } | undefined
         try {
           dims = fit.proposeDimensions()
@@ -241,6 +306,7 @@ export default function TerminalPane({
         }
         syncPtySize()
         tryAttachWebgl()
+        flushHidden() // now measured — replay anything buffered while hidden
       }
 
       safeFit()
@@ -256,15 +322,41 @@ export default function TerminalPane({
         if (torn) return
         ptyId = id
         if (existed && buffer) {
-          term.write(buffer)
-          // The snapshot restores content but not scroll position; pin to the
-          // bottom (the prompt) so a replayed terminal doesn't open at the top.
-          term.write('', () => term.scrollToBottom())
+          // Guard: replaying into a hidden/zero-size terminal can throw in xterm's
+          // viewport sync (no render dimensions yet). The buffer still lands; the
+          // scroll pin retries when the pane becomes visible and fits.
+          try {
+            term.write(buffer)
+            // The snapshot restores content but not scroll position; pin to the
+            // bottom (the prompt) so a replayed terminal doesn't open at the top.
+            term.write('', () => term.scrollToBottom())
+          } catch {
+            /* not measured yet */
+          }
         }
         onReadyRef.current?.(id)
         disposers.push(
           window.api.pty.onData(id, (data) => {
-            term.write(data)
+            if (isRenderable()) {
+              // Visible: ack in the write callback (after xterm parses the chunk).
+              // That is the backpressure signal — if xterm falls behind, acks lag,
+              // main hits the high-water mark and pauses the PTY (see pty.ts). A
+              // rare synchronous throw still acks so flow control can't deadlock.
+              try {
+                term.write(data, () => window.api.pty.ack(id, data.length))
+              } catch {
+                pendingHidden = (pendingHidden + data).slice(-HIDDEN_CAP)
+                window.api.pty.ack(id, data.length)
+              }
+            } else {
+              // Hidden: don't touch xterm (rendering into a 0-size viewport throws and
+              // can't keep up with a flood). Buffer the last screenful (capped) and ack
+              // immediately so main stays drained and a background agent keeps running;
+              // flushHidden() replays it when the pane is shown. Memory stays bounded by
+              // the cap here + main's coalescing, so no ballooning.
+              pendingHidden = (pendingHidden + data).slice(-HIDDEN_CAP)
+              window.api.pty.ack(id, data.length)
+            }
             scheduleSnapshot(id)
           })
         )

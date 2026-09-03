@@ -10,6 +10,7 @@ import { contextBus } from '../../bridge/contextBus'
 import { closeDocument } from '../../lsp/client'
 import { ensureEditor } from '../registry'
 import ContextMenu, { type MenuItem } from '../../components/ContextMenu'
+import { FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from 'lucide-react'
 import InputModal from '../../components/InputModal'
 import { FileIcon } from '../../components/FileIcon'
 import { useT } from '../../i18n'
@@ -31,20 +32,13 @@ function Chevron({ open }: { open: boolean }): JSX.Element {
     </svg>
   )
 }
+// Consistent lucide icons (the app's icon set) instead of hand-drawn SVG paths.
 function ActionIcon({ type }: { type: 'new-file' | 'new-folder' | 'refresh' | 'collapse' }): JSX.Element {
-  const p =
-    type === 'new-file'
-      ? 'M9.5 1H4a1 1 0 00-1 1v12a1 1 0 001 1h8a1 1 0 001-1V4.5L9.5 1zM9 5V2l3 3H9zM7.5 8v1.5H6v1h1.5V12h1v-1.5H10v-1H8.5V8z'
-      : type === 'new-folder'
-        ? 'M1.5 3h4l1 1.5H14a1 1 0 011 1V13a1 1 0 01-1 1H1.5a.5.5 0 01-.5-.5v-10A.5.5 0 011.5 3zm6 4v1.5H6v1h1.5V11h1V9.5H10v-1H8.5V7z'
-        : type === 'refresh'
-          ? 'M8 3V1L5 4l3 3V5a3 3 0 11-3 3H4a4 4 0 104-5z'
-          : 'M4 6l4 4 4-4H4z'
-  return (
-    <svg width="16" height="16" viewBox="0 0 16 16">
-      <path fill="currentColor" d={p} />
-    </svg>
-  )
+  const size = 14
+  if (type === 'new-file') return <FilePlus size={size} />
+  if (type === 'new-folder') return <FolderPlus size={size} />
+  if (type === 'refresh') return <RefreshCw size={size} />
+  return <ChevronsDownUp size={size} />
 }
 
 /* ---- tree node ----------------------------------------------------------- */
@@ -75,6 +69,7 @@ function TreeNode({
   const isSelected = useSelection((s) => s.selected.includes(entry.path))
   const single = useSelection((s) => s.single)
   const toggleSel = useSelection((s) => s.toggle)
+  const setRange = useSelection((s) => s.setRange)
 
   const load = useCallback(async () => {
     setChildren(await window.api.workspace.readDir(entry.path))
@@ -82,6 +77,25 @@ function TreeNode({
 
   const toggle = useCallback(
     async (e: ReactMouseEvent) => {
+      // ⇧+click selects the visible range between the anchor and this row. Read
+      // the rendered rows in document order (only visible/expanded ones, like
+      // NSOutlineView) so the range spans exactly what the user sees.
+      const anchor = useSelection.getState().anchor
+      if (e.shiftKey && anchor) {
+        const scroll = rowRef.current?.closest('.tree-scroll')
+        const paths = scroll
+          ? Array.from(scroll.querySelectorAll<HTMLElement>('.ex-row[data-path]')).map(
+              (el) => el.dataset.path as string
+            )
+          : []
+        const a = paths.indexOf(anchor)
+        const b = paths.indexOf(entry.path)
+        if (a !== -1 && b !== -1) {
+          const [lo, hi] = a < b ? [a, b] : [b, a]
+          setRange(paths.slice(lo, hi + 1))
+          return
+        }
+      }
       // ⌘/Ctrl+click a file toggles it in the multi-selection.
       if (!entry.isDirectory && (e.metaKey || e.ctrlKey)) {
         toggleSel(entry.path)
@@ -96,7 +110,7 @@ function TreeNode({
         single(entry.path)
       }
     },
-    [entry, expanded, children, load, openFile, single, toggleSel]
+    [entry, expanded, children, load, openFile, single, toggleSel, setRange]
   )
 
   useEffect(() => {
@@ -128,9 +142,16 @@ function TreeNode({
     <div>
       <div
         ref={rowRef}
+        data-path={entry.path}
         className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}${gitCat ? ' git-' + gitCat : ''}`}
         onClick={toggle}
         onContextMenu={(e) => onMenu(e, entry)}
+        draggable={!entry.isDirectory}
+        onDragStart={(e) => {
+          // Drag a file onto the native chat to attach its path.
+          e.dataTransfer.setData('text/plain', entry.path)
+          e.dataTransfer.effectAllowed = 'copy'
+        }}
       >
         {Array.from({ length: depth }).map((_, i) => (
           <span key={i} className="ex-guide" />
@@ -189,6 +210,7 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const closeTab = useSession((s) => s.closeTab)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const selection = useSelection((s) => s.selected)
+  const clearSelection = useSelection((s) => s.clear)
   const activePath = useSession((s) => s.sessions[workspace]?.activePath ?? null)
   const reveal = useExplorerReveal((s) => s.reveal)
   const refreshGit = useGitStatus((s) => s.refresh)
@@ -274,6 +296,7 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
       items.push(
         { label: '', onClick: () => {}, separator: true },
         { label: t('explorer.rename'), onClick: () => setEdit({ kind: 'rename', target: entry }) },
+        { label: t('explorer.copyPath'), onClick: () => void navigator.clipboard.writeText(entry.path) },
         { label: t('explorer.delete'), danger: true, onClick: () => doDelete(entry) },
         { label: '', onClick: () => {}, separator: true },
         { label: t('explorer.revealInFinder'), onClick: () => window.api.workspace.reveal(entry.path) }
@@ -282,15 +305,33 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
     return items
   }
 
-  const doDelete = async (entry: DirEntry): Promise<void> => {
-    if (!window.confirm(t('explorer.deleteConfirm', { name: entry.name }))) return
-    await window.api.workspace.delete(entry.path)
-    if (!entry.isDirectory) {
-      closeTab(entry.path)
-      closeDocument(entry.path)
+  const deletePaths = async (targets: string[], name?: string): Promise<void> => {
+    if (!targets.length) return
+    const ok =
+      targets.length > 1
+        ? window.confirm(t('explorer.deleteConfirmN', { n: targets.length }))
+        : window.confirm(
+            t('explorer.deleteConfirm', { name: name ?? targets[0].split('/').pop() ?? targets[0] })
+          )
+    if (!ok) return
+    const dirs = new Set<string>()
+    for (const p of targets) {
+      await window.api.workspace.delete(p)
+      closeTab(p) // no-op for a path that isn't an open tab (dirs included)
+      closeDocument(p)
+      dirs.add(dirname(p))
     }
-    bump(dirname(entry.path))
+    for (const d of dirs) bump(d)
+    clearSelection()
   }
+
+  // Delete the whole selection when the right-clicked row is part of it (Finder
+  // rule), otherwise just that one entry.
+  const doDelete = (entry: DirEntry): Promise<void> =>
+    deletePaths(
+      selection.includes(entry.path) && selection.length > 1 ? selection : [entry.path],
+      entry.name
+    )
 
   const submitEdit = async (name: string): Promise<void> => {
     if (!edit) return
@@ -336,7 +377,18 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
           </button>
         </span>
       </div>
-      <div className="tree-scroll">
+      <div
+        className="tree-scroll"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          // Delete / ⌘⌫ removes the current selection (the tree holds focus after
+          // a row click). Confirmed in deletePaths.
+          if ((e.key === 'Delete' || e.key === 'Backspace') && selection.length) {
+            e.preventDefault()
+            void deletePaths(selection)
+          }
+        }}
+      >
         {roots.map((entry) => (
           <TreeNode key={entry.path} entry={entry} depth={0} onMenu={openMenu} onNew={onNew} />
         ))}

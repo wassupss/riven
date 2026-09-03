@@ -201,19 +201,20 @@ export const THEMES: Theme[] = [
     }
   },
 
-  // -- void: near-pure black, monochrome white filament (max contrast) ---------
+  // -- void: deep charcoal, monochrome white filament. Lifted off pure black with
+  // clearly stepped layers so chrome/panels/raised surfaces read apart. ----------
   {
     id: 'void',
     name: 'Void',
     shiki: 'dark-plus',
     swatch: '#eef0f3',
     tokens: {
-      bg: '#0a0a0c',
-      'bg-2': '#0f0f12',
-      'bg-3': '#161619',
-      border: '#232327',
-      fg: '#f4f4f6',
-      'fg-dim': '#9a9aa3',
+      bg: '#101013',
+      'bg-2': '#17171b',
+      'bg-3': '#202026',
+      border: '#2c2c34',
+      fg: '#f2f3f5',
+      'fg-dim': '#a3a3ad',
       accent: '#eef0f3',
       'accent-2': '#a18fff'
     }

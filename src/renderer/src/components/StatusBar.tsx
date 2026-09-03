@@ -5,9 +5,8 @@ import { useAgentEdits } from '../state/agentEdits'
 import { useUpdate } from '../state/update'
 import { togglePanel } from '../dock/registry'
 import { useT } from '../i18n'
-import UsageWidget from './UsageWidget'
 import ScriptRunner from './ScriptRunner'
-import { Folder, FolderOpen, GitBranch, Plug, Settings, FileDiff, ArrowDownToLine } from 'lucide-react'
+import { Folder, FolderOpen, GitBranch, Plug, FileDiff, ArrowDownToLine } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -122,10 +121,6 @@ export default function StatusBar(): JSX.Element {
           <ArrowDownToLine size={13} /> {t('status.updateReady')}
         </span>
       )}
-      <UsageWidget />
-      <span className="status-item click" title={t('status.settingsTitle')} onClick={() => openSettings('general')}>
-        <Settings size={13} /> {t('status.settings')}
-      </span>
     </div>
   )
 }

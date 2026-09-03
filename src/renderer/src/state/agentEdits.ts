@@ -6,6 +6,12 @@ export interface AgentEdit {
   before: string
   after: string
   hasBaseline: boolean
+  // Who produced this diff. 'agent' entries are a persistent review (backed by a
+  // timeline entry, revertible); 'git' entries are a transient HEAD-vs-working
+  // view opened from the Git panel. They share this map only to reuse the
+  // editor's inline-diff renderer — a git view must never clobber an agent
+  // review (that would destroy the agent's original `before` baseline).
+  source?: 'agent' | 'git'
 }
 
 // One entry in the changes timeline — a summary of an agent edit. Clicking it

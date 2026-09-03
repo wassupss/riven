@@ -1,0 +1,244 @@
+/* Browser bookmarks + start page redesign.
+   Scoped under .browser-panel so these rules win over the base styles.css
+   regardless of stylesheet load order. Design tokens only — no hardcoded
+   colors — so it reads correctly on both dark and light themes. */
+
+/* --- Favicon slot (shared) --- */
+.browser-panel .bm-fav {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  object-fit: contain;
+}
+.browser-panel img.bm-fav {
+  border-radius: var(--radius-sm);
+}
+
+/* --- Bookmarks bar (under the toolbar) --- */
+.browser-panel .browser-bookmarks {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--edge);
+  background: var(--bg-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+}
+.browser-panel .browser-bookmarks::-webkit-scrollbar {
+  display: none;
+}
+.browser-panel .browser-bm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 168px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.browser-panel .browser-bm:hover {
+  background: var(--hover-strong);
+  border-color: var(--edge);
+  color: var(--fg);
+}
+.browser-panel .browser-bm:active {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.browser-panel .browser-bm .bm-fav {
+  width: 15px;
+  height: 15px;
+}
+.browser-panel .browser-bm-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Start page (blank new tab) --- */
+.browser-panel .browser-start {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  background: var(--bg);
+}
+.browser-panel .browser-start-inner {
+  width: min(720px, 90%);
+  padding: 56px 0 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+}
+.browser-panel .browser-start-section {
+  display: flex;
+  flex-direction: column;
+}
+.browser-panel .browser-start-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--fg-dim);
+  margin: 0 2px 14px;
+}
+.browser-panel .browser-start-label-text {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.browser-panel .browser-start-label-text > svg {
+  color: var(--accent);
+}
+/* "Clear history" action, subtle until hovered (turns danger). */
+.browser-panel .browser-start-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    color var(--dur-fast) ease,
+    background var(--dur-fast) ease;
+}
+.browser-panel .browser-start-clear:hover {
+  color: var(--danger);
+  background: var(--hover-strong);
+}
+
+/* Bookmark tiles: responsive grid, card style, hover lift. */
+.browser-panel .browser-start-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 12px;
+}
+.browser-panel .browser-start-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 12px 16px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  color: var(--fg);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) ease,
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease;
+}
+.browser-panel .browser-start-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent-border);
+  background: var(--bg-3);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+}
+.browser-panel .browser-start-card:active {
+  transform: translateY(0);
+}
+.browser-panel .browser-start-card .bm-fav {
+  width: 32px;
+  height: 32px;
+}
+.browser-panel .browser-start-card img.bm-fav {
+  border-radius: var(--radius-md);
+}
+.browser-panel .browser-start-card-title {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* Recent history: tidy list, favicon + title + dim host. */
+.browser-panel .browser-start-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.browser-panel .browser-start-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.browser-panel .browser-start-recent-item:hover {
+  background: var(--hover);
+  border-color: var(--edge);
+}
+.browser-panel .browser-start-recent-item .bm-fav {
+  width: 16px;
+  height: 16px;
+}
+.browser-panel .browser-start-recent-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.browser-panel .browser-start-recent-title {
+  flex: 0 1 auto;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-panel .browser-start-recent-host {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-panel .browser-start-hint {
+  text-align: center;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  padding: 64px 0;
+}

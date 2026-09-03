@@ -27,6 +27,10 @@ const LANG_SPECS: Record<string, LangSpec> = {
   yaml: { server: 'yaml', lspId: 'yaml' }
 }
 const ALL_LANGS = Object.keys(LANG_SPECS)
+// Monaco's bundled TS worker already formats/renames ts/js(x); registering an LSP
+// provider for those too would conflict. The LSP owns formatting/rename for
+// everything else (python/go/rust/c/cpp/shell/yaml) — where ⇧⌥F/F2 was a no-op.
+const LSP_FORMAT_LANGS = ALL_LANGS.filter((l) => LANG_SPECS[l].server !== 'typescript')
 
 // Populated at init from the main process — only servers that are installed.
 let availableServers = new Set<string>()
@@ -409,6 +413,56 @@ function registerProviders(): void {
       }
     }
   })
+
+  // Document formatting (⇧⌥F). LSP-owned languages only — Monaco formats ts/js
+  // itself. A server that doesn't format (e.g. pyright) just returns null.
+  monaco.languages.registerDocumentFormattingEditProvider(LSP_FORMAT_LANGS, {
+    async provideDocumentFormattingEdits(model, options) {
+      const serverKey = serverKeyFor(model.getLanguageId())
+      if (!serverKey) return null
+      await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
+      const res = (await window.api.lsp.request(serverKey, 'textDocument/formatting', {
+        textDocument: { uri: model.uri.toString() },
+        options: { tabSize: options.tabSize, insertSpaces: options.insertSpaces }
+      })) as Array<{ range: LspRange; newText: string }> | null
+      if (!res) return null
+      return res.map((e) => ({ range: toMonacoRange(e.range), text: e.newText }))
+    }
+  })
+
+  // Rename symbol (F2). LSP-owned languages only.
+  monaco.languages.registerRenameProvider(LSP_FORMAT_LANGS, {
+    async provideRenameEdits(model, position, newName) {
+      const serverKey = serverKeyFor(model.getLanguageId())
+      if (!serverKey) return { edits: [] }
+      await ensureStarted(serverKey)
+      flushChange(model) // server must see the latest buffer before answering
+      const res = (await window.api.lsp.request(serverKey, 'textDocument/rename', {
+        textDocument: { uri: model.uri.toString() },
+        position: toLspPos(position),
+        newName
+      })) as {
+        changes?: Record<string, Array<{ range: LspRange; newText: string }>>
+        documentChanges?: Array<{
+          textDocument: { uri: string }
+          edits: Array<{ range: LspRange; newText: string }>
+        }>
+      } | null
+      const edits: monaco.languages.IWorkspaceTextEdit[] = []
+      const add = (uri: string, es: Array<{ range: LspRange; newText: string }>): void => {
+        for (const e of es)
+          edits.push({
+            resource: monaco.Uri.parse(uri),
+            versionId: undefined,
+            textEdit: { range: toMonacoRange(e.range), text: e.newText }
+          })
+      }
+      if (res?.changes) for (const [uri, es] of Object.entries(res.changes)) add(uri, es)
+      if (res?.documentChanges) for (const dc of res.documentChanges) add(dc.textDocument.uri, dc.edits)
+      return { edits }
+    }
+  })
 }
 
 // ---- diagnostics -----------------------------------------------------------
@@ -460,6 +514,20 @@ function manage(model: monaco.editor.ITextModel): void {
 }
 
 export function ensureLspInitialized(workspaceRoot: string): void {
+  // Active workspace changed (root switch). Servers are single-root — the main
+  // process kills+respawns a server when asked to start it against a new root —
+  // but the renderer cached each start per serverKey, so without this the new
+  // workspace would keep being served against the OLD root. Drop the start/version
+  // caches and re-open the current models so the next request re-roots the server.
+  if (initialized && root && root !== workspaceRoot) {
+    root = workspaceRoot
+    started.clear()
+    versions.clear()
+    monaco.editor.getModels().forEach((m) => {
+      if (isManaged(m)) didOpen(m)
+    })
+    return
+  }
   root = workspaceRoot
   if (initialized) return
   initialized = true

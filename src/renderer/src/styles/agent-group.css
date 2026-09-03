@@ -1,0 +1,727 @@
+/* Agent Group - riven's orchestration surface. A tab strip (draft + open groups)
+   over a compose grid / pipeline form / reporting org chart. Tokens only. */
+.agent-group-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+/* ---- header ---- */
+.agp-head {
+  flex: 0 0 auto; /* never shrink under column pressure */
+  padding: 12px 14px 10px;
+}
+.agp-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--fg);
+}
+.agp-title > svg {
+  color: var(--accent);
+}
+.agp-hint {
+  margin-top: 5px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--fg-dim);
+}
+
+.agp-editnote {
+  margin-top: 10px;
+  padding: 8px 10px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--fg-dim);
+  background: var(--bg-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- tab strip ---- */
+/* One scrolling row (never wraps to extra rows, which would eat the body's
+   vertical space as more group/pipeline/run tabs appear). */
+.agp-tabs {
+  /* flex-shrink:0 is critical: without it the column shrinks this strip under
+     pressure from a tall body (pipeline/run view), and overflow-y:hidden then
+     clips it — the tab height visibly collapses on selection. The body scrolls
+     to absorb pressure instead. */
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 0 14px 8px;
+  border-bottom: 1px solid var(--edge);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.agp-tab {
+  flex: 0 0 auto;
+}
+.agp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.agp-tab:hover {
+  color: var(--fg);
+  background: var(--hover-strong);
+}
+.agp-tab.on {
+  color: var(--accent);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+.agp-tab-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--bg-3);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.agp-tab.on .agp-tab-count {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* ---- body (scrolls) ---- */
+.agp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px 14px;
+}
+/* In this scrolling flex column, children must NOT be vertically compressed under
+   pressure from a tall body (e.g. the pipeline form's stage cards) — flex would
+   shrink them before scrolling, flattening the mode toggle / cards. Pin every
+   direct child to its natural height and let .agp-body scroll instead. */
+.agp-body > *:not(.agp-run) {
+  flex-shrink: 0;
+}
+.agp-modeseg {
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+.agp-modeseg .ui-seg-btn {
+  flex: 1 1 0;
+}
+
+/* ---- name row ---- */
+.agp-namerow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agp-namelabel {
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.agp-namerow .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---- member card grid ---- */
+.agp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* ---- avatar picker (group editor) ---- */
+.agp-card-namerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.agp-card-namerow .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.agp-avatarpick {
+  position: relative;
+  flex: 0 0 auto;
+}
+.agp-avatarpick-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.14);
+}
+.agp-avatarpop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  width: max-content;
+  max-width: 220px;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-3);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+.agp-avatarpop-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.agp-avatarpop-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg);
+  cursor: pointer;
+}
+.agp-avatarpop-glyph:hover {
+  border-color: var(--accent-border);
+}
+.agp-avatarpop-glyph.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.agp-avatarpop-color {
+  width: 18px;
+  height: 18px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.14);
+}
+.agp-avatarpop-color.on {
+  border-color: var(--fg);
+}
+/* "no colour" swatch: hollow with a diagonal slash */
+.agp-avatarpop-color.none,
+.agp-avatarpick-btn.none {
+  background:
+    linear-gradient(
+      to top left,
+      transparent calc(50% - 1px),
+      var(--danger) calc(50% - 1px),
+      var(--danger) calc(50% + 1px),
+      transparent calc(50% + 1px)
+    );
+  border: 1px solid var(--edge-strong);
+  box-shadow: none;
+}
+.agp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--edge-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+}
+.agp-card.agp-main {
+  border-color: var(--accent-border);
+}
+.agp-card-head {
+  display: flex;
+  align-items: center;
+}
+.agp-card-badge {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.agp-card.agp-main .agp-card-badge {
+  color: var(--accent);
+}
+.agp-card-remove {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+}
+.agp-card-remove:hover {
+  background: var(--hover-strong);
+  color: var(--danger);
+}
+.agp-card .ui-input,
+.agp-card .ui-select {
+  width: 100%;
+  min-width: 0;
+}
+.agp-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.agp-card-label {
+  flex: 0 0 44px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.agp-card-row .ui-select {
+  flex: 1 1 0;
+}
+
+/* ---- add tile ---- */
+.agp-addcard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 56px;
+  border: 1px dashed var(--edge-strong);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.agp-addcard:hover {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: var(--accent-border);
+}
+.agp-addstage {
+  min-height: 0;
+  padding: 8px 10px;
+  align-self: stretch;
+}
+
+/* ---- pipeline stages ---- */
+.agp-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.agp-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+}
+.agp-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agp-stage-num {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.agp-stage-head .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.agp-stage .ui-select {
+  width: 100%;
+}
+.agp-stage-role {
+  min-height: 54px;
+  font-size: var(--text-xs);
+}
+.agp-task {
+  min-height: 64px;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--text-xs);
+}
+
+/* ---- actions ---- */
+.agp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.agp-actions .ui-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+.agp-runbtn {
+  flex: 1 1 auto;
+}
+.agp-danger {
+  color: var(--danger);
+}
+.agp-danger:hover {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* ---- org chart ---- */
+.agp-chartwrap {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(var(--edge) 1px, transparent 1px) 0 0 / 16px 16px;
+  padding: 12px;
+}
+.agp-chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 96px;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+.agp-orgchart {
+  display: inline-block;
+  min-width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  white-space: nowrap;
+}
+.agp-orgchart ul {
+  display: flex;
+  justify-content: center;
+  position: relative;
+  padding-top: 18px;
+  margin: 0;
+  list-style: none;
+}
+.agp-orgchart > ul {
+  padding-top: 0;
+}
+.agp-orgchart li {
+  position: relative;
+  padding: 18px 8px 0;
+  list-style: none;
+  /* Center the node AND its child subtree within the li, so a parent sits exactly
+     over its children's midpoint (text-align centering drifted before). */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+/* down + across connectors between a parent and its children */
+.agp-orgchart li::before,
+.agp-orgchart li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 18px;
+  border-top: 1px solid var(--edge-strong);
+}
+.agp-orgchart li::after {
+  right: auto;
+  left: 50%;
+  border-left: 1px solid var(--edge-strong);
+}
+.agp-orgchart li:only-child::before,
+.agp-orgchart li:only-child::after {
+  display: none;
+}
+.agp-orgchart li:only-child {
+  padding-top: 18px;
+}
+.agp-orgchart li:first-child::before,
+.agp-orgchart li:last-child::after {
+  border: 0 none;
+}
+.agp-orgchart li:last-child::before {
+  border-right: 1px solid var(--edge-strong);
+  border-radius: 0 5px 0 0;
+}
+.agp-orgchart li:first-child::after {
+  border-radius: 5px 0 0 0;
+}
+/* vertical stub down from a parent into the children row */
+.agp-orgchart ul ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 18px;
+  border-left: 1px solid var(--edge-strong);
+}
+/* the root has no incoming connector */
+.agp-orgchart > ul > li {
+  padding-top: 0;
+}
+.agp-orgchart > ul > li::before,
+.agp-orgchart > ul > li::after {
+  display: none;
+}
+
+.agp-node {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Fixed width so the tree connectors line up cleanly (variable widths made the
+     rows look misaligned). */
+  width: 176px;
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.agp-node-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
+}
+.agp-node-avatar.agp-main {
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 0.12),
+    0 0 0 2px var(--accent-border);
+}
+.agp-node:hover {
+  border-color: var(--accent-border);
+  background: var(--hover);
+}
+.agp-node.agp-main {
+  border-color: var(--accent-border);
+}
+.agp-node.closed {
+  opacity: 0.5;
+  border-style: dashed;
+}
+.agp-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.agp-node-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--fg-dim);
+}
+.agp-node-dot.open {
+  background: var(--success);
+}
+.agp-node-dot.busy {
+  background: var(--accent);
+}
+.agp-node-name {
+  flex: 0 1 auto;
+  margin-right: auto; /* hug the name; push MAIN/status to the right */
+  max-width: 100%;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Agent colour as a name chip (replaces the avatar icon). */
+.agp-node-name.chip {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+}
+.agp-node-badge {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+.agp-node-sub {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- pipeline run tab + progress view ---- */
+.agp-tab-run {
+  gap: 5px;
+}
+.agp-tab-run.running .agp-tab-count {
+  color: var(--accent);
+}
+.agp-run {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agp-run-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--fg);
+  font-weight: 600;
+}
+.agp-run-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agp-run-badge {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+.agp-run-badge.running {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.agp-run-badge.done {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.agp-run-task {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--fg-dim);
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.agp-run-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agp-run-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) ease;
+}
+.agp-run-stage:hover {
+  border-color: var(--accent-border);
+}
+.agp-run-stage.current {
+  border-color: var(--accent);
+}
+.agp-run-stage-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--fg-dim);
+}
+.agp-run-stage.running .agp-run-stage-ico {
+  color: var(--accent);
+}
+.agp-run-stage.done .agp-run-stage-ico {
+  color: var(--success);
+}
+.agp-run-stage.error .agp-run-stage-ico {
+  color: var(--danger);
+}
+.agp-run-stage-num {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  color: var(--fg-dim);
+  min-width: 14px;
+}
+.agp-run-stage-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+.agp-run-stage-agent,
+.agp-run-stage-model {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}

@@ -1,5 +1,75 @@
+import { useEffect, useState } from 'react'
 import { useAuth } from '../state/auth'
+import { addTerminal } from '../dock/registry'
+import { useUI } from '../state/ui'
+import { Button } from './ui/Controls'
 import { useT } from '../i18n'
+
+interface AiAccount {
+  id: 'claude' | 'codex'
+  name: string
+  loggedIn: boolean | null
+  plan?: string
+  email?: string
+  mode?: 'subscription' | 'apikey'
+}
+
+// The AI CLI accounts (Claude Code, Codex) connected via their own `/login`. Read
+// locally from each CLI's credential store; login/logout run in a terminal.
+function AiAccounts(): JSX.Element {
+  const t = useT()
+  const [accounts, setAccounts] = useState<AiAccount[] | null>(null)
+  const load = (): void => {
+    window.api.chat.accounts().then(setAccounts)
+  }
+  useEffect(load, [])
+
+  const cap = (s?: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '')
+  const manage = (a: AiAccount, action: 'login' | 'logout'): void => {
+    // Codex has real login/logout subcommands; Claude Code manages auth from its
+    // interactive prompt (open it so the user can run /login or /logout).
+    const cmd = a.id === 'codex' ? `codex ${action}` : 'claude'
+    addTerminal(cmd)
+    useUI.getState().setSettingsOpen(false)
+  }
+
+  return (
+    <>
+      <div className="section-label">{t('settings.account.aiTitle')}</div>
+      {accounts === null ? (
+        <div className="set-note">{t('settings.account.aiChecking')}</div>
+      ) : accounts.length === 0 ? (
+        <div className="set-note">{t('settings.account.aiNone')}</div>
+      ) : (
+        accounts.map((a) => {
+          const status =
+            a.loggedIn === null
+              ? t('settings.account.aiUnknown')
+              : a.loggedIn
+                ? a.mode === 'apikey'
+                  ? t('settings.account.aiApiKey')
+                  : [a.email, a.plan && `${cap(a.plan)} ${t('settings.account.aiPlan')}`]
+                      .filter(Boolean)
+                      .join(' · ') || t('settings.account.aiSignedIn')
+                : t('settings.account.aiSignedOut')
+          return (
+            <div className="ai-account-row" key={a.id}>
+              <span className={`ai-account-dot${a.loggedIn ? ' on' : a.loggedIn === false ? ' off' : ''}`} />
+              <div className="ai-account-meta">
+                <span className="ai-account-name">{a.name}</span>
+                <span className="ai-account-status">{status}</span>
+              </div>
+              <Button onClick={() => manage(a, a.loggedIn ? 'logout' : 'login')}>
+                {a.loggedIn ? t('settings.account.aiLogout') : t('settings.account.aiLogin')}
+              </Button>
+            </div>
+          )
+        })
+      )}
+      <div className="set-note">{t('settings.account.aiNote')}</div>
+    </>
+  )
+}
 
 function ProviderIcon({ provider }: { provider: 'google' | 'github' }): JSX.Element {
   if (provider === 'github') {
@@ -38,6 +108,7 @@ export default function AccountSettings(): JSX.Element {
         <div className="set-note account-code">
           VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
         </div>
+        <AiAccounts />
       </>
     )
   }
@@ -79,6 +150,7 @@ export default function AccountSettings(): JSX.Element {
         </div>
         <div className="set-note">{t('settings.account.syncNote')}</div>
         {error && <div className="set-note account-error">{error}</div>}
+        <AiAccounts />
       </>
     )
   }
@@ -97,6 +169,7 @@ export default function AccountSettings(): JSX.Element {
       {busy && <div className="set-note">{t('settings.account.waiting')}</div>}
       <div className="set-note">{t('settings.account.syncNote')}</div>
       {error && <div className="set-note account-error">{error}</div>}
+      <AiAccounts />
     </>
   )
 }

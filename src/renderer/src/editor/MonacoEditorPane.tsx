@@ -7,6 +7,7 @@ import { ensureLspInitialized } from '../lsp/client'
 import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { useNav } from '../state/nav'
+import { useDebugger } from '../state/debugger'
 import { installCrossFileNavigation } from './gotoDefinition'
 import { modelRev, modelSaved } from './modelStore'
 import { contextBus } from '../bridge/contextBus'
@@ -58,6 +59,8 @@ export default function MonacoEditorPane({
   const lineDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const glyphDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const blameDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
+  const bpDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
+  const execDecoRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const blameRef = useRef<Record<number, BlameLine> | null>(null)
   const updateBlameRef = useRef<() => void>(() => {})
   const viewZoneIds = useRef<string[]>([])
@@ -325,19 +328,30 @@ export default function MonacoEditorPane({
       theme: editorTheme(),
       fontFamily: cfg.editorFontFamily,
       fontSize: cfg.editorFontSize,
-      minimap: { enabled: true },
+      fontLigatures: cfg.editorLigatures,
+      minimap: { enabled: cfg.editorMinimap },
       glyphMargin: true,
       automaticLayout: true,
       scrollBeyondLastLine: false,
-      tabSize: 2,
+      tabSize: cfg.editorTabSize,
+      wordWrap: cfg.editorWordWrap ? 'on' : 'off',
       renderWhitespace: 'selection',
       inlineSuggest: { enabled: true }
     })
     editorRef.current = ed
     blameDecoRef.current = ed.createDecorationsCollection([])
+    bpDecoRef.current = ed.createDecorationsCollection([])
+    execDecoRef.current = ed.createDecorationsCollection([])
     ed.onDidChangeCursorPosition(() => updateBlameRef.current())
     const offSettings = useSettings.subscribe((s) =>
-      ed.updateOptions({ fontFamily: s.settings.editorFontFamily, fontSize: s.settings.editorFontSize })
+      ed.updateOptions({
+        fontFamily: s.settings.editorFontFamily,
+        fontSize: s.settings.editorFontSize,
+        fontLigatures: s.settings.editorLigatures,
+        minimap: { enabled: s.settings.editorMinimap },
+        tabSize: s.settings.editorTabSize,
+        wordWrap: s.settings.editorWordWrap ? 'on' : 'off'
+      })
     )
     // ⌘S is an app-level action (see keybindings/actions.ts 'app.save') so it
     // fires even when focus is on the tab/gutter, not the Monaco textarea.
@@ -375,7 +389,13 @@ export default function MonacoEditorPane({
       const line = e.target.position?.lineNumber
       if (line == null) return
       const h = lineToHunk.current.get(line)
-      if (h) revertHunkRef.current(h)
+      if (h) {
+        revertHunkRef.current(h)
+        return
+      }
+      // Otherwise toggle a breakpoint on this line (VS Code gutter behaviour).
+      const path = fileRef.current?.path
+      if (path) useDebugger.getState().toggleBreakpoint(path, line)
     })
     // Hover over a changed region → floating accept/revert toolbar (Cursor style).
     ed.onMouseMove((e) => {
@@ -503,6 +523,34 @@ export default function MonacoEditorPane({
     ed.focus()
     clearReveal()
   }, [reveal, file?.path])
+
+  // Breakpoint dots (gutter) + the paused execution line, kept in sync with the
+  // debugger store for the currently open file.
+  const bpForFile = useDebugger((s) => (file?.path ? s.breakpoints[file.path] : undefined))
+  const execPtr = useDebugger((s) => s.current)
+  useEffect(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    const bps = (bpForFile ?? []).map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        glyphMarginClassName: 'dbg-bp-glyph',
+        stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+      }
+    }))
+    bpDecoRef.current?.set(bps)
+    const here = execPtr && file && execPtr.file === file.path
+    execDecoRef.current?.set(
+      here
+        ? [
+            {
+              range: new monaco.Range(execPtr!.line, 1, execPtr!.line, 1),
+              options: { isWholeLine: true, className: 'dbg-exec-line', glyphMarginClassName: 'dbg-exec-glyph' }
+            }
+          ]
+        : []
+    )
+  }, [bpForFile, execPtr, file?.path])
 
   // Fetch git blame for the open file (drives the inline annotation).
   useEffect(() => {

@@ -42,8 +42,50 @@ async function gitInfo(folder: string): Promise<GitInfo> {
   }
 }
 
+export interface GitCommit {
+  hash: string
+  parents: string[]
+  author: string
+  date: string
+  refs: string
+  subject: string
+}
+
+// Recent commits across all refs for the commit-graph panel. NUL-separated fields
+// so subjects with any character parse cleanly.
+async function gitLog(folder: string, limit = 200): Promise<GitCommit[]> {
+  try {
+    const { stdout } = await pexec('git', [
+      '-C',
+      folder,
+      'log',
+      '--all',
+      '--date-order',
+      `-n${limit}`,
+      '--pretty=format:%H%x00%P%x00%an%x00%ar%x00%d%x00%s'
+    ])
+    return stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => {
+        const [hash, parents, author, date, refs, subject] = line.split('\x00')
+        return {
+          hash,
+          parents: parents ? parents.split(' ').filter(Boolean) : [],
+          author,
+          date,
+          refs: (refs || '').replace(/^\s*\(|\)\s*$/g, '').trim(),
+          subject: subject ?? ''
+        }
+      })
+  } catch {
+    return []
+  }
+}
+
 export function registerGitHandlers(): void {
   ipcMain.handle('git:info', (_e, folder: string) => gitInfo(folder))
+  ipcMain.handle('git:log', (_e, folder: string, limit?: number) => gitLog(folder, limit))
 
   // The committed (HEAD) version of a file, used as a diff baseline for agent
   // edits when we have no in-app baseline. Returns null if not tracked.
@@ -232,6 +274,53 @@ export function registerGitHandlers(): void {
       return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    }
+  })
+
+  // Local branches + current, for the branch switcher.
+  ipcMain.handle('git:branches', async (_e, folder: string) => {
+    try {
+      const { stdout } = await pexec('git', [
+        '-C',
+        folder,
+        'branch',
+        '--format=%(refname:short)%00%(HEAD)'
+      ])
+      const branches = stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [name, head] = l.split('\x00')
+          return { name, current: head.trim() === '*' }
+        })
+      return branches
+    } catch {
+      return []
+    }
+  })
+  ipcMain.handle('git:checkout', (_e, folder: string, branch: string) =>
+    gitOk(['-C', folder, 'checkout', branch])
+  )
+  ipcMain.handle('git:createBranch', (_e, folder: string, name: string) =>
+    gitOk(['-C', folder, 'checkout', '-b', name])
+  )
+  ipcMain.handle('git:fetch', (_e, folder: string) => gitOk(['-C', folder, 'fetch', '--all', '--prune']))
+  ipcMain.handle('git:stash', (_e, folder: string, message?: string) =>
+    gitOk(['-C', folder, 'stash', 'push', ...(message ? ['-m', message] : [])])
+  )
+  ipcMain.handle('git:stashPop', (_e, folder: string) => gitOk(['-C', folder, 'stash', 'pop']))
+  ipcMain.handle('git:stashList', async (_e, folder: string) => {
+    try {
+      const { stdout } = await pexec('git', ['-C', folder, 'stash', 'list', '--format=%gd%00%s'])
+      return stdout
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => {
+          const [ref, subject] = l.split('\x00')
+          return { ref, subject }
+        })
+    } catch {
+      return []
     }
   })
 

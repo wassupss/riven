@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import { atomicWriteJson } from './atomicWrite'
@@ -19,4 +19,7 @@ export function registerConfigHandlers(): void {
   })
 
   ipcMain.handle('config:save', (_e, name: string, data: unknown) => atomicWriteJson(fileFor(name), data))
+
+  // Reveal a config file in Finder/Explorer (Settings → open settings.json).
+  ipcMain.handle('config:reveal', (_e, name: string) => shell.showItemInFolder(fileFor(name)))
 }

@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSession, pathOf } from '../../state/session'
-import { useAgentEdits, cacheSet } from '../../state/agentEdits'
+import { useAgentEdits, cacheSet, cacheGet } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
-import { GitBranch, RefreshCw, Plus, Minus, ArrowUp, ArrowDown, Trash2 } from 'lucide-react'
+import GitGraphPanel from './GitGraphPanel'
+import {
+  GitBranch,
+  RefreshCw,
+  Plus,
+  Minus,
+  ArrowUp,
+  ArrowDown,
+  Trash2,
+  DownloadCloud,
+  Archive,
+  ChevronDown,
+  Check
+} from 'lucide-react'
 
 interface GitFile {
   path: string
@@ -38,6 +51,9 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
   const [message, setMessage] = useState('')
   const [committing, setCommitting] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [tab, setTab] = useState<'changes' | 'graph'>('changes')
+  const [branchMenu, setBranchMenu] = useState(false)
+  const [branches, setBranches] = useState<Array<{ name: string; current: boolean }>>([])
   const openFile = useSession((s) => s.openFile)
   const setEdit = useAgentEdits((s) => s.set)
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -58,12 +74,20 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
     const abs = `${workspace}/${rel}`
     openFile(abs)
     ensureEditor()
+    // Never overwrite a pending agent edit review with a transient git diff —
+    // doing so would drop the agent's original `before` baseline and break its
+    // revert. If an agent review is open for this file, leave it in place (the
+    // user resolves it via the Changes panel first).
+    const existing = useAgentEdits.getState().edits[abs]
+    if (existing && existing.source !== 'git') return
     const [before, after] = await Promise.all([
       window.api.git.showFile(workspace, rel),
       window.api.workspace.readFile(abs).catch(() => '')
     ])
-    cacheSet(abs, after)
-    if (before != null) setEdit(abs, { before, after, hasBaseline: true })
+    // Only seed the diff baseline cache when there's no agent baseline yet, so a
+    // git view can't repoint the "last known content" an agent edit diffs from.
+    if (cacheGet(abs) == null) cacheSet(abs, after)
+    if (before != null) setEdit(abs, { before, after, hasBaseline: true, source: 'git' })
   }
 
   const stage = async (rel: string): Promise<void> => {
@@ -113,6 +137,41 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
     if (!res.ok) window.alert(t('git.syncFailed', { err: res.error ?? '' }))
     refresh()
   }
+  const fetch = async (): Promise<void> => {
+    setSyncing(true)
+    const res = await window.api.git.fetch(workspace)
+    setSyncing(false)
+    if (!res.ok) window.alert(t('git.syncFailed', { err: res.error ?? '' }))
+    refresh()
+  }
+  const stash = async (): Promise<void> => {
+    const res = await window.api.git.stash(workspace)
+    if (!res.ok) window.alert(res.error ?? 'stash failed')
+    refresh()
+  }
+  const stashPop = async (): Promise<void> => {
+    const res = await window.api.git.stashPop(workspace)
+    if (!res.ok) window.alert(res.error ?? 'stash pop failed')
+    refresh()
+  }
+  const openBranchMenu = async (): Promise<void> => {
+    setBranches(await window.api.git.branches(workspace))
+    setBranchMenu((v) => !v)
+  }
+  const checkout = async (name: string): Promise<void> => {
+    setBranchMenu(false)
+    const res = await window.api.git.checkout(workspace, name)
+    if (!res.ok) window.alert(res.error ?? 'checkout failed')
+    refresh()
+  }
+  const newBranch = async (): Promise<void> => {
+    setBranchMenu(false)
+    const name = window.prompt(t('git.newBranchPrompt'))
+    if (!name?.trim()) return
+    const res = await window.api.git.createBranch(workspace, name.trim())
+    if (!res.ok) window.alert(res.error ?? 'branch failed')
+    refresh()
+  }
 
   const staged = status.files.filter((f) => f.staged)
   const changed = status.files.filter((f) => f.unstaged)
@@ -151,8 +210,11 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
   return (
     <div className="git-panel">
       <div className="git-head">
-        <span className="git-branch">
-          <GitBranch size={13} /> {status.branch}
+        <span className="git-branch-wrap">
+          <button className="git-branch" onClick={openBranchMenu} title={t('git.switchBranch')}>
+            <GitBranch size={13} /> {status.branch}
+            <ChevronDown size={11} />
+          </button>
           {status.hasUpstream && (status.ahead > 0 || status.behind > 0) && (
             <span className="git-sync-count">
               {status.ahead > 0 && (
@@ -169,8 +231,24 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
               )}
             </span>
           )}
+          {branchMenu && (
+            <div className="git-branch-menu">
+              {branches.map((b) => (
+                <button key={b.name} className="git-branch-item" onClick={() => checkout(b.name)}>
+                  {b.current ? <Check size={12} /> : <span className="git-branch-spacer" />}
+                  {b.name}
+                </button>
+              ))}
+              <button className="git-branch-item new" onClick={newBranch}>
+                <Plus size={12} /> {t('git.newBranch')}
+              </button>
+            </div>
+          )}
         </span>
         <span className="git-head-actions">
+          <button className="git-act" disabled={syncing} title={t('git.fetch')} onClick={fetch}>
+            <DownloadCloud size={13} />
+          </button>
           {status.hasUpstream && (
             <>
               <button className="git-act" disabled={syncing} title={t('git.pull')} onClick={pull}>
@@ -181,12 +259,37 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
               </button>
             </>
           )}
+          <button className="git-act" title={t('git.stash')} onClick={stash}>
+            <Archive size={13} />
+          </button>
+          <button className="git-act" title={t('git.stashPop')} onClick={stashPop}>
+            <Archive size={13} style={{ transform: 'scaleY(-1)' }} />
+          </button>
           <button className="git-act" title={t('common.refresh')} onClick={refresh}>
             <RefreshCw size={13} />
           </button>
         </span>
       </div>
 
+      <div className="git-tabs">
+        <button
+          className={`git-tab${tab === 'changes' ? ' active' : ''}`}
+          onClick={() => setTab('changes')}
+        >
+          {t('git.tab.changes')}
+        </button>
+        <button
+          className={`git-tab${tab === 'graph' ? ' active' : ''}`}
+          onClick={() => setTab('graph')}
+        >
+          {t('git.tab.graph')}
+        </button>
+      </div>
+
+      {tab === 'graph' ? (
+        <GitGraphPanel workspace={wid} />
+      ) : (
+        <>
       <div className="git-commit">
         <textarea
           className="git-msg"
@@ -219,6 +322,8 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
           <div className="empty-hint">{t('git.noChanges')}</div>
         )}
       </div>
+        </>
+      )}
     </div>
   )
 }

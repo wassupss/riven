@@ -1,0 +1,89 @@
+/* Launcher pane: pick what to open here. Tokens only. */
+.launcher {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--fg);
+}
+.launcher-inner {
+  width: 100%;
+  max-width: 460px;
+  padding: 24px;
+}
+.launcher-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 14px;
+  text-align: center;
+}
+.launcher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+}
+.launcher-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.launcher-tile:hover {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: var(--accent-border);
+}
+.launcher-tile > svg {
+  color: var(--accent);
+}
+.launcher-sub {
+  margin: 18px 0 8px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.launcher-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.launcher-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.launcher-agent:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+}
+.launcher-agent > svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}

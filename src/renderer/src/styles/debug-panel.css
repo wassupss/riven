@@ -1,0 +1,177 @@
+/* Editor gutter breakpoint dot + paused execution line (Monaco decorations). */
+.dbg-bp-glyph {
+  background: radial-gradient(circle at 50% 50%, #e51400 0 4px, transparent 5px);
+  cursor: pointer;
+}
+.dbg-exec-glyph {
+  background: radial-gradient(circle at 50% 50%, #f5c400 0 4px, transparent 5px);
+}
+.dbg-exec-line {
+  background: color-mix(in srgb, #f5c400 15%, transparent);
+}
+
+/* Debug panel (drawer tab): controls + call stack + variables. Tokens only. */
+.dbg-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+.dbg-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.dbg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+.dbg-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  color: var(--fg);
+}
+.dbg-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dbg-btn.primary {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.dbg-btn.danger:hover {
+  color: var(--danger, #f14c4c);
+}
+.dbg-status {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.dbg-status.paused {
+  color: var(--warning, #cca700);
+}
+.dbg-status.running {
+  color: var(--accent);
+}
+
+.dbg-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+
+.dbg-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.dbg-section {
+  border-bottom: 1px solid var(--edge);
+  padding: 6px 0;
+}
+.dbg-section-title {
+  padding: 2px 12px 4px;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.dbg-frame {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: left;
+}
+.dbg-frame:hover {
+  background: var(--hover-strong);
+}
+.dbg-frame.active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.dbg-frame-name {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.dbg-frame-loc {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.dbg-scope-head,
+.dbg-var-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 12px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  text-align: left;
+}
+.dbg-scope-head {
+  font-weight: 700;
+  color: var(--fg-dim);
+}
+.dbg-var-row:hover,
+.dbg-scope-head:hover {
+  background: var(--hover-strong);
+}
+.dbg-var-kids {
+  padding-left: 14px;
+}
+.dbg-var-spacer {
+  display: inline-block;
+  width: 12px;
+}
+.dbg-var-name {
+  color: var(--accent);
+}
+.dbg-var-val {
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

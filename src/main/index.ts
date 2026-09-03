@@ -8,12 +8,19 @@ import { registerWorkspaceHandlers } from './workspace'
 import { registerLspHandlers } from './lsp'
 import { registerBridgeHandlers } from './bridge'
 import { registerGitHandlers } from './git'
+import { registerDiagnosticsHandlers } from './diagnostics'
+import { registerDebuggerHandlers } from './debugger'
 import { registerSessionsHandlers } from './sessions'
 import { registerConfigHandlers } from './config'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
 import { registerAiHandlers } from './ai'
+import { registerAgentChatHandlers } from './agentChat'
+import { registerMcpServer, stopMcpServer } from './mcpServer'
+import { registerBrowserHandlers } from './browser'
+import { registerNotesHandlers } from './notes'
+import { registerApiHandlers } from './apiclient'
 import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
@@ -90,6 +97,23 @@ function createWindow(): void {
     })
   }
 
+  // Dev affordance: RIVEN_CAP_LIVE=1 writes the live rendered UI to /tmp/riven_cap.png
+  // every 2s (capturePage needs no screen-recording permission), so the current
+  // screen can be inspected without a manual screenshot. Does NOT quit.
+  if (process.env.RIVEN_CAP_LIVE) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      setInterval(async () => {
+        try {
+          const img = await mainWindow.webContents.capturePage()
+          const { promises: fsp } = await import('fs')
+          await fsp.writeFile('/tmp/riven_cap.png', img.toPNG())
+        } catch {
+          /* ignore */
+        }
+      }, 2000)
+    })
+  }
+
   // Forward renderer console (prefixed) to the main stdout — dev only.
   // Electron 33+ replaced the (event, level, message, …) args with a single
   // Event<WebContentsConsoleMessageEventParams>; read from it, falling back to
@@ -107,7 +131,8 @@ function createWindow(): void {
     // Allow same-origin / blank windows (dockview panel pop-out); open real
     // external http(s) links in the default browser.
     if (u === '' || u === 'about:blank' || u.startsWith('http://localhost') || u.startsWith('file://')) {
-      return { action: 'allow' }
+      // Match the app chrome so the pop-out doesn't flash/stay white.
+      return { action: 'allow', overrideBrowserWindowOptions: { backgroundColor: '#1e1e1e' } }
     }
     if (/^https?:/.test(u)) {
       shell.openExternal(u)
@@ -115,6 +140,29 @@ function createWindow(): void {
     }
     // Unknown scheme → deny by default (don't open arbitrary protocol windows).
     return { action: 'deny' }
+  })
+
+  // A dockview pop-out is a separate document, so the theme CSS variables (set
+  // inline on <html> by applyTheme) and the theme-mode attribute don't reach it —
+  // it renders white. Copy them from the opener once the child DOM is ready.
+  mainWindow.webContents.on('did-create-window', (child) => {
+    child.setBackgroundColor('#1e1e1e')
+    const syncTheme = (): void => {
+      child.webContents
+        .executeJavaScript(
+          `(() => { try {
+             const o = window.opener && window.opener.document.documentElement
+             if (!o) return
+             document.documentElement.style.cssText = o.style.cssText
+             const m = o.getAttribute('data-theme-mode')
+             if (m) document.documentElement.setAttribute('data-theme-mode', m)
+             document.documentElement.style.background = 'var(--bg)'
+             document.body && (document.body.style.background = 'var(--bg)')
+           } catch {} })()`
+        )
+        .catch(() => {})
+    }
+    child.webContents.on('dom-ready', syncTheme)
   })
 
   // Keep the main frame pinned to the trusted app origin. A top-level navigation
@@ -145,12 +193,28 @@ app.whenReady().then(() => {
   registerLspHandlers()
   registerBridgeHandlers()
   registerGitHandlers()
+  registerDiagnosticsHandlers()
+  registerDebuggerHandlers()
   registerSessionsHandlers()
   registerConfigHandlers()
   registerSearchHandlers()
   registerCliHandlers()
   registerPortsHandlers()
   registerAiHandlers()
+  registerAgentChatHandlers()
+  // riven's own MCP tool server (relays agent tool calls into the UI). Routes to
+  // the first live window's renderer.
+  registerMcpServer(() => {
+    const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
+    return w ? w.webContents : null
+  })
+  // Real Chromium browser surface (WebContentsView per tab), floated over the
+  // window at the bounds the browser panel reports.
+  registerBrowserHandlers(
+    () => BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null
+  )
+  registerNotesHandlers()
+  registerApiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()
   // Hard-exit backstop, registered LAST so every subsystem's before-quit
@@ -158,7 +222,10 @@ app.whenReady().then(() => {
   // Electron's normal quit stalls for this app (a native handle never releases →
   // macOS "Not Responding"); our on-disk writes are atomic, so a hard kill after
   // teardown is safe and guarantees the app actually closes without orphans.
-  app.on('before-quit', () => process.kill(process.pid, 'SIGKILL'))
+  app.on('before-quit', () => {
+    stopMcpServer()
+    process.kill(process.pid, 'SIGKILL')
+  })
   buildMenu()
 
   const claudePath = resolveClaude()

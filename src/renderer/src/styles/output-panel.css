@@ -1,0 +1,63 @@
+/* Output panel — channel log viewer. Tokens only. */
+.out-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+.out-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.out-channel {
+  background: var(--bg-2);
+  color: var(--fg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.out-spacer {
+  flex: 1 1 auto;
+}
+.out-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.out-clear:hover {
+  background: var(--hover-strong);
+  color: var(--fg);
+}
+.out-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 12px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg-dim);
+}
+.out-empty {
+  color: var(--fg-dim);
+  opacity: 0.6;
+}

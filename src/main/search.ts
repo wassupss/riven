@@ -20,6 +20,26 @@ export interface SearchMatch {
   matchLength: number
 }
 
+export interface SearchOpts {
+  regex?: boolean
+  wholeWord?: boolean
+  caseSensitive?: boolean
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// Compile the query into a global RegExp honoring the regex/word/case toggles.
+// Returns null if the user typed an invalid regex (caller treats as no match).
+function buildMatcher(query: string, o: SearchOpts): RegExp | null {
+  let src = o.regex ? query : escapeRe(query)
+  if (o.wholeWord) src = `\\b(?:${src})\\b`
+  try {
+    return new RegExp(src, 'g' + (o.caseSensitive ? '' : 'i'))
+  } catch {
+    return null
+  }
+}
+
 async function* walk(dir: string): AsyncGenerator<string> {
   let entries
   try {
@@ -40,12 +60,13 @@ export function registerSearchHandlers(): void {
     'search:inFiles',
     async (
       _e,
-      opts: { root: string; query: string; caseSensitive?: boolean }
+      opts: { root: string; query: string } & SearchOpts
     ): Promise<{ matches: SearchMatch[]; truncated: boolean }> => {
-      const { root, query, caseSensitive } = opts
+      const { root, query } = opts
       const matches: SearchMatch[] = []
       if (!query) return { matches, truncated: false }
-      const needle = caseSensitive ? query : query.toLowerCase()
+      const re = buildMatcher(query, opts)
+      if (!re) return { matches, truncated: false } // invalid regex → no results
 
       for await (const file of walk(root)) {
         if (matches.length >= MAX_RESULTS) return { matches, truncated: true }
@@ -69,16 +90,17 @@ export function registerSearchHandlers(): void {
         let perFile = 0
         for (let i = 0; i < lines.length && perFile < MAX_PER_FILE; i++) {
           const line = lines[i]
-          const hay = caseSensitive ? line : line.toLowerCase()
-          const idx = hay.indexOf(needle)
-          if (idx >= 0) {
+          re.lastIndex = 0
+          const m = re.exec(line)
+          // Skip empty-width matches (e.g. a lone `*` regex) so we don't spin.
+          if (m && m[0].length > 0) {
             matches.push({
               file,
               line: i + 1,
-              column: idx + 1,
+              column: m.index + 1,
               text: line.length > 240 ? line.slice(0, 240) : line,
-              matchStart: idx,
-              matchLength: query.length
+              matchStart: m.index,
+              matchLength: m[0].length
             })
             perFile++
             if (matches.length >= MAX_RESULTS) return { matches, truncated: true }
@@ -95,15 +117,15 @@ export function registerSearchHandlers(): void {
     'search:replaceInFiles',
     async (
       _e,
-      opts: { root: string; query: string; replacement: string; caseSensitive?: boolean }
+      opts: { root: string; query: string; replacement: string } & SearchOpts
     ): Promise<{ files: number; replacements: number }> => {
-      const { root, query, replacement, caseSensitive } = opts
+      const { root, query, replacement } = opts
       if (!query) return { files: 0, replacements: 0 }
-      // Escape the query so it matches literally; escape `$` in the replacement
-      // so RegExp replace treats it as text, not a capture reference.
-      const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const re = new RegExp(escapeRe(query), caseSensitive ? 'g' : 'gi')
-      const safeRepl = replacement.replace(/\$/g, '$$$$')
+      const re = buildMatcher(query, opts)
+      if (!re) return { files: 0, replacements: 0 } // invalid regex
+      // In literal mode, escape `$` in the replacement so RegExp replace treats it
+      // as text. In regex mode, keep `$1`… capture references working.
+      const safeRepl = opts.regex ? replacement : replacement.replace(/\$/g, '$$$$')
 
       let files = 0
       let replacements = 0

@@ -13,19 +13,96 @@ export function setOrphanModelDisposer(fn: (paths: string[]) => void): void {
 // preview URL and dockview layout (the arrangement of explorer/editor/terminals/
 // preview panels). Inactive workspaces stay mounted (hidden) so terminals live.
 
+// Per-chat-pane state — the SINGLE SOURCE OF TRUTH for restoring a chat pane,
+// stored in the workspace tree (sessions.json) so it can never desync from the
+// dock layout (both are saved together). Replaces the old flat localStorage keys.
+export interface PaneState {
+  model?: string
+  mode?: string
+  session?: string | null // Claude CLI session id (for --resume)
+  agent?: string | null // custom agent (.claude/agents)
+  avatar?: string | null // colour override ("glyph.color" | "none")
+  title?: string // pinned tab title
+  log?: unknown[] // transcript (Msg[]), capped
+}
+
 export interface Session {
   openTabs: string[]
   activePath: string | null
   previewUrl: string
   dockLayout: unknown | null // dockview SerializedDockview
+  panes?: Record<string, PaneState> // chatKey → pane state (the tree)
 }
 
 const emptySession = (): Session => ({
   openTabs: [],
   activePath: null,
   previewUrl: '',
-  dockLayout: null
+  dockLayout: null,
+  panes: {}
 })
+
+// ---- pane state (single source of truth) ------------------------------------
+// Legacy flat-localStorage keys, read as a one-time fallback so existing sessions
+// migrate seamlessly; new writes go into the workspace tree.
+function legacy(chatKey: string, prefix: string): string | undefined {
+  try {
+    return localStorage.getItem(`${prefix}:${chatKey}`) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+export function loadPaneState(wid: string, chatKey: string): PaneState {
+  const rec = useSession.getState().sessions[wid]?.panes?.[chatKey]
+  let legacyLog: unknown[] | undefined
+  if (!rec?.log) {
+    try {
+      const raw = localStorage.getItem(`chatlog:${chatKey}`)
+      if (raw) legacyLog = JSON.parse(raw) as unknown[]
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    model: rec?.model ?? legacy(chatKey, 'chatmodel'),
+    mode: rec?.mode ?? legacy(chatKey, 'chatmode'),
+    session: rec?.session ?? legacy(chatKey, 'chatsession') ?? null,
+    agent: rec?.agent ?? legacy(chatKey, 'chatagent') ?? null,
+    avatar: rec?.avatar ?? legacy(chatKey, 'chatavatar') ?? null,
+    title: rec?.title ?? legacy(chatKey, 'chattitle'),
+    log: rec?.log ?? legacyLog
+  }
+}
+export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {
+  useSession.setState((st) => {
+    const s = st.sessions[wid] ?? emptySession()
+    const panes = { ...(s.panes ?? {}), [chatKey]: { ...(s.panes?.[chatKey] ?? {}), ...patch } }
+    return { sessions: { ...st.sessions, [wid]: { ...s, panes } } }
+  })
+}
+export function clearPaneState(wid: string, chatKey: string): void {
+  useSession.setState((st) => {
+    const s = st.sessions[wid]
+    if (!s?.panes?.[chatKey]) return {}
+    const panes = { ...s.panes }
+    delete panes[chatKey]
+    return { sessions: { ...st.sessions, [wid]: { ...s, panes } } }
+  })
+  for (const p of ['chatlog', 'chatmodel', 'chatmode', 'chatsession', 'chattitle', 'chatavatar', 'chatagent']) {
+    try {
+      localStorage.removeItem(`${p}:${chatKey}`)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+// Find which workspace holds a pane (chatKeys are globally unique). Falls back to
+// the active workspace for a not-yet-recorded pane.
+export function widForPane(chatKey: string): string | null {
+  const st = useSession.getState()
+  for (const [wid, s] of Object.entries(st.sessions)) if (s.panes?.[chatKey]) return wid
+  return st.activeWorkspace
+}
 
 interface PersistShape {
   openWorkspaces: string[]
@@ -54,6 +131,7 @@ interface SessionState {
   patch: (wid: string, p: Partial<Session>) => void
   openFile: (path: string) => void
   closeTab: (path: string) => void
+  reorderTabs: (from: number, to: number) => void
 }
 
 // A workspace is identified by a `wid`, NOT its path, so the same folder can be
@@ -106,7 +184,11 @@ export const useSession = create<SessionState>((set) => ({
           openTabs: s.openTabs ?? [],
           activePath: s.activePath ?? null,
           previewUrl: s.previewUrl ?? '',
-          dockLayout: s.dockLayout ?? null
+          dockLayout: s.dockLayout ?? null,
+          // Preserve per-pane state (model / mode / session id / transcript / title /
+          // avatar). Dropping it here wiped the tree on every launch: the first
+          // layout-change save afterwards then persisted panes-less sessions to disk.
+          panes: s.panes ?? {}
         }
       }
       return {
@@ -206,26 +288,79 @@ export const useSession = create<SessionState>((set) => ({
       const openTabs = s.openTabs.filter((t) => t !== path)
       const activePath = s.activePath === path ? (openTabs.at(-1) ?? null) : s.activePath
       return { sessions: { ...st.sessions, [ws]: { ...s, openTabs, activePath } } }
+    }),
+
+  reorderTabs: (from, to) =>
+    set((st) => {
+      const ws = st.activeWorkspace
+      if (!ws) return {}
+      const s = st.sessions[ws] ?? emptySession()
+      if (from === to || from < 0 || to < 0 || from >= s.openTabs.length || to >= s.openTabs.length)
+        return {}
+      const openTabs = [...s.openTabs]
+      const [moved] = openTabs.splice(from, 1)
+      openTabs.splice(to, 0, moved)
+      return { sessions: { ...st.sessions, [ws]: { ...s, openTabs } } }
     })
 }))
 
 // ---- persistence -----------------------------------------------------------
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+const snapshot = (): {
+  openWorkspaces: string[]
+  activeWorkspace: string | null
+  sessions: unknown
+  recents: unknown
+  names: unknown
+} => {
+  const st = useSession.getState()
+  return {
+    openWorkspaces: st.openWorkspaces,
+    activeWorkspace: st.activeWorkspace,
+    sessions: st.sessions,
+    recents: st.recents,
+    names: st.names
+  }
+}
 useSession.subscribe((st) => {
   if (!st.ready) return
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(
-    () =>
-      window.api.sessions.save({
-        openWorkspaces: st.openWorkspaces,
-        activeWorkspace: st.activeWorkspace,
-        sessions: st.sessions,
-        recents: st.recents,
-        names: st.names
-      }),
-    400
-  )
+  saveTimer = setTimeout(() => window.api.sessions.save(snapshot()), 400)
+})
+
+// Force the current snapshot to disk NOW (blocking), cancelling the debounce.
+// Used for structural dock changes (a panel opened/closed) so a close is durable
+// immediately — otherwise quitting within the 400ms debounce loses it and the
+// closed panel reappears on next launch.
+export function flushSessionSaveSync(): void {
+  if (!useSession.getState().ready) return
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  try {
+    window.api.sessions.saveSync(snapshot())
+  } catch {
+    /* best effort */
+  }
+}
+
+// Flush the pending debounced save synchronously before the page tears down
+// (renderer reload / window close). Without this, a change made in the last 400ms
+// — e.g. closing a panel — is lost and reappears on restore. sendSync blocks until
+// the file is written, so it survives even a hard reload.
+window.addEventListener('beforeunload', () => {
+  if (!useSession.getState().ready) return
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  try {
+    window.api.sessions.saveSync(snapshot())
+  } catch {
+    /* best effort on exit */
+  }
 })
 
 // Keep the main process's file-mutation confinement list (workspace roots) in

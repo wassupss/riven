@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useUI } from '../state/ui'
-import { addTerminal } from '../dock/registry'
+import { launchAgent } from '../dock/registry'
 import { contextBus } from '../bridge/contextBus'
 import { useT } from '../i18n'
 
@@ -38,7 +38,9 @@ export default function AgentPicker(): JSX.Element | null {
     setAgentPicker(null)
   }
   const launch = (c: Cli): void => {
-    addTerminal(c.cmd) // opens a terminal running the LLM; pending flushes on agent-up
+    // Same unified launcher as the quick-panel profiles: native chat (Claude) or a
+    // terminal, per the setting. Queued send-to-LLM text becomes the first message.
+    launchAgent(c.cmd, contextBus.takePending(workspace) ?? undefined)
     setAgentPicker(null)
   }
 

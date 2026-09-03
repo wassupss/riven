@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><g transform="translate(100,100) scale(0.8047)">
+  <defs>
+    <clipPath id="rv-tile"><rect width="1024" height="1024" rx="228"></rect></clipPath>
+    <clipPath id="rv-side"><rect x="0" y="0" width="225" height="717" rx="31"></rect></clipPath>
+    <clipPath id="rv-edit"><rect x="254" y="0" width="440" height="717" rx="31"></rect></clipPath>
+    <clipPath id="rv-chat"><rect x="723" y="0" width="301" height="717" rx="31"></rect></clipPath>
+    <clipPath id="rv-term"><rect x="0" y="745" width="1024" height="279" rx="31"></rect></clipPath>
+    <path id="rv-r" fill="#ffffff" transform="translate(5.3,-153.7)" d="M330.7 429.3 L548 429.3 L568.7 431.3 L584.3 434.3 L595.3 437.3 L607.3 441.7 L623.3 449.3 L623.7 450 L630 453.3 L631.7 455 L636.3 457.7 L642 462.7 L642.7 462.7 L649 469 L650 469.3 L650 470 L655 474.7 L655 475.3 L660.7 481.7 L664.3 487.7 L665.3 488.3 L669 495.3 L669.7 495.7 L670.3 498 L673.7 504 L678.7 518 L681.3 529.3 L683.3 545 L683.7 569.3 L682.7 582.7 L680.7 594.7 L678 604.7 L673.3 616.7 L668.7 625.3 L668 625.7 L665.3 630.3 L664.3 631 L664.3 631.7 L663.3 632.3 L663.3 633 L660.3 636 L659 638.3 L656 641 L656 641.7 L648.3 649.3 L647.7 649.3 L645.7 651.7 L645 651.7 L640.3 656 L639.7 656 L635.7 659.3 L631.3 661.7 L630 663 L628.7 663.3 L628.3 664 L618.7 669 L613.3 671 L613.3 683.3 L621.3 684 L631.7 686.3 L637 688.3 L647 694 L654 700.3 L654 701 L656 702.7 L656 703.3 L657.3 704.3 L657.3 705 L660.3 708.7 L664.3 716.3 L668 727.3 L670 740.7 L670 902.3 L580.7 902.3 L580.3 752 L579.3 747.3 L576.3 739.7 L575.7 739.3 L575.3 738 L573 735.3 L573 734.7 L569 730.7 L561 726.3 L556.3 725 L549.3 724 L420 724 L420 902.3 L330.7 902.3Z M420 510.3 L420 642.7 L534.7 642.7 L541 642 L552 639.7 L558.7 637.3 L566 633.7 L566.3 633 L567.7 632.7 L570.3 630.3 L571 630.3 L571.7 629.3 L572.3 629.3 L573.3 628 L574 628 L580 622 L580 621.3 L584.3 616.3 L584.7 615 L587.3 611.3 L587.7 609.7 L590 605.3 L593.3 593.3 L594.3 583 L594.3 570 L593.3 559.3 L590 547.3 L584.7 537 L581 532.7 L581 532 L577.7 529 L577.7 528.3 L576 526.7 L575.3 526.7 L573.3 524.3 L572.7 524.3 L567.7 520.3 L560 516.3 L552.7 513.7 L546 512 L536.3 510.7Z"></path>
+  </defs>
+  <g clip-path="url(#rv-tile)">
+    <rect width="1024" height="1024" fill="#080706"></rect>
+    <g transform="translate(-9,-6)"><rect x="0" y="0" width="225" height="717" rx="31" fill="#171310"></rect><g clip-path="url(#rv-side)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(4,-10)"><rect x="254" y="0" width="440" height="717" rx="31" fill="#221b16"></rect><g clip-path="url(#rv-edit)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(12,-3)"><rect x="723" y="0" width="301" height="717" rx="31" fill="#1a1512"></rect><g clip-path="url(#rv-chat)"><use href="#rv-r"></use></g></g>
+    <g transform="translate(-4,13)"><rect x="0" y="745" width="1024" height="279" rx="31" fill="#241c17"></rect><g clip-path="url(#rv-term)"><use href="#rv-r"></use></g><rect x="49" y="874" width="74" height="16" rx="6" fill="#ff7847"></rect></g>
+  </g>
+</g></svg>

@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useSession, workspaceName, pathOf } from '../state/session'
+import { useSession, workspaceName, pathOf, loadPaneState } from '../state/session'
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
+import { useAgents, agentsForWorkspace } from '../state/agents'
+import { useUI } from '../state/ui'
+import { getActiveApi } from '../dock/registry'
+import { tintStyle } from '../lib/avatar'
 import { useT } from '../i18n'
-import { Plus, X, GitBranch } from 'lucide-react'
+import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -72,6 +76,63 @@ function shortenPath(p: string): string {
   return p.replace(/^\/(?:Users|home)\/[^/]+/, '~')
 }
 
+// Agent status indicator, matching native's rail (StatusIndicator):
+//   idle → static dot · busy → radar-pulse rings · waiting → breathing dot ·
+//   done → a checkmark that draws itself.
+type DotActivity = 'idle' | 'busy' | 'waiting' | 'done'
+function StatusDot({
+  activity,
+  color,
+  title
+}: {
+  activity: DotActivity
+  color?: string
+  title?: string
+}): JSX.Element {
+  if (activity === 'done') {
+    return (
+      <span className="ws-stat done" title={title} aria-hidden>
+        <svg viewBox="0 0 12 12">
+          <path className="ws-check-path" d="M2.6 6.3 L5 8.7 L9.4 3.3" />
+        </svg>
+      </span>
+    )
+  }
+  return (
+    <span
+      className={`ws-stat ${activity}`}
+      title={title}
+      style={activity === 'idle' && color ? ({ '--dot': color } as React.CSSProperties) : undefined}
+      aria-hidden
+    >
+      {activity === 'busy' && (
+        <>
+          <i className="ws-ring" />
+          <i className="ws-ring d2" />
+        </>
+      )}
+      <i className="ws-core" />
+    </span>
+  )
+}
+
+// Stable per-workspace identity color (like native cardColors) so cards are
+// distinguishable at a glance. Derived from the path so it's consistent.
+function colorFor(ws: string): string {
+  let h = 0
+  for (let i = 0; i < ws.length; i++) h = (h * 31 + ws.charCodeAt(i)) | 0
+  return `hsl(${Math.abs(h) % 360} 62% 62%)`
+}
+
+// Persisted set of workspaces whose agent roster is collapsed.
+function railCollapsed(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem('railCollapsed') || '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
 interface GitState {
   branch: string | null
   dirty: number
@@ -107,6 +168,31 @@ function WorkspaceCard({
   const active = ws === activeWorkspace
   const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
   const openWorkspace = useSession((s) => s.openWorkspace)
+  const metaHeld = useUI((s) => s.metaHeld)
+  // Re-read the (non-reactive) agent roster whenever it changes.
+  useAgents((s) => s.version)
+  const agents = agentsForWorkspace(ws)
+  // The card dot also reflects a just-finished agent: busy > waiting(attn) > done.
+  const cardActivity: DotActivity =
+    activity === 'busy'
+      ? 'busy'
+      : activity === 'attn'
+        ? 'waiting'
+        : agents.some((a) => a.status === 'done')
+          ? 'done'
+          : 'idle'
+  // Collapse the agent roster per workspace (persisted), like native's rail.
+  const [collapsed, setCollapsed] = useState(() => railCollapsed().has(ws))
+  const toggleCollapsed = (): void => {
+    const set = railCollapsed()
+    set.has(ws) ? set.delete(ws) : set.add(ws)
+    try {
+      localStorage.setItem('railCollapsed', JSON.stringify([...set]))
+    } catch {
+      /* ignore */
+    }
+    setCollapsed(set.has(ws))
+  }
   const [git, setGit] = useState<GitState | null>(null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
@@ -168,7 +254,11 @@ function WorkspaceCard({
       onDragEnd={onDragEnd}
     >
       <div className="ws-card-top">
-        <span className={`ws-card-dot ${activity}`} title={t(ACTIVITY_LABEL_KEY[activity])} />
+        <StatusDot
+          activity={cardActivity}
+          color={colorFor(ws)}
+          title={t(ACTIVITY_LABEL_KEY[activity])}
+        />
         {editing ? (
           <input
             className="ws-card-rename"
@@ -196,16 +286,20 @@ function WorkspaceCard({
             {name}
           </span>
         )}
-        <span
-          className="ws-card-close"
-          title={t('ws.close')}
-          onClick={(e) => {
-            e.stopPropagation()
-            closeWorkspace(ws)
-          }}
-        >
-          <X size={12} />
-        </span>
+        {agents.length > 0 && (
+          <button
+            className="ws-card-agentcount"
+            title={t('ws.agentCount', { n: agents.length })}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleCollapsed()
+            }}
+          >
+            {collapsed ? <ChevronRight size={10} /> : <ChevronDown size={10} />}
+            {agents.length}
+          </button>
+        )}
+        {index < 9 && metaHeld && <span className="ws-card-kbd">⌘{index + 1}</span>}
       </div>
       <div className="ws-card-meta">
         <span className="ws-card-path">{shortenPath(pathOf(ws))}</span>
@@ -214,6 +308,36 @@ function WorkspaceCard({
         <div className="ws-card-git">
           <span className="ws-card-branch"><GitBranch size={12} /> {git.branch ?? 'detached'}</span>
           {git.dirty > 0 && <span className="ws-card-dirty">±{git.dirty}</span>}
+        </div>
+      )}
+      {agents.length > 0 && !collapsed && (
+        <div className="ws-card-agents">
+          {agents.map((a) => {
+            // The agent's colour tints the whole row + colours the name text.
+            const tint = tintStyle(a.title.split(' · ')[0] || a.title, loadPaneState(ws, a.id).avatar)
+            return (
+              <span
+                key={a.id}
+                className="ws-agent"
+                title={a.title}
+                style={tint ? { background: tint.background } : undefined}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setActiveWorkspace(ws)
+                  // After the dock for this workspace is active, focus the agent pane.
+                  setTimeout(() => getActiveApi()?.getPanel(a.id)?.api.setActive(), 60)
+                }}
+              >
+                <StatusDot activity={a.status} />
+                <span
+                  className={`ws-agent-title${a.status === 'busy' ? ' shimmer' : ''}`}
+                  style={tint && a.status !== 'busy' ? { color: tint.color } : undefined}
+                >
+                  {a.title}
+                </span>
+              </span>
+            )
+          })}
         </div>
       )}
       {menu &&

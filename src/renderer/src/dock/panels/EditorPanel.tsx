@@ -1,27 +1,76 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import MonacoEditorPane from '../../editor/MonacoEditorPane'
 import type { EditorPaneComponent, OpenFile } from '../../editor/EditorPane'
 import { closeDocument } from '../../lsp/client'
 import { setEditorCloser } from '../../keybindings/focus'
 import { useSession } from '../../state/session'
+import { useEditorSplit, type Edge, type SplitNode } from '../../state/editorSplit'
+import { openEditorSplit } from '../registry'
 import { useExplorerReveal } from '../../state/explorerReveal'
 import { useAgentEdits, cacheSet } from '../../state/agentEdits'
+import { useEditorBottom } from '../../state/editorBottomPanel'
+import EditorBottomDrawer from './EditorBottomDrawer'
+import EditorStatusBar from './EditorStatusBar'
 import DiffModal from '../../components/DiffModal'
 import { useT, t as staticT } from '../../i18n'
 import { X, Bot } from 'lucide-react'
+import '../../styles/editor-bottom.css'
 
 const EditorPane: EditorPaneComponent = MonacoEditorPane
 
-export default function EditorPanel({ workspace }: { workspace: string }): JSX.Element {
+const PRIMARY = 'editor'
+
+// One editor group (its own tab strip + Monaco). The primary group (`editor`) is
+// backed by the workspace session; every split group by the editorSplit store.
+// Groups can be freely split in any direction by dragging a tab onto an edge.
+function EditorGroupView({
+  workspace,
+  groupId
+}: {
+  workspace: string
+  groupId: string
+}): JSX.Element {
   const t = useT()
+  const isSplit = groupId !== PRIMARY
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const session = useSession((s) => s.sessions[workspace])
-  const openFile = useSession((s) => s.openFile)
-  const closeTabAction = useSession((s) => s.closeTab)
+  const groupData = useEditorSplit((s) => s.byWs[workspace]?.groups[groupId])
+  const activeGroup = useEditorSplit((s) => s.byWs[workspace]?.activeGroup ?? PRIMARY)
+  const drag = useEditorSplit((s) => s.drag)
+  const sessOpenFile = useSession((s) => s.openFile)
+  const sessClose = useSession((s) => s.closeTab)
+  const sessReorder = useSession((s) => s.reorderTabs)
 
-  const openTabs = session?.openTabs ?? []
-  const activePath = session?.activePath ?? null
+  // The split groups keep their own tab set; the primary uses the session.
+  const openTabs = (isSplit ? groupData?.openTabs : session?.openTabs) ?? []
+  const activePath = (isSplit ? groupData?.activePath : session?.activePath) ?? null
+  const openFile = isSplit
+    ? (p: string) => useEditorSplit.getState().openInGroup(workspace, groupId, p)
+    : sessOpenFile
+  const closeTabAction = isSplit
+    ? (p: string) => useEditorSplit.getState().closeInGroup(workspace, groupId, p)
+    : sessClose
+  const reorderTabs = isSplit
+    ? (a: number, b: number) => useEditorSplit.getState().reorderInGroup(workspace, groupId, a, b)
+    : sessReorder
+
+  // Receive a tab dragged from another group onto THIS group's tab strip.
+  const receiveTab = (path: string, sourceGroup: string): void => {
+    if (sourceGroup === groupId) return
+    if (!isSplit) sessOpenFile(path)
+    useEditorSplit.getState().moveTab(workspace, sourceGroup, groupId, path)
+    if (sourceGroup === PRIMARY) sessClose(path)
+  }
+  // Split THIS group by dropping the dragged tab onto one of its four edges.
+  const splitEdge = (edge: Edge): void => {
+    const d = useEditorSplit.getState().drag
+    if (!d) return
+    useEditorSplit.getState().splitWith(workspace, groupId, edge, d.group, d.path)
+    if (d.group === PRIMARY) sessClose(d.path)
+    useEditorSplit.getState().setDrag(null)
+  }
 
   const agentEdit = useAgentEdits((s) => (activePath ? s.edits[activePath] : undefined))
   const editsMap = useAgentEdits((s) => s.edits)
@@ -34,6 +83,8 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   const [dirty, setDirty] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const [dragTab, setDragTab] = useState<number | null>(null)
+  const [overTab, setOverTab] = useState<number | null>(null)
   const revisions = useRef(new Map<string, number>())
   const fileTabsRef = useRef<HTMLDivElement>(null)
   const activeTabRef = useRef<HTMLDivElement>(null)
@@ -171,7 +222,7 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   }
 
   useEffect(() => {
-    if (!isActiveWs) return
+    if (!isActiveWs || isSplit) return
     setEditorCloser(() => {
       const s = stateRef.current
       if (!s.activePath) return false
@@ -185,16 +236,62 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
   // banner remains only as a fallback for whole-file edits with no baseline.
   const showAgentBar = !!agentEdit && !dirty && !agentEdit.hasBaseline
 
+  const isActiveGroup = isSplit ? activeGroup === groupId : activeGroup === PRIMARY
+  const focus = (): void => useEditorSplit.getState().focusGroup(workspace, groupId)
+
   return (
-    <div className="editor-panel">
+    <div
+      className={`editor-panel${isActiveGroup ? ' group-active' : ''}`}
+      onMouseDown={focus}
+    >
       {openTabs.length > 0 && (
-        <div className="file-tabs" ref={fileTabsRef}>
-          {openTabs.map((p) => (
+        <div
+          className="file-tabs"
+          ref={fileTabsRef}
+          onDragOver={(e) => {
+            // Accept a tab dragged from ANOTHER group onto this strip.
+            if (drag && drag.group !== groupId) e.preventDefault()
+          }}
+          onDrop={(e) => {
+            if (drag && drag.group !== groupId) {
+              e.preventDefault()
+              receiveTab(drag.path, drag.group)
+              useEditorSplit.getState().setDrag(null)
+            }
+          }}
+        >
+          {openTabs.map((p, i) => (
             <div
               key={p}
               ref={p === activePath ? activeTabRef : undefined}
-              className={`file-tab${p === activePath ? ' active' : ''}`}
-              onClick={() => openFile(p)}
+              className={`file-tab${p === activePath ? ' active' : ''}${overTab === i && dragTab !== null && dragTab !== i ? ' drag-over' : ''}`}
+              draggable
+              onDragStart={() => {
+                setDragTab(i)
+                useEditorSplit.getState().setDrag({ ws: workspace, group: groupId, path: p })
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                if (overTab !== i) setOverTab(i)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                // Cross-group drop: move the tab here. Same-group: reorder.
+                if (drag && drag.group !== groupId) receiveTab(drag.path, drag.group)
+                else if (dragTab !== null && dragTab !== i) reorderTabs(dragTab, i)
+                setDragTab(null)
+                setOverTab(null)
+                useEditorSplit.getState().setDrag(null)
+              }}
+              onDragEnd={() => {
+                setDragTab(null)
+                setOverTab(null)
+                useEditorSplit.getState().setDrag(null)
+              }}
+              onClick={() => {
+                focus()
+                openFile(p)
+              }}
               onContextMenu={(e) => openTabMenu(e, p)}
               title={p}
             >
@@ -265,6 +362,24 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
         onDismiss={() => activePath && clearEdit(activePath)}
       />
 
+      {/* Edge drop-zones: drag a file tab (from this or any group) onto an edge
+          to split THIS group in that direction. Shown only while dragging. */}
+      {drag && (
+        <div className="editor-drop-edges">
+          {(['left', 'right', 'top', 'bottom'] as const).map((edge) => (
+            <div
+              key={edge}
+              className={`editor-drop-edge ${edge}`}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault()
+                splitEdge(edge)
+              }}
+            />
+          ))}
+        </div>
+      )}
+
       {showDiff && agentEdit && activePath && (
         <DiffModal
           path={activePath}
@@ -328,6 +443,17 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
               {t('tab.closeAll')}
             </button>
             <div className="ctx-sep" />
+            {!isSplit && (
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  openEditorSplit(tabMenu.path)
+                  setTabMenu(null)
+                }}
+              >
+                {t('tab.splitEditor')}
+              </button>
+            )}
             <button
               className="ctx-item"
               onClick={() => {
@@ -350,6 +476,63 @@ export default function EditorPanel({ workspace }: { workspace: string }): JSX.E
         </div>,
           document.body
         )}
+    </div>
+  )
+}
+
+// A stable React key for a subtree (group ids are unique across the layout).
+function nodeKey(n: SplitNode): string {
+  return n.type === 'leaf' ? n.group : `b:${n.children.map(nodeKey).join(',')}`
+}
+
+// Render the split tree recursively: leaves are editor groups, branches are
+// nested resizable row/column PanelGroups. Any depth, any direction.
+function SplitTree({ ws, node }: { ws: string; node: SplitNode }): JSX.Element {
+  if (node.type === 'leaf') return <EditorGroupView workspace={ws} groupId={node.group} />
+  const horizontal = node.dir === 'row'
+  return (
+    <PanelGroup direction={horizontal ? 'horizontal' : 'vertical'} className="editor-split">
+      {node.children.map((c, i) => (
+        <Fragment key={nodeKey(c)}>
+          {i > 0 && (
+            <PanelResizeHandle className={horizontal ? 'resize-handle-v' : 'resize-handle-h'} />
+          )}
+          <Panel defaultSize={node.sizes[i] ?? 100 / node.children.length} minSize={12}>
+            <SplitTree ws={ws} node={c} />
+          </Panel>
+        </Fragment>
+      ))}
+    </PanelGroup>
+  )
+}
+
+// The editor panel: a free-form tree of editor groups you split by dragging a
+// tab onto a group's edge (VS Code-style), nestable in any direction.
+export default function EditorPanel({ workspace }: { workspace: string }): JSX.Element {
+  const tree = useEditorSplit((s) => s.byWs[workspace]?.tree)
+  const bottomOpen = useEditorBottom((s) => s.open)
+  const editorArea =
+    !tree || tree.type === 'leaf' ? (
+      <EditorGroupView workspace={workspace} groupId={tree?.type === 'leaf' ? tree.group : 'editor'} />
+    ) : (
+      <SplitTree ws={workspace} node={tree} />
+    )
+  return (
+    <div className="editor-shell">
+      {bottomOpen ? (
+        <PanelGroup direction="vertical" className="editor-shell-split" autoSaveId="riven:editor-bottom">
+          <Panel minSize={15} className="editor-shell-main">
+            {editorArea}
+          </Panel>
+          <PanelResizeHandle className="resize-handle-h" />
+          <Panel defaultSize={32} minSize={10} className="editor-shell-drawer">
+            <EditorBottomDrawer workspace={workspace} />
+          </Panel>
+        </PanelGroup>
+      ) : (
+        <div className="editor-shell-main">{editorArea}</div>
+      )}
+      <EditorStatusBar />
     </div>
   )
 }

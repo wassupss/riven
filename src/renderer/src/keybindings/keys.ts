@@ -133,6 +133,28 @@ class Keymap {
     return null
   }
 
+  // Chords a focused text field keeps for itself (native macOS text editing);
+  // everything else is an app shortcut and fires even while typing.
+  private static readonly TEXT_EDIT = new Set([
+    'Mod+a',
+    'Mod+c',
+    'Mod+v',
+    'Mod+x',
+    'Mod+z',
+    'Mod+y',
+    'Mod+Shift+z',
+    'Mod+Left',
+    'Mod+Right',
+    'Mod+Up',
+    'Mod+Down',
+    'Mod+Backspace',
+    'Mod+Delete',
+    'Alt+Left',
+    'Alt+Right',
+    'Alt+Backspace',
+    'Alt+Delete'
+  ])
+
   handle = (e: KeyboardEvent): void => {
     // Recorder is capturing this keydown, or a keyboard-driven modal is open —
     // let it own the keyboard without side effects.
@@ -147,7 +169,14 @@ class Keymap {
     // they're exempt.
     const ae = document.activeElement as HTMLElement | null
     if (ae && !ae.closest?.('.monaco-editor') && !ae.closest?.('.xterm')) {
-      if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) return
+      if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) {
+        // Reserve ONLY the text-editing combos for the field (so ⌘A/C/V/X/Z and
+        // caret motion still work). Every other app shortcut — ⌘1-9 workspace
+        // switch, ⌘T, ⌘B, ⌘⇧F, ⌃⌘arrows … — fires even while typing. (Previously
+        // all Mod chords were blocked in fields, which is why ⌘number failed when
+        // focus sat in the chat/search box.)
+        if (Keymap.TEXT_EDIT.has(chord)) return
+      }
     }
     const focused = getFocusRegion().kind
     for (const a of this.actions.values()) {

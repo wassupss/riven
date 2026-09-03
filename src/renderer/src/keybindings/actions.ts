@@ -1,6 +1,6 @@
 import { keymap, IS_MAC } from './keys'
 import { focusEditor, focusPane, clearFocusedTerminal, saveActiveEditor } from './focus'
-import { useSession } from '../state/session'
+import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
 import { contextBus } from '../bridge/contextBus'
 import {
@@ -9,9 +9,13 @@ import {
   popoutActive,
   cyclePanel,
   focusGroupInDirection,
-  splitTerminal,
   cycleGroupTab,
-  selectTerminal
+  selectTerminal,
+  ensureChanges,
+  getActiveApi,
+  addChat,
+  openEditorSplit,
+  openLauncher
 } from '../dock/registry'
 
 const RIVEN = '리븐 기본'
@@ -110,11 +114,19 @@ export function registerDefaultActions(): void {
 
   // Panels
   keymap.register({
-    id: 'panel.explorer',
-    label: '탐색기 사이드바 토글',
+    id: 'panel.sidebar',
+    label: '왼쪽 사이드바 토글',
     category: RIVEN,
     context: 'riven',
     def: 'Mod+b',
+    run: () => useUI.getState().toggleSidebar()
+  })
+  keymap.register({
+    id: 'panel.explorer',
+    label: '탐색기 토글',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Shift+b',
     run: () => useUI.getState().toggleExplorer()
   })
   keymap.register({
@@ -132,6 +144,29 @@ export function registerDefaultActions(): void {
     context: 'riven',
     def: 'Mod+Shift+g',
     run: () => togglePanel('git')
+  })
+  keymap.register({
+    id: 'panel.changes',
+    label: '변경사항 패널',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Shift+c',
+    run: () => {
+      // Toggle: the Changes timeline opens pinned-narrow (ensureChanges), and the
+      // same chord closes it when already open.
+      const api = getActiveApi()
+      const existing = api?.getPanel('changes')
+      if (api && existing) api.removePanel(existing)
+      else ensureChanges()
+    }
+  })
+  keymap.register({
+    id: 'panel.chat',
+    label: '새 채팅 (에이전트)',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Shift+a',
+    run: () => addChat()
   })
   keymap.register({
     id: 'panel.popout',
@@ -186,6 +221,20 @@ export function registerDefaultActions(): void {
     run: () => saveActiveEditor()
   })
   keymap.register({
+    id: 'app.newWorkspace',
+    label: '새 워크스페이스',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+Shift+n',
+    run: async () => {
+      const picked = await window.api.workspace.pickFolder()
+      if (!picked) return
+      // Same folder already open ⇒ add an independent instance (matches the rail).
+      const already = useSession.getState().openWorkspaces.some((w) => pathOf(w) === picked)
+      useSession.getState().openWorkspace(picked, already)
+    }
+  })
+  keymap.register({
     id: 'app.settings',
     label: '설정 열기',
     category: RIVEN,
@@ -219,21 +268,31 @@ export function registerDefaultActions(): void {
     def: 'Mod+k',
     run: () => clearFocusedTerminal()
   })
+  // Split: open a launcher pane beside the active one, then pick its contents
+  // inside it. ⌘D = split right, ⌘⇧D = split below.
   keymap.register({
-    id: 'terminal.split.right',
-    label: '터미널 오른쪽 분할',
-    category: TERMINAL,
-    context: 'terminal',
-    def: 'Mod+d',
-    run: () => splitTerminal('right')
+    id: 'editor.split',
+    label: '편집기 분할',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+\\',
+    run: () => openEditorSplit()
   })
   keymap.register({
-    id: 'terminal.split.down',
-    label: '터미널 아래로 분할',
-    category: TERMINAL,
-    context: 'terminal',
+    id: 'panel.split.right',
+    label: '패널 오른쪽 분할',
+    category: RIVEN,
+    context: 'riven',
+    def: 'Mod+d',
+    run: () => openLauncher('right')
+  })
+  keymap.register({
+    id: 'panel.split.down',
+    label: '패널 아래로 분할',
+    category: RIVEN,
+    context: 'riven',
     def: 'Mod+Shift+d',
-    run: () => splitTerminal('below')
+    run: () => openLauncher('below')
   })
   keymap.register({
     id: 'terminal.tab.next',

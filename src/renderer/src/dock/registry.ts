@@ -2,6 +2,9 @@ import type { DockviewApi } from 'dockview'
 import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
 import { focusPane, focusEditor } from '../keybindings/focus'
+import { getSettings } from '../state/settings'
+import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
+import { splitPrimaryRight } from '../state/editorSplit'
 
 // Confirm before closing a terminal whose agent is actively running (busy).
 // Returns true when it's OK to proceed with the close.
@@ -23,18 +26,196 @@ export function getActiveApi(): DockviewApi | null {
   return activeApi
 }
 
-let seq = 1
-export function nextPaneId(): number {
-  return seq++
+// Which workspace a dockview instance belongs to, so a tab header (which only has
+// its containerApi) can resolve its own workspace — needed to store per-tab colour
+// under the correct workspace (singleton panel ids like 'git' repeat per workspace).
+const apiWorkspace = new WeakMap<DockviewApi, string>()
+export function registerApiWorkspace(api: DockviewApi, wid: string): void {
+  apiWorkspace.set(api, wid)
 }
-export function bumpPaneSeq(ids: string[]): void {
-  for (const id of ids) {
-    const m = /term-(\d+)/.exec(id)
-    if (m) seq = Math.max(seq, Number(m[1]) + 1)
-  }
+export function widForApi(api: DockviewApi | null | undefined): string | null {
+  return (api && apiWorkspace.get(api)) ?? null
 }
 
-export function addTerminal(initialCommand?: string): void {
+// Set a tab's colour override (any panel, not just chat). Persisted in the pane
+// tree under the panel's workspace; a null/AVATAR_NONE spec clears/greys it.
+export function setTabColor(wid: string, panelId: string, spec: string | null): void {
+  setPaneState(wid, panelId, { avatar: spec })
+  window.dispatchEvent(new CustomEvent('riven:chatavatar', { detail: panelId }))
+}
+
+// Pane ids (term-N / chat-N) double as GLOBAL localStorage keys (chatlog:, chatsession:,
+// chatagent:, …) and main-process session keys. They must therefore be unique across
+// EVERY pane, every workspace, and every restart — otherwise a new pane inherits a dead
+// pane's transcript/session (e.g. an agent-group member showing a pipeline stage's
+// content). So the counter is PERSISTED and only ever grows; ids are never reused.
+const SEQ_KEY = 'paneSeq:v1'
+let seq = (() => {
+  try {
+    const n = Number(localStorage.getItem(SEQ_KEY))
+    if (Number.isFinite(n) && n >= 1) return n
+    // First run under the persisted scheme: seed the counter ABOVE every id that
+    // already has persisted state (chatlog:/chatsession:/… keys), so a fresh pane
+    // can never be handed an id whose old transcript/session is still around.
+    let max = 0
+    for (let i = 0; i < localStorage.length; i++) {
+      const m = /(?:term|chat)-(\d+)/.exec(localStorage.key(i) || '')
+      if (m) max = Math.max(max, Number(m[1]))
+    }
+    return max + 1
+  } catch {
+    return 1
+  }
+})()
+function persistSeq(): void {
+  try {
+    localStorage.setItem(SEQ_KEY, String(seq))
+  } catch {
+    /* ignore */
+  }
+}
+export function nextPaneId(): number {
+  const n = seq++
+  persistSeq()
+  return n
+}
+
+// First-message text for a freshly created chat pane, delivered ONE-SHOT so it is
+// never serialized into the dock layout (which caused the priming message to be
+// re-sent on every restart). ChatPanel consumes+clears it on mount.
+const pendingInitial = new Map<string, string>()
+export function takeInitialText(chatKey: string): string | undefined {
+  const v = pendingInitial.get(chatKey)
+  if (v !== undefined) pendingInitial.delete(chatKey)
+  return v
+}
+// Guard against a restored/imported layout whose ids are >= the current counter
+// (e.g. paneSeq was cleared but layouts survived, or a layout came from elsewhere).
+export function bumpPaneSeq(ids: string[]): void {
+  let changed = false
+  for (const id of ids) {
+    const m = /(?:term|chat)-(\d+)/.exec(id)
+    if (m && Number(m[1]) + 1 > seq) {
+      seq = Number(m[1]) + 1
+      changed = true
+    }
+  }
+  if (changed) persistSeq()
+}
+
+// Open a native agent-chat panel. Its id doubles as the chat session key.
+// `initialText` (e.g. code sent to the LLM) is delivered as the first message.
+export type SplitDir = 'right' | 'below' | 'left' | 'above' | 'within'
+// Placement relative to a reference panel (an explicit id, else the active panel);
+// defaults to a right-split like native.
+function placement(
+  api: DockviewApi,
+  dir?: SplitDir,
+  refId?: string
+): { referencePanel: string; direction: SplitDir } | undefined {
+  const ref = (refId && api.getPanel(refId)) || api.activePanel
+  if (!ref) return undefined
+  return { referencePanel: ref.id, direction: dir ?? 'right' }
+}
+
+// The chat pane whose turn is currently running — the "delegator". A spawned
+// teammate (group_add_agent / pipeline) opens BESIDE this pane, not wherever the
+// dock focus happens to be.
+let delegator: string | null = null
+export function setDelegator(chatKey: string | null): void {
+  delegator = chatKey
+}
+export function getDelegator(): string | null {
+  return delegator && activeApi?.getPanel(delegator) ? delegator : null
+}
+
+export function addChat(
+  initialText?: string,
+  dir?: SplitDir,
+  model?: string,
+  refId?: string,
+  title?: string,
+  // When true the pane opens WITHOUT stealing focus. Agent-driven spawns (team
+  // creation, pipeline stages, delegation) pass this so the user's current pane
+  // keeps focus — only a user directly creating a single pane should move focus.
+  inactive?: boolean,
+  // A custom agent (.claude/agents/<name>.md) to run this pane as `claude --agent`.
+  agent?: string
+): string {
+  const api = activeApi
+  if (!api) return ''
+  const id = `chat-${nextPaneId()}`
+  const wid = useSession.getState().activeWorkspace
+  // A freshly minted pane MUST start empty. chatKeys are globally unique now, but
+  // clear defensively, then seed the pane's model/title/agent into the workspace
+  // tree (single source of truth) so ChatPanel reads them on mount.
+  if (wid) {
+    clearPaneState(wid, id)
+    setPaneState(wid, id, {
+      model: model && model !== 'default' ? model : undefined,
+      title: title || undefined,
+      agent: agent || undefined
+    })
+    flushSessionSaveSync() // durable immediately (survives quit/reload races)
+  }
+  // "inactive" = don't end up focused. We do NOT use dockview's `inactive` add
+  // option for this: a panel added inactive is lazily rendered (its content stays
+  // blank until first activated). Instead add it ACTIVE (so it renders eagerly),
+  // then restore focus to whatever pane was active before. Net: content is live
+  // AND the user's pane keeps focus. (ChatPanel's focus timers re-check isActive,
+  // so the brief activation doesn't yank the caret into the new pane.)
+  const prevActive = inactive ? api.activePanel?.id : undefined
+  // initialText is delivered one-shot (not via params) so it never gets serialized
+  // into the layout and re-sent on restart.
+  if (initialText) pendingInitial.set(id, initialText)
+  api.addPanel({
+    id,
+    component: 'chat',
+    title: title || t('title.chat'), // else updated to the conversation's short title
+    params: { chatKey: id, pinnedTitle: title || undefined, agent: agent || undefined },
+    renderer: 'always',
+    position: placement(api, dir, refId)
+  })
+  if (prevActive && prevActive !== id) api.getPanel(prevActive)?.api.setActive()
+  return id
+}
+
+// Rename a live chat pane's tab (agent-group edit) and re-pin the title so it
+// survives a reload and never gets clobbered by an auto-generated title.
+export function setChatTitle(chatKey: string, title: string): void {
+  const wid = widForPane(chatKey)
+  if (wid) setPaneState(wid, chatKey, { title })
+  activeApi?.getPanel(chatKey)?.api.setTitle(title)
+}
+
+// Set/clear a chat pane's avatar override ("glyph.color"). The tab reads this on
+// a 'riven:chatavatar' event so its icon updates live.
+export function setChatAvatar(chatKey: string, spec: string | null): void {
+  const wid = widForPane(chatKey)
+  if (wid) setPaneState(wid, chatKey, { avatar: spec })
+  window.dispatchEvent(new CustomEvent('riven:chatavatar', { detail: chatKey }))
+}
+
+// Open a new chat pane running a custom agent (.claude/agents/<name>.md). Titled
+// by the agent name so the tab shows which agent it is; opens active since this is
+// a direct user action.
+export function openAgentChat(agent: string): string {
+  return addChat(undefined, undefined, undefined, undefined, agent, false, agent)
+}
+
+// A single entry for launching an AI agent so every path (agent picker, quick
+// panel profiles) behaves the SAME: native chat when enabled + the CLI has a
+// native driver (Claude), otherwise a terminal running the command. This removes
+// the "sometimes CLI, sometimes chat" inconsistency.
+export function isNativeChatAgent(command: string): boolean {
+  return /^claude(\s|$)/.test(command.trim())
+}
+export function launchAgent(command: string, initialText?: string): void {
+  if (getSettings().agentChatUI && isNativeChatAgent(command)) addChat(initialText)
+  else addTerminal(command)
+}
+
+export function addTerminal(initialCommand?: string, dir?: SplitDir, refId?: string): void {
   const api = activeApi
   if (!api) return
   const paneId = nextPaneId()
@@ -43,8 +224,96 @@ export function addTerminal(initialCommand?: string): void {
     component: 'terminal',
     title: initialCommand ? `❯ ${initialCommand}` : `❯ ${t('title.terminal')}`,
     params: { paneId, initialCommand },
-    renderer: 'always'
+    renderer: 'always',
+    position: dir ? placement(api, dir, refId) : undefined
   })
+}
+
+// Open ANY panel kind, optionally as a split beside the active panel. This is the
+// single entry point the split picker (⌘D / ⌘⇧D) uses, so every panel — not just
+// terminals — can be split. Singleton panels focus if already open.
+export type NamedPanel =
+  | 'terminal'
+  | 'chat'
+  | 'editor'
+  | 'search'
+  | 'git'
+  | 'changes'
+  | 'preview'
+  | 'notes'
+  | 'api'
+  | 'agentgroup'
+export function openNamedPanel(id: NamedPanel, dir?: SplitDir, refId?: string): void {
+  const api = activeApi
+  if (!api) return
+  if (id === 'terminal') return addTerminal(undefined, dir, refId)
+  if (id === 'chat') {
+    addChat(undefined, dir, undefined, refId)
+    return
+  }
+  const existing = api.getPanel(id)
+  if (existing) {
+    existing.api.setActive()
+    return
+  }
+  const cfg = SINGLETONS[id]
+  api.addPanel({
+    id,
+    component: id,
+    title: t(cfg.titleKey),
+    renderer: 'always',
+    position: dir ? placement(api, dir, refId) : { direction: cfg.direction }
+  })
+}
+
+// A "launcher" pane: an empty panel showing a picker of what to open. Used as the
+// first panel of a new workspace and for ⌘D / ⌘⇧D splits — the panel appears
+// first, then the user chooses its contents (instead of defaulting to a terminal).
+export function openLauncher(dir?: SplitDir): string {
+  const api = activeApi
+  if (!api) return ''
+  const id = `launcher-${nextPaneId()}`
+  api.addPanel({
+    id,
+    component: 'launcher',
+    title: t('title.launcher'),
+    renderer: 'always',
+    position: dir ? placement(api, dir) : undefined
+  })
+  return id
+}
+
+// The launcher's choice: open the picked kind IN the launcher's group, then remove
+// the launcher so the new panel takes its place.
+export function pickInLauncher(launcherId: string, kind: NamedPanel): void {
+  const api = activeApi
+  if (!api) return
+  openNamedPanel(kind, 'within', launcherId)
+  const l = api.getPanel(launcherId)
+  if (l) api.removePanel(l)
+}
+
+// Open a custom agent (.claude/agents) chat inside a launcher, replacing it.
+export function pickAgentInLauncher(launcherId: string, agent: string): void {
+  const api = activeApi
+  if (!api) return
+  addChat(undefined, 'within', undefined, launcherId, agent, false, agent)
+  const l = api.getPanel(launcherId)
+  if (l) api.removePanel(l)
+}
+
+// Launch a detected AI CLI (Claude Code, Codex, …) inside a launcher: native chat
+// when it has a driver (Claude) + the setting is on, else a terminal running it.
+export function pickCliInLauncher(launcherId: string, cmd: string): void {
+  const api = activeApi
+  if (!api) return
+  if (getSettings().agentChatUI && isNativeChatAgent(cmd)) {
+    addChat(undefined, 'within', undefined, launcherId)
+  } else {
+    addTerminal(cmd, 'within', launcherId)
+  }
+  const l = api.getPanel(launcherId)
+  if (l) api.removePanel(l)
 }
 
 // Split: add a terminal beside/below the active panel (cmux-style pane splits).
@@ -176,6 +445,20 @@ export function ensureEditor(): void {
   })
 }
 
+// Split the editor (VS Code-style): open `path` in a SECOND editor group that
+// renders side-by-side INSIDE the editor panel. With no path, splits the primary
+// group's current file. Also makes sure the editor panel is open.
+export function openEditorSplit(path?: string): void {
+  const api = activeApi
+  const ws = useSession.getState().activeWorkspace
+  if (!api || !ws) return
+  const file = path ?? useSession.getState().sessions[ws]?.activePath
+  if (!file) return
+  splitPrimaryRight(ws, file)
+  if (!api.getPanel('editor')) ensureEditor()
+  else api.getPanel('editor')?.api.setActive()
+}
+
 // Auto-open the changes timeline when an agent edit arrives (idempotent). Opens
 // it on the left WITHOUT stealing focus from the terminal the user is typing in,
 // so agent activity surfaces the summary without hijacking the cursor.
@@ -212,7 +495,10 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   preview: { titleKey: 'title.preview', direction: 'right' },
   search: { titleKey: 'title.search', direction: 'left' },
   git: { titleKey: 'title.git', direction: 'left' },
-  changes: { titleKey: 'title.changes', direction: 'right' }
+  changes: { titleKey: 'title.changes', direction: 'right' },
+  notes: { titleKey: 'title.notes', direction: 'right' },
+  api: { titleKey: 'title.api', direction: 'right' },
+  agentgroup: { titleKey: 'title.agentgroup', direction: 'right' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).

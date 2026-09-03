@@ -88,9 +88,17 @@ export function resetIn(iso: string | null): string {
 export function remaining(l: PlanLimit): number {
   return Math.max(0, Math.round(100 - l.usedPct))
 }
+// Used % (what the header widget shows — usage, not remaining).
+export function used(l: PlanLimit): number {
+  return Math.min(100, Math.max(0, Math.round(l.usedPct)))
+}
 // Remaining-based color: <20% danger, <50% warning, else accent.
 export function remainingColor(pct: number): string {
   if (pct < 20) return 'var(--danger)'
   if (pct < 50) return 'var(--warning)'
   return 'var(--accent)'
+}
+// Usage-based color: high usage = danger. (mirror of remainingColor)
+export function usedColor(usedPct: number): string {
+  return remainingColor(100 - usedPct)
 }

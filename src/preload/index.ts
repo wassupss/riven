@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webFrame } from 'electron'
 
 export interface DirEntry {
   name: string
@@ -35,6 +35,42 @@ const onPtyAgent = multiplexed<{ key: string; agent: boolean; name?: string | nu
 const onPtyBell = multiplexed<{ key: string }>('pty:bell')
 const onPtyDone = multiplexed<{ key: string; duration: number; summary?: string }>('pty:done')
 
+// Native agent-chat events all share one channel; the payload's `key` scopes it
+// to a pane. Renderer chat panels filter by their own key.
+export type ChatEvent =
+  | {
+      key: string
+      kind: 'init'
+      sessionId: string | null
+      model: string | null
+      tools: string[]
+      slashCommands: string[]
+      mcpServers: Array<{ name: string; status: string }>
+    }
+  | { key: string; kind: 'text'; delta: string }
+  | {
+      key: string
+      kind: 'tool'
+      name: string
+      detail: string
+      path: string | null
+      code: string | null
+      toolId: string | null
+      parent: string | null
+    }
+  | { key: string; kind: 'toolResult'; toolId: string; isError: boolean }
+  | { key: string; kind: 'fileEdited'; path: string }
+  | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
+  | {
+      key: string
+      kind: 'turnDone'
+      costUSD: number | null
+      sessionId: string | null
+      error: string | null
+    }
+  | { key: string; kind: 'exit'; code: number }
+const onChatEvent = multiplexed<ChatEvent>('chat:event')
+
 const api = {
   env: {
     defaults: (): Promise<{
@@ -66,7 +102,13 @@ const api = {
       ipcRenderer.invoke('workspace:snapshotContents', folder)
   },
   search: {
-    inFiles: (opts: { root: string; query: string; caseSensitive?: boolean }): Promise<{
+    inFiles: (opts: {
+      root: string
+      query: string
+      caseSensitive?: boolean
+      regex?: boolean
+      wholeWord?: boolean
+    }): Promise<{
       matches: Array<{
         file: string
         line: number
@@ -82,6 +124,8 @@ const api = {
       query: string
       replacement: string
       caseSensitive?: boolean
+      regex?: boolean
+      wholeWord?: boolean
     }): Promise<{ files: number; replacements: number }> =>
       ipcRenderer.invoke('search:replaceInFiles', opts)
   },
@@ -95,6 +139,8 @@ const api = {
     }): Promise<{ id: string; existed: boolean; buffer: string; error?: string }> =>
       ipcRenderer.invoke('pty:open', opts),
     write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
+    ack: (id: string, bytes: number): void => ipcRenderer.send('pty:ack', id, bytes),
+    resume: (id: string): void => ipcRenderer.send('pty:resume', id),
     snapshot: (id: string, data: string): void => ipcRenderer.send('pty:snapshot', id, data),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
@@ -117,6 +163,198 @@ const api = {
     onBell: (cb: (e: { key: string }) => void): (() => void) => onPtyBell(cb),
     onDone: (cb: (e: { key: string; duration: number; summary?: string }) => void): (() => void) =>
       onPtyDone(cb)
+  },
+  chat: {
+    start: (
+      key: string,
+      opts: {
+        cwd: string
+        resume?: string
+        model?: string
+        permissionMode?: string
+        mcpDisabled?: string[]
+        globalPrompt?: string
+        agent?: string
+      }
+    ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
+    send: (key: string, text: string): void => ipcRenderer.send('chat:send', key, text),
+    interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
+    setModel: (key: string, model: string): void => ipcRenderer.send('chat:setModel', key, model),
+    setMode: (key: string, mode: string): void => ipcRenderer.send('chat:setMode', key, mode),
+    stop: (key: string): void => ipcRenderer.send('chat:stop', key),
+    title: (message: string): Promise<string> => ipcRenderer.invoke('chat:title', message),
+    detectClis: (): Promise<
+      Array<{ name: string; cmd: string; path: string; version: string | null }>
+    > => ipcRenderer.invoke('chat:detectClis'),
+    accounts: (): Promise<
+      Array<{
+        id: 'claude' | 'codex'
+        name: string
+        loggedIn: boolean | null
+        plan?: string
+        email?: string
+        mode?: 'subscription' | 'apikey'
+      }>
+    > => ipcRenderer.invoke('accounts:list'),
+    sessionInfo: (
+      cwd: string
+    ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>
+      ipcRenderer.invoke('chat:sessionInfo', cwd),
+    sessions: (
+      cwd: string
+    ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
+      ipcRenderer.invoke('chat:sessions', cwd),
+    agents: (
+      cwd: string
+    ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
+      ipcRenderer.invoke('chat:agents', cwd),
+    sessionTranscript: (
+      cwd: string,
+      id: string
+    ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> =>
+      ipcRenderer.invoke('chat:sessionTranscript', cwd, id),
+    mcpList: (
+      cwd: string
+    ): Promise<Array<{ name: string; url: string; status: 'connected' | 'needs-auth' | 'other' }>> =>
+      ipcRenderer.invoke('chat:mcpList', cwd),
+    mcpLogin: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpLogin', cwd, name),
+    mcpLogout: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpLogout', cwd, name),
+    onEvent: (cb: (e: ChatEvent) => void): (() => void) => onChatEvent(cb)
+  },
+  // Real Chromium browser: each tab is a main-process WebContentsView. The panel
+  // draws chrome and reports the viewport rect; ops/results go over IPC.
+  browser: {
+    create: (id: string, url: string, partition?: string): Promise<void> =>
+      ipcRenderer.invoke('browser:create', { id, url, partition }),
+    navigate: (id: string, url: string): Promise<void> =>
+      ipcRenderer.invoke('browser:navigate', { id, url }),
+    go: (id: string, action: 'back' | 'forward' | 'reload' | 'stop'): Promise<void> =>
+      ipcRenderer.invoke('browser:go', { id, action }),
+    destroy: (id: string): Promise<void> => ipcRenderer.invoke('browser:destroy', { id }),
+    sync: (
+      activeId: string | null,
+      rect: { x: number; y: number; width: number; height: number } | null,
+      css?: { w: number; h: number }
+    ): void => ipcRenderer.send('browser:sync', { activeId, rect, css }),
+    hideAll: (hidden: boolean): void => ipcRenderer.send('browser:hideAll', hidden),
+    execJs: (id: string, code: string): Promise<unknown> =>
+      ipcRenderer.invoke('browser:execJs', { id, code }),
+    capture: (id: string): Promise<string | null> => ipcRenderer.invoke('browser:capture', { id }),
+    state: (
+      id: string
+    ): Promise<{
+      url: string
+      title: string
+      loading: boolean
+      canGoBack: boolean
+      canGoForward: boolean
+      zoom: number
+    } | null> => ipcRenderer.invoke('browser:state', { id }),
+    setZoom: (id: string, factor: number): Promise<void> =>
+      ipcRenderer.invoke('browser:setZoom', { id, factor }),
+    find: (id: string, text: string): void => ipcRenderer.send('browser:find', { id, text }),
+    openDevtools: (id: string): Promise<void> => ipcRenderer.invoke('browser:openDevtools', { id }),
+    setLang: (l: 'ko' | 'en'): void => ipcRenderer.send('browser:setLang', l),
+    barMenu: (id: string): Promise<void> => ipcRenderer.invoke('browser:barMenu', { id }),
+    pickElement: (
+      id: string
+    ): Promise<{ dataUrl: string | null; selector: string; html: string } | null> =>
+      ipcRenderer.invoke('browser:pickElement', { id }),
+    bookmarks: (): Promise<Array<{ url: string; title: string }>> =>
+      ipcRenderer.invoke('browser:bookmarks'),
+    history: (): Promise<Array<{ url: string; title: string; ts: number }>> =>
+      ipcRenderer.invoke('browser:history'),
+    addBookmark: (b: { url: string; title: string }): Promise<void> =>
+      ipcRenderer.invoke('browser:addBookmark', b),
+    removeBookmark: (url: string): Promise<void> =>
+      ipcRenderer.invoke('browser:removeBookmark', url),
+    clearHistory: (): Promise<void> => ipcRenderer.invoke('browser:clearHistory'),
+    onEvent: (cb: (e: Record<string, unknown>) => void): (() => void) => {
+      const listener = (_e: unknown, payload: Record<string, unknown>): void => cb(payload)
+      ipcRenderer.on('browser:event', listener)
+      return () => ipcRenderer.removeListener('browser:event', listener)
+    },
+    onKey: (
+      cb: (e: {
+        key: string
+        code: string
+        meta: boolean
+        control: boolean
+        alt: boolean
+        shift: boolean
+      }) => void
+    ): (() => void) => {
+      const listener = (_e: unknown, payload: Parameters<typeof cb>[0]): void => cb(payload)
+      ipcRenderer.on('browser:key', listener)
+      return () => ipcRenderer.removeListener('browser:key', listener)
+    }
+  },
+  // HTTP client (API panel + riven_api_request).
+  api: {
+    request: (opts: {
+      method: string
+      url: string
+      headers?: Record<string, string>
+      body?: string
+    }): Promise<{
+      ok: boolean
+      status: number
+      statusText: string
+      headers: Record<string, string>
+      body: string
+      timeMs: number
+      contentType: string
+      error?: string
+    }> => ipcRenderer.invoke('api:request', opts)
+  },
+  // Scratch markdown notes (Notes panel + note_* MCP tools).
+  notes: {
+    list: (ws: string): Promise<Array<{ name: string; title: string; mtime: number }>> =>
+      ipcRenderer.invoke('notes:list', ws),
+    read: (ws: string, ref: string): Promise<string | null> =>
+      ipcRenderer.invoke('notes:read', ws, ref),
+    write: (ws: string, ref: string | null, title: string, body: string): Promise<string> =>
+      ipcRenderer.invoke('notes:write', ws, ref, title, body),
+    append: (ws: string, ref: string, body: string): Promise<string | null> =>
+      ipcRenderer.invoke('notes:append', ws, ref, body),
+    remove: (ws: string, ref: string): Promise<boolean> =>
+      ipcRenderer.invoke('notes:delete', ws, ref),
+    writeFile: (
+      ws: string,
+      relPath: string,
+      body: string,
+      overwrite: boolean
+    ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('notes:writeFile', ws, relPath, body, overwrite),
+    saveToFile: (
+      ws: string,
+      ref: string,
+      relPath: string,
+      overwrite: boolean
+    ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke('notes:saveToFile', ws, ref, relPath, overwrite)
+  },
+  // riven's own MCP tools: the main process forwards each agent tool call here;
+  // the renderer performs it (open a file/panel, ask the user, …) and replies.
+  mcp: {
+    onInvoke: (
+      cb: (e: {
+        id: string
+        tool: string
+        args: Record<string, unknown>
+        cwd: string | null
+      }) => void
+    ): (() => void) => {
+      const listener = (
+        _e: unknown,
+        payload: { id: string; tool: string; args: Record<string, unknown>; cwd: string | null }
+      ): void => cb(payload)
+      ipcRenderer.on('mcp:invoke', listener)
+      return () => ipcRenderer.removeListener('mcp:invoke', listener)
+    },
+    result: (id: string, result: string): void => ipcRenderer.send('mcp:result', { id, result })
   },
   lsp: {
     servers: (rootPath: string): Promise<string[]> =>
@@ -176,9 +414,80 @@ const api = {
   ports: {
     list: (folder: string): Promise<number[]> => ipcRenderer.invoke('ports:list', folder)
   },
+  diagnostics: {
+    run: (
+      root: string,
+      kind: 'eslint' | 'tsc'
+    ): Promise<{
+      ok: boolean
+      diagnostics: Array<{
+        path: string
+        line: number
+        column: number
+        severity: 'error' | 'warning' | 'info'
+        message: string
+        source: string
+        code?: string
+      }>
+      log: string
+      error?: string
+    }> => ipcRenderer.invoke('diagnostics:run', root, kind)
+  },
+  debug: {
+    start: (cfg: { file: string; cwd?: string; args?: string[] }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('debug:start', cfg),
+    stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('debug:stop'),
+    cont: (): Promise<unknown> => ipcRenderer.invoke('debug:continue'),
+    stepOver: (): Promise<unknown> => ipcRenderer.invoke('debug:stepOver'),
+    stepInto: (): Promise<unknown> => ipcRenderer.invoke('debug:stepInto'),
+    stepOut: (): Promise<unknown> => ipcRenderer.invoke('debug:stepOut'),
+    setBreakpoints: (file: string, lines: number[]): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('debug:setBreakpoints', file, lines),
+    getProperties: (
+      objectId: string
+    ): Promise<Array<{ name: string; type: string; value: string; objectId: string | null }>> =>
+      ipcRenderer.invoke('debug:getProperties', objectId),
+    evaluate: (
+      callFrameId: string,
+      expression: string
+    ): Promise<{ value: string; type: string; objectId: string | null }> =>
+      ipcRenderer.invoke('debug:evaluate', callFrameId, expression),
+    onEvent: (cb: (e: { type: string; payload?: unknown }) => void): (() => void) => {
+      const listener = (_e: unknown, data: { type: string; payload?: unknown }): void => cb(data)
+      ipcRenderer.on('debug:event', listener)
+      return () => ipcRenderer.removeListener('debug:event', listener)
+    }
+  },
   git: {
     info: (folder: string): Promise<{ repoName: string; branch: string | null; isRepo: boolean }> =>
       ipcRenderer.invoke('git:info', folder),
+    log: (
+      folder: string,
+      limit?: number
+    ): Promise<
+      Array<{
+        hash: string
+        parents: string[]
+        author: string
+        date: string
+        refs: string
+        subject: string
+      }>
+    > => ipcRenderer.invoke('git:log', folder, limit),
+    branches: (folder: string): Promise<Array<{ name: string; current: boolean }>> =>
+      ipcRenderer.invoke('git:branches', folder),
+    checkout: (folder: string, branch: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:checkout', folder, branch),
+    createBranch: (folder: string, name: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:createBranch', folder, name),
+    fetch: (folder: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:fetch', folder),
+    stash: (folder: string, message?: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:stash', folder, message),
+    stashPop: (folder: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('git:stashPop', folder),
+    stashList: (folder: string): Promise<Array<{ ref: string; subject: string }>> =>
+      ipcRenderer.invoke('git:stashList', folder),
     showFile: (folder: string, relPath: string): Promise<string | null> =>
       ipcRenderer.invoke('git:showFile', folder, relPath),
     blame: (
@@ -227,11 +536,17 @@ const api = {
   },
   sessions: {
     load: (): Promise<unknown> => ipcRenderer.invoke('sessions:load'),
-    save: (data: unknown): Promise<void> => ipcRenderer.invoke('sessions:save', data)
+    save: (data: unknown): Promise<void> => ipcRenderer.invoke('sessions:save', data),
+    // Blocking write used only on beforeunload, so a reload/close can't drop the
+    // pending debounced save.
+    saveSync: (data: unknown): boolean => ipcRenderer.sendSync('sessions:save-sync', data) === true
   },
+  // Whole-UI zoom (native UIScale). Scales the entire renderer.
+  setZoom: (factor: number): void => webFrame.setZoomFactor(factor),
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
-    save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data)
+    save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),
+    reveal: (name: string): Promise<void> => ipcRenderer.invoke('config:reveal', name)
   },
   auth: {
     // Runs the provider OAuth flow in a dedicated window and resolves with the
