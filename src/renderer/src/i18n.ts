@@ -567,6 +567,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.stopped': { ko: '중단', en: 'Stopped' },
   'chat.resumed': { ko: '이전 세션에서 이어짐', en: 'Continued from a previous session' },
   'chat.restoring': { ko: '이전 대화 불러오는 중…', en: 'Loading previous conversation…' },
+  'chat.loadEarlier': { ko: '이전 대화 {n}개 더 보기', en: 'Show {n} earlier messages' },
+  'chat.jumpBottom': { ko: '맨 아래로', en: 'Jump to latest' },
   'chat.help': { ko: '사용 가능한 명령', en: 'Available commands' },
   'chat.cmd.clear': { ko: '대화 지우기 (새 세션)', en: 'Clear conversation (new session)' },
   'chat.cmd.agents': { ko: '새 에이전트 챗 패널 열기', en: 'Open a new agent chat panel' },

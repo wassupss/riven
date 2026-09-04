@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowUp,
+  ChevronDown,
   Square,
   Loader2,
   Check,
@@ -1001,6 +1002,11 @@ export default function ChatPanel({
     return arr
   })
   const [restoring, setRestoring] = useState(false)
+  // How many recent turns are rendered (see `windowed` below), and whether the view
+  // is pinned to the bottom (drives auto-scroll + the jump-to-latest button).
+  const WINDOW_STEP = 50
+  const [limit, setLimit] = useState(WINDOW_STEP)
+  const [atBottom, setAtBottom] = useState(true)
   // The last assistant reply, used as the desktop notification's body.
   const replyRef = useRef('')
   // An agent-group member's role goes in the SYSTEM prompt at spawn, not as a chat
@@ -1330,9 +1336,19 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatKey, workspace, patchLast])
 
+  // Follow new output only while the view is pinned to the bottom — otherwise
+  // reading scrollback would get yanked away on every streamed chunk.
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+    if (atBottom) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgs])
+
+  const scrollToBottom = useCallback((): void => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    setAtBottom(true)
+  }, [])
 
   // The transcript is NOT persisted by riven. The Claude CLI already stores every
   // session on disk, so we keep just the session id and reload the real transcript
@@ -1825,18 +1841,24 @@ export default function ChatPanel({
   // transcript is thousands of DOM nodes; re-diffing them per keystroke stalled).
   const handlers = useRef({ applyModel, dismissCard, resumeSession })
   handlers.current = { applyModel, dismissCard, resumeSession }
+  // Render only a WINDOW of recent turns. A long transcript is thousands of DOM
+  // nodes (each tool line, code block, markdown tree) — rendering all of it pinned
+  // the renderer's heap and kept V8 in constant GC. Older turns are still in state
+  // (and on disk in the CLI session); "load earlier" reveals them on demand.
+  const windowed = limit >= msgs.length ? msgs : msgs.slice(-limit)
+  const windowOffset = msgs.length - windowed.length
   const messageList = useMemo(
     () =>
-      msgs.map((msg, i) =>
+      windowed.map((msg, wi) =>
         msg.card === 'mcp' ? (
           <McpCard
-            key={msg.cardId ?? i}
+            key={msg.cardId ?? windowOffset + wi}
             cwd={pathOf(workspace)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : msg.card === 'resume' ? (
           <ResumeCard
-            key={msg.cardId ?? i}
+            key={msg.cardId ?? windowOffset + wi}
             cwd={pathOf(workspace)}
             now={now}
             onResume={(id) => void handlers.current.resumeSession(id)}
@@ -1844,7 +1866,7 @@ export default function ChatPanel({
           />
         ) : msg.card === 'model' ? (
           <ModelCard
-            key={msg.cardId ?? i}
+            key={msg.cardId ?? windowOffset + wi}
             models={MODELS}
             current={pickedModel}
             onPick={(m) => {
@@ -1854,10 +1876,10 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={i} msg={msg} now={now} />
+          <ChatMessage key={windowOffset + wi} msg={msg} now={now} />
         )
       ),
-    [msgs, now, pickedModel, workspace]
+    [windowed, windowOffset, now, pickedModel, workspace]
   )
 
   return (
@@ -1884,12 +1906,44 @@ export default function ChatPanel({
       }}
       onDrop={onDropFiles}
     >
-      <div className="chat-scroll" ref={scrollRef}>
+      <div
+        className="chat-scroll"
+        ref={scrollRef}
+        onScroll={(e) => {
+          const el = e.currentTarget
+          const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          if (bottom !== atBottom) setAtBottom(bottom)
+          // Infinite scroll upward: reveal older turns as you reach the top.
+          if (el.scrollTop < 60 && limit < msgs.length) {
+            const prev = el.scrollHeight
+            setLimit((n) => Math.min(msgs.length, n + WINDOW_STEP))
+            // Keep the reading position stable after the taller list renders.
+            requestAnimationFrame(() => {
+              const cur = scrollRef.current
+              if (cur) cur.scrollTop += cur.scrollHeight - prev
+            })
+          }
+        }}
+      >
+        {limit < msgs.length && (
+          <button
+            className="chat-loadmore"
+            onClick={() => setLimit((n) => Math.min(msgs.length, n + WINDOW_STEP))}
+          >
+            {t('chat.loadEarlier', { n: msgs.length - limit })}
+          </button>
+        )}
         {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}
         {!restoring && restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
         {messageList}
         {error && <div className="chat-error">{error}</div>}
       </div>
+
+      {!atBottom && (
+        <button className="chat-jump-bottom" onClick={scrollToBottom} title={t('chat.jumpBottom')}>
+          <ChevronDown size={16} />
+        </button>
+      )}
 
       <div className={`chat-composer${input.trim().startsWith('/') ? ' is-command' : ''}`}>
         {mentionOpen && (
