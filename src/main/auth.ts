@@ -31,11 +31,20 @@ export function registerAuthHandlers(): void {
         width: 480,
         height: 680,
         parent,
-        modal: !!parent,
+        // NOT modal on macOS: a modal child window is rendered as a document sheet,
+        // which has no title bar — so the login window had no close button and the
+        // only way out was quitting the app. A plain child window keeps the traffic
+        // lights (and still floats above its parent).
+        modal: process.platform !== 'darwin' && !!parent,
         show: true,
+        closable: true,
         autoHideMenuBar: true,
         title: '로그인',
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
+      })
+      // Esc also closes it (cancels the sign-in), like any auth popup.
+      win.webContents.on('before-input-event', (_evt, input) => {
+        if (input.type === 'keyDown' && input.key === 'Escape' && !win.isDestroyed()) win.close()
       })
 
       let settled = false

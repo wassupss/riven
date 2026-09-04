@@ -30,8 +30,20 @@ export function getActiveApi(): DockviewApi | null {
 // its containerApi) can resolve its own workspace — needed to store per-tab colour
 // under the correct workspace (singleton panel ids like 'git' repeat per workspace).
 const apiWorkspace = new WeakMap<DockviewApi, string>()
+// Reverse lookup: a workspace's dockview instance. Lets an agent act on ITS OWN
+// workspace (open a panel/file/browser tab) instead of whatever the user happens
+// to be looking at. Undefined when that workspace isn't currently mounted (the
+// mounted set is bounded by an LRU).
+const apiByWorkspace = new Map<string, DockviewApi>()
 export function registerApiWorkspace(api: DockviewApi, wid: string): void {
   apiWorkspace.set(api, wid)
+  apiByWorkspace.set(wid, api)
+}
+export function unregisterApiWorkspace(wid: string): void {
+  apiByWorkspace.delete(wid)
+}
+export function getApiFor(wid: string | null | undefined): DockviewApi | null {
+  return wid ? (apiByWorkspace.get(wid) ?? null) : null
 }
 export function widForApi(api: DockviewApi | null | undefined): string | null {
   return (api && apiWorkspace.get(api)) ?? null

@@ -1,6 +1,7 @@
 import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
+import * as os from 'os'
 import { atomicWriteText, TMP_SUFFIX } from './atomicWrite'
 
 export interface DirEntry {
@@ -101,6 +102,22 @@ export function registerWorkspaceHandlers(): void {
       return a.name.localeCompare(b.name)
     })
   })
+
+  // A pasted/dropped image has no path — persist it to a temp file so the agent
+  // can Read it (the CLI takes file paths, not clipboard data).
+  ipcMain.handle(
+    'image:saveTemp',
+    async (_e, dataUrl: string): Promise<string | null> => {
+      const m = /^data:image\/([a-zA-Z0-9.+-]+);base64,(.*)$/s.exec(dataUrl || '')
+      if (!m) return null
+      const ext = m[1].toLowerCase().replace('jpeg', 'jpg').replace(/[^a-z0-9]/g, '') || 'png'
+      const dir = path.join(os.tmpdir(), 'riven-paste')
+      await fs.mkdir(dir, { recursive: true })
+      const file = path.join(dir, `paste-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.${ext}`)
+      await fs.writeFile(file, Buffer.from(m[2], 'base64'))
+      return file
+    }
+  )
 
   ipcMain.handle('workspace:readFile', async (_event, file: string): Promise<string> => {
     return fs.readFile(file, 'utf8')

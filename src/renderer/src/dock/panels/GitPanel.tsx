@@ -37,7 +37,27 @@ interface Status {
 
 export default function GitPanel({ workspace: wid }: { workspace: string }): JSX.Element {
   // Git operates on the real folder; several workspaces can share one path.
-  const workspace = pathOf(wid)
+  const root = pathOf(wid)
+  // A workspace often CONTAINS many repos (e.g. ~/hs-playground). List them and let
+  // the user pick which one this panel is showing, instead of only ever looking at
+  // the top folder (which usually isn't a repo at all).
+  const [repos, setRepos] = useState<Array<{ path: string; name: string; branch: string | null }>>([])
+  const [repo, setRepo] = useState<string>(root)
+  useEffect(() => {
+    let alive = true
+    void window.api.git.repos(root).then((list) => {
+      if (!alive) return
+      setRepos(list)
+      // Prefer the workspace itself when it's a repo, else the first one found.
+      setRepo((cur) =>
+        list.some((r) => r.path === cur) ? cur : (list.find((r) => r.path === root)?.path ?? list[0]?.path ?? root)
+      )
+    })
+    return () => {
+      alive = false
+    }
+  }, [root])
+  const workspace = repo
   const t = useT()
   const statusLabel = (ch: string): string => t(`git.status.${ch === '?' ? 'Q' : ch}`, ch)
   const [status, setStatus] = useState<Status>({
@@ -176,8 +196,30 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
   const staged = status.files.filter((f) => f.staged)
   const changed = status.files.filter((f) => f.unstaged)
 
+  // The workspace folder itself often isn't a repo (it just CONTAINS repos), so the
+  // picker must still render here — otherwise "not a git repository" is a dead end
+  // even though there are repos one level down.
+  const repoPicker =
+    repos.length > 0 ? (
+      <div className="git-repos">
+        <select className="git-repo-select" value={repo} onChange={(e) => setRepo(e.target.value)}>
+          {repos.map((r) => (
+            <option key={r.path} value={r.path}>
+              {r.name}
+              {r.branch ? ` · ${r.branch}` : ''}
+            </option>
+          ))}
+        </select>
+      </div>
+    ) : null
+
   if (!status.isRepo) {
-    return <div className="git-panel empty-hint center">{t('git.notRepo')}</div>
+    return (
+      <div className="git-panel">
+        {repoPicker}
+        <div className="empty-hint center">{t('git.notRepo')}</div>
+      </div>
+    )
   }
 
   const row = (f: GitFile, kind: 'staged' | 'changed'): JSX.Element => {
@@ -271,6 +313,8 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
         </span>
       </div>
 
+      {repos.length > 1 && repoPicker}
+
       <div className="git-tabs">
         <button
           className={`git-tab${tab === 'changes' ? ' active' : ''}`}
@@ -287,7 +331,7 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
       </div>
 
       {tab === 'graph' ? (
-        <GitGraphPanel workspace={wid} />
+        <GitGraphPanel workspace={wid} repo={repo} />
       ) : (
         <>
       <div className="git-commit">

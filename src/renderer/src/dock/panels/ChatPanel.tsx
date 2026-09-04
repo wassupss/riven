@@ -24,6 +24,8 @@ import {
 } from 'lucide-react'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
+import { useRetainedValue } from '../RetainedPanel'
+import AskInline from './AskInline'
 import { getSettings } from '../../state/settings'
 import {
   registerAgent,
@@ -38,6 +40,7 @@ import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi 
 import { useUI } from '../../state/ui'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
+import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 
 // Native agent-chat panel — visual design ported 1:1 from the Swift ChatViews:
 // user turns are a left-aligned accent-tinted bubble, assistant turns are an
@@ -424,10 +427,39 @@ const ToolGroup = memo(function ToolGroup({
 // form as they stream). Memoized on its text, so completed blocks never re-parse;
 // only the still-growing tail block re-parses per frame — bounding the cost that
 // used to make the whole message re-parse and stutter.
-const AssistantText = memo(function AssistantText({ text }: { text: string }): JSX.Element {
+// One markdown block. Memoised on its text, so a completed block is parsed once
+// and then skipped on every later chunk of the same message.
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }): JSX.Element {
+  return <Markdown text={text} />
+})
+
+const AssistantText = memo(function AssistantText({
+  text,
+  streaming
+}: {
+  text: string
+  streaming?: boolean
+}): JSX.Element {
+  // Markdown IS rendered while streaming. To keep it cheap we split the message
+  // into top-level blocks: everything above the last block is a stable string, so
+  // MarkdownBlock's memo skips it, and only the growing tail block is re-parsed.
+  // (Re-parsing the whole message per chunk was the real cause of the stutter.)
+  const blocks = useMemo(
+    () => (streaming ? splitMarkdownBlocks(text) : null),
+    [streaming, text]
+  )
+  if (!blocks) {
+    return (
+      <div className="chat-assistant-text">
+        <Markdown text={text} />
+      </div>
+    )
+  }
   return (
     <div className="chat-assistant-text">
-      <Markdown text={text} />
+      {blocks.map((b, i) => (
+        <MarkdownBlock key={i} text={b} />
+      ))}
     </div>
   )
 })
@@ -484,7 +516,7 @@ const ChatMessage = memo(function ChatMessage({
     <div className="chat-turn assistant">
       {groups.map((g, i) =>
         g.k === 'text' ? (
-          <AssistantText key={`t${g.key}`} text={g.text} />
+          <AssistantText key={`t${g.key}`} text={g.text} streaming={!msg.done} />
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
@@ -1009,6 +1041,8 @@ export default function ChatPanel({
   const [atBottom, setAtBottom] = useState(true)
   // The last assistant reply, used as the desktop notification's body.
   const replyRef = useRef('')
+  // Timestamp of the last streamed-text commit (throttles the typewriter drain).
+  const lastCommitRef = useRef(0)
   // An agent-group member's role goes in the SYSTEM prompt at spawn, not as a chat
   // turn: the agent knows who it is without spending a request, and the role can't
   // scroll out of context or pollute the visible conversation.
@@ -1164,6 +1198,22 @@ export default function ChatPanel({
         rafRef.current = null
         return
       }
+      // Commit at ~18fps, not every frame. Each commit copies the WHOLE accumulated
+      // message text twice (m.text + the trailing text item) and rebuilds the msgs
+      // array, so a per-frame commit on a long reply threw megabytes/second at the
+      // GC — V8 then sat in incremental marking (measured: ~97% of renderer CPU in
+      // the marking write barrier). Fewer, larger commits keep the typewriter look
+      // while cutting that allocation churn several-fold.
+      const nowMs = performance.now()
+      // Unfocused (or this pane isn't the visible one): nobody is watching the text
+      // stream, so commit far less often — several background agents streaming at
+      // once was a big share of the idle-looking CPU.
+      const interval = document.hasFocus() ? 0 : 400
+      if (nowMs - lastCommitRef.current < interval) {
+        rafRef.current = requestAnimationFrame(drainTick)
+        return
+      }
+      lastCommitRef.current = nowMs
       let n = Math.max(2, Math.ceil(buf.length / 5))
       // Don't cut mid-word if a space is very close (reduces markdown flicker).
       if (n < buf.length) {
@@ -1292,7 +1342,21 @@ export default function ChatPanel({
             setBusy(false)
             // Rail status: draw the done checkmark, then settle back to idle.
             setAgentStatus(chatKey, e.error ? 'idle' : 'done')
-            setTimeout(() => setAgentStatus(chatKey, 'idle'), 2600)
+            // Hold "done" until the user can actually SEE it. On a second monitor
+            // (or another app in front) the 2.6s decay expired while nobody was
+            // looking, so coming back showed nothing — no checkmark, no border
+            // flash. Start the countdown when the window regains focus instead.
+            const settle = (): void => {
+              setTimeout(() => setAgentStatus(chatKey, 'idle'), 2600)
+            }
+            if (document.hasFocus()) settle()
+            else {
+              const onFocus = (): void => {
+                window.removeEventListener('focus', onFocus)
+                settle()
+              }
+              window.addEventListener('focus', onFocus)
+            }
             // Desktop notification when a turn finishes AND the user isn't already
             // looking at this pane (background workspace/pane, or app unfocused).
             // Routed through MAIN (electron Notification is reliable; the web one
@@ -1618,6 +1682,42 @@ export default function ChatPanel({
 
   // Drag files (from the explorer or the OS) onto the chat to attach their paths
   // to the message — the agent can then Read them.
+  // Append file paths to the composer (shared by drop + image paste).
+  const appendPaths = (paths: string[]): void => {
+    if (paths.length === 0) return
+    const el = inputRef.current
+    const add = paths.join(' ')
+    const next = (el?.value ? el.value + (el.value.endsWith(' ') ? '' : ' ') : '') + add + ' '
+    setInput(next)
+    if (el) {
+      el.value = next
+      el.focus()
+    }
+  }
+
+  // Paste an image straight into the chat: the CLI takes file paths, not clipboard
+  // bitmaps, so persist it to a temp file and attach that path.
+  const onPasteComposer = (e: React.ClipboardEvent): void => {
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const images = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+    if (images.length === 0) return
+    e.preventDefault()
+    void Promise.all(
+      images.map(
+        (it) =>
+          new Promise<string | null>((resolve) => {
+            const file = it.getAsFile()
+            if (!file) return resolve(null)
+            const reader = new FileReader()
+            reader.onload = () =>
+              void window.api.workspace.saveTempImage(String(reader.result)).then(resolve, () => resolve(null))
+            reader.onerror = () => resolve(null)
+            reader.readAsDataURL(file)
+          })
+      )
+    ).then((paths) => appendPaths(paths.filter((p): p is string => !!p)))
+  }
+
   const onDropFiles = (e: React.DragEvent): void => {
     e.preventDefault()
     setDragOver(false)
@@ -1845,7 +1945,12 @@ export default function ChatPanel({
   // nodes (each tool line, code block, markdown tree) — rendering all of it pinned
   // the renderer's heap and kept V8 in constant GC. Older turns are still in state
   // (and on disk in the CLI session); "load earlier" reveals them on demand.
-  const windowed = limit >= msgs.length ? msgs : msgs.slice(-limit)
+  // Freeze the rendered slice while this pane is hidden: a background agent can
+  // stream hundreds of updates that nobody can see, and re-rendering the transcript
+  // for each one is pure waste. On re-show the current value flows through again.
+  const paneVisible = api ? api.isVisible : true
+  const windowedLive = limit >= msgs.length ? msgs : msgs.slice(-limit)
+  const windowed = useRetainedValue(windowedLive, paneVisible)
   const windowOffset = msgs.length - windowed.length
   const messageList = useMemo(
     () =>
@@ -1936,6 +2041,8 @@ export default function ChatPanel({
         {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}
         {!restoring && restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
         {messageList}
+        {/* An ask_user prompt from THIS pane's agent, answered in context. */}
+        <AskInline chatKey={chatKey} />
         {error && <div className="chat-error">{error}</div>}
       </div>
 
@@ -1986,6 +2093,7 @@ export default function ChatPanel({
         <textarea
           ref={inputRef}
           className="chat-input"
+          onPaste={onPasteComposer}
           value={input}
           placeholder={t('chat.placeholder')}
           onChange={(e) => {

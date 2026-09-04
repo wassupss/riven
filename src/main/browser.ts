@@ -288,6 +288,87 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
     }
   )
   // Modal z-order guard: hide every browser view while a renderer overlay is up.
+  // ---- address-bar suggestion overlay ---------------------------------------
+  // A WebContentsView always paints above renderer DOM, so the omnibox dropdown
+  // can't be plain DOM. It gets its own view, added AFTER the page views (later
+  // child = drawn on top), so the page stays full-size and untouched underneath.
+  let overlay: WebContentsView | null = null
+  const overlayHtml = (items: Array<{ url: string; title: string }>, sel: number): string => {
+    const esc = (v: string): string =>
+      v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
+    const rows = items
+      .map(
+        (it, i) =>
+          `<div class="i${i === sel ? ' on' : ''}" data-i="${i}"><span class="t">${esc(
+            it.title || it.url
+          )}</span><span class="u">${esc(it.url)}</span></div>`
+      )
+      .join('')
+    return `<!doctype html><meta charset="utf-8"><style>
+      :root{color-scheme:dark}
+      body{margin:0;font:12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+           background:#14100d;color:#e7e3df;border:1px solid #2a2723;border-radius:8px;
+           overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+      .i{display:flex;gap:8px;align-items:baseline;padding:6px 10px;cursor:pointer;white-space:nowrap}
+      .i:hover,.i.on{background:#221d18}
+      .t{overflow:hidden;text-overflow:ellipsis;max-width:55%}
+      .u{color:#928779;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+    </style><body>${rows}</body>
+    <script>
+      document.body.addEventListener('mousedown', function (e) {
+        var el = e.target.closest('.i'); if (!el) return;
+        // No preload here: report the pick through the title, which main observes.
+        document.title = 'pick:' + el.dataset.i + ':' + Date.now();
+      });
+    </script>`
+  }
+  const destroyOverlay = (): void => {
+    const w = win()
+    if (overlay && w) w.contentView.removeChildView(overlay)
+    overlay?.webContents.close()
+    overlay = null
+  }
+  ipcMain.on(
+    'browser:suggest',
+    (
+      e,
+      payload: {
+        rect: { x: number; y: number; width: number; height: number } | null
+        items: Array<{ url: string; title: string }>
+        selected: number
+      }
+    ) => {
+      const w = win()
+      if (!w) return
+      if (!payload.rect || payload.items.length === 0) {
+        destroyOverlay()
+        return
+      }
+      if (!overlay) {
+        overlay = new WebContentsView({ webPreferences: { javascript: true } })
+        overlay.setBackgroundColor('#00000000')
+        w.contentView.addChildView(overlay) // last child ⇒ above the page views
+        overlay.webContents.on('page-title-updated', (_ev, title) => {
+          const m = /^pick:(\d+):/.exec(title)
+          if (m && !e.sender.isDestroyed()) e.sender.send('browser:suggestPick', Number(m[1]))
+        })
+      } else {
+        // Keep it on top if page views were added after it.
+        w.contentView.removeChildView(overlay)
+        w.contentView.addChildView(overlay)
+      }
+      overlay.setBounds({
+        x: Math.round(payload.rect.x),
+        y: Math.round(payload.rect.y),
+        width: Math.round(payload.rect.width),
+        height: Math.round(payload.rect.height)
+      })
+      void overlay.webContents.loadURL(
+        'data:text/html;charset=utf-8,' + encodeURIComponent(overlayHtml(payload.items, payload.selected))
+      )
+    }
+  )
+
   ipcMain.on('browser:hideAll', (_e, hidden: boolean) => {
     hiddenAll = hidden
     if (hidden) for (const t of tabs.values()) t.view.setVisible(false)

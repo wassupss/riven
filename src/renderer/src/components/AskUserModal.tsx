@@ -4,9 +4,11 @@ import { useAskUser } from '../state/askUser'
 // The `ask_user` MCP tool's UI: an arrow-selectable option list (native chat's
 // choice card). Enter/click picks, Esc dismisses. Only the current request shows.
 export default function AskUserModal(): JSX.Element | null {
-  const current = useAskUser((s) => s.current)
-  const answer = useAskUser((s) => s.answer)
-  const cancel = useAskUser((s) => s.cancel)
+  // Only questions with no owning chat pane use this modal; a pane-bound question
+  // renders inline in that conversation (see AskInline).
+  const current = useAskUser((s) => s.pending.find((r) => !r.chatKey) ?? null)
+  const answerFn = useAskUser((s) => s.answer)
+  const cancelFn = useAskUser((s) => s.cancel)
   const [sel, setSel] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -21,7 +23,7 @@ export default function AskUserModal(): JSX.Element | null {
   const { question, options } = current
 
   return (
-    <div className="askuser-backdrop" onClick={cancel}>
+    <div className="askuser-backdrop" onClick={() => cancelFn(current.id)}>
       <div
         ref={ref}
         className="askuser-card"
@@ -36,10 +38,10 @@ export default function AskUserModal(): JSX.Element | null {
             setSel((i) => (i - 1 + options.length) % options.length)
           } else if (e.key === 'Enter') {
             e.preventDefault()
-            answer(options[sel])
+            answerFn(current.id, options[sel])
           } else if (e.key === 'Escape') {
             e.preventDefault()
-            cancel()
+            cancelFn(current.id)
           }
         }}
       >
@@ -50,7 +52,7 @@ export default function AskUserModal(): JSX.Element | null {
               key={i}
               className={`askuser-option${i === sel ? ' sel' : ''}`}
               onMouseEnter={() => setSel(i)}
-              onClick={() => answer(opt)}
+              onClick={() => answerFn(current.id, opt)}
             >
               {opt}
             </button>

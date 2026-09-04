@@ -90,6 +90,9 @@ const api = {
     importFont: (): Promise<{ family: string; dataUrl: string } | null> =>
       ipcRenderer.invoke('font:import'),
     readFile: (file: string): Promise<string> => ipcRenderer.invoke('workspace:readFile', file),
+    // Save a pasted image to a temp file and return its path (agents read paths).
+    saveTempImage: (dataUrl: string): Promise<string | null> =>
+      ipcRenderer.invoke('image:saveTemp', dataUrl),
     writeFile: (file: string, content: string): Promise<void> =>
       ipcRenderer.invoke('workspace:writeFile', file, content),
     createFile: (p: string): Promise<void> => ipcRenderer.invoke('workspace:createFile', p),
@@ -239,6 +242,18 @@ const api = {
       css?: { w: number; h: number }
     ): void => ipcRenderer.send('browser:sync', { activeId, rect, css }),
     hideAll: (hidden: boolean): void => ipcRenderer.send('browser:hideAll', hidden),
+    // Omnibox suggestions are drawn by a native overlay view (renderer DOM can't
+    // paint above a WebContentsView). rect=null closes it.
+    suggest: (
+      rect: { x: number; y: number; width: number; height: number } | null,
+      items: Array<{ url: string; title: string }>,
+      selected: number
+    ): void => ipcRenderer.send('browser:suggest', { rect, items, selected }),
+    onSuggestPick: (cb: (index: number) => void): (() => void) => {
+      const l = (_e: unknown, i: number): void => cb(i)
+      ipcRenderer.on('browser:suggestPick', l)
+      return () => ipcRenderer.removeListener('browser:suggestPick', l)
+    },
     execJs: (id: string, code: string): Promise<unknown> =>
       ipcRenderer.invoke('browser:execJs', { id, code }),
     capture: (id: string): Promise<string | null> => ipcRenderer.invoke('browser:capture', { id }),
@@ -421,7 +436,8 @@ const api = {
     }> => ipcRenderer.invoke('usage:limits')
   },
   ports: {
-    list: (folder: string): Promise<number[]> => ipcRenderer.invoke('ports:list', folder)
+    list: (folder: string): Promise<Array<{ port: number; pid: number; name: string }>> =>
+      ipcRenderer.invoke('ports:list', folder)
   },
   diagnostics: {
     run: (
@@ -470,6 +486,9 @@ const api = {
   git: {
     info: (folder: string): Promise<{ repoName: string; branch: string | null; isRepo: boolean }> =>
       ipcRenderer.invoke('git:info', folder),
+    // Repos at/under the workspace folder (a workspace often holds many).
+    repos: (folder: string): Promise<Array<{ path: string; name: string; branch: string | null }>> =>
+      ipcRenderer.invoke('git:repos', folder),
     log: (
       folder: string,
       limit?: number
@@ -551,6 +570,7 @@ const api = {
     saveSync: (data: unknown): boolean => ipcRenderer.sendSync('sessions:save-sync', data) === true
   },
   // Whole-UI zoom (native UIScale). Scales the entire renderer.
+  openExternal: (url: string): void => ipcRenderer.send('shell:openExternal', url),
   setZoom: (factor: number): void => {
     webFrame.setZoomFactor(factor) // immediate, for a snappy in-session change
     ipcRenderer.send('ui:setZoom', factor) // authoritative (survives load timing)

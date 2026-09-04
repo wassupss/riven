@@ -1,4 +1,4 @@
-import { ipcMain, WebContents, Notification, BrowserWindow } from 'electron'
+import { ipcMain, WebContents, Notification, BrowserWindow, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import chokidar, { FSWatcher } from 'chokidar'
@@ -67,6 +67,11 @@ export function registerBridgeHandlers(): void {
   ipcMain.on('watch:stop', () => {
     watcher?.close()
     watcher = null
+  })
+
+  // Open a URL in the user's default browser (port chips, links).
+  ipcMain.on('shell:openExternal', (_e, url: string) => {
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
   })
 
   // Whole-UI zoom applied on the WebContents (authoritative). Doing it only via

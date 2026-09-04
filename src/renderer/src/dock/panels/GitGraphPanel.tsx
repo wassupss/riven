@@ -28,6 +28,14 @@ const LANE_COLORS = [
   '#c586c0'
 ]
 const laneColor = (i: number): string => LANE_COLORS[i % LANE_COLORS.length]
+// Width the rail actually occupies for a row: its own lane plus any lane still
+// running through it (before/after), so text can clear the drawn lines.
+function rowWidth(row: Row): number {
+  let last = row.lane
+  for (let i = 0; i < row.before.length; i++) if (row.before[i] != null && i > last) last = i
+  for (let i = 0; i < row.after.length; i++) if (row.after[i] != null && i > last) last = i
+  return (last + 1) * COL
+}
 const COL = 14 // px per lane
 const ROW = 34 // px row height
 
@@ -88,16 +96,29 @@ function Rail({ row, maxLanes }: { row: Row; maxLanes: number }): JSX.Element {
     }
   }
   return (
-    <svg className="gg-rail" width={w} height={ROW} style={{ flex: `0 0 ${w}px` }}>
+    <svg
+      className="gg-rail"
+      width={w}
+      height={ROW}
+      style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
+    >
       {lines}
       <circle cx={cx} cy={mid} r={4} fill={laneColor(row.lane)} stroke="var(--bg)" strokeWidth={1.5} />
     </svg>
   )
 }
 
-export default function GitGraphPanel({ workspace }: { workspace: string }): JSX.Element {
+export default function GitGraphPanel({
+  workspace,
+  repo
+}: {
+  workspace: string
+  // Absolute path of the repo to graph (a workspace can hold several); falls back
+  // to the workspace folder.
+  repo?: string
+}): JSX.Element {
   const t = useT()
-  const ws = pathOf(workspace)
+  const ws = repo || pathOf(workspace)
   const [commits, setCommits] = useState<Commit[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -127,8 +148,18 @@ export default function GitGraphPanel({ workspace }: { workspace: string }): JSX
         <div className="gg-scroll">
           {rows.map((row) => (
             <div key={row.commit.hash} className="gg-row" style={{ height: ROW }}>
+              {/* The rail spans the full lane area (so lane lines stay continuous),
+                  and the text starts right after THIS commit's dot instead of after
+                  the widest lane — so each subject sits beside its own node. */}
               <Rail row={row} maxLanes={maxLanes} />
-              <div className="gg-meta">
+              <div
+                className="gg-meta"
+                // Start after the RIGHTMOST lane this row actually draws — close to
+                // the commit's own dot when the history is narrow, but never on top
+                // of lane lines passing to its right (which overlapped the subject
+                // once a third branch appeared).
+                style={{ paddingLeft: rowWidth(row) + 8 }}
+              >
                 <span className="gg-subject">
                   {row.commit.refs && <span className="gg-refs">{row.commit.refs}</span>}
                   {row.commit.subject}

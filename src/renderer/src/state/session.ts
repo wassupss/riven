@@ -114,6 +114,7 @@ interface PersistShape {
   sessions: Record<string, Session>
   recents?: string[]
   names?: Record<string, string>
+  colors?: Record<string, string>
 }
 
 interface SessionState {
@@ -124,6 +125,9 @@ interface SessionState {
   recents: string[] // most-recently-opened workspace paths (MRU), for reopening
   // Custom display names, keyed by wid. Absent ⇒ the folder name is used.
   names: Record<string, string>
+  // Per-workspace dot colour (an avatar colour index, or AVATAR_NONE). Drives the
+  // rail dot AND its busy pulse. Absent ⇒ the default accent.
+  colors: Record<string, string>
   hydrate: (data: PersistShape) => void
   // Open (or, with forceNew, always add another instance of) a folder path.
   openWorkspace: (path: string, forceNew?: boolean) => void
@@ -132,6 +136,7 @@ interface SessionState {
   // Move a workspace card up/down in the rail (drag reorder).
   reorderWorkspace: (from: number, to: number) => void
   renameWorkspace: (wid: string, name: string) => void
+  setWorkspaceColor: (wid: string, spec: string | null) => void
   patch: (wid: string, p: Partial<Session>) => void
   openFile: (path: string) => void
   closeTab: (path: string) => void
@@ -179,6 +184,7 @@ export const useSession = create<SessionState>((set) => ({
   sessions: {},
   recents: [],
   names: {},
+  colors: {},
 
   hydrate: (data) =>
     set(() => {
@@ -201,7 +207,8 @@ export const useSession = create<SessionState>((set) => ({
         activeWorkspace: data.activeWorkspace ?? null,
         sessions,
         recents: data.recents ?? [],
-        names: data.names ?? {}
+        names: data.names ?? {},
+        colors: data.colors ?? {}
       }
     }),
 
@@ -270,6 +277,14 @@ export const useSession = create<SessionState>((set) => ({
       return { names }
     }),
 
+  setWorkspaceColor: (wid, spec) =>
+    set((st) => {
+      const colors = { ...st.colors }
+      if (spec) colors[wid] = spec
+      else delete colors[wid] // null ⇒ back to the default accent
+      return { colors }
+    }),
+
   patch: (path, p) =>
     set((st) => ({
       sessions: { ...st.sessions, [path]: { ...(st.sessions[path] ?? emptySession()), ...p } }
@@ -317,6 +332,7 @@ const snapshot = (): {
   sessions: unknown
   recents: unknown
   names: unknown
+  colors: unknown
 } => {
   const st = useSession.getState()
   return {
@@ -324,7 +340,8 @@ const snapshot = (): {
     activeWorkspace: st.activeWorkspace,
     sessions: st.sessions,
     recents: st.recents,
-    names: st.names
+    names: st.names,
+    colors: st.colors
   }
 }
 useSession.subscribe((st) => {

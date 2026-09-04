@@ -26,6 +26,20 @@ import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
 import { buildMenu } from './menu'
 
+// Chromium switches. Deliberately conservative — we do NOT disable
+// backgroundThrottling or the frame-rate limit: keeping the compositor running
+// pins ProMotion displays at 120Hz and burns battery while idle.
+//   IntensiveWakeUpThrottling: Chromium clamps hidden-page timers to once/minute
+//     after 5 minutes, which would delay an agent-done notification by ~60s.
+//   max-active-webgl-contexts: Blink evicts the oldest context past 16 per
+//     renderer and each terminal pane holds one, silently downgrading panes to the
+//     (much slower) DOM renderer once you have many terminals open.
+//   disable-skia-graphite (macOS): Graphite can strand corrupt Metal tiles after
+//     idle; Ganesh still composites on the GPU.
+app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling')
+app.commandLine.appendSwitch('max-active-webgl-contexts', '128')
+if (process.platform === 'darwin') app.commandLine.appendSwitch('disable-skia-graphite')
+
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
 // In dev, use a SEPARATE app name so its userData (sessions.json, config, caches)
 // lives in Application Support/riven-dev and can never collide with the shipped

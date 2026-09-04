@@ -85,6 +85,36 @@ async function gitLog(folder: string, limit = 200): Promise<GitCommit[]> {
 
 export function registerGitHandlers(): void {
   ipcMain.handle('git:info', (_e, folder: string) => gitInfo(folder))
+
+  // Git repositories at or just under the workspace folder. A workspace is often a
+  // container (e.g. ~/hs-playground) holding many independent repos, and showing
+  // only the top folder's repo (usually none) hid all of them.
+  ipcMain.handle(
+    'git:repos',
+    async (_e, folder: string): Promise<Array<{ path: string; name: string; branch: string | null }>> => {
+      const out: Array<{ path: string; name: string; branch: string | null }> = []
+      const add = async (dir: string): Promise<void> => {
+        if (!fs.existsSync(path.join(dir, '.git'))) return
+        out.push({
+          path: dir,
+          name: path.basename(dir),
+          branch: await currentBranch(dir).catch(() => null)
+        })
+      }
+      await add(folder) // the workspace itself may be a repo
+      try {
+        const entries = await fs.promises.readdir(folder, { withFileTypes: true })
+        // One level down only: deep scans are slow and rarely what you mean.
+        const dirs = entries
+          .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
+          .map((d) => path.join(folder, d.name))
+        await Promise.all(dirs.map(add))
+      } catch {
+        /* unreadable folder */
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name))
+    }
+  )
   ipcMain.handle('git:log', (_e, folder: string, limit?: number) => gitLog(folder, limit))
 
   // The committed (HEAD) version of a file, used as a diff baseline for agent

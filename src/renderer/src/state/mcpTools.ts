@@ -1,4 +1,4 @@
-import { useSession, pathOf } from './session'
+import { useSession, pathOf, widForPane } from './session'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
@@ -9,7 +9,8 @@ import {
   addTerminal,
   addChat,
   togglePanel,
-  getDelegator
+  getDelegator,
+  getApiFor
 } from '../dock/registry'
 
 // Executes a riven MCP tool call forwarded from the main process and returns a
@@ -54,6 +55,21 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
   { name: 'riven_note_save_file', ko: '메모를 파일로 저장', en: 'Save note to file' }
 ]
 
+// EVERY tool must act on the workspace of the agent that called it — never on
+// whatever workspace the user is currently looking at. A background agent opening
+// a file/browser tab/panel must not hijack the visible workspace. getDelegator()
+// is the chat pane whose turn is running; its workspace owns the action.
+function callerWs(): string | null {
+  const d = getDelegator()
+  const own = d ? widForPane(d) : null
+  return own ?? useSession.getState().activeWorkspace
+}
+// The caller's dock. Null when that workspace isn't mounted right now (LRU), in
+// which case dock-manipulating tools report it instead of acting on the wrong one.
+function callerApi(): ReturnType<typeof getApiFor> {
+  return getApiFor(callerWs())
+}
+
 type Args = Record<string, unknown>
 const s = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 
@@ -64,6 +80,9 @@ async function askUser(args: Args): Promise<string> {
   return new Promise<string>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
+      // Bind the question to the pane that asked, so it renders inside THAT
+      // conversation instead of interrupting whatever workspace is on screen.
+      chatKey: getDelegator(),
       question,
       options,
       resolve
@@ -82,7 +101,7 @@ function openFile(args: Args): string {
 }
 
 function listPanels(): string {
-  const api = getActiveApi()
+  const api = callerApi()
   if (!api) return 'no panels'
   const panels = api.panels.map((p) => ({
     id: p.id,
@@ -115,19 +134,19 @@ function notesChanged(): void {
   window.dispatchEvent(new Event('riven:notes-changed'))
 }
 async function noteList(): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const list = await window.api.notes.list(pathOf(ws))
   return JSON.stringify(list.map((n) => ({ note: n.name, title: n.title })))
 }
 async function noteRead(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const content = await window.api.notes.read(pathOf(ws), s(args.note))
   return content ?? 'error: note not found'
 }
 async function noteWrite(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const name = await window.api.notes.write(
     pathOf(ws),
@@ -140,7 +159,7 @@ async function noteWrite(args: Args): Promise<string> {
   return `wrote note "${name}"`
 }
 async function noteAppend(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const name = await window.api.notes.append(pathOf(ws), s(args.note), s(args.body))
   if (!name) return 'error: note not found'
@@ -148,7 +167,7 @@ async function noteAppend(args: Args): Promise<string> {
   return `appended to "${name}"`
 }
 async function docWrite(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const res = await window.api.notes.writeFile(pathOf(ws), s(args.path), s(args.body), !!args.overwrite)
   if (!res.ok) return `error: ${res.error}`
@@ -159,7 +178,7 @@ async function docWrite(args: Args): Promise<string> {
   return `wrote ${res.path}`
 }
 async function noteSaveFile(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const res = await window.api.notes.saveToFile(
     pathOf(ws),
@@ -172,7 +191,7 @@ async function noteSaveFile(args: Args): Promise<string> {
 
 function closePanel(args: Args): string {
   const id = s(args.id)
-  const api = getActiveApi()
+  const api = callerApi()
   if (!api) return 'error: no active workspace'
   const panel = api.getPanel(id)
   if (!panel) return `error: no panel with id "${id}"`
@@ -206,9 +225,9 @@ const clip = (v: unknown): string => {
 // Ensure the active workspace has an open browser panel with a ready tab, and
 // return its tab id. (v1 drives the active workspace's browser.)
 async function ensureBrowser(url?: string): Promise<{ ws: string; tabId: string } | string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
-  const api = getActiveApi()
+  const api = callerApi()
   if (api && !api.getPanel('preview')) togglePanel('preview')
   useBrowser.getState().ensureWs(ws)
   const cur = useBrowser.getState().byWs[ws]
@@ -236,7 +255,7 @@ async function browserEval(code: string): Promise<string> {
 }
 
 function browserStateText(): string {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const cur = useBrowser.getState().byWs[ws]
   const tab = activeTab(ws)
@@ -255,9 +274,9 @@ async function browserOpen(args: Args): Promise<string> {
   if (!url) return 'error: url is required'
   const full = /^https?:\/\//i.test(url) ? url : 'http://' + url
   if (args.new_tab) {
-    const ws = useSession.getState().activeWorkspace
+    const ws = callerWs()
     if (!ws) return 'error: no active workspace'
-    const api = getActiveApi()
+    const api = callerApi()
     if (api && !api.getPanel('preview')) togglePanel('preview')
     useBrowser.getState().ensureWs(ws)
     useBrowser.getState().newTab(ws, full)
@@ -271,7 +290,7 @@ async function browserOpen(args: Args): Promise<string> {
 }
 
 async function browserTab(args: Args): Promise<string> {
-  const ws = useSession.getState().activeWorkspace
+  const ws = callerWs()
   if (!ws) return 'error: no active workspace'
   const cur = useBrowser.getState().byWs[ws]
   const idx = typeof args.index === 'number' ? args.index : -1
@@ -360,6 +379,7 @@ async function confirmAsk(question: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
+      chatKey: getDelegator(),
       question,
       options: ['예', '아니오'],
       resolve: (choice) => resolve(choice === '예')
@@ -372,7 +392,7 @@ async function groupRemoveAgent(args: Args): Promise<string> {
   if (!target) return `error: no agent matching "${name}"`
   if (!(await confirmAsk(`"${target.getTitle()}" 에이전트를 닫을까요?`)))
     return 'the user declined'
-  const api = getActiveApi()
+  const api = callerApi()
   const panel = api?.getPanel(target.chatKey)
   if (panel && api) api.removePanel(panel)
   return `removed "${target.getTitle()}"`
@@ -381,7 +401,7 @@ async function groupDelete(args: Args): Promise<string> {
   const group = s(args.group)
   if (!(await confirmAsk(`그룹 "${group}"의 모든 에이전트 패널을 닫을까요?`)))
     return 'the user declined'
-  const api = getActiveApi()
+  const api = callerApi()
   if (!api) return 'error: no active workspace'
   let n = 0
   for (const p of api.panels.filter((p) => p.id.startsWith('chat-'))) {

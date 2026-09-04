@@ -259,6 +259,58 @@ export default function TerminalPane({
       // background agent keeps running — then replay it once the pane is shown.
       const HIDDEN_CAP = 256 * 1024
       let pendingHidden = ''
+
+      // Cooperative write scheduler. Writing every PTY chunk straight into xterm
+      // lets a flood (build logs, `yes`, a runaway agent) pin the renderer thread:
+      // xterm's parser + DOM work share it with input and paint. Instead we queue
+      // chunks and drain them in slices bounded by a time budget, yielding between
+      // slices via MessageChannel — a posted macrotask isn't clamped like a nested
+      // setTimeout(0) (~4ms) yet still lets input/paint run first.
+      const DRAIN_BUDGET_MS = 8
+      const MAX_WRITES_PER_DRAIN = 8
+      const BACKLOG_CAP_CHARS = 2 * 1024 * 1024
+      const queue: string[] = []
+      let queuedChars = 0
+      let drainScheduled = false
+      const drainChannel = new MessageChannel()
+      const scheduleDrain = (): void => {
+        if (drainScheduled) return
+        drainScheduled = true
+        drainChannel.port2.postMessage(0)
+      }
+      const drain = (): void => {
+        drainScheduled = false
+        const started = performance.now()
+        let writes = 0
+        while (queue.length && writes < MAX_WRITES_PER_DRAIN) {
+          const chunk = queue.shift() as string
+          queuedChars -= chunk.length
+          writes++
+          try {
+            term.write(chunk, () => window.api.pty.ack(ptyId ?? '', chunk.length))
+          } catch {
+            // Not renderable right now — keep the tail and ack so flow control
+            // can't deadlock.
+            pendingHidden = (pendingHidden + chunk).slice(-HIDDEN_CAP)
+            if (ptyId) window.api.pty.ack(ptyId, chunk.length)
+          }
+          if (performance.now() - started >= DRAIN_BUDGET_MS) break
+        }
+        if (queue.length) scheduleDrain()
+      }
+      drainChannel.port1.onmessage = drain
+      const enqueue = (data: string): void => {
+        queue.push(data)
+        queuedChars += data.length
+        // Bound the queue: a flood the drain can't keep up with would otherwise
+        // grow renderer memory without limit. Drop the oldest backlog and say so.
+        while (queuedChars > BACKLOG_CAP_CHARS && queue.length > 1) {
+          const dropped = queue.shift() as string
+          queuedChars -= dropped.length
+          if (ptyId) window.api.pty.ack(ptyId, dropped.length)
+        }
+        scheduleDrain()
+      }
       const isRenderable = (): boolean =>
         opened && container.isConnected && container.clientWidth > 0 && container.clientHeight > 0
       const flushHidden = (): void => {
@@ -338,16 +390,10 @@ export default function TerminalPane({
         disposers.push(
           window.api.pty.onData(id, (data) => {
             if (isRenderable()) {
-              // Visible: ack in the write callback (after xterm parses the chunk).
-              // That is the backpressure signal — if xterm falls behind, acks lag,
-              // main hits the high-water mark and pauses the PTY (see pty.ts). A
-              // rare synchronous throw still acks so flow control can't deadlock.
-              try {
-                term.write(data, () => window.api.pty.ack(id, data.length))
-              } catch {
-                pendingHidden = (pendingHidden + data).slice(-HIDDEN_CAP)
-                window.api.pty.ack(id, data.length)
-              }
+              // Visible: queue it. The drain acks each chunk only once xterm has
+              // parsed it, which IS the backpressure signal — if we fall behind,
+              // acks lag, main hits the high-water mark and pauses the PTY.
+              enqueue(data)
             } else {
               // Hidden: don't touch xterm (rendering into a 0-size viewport throws and
               // can't keep up with a flood). Buffer the last screenful (capped) and ack
@@ -419,6 +465,12 @@ export default function TerminalPane({
             /* ignore */
           }
         }
+        // Stop the cooperative drain and release its ports with the pane.
+        queue.length = 0
+        queuedChars = 0
+        drainChannel.port1.onmessage = null
+        drainChannel.port1.close()
+        drainChannel.port2.close()
         disposers.forEach((d) => d())
         searchRef.current = null
         refocusRef.current = null
@@ -435,6 +487,14 @@ export default function TerminalPane({
     let hideTimer: ReturnType<typeof setTimeout> | null = null
 
     const reconcile = (): void => {
+      // A hidden-but-retained pane (agent still working) must not keep blinking its
+      // cursor: the blink timer repaints the cursor row through the WebGL renderer
+      // ~2x/sec forever, which is pure GPU + renderer CPU nobody can see. Park it
+      // while hidden, restore on show.
+      if (liveTerm) {
+        const wantBlink = visible
+        if (liveTerm.options.cursorBlink !== wantBlink) liveTerm.options.cursorBlink = wantBlink
+      }
       // Keep the renderer alive while visible OR while an agent is working (so its
       // output is captured even in a background workspace). Release it only when
       // hidden AND idle, after a short grace period.

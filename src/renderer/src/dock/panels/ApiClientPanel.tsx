@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import '../../styles/api-panel.css'
+import { useApiTarget } from '../../state/apiTarget'
 import { useT } from '../../i18n'
 import { highlightCode } from '../../components/highlight'
 
@@ -239,6 +240,14 @@ export default function ApiClientPanel(): JSX.Element {
   // ---- request state -------------------------------------------------------
   const [method, setMethod] = useState('GET')
   const [url, setUrl] = useState('')
+  // A URL handed over from elsewhere (e.g. clicking a running port in the status
+  // bar) loads into the address field, then clears so it can't re-apply later.
+  const handoff = useApiTarget((s) => s.url)
+  useEffect(() => {
+    if (!handoff) return
+    setUrl(handoff)
+    useApiTarget.getState().setUrl(null)
+  }, [handoff])
   const [params, setParams] = useState<KV[]>([])
   const [headers, setHeaders] = useState<KV[]>([])
   const [bodyType, setBodyType] = useState<BodyType>('none')

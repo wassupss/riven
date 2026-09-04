@@ -20,6 +20,7 @@ import {
   setActiveApi,
   getActiveApi,
   registerApiWorkspace,
+  unregisterApiWorkspace,
   nextPaneId,
   bumpPaneSeq
 } from './registry'
@@ -159,6 +160,11 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       const api = event.api
       apiRef.current = api
       registerApiWorkspace(api, workspace) // so tab headers can resolve their workspace
+      // onReady fires once per dockview INSTANCE. Refs survive a StrictMode
+      // remount (and a renderer reload remounts too), so a stale `restoredRef`
+      // from the previous instance made tryRestore() bail out — the new dock never
+      // got fromJSON and every panel vanished on ⌘R. Reset it per instance.
+      restoredRef.current = false
 
       // KNOWN is derived from the live component registry so it can never drift
       // out of sync (the old hardcoded list omitted 'git'/'changes', wiping any
@@ -218,8 +224,14 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             // yet, so closing the LAST panel is correctly detected as empty.
             const remaining = api.panels.filter((p) => p.id !== panel.id).length
             lastPanelCount.current = remaining
-            patch(workspace, { dockLayout: remaining === 0 ? null : api.toJSON() })
-            flushSessionSaveSync()
+            // NEVER persist an empty layout. A renderer reload (⌘R) tears the dock
+            // down panel-by-panel, and saving the 0-panel state on the last removal
+            // wiped the workspace's layout. An intentionally emptied dock re-opens
+            // the launcher anyway, so "empty" is never a state worth storing.
+            if (remaining > 0) {
+              patch(workspace, { dockLayout: api.toJSON() })
+              flushSessionSaveSync()
+            }
           }
         })
       )
@@ -242,8 +254,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             // A 0-panel layout is only real once we've restored; before that it's a
             // transient mount artifact. After restore, an empty layout means the
             // user closed everything and MUST persist (else the old panels revive).
-            if (api.panels.length === 0 && !restoredRef.current) return
-            patch(workspace, { dockLayout: api.panels.length === 0 ? null : api.toJSON() })
+            if (api.panels.length === 0) return // never store an empty dock (see above)
+            patch(workspace, { dockLayout: api.toJSON() })
           }
           const count = api.panels.length
           const structural = count !== lastPanelCount.current
@@ -286,6 +298,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       // HMR reload / StrictMode remount cancels the timer, and the just-closed
       // panel would reappear on restore. Only persist a still-open, active,
       // non-empty workspace's layout (same guards as the debounced save).
+      unregisterApiWorkspace(workspace)
       if (saveTimer.current) {
         clearTimeout(saveTimer.current)
         saveTimer.current = null
@@ -294,10 +307,10 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
           cur &&
           useSession.getState().openWorkspaces.includes(workspace) &&
           workspace === useSession.getState().activeWorkspace &&
-          (cur.panels.length > 0 || restoredRef.current)
+          cur.panels.length > 0
         ) {
           try {
-            patch(workspace, { dockLayout: cur.panels.length === 0 ? null : cur.toJSON() })
+            patch(workspace, { dockLayout: cur.toJSON() })
           } catch {
             /* api may already be tearing down */
           }

@@ -183,7 +183,7 @@ export default function App(): JSX.Element {
   const overlayOpen = useUI(
     (s) => s.settingsOpen || s.keybindingsOpen || !!s.palette || s.quickPanel || !!s.agentPicker
   )
-  const askOpen = useAskUser((s) => !!s.current)
+  const askOpen = useAskUser((s) => s.pending.some((r) => !r.chatKey))
   useEffect(() => {
     window.api.browser.hideAll(overlayOpen || askOpen)
   }, [overlayOpen, askOpen])

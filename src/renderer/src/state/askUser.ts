@@ -1,48 +1,45 @@
 import { create } from 'zustand'
 
-// Backs the `ask_user` MCP tool: an agent asks the user to pick one option, and
-// the tool call blocks (in the main process) until the user chooses here. Only
-// one prompt shows at a time; a second request queues behind it.
+// Backs the `ask_user` MCP tool: an agent asks the user something and the tool
+// call blocks (in the main process) until the user answers here.
+//
+// A request is bound to the chat pane that asked (chatKey), so it renders INLINE
+// in that conversation — not as a global dialog that would interrupt whatever
+// workspace you happen to be looking at. Requests with no pane (e.g. a terminal
+// agent) fall back to the modal so they can't be lost.
 
 export interface AskRequest {
   id: string
+  chatKey: string | null // the pane that asked; null ⇒ show the fallback modal
   question: string
   options: string[]
   resolve: (choice: string) => void
 }
 
 interface AskUserState {
-  queue: AskRequest[]
-  current: AskRequest | null
+  pending: AskRequest[]
   enqueue: (req: AskRequest) => void
-  answer: (choice: string) => void
-  cancel: () => void
+  // Answer a specific request (a chosen option or free-typed text).
+  answer: (id: string, choice: string) => void
+  cancel: (id: string) => void
+  // The oldest request that isn't bound to a pane (drives the fallback modal).
+  unattached: () => AskRequest | null
 }
 
 export const useAskUser = create<AskUserState>((set, get) => ({
-  queue: [],
-  current: null,
-  enqueue: (req) =>
-    set((s) => {
-      if (s.current) return { queue: [...s.queue, req] }
-      return { current: req }
-    }),
-  answer: (choice) => {
-    const cur = get().current
-    if (!cur) return
-    cur.resolve(choice)
-    set((s) => {
-      const [next, ...rest] = s.queue
-      return { current: next ?? null, queue: rest }
-    })
+  pending: [],
+  enqueue: (req) => set((s) => ({ pending: [...s.pending, req] })),
+  answer: (id, choice) => {
+    const req = get().pending.find((r) => r.id === id)
+    if (!req) return
+    req.resolve(choice)
+    set((s) => ({ pending: s.pending.filter((r) => r.id !== id) }))
   },
-  cancel: () => {
-    const cur = get().current
-    if (!cur) return
-    cur.resolve('riven: the user dismissed the question')
-    set((s) => {
-      const [next, ...rest] = s.queue
-      return { current: next ?? null, queue: rest }
-    })
-  }
+  cancel: (id) => {
+    const req = get().pending.find((r) => r.id === id)
+    if (!req) return
+    req.resolve('riven: the user dismissed the question')
+    set((s) => ({ pending: s.pending.filter((r) => r.id !== id) }))
+  },
+  unattached: () => get().pending.find((r) => !r.chatKey) ?? null
 }))

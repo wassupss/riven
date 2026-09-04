@@ -907,7 +907,8 @@ select {
   background: var(--dot, var(--fg-dim));
 }
 .ws-stat.busy .ws-core {
-  background: var(--accent-2);
+  /* Follows the workspace's chosen dot colour (falls back to the accent). */
+  background: var(--dot, var(--accent-2));
 }
 .ws-stat.waiting .ws-core {
   background: var(--warning);
@@ -922,7 +923,7 @@ select {
   height: 8px;
   margin: -4px 0 0 -4px;
   border-radius: var(--radius-full);
-  border: 1px solid var(--accent-2);
+  border: 1px solid var(--dot, var(--accent-2));
   transform-origin: center;
   opacity: 0;
   animation: ws-ping 1.5s ease-out infinite;
@@ -6159,9 +6160,11 @@ select {
   overflow-y: auto;
 }
 .gg-row {
+  /* The rail is an absolutely-positioned overlay so each row's text can start
+     beside its OWN commit dot (see GitGraphPanel), not after the widest lane. */
+  position: relative;
   display: flex;
   align-items: stretch;
-  gap: 8px;
   padding-right: 10px;
 }
 .gg-row:hover {
@@ -6758,4 +6761,138 @@ select {
 .chat-loadmore:hover {
   background: var(--hover-strong);
   color: var(--fg);
+}
+
+/* ask_user prompt rendered inside the conversation that asked it. */
+.ask-inline {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg-2));
+}
+.ask-inline-q {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg);
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+}
+.ask-inline-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ask-inline-opt {
+  padding: 5px 11px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.ask-inline-opt:hover,
+.ask-inline-opt.on {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.ask-inline-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.ask-inline-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+}
+.ask-inline-send,
+.ask-inline-cancel {
+  padding: 5px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.ask-inline-send:not(:disabled):hover {
+  color: var(--accent);
+  border-color: var(--accent-border);
+}
+.ask-inline-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ask-inline-cancel:hover {
+  color: var(--fg);
+  background: var(--hover-strong);
+}
+
+/* Port chips: a live dot + the owning process, so "what's running" is obvious.
+   The base chip is a fixed 16px pill; adding content needs room or the number
+   gets pushed out of the clip. */
+.port-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: auto;
+  min-height: 16px;
+  padding: 1px 7px;
+  flex: 0 0 auto;
+}
+.port-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--success);
+  flex: 0 0 auto;
+}
+.port-name {
+  color: inherit;
+  opacity: 0.65;
+  font-size: var(--text-2xs);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Repo picker — a workspace folder often contains several git repos. */
+.git-repos {
+  padding: 6px 10px 0;
+}
+.git-repo-select {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+/* In-flight assistant text: plain (unparsed) while streaming, so each chunk is a
+   cheap text update. Keeps the same typography as the rendered markdown body. */
+.chat-assistant-text.streaming {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Port chip chooser: open a running port in the API client, the browser panel,
+   or the system browser. */
+.port-menu {
+  min-width: 200px;
 }

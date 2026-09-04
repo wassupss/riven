@@ -111,6 +111,10 @@ export default function PreviewPanel({
   const [suggestOpen, setSuggestOpen] = useState(false)
   const viewportRef = useRef<HTMLDivElement>(null)
   const lastSent = useRef('')
+  // The omnibox dropdown is drawn by a NATIVE overlay view (renderer DOM can't
+  // paint above a WebContentsView), positioned right under the address bar.
+  const addrWrapRef = useRef<HTMLDivElement | null>(null)
+  const [suggestIndex, setSuggestIndex] = useState(0)
 
   // Keep native context menus in the current UI language.
   useEffect(() => {
@@ -258,6 +262,40 @@ export default function PreviewPanel({
         ].slice(0, 8)
       : []
 
+  // A WebContentsView is a native layer that ALWAYS paints above renderer DOM, so
+  // the suggestions dropdown was drawn underneath the page. Hide the page while the
+  // dropdown is open (you're typing an address, not reading the page) and restore it
+  // as soon as it closes.
+  const suggestVisible = suggestOpen && suggestions.length > 0
+  const suggestKey = suggestions.map((x) => x.url).join('|')
+  useEffect(() => {
+    const el = addrWrapRef.current
+    if (!suggestVisible || !el) {
+      window.api.browser.suggest(null, [], 0)
+      return
+    }
+    const r = el.getBoundingClientRect()
+    const rowH = 30
+    window.api.browser.suggest(
+      { x: r.left, y: r.bottom + 3, width: r.width, height: Math.min(suggestions.length, 8) * rowH + 8 },
+      suggestions.map((x) => ({ url: x.url, title: x.title })),
+      suggestIndex
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestVisible, suggestKey, suggestIndex])
+
+  // Clicking a row in the overlay navigates here.
+  useEffect(() => {
+    return window.api.browser.onSuggestPick((i) => {
+      const s = suggestions[i]
+      if (s) navigate(s.url)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestKey])
+
+  // Never leave the overlay behind when the panel unmounts/hides.
+  useEffect(() => () => window.api.browser.suggest(null, [], 0), [])
+
   return (
     <div className="browser-panel">
       <div className="browser-tabs">
@@ -306,7 +344,7 @@ export default function PreviewPanel({
         >
           {active?.loading ? <X size={14} /> : <RotateCw size={13} />}
         </button>
-        <div className="browser-addr-wrap">
+        <div className="browser-addr-wrap" ref={addrWrapRef}>
           <input
             className="url-input browser-addr"
             value={addr}
@@ -322,10 +360,20 @@ export default function PreviewPanel({
             onChange={(e) => {
               setAddr(e.target.value)
               setSuggestOpen(true)
+              setSuggestIndex(0)
             }}
             onKeyDown={(e) => {
+              // Arrow keys move the highlight in the native suggestion overlay;
+              // Enter takes the highlighted row (or the typed text when none).
+              if (suggestVisible && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault()
+                const n = suggestions.length
+                setSuggestIndex((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i - 1 + n) % n))
+                return
+              }
               if (e.key === 'Enter') {
-                navigate(addr)
+                const picked = suggestVisible ? suggestions[suggestIndex] : null
+                navigate(picked ? picked.url : addr)
                 ;(e.target as HTMLInputElement).blur()
               } else if (e.key === 'Escape') setSuggestOpen(false)
             }}
@@ -338,23 +386,6 @@ export default function PreviewPanel({
             >
               <Star size={13} fill={isBookmarked ? 'currentColor' : 'none'} />
             </button>
-          )}
-          {suggestOpen && suggestions.length > 0 && (
-            <div className="browser-suggest">
-              {suggestions.map((s, i) => (
-                <button
-                  key={i}
-                  className="browser-suggest-item"
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    navigate(s.url)
-                  }}
-                >
-                  <span className="browser-suggest-title">{s.title}</span>
-                  <span className="browser-suggest-url">{s.url}</span>
-                </button>
-              ))}
-            </div>
           )}
         </div>
         {/* Everything except back/forward/reload lives in this overflow menu — a

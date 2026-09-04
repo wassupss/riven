@@ -5,7 +5,7 @@ import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/
 import { useAgents, agentsForWorkspace } from '../state/agents'
 import { useUI } from '../state/ui'
 import { getActiveApi } from '../dock/registry'
-import { tintStyle } from '../lib/avatar'
+import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
 import { useT } from '../i18n'
 import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
 
@@ -102,7 +102,9 @@ function StatusDot({
     <span
       className={`ws-stat ${activity}`}
       title={title}
-      style={activity === 'idle' && color ? ({ '--dot': color } as React.CSSProperties) : undefined}
+      // The colour drives the dot AND the busy radar rings (CSS reads --dot), so a
+      // workspace's pulse matches the colour the user picked for it.
+      style={color ? ({ '--dot': color } as React.CSSProperties) : undefined}
       aria-hidden
     >
       {activity === 'busy' && (
@@ -118,7 +120,11 @@ function StatusDot({
 
 // Stable per-workspace identity color (like native cardColors) so cards are
 // distinguishable at a glance. Derived from the path so it's consistent.
-function colorFor(ws: string): string {
+function colorFor(ws: string, override?: string): string {
+  // A user-picked colour (avatar palette index) always wins; otherwise fall back to
+  // the stable hash colour so untouched workspaces stay distinguishable.
+  const d = decodeAvatar(override)
+  if (d) return hueColor(d.color)
   let h = 0
   for (let i = 0; i < ws.length; i++) h = (h * 31 + ws.charCodeAt(i)) | 0
   return `hsl(${Math.abs(h) % 360} 62% 62%)`
@@ -164,6 +170,8 @@ function WorkspaceCard({
   const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
   const closeWorkspace = useSession((s) => s.closeWorkspace)
   const renameWorkspace = useSession((s) => s.renameWorkspace)
+  const setWorkspaceColor = useSession((s) => s.setWorkspaceColor)
+  const wsColor = useSession((s) => s.colors[ws])
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
   const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
@@ -256,7 +264,7 @@ function WorkspaceCard({
       <div className="ws-card-top">
         <StatusDot
           activity={cardActivity}
-          color={colorFor(ws)}
+          color={colorFor(ws, wsColor)}
           title={t(ACTIVITY_LABEL_KEY[activity])}
         />
         {editing ? (
@@ -361,6 +369,31 @@ function WorkspaceCard({
                 }}
               >
                 {t('ws.newInstance')}
+              </button>
+              <div className="ctx-sep" />
+              <div className="context-label">{t('tab.color')}</div>
+              <div className="tab-swatches">
+                {Array.from({ length: AVATAR_COLOR_COUNT }, (_, c) => (
+                  <button
+                    key={c}
+                    className="tab-swatch"
+                    style={{ background: hueColor(c) }}
+                    aria-label={`color ${c}`}
+                    onClick={() => {
+                      setWorkspaceColor(ws, encodeAvatar(0, c))
+                      setMenu(null)
+                    }}
+                  />
+                ))}
+              </div>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setWorkspaceColor(ws, null)
+                  setMenu(null)
+                }}
+              >
+                {t('ws.colorReset')}
               </button>
               <div className="ctx-sep" />
               <button
