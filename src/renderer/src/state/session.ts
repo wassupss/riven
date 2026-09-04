@@ -21,6 +21,10 @@ export interface PaneState {
   mode?: string
   session?: string | null // Claude CLI session id (for --resume)
   agent?: string | null // custom agent (.claude/agents)
+  // Role/persona for this pane (agent-group member). Sent as a SYSTEM prompt at
+  // spawn (--append-system-prompt) instead of burning a real turn priming the
+  // agent, so it costs no conversation and survives restarts.
+  persona?: string
   avatar?: string | null // colour override ("glyph.color" | "none")
   title?: string // pinned tab title
   log?: unknown[] // transcript (Msg[]), capped

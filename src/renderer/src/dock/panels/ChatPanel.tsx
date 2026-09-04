@@ -932,6 +932,31 @@ function SchedulePopover({
   )
 }
 
+// Rebuild the visible transcript from a CLI session file. Everything here already
+// finished, so tools MUST be marked done — otherwise the restored view shows every
+// tool as still running (the group's state is derived from its tools).
+type CliTranscript = Awaited<ReturnType<typeof window.api.chat.sessionTranscript>>
+function transcriptToMsgs(transcript: CliTranscript): Msg[] {
+  return transcript.map((m) => {
+    const tools: ToolLine[] = m.tools.map((tl) => ({ name: tl.name, detail: tl.detail, done: true }))
+    const items: MsgItem[] = []
+    if (m.text) items.push({ type: 'text', text: m.text })
+    for (const tool of tools) items.push({ type: 'tool', tool })
+    return {
+      role: m.role,
+      text: m.text,
+      tools,
+      items,
+      done: true,
+      interrupted: false,
+      startedAt: 0,
+      durationMs: 0,
+      tokensIn: 0,
+      tokensOut: 0
+    }
+  })
+}
+
 // A teammate's @mention handle: the name only, dropping the " · group" suffix that
 // group-member panes carry in their title.
 function mentionHandle(title: string): string {
@@ -964,6 +989,10 @@ export default function ChatPanel({
     (patch: Parameters<typeof setPaneState>[2]) => setPaneState(workspace, chatKey, patch),
     [workspace, chatKey]
   )
+  // The transcript is NOT stored by riven — the Claude CLI already persists every
+  // session, so on restore we reload it from there via `--resume`'s session id
+  // (see the restore effect below). Any `log` from an older build is used only as
+  // an instant placeholder until the real transcript arrives.
   const [msgs, setMsgs] = useState<Msg[]>(() => {
     const arr = (pane0.log as Msg[] | undefined) ?? []
     // A turn that was still streaming when the app reloaded isn't running anymore.
@@ -971,6 +1000,19 @@ export default function ChatPanel({
     if (last && last.role === 'assistant' && !last.done) last.done = true
     return arr
   })
+  const [restoring, setRestoring] = useState(false)
+  // The last assistant reply, used as the desktop notification's body.
+  const replyRef = useRef('')
+  // An agent-group member's role goes in the SYSTEM prompt at spawn, not as a chat
+  // turn: the agent knows who it is without spending a request, and the role can't
+  // scroll out of context or pollute the visible conversation.
+  const withPersona = useCallback(
+    (globalPrompt: string): string => {
+      const p = (pane0.persona ?? '').trim()
+      return p ? [globalPrompt?.trim(), p].filter(Boolean).join('\n\n') : globalPrompt
+    },
+    [pane0.persona]
+  )
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [model, setModel] = useState<string | null>(null)
@@ -1155,7 +1197,7 @@ export default function ChatPanel({
       model: savedModel !== 'default' ? savedModel : undefined,
       permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
       mcpDisabled: st.mcpDisabledTools,
-      globalPrompt: st.globalPrompt,
+      globalPrompt: withPersona(st.globalPrompt),
       agent: savedAgent
     })
     const off = window.api.chat.onEvent((e) => {
@@ -1216,6 +1258,7 @@ export default function ChatPanel({
           // Only a genuine failure (not a steer, not a user Stop) shows the banner.
           if (e.error && !steering && !stopped) setError(e.error)
           patchLast((m) => {
+            replyRef.current = m.text // for the desktop notification preview
             // Resolve any delegation waiters (riven_ask_agent) with this reply.
             if (waitersRef.current.length) {
               const reply = m.text
@@ -1253,11 +1296,19 @@ export default function ChatPanel({
                 document.hasFocus() &&
                 useSession.getState().activeWorkspace === workspace &&
                 getActiveApi()?.activePanel?.id === chatKey
-              if (getSettings().notifications && !looking)
-                window.api.notify.show(titleRef.current || 'Claude', t('chat.done'), {
+              if (getSettings().notifications && !looking) {
+                // Show what the agent actually said (cmux-style), not just "done" —
+                // a bare "완료" tells you nothing about which agent finished what.
+                const reply = (replyRef.current || '')
+                  .replace(/```[\s\S]*?```/g, ' ') // drop code fences
+                  .replace(/\s+/g, ' ')
+                  .trim()
+                const body = reply ? (reply.length > 160 ? reply.slice(0, 160) + '…' : reply) : t('chat.done')
+                window.api.notify.show(titleRef.current || 'Claude', body, {
                   force: true,
                   paneId: chatKey
                 })
+              }
             } catch {
               /* notifications unavailable */
             }
@@ -1283,30 +1334,63 @@ export default function ChatPanel({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
   }, [msgs])
 
-  // Persist the transcript (capped) so ⌘R keeps the visible history — debounced
-  // so a streaming turn doesn't JSON-stringify the whole log every frame.
-  useEffect(() => {
-    // Never overwrite a saved transcript with an EMPTY one. On restore a pane can
-    // momentarily mount before its log loads; writing [] then would wipe the real
-    // history. /clear removes the key explicitly, so skipping empty writes is safe.
-    if (msgs.length === 0) return
-    const id = setTimeout(() => {
-      savePane({ log: msgs.slice(-120) })
-      // When the turn has finished, force the transcript to disk synchronously so a
-      // quit/reload right after can never lose it (the debounced full-store save may
-      // not have fired yet). During streaming we let the debounce coalesce writes.
-      if (msgs[msgs.length - 1]?.done) flushSessionSaveSync()
-    }, 800)
-    return () => clearTimeout(id)
-  }, [msgs, savePane])
-
-  // If the transcript was restored, the panel already has its title — don't let
-  // the next first-message override it — and show a "continued" marker on top.
+  // The transcript is NOT persisted by riven. The Claude CLI already stores every
+  // session on disk, so we keep just the session id and reload the real transcript
+  // from the CLI on restore (below). Storing it here was both redundant and lossy
+  // (it was capped at 120 messages, which is why long chats came back truncated),
+  // and it bloated sessions.json / every save.
+  //
+  // Restore: when this pane mounts with a saved session id, pull that session's
+  // transcript from the CLI (shows a loading state while it loads).
+  // If the transcript was restored, the panel already has its title — don't let the
+  // next first-message override it — and show a "continued" marker on top.
   const restoredRef = useRef(msgs.length > 0)
+  const restoredSessionRef = useRef<string | null>(null)
+  useEffect(() => {
+    const sid = pane0.session
+    if (!sid || restoredSessionRef.current === sid) return
+    restoredSessionRef.current = sid
+    let cancelled = false
+    setRestoring(true)
+    void window.api.chat
+      .sessionTranscript(pathOf(workspace), sid)
+      .then((tr) => {
+        if (cancelled || !tr?.length) return
+        // Never clobber a turn the user started while this was loading.
+        setMsgs((cur) => (cur.some((m) => !m.done) ? cur : transcriptToMsgs(tr)))
+        restoredRef.current = true
+        titleSet.current = true // keep the restored tab title; don't re-title
+      })
+      .catch(() => {
+        /* keep whatever placeholder we have */
+      })
+      .finally(() => {
+        if (!cancelled) setRestoring(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane0.session, workspace])
+
+  // Drop any transcript an older build persisted (one-time cleanup, keeps the
+  // session id) so sessions.json stays small.
+  useEffect(() => {
+    if ((pane0.log as unknown[] | undefined)?.length) savePane({ log: [] })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // A pinned title (agent-group member name · group) comes via prop on first mount
   // and via localStorage after a reload. When pinned, the pane never auto-retitles.
   const pinned = pinnedTitle || pane0.title || ''
-  const titleSet = useRef(msgs.length > 0 || !!pinned)
+  // A pinned pane still earns a conversation title — it's appended to the pin, so a
+  // team member's tab reads "멤버 · 팀 · 대화제목" instead of staying "멤버 · 팀".
+  const titleSet = useRef(msgs.length > 0)
+  // Compose the tab title: keep the pinned "member · group" prefix when present.
+  const composeTitle = useCallback(
+    (convo: string): string => (pinned ? `${pinned} · ${convo}` : convo),
+    [pinned]
+  )
   // Live title/busy/reply-waiters so this chat can act as a delegatable agent
   // (riven_ask_agent). titleRef tracks the tab's short title.
   const titleRef = useRef(
@@ -1375,14 +1459,14 @@ export default function ChatPanel({
         titleSet.current = true
         const first = clean.split('\n')[0].trim()
         const short = first.length > 40 ? first.slice(0, 40) + '…' : first
-        titleRef.current = short
-        setTitle?.(short)
+        titleRef.current = composeTitle(short)
+        setTitle?.(titleRef.current)
         useAgents.getState().bump() // refresh the workspace rail (it reads getTitle)
         // Then upgrade to an AI-generated summary title (native refreshAITitle).
         void window.api.chat.title(clean).then((ai) => {
           if (ai) {
-            titleRef.current = ai
-            setTitle?.(ai)
+            titleRef.current = composeTitle(ai)
+            setTitle?.(titleRef.current)
             useAgents.getState().bump()
           }
         })
@@ -1407,7 +1491,9 @@ export default function ChatPanel({
   // Keep a pinned tab title applied (survives reload / restore) so an agent-group
   // member's name doesn't fall back to the generic "채팅" label.
   useEffect(() => {
-    if (pinned) setTitle?.(pinned)
+    // Only until the pane earns a conversation title — after that the tab shows
+    // "member · group · conversation" and must not be reset to the bare pin.
+    if (pinned && !titleSet.current) setTitle?.(pinned)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -1507,7 +1593,7 @@ export default function ChatPanel({
         cwd: pathOf(workspace),
         model: m,
         mcpDisabled: st.mcpDisabledTools,
-        globalPrompt: st.globalPrompt
+        globalPrompt: withPersona(st.globalPrompt)
       })
     } else {
       window.api.chat.setModel(chatKey, m)
@@ -1654,27 +1740,13 @@ export default function ChatPanel({
   const resumeSession = async (id: string): Promise<void> => {
     const cwd = pathOf(workspace)
     window.api.chat.stop(chatKey)
-    const transcript = await window.api.chat.sessionTranscript(cwd, id)
-    setMsgs(
-      transcript.map((m) => {
-        const tools = m.tools.map((tl) => ({ name: tl.name, detail: tl.detail }))
-        const items: MsgItem[] = []
-        if (m.text) items.push({ type: 'text', text: m.text })
-        for (const tool of tools) items.push({ type: 'tool', tool })
-        return {
-          role: m.role,
-          text: m.text,
-          tools,
-          items,
-          done: true,
-          interrupted: false,
-          startedAt: 0,
-          durationMs: 0,
-          tokensIn: 0,
-          tokensOut: 0
-        }
-      })
-    )
+    setRestoring(true)
+    try {
+      const transcript = await window.api.chat.sessionTranscript(cwd, id)
+      setMsgs(transcriptToMsgs(transcript))
+    } finally {
+      setRestoring(false)
+    }
     restoredRef.current = true
     savePane({ session: id })
     const st = getSettings()
@@ -1687,7 +1759,7 @@ export default function ChatPanel({
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
-          globalPrompt: st.globalPrompt
+          globalPrompt: withPersona(st.globalPrompt)
         }),
       120
     )
@@ -1813,7 +1885,8 @@ export default function ChatPanel({
       onDrop={onDropFiles}
     >
       <div className="chat-scroll" ref={scrollRef}>
-        {restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
+        {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}
+        {!restoring && restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
         {messageList}
         {error && <div className="chat-error">{error}</div>}
       </div>

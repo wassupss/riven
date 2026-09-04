@@ -551,7 +551,10 @@ const api = {
     saveSync: (data: unknown): boolean => ipcRenderer.sendSync('sessions:save-sync', data) === true
   },
   // Whole-UI zoom (native UIScale). Scales the entire renderer.
-  setZoom: (factor: number): void => webFrame.setZoomFactor(factor),
+  setZoom: (factor: number): void => {
+    webFrame.setZoomFactor(factor) // immediate, for a snappy in-session change
+    ipcRenderer.send('ui:setZoom', factor) // authoritative (survives load timing)
+  },
   // Menu-driven zoom (⌘0/⌘+/⌘-): the renderer adjusts + persists uiScale.
   onUiZoom: (cb: (dir: 'in' | 'out' | 'reset') => void): (() => void) => {
     const listener = (_e: unknown, dir: 'in' | 'out' | 'reset'): void => cb(dir)

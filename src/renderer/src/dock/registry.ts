@@ -140,7 +140,9 @@ export function addChat(
   // keeps focus — only a user directly creating a single pane should move focus.
   inactive?: boolean,
   // A custom agent (.claude/agents/<name>.md) to run this pane as `claude --agent`.
-  agent?: string
+  agent?: string,
+  // Role/persona sent as a SYSTEM prompt at spawn (never as a chat turn).
+  persona?: string
 ): string {
   const api = activeApi
   if (!api) return ''
@@ -154,7 +156,8 @@ export function addChat(
     setPaneState(wid, id, {
       model: model && model !== 'default' ? model : undefined,
       title: title || undefined,
-      agent: agent || undefined
+      agent: agent || undefined,
+      persona: persona || undefined
     })
     flushSessionSaveSync() // durable immediately (survives quit/reload races)
   }

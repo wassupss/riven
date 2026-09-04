@@ -69,6 +69,19 @@ export function registerBridgeHandlers(): void {
     watcher = null
   })
 
+  // Whole-UI zoom applied on the WebContents (authoritative). Doing it only via
+  // the preload's webFrame was unreliable at startup: a setZoomFactor issued while
+  // the page is still loading gets reset, so the restored uiScale silently fell
+  // back to 100% on every launch.
+  ipcMain.on('ui:setZoom', (e, factor: number) => {
+    const f = Number(factor)
+    if (!Number.isFinite(f) || f <= 0) return
+    const wc = e.sender
+    wc.setZoomFactor(f)
+    // Re-apply once the load settles, in case this arrived mid-load.
+    if (wc.isLoading()) wc.once('did-finish-load', () => wc.setZoomFactor(f))
+  })
+
   ipcMain.on(
     'notify:show',
     (e, opts: { title: string; body: string; force?: boolean; paneId?: string }) => {

@@ -227,8 +227,9 @@ function OrgChart({
   )
 }
 
-// The first message a spawned teammate gets, so it stays in character and knows
-// who it reports to (mirrors the native createAgentGroup priming).
+// A spawned teammate's role block. Sent as its SYSTEM prompt at spawn (not as a
+// chat turn), so it stays in character and knows who it reports to without
+// spending a request or polluting the visible conversation.
 function priming(
   name: string,
   persona: string,
@@ -494,13 +495,14 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         }
       }
       const chatKey = addChat(
-        priming(draftNames[i], d.persona, g, parentName, t) || undefined,
+        undefined, // no priming TURN — the role goes in the system prompt instead
         dir,
         d.model === 'default' ? undefined : d.model,
         ref,
         memberTitle(draftNames[i], g),
         true, // don't steal focus while the team is being spawned
-        d.agent || undefined
+        d.agent || undefined,
+        priming(draftNames[i], d.persona, g, parentName, t) || undefined
       )
       created.push(chatKey)
       if (i > 0 && (i - 1) % MAX_PER_COL === 0) columnTops.push(chatKey)
@@ -648,13 +650,14 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       if (!ref || !getActiveApi()?.getPanel(ref)) ref = openMemberKey(g)
     }
     const newKey = addChat(
-      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined,
+      undefined, // role goes in the system prompt, not a chat turn
       dir,
       m.model === 'default' ? undefined : m.model,
       ref,
       memberTitle(m.name, g.group),
       true,
-      m.agent || undefined
+      m.agent || undefined,
+      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined
     )
     // Carry the member's avatar override to the new pane so its tab keeps the face.
     if (m.avatar) setChatAvatar(newKey, m.avatar)
@@ -684,12 +687,14 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     // If that neighbour pane was closed, fall back to any open member.
     if (!ref || !getActiveApi()?.getPanel(ref)) ref = openMemberKey(g)
     const chatKey = addChat(
-      priming(name, '', g.group, mainName, t) || undefined,
+      undefined, // role goes in the system prompt, not a chat turn
       dir,
       undefined,
       ref,
       memberTitle(name, g.group),
-      true
+      true,
+      undefined,
+      priming(name, '', g.group, mainName, t) || undefined
     )
     addMember(workspace, g.group, { name, persona: null, model: 'default', parent: 0, chatKey })
   }
