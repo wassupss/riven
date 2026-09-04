@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DockviewReact, type DockviewReadyEvent, type IDockviewPanelProps } from 'dockview-react'
 import { themeAbyss, type DockviewApi } from 'dockview-core'
 import 'dockview-core/dist/styles/dockview.css'
-import { SquareTerminal, FileCode } from 'lucide-react'
 import EditorPanel from './panels/EditorPanel'
 import PreviewPanel from './panels/PreviewPanel'
 import AgentGroupPanel from './panels/AgentGroupPanel'
@@ -22,9 +21,7 @@ import {
   getActiveApi,
   registerApiWorkspace,
   nextPaneId,
-  bumpPaneSeq,
-  addTerminal,
-  togglePanel
+  bumpPaneSeq
 } from './registry'
 import { useT } from '../i18n'
 
@@ -234,6 +231,9 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       disposers.current.push(
         api.onDidLayoutChange(() => {
           setEmpty(api.panels.length === 0)
+          // Closing the last panel drops back to the launcher (same UI as adding a
+          // panel), instead of a separate empty-state screen.
+          if (api.panels.length === 0 && restoredRef.current) buildDefault(api)
           const save = (): void => {
             // Only the active (visible) workspace persists its layout. A hidden
             // dockview can momentarily report a degenerate/empty layout; saving it
@@ -331,22 +331,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         components={components}
         onReady={onReady}
       />
-      {empty && (
-        <div className="dock-empty">
-          <div className="dock-empty-inner">
-            <div className="dock-empty-mark">riven</div>
-            <div className="dock-empty-tag">{t('empty.tagline')}</div>
-            <div className="dock-empty-actions">
-              <button className="dock-empty-btn primary" onClick={() => addTerminal()}>
-                <SquareTerminal size={15} /> {t('empty.addTerminal')}
-              </button>
-              <button className="dock-empty-btn" onClick={() => togglePanel('editor')}>
-                <FileCode size={15} /> {t('empty.addEditor')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* No bespoke empty state: closing every panel re-opens the launcher, so the
+          "nothing open" screen is exactly the same picker as adding a new panel. */}
     </div>
   )
 }

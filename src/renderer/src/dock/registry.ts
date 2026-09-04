@@ -529,12 +529,18 @@ export function togglePanel(id: keyof typeof SINGLETONS): void {
     existing.api.setActive()
   } else {
     const cfg = SINGLETONS[id]
+    // Open as a TAB in the focused panel's group (⌘O adds beside what you're
+    // looking at). Only when nothing is focused do we fall back to the panel's
+    // default edge, which is also what a brand-new workspace gets.
+    const ref = api.activePanel?.id
     api.addPanel({
       id,
       component: id,
       title: t(cfg.titleKey),
       renderer: 'always',
-      position: { direction: cfg.direction }
+      position: ref
+        ? { referencePanel: ref, direction: 'within' }
+        : { direction: cfg.direction }
     })
   }
 }
