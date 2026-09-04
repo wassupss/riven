@@ -27,7 +27,10 @@ import { registerUpdateHandlers } from './update'
 import { buildMenu } from './menu'
 
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
-app.setName('riven')
+// In dev, use a SEPARATE app name so its userData (sessions.json, config, caches)
+// lives in Application Support/riven-dev and can never collide with the shipped
+// app's Application Support/riven — dev testing won't corrupt the real session.
+app.setName(app.isPackaged ? 'riven' : 'riven-dev')
 
 // Backstop so a stray async rejection in the main process (a failed fs op, an
 // LSP/pty edge case) logs instead of, on newer Electron/Node, terminating the app.

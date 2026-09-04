@@ -1081,9 +1081,15 @@ export default function ChatPanel({
 
   const patchLast = useCallback((fn: (m: Msg) => Msg) => {
     setMsgs((all) => {
-      const last = all[all.length - 1]
-      if (!last || last.role !== 'assistant') return all
-      return [...all.slice(0, -1), fn(last)]
+      // Patch the last ASSISTANT message (the running turn), not the literal last:
+      // a mid-turn "steer" appends a queued USER message after the running
+      // assistant, and patching the literal last then no-op'd — so streaming
+      // updates AND the turnDone finalize were lost, leaving the assistant stuck
+      // in the "generating" (shimmer) state forever (and pinning CPU).
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (all[i].role === 'assistant') return all.map((m, j) => (j === i ? fn(m) : m))
+      }
+      return all
     })
   }, [])
 

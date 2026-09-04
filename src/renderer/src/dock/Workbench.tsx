@@ -163,29 +163,42 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       apiRef.current = api
       registerApiWorkspace(api, workspace) // so tab headers can resolve their workspace
 
-      const saved = useSession.getState().sessions[workspace]?.dockLayout
       // KNOWN is derived from the live component registry so it can never drift
       // out of sync (the old hardcoded list omitted 'git'/'changes', wiping any
       // layout that contained them). Unknown panels are pruned per-node instead
       // of discarding the whole layout.
       const KNOWN = new Set(Object.keys(components))
-
-      let restored = false
-      if (saved) {
-        const { layout } = pruneUnknownComponents(saved as SavedLayout, KNOWN)
-        if (layout) {
-          try {
-            api.fromJSON(layout)
-            bumpPaneSeq(api.panels.map((p) => p.id))
-            restored = api.panels.length > 0
-          } catch {
-            restored = false
+      const restore = (): void => {
+        const saved = useSession.getState().sessions[workspace]?.dockLayout
+        let restored = false
+        if (saved) {
+          const { layout } = pruneUnknownComponents(saved as SavedLayout, KNOWN)
+          if (layout) {
+            try {
+              api.fromJSON(layout)
+              bumpPaneSeq(api.panels.map((p) => p.id))
+              restored = api.panels.length > 0
+            } catch {
+              restored = false
+            }
           }
         }
+        if (!restored) buildDefault(api)
+        setEmpty(api.panels.length === 0)
+        restoredRef.current = true
       }
-      if (!restored) buildDefault(api)
-      setEmpty(api.panels.length === 0)
-      restoredRef.current = true
+      // Restore ONLY once the dock has a real size. On a cold start the dockview's
+      // onReady can fire before the flex layout has sized its container (0×0);
+      // fromJSON into a 0×0 dock mangles group positions — panels pile at the top
+      // and become unusable. Wait for a non-zero size (retry a few frames, then
+      // restore anyway as a backstop).
+      let tries = 0
+      const tryRestore = (): void => {
+        if (restoredRef.current) return
+        if ((api.width > 0 && api.height > 0) || tries++ >= 30) restore()
+        else requestAnimationFrame(tryRestore)
+      }
+      tryRestore()
 
       if (workspace === useSession.getState().activeWorkspace) setActiveApi(api)
 
