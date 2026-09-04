@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowUp,
   Square,
@@ -1201,8 +1201,11 @@ export default function ChatPanel({
           // A steer-interrupt ends the turn with an error subtype — that's expected,
           // not a real failure, so don't surface it or mark the bubble "stopped".
           const steering = steerRef.current
+          const stopped = stoppedRef.current
           steerRef.current = false
-          if (e.error && !steering) setError(e.error)
+          stoppedRef.current = false
+          // Only a genuine failure (not a steer, not a user Stop) shows the banner.
+          if (e.error && !steering && !stopped) setError(e.error)
           patchLast((m) => {
             // Resolve any delegation waiters (riven_ask_agent) with this reply.
             if (waitersRef.current.length) {
@@ -1294,6 +1297,9 @@ export default function ChatPanel({
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
+  // True when the user pressed Stop, so the turn's non-success end subtype isn't
+  // surfaced as a red "error…" banner (a manual interrupt is expected, not a fault).
+  const stoppedRef = useRef(false)
   const blankAssistant = (): Msg => ({
     role: 'assistant',
     text: '',
@@ -1324,6 +1330,7 @@ export default function ChatPanel({
   // Stop means stop: interrupt the current turn AND drop anything queued.
   const stopTurn = (): void => {
     queuedRef.current = []
+    stoppedRef.current = true
     setMsgs((all) => all.filter((m) => !m.queued))
     window.api.chat.interrupt(chatKey)
   }
@@ -1715,6 +1722,48 @@ export default function ChatPanel({
     return true
   }
 
+  // Render the transcript once per (msgs / now / model) change — NOT on every
+  // composer keystroke. Callbacks go through a ref so the memoised element tree
+  // stays referentially stable; React then skips reconciling all N turns while
+  // typing. This is the fix for typing/interaction lag on long chats (a long
+  // transcript is thousands of DOM nodes; re-diffing them per keystroke stalled).
+  const handlers = useRef({ applyModel, dismissCard, resumeSession })
+  handlers.current = { applyModel, dismissCard, resumeSession }
+  const messageList = useMemo(
+    () =>
+      msgs.map((msg, i) =>
+        msg.card === 'mcp' ? (
+          <McpCard
+            key={msg.cardId ?? i}
+            cwd={pathOf(workspace)}
+            onDismiss={() => handlers.current.dismissCard(msg.cardId)}
+          />
+        ) : msg.card === 'resume' ? (
+          <ResumeCard
+            key={msg.cardId ?? i}
+            cwd={pathOf(workspace)}
+            now={now}
+            onResume={(id) => void handlers.current.resumeSession(id)}
+            onDismiss={() => handlers.current.dismissCard(msg.cardId)}
+          />
+        ) : msg.card === 'model' ? (
+          <ModelCard
+            key={msg.cardId ?? i}
+            models={MODELS}
+            current={pickedModel}
+            onPick={(m) => {
+              handlers.current.applyModel(m)
+              handlers.current.dismissCard(msg.cardId)
+            }}
+            onDismiss={() => handlers.current.dismissCard(msg.cardId)}
+          />
+        ) : (
+          <ChatMessage key={i} msg={msg} now={now} />
+        )
+      ),
+    [msgs, now, pickedModel, workspace]
+  )
+
   return (
     <div
       className={`chat-panel${dragOver ? ' drop-active' : ''}`}
@@ -1741,32 +1790,7 @@ export default function ChatPanel({
     >
       <div className="chat-scroll" ref={scrollRef}>
         {restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
-        {msgs.map((msg, i) =>
-          msg.card === 'mcp' ? (
-            <McpCard key={msg.cardId ?? i} cwd={pathOf(workspace)} onDismiss={() => dismissCard(msg.cardId)} />
-          ) : msg.card === 'resume' ? (
-            <ResumeCard
-              key={msg.cardId ?? i}
-              cwd={pathOf(workspace)}
-              now={now}
-              onResume={(id) => void resumeSession(id)}
-              onDismiss={() => dismissCard(msg.cardId)}
-            />
-          ) : msg.card === 'model' ? (
-            <ModelCard
-              key={msg.cardId ?? i}
-              models={MODELS}
-              current={pickedModel}
-              onPick={(m) => {
-                applyModel(m)
-                dismissCard(msg.cardId)
-              }}
-              onDismiss={() => dismissCard(msg.cardId)}
-            />
-          ) : (
-            <ChatMessage key={i} msg={msg} now={now} />
-          )
-        )}
+        {messageList}
         {error && <div className="chat-error">{error}</div>}
       </div>
 

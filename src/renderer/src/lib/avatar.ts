@@ -74,10 +74,14 @@ export function tintStyle(
   override?: string | null,
   base = 'transparent'
 ): { background: string; color: string } | null {
-  if (override === AVATAR_NONE) return null
-  const idx = avatarSpec(name, override).color
+  // Tint ONLY when the user has explicitly picked a colour (an encoded glyph.color
+  // override). No override — or the "none" sentinel — means a plain, untinted
+  // surface; we never auto-colour from the name hash.
+  void name
+  const d = decodeAvatar(override)
+  if (!d) return null
   return {
-    background: `color-mix(in srgb, ${hueColor(idx)} 26%, ${base})`,
-    color: hueText(idx)
+    background: `color-mix(in srgb, ${hueColor(d.color)} 26%, ${base})`,
+    color: hueText(d.color)
   }
 }

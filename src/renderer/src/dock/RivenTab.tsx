@@ -61,14 +61,9 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   void avatarRev
   const override = loadPaneState(workspace, api.id).avatar ?? null
   const nameKey = title.split(' · ')[0] || title
-  const tint =
-    override === AVATAR_NONE
-      ? null
-      : override
-        ? tintStyle(nameKey, override)
-        : isChat
-          ? tintStyle(nameKey, null)
-          : null
+  // Tint only when a colour was explicitly chosen (tintStyle returns null for no
+  // override / "none"). No auto colour on new chats.
+  const tint = tintStyle(nameKey, override)
 
   return (
     <div

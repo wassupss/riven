@@ -23,3 +23,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 if (new URLSearchParams(location.search).has('stress')) {
   void import('./dev/stress').then((m) => m.maybeRunStress())
 }
+
+// DEV-only: expose stores/registry on window so an external CDP profiler can drive
+// real code paths (workspace switch etc.). Never present in production builds.
+if (import.meta.env.DEV) {
+  void import('./state/session').then((m) => ((window as unknown as { __session: unknown }).__session = m.useSession))
+  void import('./dock/registry').then((m) => ((window as unknown as { __registry: unknown }).__registry = m))
+}

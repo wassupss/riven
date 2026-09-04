@@ -55,11 +55,22 @@ export default function App(): JSX.Element {
   // mangles it — panels drop / positions collapse — and that corrupted layout
   // then overwrites the good save. Lazy-mounting means every restore happens at a
   // real size. Already-open terminals still persist across switches.
+  // Keep only the N most-recently-active workspaces mounted. Previously EVERY
+  // visited workspace stayed mounted forever (hidden), so its panels — chats,
+  // xterm terminals, Monaco editors — all stayed live. With several heavy
+  // workspaces this ballooned the renderer heap (measured 2.5GB) and thrashed the
+  // GC, making the whole app lag on every action. An LRU bounds the live set;
+  // switching back re-mounts (PTYs survive in main, chat transcripts reload from
+  // the session tree), so no state is lost.
+  const MAX_MOUNTED = 3
   const [activated, setActivated] = useState<string[]>([])
   useEffect(() => {
-    if (activeWorkspace && !activated.includes(activeWorkspace))
-      setActivated((a) => [...a, activeWorkspace])
-  }, [activeWorkspace, activated])
+    if (!activeWorkspace) return
+    setActivated((a) => {
+      const recent = [...a.filter((w) => w !== activeWorkspace && openWorkspaces.includes(w)), activeWorkspace]
+      return recent.slice(-MAX_MOUNTED)
+    })
+  }, [activeWorkspace, openWorkspaces])
 
   // Always watch the active workspace (independent of whether the editor is open)
   // so agent edits are detected reliably.

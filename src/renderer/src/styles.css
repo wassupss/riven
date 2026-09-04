@@ -222,7 +222,10 @@ body {
   color: var(--fg);
   background: var(--bg);
   overflow: hidden;
-  -webkit-font-smoothing: antialiased;
+  /* `antialiased` renders noticeably thinner on macOS (and CJK fonts only ship
+     400/700, so a weight bump can't compensate). `auto` = subpixel on macOS,
+     which reads heavier and crisper across Latin + Korean. */
+  -webkit-font-smoothing: auto;
   text-rendering: optimizeLegibility;
 }
 
