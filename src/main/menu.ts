@@ -31,9 +31,24 @@ export function buildMenu(): void {
         { role: 'forceReload' },
         { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Alt+I' },
         { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
+        // Custom zoom → adjusts the persisted uiScale setting in the renderer (the
+        // native zoom roles change Chromium zoom transiently and don't survive a
+        // restart). The renderer clamps + applies + saves.
+        {
+          label: 'Actual Size',
+          accelerator: 'CmdOrCtrl+0',
+          click: () => BrowserWindow.getFocusedWindow()?.webContents.send('ui:zoom', 'reset')
+        },
+        {
+          label: 'Zoom In',
+          accelerator: 'CmdOrCtrl+=',
+          click: () => BrowserWindow.getFocusedWindow()?.webContents.send('ui:zoom', 'in')
+        },
+        {
+          label: 'Zoom Out',
+          accelerator: 'CmdOrCtrl+-',
+          click: () => BrowserWindow.getFocusedWindow()?.webContents.send('ui:zoom', 'out')
+        },
         { type: 'separator' },
         { role: 'togglefullscreen' }
       ]

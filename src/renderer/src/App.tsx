@@ -18,7 +18,7 @@ import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler } from './state/mcpTools'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
-import { useSession, loadPersistedSessions, pathOf } from './state/session'
+import { useSession, loadPersistedSessions, pathOf, widForPane } from './state/session'
 import { loadEnv } from './state/env'
 import { loadSettings, getSettings, useSettings } from './state/settings'
 import { useAuth } from './state/auth'
@@ -148,9 +148,27 @@ export default function App(): JSX.Element {
         api.removePanel(active)
       }
     })
+    // Click a desktop notification → focus that chat's workspace + pane.
+    const offNotifyClick = window.api.notify.onClick((paneId) => {
+      const wid = widForPane(paneId)
+      if (wid) useSession.getState().setActiveWorkspace(wid)
+      setTimeout(() => getActiveApi()?.getPanel(paneId)?.api.setActive(), 80)
+    })
+    // Menu zoom (⌘0/⌘+/⌘-) → adjust + persist uiScale, then apply.
+    const offZoom = window.api.onUiZoom((dir) => {
+      const cur = getSettings().uiScale || 1
+      const next =
+        dir === 'reset'
+          ? 1
+          : Math.min(1.6, Math.max(0.7, Math.round((cur + (dir === 'in' ? 0.1 : -0.1)) * 10) / 10))
+      useSettings.getState().set({ uiScale: next })
+      window.api.setZoom(next)
+    })
     return () => {
       window.removeEventListener('keydown', keymap.handle, { capture: true })
       offClose()
+      offZoom()
+      offNotifyClick()
       offMcp()
       offBrowser()
       offBrowserKey()
@@ -172,7 +190,7 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app">
-      <PanelGroup direction="horizontal" className="body">
+      <PanelGroup direction="horizontal" className="body" autoSaveId="riven:body">
         {showSidebar && (
         <Panel id="sidebar" order={1} defaultSize={17} minSize={11} maxSize={40} className="sidebar">
           <div className="sidebar-inner">
@@ -189,7 +207,7 @@ export default function App(): JSX.Element {
                 <PanelTop size={12} /> {t('toolbar.addPanel')}
               </button>
             </div>
-            <PanelGroup direction="vertical" className="sidebar-stack">
+            <PanelGroup direction="vertical" className="sidebar-stack" autoSaveId="riven:sidebar-stack">
               <Panel id="ws" order={1} defaultSize={34} minSize={12} className="sidebar-region">
                 <WorkspaceTabs />
               </Panel>

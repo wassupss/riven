@@ -10,7 +10,7 @@ import {
   cyclePanel,
   focusGroupInDirection,
   cycleGroupTab,
-  selectTerminal,
+  selectPanelInGroup,
   ensureChanges,
   getActiveApi,
   addChat,
@@ -314,15 +314,17 @@ export function registerDefaultActions(): void {
   // Ctrl+N keeps ⌘1-9 free for workspace switching. On Windows/Linux there is no
   // separate ⌘: Mod IS Ctrl, so a Ctrl+N chord is indistinguishable from
   // workspace.switch's Mod+N (and would never fire) — use Alt+N there instead.
+  // Ctrl+1..9 (Alt+1..9 on Win/Linux): switch to the Nth tab in the active dock
+  // group — any panel, from anywhere (global 'riven' context, not terminal-only).
   const selectMod = IS_MAC ? 'Ctrl' : 'Alt'
   for (let i = 1; i <= 9; i++) {
     keymap.register({
-      id: `terminal.select.${i}`,
-      label: `${i}번 터미널로`,
-      category: TERMINAL,
-      context: 'terminal',
+      id: `panel.tab.${i}`,
+      label: `패널 탭 ${i}번으로`,
+      category: RIVEN,
+      context: 'riven',
       def: `${selectMod}+${i}`,
-      run: () => selectTerminal(i)
+      run: () => selectPanelInGroup(i)
     })
   }
 }

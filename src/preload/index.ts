@@ -386,7 +386,16 @@ const api = {
     }
   },
   notify: {
-    show: (title: string, body: string): void => ipcRenderer.send('notify:show', { title, body })
+    // opts.force shows even when a window is focused (the renderer already decided
+    // the relevant pane isn't the one being looked at). opts.paneId lets a click
+    // focus + navigate to that pane.
+    show: (title: string, body: string, opts?: { force?: boolean; paneId?: string }): void =>
+      ipcRenderer.send('notify:show', { title, body, ...opts }),
+    onClick: (cb: (paneId: string) => void): (() => void) => {
+      const listener = (_e: unknown, paneId: string): void => cb(paneId)
+      ipcRenderer.on('notify:click', listener)
+      return () => ipcRenderer.removeListener('notify:click', listener)
+    }
   },
   cli: {
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
@@ -543,6 +552,12 @@ const api = {
   },
   // Whole-UI zoom (native UIScale). Scales the entire renderer.
   setZoom: (factor: number): void => webFrame.setZoomFactor(factor),
+  // Menu-driven zoom (⌘0/⌘+/⌘-): the renderer adjusts + persists uiScale.
+  onUiZoom: (cb: (dir: 'in' | 'out' | 'reset') => void): (() => void) => {
+    const listener = (_e: unknown, dir: 'in' | 'out' | 'reset'): void => cb(dir)
+    ipcRenderer.on('ui:zoom', listener)
+    return () => ipcRenderer.removeListener('ui:zoom', listener)
+  },
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),

@@ -69,12 +69,26 @@ export function registerBridgeHandlers(): void {
     watcher = null
   })
 
-  ipcMain.on('notify:show', (_e, opts: { title: string; body: string }) => {
-    // Only notify when the app is NOT focused (reliable main-process check —
-    // renderer document.hasFocus() is flaky in Electron).
-    if (BrowserWindow.getAllWindows().some((w) => w.isFocused())) return
-    if (Notification.isSupported()) {
-      new Notification({ title: opts.title, body: opts.body, silent: false }).show()
+  ipcMain.on(
+    'notify:show',
+    (e, opts: { title: string; body: string; force?: boolean; paneId?: string }) => {
+      // Default: only when the app is unfocused. `force` (renderer already decided
+      // the relevant pane isn't the one being viewed) shows even while focused, so a
+      // completion in a BACKGROUND workspace/pane still notifies.
+      if (!opts.force && BrowserWindow.getAllWindows().some((w) => w.isFocused())) return
+      if (!Notification.isSupported()) return
+      const n = new Notification({ title: opts.title, body: opts.body, silent: false })
+      n.on('click', () => {
+        const win =
+          BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
+        if (win) {
+          if (win.isMinimized()) win.restore()
+          win.show()
+          win.focus()
+        }
+        if (opts.paneId) e.sender.send('notify:click', opts.paneId)
+      })
+      n.show()
     }
-  })
+  )
 }

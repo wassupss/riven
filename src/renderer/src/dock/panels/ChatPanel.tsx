@@ -33,7 +33,7 @@ import {
 } from '../../state/agents'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
-import { ensureEditor, addTerminal, setDelegator, takeInitialText } from '../registry'
+import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
 import { useUI } from '../../state/ui'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
@@ -125,6 +125,7 @@ const modelAlias = (m: string | null): string => {
   if (/opus/i.test(m)) return 'opus'
   if (/sonnet/i.test(m)) return 'sonnet'
   if (/haiku/i.test(m)) return 'haiku'
+  if (/fable/i.test(m)) return 'fable'
   return 'default'
 }
 // "claude-opus-5[1m]" → "opus 5" (friendly label for the active model).
@@ -355,14 +356,16 @@ function SubagentCard({
 
 const ToolGroup = memo(function ToolGroup({
   tools,
-  running,
   interrupted
 }: {
   tools: ToolLine[]
-  running: boolean
   interrupted: boolean
 }): JSX.Element {
   const t = useT()
+  // Running = a tool in this group is still awaiting its result. Derived per-tool
+  // (each ToolLine gets `done` when its toolResult arrives) so a finished tool
+  // shows done immediately, instead of staying "running" until the whole turn ends.
+  const running = !interrupted && tools.some((tl) => !tl.done)
   const [open, setOpen] = useState(false)
   let added = 0
   let removed = 0
@@ -484,7 +487,7 @@ const ChatMessage = memo(function ChatMessage({
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
-          <ToolGroup key={`g${i}`} tools={g.tools} running={!msg.done} interrupted={msg.interrupted} />
+          <ToolGroup key={`g${i}`} tools={g.tools} interrupted={msg.interrupted} />
         )
       )}
       <div className="chat-turn-foot">
@@ -1214,10 +1217,15 @@ export default function ChatPanel({
               waitersRef.current = []
               setTimeout(() => ws.forEach((r) => r(reply)), 0)
             }
+            // Mark any tool still awaiting a result as done — the turn is over, so a
+            // missing toolResult mustn't leave a tool shimmering "running" forever.
+            const finish = (tl: (typeof m.tools)[number]): typeof tl => (tl.done ? tl : { ...tl, done: true })
             return {
               ...m,
               done: true,
               interrupted: !!e.error && !steering,
+              tools: m.tools.map(finish),
+              items: m.items.map((it) => (it.type === 'tool' ? { type: 'tool', tool: finish(it.tool) } : it)),
               durationMs: Date.now() - m.startedAt,
               completedAt: Date.now()
             }
@@ -1230,12 +1238,20 @@ export default function ChatPanel({
             // Rail status: draw the done checkmark, then settle back to idle.
             setAgentStatus(chatKey, e.error ? 'idle' : 'done')
             setTimeout(() => setAgentStatus(chatKey, 'idle'), 2600)
-            // Desktop notification when a turn finishes and the app window is not
-            // focused. Routed through MAIN (electron Notification) — the renderer
-            // web Notification is unreliable; main also does the focus gate.
+            // Desktop notification when a turn finishes AND the user isn't already
+            // looking at this pane (background workspace/pane, or app unfocused).
+            // Routed through MAIN (electron Notification is reliable; the web one
+            // isn't). Clicking it focuses + navigates to this chat.
             try {
-              if (getSettings().notifications)
-                window.api.notify.show(t('chat.done'), titleRef.current || 'Claude')
+              const looking =
+                document.hasFocus() &&
+                useSession.getState().activeWorkspace === workspace &&
+                getActiveApi()?.activePanel?.id === chatKey
+              if (getSettings().notifications && !looking)
+                window.api.notify.show(titleRef.current || 'Claude', t('chat.done'), {
+                  force: true,
+                  paneId: chatKey
+                })
             } catch {
               /* notifications unavailable */
             }
@@ -1355,11 +1371,13 @@ export default function ChatPanel({
         const short = first.length > 40 ? first.slice(0, 40) + '…' : first
         titleRef.current = short
         setTitle?.(short)
+        useAgents.getState().bump() // refresh the workspace rail (it reads getTitle)
         // Then upgrade to an AI-generated summary title (native refreshAITitle).
         void window.api.chat.title(clean).then((ai) => {
           if (ai) {
             titleRef.current = ai
             setTitle?.(ai)
+            useAgents.getState().bump()
           }
         })
       }
@@ -1463,7 +1481,7 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = ['default', 'opus', 'sonnet', 'haiku']
+  const MODELS = ['default', 'fable', 'sonnet', 'opus', 'haiku']
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],

@@ -352,6 +352,15 @@ export function selectTerminal(n: number): void {
   terms[n - 1]?.api.setActive()
 }
 
+// Select the Nth tab in the ACTIVE dock group (any panel kind) — VS Code-style
+// Ctrl+1..9 tab switching, works regardless of which panel is focused.
+export function selectPanelInGroup(n: number): void {
+  const api = activeApi
+  if (!api) return
+  const group = api.activeGroup ?? api.groups[0]
+  group?.panels[n - 1]?.api.setActive()
+}
+
 export type FocusDir = 'left' | 'right' | 'up' | 'down'
 
 // Move focus to the split group spatially adjacent to the active one, in the
