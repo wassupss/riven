@@ -689,6 +689,12 @@ export function registerAgentChatHandlers(): void {
     runClaudeMcp(os.homedir(), ['auth', 'logout'], 30000, configDir)
   )
 
+  // NOTE: there is deliberately no background login. Claude Code documents the
+  // browser sign-in as interactive — it may ask you to press `c` to copy the URL,
+  // or to paste a code back at its prompt — and names `claude setup-token` as the
+  // path for environments without an interactive terminal. So login runs in a
+  // real terminal pane; riven watches `auth status` to know when it finished.
+
   ipcMain.handle('accounts:list', async (_e, configDir?: string): Promise<AccountInfo[]> => {
     const [claude, codex] = await Promise.all([claudeAccount(configDir), codexAccount()])
     return [claude, codex].filter((a): a is AccountInfo => a !== null)

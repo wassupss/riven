@@ -346,7 +346,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.account.aiPlan': { ko: '플랜', en: 'plan' },
   'settings.account.aiLogin': { ko: '로그인', en: 'Sign in' },
   'settings.account.aiLogout': { ko: '로그아웃', en: 'Sign out' },
-  'settings.account.aiNote': { ko: '로그인/로그아웃은 터미널에서 각 CLI로 진행됩니다.', en: 'Sign in/out runs in a terminal via each CLI.' },
+  'settings.account.aiNote': {
+    ko: '로그아웃은 앱에서 바로 처리됩니다. 로그인은 브라우저 인증이 필요해 터미널에서 진행됩니다.',
+    en: 'Signing out happens in the app. Signing in runs in a terminal, since it needs a browser.'
+  },
   'settings.account.notConfigured': {
     ko: 'Supabase가 설정되지 않았습니다. 프로젝트 URL과 anon 키를 아래 환경변수로 지정하면 로그인·설정 동기화가 활성화됩니다.',
     en: 'Supabase is not configured. Set the project URL and anon key via the env vars below to enable login and settings sync.'
@@ -672,6 +675,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.account.defaultProfile': { ko: '기본', en: 'Default' },
   'settings.account.profileNamePrompt': { ko: '추가할 계정의 이름', en: 'Name for the new account' },
   'settings.account.profileDefaultName': { ko: '팀', en: 'Team' },
+  'settings.account.addProfileHint': {
+    ko: '지금 계정을 그대로 두고 다른 Claude 계정(예: 팀 시트)을 추가합니다. 로그아웃하고 다시 로그인하면 계정이 교체되니, 두 계정을 같이 쓰려면 이걸 쓰세요.',
+    en: 'Add another Claude account (a team seat, say) while keeping the current one. Logging out and back in REPLACES the stored account, so use this to keep both.'
+  },
   'settings.account.profilesNote': {
     ko: '선택한 계정으로 에이전트 챗과 터미널의 claude가 실행됩니다. 계정이 하나면 아무것도 지정하지 않고 기존 로그인을 그대로 씁니다.',
     en: 'Agent chats and terminal `claude` runs use the selected account. With a single account riven sets nothing and your existing login is used as-is.'
