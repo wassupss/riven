@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../state/auth'
 import { addTerminal } from '../dock/registry'
 import { useUI } from '../state/ui'
+import { useSettings } from '../state/settings'
+import { useUsage } from '../state/usage'
+import { promptInput } from './promptInput'
 import { Button } from './ui/Controls'
 import { useT } from '../i18n'
 
@@ -11,25 +14,205 @@ interface AiAccount {
   loggedIn: boolean | null
   plan?: string
   email?: string
+  org?: string
   mode?: 'subscription' | 'apikey'
+  configDir?: string
+}
+
+// Sign in. Claude Code documents its browser login as INTERACTIVE (it can ask you
+// to press `c` to copy the URL, or to paste a code back at its prompt), so it has
+// to run in a real terminal — `claude setup-token` is the documented path for
+// non-interactive environments, and it is not what we want here.
+//
+// What riven owes the user is the result: the settings window stays open and this
+// polls `auth status` until the login lands, so the row reports the account itself
+// instead of leaving you to guess whether the redirect worked.
+// This lives OUTSIDE the component on purpose: the settings window closes so the
+// login terminal is reachable, which unmounts the panel, and the watch has to
+// outlive it to be able to bring the result back.
+async function signInClaude(configDir?: string | null): Promise<void> {
+  const dir = configDir ?? undefined
+  const before = (await window.api.chat.accounts(dir)).find((a) => a.id === 'claude')
+  // The terminal needs to be usable (it may ask for a pasted code), so get the
+  // settings window out of the way rather than covering it.
+  addTerminal(
+    configDir ? `CLAUDE_CONFIG_DIR=${JSON.stringify(configDir)} claude auth login` : 'claude auth login'
+  )
+  useUI.getState().setSettingsOpen(false)
+  // ~3 minutes, a slow but realistic browser flow. Each check is one short
+  // `claude auth status` (~180ms) and the loop stops the moment the login lands.
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 2000))
+    const now = (await window.api.chat.accounts(dir)).find((a) => a.id === 'claude')
+    if (now?.loggedIn && (!before?.loggedIn || now.email !== before.email)) {
+      // Plan usage is read with the account's own token, so it belongs to the new
+      // account: refresh now instead of leaving the widget blank until the next
+      // poll comes round.
+      useUsage.getState().refresh()
+      // Signed in: show it, rather than leaving the user to guess whether the
+      // redirect worked. The panel re-queries on mount, so it reports the account.
+      useUI.getState().openSettings('account')
+      return
+    }
+  }
+}
+
+// Claude account profiles. riven stores only the CLAUDE_CONFIG_DIR of each; WHO
+// each one is logged in as is asked of the CLI every time (`claude auth status`,
+// ~180ms), so nothing here can go stale or disagree with the terminal.
+function ClaudeProfiles(): JSX.Element | null {
+  const t = useT()
+  const profiles = useSettings((s) => s.settings.claudeProfiles)
+  const activeId = useSettings((s) => s.settings.claudeProfileId)
+  const set = useSettings((s) => s.set)
+  const [who, setWho] = useState<Record<string, AiAccount | null>>({})
+
+  // One query per profile, in parallel, only while this panel is open.
+  useEffect(() => {
+    let dead = false
+    void Promise.all(
+      profiles.map(async (p) => {
+        const list = await window.api.chat.accounts(p.dir ?? undefined)
+        return [p.id, list.find((a) => a.id === 'claude') ?? null] as const
+      })
+    ).then((pairs) => {
+      if (!dead) setWho(Object.fromEntries(pairs))
+    })
+    return () => {
+      dead = true
+    }
+  }, [profiles])
+
+  const addProfile = async (): Promise<void> => {
+    const label = await promptInput({
+      title: t('settings.account.profileNamePrompt'),
+      initial: t('settings.account.profileDefaultName')
+    })
+    if (!label?.trim()) return
+    const id = Math.random().toString(36).slice(2, 10)
+    const dir = await window.api.chat.profileDir(id)
+    // The FIRST time, adopt the existing login as a `dir: null` profile: nothing
+    // is moved and the user is never asked to sign in again for it.
+    const base = profiles.length
+      ? profiles
+      : [{ id: 'default', label: t('settings.account.defaultProfile'), dir: null }]
+    set({
+      claudeProfiles: [...base, { id, label: label.trim(), dir }],
+      claudeProfileId: activeId ?? base[0].id
+    })
+    // Sign the new profile in. The settings window reopens on the account tab
+    // once the login lands, so the list shows who it is.
+    void signInClaude(dir)
+  }
+
+  const removeProfile = (id: string): void => {
+    const left = profiles.filter((p) => p.id !== id)
+    set({
+      // Dropping back to one profile removes the concept again: with a single
+      // `dir: null` entry riven injects nothing, exactly like a fresh install.
+      claudeProfiles: left.length === 1 && left[0].dir === null ? [] : left,
+      claudeProfileId: activeId === id ? (left[0]?.id ?? null) : activeId
+    })
+  }
+
+  // With no profiles yet the single stored login is all there is, and logging out
+  // and back in REPLACES it — which is the trap: someone signing into a team seat
+  // loses their personal login without being told. So say what the button is for
+  // right where that decision gets made.
+  if (!profiles.length)
+    return (
+      <>
+        <div className="set-row">
+          <Button onClick={() => void addProfile()}>{t('settings.account.addProfile')}</Button>
+        </div>
+        <div className="set-note">{t('settings.account.addProfileHint')}</div>
+      </>
+    )
+
+  return (
+    <>
+      <div className="section-label">{t('settings.account.profilesTitle')}</div>
+      {profiles.map((p) => {
+        const a = who[p.id]
+        const detail = !a
+          ? t('settings.account.aiChecking')
+          : a.loggedIn
+            ? [a.email, a.org, a.plan].filter(Boolean).join(' · ')
+            : t('settings.account.aiSignedOut')
+        return (
+          <div className="ai-account-row" key={p.id}>
+            <input
+              type="radio"
+              name="claude-profile"
+              checked={activeId === p.id}
+              onChange={() => set({ claudeProfileId: p.id })}
+            />
+            <div className="ai-account-meta">
+              <span className="ai-account-name">{p.label}</span>
+              <span className="ai-account-status">{detail}</span>
+            </div>
+            {a &&
+              (a.loggedIn ? (
+                <Button
+                  onClick={() => {
+                    setWho((w) => ({ ...w, [p.id]: null }))
+                    void window.api.chat
+                      .logout(p.dir ?? undefined)
+                      .then(() => window.api.chat.accounts(p.dir ?? undefined))
+                      .then((list) =>
+                        setWho((w) => ({ ...w, [p.id]: list.find((x) => x.id === 'claude') ?? null }))
+                      )
+                  }}
+                >
+                  {t('settings.account.aiLogout')}
+                </Button>
+              ) : (
+                <Button onClick={() => void signInClaude(p.dir)}>
+                  {t('settings.account.aiLogin')}
+                </Button>
+              ))}
+            <Button onClick={() => removeProfile(p.id)}>{t('settings.account.removeProfile')}</Button>
+          </div>
+        )
+      })}
+      <div className="set-row">
+        <Button onClick={() => void addProfile()}>{t('settings.account.addProfile')}</Button>
+      </div>
+      <div className="set-note">{t('settings.account.profilesNote')}</div>
+    </>
+  )
 }
 
 // The AI CLI accounts (Claude Code, Codex) connected via their own `/login`. Read
 // locally from each CLI's credential store; login/logout run in a terminal.
 function AiAccounts(): JSX.Element {
   const t = useT()
-  const [accounts, setAccounts] = useState<AiAccount[] | null>(null)
+  const [all, setAll] = useState<AiAccount[] | null>(null)
+  const hasProfiles = useSettings((s) => s.settings.claudeProfiles.length > 0)
   const load = (): void => {
-    window.api.chat.accounts().then(setAccounts)
+    window.api.chat.accounts().then(setAll)
   }
   useEffect(load, [])
+  // Once profiles exist, the profile list below owns the Claude account (and shows
+  // it per profile), so keeping this row too would show the same login twice.
+  const accounts = hasProfiles ? (all ?? []).filter((a) => a.id !== 'claude') : all
+  const setAccounts = setAll
 
   const cap = (s?: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '')
-  const manage = (a: AiAccount, action: 'login' | 'logout'): void => {
-    // Codex has real login/logout subcommands; Claude Code manages auth from its
-    // interactive prompt (open it so the user can run /login or /logout).
-    const cmd = a.id === 'codex' ? `codex ${action}` : 'claude'
-    addTerminal(cmd)
+  const manage = async (a: AiAccount, action: 'login' | 'logout'): Promise<void> => {
+    // Logging out asks the user nothing, so it runs in the background and the row
+    // refreshes in place. Only login needs a terminal: that one runs a browser
+    // OAuth flow and may ask for a code to be pasted back.
+    if (a.id === 'claude') {
+      if (action === 'logout') {
+        setAccounts(null) // shows the "checking" line while it runs
+        await window.api.chat.logout()
+        load()
+        useUsage.getState().refresh() // the old account's usage no longer applies
+      } else void signInClaude() // closes settings, reopens it when signed in
+      return
+    }
+    addTerminal(`codex ${action}`)
     useUI.getState().setSettingsOpen(false)
   }
 
@@ -48,7 +231,7 @@ function AiAccounts(): JSX.Element {
               : a.loggedIn
                 ? a.mode === 'apikey'
                   ? t('settings.account.aiApiKey')
-                  : [a.email, a.plan && `${cap(a.plan)} ${t('settings.account.aiPlan')}`]
+                  : [a.email, a.org, a.plan && `${cap(a.plan)} ${t('settings.account.aiPlan')}`]
                       .filter(Boolean)
                       .join(' · ') || t('settings.account.aiSignedIn')
                 : t('settings.account.aiSignedOut')
@@ -59,7 +242,7 @@ function AiAccounts(): JSX.Element {
                 <span className="ai-account-name">{a.name}</span>
                 <span className="ai-account-status">{status}</span>
               </div>
-              <Button onClick={() => manage(a, a.loggedIn ? 'logout' : 'login')}>
+              <Button onClick={() => void manage(a, a.loggedIn ? 'logout' : 'login')}>
                 {a.loggedIn ? t('settings.account.aiLogout') : t('settings.account.aiLogin')}
               </Button>
             </div>
@@ -67,6 +250,7 @@ function AiAccounts(): JSX.Element {
         })
       )}
       <div className="set-note">{t('settings.account.aiNote')}</div>
+      <ClaudeProfiles />
     </>
   )
 }

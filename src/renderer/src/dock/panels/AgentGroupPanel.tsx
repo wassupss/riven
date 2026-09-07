@@ -26,6 +26,7 @@ import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
+import { promptInput } from '../../components/promptInput'
 import {
   tintStyle,
   hueColor,
@@ -664,11 +665,13 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     setMemberChatKey(workspace, g.group, m.chatKey, newKey)
   }
 
-  const doAddToGroup = (g: AgentGroup): void => {
+  const doAddToGroup = async (g: AgentGroup): Promise<void> => {
     const n = g.members.length
-    const name =
-      (window.prompt(t('team.mainName'), t('team.memberDefault', { n })) || '').trim() ||
-      t('team.memberDefault', { n })
+    const typed = await promptInput({
+      title: t('team.mainName'),
+      initial: t('team.memberDefault', { n })
+    })
+    const name = (typed || '').trim() || t('team.memberDefault', { n })
     const mainName = g.members[0]?.name ?? null
     // Place the new member in the next slot of the same column layout: below the
     // last member if its column has room, else start a new column to the right.

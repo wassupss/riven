@@ -1,4 +1,4 @@
-import { ipcMain, WebContents } from 'electron'
+import { app, ipcMain, WebContents } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { promises as fsp } from 'fs'
 import * as os from 'os'
@@ -31,6 +31,9 @@ export interface StartOpts {
   // A custom agent defined in .claude/agents/<name>.md (project or ~). Runs the
   // pane as `claude --agent <name>` so it uses that agent's system prompt/tools.
   agent?: string
+  // CLAUDE_CONFIG_DIR for this pane, when the user runs more than one Claude
+  // account. Absent means inject nothing (the default, single-account setup).
+  configDir?: string
 }
 
 interface Session {
@@ -382,9 +385,13 @@ async function startSession(
   if (opts.agent) args.push('--agent', opts.agent)
   if (opts.resume) args.push('--resume', opts.resume)
 
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, RIVEN_CHAT_KEY: key }
+  if (opts.configDir) childEnv.CLAUDE_CONFIG_DIR = opts.configDir
   let proc: ChildProcess
   try {
-    proc = spawn(cmd, args, { cwd: opts.cwd, env: { ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // childEnv carries the pane's key so its riven MCP calls come back tagged with
+    // WHICH conversation made them (see mcpServer's relay).
+    proc = spawn(cmd, args, { cwd: opts.cwd, env: childEnv, stdio: ['pipe', 'pipe', 'pipe'] })
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -668,8 +675,28 @@ export function registerAgentChatHandlers(): void {
   // state locally: Claude Code's plan from its keychain item, Codex's email/plan
   // from its OAuth token. Tokens themselves NEVER leave the main process — only
   // {loggedIn, plan, email} are returned. Login/logout run in a terminal.
-  ipcMain.handle('accounts:list', async (): Promise<AccountInfo[]> => {
-    const [claude, codex] = await Promise.all([claudeAccount(), codexAccount()])
+  // Where a new Claude account profile keeps its CLAUDE_CONFIG_DIR. Under
+  // userData so it is riven's to manage, and never the user's own ~/.claude.
+  ipcMain.handle('accounts:profileDir', (_e, id: string): string =>
+    path.join(app.getPath('userData'), 'claude-profiles', id.replace(/[^\w-]/g, ''))
+  )
+
+  // `claude auth logout` is a real, non-interactive subcommand, so it runs right
+  // here. Opening a terminal panel for it (as riven used to) was pure noise: the
+  // CLI has nothing to ask. Login still needs a terminal — that one runs a browser
+  // OAuth flow and may ask the user to paste a code back.
+  ipcMain.handle('accounts:logout', async (_e, configDir?: string) =>
+    runClaudeMcp(os.homedir(), ['auth', 'logout'], 30000, configDir)
+  )
+
+  // NOTE: there is deliberately no background login. Claude Code documents the
+  // browser sign-in as interactive — it may ask you to press `c` to copy the URL,
+  // or to paste a code back at its prompt — and names `claude setup-token` as the
+  // path for environments without an interactive terminal. So login runs in a
+  // real terminal pane; riven watches `auth status` to know when it finished.
+
+  ipcMain.handle('accounts:list', async (_e, configDir?: string): Promise<AccountInfo[]> => {
+    const [claude, codex] = await Promise.all([claudeAccount(configDir), codexAccount()])
     return [claude, codex].filter((a): a is AccountInfo => a !== null)
   })
 }
@@ -935,7 +962,8 @@ async function mcpList(cwd: string): Promise<McpServer[]> {
 async function runClaudeMcp(
   cwd: string,
   args: string[],
-  timeoutMs: number
+  timeoutMs: number,
+  configDir?: string
 ): Promise<{ ok: boolean; output: string }> {
   const cmd = await resolveBin('claude')
   if (!cmd) return { ok: false, output: 'claude CLI not found' }
@@ -948,7 +976,9 @@ async function runClaudeMcp(
       resolve({ ok, output: out })
     }
     // login opens the OS browser for the OAuth flow; inherit no stdin.
-    const p = spawn(cmd, args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const env = { ...process.env }
+    if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+    const p = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     p.stdout?.on('data', (b: Buffer) => (out += b.toString()))
     p.stderr?.on('data', (b: Buffer) => (out += b.toString()))
     p.on('close', (code) => finish(code === 0))
@@ -970,21 +1000,26 @@ export interface AccountInfo {
   loggedIn: boolean | null // null = installed but status could not be read
   plan?: string
   email?: string
+  org?: string // the Anthropic organization — personal vs team seat
   mode?: 'subscription' | 'apikey'
+  configDir?: string // which CLAUDE_CONFIG_DIR this answer is for (undefined = default)
 }
 
-// Claude Code: the CLI must be installed; its subscription plan lives in the macOS
-// keychain item "Claude Code-credentials" (claudeAiOauth). Reading it may prompt
-// for keychain access once — we only extract the plan + expiry, never the token.
-async function claudeAccount(): Promise<AccountInfo | null> {
-  if (!(await resolveBin('claude'))) return null
-  const base: AccountInfo = { id: 'claude', name: 'Claude Code', loggedIn: null }
-  if (process.platform !== 'darwin') return base
+// Claude Code: ask the CLI itself who it is (`claude auth status --json`, ~180ms).
+// We deliberately do NOT read the macOS keychain item directly any more: that read
+// can raise a keychain access prompt, is macOS-only, and is keyed to
+// CLAUDE_CONFIG_DIR — so with more than one config dir it reports the WRONG
+// account. Asking the CLI is correct by construction, including for a configDir
+// the user keeps a second login in.
+async function claudeAccount(configDir?: string): Promise<AccountInfo | null> {
+  const cmd = await resolveBin('claude')
+  if (!cmd) return null
+  const base: AccountInfo = { id: 'claude', name: 'Claude Code', loggedIn: null, configDir }
+  const env = { ...process.env }
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   const raw = await new Promise<string>((resolve) => {
     let out = ''
-    const p = spawn('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
+    const p = spawn(cmd, ['auth', 'status', '--json'], { env, stdio: ['ignore', 'pipe', 'ignore'] })
     p.stdout?.on('data', (b: Buffer) => (out += b.toString()))
     p.on('close', () => resolve(out))
     p.on('error', () => resolve(''))
@@ -995,15 +1030,27 @@ async function claudeAccount(): Promise<AccountInfo | null> {
         /* ignore */
       }
       resolve(out)
-    }, 4000)
+    }, 8000)
   })
   try {
-    const o = JSON.parse(raw).claudeAiOauth
-    if (o?.accessToken) {
-      const live = !o.expiresAt || o.expiresAt > Date.now()
-      return { ...base, loggedIn: live, plan: o.subscriptionType || undefined, mode: 'subscription' }
+    const j = JSON.parse(raw) as {
+      loggedIn?: boolean
+      authMethod?: string
+      email?: string
+      orgName?: string
+      subscriptionType?: string
     }
-    return { ...base, loggedIn: false }
+    if (typeof j.loggedIn !== 'boolean') return base
+    return {
+      ...base,
+      loggedIn: j.loggedIn,
+      email: j.email || undefined,
+      // The organization is what distinguishes a personal plan from a team seat.
+      org: j.orgName || undefined,
+      plan: j.subscriptionType || undefined,
+      // Signed out has no auth mode at all; only label one when there is a login.
+      mode: !j.loggedIn ? undefined : j.authMethod === 'claude.ai' ? 'subscription' : 'apikey'
+    }
   } catch {
     return base
   }

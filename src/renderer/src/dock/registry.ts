@@ -452,7 +452,13 @@ export function popoutActive(): void {
 
 // Ensure the editor panel exists (opened when a file is selected).
 export function ensureEditor(): void {
-  const api = activeApi
+  ensureEditorIn(activeApi)
+}
+
+// Make sure a SPECIFIC workspace's dock has an editor panel. Agent-driven opens
+// go through this: the panel has to appear in the caller's workspace, not in the
+// one on screen.
+export function ensureEditorIn(api: DockviewApi | null): void {
   if (!api) return
   const existing = api.getPanel('editor')
   if (existing) {

@@ -4,6 +4,7 @@ import { useSession, workspaceName, pathOf, loadPaneState } from '../state/sessi
 import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
 import { useAgents, agentsForWorkspace } from '../state/agents'
 import { useUI } from '../state/ui'
+import { useSettings } from '../state/settings'
 import { getActiveApi } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
 import { useT } from '../i18n'
@@ -172,6 +173,9 @@ function WorkspaceCard({
   const renameWorkspace = useSession((s) => s.renameWorkspace)
   const setWorkspaceColor = useSession((s) => s.setWorkspaceColor)
   const wsColor = useSession((s) => s.colors[ws])
+  const claudeProfiles = useSettings((s) => s.settings.claudeProfiles)
+  const profileByWorkspace = useSettings((s) => s.settings.claudeProfileByWorkspace)
+  const setSettings = useSettings((s) => s.set)
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
   const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
@@ -395,6 +399,40 @@ function WorkspaceCard({
               >
                 {t('ws.colorReset')}
               </button>
+              {/* Only once there is more than one Claude account to choose between:
+                  with a single account there is nothing to pick and the menu stays
+                  as it was. */}
+              {claudeProfiles.length > 1 && (
+                <>
+                  <div className="ctx-sep" />
+                  <div className="context-label">{t('ws.claudeAccount')}</div>
+                  <button
+                    className={`ctx-item${!profileByWorkspace[ws] ? ' on' : ''}`}
+                    onClick={() => {
+                      const next = { ...profileByWorkspace }
+                      delete next[ws]
+                      setSettings({ claudeProfileByWorkspace: next })
+                      setMenu(null)
+                    }}
+                  >
+                    {t('ws.claudeAccountDefault')}
+                  </button>
+                  {claudeProfiles.map((p) => (
+                    <button
+                      key={p.id}
+                      className={`ctx-item${profileByWorkspace[ws] === p.id ? ' on' : ''}`}
+                      onClick={() => {
+                        setSettings({
+                          claudeProfileByWorkspace: { ...profileByWorkspace, [ws]: p.id }
+                        })
+                        setMenu(null)
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </>
+              )}
               <div className="ctx-sep" />
               <button
                 className="ctx-item"

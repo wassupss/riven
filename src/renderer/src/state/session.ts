@@ -139,6 +139,7 @@ interface SessionState {
   setWorkspaceColor: (wid: string, spec: string | null) => void
   patch: (wid: string, p: Partial<Session>) => void
   openFile: (path: string) => void
+  openFileIn: (ws: string | null, path: string) => void
   closeTab: (path: string) => void
   reorderTabs: (from: number, to: number) => void
 }
@@ -175,6 +176,19 @@ export function workspaceName(wid: string, names: Record<string, string>): strin
   const base = dir.split('/').filter(Boolean).pop() || dir
   const ord = widOrdinal(wid)
   return ord > 1 ? `${base} (${ord})` : base
+}
+
+// Add `path` to a workspace's open tabs and make it active. Shared by openFile
+// (the visible workspace) and openFileIn (a named one, used by agent tools).
+function openTabIn(
+  st: SessionState,
+  ws: string | null,
+  path: string
+): Partial<SessionState> {
+  if (!ws) return {}
+  const s = st.sessions[ws] ?? emptySession()
+  const openTabs = s.openTabs.includes(path) ? s.openTabs : [...s.openTabs, path]
+  return { sessions: { ...st.sessions, [ws]: { ...s, openTabs, activePath: path } } }
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -291,13 +305,11 @@ export const useSession = create<SessionState>((set) => ({
     })),
 
   openFile: (path) =>
-    set((st) => {
-      const ws = st.activeWorkspace
-      if (!ws) return {}
-      const s = st.sessions[ws] ?? emptySession()
-      const openTabs = s.openTabs.includes(path) ? s.openTabs : [...s.openTabs, path]
-      return { sessions: { ...st.sessions, [ws]: { ...s, openTabs, activePath: path } } }
-    }),
+    set((st) => openTabIn(st, st.activeWorkspace, path)),
+
+  // Open into a NAMED workspace. Agent-driven opens must land in the workspace of
+  // the agent that asked, not in whatever the user happens to be looking at.
+  openFileIn: (ws, path) => set((st) => openTabIn(st, ws, path)),
 
   closeTab: (path) =>
     set((st) => {

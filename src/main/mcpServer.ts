@@ -408,7 +408,10 @@ function call(tool, args) {
     // end() writes the request AND half-closes our write side (like native's
     // shutdown(SHUT_WR)) so the server sees 'end' and processes the call; the
     // read side stays open for the reply.
-    s.on('connect', () => { s.end(JSON.stringify({ tool: tool, args: args, cwd: process.cwd() }) + '\\n') })
+    // RIVEN_CHAT_KEY identifies the chat pane this agent IS, so riven can route
+    // the call back to that exact conversation instead of guessing from what the
+    // user happens to be looking at. Absent for agents riven did not spawn.
+    s.on('connect', () => { s.end(JSON.stringify({ tool: tool, args: args, cwd: process.cwd(), key: process.env.RIVEN_CHAT_KEY || null }) + '\\n') })
     s.on('data', (d) => { buf += d })
     s.on('close', () => finish(buf))
     s.on('error', () => finish('error: riven is not reachable'))
@@ -475,7 +478,7 @@ function handleConnection(sock: net.Socket): void {
     data += d
   })
   sock.on('end', () => {
-    let req: { tool?: string; args?: Record<string, unknown>; cwd?: string }
+    let req: { tool?: string; args?: Record<string, unknown>; cwd?: string; key?: string | null }
     try {
       req = JSON.parse(data)
     } catch {
@@ -510,7 +513,7 @@ function handleConnection(sock: net.Socket): void {
         /* client gone */
       }
     })
-    wc.send('mcp:invoke', { id, tool, args: req.args ?? {}, cwd: req.cwd ?? null })
+    wc.send('mcp:invoke', { id, tool, args: req.args ?? {}, cwd: req.cwd ?? null, key: req.key ?? null })
   })
   sock.on('error', () => {
     /* client vanished mid-call */

@@ -4,12 +4,10 @@ import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
 import { listAgents, resolveAgent } from './agents'
 import {
-  getActiveApi,
-  ensureEditor,
+  ensureEditorIn,
   addTerminal,
   addChat,
   togglePanel,
-  getDelegator,
   getApiFor
 } from '../dock/registry'
 
@@ -55,14 +53,58 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
   { name: 'riven_note_save_file', ko: '메모를 파일로 저장', en: 'Save note to file' }
 ]
 
-// EVERY tool must act on the workspace of the agent that called it — never on
-// whatever workspace the user is currently looking at. A background agent opening
-// a file/browser tab/panel must not hijack the visible workspace. getDelegator()
-// is the chat pane whose turn is running; its workspace owns the action.
+// EVERY tool acts on the workspace of the agent that called it, never on the one
+// the user happens to be looking at.
+//
+// Who made the call currently being dispatched. Set synchronously at the top of
+// dispatch() and read synchronously by the helpers below, so a second agent's
+// call can never retag the first one's.
+interface Caller {
+  key: string | null // the chat pane the agent IS (RIVEN_CHAT_KEY), when riven spawned it
+  cwd: string | null // the directory it runs in, used when there is no key
+}
+let activeCaller: Caller = { key: null, cwd: null }
+
+// The calling pane, ONLY if it is still open. Unlike getDelegator() this does not
+// care which workspace is on screen: the key came with the call itself.
+function callerPane(): string | null {
+  const k = activeCaller.key
+  if (!k) return null
+  const st = useSession.getState()
+  for (const s of Object.values(st.sessions)) if (s.panes?.[k]) return k
+  return null
+}
+
+// The workspace that owns this call, or null when it cannot be established.
+//
+// There is deliberately NO fallback to the active workspace. That fallback is
+// what made a background agent's browser tab, file or panel appear in whatever
+// workspace the user was looking at: attribution failed silently and the visible
+// workspace absorbed the action. Null is the honest answer, and the tools below
+// report it instead of acting on the wrong workspace.
 function callerWs(): string | null {
-  const d = getDelegator()
-  const own = d ? widForPane(d) : null
-  return own ?? useSession.getState().activeWorkspace
+  const pane = callerPane()
+  if (pane) return widForPane(pane)
+  // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
+  // directory it runs in. riven always spawns an agent with cwd = its workspace,
+  // so this covers everything the key doesn't.
+  const cwd = activeCaller.cwd
+  if (!cwd) return null
+  const open = useSession.getState().openWorkspaces
+  const exact = open.find((w) => pathOf(w) === cwd)
+  if (exact) return exact
+  // A subdirectory of an open workspace still belongs to it; prefer the deepest
+  // match so nested workspaces resolve to the closest one.
+  const inside = open
+    .filter((w) => cwd.startsWith(pathOf(w).replace(/\/?$/, '/')))
+    .sort((a, b) => pathOf(b).length - pathOf(a).length)
+  return inside[0] ?? null
+}
+
+// Message used whenever a UI action cannot be attributed to a workspace. Naming
+// the cwd makes the fix obvious (open that folder as a workspace).
+function unattributed(): string {
+  return `error: riven could not tell which workspace this call belongs to (cwd: ${activeCaller.cwd ?? 'unknown'}), so it refused to act on the one on screen. Run the agent from a riven chat pane, or from a directory inside an open workspace.`
 }
 // The caller's dock. Null when that workspace isn't mounted right now (LRU), in
 // which case dock-manipulating tools report it instead of acting on the wrong one.
@@ -77,12 +119,17 @@ async function askUser(args: Args): Promise<string> {
   const question = s(args.question)
   const options = Array.isArray(args.options) ? (args.options as unknown[]).map(s) : []
   if (!options.length) return 'error: options is required'
+  // A blocking prompt may ONLY appear in the conversation that asked it. If the
+  // caller is not a riven chat pane there is nowhere it can render without
+  // interrupting an unrelated workspace, so refuse rather than guess: the agent
+  // asks in plain text instead.
+  const pane = callerPane()
+  if (!pane)
+    return 'riven: ask_user is only available to riven chat panes. Ask your question in plain text, listing the options, and let the user reply normally.'
   return new Promise<string>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
-      // Bind the question to the pane that asked, so it renders inside THAT
-      // conversation instead of interrupting whatever workspace is on screen.
-      chatKey: getDelegator(),
+      chatKey: pane,
       question,
       options,
       resolve
@@ -93,11 +140,16 @@ async function askUser(args: Args): Promise<string> {
 function openFile(args: Args): string {
   const p = s(args.path)
   if (!p) return 'error: path is required'
-  useSession.getState().openFile(p)
-  ensureEditor()
+  const ws = callerWs()
+  if (!ws) return unattributed()
+  // Open the tab and the editor panel in the CALLER's workspace. Previously both
+  // went to the active workspace, so a background agent's file opened on top of
+  // whatever the user was doing.
+  useSession.getState().openFileIn(ws, p)
+  ensureEditorIn(getApiFor(ws))
   const line = typeof args.line === 'number' ? args.line : undefined
   if (line) useNav.getState().requestReveal(p, line, 1)
-  return `opened ${p}${line ? `:${line}` : ''}`
+  return `opened ${p}${line ? `:${line}` : ''} in ${pathOf(ws)}`
 }
 
 function listPanels(): string {
@@ -135,19 +187,19 @@ function notesChanged(): void {
 }
 async function noteList(): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const list = await window.api.notes.list(pathOf(ws))
   return JSON.stringify(list.map((n) => ({ note: n.name, title: n.title })))
 }
 async function noteRead(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const content = await window.api.notes.read(pathOf(ws), s(args.note))
   return content ?? 'error: note not found'
 }
 async function noteWrite(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const name = await window.api.notes.write(
     pathOf(ws),
     args.note ? s(args.note) : null,
@@ -160,7 +212,7 @@ async function noteWrite(args: Args): Promise<string> {
 }
 async function noteAppend(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const name = await window.api.notes.append(pathOf(ws), s(args.note), s(args.body))
   if (!name) return 'error: note not found'
   notesChanged()
@@ -168,18 +220,19 @@ async function noteAppend(args: Args): Promise<string> {
 }
 async function docWrite(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const res = await window.api.notes.writeFile(pathOf(ws), s(args.path), s(args.body), !!args.overwrite)
   if (!res.ok) return `error: ${res.error}`
   if (res.path) {
-    useSession.getState().openFile(res.path)
-    ensureEditor()
+    // Show the written doc in the CALLER's workspace, not the visible one.
+    useSession.getState().openFileIn(ws, res.path)
+    ensureEditorIn(getApiFor(ws))
   }
   return `wrote ${res.path}`
 }
 async function noteSaveFile(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const res = await window.api.notes.saveToFile(
     pathOf(ws),
     s(args.note),
@@ -226,7 +279,7 @@ const clip = (v: unknown): string => {
 // return its tab id. (v1 drives the active workspace's browser.)
 async function ensureBrowser(url?: string): Promise<{ ws: string; tabId: string } | string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const api = callerApi()
   if (api && !api.getPanel('preview')) togglePanel('preview')
   useBrowser.getState().ensureWs(ws)
@@ -256,7 +309,7 @@ async function browserEval(code: string): Promise<string> {
 
 function browserStateText(): string {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const cur = useBrowser.getState().byWs[ws]
   const tab = activeTab(ws)
   return JSON.stringify({
@@ -275,7 +328,7 @@ async function browserOpen(args: Args): Promise<string> {
   const full = /^https?:\/\//i.test(url) ? url : 'http://' + url
   if (args.new_tab) {
     const ws = callerWs()
-    if (!ws) return 'error: no active workspace'
+    if (!ws) return unattributed()
     const api = callerApi()
     if (api && !api.getPanel('preview')) togglePanel('preview')
     useBrowser.getState().ensureWs(ws)
@@ -291,11 +344,18 @@ async function browserOpen(args: Args): Promise<string> {
 
 async function browserTab(args: Args): Promise<string> {
   const ws = callerWs()
-  if (!ws) return 'error: no active workspace'
+  if (!ws) return unattributed()
   const cur = useBrowser.getState().byWs[ws]
-  const idx = typeof args.index === 'number' ? args.index : -1
-  const tab = cur?.tabs[idx]
-  if (!tab) return `error: no tab at index ${idx}`
+  // No index means "the one in front" — closing the current tab is the common
+  // case, and it used to fail with "no tab at index -1".
+  const tab =
+    typeof args.index === 'number'
+      ? cur?.tabs[args.index]
+      : cur?.tabs.find((t) => t.id === cur.activeId)
+  if (!tab)
+    return typeof args.index === 'number'
+      ? `error: no tab at index ${args.index}`
+      : 'error: no open tab in this workspace'
   if (s(args.action) === 'close') useBrowser.getState().closeTab(ws, tab.id)
   else useBrowser.getState().selectTab(ws, tab.id)
   return browserStateText()
@@ -369,17 +429,18 @@ function groupAddAgent(args: Args): string {
   if (name) lines.push(`[이름] ${name}`)
   if (parent) lines.push(`[보고 대상] ${parent}`)
   const initial = lines.length ? `${lines.join('\n')}\n이 역할로 이후 작업을 수행하세요.` : undefined
-  // Open the teammate BESIDE the delegating agent's pane (getDelegator), not
-  // wherever dock focus happens to be. `inactive` so the delegating agent's pane
-  // (where the user may be typing) keeps focus.
-  addChat(initial, 'right', model || undefined, getDelegator() ?? undefined, name || undefined, true)
+  // Open the teammate BESIDE the pane that asked for it — identified by the key
+  // that came with the call, so a background agent's teammate lands in ITS
+  // workspace rather than in whichever dock is on screen. `inactive` so the
+  // asking pane (where the user may be typing) keeps focus.
+  addChat(initial, 'right', model || undefined, callerPane() ?? undefined, name || undefined, true)
   return `added agent "${name || persona || 'chat'}"${model && model !== 'default' ? ` · ${model}` : ''}`
 }
 async function confirmAsk(question: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
-      chatKey: getDelegator(),
+      chatKey: callerPane(),
       question,
       options: ['예', '아니오'],
       resolve: (choice) => resolve(choice === '예')
@@ -417,8 +478,9 @@ async function startPipeline(args: Args): Promise<string> {
   if (!stages.length) return 'error: stages is required'
   let carry = task
   const out: string[] = []
-  // Lay stage panes out in a row beside the delegator, each next to the previous.
-  let ref = getDelegator() ?? undefined
+  // Lay stage panes out in a row beside the pane that started the pipeline, each
+  // next to the previous.
+  let ref = callerPane() ?? undefined
   for (const st of stages) {
     const stageName = s(st.name)
     const instruction = s(st.instruction)
@@ -446,7 +508,8 @@ async function startPipeline(args: Args): Promise<string> {
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`
 }
 
-async function dispatch(tool: string, args: Args): Promise<string> {
+async function dispatch(tool: string, args: Args, caller: Caller): Promise<string> {
+  activeCaller = caller
   switch (tool) {
     case 'ask_user':
       return askUser(args)
@@ -554,7 +617,7 @@ async function dispatch(tool: string, args: Args): Promise<string> {
 // Wire the main→renderer tool bridge. Call once at app start. Returns a disposer.
 export function registerMcpToolHandler(): () => void {
   return window.api.mcp.onInvoke((e) => {
-    dispatch(e.tool, e.args)
+    dispatch(e.tool, e.args, { key: e.key, cwd: e.cwd })
       .then((result) => window.api.mcp.result(e.id, result))
       .catch((err) =>
         window.api.mcp.result(e.id, `error: ${err instanceof Error ? err.message : String(err)}`)

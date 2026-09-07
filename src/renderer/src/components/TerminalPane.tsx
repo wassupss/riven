@@ -52,6 +52,9 @@ export interface TerminalPaneProps {
   args?: string[]
   paneId?: number
   initialCommand?: string
+  // CLAUDE_CONFIG_DIR for this workspace's Claude account profile, so a `claude`
+  // run in this terminal is the same account as the workspace's native chat.
+  configDir?: string
   onReady?: (ptyId: string) => void
   onFocus?: () => void
 }
@@ -64,6 +67,7 @@ export default function TerminalPane({
   cwd,
   paneId,
   initialCommand,
+  configDir,
   onReady,
   onFocus
 }: TerminalPaneProps): JSX.Element {
@@ -259,6 +263,26 @@ export default function TerminalPane({
       // background agent keeps running — then replay it once the pane is shown.
       const HIDDEN_CAP = 256 * 1024
       let pendingHidden = ''
+      // True once the buffer has overflowed and we dropped the head of the stream.
+      // That head carries the erases, cursor homing and SGR state a full-screen TUI
+      // relies on, so replaying only the tail would paint new glyphs over cells
+      // nobody cleared (fused words, leftover tails from the previous frame).
+      let hiddenLost = false
+      const appendHidden = (s: string): void => {
+        const next = pendingHidden + s
+        if (next.length <= HIDDEN_CAP) {
+          pendingHidden = next
+          return
+        }
+        hiddenLost = true
+        let cut = next.length - HIDDEN_CAP
+        // Never resume mid-sequence: start at the next ESC so the replay always
+        // begins on a sequence boundary, and never split a surrogate pair.
+        const esc = next.indexOf('\x1b', cut)
+        if (esc >= 0) cut = esc
+        else if (/[\uDC00-\uDFFF]/.test(next[cut] ?? '')) cut++
+        pendingHidden = next.slice(cut)
+      }
 
       // Cooperative write scheduler. Writing every PTY chunk straight into xterm
       // lets a flood (build logs, `yes`, a runaway agent) pin the renderer thread:
@@ -291,7 +315,7 @@ export default function TerminalPane({
           } catch {
             // Not renderable right now — keep the tail and ack so flow control
             // can't deadlock.
-            pendingHidden = (pendingHidden + chunk).slice(-HIDDEN_CAP)
+            appendHidden(chunk)
             if (ptyId) window.api.pty.ack(ptyId, chunk.length)
           }
           if (performance.now() - started >= DRAIN_BUDGET_MS) break
@@ -317,11 +341,20 @@ export default function TerminalPane({
         if (!isRenderable()) return
         if (pendingHidden) {
           const b = pendingHidden
+          const lost = hiddenLost
           pendingHidden = ''
+          hiddenLost = false
           try {
+            // The kept tail assumes a screen the dropped head had already set up.
+            // Clear first so nothing lands on stale cells; a live TUI repaints
+            // itself on its next frame, which is what the user sees.
+            if (lost) term.reset()
             term.write(b, () => term.scrollToBottom())
           } catch {
-            /* will retry on the next fit once measured */
+            // Not measured yet — put it back so the next fit retries, and keep
+            // knowing that the stream is missing its head.
+            pendingHidden = b
+            hiddenLost = lost
           }
         }
         // We withheld acks while hidden (backpressure paused the PTY at the source);
@@ -369,7 +402,8 @@ export default function TerminalPane({
           cwd,
           initialCommand,
           cols: term.cols,
-          rows: term.rows
+          rows: term.rows,
+          configDir
         })
         if (torn) return
         ptyId = id
@@ -400,7 +434,7 @@ export default function TerminalPane({
               // immediately so main stays drained and a background agent keeps running;
               // flushHidden() replays it when the pane is shown. Memory stays bounded by
               // the cap here + main's coalescing, so no ballooning.
-              pendingHidden = (pendingHidden + data).slice(-HIDDEN_CAP)
+              appendHidden(data)
               window.api.pty.ack(id, data.length)
             }
             scheduleSnapshot(id)
