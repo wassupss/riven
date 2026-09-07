@@ -206,6 +206,8 @@ const api = {
       }>
     > => ipcRenderer.invoke('accounts:list', configDir),
     profileDir: (id: string): Promise<string> => ipcRenderer.invoke('accounts:profileDir', id),
+    logout: (configDir?: string): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('accounts:logout', configDir),
     sessionInfo: (
       cwd: string
     ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>

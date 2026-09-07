@@ -105,20 +105,35 @@ function ClaudeProfiles(): JSX.Element | null {
               <span className="ai-account-name">{p.label}</span>
               <span className="ai-account-status">{detail}</span>
             </div>
-            {a && !a.loggedIn && (
-              <Button
-                onClick={() => {
-                  addTerminal(
-                    p.dir
-                      ? `CLAUDE_CONFIG_DIR=${JSON.stringify(p.dir)} claude auth login`
-                      : 'claude auth login'
-                  )
-                  useUI.getState().setSettingsOpen(false)
-                }}
-              >
-                {t('settings.account.aiLogin')}
-              </Button>
-            )}
+            {a &&
+              (a.loggedIn ? (
+                <Button
+                  onClick={() => {
+                    setWho((w) => ({ ...w, [p.id]: null }))
+                    void window.api.chat
+                      .logout(p.dir ?? undefined)
+                      .then(() => window.api.chat.accounts(p.dir ?? undefined))
+                      .then((list) =>
+                        setWho((w) => ({ ...w, [p.id]: list.find((x) => x.id === 'claude') ?? null }))
+                      )
+                  }}
+                >
+                  {t('settings.account.aiLogout')}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => {
+                    addTerminal(
+                      p.dir
+                        ? `CLAUDE_CONFIG_DIR=${JSON.stringify(p.dir)} claude auth login`
+                        : 'claude auth login'
+                    )
+                    useUI.getState().setSettingsOpen(false)
+                  }}
+                >
+                  {t('settings.account.aiLogin')}
+                </Button>
+              ))}
             <Button onClick={() => removeProfile(p.id)}>{t('settings.account.removeProfile')}</Button>
           </div>
         )
@@ -142,11 +157,17 @@ function AiAccounts(): JSX.Element {
   useEffect(load, [])
 
   const cap = (s?: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '')
-  const manage = (a: AiAccount, action: 'login' | 'logout'): void => {
-    // Codex has real login/logout subcommands; Claude Code manages auth from its
-    // interactive prompt (open it so the user can run /login or /logout).
-    const cmd = a.id === 'codex' ? `codex ${action}` : 'claude'
-    addTerminal(cmd)
+  const manage = async (a: AiAccount, action: 'login' | 'logout'): Promise<void> => {
+    // Logging out asks the user nothing, so it runs in the background and the row
+    // refreshes in place. Only login needs a terminal: that one runs a browser
+    // OAuth flow and may ask for a code to be pasted back.
+    if (a.id === 'claude' && action === 'logout') {
+      setAccounts(null)
+      await window.api.chat.logout()
+      load()
+      return
+    }
+    addTerminal(a.id === 'codex' ? `codex ${action}` : 'claude auth login')
     useUI.getState().setSettingsOpen(false)
   }
 
@@ -176,7 +197,7 @@ function AiAccounts(): JSX.Element {
                 <span className="ai-account-name">{a.name}</span>
                 <span className="ai-account-status">{status}</span>
               </div>
-              <Button onClick={() => manage(a, a.loggedIn ? 'logout' : 'login')}>
+              <Button onClick={() => void manage(a, a.loggedIn ? 'logout' : 'login')}>
                 {a.loggedIn ? t('settings.account.aiLogout') : t('settings.account.aiLogin')}
               </Button>
             </div>

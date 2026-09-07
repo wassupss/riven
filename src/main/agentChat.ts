@@ -681,6 +681,14 @@ export function registerAgentChatHandlers(): void {
     path.join(app.getPath('userData'), 'claude-profiles', id.replace(/[^\w-]/g, ''))
   )
 
+  // `claude auth logout` is a real, non-interactive subcommand, so it runs right
+  // here. Opening a terminal panel for it (as riven used to) was pure noise: the
+  // CLI has nothing to ask. Login still needs a terminal — that one runs a browser
+  // OAuth flow and may ask the user to paste a code back.
+  ipcMain.handle('accounts:logout', async (_e, configDir?: string) =>
+    runClaudeMcp(os.homedir(), ['auth', 'logout'], 30000, configDir)
+  )
+
   ipcMain.handle('accounts:list', async (_e, configDir?: string): Promise<AccountInfo[]> => {
     const [claude, codex] = await Promise.all([claudeAccount(configDir), codexAccount()])
     return [claude, codex].filter((a): a is AccountInfo => a !== null)
@@ -948,7 +956,8 @@ async function mcpList(cwd: string): Promise<McpServer[]> {
 async function runClaudeMcp(
   cwd: string,
   args: string[],
-  timeoutMs: number
+  timeoutMs: number,
+  configDir?: string
 ): Promise<{ ok: boolean; output: string }> {
   const cmd = await resolveBin('claude')
   if (!cmd) return { ok: false, output: 'claude CLI not found' }
@@ -961,7 +970,9 @@ async function runClaudeMcp(
       resolve({ ok, output: out })
     }
     // login opens the OS browser for the OAuth flow; inherit no stdin.
-    const p = spawn(cmd, args, { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'pipe'] })
+    const env = { ...process.env }
+    if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+    const p = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     p.stdout?.on('data', (b: Buffer) => (out += b.toString()))
     p.stderr?.on('data', (b: Buffer) => (out += b.toString()))
     p.on('close', (code) => finish(code === 0))
