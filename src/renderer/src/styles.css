@@ -3277,6 +3277,12 @@ select {
   background: var(--bg-2);
   overflow: hidden;
   outline: none;
+  /* The transcript is a flex column, and `overflow: hidden` switches OFF a flex
+     item's automatic minimum size — so once the transcript overflowed, the card
+     shrank to its two borders (2px) and clipped every row inside it: /mcp,
+     /resume and /model each rendered as a bare underline. Keep it at content
+     height. */
+  flex: none;
 }
 .chat-card:focus-visible {
   border-color: var(--accent-border);
