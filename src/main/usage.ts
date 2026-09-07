@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { promises as fs } from 'fs'
 import { execFile } from 'child_process'
+import { createHash } from 'crypto'
 import { promisify } from 'util'
 import * as os from 'os'
 import * as path from 'path'
@@ -118,8 +119,19 @@ function oauthFrom(blob: string): OauthBlob | null {
 
 const KEYCHAIN_SERVICE = 'Claude Code-credentials'
 
-async function keychainBlob(account?: string): Promise<string> {
-  const args = ['find-generic-password', '-s', KEYCHAIN_SERVICE]
+// Claude Code namespaces the keychain item by config dir: with CLAUDE_CONFIG_DIR
+// set, the SERVICE becomes "Claude Code-credentials-<first 8 hex of sha256(dir)>"
+// and the bare service name keeps belonging to the default ~/.claude login. The
+// account field is just the OS user in every item, so guessing the account (the
+// dir, its basename) never matched — which is why a second, separately signed-in
+// profile reported no plan limits at all.
+function keychainService(configDir?: string): string {
+  if (!configDir) return KEYCHAIN_SERVICE
+  return `${KEYCHAIN_SERVICE}-${createHash('sha256').update(configDir).digest('hex').slice(0, 8)}`
+}
+
+async function keychainBlob(service: string, account?: string): Promise<string> {
+  const args = ['find-generic-password', '-s', service]
   if (account) args.push('-a', account)
   args.push('-w')
   const { stdout } = await pexec('security', args, { timeout: 5000 })
@@ -145,15 +157,14 @@ async function claudeToken(configDir?: string): Promise<string | null> {
     } catch {
       /* fall through: on macOS the CLI may have put it in the keychain instead */
     }
-    // Keyed to the directory, per Claude Code's own docs. We can only guess the
-    // account name it used, so try the plausible ones and give up quietly.
-    for (const a of [configDir, path.basename(configDir)]) {
-      try {
-        const o = oauthFrom(await keychainBlob(a))
-        if (o?.accessToken) return o.accessToken
-      } catch {
-        /* next */
-      }
+    // Keyed to the directory through the service name (see keychainService). No
+    // account filter: the item is written under the OS user, and the service
+    // already pins it to this dir, so there is nothing to tell apart.
+    try {
+      const o = oauthFrom(await keychainBlob(keychainService(configDir)))
+      if (o?.accessToken) return o.accessToken
+    } catch {
+      /* no item for this dir — this profile is not signed in */
     }
     return null
   }
@@ -162,7 +173,7 @@ async function claudeToken(configDir?: string): Promise<string | null> {
     let best: { token: string; expiresAt: number } | null = null
     for (const a of accounts) {
       try {
-        const o = oauthFrom(await keychainBlob(a))
+        const o = oauthFrom(await keychainBlob(KEYCHAIN_SERVICE, a))
         if (!o?.accessToken) continue
         const expiresAt = typeof o.expiresAt === 'number' ? o.expiresAt : Number.MAX_SAFE_INTEGER
         if (expiresAt <= Date.now()) continue // expired: it would only 401
