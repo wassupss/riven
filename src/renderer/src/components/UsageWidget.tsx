@@ -11,6 +11,7 @@ import {
   type PlanLimit
 } from '../state/usage'
 import { useSettings } from '../state/settings'
+import UsageAccounts from './UsageAccounts'
 import { useT } from '../i18n'
 
 // Compact status-bar usage: session/weekly remaining % (colored by threshold),
@@ -85,9 +86,7 @@ export default function UsageWidget(): JSX.Element | null {
       {open && (
         <div className="usage-pop usage-pop-right" onClick={(e) => e.stopPropagation()}>
           <div className="usage-pop-headrow">
-            <span className="usage-pop-head">
-              {t('usage.limitsHead')} · {t('usage.product')}
-            </span>
+            <span className="usage-pop-head">{t('usage.limitsHead')}</span>
             <button
               className="usage-pin"
               title={t('usage.pin')}
@@ -99,8 +98,9 @@ export default function UsageWidget(): JSX.Element | null {
               <Pin size={12} /> {t('usage.pin')}
             </button>
           </div>
-          {bar(t('usage.session'), limits?.session ?? null)}
-          {bar(t('usage.weekly'), limits?.weekly ?? null)}
+          {/* Per-account accordion: which CLI, which login, and the current
+              workspace's account open by default. */}
+          <UsageAccounts />
           {hasToday && (
             <>
               <div className="usage-pop-head">

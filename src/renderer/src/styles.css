@@ -1949,6 +1949,75 @@ select {
   padding: 8px 6px 10px;
   background: var(--bg-2);
 }
+/* Per-account usage accordion (pinned sidebar + status-bar popover). */
+.usage-accs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.usage-acc-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.usage-acc-head:hover {
+  background: var(--bg-3);
+}
+.usage-acc-chev {
+  flex: none;
+  color: var(--fg-dim);
+  transition: transform var(--dur-fast) ease;
+}
+.usage-acc.open .usage-acc-chev {
+  transform: rotate(90deg);
+}
+.usage-acc-name {
+  flex: none;
+  font-weight: 600;
+}
+.usage-acc-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+}
+/* Marks the account this workspace's agents actually run as. */
+.usage-acc-here {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 9px;
+  line-height: 14px;
+}
+.usage-acc-sum {
+  margin-left: auto;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.usage-acc-sum.dim,
+.usage-acc-today.dim {
+  color: var(--fg-dim);
+}
+.usage-acc-body {
+  padding: 2px 6px 6px 19px;
+}
+.usage-acc-today {
+  margin-top: 4px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
 .usage-pinned-head {
   display: flex;
   align-items: center;

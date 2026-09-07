@@ -441,15 +441,24 @@ const api = {
       ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
   },
   usage: {
-    today: (): Promise<{
+    today: (configDir?: string): Promise<{
       totalCost: number
       totalTokens: number
       perModel: Array<{ model: string; input: number; output: number; cacheWrite: number; cacheRead: number; cost: number }>
-    }> => ipcRenderer.invoke('usage:today'),
-    limits: (): Promise<{
+    }> => ipcRenderer.invoke('usage:today', configDir),
+    codex: (): Promise<{
+      installed: boolean
+      totalTokens: number
+      primary: { usedPct: number; resetsAt: string | null } | null
+      primaryWindowMinutes: number | null
+      secondary: { usedPct: number; resetsAt: string | null } | null
+    }> => ipcRenderer.invoke('usage:codex'),
+    limits: (configDir?: string): Promise<{
       session: { usedPct: number; resetsAt: string | null } | null
       weekly: { usedPct: number; resetsAt: string | null } | null
-    }> => ipcRenderer.invoke('usage:limits')
+      stale?: boolean
+      at?: number
+    }> => ipcRenderer.invoke('usage:limits', configDir)
   },
   ports: {
     list: (folder: string): Promise<Array<{ port: number; pid: number; name: string }>> =>
