@@ -2010,11 +2010,19 @@ select {
 .usage-acc-today.dim {
   color: var(--fg-dim);
 }
+/* No side inset: an expanded section reads as a continuation of its header, not
+   as a card floating inside one, so its bars line up with the header text and
+   span the full width. Children carry the header's own 6px instead. */
 .usage-acc-body {
-  padding: 2px 6px 6px 19px;
+  padding: 2px 0 6px;
+}
+.usage-acc-body .usage-limit {
+  padding-left: 6px;
+  padding-right: 6px;
 }
 .usage-acc-today {
   margin-top: 4px;
+  padding: 0 6px;
   color: var(--fg-dim);
   font-size: var(--text-xs);
 }
