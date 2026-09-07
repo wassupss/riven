@@ -21,6 +21,18 @@ import {
 // Auth: we deliberately do NOT set ANTHROPIC_API_KEY or --bare, so the CLI uses
 // the user's ~/.claude subscription login (no API billing), matching native.
 
+export interface StartOpts {
+  cwd: string
+  resume?: string
+  model?: string
+  permissionMode?: string
+  mcpDisabled?: string[]
+  globalPrompt?: string
+  // A custom agent defined in .claude/agents/<name>.md (project or ~). Runs the
+  // pane as `claude --agent <name>` so it uses that agent's system prompt/tools.
+  agent?: string
+}
+
 interface Session {
   key: string
   proc: ChildProcess
@@ -31,9 +43,24 @@ interface Session {
   ctrlSeq: number
   sawInit: boolean // whether the CLI reached its init (used for resume fallback)
   streamedText: boolean // any assistant text_delta this turn (else surface result)
+  opts: StartOpts // kept so an idle-parked pane can respawn its child unchanged
+  lastActive: number
+  turnBusy: boolean // a turn is in flight — never park mid-answer
+  parking: boolean // killed by the idle reaper, so its exit isn't a real exit
 }
 
 const sessions = new Map<string, Session>()
+
+// A CLI child stays alive between turns to hold its context, so a pane left open
+// pins ~200-500MB (and whatever its MCP workers spin) for as long as the app runs
+// — days, in practice. Park the child once a pane has been quiet this long: the
+// pane is untouched (its transcript lives in the renderer) and the next message
+// respawns it with --resume. Cost is one resume instead of a permanent process.
+// (RIVEN_CHAT_IDLE_PARK_MS shortens it so the park/revive path can be exercised
+// without waiting half an hour.)
+const IDLE_PARK_MS = Number(process.env.RIVEN_CHAT_IDLE_PARK_MS) || 30 * 60_000
+const REAP_EVERY_MS = Math.min(60_000, Math.max(2_000, Math.floor(IDLE_PARK_MS / 2)))
+const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
 
 // A single fan-out channel (payload carries `key`) so the renderer attaches one
 // listener regardless of how many chat panes are open — same pattern as pty:*.
@@ -285,6 +312,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     return
   }
   if (type === 'result') {
+    s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
     s.sessionId = (ev.session_id as string) ?? s.sessionId
     // Slash commands (e.g. /usage, /context) return their output ONLY in the
     // result — nothing streams as assistant text. Surface it so the pane shows the
@@ -309,24 +337,18 @@ const DEFAULT_ALLOWED =
 
 async function startSession(
   key: string,
-  opts: {
-    cwd: string
-    resume?: string
-    model?: string
-    permissionMode?: string
-    mcpDisabled?: string[]
-    globalPrompt?: string
-    // A custom agent defined in .claude/agents/<name>.md (project or ~). Runs the
-    // pane as `claude --agent <name>` so it uses that agent's system prompt/tools.
-    agent?: string
-  },
+  opts: StartOpts,
   sender: WebContents
 ): Promise<{ ok: boolean; error?: string }> {
   const existing = sessions.get(key)
   if (existing) {
     existing.sender = sender // reattach after a renderer reload
+    existing.lastActive = Date.now()
     return { ok: true }
   }
+  // Starting explicitly supersedes a parked child: this call carries the pane's
+  // own resume id, so the parked copy would only respawn a duplicate.
+  parked.delete(key)
   const cmd = await resolveBin('claude')
   if (!cmd) return { ok: false, error: 'claude CLI not found on PATH' }
 
@@ -376,11 +398,16 @@ async function startSession(
     alive: true,
     ctrlSeq: 0,
     sawInit: false,
-    streamedText: false
+    streamedText: false,
+    opts,
+    lastActive: Date.now(),
+    turnBusy: false,
+    parking: false
   }
   sessions.set(key, s)
 
   proc.stdout?.on('data', (chunk: Buffer) => {
+    s.lastActive = Date.now()
     s.buf += chunk.toString()
     let nl: number
     while ((nl = s.buf.indexOf('\n')) >= 0) {
@@ -400,6 +427,9 @@ async function startSession(
   proc.on('exit', (code) => {
     s.alive = false
     sessions.delete(key)
+    // Parked by the idle reaper — the pane is still open and will respawn on its
+    // next message, so this exit must not reach the renderer as a session end.
+    if (s.parking) return
     // Resume fallback: if we asked to --resume a session but the CLI exited before
     // ever reaching init, the session id was likely stale (deleted / other
     // machine). Restart once WITHOUT resume so the pane stays usable instead of
@@ -420,6 +450,7 @@ async function startSession(
 }
 
 function stopSession(key: string): void {
+  parked.delete(key)
   const s = sessions.get(key)
   if (!s) return
   s.alive = false
@@ -436,30 +467,71 @@ function stopSession(key: string): void {
   sessions.delete(key)
 }
 
+// Park every pane that has been quiet past the threshold. Runs on a slow timer
+// (unref'd so it never holds the app open) — a turn in flight is always skipped.
+function reapIdleSessions(): void {
+  const now = Date.now()
+  for (const [key, s] of [...sessions]) {
+    // No sessionId means the CLI never reached init, so there is nothing to
+    // --resume from: killing it would lose the pane's context outright.
+    if (s.turnBusy || !s.sessionId) continue
+    if (now - s.lastActive < IDLE_PARK_MS) continue
+    s.parking = true
+    const entry = { opts: { ...s.opts, resume: s.sessionId }, sender: s.sender }
+    stopSession(key) // clears any stale parked entry first
+    parked.set(key, entry)
+  }
+}
+
+// Kill every CLI child. Called at quit: the app's shutdown path SIGKILLs itself,
+// which would otherwise leave these children reparented to launchd and running
+// (each one holding its memory) long after riven is gone.
+export function killAllChatSessions(): void {
+  for (const s of sessions.values()) {
+    s.parking = true // suppress exit events during teardown
+    try {
+      s.proc.kill()
+    } catch {
+      /* already exited */
+    }
+  }
+  sessions.clear()
+  parked.clear()
+}
+
 export function registerAgentChatHandlers(): void {
-  ipcMain.handle(
-    'chat:start',
-    (
-      event,
-      key: string,
-      opts: {
-        cwd: string
-        resume?: string
-        model?: string
-        permissionMode?: string
-        mcpDisabled?: string[]
-        globalPrompt?: string
-        agent?: string
-      }
-    ) => startSession(key, opts, event.sender)
+  setInterval(reapIdleSessions, REAP_EVERY_MS).unref()
+
+  ipcMain.handle('chat:start', (event, key: string, opts: StartOpts) =>
+    startSession(key, opts, event.sender)
   )
-  ipcMain.on('chat:send', (_e, key: string, text: string) => {
+  ipcMain.on('chat:send', (event, key: string, text: string) => {
+    const line = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null }
     const s = sessions.get(key)
-    if (s) writeLine(s, { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null })
+    if (s) {
+      s.turnBusy = true
+      s.lastActive = Date.now()
+      writeLine(s, line)
+      return
+    }
+    // Parked while idle: respawn the child (with --resume) and deliver the message
+    // to it, so parking is invisible to the pane apart from the resume itself.
+    const p = parked.get(key)
+    if (!p) return
+    parked.delete(key)
+    void startSession(key, p.opts, event.sender).then(() => {
+      const revived = sessions.get(key)
+      if (!revived) return
+      revived.turnBusy = true
+      revived.lastActive = Date.now()
+      writeLine(revived, line)
+    })
   })
   ipcMain.on('chat:interrupt', (_e, key: string) => {
     const s = sessions.get(key)
-    if (s) writeLine(s, { type: 'control_request', request_id: `i${++s.ctrlSeq}`, request: { subtype: 'interrupt' } })
+    if (!s) return
+    s.lastActive = Date.now()
+    writeLine(s, { type: 'control_request', request_id: `i${++s.ctrlSeq}`, request: { subtype: 'interrupt' } })
   })
   ipcMain.on('chat:setModel', (_e, key: string, model: string) => {
     const s = sessions.get(key)

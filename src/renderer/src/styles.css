@@ -2136,7 +2136,8 @@ select {
 /* State ring drawn as an overlay ABOVE the terminal — the xterm canvas fills the
    panel edge-to-edge, so an inset box-shadow on the panel itself sits behind it
    and is invisible. */
-.terminal-panel.attn::after {
+.terminal-panel.attn::after,
+.chat-panel.busy::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2174,8 +2175,16 @@ select {
     --attn-angle: 360deg;
   }
 }
+/* Working: a STATIC ring in the accent (native draws the same distinction —
+   busy is a still ring, attention is the travelling ember). */
+.chat-panel.busy::after {
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .terminal-panel.attn::after {
+  .terminal-panel.attn::after,
+  .chat-ring::before {
     animation: none;
     background: none;
     box-shadow: inset 0 0 0 1.5px var(--accent-border);
@@ -2941,6 +2950,11 @@ select {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* A tool that never returned because the turn was stopped: dimmed, so the calls
+   that DID complete stay plainly readable next to it. */
+.tg-item.interrupted {
+  opacity: 0.55;
 }
 /* Subagent (Task) card — its own block, distinct from the command group, with an
    accent left edge and a nested list of the subagent's tool calls (native SubagentEntry). */
@@ -6779,12 +6793,23 @@ select {
   white-space: pre-wrap;
 }
 .ask-inline-opts {
+  /* Vertical list so ↑/↓ reads naturally (and long options stay legible). The
+     group itself must never draw a focus ring: a rectangle around the rounded
+     options looked like a stray border. */
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
+  outline: none !important;
+  border: none;
+}
+.ask-inline-opts:focus,
+.ask-inline-opts:focus-visible {
+  outline: none !important;
+  box-shadow: none;
 }
 .ask-inline-opt {
-  padding: 5px 11px;
+  text-align: left;
+  padding: 6px 11px;
   border: 1px solid var(--edge);
   border-radius: var(--radius-full);
   background: var(--bg);
@@ -6803,6 +6828,10 @@ select {
   display: flex;
   gap: 6px;
   margin-top: 8px;
+}
+.ask-inline-input.on {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
 }
 .ask-inline-input {
   flex: 1 1 auto;
@@ -6895,4 +6924,53 @@ select {
    or the system browser. */
 .port-menu {
   min-width: 200px;
+}
+
+
+/* Completion ring (native AttnRingView parity): a fixed masked ring band with an
+   oversized conic gradient ROTATING inside it. Native rotates the gradient layer
+   for the same reason we do — animating the gradient's angle instead repaints the
+   whole panel every frame (measured: GPU + WindowServer ~23% each while a single
+   finished pane sat there), whereas a transform is compositor-only. */
+.chat-ring {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  border-radius: 2px;
+  padding: 1.5px;
+  overflow: hidden;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.chat-ring::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  will-change: transform;
+  background: conic-gradient(
+    color-mix(in srgb, var(--accent) 6%, transparent) 0deg,
+    color-mix(in srgb, var(--accent) 6%, transparent) 200deg,
+    color-mix(in srgb, var(--accent) 55%, transparent) 300deg,
+    var(--accent) 350deg,
+    color-mix(in srgb, var(--accent) 6%, transparent) 360deg
+  );
+  animation: chat-ring-spin 2.2s linear infinite;
+}
+@keyframes chat-ring-spin {
+  to {
+    rotate: 360deg;
+  }
+}
+/* Nobody is looking at an unfocused window — freeze the ring (it stays visible,
+   it just stops costing frames). */
+body.win-blurred .chat-ring::before {
+  animation-play-state: paused;
 }

@@ -130,6 +130,12 @@ export default function App(): JSX.Element {
       if (!e.metaKey && !e.ctrlKey) useUI.getState().setMetaHeld(false)
     }
     const onBlurMeta = (): void => useUI.getState().setMetaHeld(false)
+    // Freeze decorative animations while the window is unfocused: they stay
+    // visible (so a completion isn't lost) but stop costing frames.
+    const markBlur = (): void => document.body.classList.add('win-blurred')
+    const markFocus = (): void => document.body.classList.remove('win-blurred')
+    window.addEventListener('blur', markBlur)
+    window.addEventListener('focus', markFocus)
     window.addEventListener('keydown', onMetaDown, true)
     window.addEventListener('keyup', onMetaUp, true)
     window.addEventListener('blur', onBlurMeta)
@@ -175,6 +181,8 @@ export default function App(): JSX.Element {
       window.removeEventListener('keydown', onMetaDown, true)
       window.removeEventListener('keyup', onMetaUp, true)
       window.removeEventListener('blur', onBlurMeta)
+      window.removeEventListener('blur', markBlur)
+      window.removeEventListener('focus', markFocus)
     }
   }, [])
 

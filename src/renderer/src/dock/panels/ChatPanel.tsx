@@ -31,6 +31,7 @@ import {
   registerAgent,
   useAgents,
   setAgentStatus,
+  getAgentStatus,
   agentsForWorkspace,
   resolveAgent
 } from '../../state/agents'
@@ -57,6 +58,10 @@ interface ToolLine {
   parent?: string | null // subagent (Task) tool_use id this call belongs to
   done?: boolean // its tool_result arrived (subagent/tool finished)
   error?: boolean
+  // The turn ended (stop / failure) while THIS tool was still awaiting its result.
+  // Tools that already returned keep their own "done" — stopping a turn must not
+  // retroactively re-label work that actually completed.
+  interrupted?: boolean
 }
 // Ordered content of an assistant turn: text and tool calls in the exact sequence
 // they streamed, so a tool/subagent card renders in its real position (not hoisted
@@ -292,7 +297,7 @@ function ChatCode({
 // One tool line: icon + name + detail, with an optional expandable code block.
 function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
   return (
-    <div className="tg-item">
+    <div className={`tg-item${tl.interrupted ? ' interrupted' : ''}`}>
       <div className="chat-tool">
         <span className="chat-tool-ico">
           <ToolIcon name={tl.name} />
@@ -322,7 +327,10 @@ function SubagentCard({
   // Done when the Agent tool's tool_result arrived, or the whole turn ended.
   const done = task.done || !turnRunning
   const running = !done
-  const state = task.error ? ' err' : running ? ' running' : ' done'
+  // Stopped only if this delegation itself never returned; one that finished
+  // before the user hit Stop stays a completed subagent.
+  const stopped = !!task.error || !!task.interrupted
+  const state = stopped ? ' err' : running ? ' running' : ' done'
   return (
     <div className={`chat-subagent${state}`}>
       <button className="chat-subagent-head" onClick={() => setOpen((o) => !o)}>
@@ -335,7 +343,7 @@ function SubagentCard({
             <>
               <Loader2 size={11} className="spin" /> {t('chat.tools.run')}
             </>
-          ) : task.error ? (
+          ) : stopped ? (
             <>
               <Square size={9} fill="currentColor" /> {t('chat.stopped')}
             </>
@@ -358,18 +366,15 @@ function SubagentCard({
   )
 }
 
-const ToolGroup = memo(function ToolGroup({
-  tools,
-  interrupted
-}: {
-  tools: ToolLine[]
-  interrupted: boolean
-}): JSX.Element {
+const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolLine[] }): JSX.Element {
   const t = useT()
   // Running = a tool in this group is still awaiting its result. Derived per-tool
   // (each ToolLine gets `done` when its toolResult arrives) so a finished tool
   // shows done immediately, instead of staying "running" until the whole turn ends.
-  const running = !interrupted && tools.some((tl) => !tl.done)
+  const running = tools.some((tl) => !tl.done)
+  // Interrupted is likewise per-tool: stopping a turn only labels the calls that
+  // were still in flight, so tools that already returned keep reading as done.
+  const interrupted = tools.some((tl) => tl.interrupted)
   const [open, setOpen] = useState(false)
   let added = 0
   let removed = 0
@@ -520,7 +525,7 @@ const ChatMessage = memo(function ChatMessage({
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
-          <ToolGroup key={`g${i}`} tools={g.tools} interrupted={msg.interrupted} />
+          <ToolGroup key={`g${i}`} tools={g.tools} />
         )
       )}
       <div className="chat-turn-foot">
@@ -1034,6 +1039,41 @@ export default function ChatPanel({
     return arr
   })
   const [restoring, setRestoring] = useState(false)
+  // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
+  // session later (see below) must be observed from the store or the restore
+  // effect would never fire.
+  const liveSession = useSession(
+    (st) => st.sessions[workspace]?.panes?.[chatKey]?.session ?? null
+  )
+  // This pane's agent status drives the completion flash on the panel border.
+  // (setAgentStatus bumps `version`, so this re-reads when the turn finishes.)
+  useAgents((s) => s.version)
+  const paneStatus = getAgentStatus(chatKey)
+  // Acknowledge a finished turn only when the user actually turns to this pane:
+  // it BECOMES the visible tab, or the window regains focus while it already is.
+  // We never ack on mount/state changes, so a completion that happens while you're
+  // elsewhere is still waiting when you come back.
+  useEffect(() => {
+    if (!api) return
+    const ack = (): void => {
+      if (api.isVisible && document.hasFocus() && getAgentStatus(chatKey) === 'done') {
+        setAgentStatus(chatKey, 'idle')
+      }
+    }
+    const subs = [
+      api.onDidActiveChange(() => {
+        if (api.isActive) ack()
+      }),
+      api.onDidVisibilityChange(() => {
+        if (api.isVisible) ack()
+      })
+    ]
+    window.addEventListener('focus', ack)
+    return () => {
+      subs.forEach((d) => d.dispose())
+      window.removeEventListener('focus', ack)
+    }
+  }, [api, chatKey])
   // How many recent turns are rendered (see `windowed` below), and whether the view
   // is pinned to the bottom (drives auto-scroll + the jump-to-latest button).
   const WINDOW_STEP = 50
@@ -1086,6 +1126,15 @@ export default function ChatPanel({
   // markdown isn't re-parsed on every single token (that was the choppiness).
   const pendingText = useRef('')
   const rafRef = useRef<number | null>(null)
+  // Timer that races the frame callback so a window that isn't painting still
+  // commits streamed text (see flushPending).
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Streaming cadence: when the last delta arrived and an EMA of the gap between
+  // deltas. The reveal spreads each chunk over that gap so text flows instead of
+  // landing in half-second jerks (measured: ~87 chars every ~540ms).
+  const lastArrivalRef = useRef(0)
+  // Measured streaming throughput in characters per millisecond (EMA).
+  const rateRef = useRef(0)
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([])
 
   useEffect(() => {
@@ -1192,52 +1241,77 @@ export default function ChatPanel({
     // dumped whole per frame. Instead reveal a slice PROPORTIONAL to the backlog
     // each frame — small bursts trickle out smoothly, big ones catch up fast — so
     // the text flows steadily regardless of network/CLI timing.
-    const drainTick = (): void => {
+    // MEASURED: the CLI emits ~87 characters every ~540ms (p90 660ms) — a whole
+    // sentence at a time, not a character stream. Rendering each delta the moment
+    // it lands therefore looks exactly like what it is: a jerk every half second.
+    // So we INTERPOLATE: spread the pending buffer over the interval we expect the
+    // next delta in, which turns those bursts into continuous text. The target is
+    // an EMA of observed arrival gaps, so it adapts to a faster/slower model
+    // instead of a hardcoded speed.
+    // Hoisted function declaration so step() can re-arm the next frame.
+    function startDrain(): void {
+      if (rafRef.current != null || flushTimerRef.current != null) return
+      rafRef.current = requestAnimationFrame(step)
+      flushTimerRef.current = setTimeout(step, 48)
+    }
+    const step = (): void => {
+      rafRef.current = null
+      if (flushTimerRef.current != null) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
       const buf = pendingText.current
-      if (!buf) {
-        rafRef.current = null
-        return
-      }
-      // Commit at ~18fps, not every frame. Each commit copies the WHOLE accumulated
-      // message text twice (m.text + the trailing text item) and rebuilds the msgs
-      // array, so a per-frame commit on a long reply threw megabytes/second at the
-      // GC — V8 then sat in incremental marking (measured: ~97% of renderer CPU in
-      // the marking write barrier). Fewer, larger commits keep the typewriter look
-      // while cutting that allocation churn several-fold.
-      const nowMs = performance.now()
-      // Unfocused (or this pane isn't the visible one): nobody is watching the text
-      // stream, so commit far less often — several background agents streaming at
-      // once was a big share of the idle-looking CPU.
-      const interval = document.hasFocus() ? 0 : 400
-      if (nowMs - lastCommitRef.current < interval) {
-        rafRef.current = requestAnimationFrame(drainTick)
-        return
-      }
-      lastCommitRef.current = nowMs
-      let n = Math.max(2, Math.ceil(buf.length / 5))
-      // Don't cut mid-word if a space is very close (reduces markdown flicker).
+      if (!buf) return
+      const now = performance.now()
+      const frameMs = Math.min(50, Math.max(8, now - (lastCommitRef.current || now)))
+      lastCommitRef.current = now
+      // How long we want the CURRENT buffer to take: whatever remains of the
+      // expected gap. Falling behind (a big backlog) drains proportionally faster.
+      // Reveal at the measured input rate (+5% so the lag can't grow), which makes
+      // the text flow continuously instead of emptying each burst in ~150ms and
+      // then waiting ~400ms for the next one.
+      const rate = rateRef.current || 0.12 // chars/ms until we've measured
+      let n = Math.max(1, Math.round(rate * frameMs * 1.05))
+      // Don't let a backlog build unboundedly (tool output dumped at once, or
+      // catching up after a stall): drain proportionally faster past a threshold.
+      if (buf.length > 400) n = Math.max(n, Math.ceil(buf.length / 12))
       if (n < buf.length) {
+        // Prefer breaking after a space so words don't visibly assemble.
         const sp = buf.indexOf(' ', n)
         if (sp >= 0 && sp - n <= 12) n = sp + 1
       }
+      const t0 = performance.now()
       appendText(buf.slice(0, n))
+      if (import.meta.env.DEV) {
+        const w = window as unknown as { __streamStats?: { gaps: number[]; commits: number[] } }
+        const st = (w.__streamStats ??= { gaps: [], commits: [] })
+        st.gaps.push(Math.round(frameMs))
+        st.commits.push(Math.round(performance.now() - t0))
+        if (st.gaps.length > 400) {
+          st.gaps.shift()
+          st.commits.shift()
+        }
+      }
       pendingText.current = buf.slice(n)
-      rafRef.current = requestAnimationFrame(drainTick)
+      if (pendingText.current) startDrain()
     }
-    const startDrain = (): void => {
-      if (rafRef.current == null) rafRef.current = requestAnimationFrame(drainTick)
-    }
-    // Reveal everything now (tool boundary / turn end) so nothing lags behind and
-    // tool lines stay in order with the text.
-    const flushText = (): void => {
+    const flushPending = (): void => {
       if (rafRef.current != null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
       }
+      if (flushTimerRef.current != null) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
       const delta = pendingText.current
+      if (!delta) return
       pendingText.current = ''
       appendText(delta)
     }
+    // Reveal everything now (tool boundary / turn end) so nothing lags behind and
+    // tool lines stay in order with the text.
+    const flushText = (): void => flushPending()
     const st = getSettings()
     const savedModel = pane0.model || st.defaultChatModel || 'default'
     // Resume the SAME Claude session across a restart so the agent keeps its full
@@ -1265,12 +1339,26 @@ export default function ChatPanel({
           if (e.slashCommands?.length) setSlashCommands(e.slashCommands)
           if (e.sessionId) savePane({ session: e.sessionId })
           break
-        case 'text':
+        case 'text': {
+          const now = performance.now()
+          if (lastArrivalRef.current) {
+            const gap = now - lastArrivalRef.current
+            // Track the INPUT RATE (chars/ms), not just the gap: revealing against
+            // "time until the next chunk" drained each burst early and then stalled.
+            // Matching the average arrival rate keeps a small buffer in hand, so the
+            // text keeps moving between chunks. Tool pauses are ignored.
+            if (gap > 8 && gap < 3000) {
+              const inst = e.delta.length / gap
+              rateRef.current = rateRef.current ? rateRef.current * 0.7 + inst * 0.3 : inst
+            }
+          }
+          lastArrivalRef.current = now
           pendingText.current += e.delta
           // Reveal it smoothly over frames (typewriter drain) instead of dumping
           // the whole burst at once, which read as choppy.
           startDrain()
           break
+        }
         case 'tool': {
           if (pendingText.current) flushText() // keep tool lines in order with text
           const tool: ToolLine = {
@@ -1324,11 +1412,15 @@ export default function ChatPanel({
             }
             // Mark any tool still awaiting a result as done — the turn is over, so a
             // missing toolResult mustn't leave a tool shimmering "running" forever.
-            const finish = (tl: (typeof m.tools)[number]): typeof tl => (tl.done ? tl : { ...tl, done: true })
+            // Only those unfinished ones count as interrupted: a tool whose result
+            // already arrived really did complete, so it stays "done".
+            const cut = !!e.error && !steering
+            const finish = (tl: (typeof m.tools)[number]): typeof tl =>
+              tl.done ? tl : { ...tl, done: true, interrupted: cut }
             return {
               ...m,
               done: true,
-              interrupted: !!e.error && !steering,
+              interrupted: cut,
               tools: m.tools.map(finish),
               items: m.items.map((it) => (it.type === 'tool' ? { type: 'tool', tool: finish(it.tool) } : it)),
               durationMs: Date.now() - m.startedAt,
@@ -1342,21 +1434,9 @@ export default function ChatPanel({
             setBusy(false)
             // Rail status: draw the done checkmark, then settle back to idle.
             setAgentStatus(chatKey, e.error ? 'idle' : 'done')
-            // Hold "done" until the user can actually SEE it. On a second monitor
-            // (or another app in front) the 2.6s decay expired while nobody was
-            // looking, so coming back showed nothing — no checkmark, no border
-            // flash. Start the countdown when the window regains focus instead.
-            const settle = (): void => {
-              setTimeout(() => setAgentStatus(chatKey, 'idle'), 2600)
-            }
-            if (document.hasFocus()) settle()
-            else {
-              const onFocus = (): void => {
-                window.removeEventListener('focus', onFocus)
-                settle()
-              }
-              window.addEventListener('focus', onFocus)
-            }
+            // "done" is cleared by the USER looking at the pane (click/focus below),
+            // never by a timer: a completion that expired while you were on another
+            // window or monitor was simply lost.
             // Desktop notification when a turn finishes AND the user isn't already
             // looking at this pane (background workspace/pane, or app unfocused).
             // Routed through MAIN (electron Notification is reliable; the web one
@@ -1387,7 +1467,10 @@ export default function ChatPanel({
         }
         case 'exit':
           setBusy(false)
-          setAgentStatus(chatKey, 'idle')
+          // In -p mode the CLI exits right after each turn, so this fired moments
+          // after turnDone set 'done' and wiped the completion ring before anyone
+          // could see it. A finished turn keeps its state until the user looks.
+          if (getAgentStatus(chatKey) !== 'done') setAgentStatus(chatKey, 'idle')
           break
         default:
           break
@@ -1396,6 +1479,7 @@ export default function ChatPanel({
     return () => {
       off()
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+      if (flushTimerRef.current != null) clearTimeout(flushTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatKey, workspace, patchLast])
@@ -1426,8 +1510,29 @@ export default function ChatPanel({
   // next first-message override it — and show a "continued" marker on top.
   const restoredRef = useRef(msgs.length > 0)
   const restoredSessionRef = useRef<string | null>(null)
+  // A brand-new pane (no session of its own) picks up the workspace's most recent
+  // conversation, so opening a chat continues where you left off instead of showing
+  // an empty window. Only until it has its own turn — once this pane owns a session
+  // that one wins.
   useEffect(() => {
-    const sid = pane0.session
+    if (liveSession || pane0.session || restoredSessionRef.current || pinnedTitle) return
+    let cancelled = false
+    void window.api.chat
+      .sessions(pathOf(workspace))
+      .then((list) => {
+        const latest = list?.[0]
+        if (cancelled || !latest?.id) return
+        savePane({ session: latest.id }) // drives the restore effect below
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace])
+
+  useEffect(() => {
+    const sid = liveSession ?? pane0.session
     if (!sid || restoredSessionRef.current === sid) return
     restoredSessionRef.current = sid
     let cancelled = false
@@ -1440,18 +1545,37 @@ export default function ChatPanel({
         setMsgs((cur) => (cur.some((m) => !m.done) ? cur : transcriptToMsgs(tr)))
         restoredRef.current = true
         titleSet.current = true // keep the restored tab title; don't re-title
+        // Backfill: panes created before titles were composed still read just
+        // "member · group". Now that we have their transcript, derive the
+        // conversation part once so they match new panes.
+        if (pinned && titleRef.current.trim() === pinned.trim()) {
+          const firstUser = tr.find((m) => m.role === 'user')?.text?.split('\n')[0].trim()
+          if (firstUser) {
+            const short = firstUser.length > 40 ? firstUser.slice(0, 40) + '…' : firstUser
+            titleRef.current = composeTitle(short)
+            setTitle?.(titleRef.current)
+            useAgents.getState().bump()
+          }
+        }
       })
       .catch(() => {
         /* keep whatever placeholder we have */
       })
       .finally(() => {
-        if (!cancelled) setRestoring(false)
+        // Always clear the flag. Gating this on `cancelled` left the "loading
+        // previous conversation" label stuck forever after StrictMode's
+        // mount→cleanup→mount cycle (state survives that cycle).
+        setRestoring(false)
       })
     return () => {
       cancelled = true
+      // Allow the remount to fetch again — the ref survives the cycle too, so
+      // keeping it set meant the second pass skipped the restore entirely and the
+      // transcript never loaded.
+      restoredSessionRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pane0.session, workspace])
+  }, [liveSession, pane0.session, workspace])
 
   // Drop any transcript an older build persisted (one-time cleanup, keeps the
   // session id) so sessions.json stays small.
@@ -1989,7 +2113,14 @@ export default function ChatPanel({
 
   return (
     <div
-      className={`chat-panel${dragOver ? ' drop-active' : ''}`}
+      // Native parity (AttnRingView): a running turn shows a STATIC ring, a
+      // finished one shows the travelling ember ring until you acknowledge it.
+      className={`chat-panel${dragOver ? ' drop-active' : ''}${paneStatus === 'busy' ? ' busy' : ''}`}
+      // Acknowledge a finished turn: clicking anywhere in the pane clears the
+      // "done" shimmer on its tab (that's the "I've seen it" signal).
+      onMouseDownCapture={() => {
+        if (getAgentStatus(chatKey) === 'done') setAgentStatus(chatKey, 'idle')
+      }}
       ref={rootRef}
       // Explicitly activate this pane on a real click. dockview's default
       // "focusin activates the group" is unreliable once split groups exist (e.g.
@@ -2011,6 +2142,8 @@ export default function ChatPanel({
       }}
       onDrop={onDropFiles}
     >
+      {/* Finished turn: the travelling ember ring stays until acknowledged. */}
+      {paneStatus === 'done' && <span className="chat-ring" aria-hidden />}
       <div
         className="chat-scroll"
         ref={scrollRef}
