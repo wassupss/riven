@@ -84,30 +84,60 @@ export interface UsageLimits {
   weekly: PlanLimit | null
 }
 
-function tokenFrom(blob: string): string | null {
+interface OauthBlob {
+  accessToken?: string
+  expiresAt?: number
+}
+
+function oauthFrom(blob: string): OauthBlob | null {
   try {
-    return (JSON.parse(blob) as { claudeAiOauth?: { accessToken?: string } })?.claudeAiOauth?.accessToken?.trim() || null
+    const o = (JSON.parse(blob) as { claudeAiOauth?: OauthBlob })?.claudeAiOauth
+    return o?.accessToken?.trim() ? o : null
   } catch {
     return null
   }
 }
 
+const KEYCHAIN_SERVICE = 'Claude Code-credentials'
+
+async function keychainBlob(account?: string): Promise<string> {
+  const args = ['find-generic-password', '-s', KEYCHAIN_SERVICE]
+  if (account) args.push('-a', account)
+  args.push('-w')
+  const { stdout } = await pexec('security', args, { timeout: 5000 })
+  return stdout.trim()
+}
+
 // Claude Code stores its OAuth credentials in the macOS Keychain (service
 // "Claude Code-credentials"); older versions used ~/.claude/.credentials.json.
+//
+// A machine can hold SEVERAL items under that service — observed here: one under
+// the OS user and a second under account "unknown" — and a logout/login can leave
+// the live token in a different one than the first match. Reading only the first
+// match (no -a) is why plan usage went blank after signing back in: that item
+// carried no token at all. So try each candidate and take the newest live token.
 async function claudeToken(): Promise<string | null> {
   if (process.platform === 'darwin') {
-    try {
-      const { stdout } = await pexec('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], {
-        timeout: 5000
-      })
-      const tok = tokenFrom(stdout.trim())
-      if (tok) return tok
-    } catch {
-      /* not in keychain — fall through to file */
+    const accounts = [...new Set([os.userInfo().username, undefined, 'unknown'])]
+    let best: { token: string; expiresAt: number } | null = null
+    for (const a of accounts) {
+      try {
+        const o = oauthFrom(await keychainBlob(a))
+        if (!o?.accessToken) continue
+        const expiresAt = typeof o.expiresAt === 'number' ? o.expiresAt : Number.MAX_SAFE_INTEGER
+        if (expiresAt <= Date.now()) continue // expired: it would only 401
+        if (!best || expiresAt > best.expiresAt) best = { token: o.accessToken, expiresAt }
+      } catch {
+        /* no item for this account — try the next */
+      }
     }
+    if (best) return best.token
   }
   try {
-    return tokenFrom(await fs.readFile(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'))
+    return (
+      oauthFrom(await fs.readFile(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'))
+        ?.accessToken ?? null
+    )
   } catch {
     return null
   }

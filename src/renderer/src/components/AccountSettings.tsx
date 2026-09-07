@@ -3,6 +3,7 @@ import { useAuth } from '../state/auth'
 import { addTerminal } from '../dock/registry'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
+import { useUsage } from '../state/usage'
 import { promptInput } from './promptInput'
 import { Button } from './ui/Controls'
 import { useT } from '../i18n'
@@ -44,6 +45,10 @@ async function signInClaude(configDir?: string | null): Promise<void> {
     await new Promise((r) => setTimeout(r, 2000))
     const now = (await window.api.chat.accounts(dir)).find((a) => a.id === 'claude')
     if (now?.loggedIn && (!before?.loggedIn || now.email !== before.email)) {
+      // Plan usage is read with the account's own token, so it belongs to the new
+      // account: refresh now instead of leaving the widget blank until the next
+      // poll comes round.
+      useUsage.getState().refresh()
       // Signed in: show it, rather than leaving the user to guess whether the
       // redirect worked. The panel re-queries on mount, so it reports the account.
       useUI.getState().openSettings('account')
@@ -203,6 +208,7 @@ function AiAccounts(): JSX.Element {
         setAccounts(null) // shows the "checking" line while it runs
         await window.api.chat.logout()
         load()
+        useUsage.getState().refresh() // the old account's usage no longer applies
       } else void signInClaude() // closes settings, reopens it when signed in
       return
     }
