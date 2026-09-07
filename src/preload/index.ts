@@ -139,6 +139,7 @@ const api = {
       initialCommand?: string
       cols?: number
       rows?: number
+      configDir?: string
     }): Promise<{ id: string; existed: boolean; buffer: string; error?: string }> =>
       ipcRenderer.invoke('pty:open', opts),
     write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
@@ -178,6 +179,7 @@ const api = {
         mcpDisabled?: string[]
         globalPrompt?: string
         agent?: string
+        configDir?: string
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     send: (key: string, text: string): void => ipcRenderer.send('chat:send', key, text),
@@ -189,16 +191,21 @@ const api = {
     detectClis: (): Promise<
       Array<{ name: string; cmd: string; path: string; version: string | null }>
     > => ipcRenderer.invoke('chat:detectClis'),
-    accounts: (): Promise<
+    accounts: (
+      configDir?: string
+    ): Promise<
       Array<{
         id: 'claude' | 'codex'
         name: string
         loggedIn: boolean | null
         plan?: string
         email?: string
+        org?: string
         mode?: 'subscription' | 'apikey'
+        configDir?: string
       }>
-    > => ipcRenderer.invoke('accounts:list'),
+    > => ipcRenderer.invoke('accounts:list', configDir),
+    profileDir: (id: string): Promise<string> => ipcRenderer.invoke('accounts:profileDir', id),
     sessionInfo: (
       cwd: string
     ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>
@@ -360,11 +367,18 @@ const api = {
         tool: string
         args: Record<string, unknown>
         cwd: string | null
+        key: string | null // the chat pane that called, when riven spawned it
       }) => void
     ): (() => void) => {
       const listener = (
         _e: unknown,
-        payload: { id: string; tool: string; args: Record<string, unknown>; cwd: string | null }
+        payload: {
+          id: string
+          tool: string
+          args: Record<string, unknown>
+          cwd: string | null
+          key: string | null
+        }
       ): void => cb(payload)
       ipcRenderer.on('mcp:invoke', listener)
       return () => ipcRenderer.removeListener('mcp:invoke', listener)

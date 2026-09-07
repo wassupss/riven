@@ -59,7 +59,36 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
 // whatever workspace the user is currently looking at. A background agent opening
 // a file/browser tab/panel must not hijack the visible workspace. getDelegator()
 // is the chat pane whose turn is running; its workspace owns the action.
+// Who made the call currently being dispatched. Set synchronously at the top of
+// dispatch() and read synchronously by the helpers below, so a second agent's
+// call can never retag the first one's.
+interface Caller {
+  key: string | null // the chat pane the agent IS (RIVEN_CHAT_KEY), when riven spawned it
+  cwd: string | null // the directory it runs in, used when there is no key
+}
+let activeCaller: Caller = { key: null, cwd: null }
+
+// The calling pane, ONLY if it is still open. Unlike getDelegator() this does not
+// care which workspace is on screen: the key came with the call itself.
+function callerPane(): string | null {
+  const k = activeCaller.key
+  if (!k) return null
+  const st = useSession.getState()
+  for (const s of Object.values(st.sessions)) if (s.panes?.[k]) return k
+  return null
+}
+
 function callerWs(): string | null {
+  const pane = callerPane()
+  if (pane) return widForPane(pane)
+  // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
+  // directory it runs in, so it still acts on ITS workspace.
+  const cwd = activeCaller.cwd
+  if (cwd) {
+    const open = useSession.getState().openWorkspaces
+    const match = open.find((w) => pathOf(w) === cwd)
+    if (match) return match
+  }
   const d = getDelegator()
   const own = d ? widForPane(d) : null
   return own ?? useSession.getState().activeWorkspace
@@ -77,12 +106,17 @@ async function askUser(args: Args): Promise<string> {
   const question = s(args.question)
   const options = Array.isArray(args.options) ? (args.options as unknown[]).map(s) : []
   if (!options.length) return 'error: options is required'
+  // A blocking prompt may ONLY appear in the conversation that asked it. If the
+  // caller is not a riven chat pane there is nowhere it can render without
+  // interrupting an unrelated workspace, so refuse rather than guess: the agent
+  // asks in plain text instead.
+  const pane = callerPane()
+  if (!pane)
+    return 'riven: ask_user is only available to riven chat panes. Ask your question in plain text, listing the options, and let the user reply normally.'
   return new Promise<string>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
-      // Bind the question to the pane that asked, so it renders inside THAT
-      // conversation instead of interrupting whatever workspace is on screen.
-      chatKey: getDelegator(),
+      chatKey: pane,
       question,
       options,
       resolve
@@ -446,7 +480,8 @@ async function startPipeline(args: Args): Promise<string> {
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`
 }
 
-async function dispatch(tool: string, args: Args): Promise<string> {
+async function dispatch(tool: string, args: Args, caller: Caller): Promise<string> {
+  activeCaller = caller
   switch (tool) {
     case 'ask_user':
       return askUser(args)
@@ -554,7 +589,7 @@ async function dispatch(tool: string, args: Args): Promise<string> {
 // Wire the main→renderer tool bridge. Call once at app start. Returns a disposer.
 export function registerMcpToolHandler(): () => void {
   return window.api.mcp.onInvoke((e) => {
-    dispatch(e.tool, e.args)
+    dispatch(e.tool, e.args, { key: e.key, cwd: e.cwd })
       .then((result) => window.api.mcp.result(e.id, result))
       .catch((err) =>
         window.api.mcp.result(e.id, `error: ${err instanceof Error ? err.message : String(err)}`)

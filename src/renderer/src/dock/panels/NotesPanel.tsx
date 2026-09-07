@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { pathOf } from '../../state/session'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
+import { promptInput } from '../../components/promptInput'
 import {
   FileText,
   Plus,
@@ -21,6 +22,7 @@ import {
   Search,
   Hash,
   ListTree,
+  PanelLeft,
   PanelRight,
   Columns2
 } from 'lucide-react'
@@ -116,6 +118,9 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
   const [query, setQuery] = useState('')
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [asideOpen, setAsideOpen] = useState(true)
+  // The note list costs 210px of a panel that is often docked narrow, so it can
+  // be folded away to give the document the full width.
+  const [sideOpen, setSideOpen] = useState(true)
 
   // Wikilink autocomplete state (while typing "[[").
   const [ac, setAc] = useState<{ start: number; query: string } | null>(null)
@@ -224,7 +229,10 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
   const saveToFile = async (): Promise<void> => {
     if (!sel) return
     const suggested = `${(title || 'note').replace(/[^\w가-힣.-]+/g, '-')}.md`
-    const relPath = window.prompt(t('notes.saveToFilePrompt'), `docs/${suggested}`)
+    const relPath = await promptInput({
+      title: t('notes.saveToFilePrompt'),
+      initial: `docs/${suggested}`
+    })
     if (!relPath?.trim()) return
     const res = await window.api.notes.saveToFile(ws, sel, relPath.trim(), false)
     if (res.ok) window.alert(t('notes.saved', { path: res.path ?? relPath }))
@@ -594,10 +602,22 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
     </button>
   )
 
+  // Rendered at the head of the main column in both states (note open or not),
+  // so folding the list away never leaves it unreachable.
+  const sideToggle = (
+    <button
+      className={`no-btn${sideOpen ? ' active' : ''}`}
+      title={t('notes.listToggle')}
+      onClick={() => setSideOpen((v) => !v)}
+    >
+      <PanelLeft size={14} />
+    </button>
+  )
+
   return (
     <div className="notes-panel notes-obsidian">
       {/* left: search + tags + list */}
-      <div className="no-side">
+      <div className={`no-side${sideOpen ? '' : ' hidden'}`}>
         <div className="no-side-head">
           <span>{t('notes.title')}</span>
           <button className="no-btn" title={t('notes.new')} onClick={newNote}>
@@ -649,6 +669,7 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
         {sel ? (
           <>
             <div className="no-head">
+              {sideToggle}
               <input
                 className="no-title"
                 value={title}
@@ -738,7 +759,10 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
             </div>
           </>
         ) : (
-          <div className="no-main-empty">{t('notes.pick')}</div>
+          <>
+            <div className="no-head">{sideToggle}</div>
+            <div className="no-main-empty">{t('notes.pick')}</div>
+          </>
         )}
       </div>
 

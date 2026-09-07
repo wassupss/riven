@@ -41,6 +41,17 @@ export interface Settings {
   mcpDisabledTools: string[]
   // Browser panel's default search engine (a URL template with `{q}`).
   browserSearch: string
+  // Claude account profiles, each pinning a CLAUDE_CONFIG_DIR (which is what
+  // separates one claude.ai login from another, keychain entry included).
+  //
+  // EMPTY BY DEFAULT, and that is load-bearing: with no profiles riven injects no
+  // CLAUDE_CONFIG_DIR at all, so a single-account user's chats and terminals are
+  // byte-identical to before and nothing has to be configured. `dir: null` means
+  // "the system default", which is how an existing login is adopted without being
+  // moved or asked to log in again.
+  claudeProfiles: Array<{ id: string; label: string; dir: string | null }>
+  claudeProfileId: string | null // the global default profile
+  claudeProfileByWorkspace: Record<string, string> // per-workspace override
   // Default model + permission mode new agent chats start on.
   defaultChatModel: string
   defaultPermissionMode: string
@@ -80,6 +91,9 @@ export const DEFAULT_SETTINGS: Settings = {
   globalPrompt: '',
   mcpDisabledTools: [],
   browserSearch: 'https://www.google.com/search?q={q}',
+  claudeProfiles: [],
+  claudeProfileId: null,
+  claudeProfileByWorkspace: {},
   defaultChatModel: 'default',
   defaultPermissionMode: 'acceptEdits',
   notifications: true,
@@ -145,6 +159,18 @@ export const useSettings = create<SettingsState>((set) => ({
 
 export function getSettings(): Settings {
   return useSettings.getState().settings
+}
+
+// The CLAUDE_CONFIG_DIR a workspace's agents and terminals should run with, or
+// undefined to inject nothing. Undefined is the answer whenever the user has not
+// set profiles up, and also for the adopted default profile (dir: null) — riven
+// then leaves the environment exactly as it found it, which keeps both the stock
+// setup and a user who manages the variable in their own shell rc working.
+export function claudeConfigDirFor(workspace: string | null): string | undefined {
+  const s = getSettings()
+  if (!s.claudeProfiles.length) return undefined
+  const id = (workspace && s.claudeProfileByWorkspace[workspace]) || s.claudeProfileId
+  return s.claudeProfiles.find((p) => p.id === id)?.dir ?? undefined
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null

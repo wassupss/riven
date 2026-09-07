@@ -26,7 +26,7 @@ import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
 import { useRetainedValue } from '../RetainedPanel'
 import AskInline from './AskInline'
-import { getSettings } from '../../state/settings'
+import { getSettings, claudeConfigDirFor } from '../../state/settings'
 import {
   registerAgent,
   useAgents,
@@ -1328,7 +1328,8 @@ export default function ChatPanel({
       permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
       mcpDisabled: st.mcpDisabledTools,
       globalPrompt: withPersona(st.globalPrompt),
-      agent: savedAgent
+      agent: savedAgent,
+      configDir: claudeConfigDirFor(workspace)
     })
     const off = window.api.chat.onEvent((e) => {
       if (e.key !== chatKey) return
@@ -1797,7 +1798,8 @@ export default function ChatPanel({
         cwd: pathOf(workspace),
         model: m,
         mcpDisabled: st.mcpDisabledTools,
-        globalPrompt: withPersona(st.globalPrompt)
+        globalPrompt: withPersona(st.globalPrompt),
+        configDir: claudeConfigDirFor(workspace)
       })
     } else {
       window.api.chat.setModel(chatKey, m)
@@ -1999,7 +2001,8 @@ export default function ChatPanel({
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
-          globalPrompt: withPersona(st.globalPrompt)
+          globalPrompt: withPersona(st.globalPrompt),
+          configDir: claudeConfigDirFor(workspace)
         }),
       120
     )

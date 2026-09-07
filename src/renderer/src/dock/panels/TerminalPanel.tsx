@@ -4,6 +4,7 @@ import TerminalPane from '../../components/TerminalPane'
 import { contextBus } from '../../bridge/contextBus'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { pathOf } from '../../state/session'
+import { claudeConfigDirFor } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
 import { t as staticT } from '../../i18n'
 
@@ -117,6 +118,7 @@ export default function TerminalPanel({
       <TerminalPane
         sessionKey={sessionKey}
         cwd={pathOf(workspace)}
+        configDir={claudeConfigDirFor(workspace)}
         paneId={paneId}
         initialCommand={initialCommand}
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}

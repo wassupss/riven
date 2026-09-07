@@ -78,8 +78,12 @@ function defaultShell(): string {
 // mangle multibyte input — typing Korean/CJK via an IME comes out corrupted.
 // If no UTF-8 locale is already present we set one (without clobbering a locale
 // the user has deliberately configured, e.g. ko_KR.UTF-8).
-function ptyEnv(): Record<string, string> {
+function ptyEnv(configDir?: string): Record<string, string> {
   const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
+  // Only when the workspace pins a Claude account profile, so a terminal and the
+  // native chat in the same workspace run as the same account. Without a profile
+  // we set nothing and the user's shell rc stays in charge.
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   if (process.platform !== 'win32') {
     const hasUtf8 = [env.LC_ALL, env.LC_CTYPE, env.LANG].some((v) => v && /utf-?8/i.test(v))
     if (!hasUtf8) {
@@ -226,6 +230,7 @@ export function registerPtyHandlers(): void {
         initialCommand?: string
         cols?: number
         rows?: number
+        configDir?: string
       }
     ) => {
       const key = opts.sessionKey
@@ -255,7 +260,7 @@ export function registerPtyHandlers(): void {
           cols: opts.cols ?? 80,
           rows: opts.rows ?? 24,
           cwd: opts.cwd || os.homedir(),
-          env: ptyEnv()
+          env: ptyEnv(opts.configDir)
         })
       } catch (e) {
         // A bad shell / cwd shouldn't reject the invoke and break the pane.

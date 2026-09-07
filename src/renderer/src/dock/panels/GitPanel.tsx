@@ -3,6 +3,7 @@ import { useSession, pathOf } from '../../state/session'
 import { useAgentEdits, cacheSet, cacheGet } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
+import { promptInput } from '../../components/promptInput'
 import GitGraphPanel from './GitGraphPanel'
 import {
   GitBranch,
@@ -186,7 +187,7 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
   }
   const newBranch = async (): Promise<void> => {
     setBranchMenu(false)
-    const name = window.prompt(t('git.newBranchPrompt'))
+    const name = await promptInput({ title: t('git.newBranchPrompt') })
     if (!name?.trim()) return
     const res = await window.api.git.createBranch(workspace, name.trim())
     if (!res.ok) window.alert(res.error ?? 'branch failed')

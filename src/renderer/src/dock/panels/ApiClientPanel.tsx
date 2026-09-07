@@ -3,6 +3,7 @@ import '../../styles/api-panel.css'
 import { useApiTarget } from '../../state/apiTarget'
 import { useT } from '../../i18n'
 import { highlightCode } from '../../components/highlight'
+import { promptInput } from '../../components/promptInput'
 
 // =============================================================================
 // APIClientPanel — a Postman-like HTTP client.
@@ -428,8 +429,11 @@ export default function ApiClientPanel(): JSX.Element {
   }
 
   // ---- save current request as a collection entry --------------------------
-  const saveCurrent = (): void => {
-    const name = window.prompt(t('api.saveName', 'Save request as:'), url.trim() || 'Request')
+  const saveCurrent = async (): Promise<void> => {
+    const name = await promptInput({
+      title: t('api.saveName', 'Save request as:'),
+      initial: url.trim() || 'Request'
+    })
     if (!name) return
     setSaved((prev) => [{ id: uid(), name: name.trim(), req: snapshot() }, ...prev])
     setOpen((o) => ({ ...o, saved: true }))
