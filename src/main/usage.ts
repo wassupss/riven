@@ -36,7 +36,11 @@ function rate(model: string): { in: number; out: number; cw: number; cr: number 
   return PRICING.find((p) => p.re.test(model)) ?? PRICING[2]
 }
 
-function claudeRoots(): string[] {
+// Where a given account's session logs live. With an explicit configDir (a riven
+// Claude account profile) the answer is exactly that directory — mixing in the
+// default one would add another account's tokens to this account's total.
+function claudeRoots(configDir?: string): string[] {
+  if (configDir) return [path.join(configDir, 'projects')]
   const roots: string[] = []
   const cfg = process.env.CLAUDE_CONFIG_DIR
   if (cfg) cfg.split(',').forEach((d) => roots.push(path.join(d.trim(), 'projects')))
@@ -82,6 +86,20 @@ export interface PlanLimit {
 export interface UsageLimits {
   session: PlanLimit | null
   weekly: PlanLimit | null
+  // Served from the last successful read because this one failed (the usage
+  // endpoint rate limits), with when that read happened. Claude Code's own client
+  // does the same rather than showing empty bars.
+  stale?: boolean
+  at?: number
+}
+
+const LIMITS_TTL_MS = 60 * 60_000
+const limitsCache = new Map<string, { at: number; val: UsageLimits }>()
+
+function cachedLimits(key: string): UsageLimits {
+  const c = limitsCache.get(key)
+  if (c && Date.now() - c.at < LIMITS_TTL_MS) return { ...c.val, stale: true, at: c.at }
+  return { session: null, weekly: null }
 }
 
 interface OauthBlob {
@@ -116,7 +134,29 @@ async function keychainBlob(account?: string): Promise<string> {
 // the live token in a different one than the first match. Reading only the first
 // match (no -a) is why plan usage went blank after signing back in: that item
 // carried no token at all. So try each candidate and take the newest live token.
-async function claudeToken(): Promise<string | null> {
+async function claudeToken(configDir?: string): Promise<string | null> {
+  // A profile keeps its credentials under its OWN config dir, so read that file
+  // first: the keychain items below belong to the default login and would report
+  // the wrong account's limits for this profile.
+  if (configDir) {
+    try {
+      const o = oauthFrom(await fs.readFile(path.join(configDir, '.credentials.json'), 'utf8'))
+      if (o?.accessToken) return o.accessToken
+    } catch {
+      /* fall through: on macOS the CLI may have put it in the keychain instead */
+    }
+    // Keyed to the directory, per Claude Code's own docs. We can only guess the
+    // account name it used, so try the plausible ones and give up quietly.
+    for (const a of [configDir, path.basename(configDir)]) {
+      try {
+        const o = oauthFrom(await keychainBlob(a))
+        if (o?.accessToken) return o.accessToken
+      } catch {
+        /* next */
+      }
+    }
+    return null
+  }
   if (process.platform === 'darwin') {
     const accounts = [...new Set([os.userInfo().username, undefined, 'unknown'])]
     let best: { token: string; expiresAt: number } | null = null
@@ -143,10 +183,114 @@ async function claudeToken(): Promise<string | null> {
   }
 }
 
+// ---- Codex -----------------------------------------------------------------
+// Codex keeps rollouts at ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl, and its
+// `token_count` events carry BOTH the token counts and the plan's rate limits, so
+// this needs no network and no token: everything is on disk.
+//
+//   payload.info.last_token_usage.{input,cached_input,output,reasoning_output}_tokens
+//   payload.rate_limits.primary.{used_percent,window_minutes,resets_at}
+export interface CodexUsage {
+  installed: boolean
+  totalTokens: number
+  primary: PlanLimit | null // usually the 30-day window
+  primaryWindowMinutes: number | null
+  secondary: PlanLimit | null
+}
+
+function dayDir(d: Date): string {
+  return path.join(
+    os.homedir(),
+    '.codex',
+    'sessions',
+    String(d.getFullYear()),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0')
+  )
+}
+
+async function codexUsage(): Promise<CodexUsage> {
+  const empty: CodexUsage = {
+    installed: false,
+    totalTokens: 0,
+    primary: null,
+    primaryWindowMinutes: null,
+    secondary: null
+  }
+  try {
+    await fs.stat(path.join(os.homedir(), '.codex'))
+  } catch {
+    return empty
+  }
+  const out: CodexUsage = { ...empty, installed: true }
+  const today = todayKey()
+  const files: string[] = []
+  // Today's directory, plus yesterday's: a session started before midnight keeps
+  // writing into its start date's folder, and its later turns are still today's.
+  const now = new Date()
+  for (const d of [now, new Date(now.getTime() - 24 * 3600 * 1000)])
+    await walkJsonl(dayDir(d), files)
+
+  // The freshest rate_limits win: they are a snapshot of the plan window, not a
+  // per-turn delta, so summing them would be meaningless.
+  let newestLimitsAt = 0
+  for (const file of files) {
+    let text: string
+    try {
+      text = await fs.readFile(file, 'utf8')
+    } catch {
+      continue
+    }
+    for (const line of text.split('\n')) {
+      if (!line.includes('token_count')) continue
+      let obj: Record<string, unknown>
+      try {
+        obj = JSON.parse(line)
+      } catch {
+        continue
+      }
+      const payload = obj.payload as Record<string, unknown> | undefined
+      if (payload?.type !== 'token_count') continue
+      const ts = (obj.timestamp as string) ?? ''
+      const info = payload.info as Record<string, unknown> | undefined
+      const last = info?.last_token_usage as Record<string, number> | undefined
+      if (last && localDayKey(ts) === today) {
+        out.totalTokens +=
+          (last.input_tokens ?? 0) +
+          (last.output_tokens ?? 0) +
+          (last.reasoning_output_tokens ?? 0) +
+          (last.cache_write_input_tokens ?? 0)
+      }
+      const rl = payload.rate_limits as Record<string, unknown> | undefined
+      const at = new Date(ts).getTime() || 0
+      if (rl && at >= newestLimitsAt) {
+        newestLimitsAt = at
+        const win = (o: unknown): PlanLimit | null => {
+          const w = o as { used_percent?: number; resets_at?: number } | null
+          if (!w || typeof w.used_percent !== 'number') return null
+          return {
+            usedPct: w.used_percent,
+            // resets_at is unix SECONDS here, unlike Claude's ISO string.
+            resetsAt: w.resets_at ? new Date(w.resets_at * 1000).toISOString() : null
+          }
+        }
+        out.primary = win(rl.primary)
+        out.secondary = win(rl.secondary)
+        const pw = (rl.primary as { window_minutes?: number } | null)?.window_minutes
+        out.primaryWindowMinutes = typeof pw === 'number' ? pw : null
+      }
+    }
+  }
+  return out
+}
+
 export function registerUsageHandlers(): void {
-  ipcMain.handle('usage:limits', async (): Promise<UsageLimits> => {
-    const token = await claudeToken()
-    if (!token) return { session: null, weekly: null }
+  ipcMain.handle('usage:codex', async (): Promise<CodexUsage> => codexUsage())
+
+  ipcMain.handle('usage:limits', async (_e, configDir?: string): Promise<UsageLimits> => {
+    const cacheKey = configDir ?? '<default>'
+    const token = await claudeToken(configDir)
+    if (!token) return cachedLimits(cacheKey)
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 10000)
     try {
@@ -160,24 +304,26 @@ export function registerUsageHandlers(): void {
           'User-Agent': 'claude-code/2.1.69'
         }
       })
-      if (!res.ok) return { session: null, weekly: null }
+      if (!res.ok) return cachedLimits(cacheKey)
       const b = (await res.json()) as Record<string, { utilization?: number; resets_at?: string }>
       const win = (o?: { utilization?: number; resets_at?: string }): PlanLimit | null =>
         o && typeof o.utilization === 'number'
           ? { usedPct: o.utilization, resetsAt: o.resets_at ?? null }
           : null
-      return { session: win(b.five_hour), weekly: win(b.seven_day) }
+      const val: UsageLimits = { session: win(b.five_hour), weekly: win(b.seven_day) }
+      if (val.session || val.weekly) limitsCache.set(cacheKey, { at: Date.now(), val })
+      return val
     } catch {
-      return { session: null, weekly: null }
+      return cachedLimits(cacheKey)
     } finally {
       clearTimeout(timer)
     }
   })
 
-  ipcMain.handle('usage:today', async (): Promise<UsageToday> => {
+  ipcMain.handle('usage:today', async (_e, configDir?: string): Promise<UsageToday> => {
     const today = todayKey()
     const files: string[] = []
-    for (const root of claudeRoots()) await walkJsonl(root, files)
+    for (const root of claudeRoots(configDir)) await walkJsonl(root, files)
 
     const seen = new Set<string>()
     const byModel = new Map<string, ModelUsage>()
