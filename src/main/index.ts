@@ -16,7 +16,7 @@ import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
 import { registerAiHandlers } from './ai'
-import { registerAgentChatHandlers } from './agentChat'
+import { registerAgentChatHandlers, killAllChatSessions } from './agentChat'
 import { registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
@@ -241,6 +241,9 @@ app.whenReady().then(() => {
   // teardown is safe and guarantees the app actually closes without orphans.
   app.on('before-quit', () => {
     stopMcpServer()
+    // Kill the chat CLI children BEFORE the self-SIGKILL: that kill runs no
+    // further teardown, so anything still spawned here outlives the app.
+    killAllChatSessions()
     process.kill(process.pid, 'SIGKILL')
   })
   buildMenu()
