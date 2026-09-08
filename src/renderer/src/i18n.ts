@@ -290,6 +290,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.notifyTitle': { ko: 'riven — 터미널 {n}', en: 'riven — Terminal {n}' },
   'term.bell': { ko: '알림 🔔', en: 'Bell 🔔' },
   'term.done': { ko: '작업 완료 ✓', en: 'Done ✓' },
+  'term.needsInput': { ko: '입력을 기다리는 중 ✋', en: 'Waiting for your input ✋' },
   'term.attn': { ko: '🔔 알림', en: '🔔 Alert' },
   'term.label': { ko: '터미널', en: 'Terminal' },
   'term.closeBusyConfirm': {

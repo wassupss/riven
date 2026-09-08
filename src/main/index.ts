@@ -24,6 +24,7 @@ import { registerApiHandlers } from './apiclient'
 import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
+import { registerNotifyHandlers, ensureNotificationCenterRegistration } from './notify'
 import { buildMenu } from './menu'
 
 // Chromium switches. Deliberately conservative — we do NOT disable
@@ -234,6 +235,8 @@ app.whenReady().then(() => {
     () => BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null
   )
   registerNotesHandlers()
+  registerNotifyHandlers()
+  ensureNotificationCenterRegistration()
   registerApiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()

@@ -32,7 +32,7 @@ import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { useUpdate } from './state/update'
 import { getEditorCloser, initFocusTracking } from './keybindings/focus'
-import { getActiveApi, confirmTerminalClose } from './dock/registry'
+import { getActiveApi, confirmTerminalClose, addTerminal } from './dock/registry'
 import { useT } from './i18n'
 
 export default function App(): JSX.Element {
@@ -82,6 +82,10 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     registerDefaultActions()
+    // Dev/e2e only: lets scripts/e2e-terminal-smoke.mjs drive the real UI over CDP.
+    if (import.meta.env.DEV) {
+      ;(window as unknown as { __riven?: unknown }).__riven = { addTerminal, getActiveApi }
+    }
     registerInlineComplete()
     registerSnippets()
     useUpdate.getState().init()
@@ -154,6 +158,31 @@ export default function App(): JSX.Element {
         api.removePanel(active)
       }
     })
+    // Presence for main's notification plan: is this window visible + focused,
+    // which pane is on screen, and when the user last touched it. Reported on
+    // every relevant transition plus a heartbeat, so main never reasons from a
+    // stale picture (see main/notify.ts).
+    let lastActivity = Date.now()
+    const reportPresence = (): void =>
+      window.api.notify.presence({
+        visible: document.visibilityState === 'visible',
+        focused: document.hasFocus(),
+        activePane: getActiveApi()?.activePanel?.id ?? null,
+        at: lastActivity
+      })
+    const touched = (): void => {
+      const now = Date.now()
+      if (now - lastActivity < 2000) return
+      lastActivity = now
+      reportPresence()
+    }
+    window.addEventListener('focus', reportPresence)
+    window.addEventListener('blur', reportPresence)
+    document.addEventListener('visibilitychange', reportPresence)
+    window.addEventListener('keydown', touched, true)
+    window.addEventListener('mousedown', touched, true)
+    const presenceBeat = setInterval(reportPresence, 30_000)
+    reportPresence()
     // Click a desktop notification → focus that chat's workspace + pane.
     const offNotifyClick = window.api.notify.onClick((paneId) => {
       const wid = widForPane(paneId)
@@ -175,6 +204,12 @@ export default function App(): JSX.Element {
       offClose()
       offZoom()
       offNotifyClick()
+      window.removeEventListener('focus', reportPresence)
+      window.removeEventListener('blur', reportPresence)
+      document.removeEventListener('visibilitychange', reportPresence)
+      window.removeEventListener('keydown', touched, true)
+      window.removeEventListener('mousedown', touched, true)
+      clearInterval(presenceBeat)
       offMcp()
       offBrowser()
       offBrowserKey()

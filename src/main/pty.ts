@@ -5,65 +5,84 @@ import * as path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import * as pty from 'node-pty'
-import { writeMcpConfig, mcpSystemPrompt, implementedToolNames } from './mcpServer'
+import { Terminal as HeadlessTerminal } from '@xterm/headless'
+import { SerializeAddon } from '@xterm/addon-serialize'
+import type { ITerminalAddon } from '@xterm/headless'
+import { mcpConfigJson, mcpSystemPrompt, implementedToolNames } from './mcpServer'
 import { resolveBin } from './shellPath'
+import { OutputCoalescer, realTimers } from './terminal/coalescer'
+import { TerminalActivity, type AttentionReason } from './terminal/activity'
+import { hookEnv, registerAgentHooks } from './agentHooks'
 
 const pexec = promisify(execFile)
 
 // PTY sessions live in the MAIN process, keyed by a stable sessionKey, and are
 // NOT tied to the renderer lifetime (survive reloads; killed only on explicit
-// kill). "Running" means an AGENT is actually running in the terminal — detected
-// by inspecting the shell's child process command lines (not raw output, and not
-// generic commands), so typing / ls / dev-servers don't read as an agent.
+// kill).
+//
+// Main also owns the terminal MODEL: a headless xterm ingests every byte the
+// PTY produces, so the authoritative screen + scrollback exist here whether or
+// not a renderer is looking. That is what makes hidden panes free (their bytes
+// are simply not delivered), reattach exact (the renderer gets a snapshot of the
+// model, not a stale copy it once uploaded), and reconnection race-free: every
+// delivered chunk carries a model revision, a snapshot carries the revision it
+// reflects, and the renderer drops any chunk at or below it. Same design as
+// paseo's worker-owned headless terminal and orca's main-owned model.
 
 interface Session {
   key: string
   proc: pty.IPty
   sender: WebContents
-  snapshot: string // serialized screen (from renderer), replayed on reconnect
-  busy: boolean
-  busyStart: number
-  startupUntil: number
+  cwd: string
+  term: HeadlessTerminal
+  serialize: SerializeAddon
+  // Chunks handed to the model (assigned on write) vs. chunks it has parsed
+  // (assigned in the write callback, in order). A snapshot reflects `parsed`.
+  written: number
+  parsed: number
+  coalescer: OutputCoalescer
+  // Renderer has a live, sized xterm that wants bytes. While false nothing is
+  // delivered; the first flush dropped sets needsSnapshot so the next reveal
+  // restores from the model.
+  visible: boolean
+  needsSnapshot: boolean
+  // Flow control, TCP-style: the renderer reports the cumulative chars it has
+  // parsed for the current epoch; in-flight = sent - acked. A lost ack cannot
+  // become permanent debt, and a snapshot starts a new epoch so stale acks are
+  // simply ignored.
+  epoch: number
+  sentChars: number
+  ackedChars: number
+  paused: boolean
+  cols: number
+  rows: number
+  activity: TerminalActivity
   agentPresent: boolean
   agentName: string | null
-  lastInput: number
-  lastData: number
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
-  // Coalesce PTY output: a flood command (cat huge file, yes, a runaway build)
-  // fires onData many times per frame; batching into one IPC per ~frame instead
-  // of one-IPC-per-chunk keeps the main↔renderer channel from saturating.
-  dataBuf: string
-  flushTimer: ReturnType<typeof setTimeout> | null
-  // Flow control: bytes sent to the renderer but not yet acked (xterm-processed).
-  // A flood (yes / cat huge file / runaway build) produces data far faster than
-  // xterm can render; without backpressure the un-drained IPC messages pile up in
-  // the main process and RSS explodes (measured 14GB). We pause the PTY above a
-  // high-water mark and resume once the renderer has caught up.
-  outstanding: number
-  paused: boolean
-  // "A user submitted a line (Enter) and we're waiting for the agent's reply."
-  // Gates the done-notification to one per user-initiated turn (so idle TUI
-  // redraws don't fire it), and turnBuf accumulates that turn's output so we can
-  // put a snippet of the reply in the notification.
+  busyStart: number
+  lastInput: number
+  lastData: number
+  startupUntil: number
+  // Heuristic-only: "the user pressed Enter and we're waiting for the reply",
+  // so an idle TUI redraw never counts as a finished turn.
   awaitingReply: boolean
-  turnBuf: string
-  // OSC scan state, carried across reads. See hasBell.
-  // 0 = normal, 1 = saw ESC, 2 = inside an OSC string, 3 = inside an OSC, saw ESC.
-  osc: 0 | 1 | 2 | 3
 }
 
 const sessions = new Map<string, Session>()
-const BUFFER_CAP = 200_000
-const FLUSH_MS = 8 // batch onData chunks into ~one IPC per frame
-const FLUSH_MAX = 256 * 1024 // flush immediately once a batch reaches this size
-// Flow-control water marks (bytes in-flight to the renderer). Pause the PTY above
-// HIGH so main memory stays bounded under a flood; resume below LOW so throughput
-// stays smooth. ~4MB/512KB keeps a healthy pipeline without stalling normal use.
-const HIGH_WATER = 4 * 1024 * 1024
-const LOW_WATER = 512 * 1024
-const POLL_MS = 900
+// Model scrollback: what a reattach/reveal can restore. The renderer keeps its
+// own (larger) scrollback for what it has already seen.
+const MODEL_SCROLLBACK = 2000
+const SNAPSHOT_SCROLLBACK = 2000
+// Flow-control water marks (chars in flight to the renderer, per terminal).
+// xterm parses ~100MB/s, so 2MB is ~20ms of backlog — enough to stream, small
+// enough that a flood cannot balloon main. Wide hysteresis so a draining queue
+// does not flap pause/resume on every batch.
+const HIGH_WATER = 2 * 1024 * 1024
+const LOW_WATER = 256 * 1024
+const POLL_MS = 1500
 const IDLE_POLL_MS = 5000 // skip the pgrep/ps child-process probe after this much silence
 const ACTIVE_MS = 800 // output must flow within this window to count as "working"
 const INPUT_ECHO_MS = 350 // output within this long after a keystroke = echo, ignore
@@ -79,18 +98,12 @@ function defaultShell(): string {
   return process.env.SHELL || '/bin/zsh'
 }
 
-// Build the PTY environment, guaranteeing a UTF-8 locale (issue #5). When the app
-// is launched from the macOS GUI (Finder/Dock) the shell's LANG/LC_* are usually
-// absent, so the shell + readline + CLIs fall back to the C/ASCII locale and
-// mangle multibyte input — typing Korean/CJK via an IME comes out corrupted.
-// If no UTF-8 locale is already present we set one (without clobbering a locale
-// the user has deliberately configured, e.g. ko_KR.UTF-8).
 // A zsh startup dir riven owns, sourced INSTEAD of the user's (it sources theirs
 // first, so nothing of theirs is lost). Its .zshrc defines a `claude` function
-// that injects riven's own MCP server, so a hand-typed `claude` in a riven
-// terminal can drive the IDE exactly like the native chat pane — without writing
-// anything into the user's global Claude config. Ported from the native app
-// (main.swift `setupShellShim`).
+// that injects riven's own MCP server and its agent hooks, so a hand-typed
+// `claude` in a riven terminal can drive the IDE exactly like the native chat
+// pane — without writing anything into the user's global Claude config. Ported
+// from the native app (main.swift `setupShellShim`).
 //
 // Interactive shells only (.zshrc is not sourced for scripts), so a script that
 // calls `claude` is unaffected.
@@ -132,7 +145,7 @@ ZDOTDIR=${sq(dir)}`,
         '[ -r "$RIVEN_USER_ZDOTDIR/.zprofile" ] && source "$RIVEN_USER_ZDOTDIR/.zprofile"',
       '.zshrc': `[ -r "$RIVEN_USER_ZDOTDIR/.zshrc" ] && source "$RIVEN_USER_ZDOTDIR/.zshrc"
 # riven: typing \`claude\` here gets riven's OWN tools (ask_user / open file /
-# panels / browser / notes), like the native chat pane.
+# panels / browser / notes) and its lifecycle hooks, like the native chat pane.
 if [ -n "$RIVEN_MCP_CONFIG" ]; then
   claude() {
     # Build flags in a zsh array — NOT via \${VAR:+--flag "$VAR"}: zsh does not
@@ -141,6 +154,8 @@ if [ -n "$RIVEN_MCP_CONFIG" ]; then
     local -a rv
     rv+=(--mcp-config "$RIVEN_MCP_CONFIG")
     [ -n "$RIVEN_MCP_PROMPT" ] && rv+=(--append-system-prompt "$RIVEN_MCP_PROMPT")
+    # Lifecycle hooks (deep-merged by the CLI, so the user's own hooks still fire).
+    [ -n "$RIVEN_HOOKS_SETTINGS" ] && rv+=(--settings "$RIVEN_HOOKS_SETTINGS")
     command "\${RIVEN_REAL_CLAUDE:-claude}" "\${rv[@]}" "$@"
   }
 fi
@@ -168,7 +183,13 @@ export function primeShellShim(): void {
   })
 }
 
-function ptyEnv(configDir?: string): Record<string, string> {
+// Build the PTY environment, guaranteeing a UTF-8 locale (issue #5). When the app
+// is launched from the macOS GUI (Finder/Dock) the shell's LANG/LC_* are usually
+// absent, so the shell + readline + CLIs fall back to the C/ASCII locale and
+// mangle multibyte input — typing Korean/CJK via an IME comes out corrupted.
+// If no UTF-8 locale is already present we set one (without clobbering a locale
+// the user has deliberately configured, e.g. ko_KR.UTF-8).
+function ptyEnv(configDir: string | undefined, key: string): Record<string, string> {
   const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
   // Only when the workspace pins a Claude account profile, so a terminal and the
   // native chat in the same workspace run as the same account. Without a profile
@@ -176,7 +197,10 @@ function ptyEnv(configDir?: string): Record<string, string> {
   if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   // zsh only: ZDOTDIR is what makes the shim possible, and bash/fish have no
   // equivalent that survives a login shell. Their terminals just run unshimmed.
-  const mcpConfig = shimReady && /zsh$/.test(defaultShell()) ? writeMcpConfig(implementedToolNames()) : null
+  // The pane key on the URL is how a hand-typed `claude` is attributed to THIS
+  // terminal's workspace, whatever directory the user has cd'd to since.
+  const mcpConfig =
+    shimReady && /zsh$/.test(defaultShell()) ? mcpConfigJson(implementedToolNames(), key) : null
   if (mcpConfig) {
     env.ZDOTDIR = shimDir()
     env.RIVEN_MCP_CONFIG = mcpConfig
@@ -185,6 +209,7 @@ function ptyEnv(configDir?: string): Record<string, string> {
     // That is usually right, but riven knows the absolute path it found itself.
     if (realClaude) env.RIVEN_REAL_CLAUDE = realClaude
   }
+  Object.assign(env, hookEnv(key))
   if (process.platform !== 'win32') {
     const hasUtf8 = [env.LC_ALL, env.LC_CTYPE, env.LANG].some((v) => v && /utf-?8/i.test(v))
     if (!hasUtf8) {
@@ -218,124 +243,110 @@ function send(s: Session, channel: string, ...args: unknown[]): void {
   if (!s.sender.isDestroyed()) s.sender.send(channel, ...args)
 }
 
-// Send any buffered PTY output as a single IPC message and clear the batch.
-function flushData(s: Session): void {
-  if (s.flushTimer) {
-    clearTimeout(s.flushTimer)
-    s.flushTimer = null
-  }
-  if (!s.dataBuf) return
-  const data = s.dataBuf
-  s.dataBuf = ''
-  s.outstanding += data.length
-  send(s, `pty:data:${s.key}`, data)
-  // Above the high-water mark of un-acked data: pause the source so main memory
-  // can't grow unbounded while the renderer catches up.
-  if (!s.paused && s.outstanding >= HIGH_WATER) {
-    s.paused = true
-    try {
-      s.proc.pause()
-    } catch {
-      /* pause unsupported — best effort */
-    }
+function resumeIfPaused(s: Session): void {
+  if (!s.paused) return
+  s.paused = false
+  try {
+    s.proc.resume()
+  } catch {
+    /* resume unsupported — best effort */
   }
 }
 
-// Best-effort plain-text snippet of an agent's reply, pulled from the raw PTY
-// output of the turn. Terminal UIs are full of ANSI/cursor redraws, so this
-// strips escapes + box-drawing and returns the tail few content lines — enough
-// for a notification preview, not a faithful transcript.
-function extractSummary(raw: string): string {
-  if (!raw) return ''
-  const noEsc = raw
-    // OSC (title etc.): ESC ] ... BEL/ST
-    .replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '')
-    // CSI + other single escapes
-    .replace(/\x1b[[\]()#;?=][0-9;?]*[ -/]*[@-~]/g, '')
-    .replace(/\x1b[@-Z\\-_]/g, '')
-    // remaining control chars except tab/newline/CR
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '')
-  const lines = noEsc.split('\n').map((ln) => {
-    // A CR redraws the line; keep only what's after the last CR.
-    const seg = ln.split('\r')
-    return seg[seg.length - 1].replace(/[─-╿▀-▟]/g, '').trimEnd()
-  })
-  const content = lines.filter((l) => l.trim().length > 0)
-  const tail = content.slice(-8).join('\n').replace(/[ \t]+/g, ' ').trim()
+// The last few content lines of the model, for a notification preview. Reading
+// the parsed grid beats scraping ANSI out of the raw stream: box drawing and
+// cursor games are already resolved.
+function bufferTail(term: HeadlessTerminal, lines: number): string {
+  const buf = term.buffer.active
+  const out: string[] = []
+  for (let y = buf.length - 1; y >= 0 && out.length < lines; y--) {
+    const line = buf.getLine(y)?.translateToString(true).trim()
+    if (line) out.unshift(line.replace(/[─-╿▀-▟]/g, '').replace(/\s+/g, ' ').trim())
+  }
+  const tail = out.filter(Boolean).join('\n')
   return tail.length > 240 ? '…' + tail.slice(-240) : tail
 }
 
-// Does this chunk contain a REAL bell? A 0x07 that terminates an OSC string is
-// not one. Every shell that sets the window title emits `ESC ] 2 ; <title> BEL`,
-// and oh-my-zsh's auto-title does it TWICE per prompt (window + tab) — so
-// treating any 0x07 as a bell fired two spurious notifications for every command
-// the user ran. Verified against the user's own zsh in a real pty: 12 BEL bytes,
-// all 12 OSC terminators, zero actual bells.
-//
-// A state machine, NOT a lookahead: node-pty hands us arbitrary chunks, so every
-// boundary has to be resumable — including one falling BETWEEN the ESC and the
-// `]` that introduce the OSC. A version of this that peeked at `data[i + 1]`
-// looked correct and passed on realistic chunk sizes, but read `undefined` at
-// such a split, missed the OSC entirely, and then counted its terminator as a
-// bell: replaying a real capture one byte at a time fired all 16 times.
-function hasBell(s: Session, data: string): boolean {
-  let bell = false
-  for (const c of data) {
-    switch (s.osc) {
-      case 1: // saw ESC outside an OSC
-        if (c === ']') s.osc = 2
-        else if (c === '\x1b') s.osc = 1
-        else {
-          s.osc = 0
-          if (c === '\x07') bell = true
-        }
-        break
-      case 2: // inside an OSC string: BEL and ST both just end it
-        if (c === '\x07') s.osc = 0
-        else if (c === '\x1b') s.osc = 3
-        break
-      case 3: // inside an OSC, saw ESC — ST is ESC \
-        s.osc = c === '\\' ? 0 : c === '\x1b' ? 3 : 2
-        break
-      default:
-        if (c === '\x1b') s.osc = 1
-        else if (c === '\x07') bell = true
-    }
+// Deliver a model snapshot and start a fresh flow-control epoch. Anything the
+// coalescer still holds is flushed first so it precedes the snapshot on the
+// wire (the renderer drops it by revision anyway).
+function sendSnapshot(s: Session): void {
+  s.coalescer.flush()
+  s.epoch += 1
+  s.sentChars = 0
+  s.ackedChars = 0
+  resumeIfPaused(s)
+  let data = ''
+  try {
+    data = s.serialize.serialize({ scrollback: SNAPSHOT_SCROLLBACK })
+  } catch (e) {
+    console.error('[pty] serialize failed', e)
   }
-  return bell
+  s.needsSnapshot = false
+  send(s, `pty:snapshot:${s.key}`, {
+    data,
+    rev: s.parsed,
+    epoch: s.epoch,
+    cols: s.cols,
+    rows: s.rows
+  })
+  s.coalescer.markFlushed()
 }
 
-// "Working" = an agent is the foreground child AND output is actively flowing.
-// Output activity (onData) drives busy on; a gap of ACTIVE_MS drives it off, so
-// an agent sitting idle at its input prompt does not read as running.
+function publishActivity(s: Session, notify: AttentionReason): void {
+  const snap = s.activity.snapshot()
+  send(s, 'pty:status', { key: s.key, busy: snap.state === 'working', attention: snap.attention })
+  if (notify && Date.now() >= s.startupUntil) {
+    send(s, 'pty:done', { key: s.key, reason: notify, summary: bufferTail(s.term, 8) })
+  }
+}
+
+// Output-flow heuristic for agents without hooks: bytes flowing from an agent
+// process = working; ACTIVE_MS of silence = idle. A finished turn only counts
+// (and notifies) if the user kicked it off with Enter and it ran a while.
 function markActive(s: Session): void {
-  if (!s.agentPresent) return
-  if (!s.busy) {
-    s.busy = true
+  if (!s.agentPresent || s.activity.hookDriven) return
+  if (s.activity.snapshot().state !== 'working') {
     s.busyStart = Date.now()
-    send(s, 'pty:status', { key: s.key, busy: true })
+    publishActivity(s, s.activity.heuristic('working'))
   }
   if (s.activeTimer) clearTimeout(s.activeTimer)
   s.activeTimer = setTimeout(() => {
-    s.busy = false
+    s.activeTimer = null
     const duration = Date.now() - s.busyStart
-    send(s, 'pty:status', { key: s.key, busy: false })
-    // Notify only for a turn the USER kicked off (Enter) — not idle TUI redraws —
-    // and only once per turn. Include a snippet of the agent's reply.
-    if (
-      s.awaitingReply &&
-      duration > NOTIFY_MIN_BUSY_MS &&
-      Date.now() >= s.startupUntil
-    ) {
-      const summary = extractSummary(s.turnBuf)
-      s.awaitingReply = false
-      s.turnBuf = ''
-      send(s, 'pty:done', { key: s.key, duration, summary })
-    }
+    const reason = s.activity.heuristic('idle')
+    const notify = reason && s.awaitingReply && duration > NOTIFY_MIN_BUSY_MS ? reason : null
+    if (!notify) s.activity.clearAttention()
+    s.awaitingReply = false
+    publishActivity(s, notify)
   }, ACTIVE_MS)
 }
 
+function dispose(s: Session): void {
+  if (s.poll) clearInterval(s.poll)
+  if (s.activeTimer) clearTimeout(s.activeTimer)
+  s.coalescer.dispose()
+  try {
+    s.term.dispose()
+  } catch {
+    /* already disposed */
+  }
+  sessions.delete(s.key)
+}
+
 export function registerPtyHandlers(): void {
+  // Agent hooks arrive on the loopback server tagged with the pane they ran in.
+  registerAgentHooks((pane, event) => {
+    const s = sessions.get(pane)
+    if (!s) return
+    if (s.activeTimer) {
+      clearTimeout(s.activeTimer)
+      s.activeTimer = null
+    }
+    s.awaitingReply = false
+    publishActivity(s, s.activity.hook(event))
+  })
+
   // Clean quit. PTYs live in the main process; left running they make Electron
   // hang ("Not Responding") on quit. Killing the child isn't enough — node-pty's
   // master-fd handle keeps the libuv loop alive after the child dies, so the
@@ -346,14 +357,12 @@ export function registerPtyHandlers(): void {
     quitting = true
     // Kill terminals so no shell/agent is orphaned.
     for (const [, s] of sessions) {
-      if (s.poll) clearInterval(s.poll)
-      if (s.activeTimer) clearTimeout(s.activeTimer)
-      if (s.flushTimer) clearTimeout(s.flushTimer)
       try {
         s.proc.kill()
       } catch {
         /* already exited */
       }
+      dispose(s)
     }
     sessions.clear()
     // NOTE: the hard SIGKILL backstop is registered LAST in index.ts (after the
@@ -377,8 +386,12 @@ export function registerPtyHandlers(): void {
       const key = opts.sessionKey
       const existing = sessions.get(key)
       if (existing) {
+        // Reattach after a reload / remount: the renderer's xterm is fresh, so
+        // the next time it says it is visible it gets the model.
         existing.sender = event.sender
-        return { id: key, existed: true, buffer: existing.snapshot }
+        existing.visible = false
+        existing.needsSnapshot = true
+        return { id: key, existed: true }
       }
 
       const shell = defaultShell()
@@ -393,66 +406,107 @@ export function registerPtyHandlers(): void {
       const args = opts.initialCommand
         ? [...loginInteractive, '-c', `${opts.initialCommand}; exec ${shell} -il`]
         : loginInteractive
+      const cols = opts.cols && opts.cols > 0 ? opts.cols : 80
+      const rows = opts.rows && opts.rows > 0 ? opts.rows : 24
 
       let proc: pty.IPty
       try {
         proc = pty.spawn(shell, args, {
           name: 'xterm-256color',
-          cols: opts.cols ?? 80,
-          rows: opts.rows ?? 24,
+          cols,
+          rows,
           cwd: opts.cwd || os.homedir(),
-          env: ptyEnv(opts.configDir)
+          env: ptyEnv(opts.configDir, key)
         })
       } catch (e) {
         // A bad shell / cwd shouldn't reject the invoke and break the pane.
         console.error('[riven] pty spawn failed', e)
-        return { id: key, existed: false, buffer: '', error: e instanceof Error ? e.message : String(e) }
+        return { id: key, existed: false, error: e instanceof Error ? e.message : String(e) }
       }
+
+      const term = new HeadlessTerminal({
+        cols,
+        rows,
+        scrollback: MODEL_SCROLLBACK,
+        allowProposedApi: true
+      })
+      const serialize = new SerializeAddon()
+      term.loadAddon(serialize as unknown as ITerminalAddon)
 
       const s: Session = {
         key,
         proc,
         sender: event.sender,
-        snapshot: '',
-        busy: false,
-        busyStart: 0,
-        awaitingReply: false,
-        osc: 0,
-        turnBuf: '',
-        startupUntil: Date.now() + 3000,
+        cwd: opts.cwd,
+        term,
+        serialize,
+        written: 0,
+        parsed: 0,
+        coalescer: null as unknown as OutputCoalescer,
+        visible: false,
+        needsSnapshot: false,
+        epoch: 0,
+        sentChars: 0,
+        ackedChars: 0,
+        paused: false,
+        cols,
+        rows,
+        activity: new TerminalActivity(),
         agentPresent: false,
         agentName: null,
-        lastInput: 0,
-        lastData: Date.now(),
         poll: null,
         polling: false,
         activeTimer: null,
-        dataBuf: '',
-        flushTimer: null,
-        outstanding: 0,
-        paused: false
+        busyStart: 0,
+        lastInput: 0,
+        lastData: Date.now(),
+        startupUntil: Date.now() + 3000,
+        awaitingReply: false
       }
+      s.coalescer = new OutputCoalescer(realTimers, ({ data, rev }) => {
+        if (!s.visible) {
+          // Nobody is looking: the model has it, and the reveal restores from
+          // the model. Dropping here is what keeps a background agent free.
+          s.needsSnapshot = true
+          return
+        }
+        s.sentChars += data.length
+        send(s, `pty:data:${key}`, { data, rev, epoch: s.epoch })
+        // Above the high-water mark of un-acked data: pause the source so main
+        // memory can't grow unbounded while the renderer catches up.
+        if (!s.paused && s.sentChars - s.ackedChars >= HIGH_WATER) {
+          s.paused = true
+          try {
+            s.proc.pause()
+          } catch {
+            /* pause unsupported — best effort */
+          }
+        }
+      })
       sessions.set(key, s)
+
+      // The model reports what the parser resolved: a real BEL (never an OSC
+      // terminator — the parser knows the difference) and title changes.
+      term.onBell(() => send(s, 'pty:bell', { key }))
+      term.onTitleChange((title) => send(s, 'pty:title', { key, title }))
 
       proc.onData((data) => {
         s.lastData = Date.now()
-        // Coalesce output into one IPC per frame instead of one per chunk.
-        s.dataBuf += data
-        if (s.dataBuf.length >= FLUSH_MAX) flushData(s)
-        else if (!s.flushTimer) s.flushTimer = setTimeout(() => flushData(s), FLUSH_MS)
-        if (hasBell(s, data)) send(s, 'pty:bell', { key })
-        // While waiting for a reply, accumulate the turn's output (capped) so the
-        // done-notification can preview it.
-        if (s.awaitingReply) {
-          s.turnBuf += data
-          if (s.turnBuf.length > 16000) s.turnBuf = s.turnBuf.slice(-16000)
-        }
+        // Revision is assigned on write and confirmed (in order) on parse: a
+        // snapshot taken between the two reflects exactly the confirmed ones,
+        // so a chunk delivered with a higher revision is never inside it.
+        const rev = ++s.written
+        term.write(data, () => {
+          s.parsed = rev
+        })
+        s.coalescer.handle(data, rev)
         // Ignore output that's just an echo of the user's own keystrokes; only
         // agent-generated output (not right after typing) counts as "working".
         if (Date.now() - s.lastInput > INPUT_ECHO_MS) markActive(s)
       })
 
-      // Track whether an agent is the foreground child.
+      // Track whether an agent is the foreground child (tab title, context
+      // routing, and the heuristic's gate).
       s.poll = setInterval(async () => {
         if (s.polling) return
         // When no agent is present and the terminal has been silent, skip the
@@ -466,28 +520,24 @@ export function registerPtyHandlers(): void {
         s.agentPresent = !!name
         s.agentName = name
         s.polling = false
-        // Notify the renderer when an LLM agent appears/disappears (or changes) in
-        // this pane — used for context routing + auto tab titles.
         if (s.agentPresent !== was || name !== wasName)
           send(s, 'pty:agent', { key, agent: s.agentPresent, name })
-        // Agent gone → definitely not running.
-        if (!s.agentPresent && s.busy) {
-          s.busy = false
+        // Agent gone → definitely not running, and its hooks are gone with it.
+        if (!s.agentPresent && was) {
           if (s.activeTimer) clearTimeout(s.activeTimer)
-          send(s, 'pty:status', { key, busy: false })
+          s.activeTimer = null
+          s.activity.reset()
+          publishActivity(s, null)
         }
       }, POLL_MS)
 
       proc.onExit(({ exitCode }) => {
-        flushData(s) // don't drop the final output batch
+        s.coalescer.flush()
         send(s, `pty:exit:${key}`, exitCode)
-        if (s.poll) clearInterval(s.poll)
-        if (s.activeTimer) clearTimeout(s.activeTimer)
-        if (s.flushTimer) clearTimeout(s.flushTimer)
-        sessions.delete(key)
+        dispose(s)
       })
 
-      return { id: key, existed: false, buffer: '' }
+      return { id: key, existed: false }
     }
   )
 
@@ -495,77 +545,71 @@ export function registerPtyHandlers(): void {
     const s = sessions.get(key)
     if (!s) return
     s.lastInput = Date.now() // mark keystroke time so its echo isn't seen as work
-    // A carriage return = the user submitted a line. If an agent is running, arm
-    // the one-shot "reply done" notification and start capturing its output.
-    if (s.agentPresent && data.includes('\r')) {
-      s.awaitingReply = true
-      s.turnBuf = ''
-    }
+    // A carriage return = the user submitted a line. If an agent without hooks
+    // is running, arm the one-shot "reply done" notification.
+    if (s.agentPresent && !s.activity.hookDriven && data.includes('\r')) s.awaitingReply = true
     s.proc.write(data)
   })
 
-  // The renderer acks bytes once xterm has parsed them; drain the in-flight count
-  // and resume the PTY when we're back below the low-water mark.
-  ipcMain.on('pty:ack', (_event, key: string, bytes: number) => {
+  // Cumulative ack for the current epoch (chars the renderer has parsed).
+  ipcMain.on('pty:ack', (_event, key: string, epoch: number, processed: number) => {
     const s = sessions.get(key)
-    if (!s) return
-    s.outstanding = Math.max(0, s.outstanding - bytes)
-    if (s.paused && s.outstanding <= LOW_WATER) {
-      s.paused = false
-      try {
-        s.proc.resume()
-      } catch {
-        /* resume unsupported — best effort */
-      }
-    }
+    if (!s || epoch !== s.epoch) return
+    s.ackedChars = Math.min(s.sentChars, Math.max(s.ackedChars, processed))
+    if (s.paused && s.sentChars - s.ackedChars <= LOW_WATER) resumeIfPaused(s)
   })
 
-  // The renderer became visible again (was buffering while hidden): clear the
-  // in-flight count and resume the PTY unconditionally. Safe because on show the
-  // pane replays its buffered screen and then fits, so main's outstanding estimate
-  // can be reset without losing display state.
-  ipcMain.on('pty:resume', (_event, key: string) => {
+  // The renderer says whether a live, sized xterm wants this terminal's bytes.
+  // Hidden: stop delivering and stop counting — a hidden pane must never be
+  // the reason a shell blocks on write. Visible: restore from the model if
+  // anything was dropped in the meantime.
+  ipcMain.on('pty:visible', (_event, key: string, visible: boolean) => {
     const s = sessions.get(key)
     if (!s) return
-    s.outstanding = 0
-    if (s.paused) {
-      s.paused = false
-      try {
-        s.proc.resume()
-      } catch {
-        /* best effort */
-      }
+    s.visible = visible
+    if (!visible) {
+      s.epoch += 1
+      s.sentChars = 0
+      s.ackedChars = 0
+      resumeIfPaused(s)
+      // Chunks already on the wire when the renderer went hidden are lost to
+      // it (it discards its queue), so the reveal must come from the model.
+      s.needsSnapshot = true
+      return
     }
+    if (s.needsSnapshot) sendSnapshot(s)
   })
 
-  ipcMain.on('pty:snapshot', (_event, key: string, data: string) => {
+  // The user looked at the terminal: its attention flag is delivered.
+  ipcMain.on('pty:seen', (_event, key: string) => {
     const s = sessions.get(key)
-    if (s) s.snapshot = data
+    if (s && s.activity.clearAttention()) publishActivity(s, null)
   })
 
   ipcMain.on('pty:resize', (_event, key: string, cols: number, rows: number) => {
     const s = sessions.get(key)
-    if (s && cols > 0 && rows > 0) {
-      try {
-        s.proc.resize(cols, rows)
-      } catch {
-        /* pty may have exited */
-      }
+    if (!s || !(cols > 0 && rows > 0)) return
+    // Same size = no SIGWINCH. A refit after a font load or a tab switch must
+    // not make every TUI redraw itself.
+    if (cols === s.cols && rows === s.rows) return
+    s.cols = cols
+    s.rows = rows
+    try {
+      s.term.resize(cols, rows)
+      s.proc.resize(cols, rows)
+    } catch {
+      /* pty may have exited */
     }
   })
 
   ipcMain.on('pty:kill', (_event, key: string) => {
     const s = sessions.get(key)
-    if (s) {
-      if (s.poll) clearInterval(s.poll)
-      if (s.activeTimer) clearTimeout(s.activeTimer)
-      if (s.flushTimer) clearTimeout(s.flushTimer)
-      try {
-        s.proc.kill()
-      } catch {
-        /* already dead */
-      }
-      sessions.delete(key)
+    if (!s) return
+    try {
+      s.proc.kill()
+    } catch {
+      /* already dead */
     }
+    dispose(s)
   })
 }

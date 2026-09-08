@@ -75,8 +75,12 @@ export default function TerminalPanel({
 
   useEffect(() => {
     const notify = (body: string): void => window.api.notify.show(staticT('term.notifyTitle', { n: paneId }), body)
-    const offStatus = window.api.pty.onStatus(({ key, busy: b }) => {
-      if (key === sessionKey) setBusy(b)
+    // Attention (finished / needs input) is main's flag: it survives remounts and
+    // clears when the user looks (pty:seen), not when this component guesses.
+    const offStatus = window.api.pty.onStatus(({ key, busy: b, attention: a }) => {
+      if (key !== sessionKey) return
+      setBusy(b)
+      setAttention(a !== null)
     })
     const offAgent = window.api.pty.onAgent(({ key, agent, name }) => {
       if (key !== sessionKey) return
@@ -96,20 +100,24 @@ export default function TerminalPanel({
       lastBell = Date.now()
       notify(staticT('term.bell'))
     })
-    const offDone = window.api.pty.onDone(({ key, summary }) => {
+    const offDone = window.api.pty.onDone(({ key, reason, summary }) => {
       if (key !== sessionKey) return
       // Only fire when the user isn't already looking at this terminal (else the
       // reply is right in front of them). Body previews the agent's reply.
       const looking = api?.isActive && document.hasFocus()
-      if (!api?.isActive) setAttention(true)
-      if (!looking) notify(summary?.trim() || staticT('term.done'))
+      if (looking) {
+        window.api.pty.seen(sessionKey)
+        return
+      }
+      notify(
+        reason === 'needs_input' ? staticT('term.needsInput') : summary?.trim() || staticT('term.done')
+      )
     })
-    const offActive = api?.onDidActiveChange?.(() => {
-      if (api?.isActive) setAttention(false)
-    })
-    const onWinFocus = (): void => {
-      if (api?.isActive) setAttention(false)
+    const seen = (): void => {
+      if (api?.isActive && document.hasFocus()) window.api.pty.seen(sessionKey)
     }
+    const offActive = api?.onDidActiveChange?.(seen)
+    const onWinFocus = (): void => seen()
     window.addEventListener('focus', onWinFocus)
     return () => {
       offStatus()
@@ -125,7 +133,7 @@ export default function TerminalPanel({
   return (
     <div
       className={`terminal-panel${attention ? ' attn' : busy ? ' busy' : ''}`}
-      onMouseDown={() => setAttention(false)}
+      onMouseDown={() => window.api.pty.seen(sessionKey)}
     >
       <TerminalPane
         sessionKey={sessionKey}
@@ -136,7 +144,7 @@ export default function TerminalPanel({
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}
         onFocus={() => {
           contextBus.setActive(workspace, paneId)
-          setAttention(false)
+          window.api.pty.seen(sessionKey)
         }}
       />
     </div>

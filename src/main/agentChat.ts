@@ -5,7 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { resolveBin } from './shellPath'
 import {
-  writeMcpConfig,
+  mcpConfigJson,
   mcpSystemPrompt,
   MCP_TOOL_PREFIX,
   implementedToolNames
@@ -405,12 +405,13 @@ async function startSession(
     '--allowedTools',
     `${DEFAULT_ALLOWED},${MCP_TOOL_PREFIX}`
   ]
-  // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): wire
-  // the stdio relay via --mcp-config. Only implemented tools the user hasn't
-  // disabled are advertised.
+  // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): the
+  // loopback HTTP server, inline in --mcp-config. Only implemented tools the
+  // user hasn't disabled are advertised; the pane key rides on the URL so every
+  // call comes back tagged with WHICH conversation made it.
   const disabled = new Set(opts.mcpDisabled ?? [])
   const enabled = implementedToolNames().filter((n) => !disabled.has(n))
-  const mcpConfig = enabled.length ? writeMcpConfig(enabled) : null
+  const mcpConfig = enabled.length ? mcpConfigJson(enabled, key) : null
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
   // Document available tools + the user's global instruction (--append-system-prompt).
   const globalPrompt = (opts.globalPrompt ?? '').trim()
@@ -805,7 +806,7 @@ async function probeSessionInfo(
   const cmd = await resolveBin('claude')
   const empty: SessionInfo = { slashCommands: [], mcpServers: [] }
   if (!cmd) return empty
-  const mcpConfig = writeMcpConfig(implementedToolNames())
+  const mcpConfig = mcpConfigJson(implementedToolNames())
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
   const env = { ...process.env }

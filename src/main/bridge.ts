@@ -1,4 +1,4 @@
-import { app, ipcMain, WebContents, Notification, BrowserWindow, shell } from 'electron'
+import { app, ipcMain, WebContents, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import chokidar, { FSWatcher } from 'chokidar'
@@ -95,26 +95,4 @@ export function registerBridgeHandlers(): void {
     if (wc.isLoading()) wc.once('did-finish-load', () => wc.setZoomFactor(f))
   })
 
-  ipcMain.on(
-    'notify:show',
-    (e, opts: { title: string; body: string; force?: boolean; paneId?: string }) => {
-      // Default: only when the app is unfocused. `force` (renderer already decided
-      // the relevant pane isn't the one being viewed) shows even while focused, so a
-      // completion in a BACKGROUND workspace/pane still notifies.
-      if (!opts.force && BrowserWindow.getAllWindows().some((w) => w.isFocused())) return
-      if (!Notification.isSupported()) return
-      const n = new Notification({ title: opts.title, body: opts.body, silent: false })
-      n.on('click', () => {
-        const win =
-          BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
-        if (win) {
-          if (win.isMinimized()) win.restore()
-          win.show()
-          win.focus()
-        }
-        if (opts.paneId) e.sender.send('notify:click', opts.paneId)
-      })
-      n.show()
-    }
-  )
 }

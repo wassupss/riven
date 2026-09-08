@@ -1,21 +1,12 @@
 import { ipcMain, WebContents } from 'electron'
-import * as net from 'net'
-import * as fs from 'fs'
-import * as path from 'path'
-import * as os from 'os'
+import * as http from 'http'
 import { randomUUID } from 'crypto'
 
-// riven's OWN tools, exposed to the headless Claude CLI over MCP — things the CLI
-// can't do itself or that should run inside riven's UI. Mirrors the native
-// Agent/ChatAskServer.swift design: a tiny stdio MCP relay (Node, written to
-// disk) is wired via --mcp-config; on a tools/call it forwards {tool,args,cwd}
-// over a unix socket to THIS main process, which performs it (usually by asking
-// the renderer) and returns the result string to the agent.
-//
-// Porting note vs native: native relayed to the Swift app over the socket; here
-// the relay still uses a socket (the CLI spawns it as a separate process, so it
-// can't call into Electron directly), but the main process owns everything and
-// forwards UI work to the renderer via ipc instead of a second hop.
+// riven's OWN tools, exposed to the Claude CLI over MCP — things the CLI can't do
+// itself or that should run inside riven's UI. The CLI talks Streamable-HTTP MCP
+// to a loopback server in THIS main process (see registerMcpServer); a tools/call
+// is performed here (usually by asking the renderer) and the result string goes
+// back to the agent.
 
 export interface McpToolDef {
   name: string
@@ -367,85 +358,64 @@ export function implementedToolNames(): string[] {
   return MCP_TOOLS.filter((t) => t.implemented).map((t) => t.name)
 }
 
-// ---- one shared socket server for the whole app ----
-let sockPath: string | null = null
-let relayPath: string | null = null
-let toolsJsonPath: string | null = null
-let configPath: string | null = null
-let server: net.Server | null = null
+// ---- one loopback HTTP MCP server for the whole app ---------------------------
+//
+// Streamable-HTTP MCP, hand-rolled (JSON responses only — the CLI never needs
+// the SSE leg for a tools-only server). Verified against the real CLI: a
+// `{type:"http", url, headers:{Authorization}}` entry in --mcp-config reports
+// `connected` and lists the tools, and the CLI echoes our Mcp-Session-Id back.
+//
+// Why HTTP and not the old stdio relay + unix socket: the relay design needed a
+// script on disk, a socket file per launch (which piled up after every crash /
+// hot restart), a config that went stale the moment the socket uid changed, and
+// a ZDOTDIR shim to smuggle the config into hand-typed CLIs. A loopback port +
+// a per-run capability token has none of that state: nothing on disk, nothing
+// to sweep, and a stale config simply fails to connect instead of pointing at a
+// dead socket. Same shape paseo uses (`/mcp/agents` + randomUUID token).
+let server: http.Server | null = null
+let baseUrl: string | null = null
 let getWebContents: (() => WebContents | null) | null = null
+// Random per run and only ever handed to processes riven spawns (or shells riven
+// opens), so a config copied elsewhere cannot drive this app after a restart.
+const authToken = randomUUID()
+const sessionId = randomUUID()
 
 const pending = new Map<string, (result: string) => void>()
 const REQUEST_TIMEOUT_MS = 1_800_000 // 30 min — matches native (waits for the human)
+const MAX_BODY_BYTES = 1024 * 1024
 
-function supportDir(): string {
-  // A short base path: unix socket paths are capped at ~104 bytes on macOS, and
-  // userData under "Application Support" is long — tmpdir keeps us well under.
-  const d = path.join(os.tmpdir(), 'riven-mcp')
-  try {
-    fs.mkdirSync(d, { recursive: true })
-  } catch {
-    /* ignore */
-  }
-  return d
+// Extra loopback routes (agent hooks post here too) share the port and token.
+type RouteHandler = (
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  body: string
+) => void | Promise<void>
+const routes = new Map<string, RouteHandler>()
+export function registerHttpRoute(pathname: string, handler: RouteHandler): void {
+  routes.set(pathname, handler)
+}
+export function mcpAuthToken(): string {
+  return authToken
+}
+export function mcpBaseUrl(): string | null {
+  return baseUrl
 }
 
-// The Node stdio MCP relay the CLI spawns. Reads the enabled tool defs from a
-// json file (argv[3]) so schemas live in TS, and forwards each call over argv[2].
-const RELAY_SOURCE = `
-const net = require('net')
-const fs = require('fs')
-const SOCK = process.argv[2]
-let TOOLS = []
-try { TOOLS = JSON.parse(fs.readFileSync(process.argv[3], 'utf8')) } catch (e) { TOOLS = [] }
-function send(m) { process.stdout.write(JSON.stringify(m) + '\\n') }
-function call(tool, args) {
-  return new Promise((resolve) => {
-    const s = net.connect(SOCK)
-    let buf = ''
-    let done = false
-    const finish = (v) => { if (!done) { done = true; resolve(v) } }
-    // end() writes the request AND half-closes our write side (like native's
-    // shutdown(SHUT_WR)) so the server sees 'end' and processes the call; the
-    // read side stays open for the reply.
-    // RIVEN_CHAT_KEY identifies the chat pane this agent IS, so riven can route
-    // the call back to that exact conversation instead of guessing from what the
-    // user happens to be looking at. Absent for agents riven did not spawn.
-    s.on('connect', () => { s.end(JSON.stringify({ tool: tool, args: args, cwd: process.cwd(), key: process.env.RIVEN_CHAT_KEY || null }) + '\\n') })
-    s.on('data', (d) => { buf += d })
-    s.on('close', () => finish(buf))
-    s.on('error', () => finish('error: riven is not reachable'))
-  })
+interface JsonRpcRequest {
+  jsonrpc?: string
+  id?: string | number | null
+  method?: string
+  params?: Record<string, unknown>
 }
-let buffer = ''
-process.stdin.on('data', (chunk) => {
-  buffer += chunk
-  let nl
-  while ((nl = buffer.indexOf('\\n')) >= 0) {
-    const line = buffer.slice(0, nl).trim()
-    buffer = buffer.slice(nl + 1)
-    if (!line) continue
-    let r
-    try { r = JSON.parse(line) } catch (e) { continue }
-    handle(r)
-  }
-})
-async function handle(r) {
-  const mid = r.id
-  const m = r.method
-  if (m === 'initialize') {
-    send({ jsonrpc: '2.0', id: mid, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'riven', version: '1.0' } } })
-  } else if (m === 'tools/list') {
-    send({ jsonrpc: '2.0', id: mid, result: { tools: TOOLS } })
-  } else if (m === 'tools/call') {
-    const p = r.params || {}
-    const out = await call(p.name || '', p.arguments || {})
-    send({ jsonrpc: '2.0', id: mid, result: { content: [{ type: 'text', text: out || '(no result)' }] } })
-  } else if (mid !== undefined && mid !== null) {
-    send({ jsonrpc: '2.0', id: mid, error: { code: -32601, message: 'unknown method' } })
-  }
+
+function toolDefs(enabled: Set<string> | null): Array<Record<string, unknown>> {
+  return MCP_TOOLS.filter((t) => t.implemented && (!enabled || enabled.has(t.name))).map((t) => ({
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema
+  }))
 }
-`
 
 // riven_api_request: run an HTTP request and return a compact status/headers/body
 // summary. Body is truncated so a huge response doesn't flood the transcript.
@@ -471,53 +441,140 @@ async function runApiRequest(args: Record<string, unknown>): Promise<string> {
   }
 }
 
-function handleConnection(sock: net.Socket): void {
-  let data = ''
-  sock.setEncoding('utf8')
-  sock.on('data', (d) => {
-    data += d
-  })
-  sock.on('end', () => {
-    let req: { tool?: string; args?: Record<string, unknown>; cwd?: string; key?: string | null }
-    try {
-      req = JSON.parse(data)
-    } catch {
-      sock.end('')
-      return
-    }
-    const tool = req.tool
-    if (!tool) {
-      sock.end('')
-      return
-    }
-    // Tools that need no UI run right here in the main process (no CORS, works
-    // even with no window focused).
-    if (tool === 'riven_api_request') {
-      void runApiRequest(req.args ?? {}).then((out) => sock.end(out))
-      return
-    }
-    const wc = getWebContents?.()
-    if (!wc || wc.isDestroyed()) {
-      sock.end('riven: no window available')
-      return
-    }
+// Run one tool call. UI tools round-trip through the renderer (mcp:invoke →
+// mcp:result); pure-network ones run right here so they work with no window.
+function invokeTool(
+  tool: string,
+  args: Record<string, unknown>,
+  cwd: string | null,
+  key: string | null,
+  onAbort: (cancel: () => void) => void
+): Promise<string> {
+  if (tool === 'riven_api_request') return runApiRequest(args)
+  if (!TOOL_BY_NAME.get(tool)?.implemented) return Promise.resolve(`error: unknown tool ${tool}`)
+  const wc = getWebContents?.()
+  if (!wc || wc.isDestroyed()) return Promise.resolve('riven: no window available')
+  return new Promise((resolve) => {
     const id = randomUUID()
     const timer = setTimeout(() => {
-      if (pending.delete(id)) sock.end('riven: timed out waiting for the user')
+      if (pending.delete(id)) resolve('riven: timed out waiting for the user')
     }, REQUEST_TIMEOUT_MS)
     pending.set(id, (result) => {
       clearTimeout(timer)
-      try {
-        sock.end(result)
-      } catch {
-        /* client gone */
-      }
+      resolve(result)
     })
-    wc.send('mcp:invoke', { id, tool, args: req.args ?? {}, cwd: req.cwd ?? null, key: req.key ?? null })
+    // The agent hung up (killed, or its own timeout): stop waiting on the user.
+    onAbort(() => {
+      if (pending.delete(id)) clearTimeout(timer)
+    })
+    wc.send('mcp:invoke', { id, tool, args, cwd, key })
   })
-  sock.on('error', () => {
-    /* client vanished mid-call */
+}
+
+function readBody(req: http.IncomingMessage): Promise<string | null> {
+  return new Promise((resolve) => {
+    let body = ''
+    let over = false
+    req.setEncoding('utf8')
+    req.on('data', (d: string) => {
+      if (over) return
+      body += d
+      if (body.length > MAX_BODY_BYTES) over = true
+    })
+    req.on('end', () => resolve(over ? null : body))
+    req.on('error', () => resolve(null))
   })
+}
+
+function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
+  const text = JSON.stringify(payload)
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(text),
+    'mcp-session-id': sessionId
+  })
+  res.end(text)
+}
+
+async function handleMcp(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  url: URL,
+  body: string
+): Promise<void> {
+  if (req.method === 'DELETE') {
+    res.writeHead(200).end()
+    return
+  }
+  if (req.method !== 'POST') {
+    res.writeHead(405, { allow: 'POST, DELETE' }).end()
+    return
+  }
+  let msg: JsonRpcRequest
+  try {
+    msg = JSON.parse(body) as JsonRpcRequest
+  } catch {
+    sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } })
+    return
+  }
+  const id = msg.id
+  // Notifications (no id) are acknowledged and otherwise ignored.
+  if (id === undefined || id === null) {
+    res.writeHead(202).end()
+    return
+  }
+  const pane = url.searchParams.get('pane')
+  const toolsParam = url.searchParams.get('tools')
+  const enabled = toolsParam ? new Set(toolsParam.split(',').filter(Boolean)) : null
+  const params = msg.params ?? {}
+  switch (msg.method) {
+    case 'initialize':
+      sendJson(res, 200, {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: (params.protocolVersion as string) || '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: 'riven', version: '2.0' }
+        }
+      })
+      return
+    case 'ping':
+      sendJson(res, 200, { jsonrpc: '2.0', id, result: {} })
+      return
+    case 'tools/list':
+      sendJson(res, 200, { jsonrpc: '2.0', id, result: { tools: toolDefs(enabled) } })
+      return
+    case 'tools/call': {
+      const name = String(params.name ?? '')
+      const args = (params.arguments as Record<string, unknown>) ?? {}
+      // Every agent riven starts — chat pane or terminal shell — carries the key
+      // of the pane it runs in on its URL, so the renderer routes the call to
+      // that pane's workspace. `cwd` is only for a config built by hand.
+      const cwd = url.searchParams.get('cwd')
+      const text = await invokeTool(name, args, cwd, pane, (cancel) => res.on('close', cancel))
+      if (res.destroyed) return
+      sendJson(res, 200, {
+        jsonrpc: '2.0',
+        id,
+        result: { content: [{ type: 'text', text: text || '(no result)' }] }
+      })
+      return
+    }
+    default:
+      sendJson(res, 200, {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32601, message: `unknown method ${msg.method}` }
+      })
+  }
+}
+
+function isAuthorized(req: http.IncomingMessage, url: URL): boolean {
+  const header = req.headers.authorization
+  if (header === `Bearer ${authToken}`) return true
+  // Hook commands are shell one-liners; a query token keeps them dependency-free.
+  return url.searchParams.get('token') === authToken
 }
 
 // Called once from index.ts with a getter for the main window's web contents.
@@ -532,120 +589,63 @@ export function registerMcpServer(webContentsGetter: () => WebContents | null): 
     }
   })
 
-  const dir = supportDir()
-  const uid = randomUUID().slice(0, 8)
-  sockPath = path.join(dir, `sock-${uid}.sock`)
-  relayPath = path.join(dir, 'relay.cjs')
-  toolsJsonPath = path.join(dir, 'tools.json')
-  configPath = path.join(dir, 'config.json')
-
-  try {
-    fs.writeFileSync(relayPath, RELAY_SOURCE)
-  } catch (e) {
-    console.error('[mcp] failed to write relay', e)
-    return
-  }
-
-  try {
-    fs.rmSync(sockPath, { force: true })
-  } catch {
-    /* ignore */
-  }
-  // allowHalfOpen: the relay half-closes its write side (FIN) after sending the
-  // request; without this Node would auto-close our side too, so we couldn't
-  // write the (async) reply back after the renderer answers.
-  server = net.createServer({ allowHalfOpen: true }, handleConnection)
-  server.on('error', (e) => console.error('[mcp] socket error', e))
-  server.listen(sockPath)
-  // Startup is the ONLY chance to collect the previous runs' sockets, so do it
-  // here rather than never. Detached: nothing about our own listener waits on it.
-  void sweepStaleSockets(dir, sockPath)
-}
-
-// A unix socket file outlives the process that bound it, and only a clean
-// `before-quit` unlinks ours — so an electron-vite hot restart, an
-// autoUpdater.quitAndInstall, a crash or a Force Quit each leave one behind. No
-// other process can collect it either: the one that knew it was alive is gone.
-//
-// The per-launch uid is NOT the bug and must stay — two riven instances really
-// do run at once (verified), and they cannot share one path. So staleness can't
-// be read off the name: connect to it. Refused = nobody is listening = orphaned.
-async function sweepStaleSockets(dir: string, keep: string): Promise<void> {
-  let names: string[]
-  try {
-    names = fs.readdirSync(dir)
-  } catch {
-    return
-  }
-  const socks = names.filter((n) => n.startsWith('sock-') && n.endsWith('.sock'))
-  await Promise.all(
-    socks.map(async (n) => {
-      const p = path.join(dir, n)
-      if (p === keep) return
-      // A sibling instance starting right now may have created its socket but
-      // not reached listen() yet; unlinking it would break that instance. Only
-      // consider ones that have had time to settle.
-      try {
-        if (Date.now() - fs.statSync(p).mtimeMs < 60_000) return
-      } catch {
+  routes.set('/mcp', handleMcp)
+  server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (!isAuthorized(req, url)) {
+      res.writeHead(401).end()
+      return
+    }
+    const handler = routes.get(url.pathname)
+    if (!handler) {
+      res.writeHead(404).end()
+      return
+    }
+    void readBody(req).then((body) => {
+      if (body === null) {
+        res.writeHead(413).end()
         return
       }
-      const alive = await new Promise<boolean>((resolve) => {
-        const c = net.connect(p)
-        // Guarded: the error handler and the timer below can both fire, and the
-        // second one must not re-enter destroy() or race the first verdict.
-        let settled = false
-        const timer = setTimeout(() => done(true), 1000)
-        function done(v: boolean): void {
-          if (settled) return
-          settled = true
-          clearTimeout(timer)
-          c.destroy()
-          resolve(v)
-        }
-        c.on('connect', () => done(true))
-        c.on('error', () => done(false))
-        // Silence is not proof of death — a busy peer may just be slow. Only an
-        // explicit refusal earns an unlink.
+      Promise.resolve(handler(req, res, url, body)).catch((e) => {
+        console.error('[mcp] route failed', url.pathname, e)
+        if (!res.headersSent) res.writeHead(500).end()
       })
-      if (alive) return
-      try {
-        fs.rmSync(p, { force: true })
-      } catch {
-        /* someone else got there first */
-      }
     })
-  )
+  })
+  // A tools/call can legitimately sit for minutes while the user answers
+  // ask_user; Node's default 5-minute requestTimeout would drop it mid-wait.
+  server.requestTimeout = 0
+  server.headersTimeout = 60_000
+  server.keepAliveTimeout = 65_000
+  server.on('error', (e) => console.error('[mcp] http error', e))
+  server.listen(0, '127.0.0.1', () => {
+    const addr = server?.address()
+    if (addr && typeof addr === 'object') baseUrl = `http://127.0.0.1:${addr.port}`
+  })
 }
 
-// Build the --mcp-config file for a session given the enabled tool names, and
-// return its path. `enabled` comes from the renderer's settings; only tools that
-// are BOTH implemented and enabled are advertised to the agent.
-export function writeMcpConfig(enabled?: string[]): string | null {
-  if (!sockPath || !relayPath || !toolsJsonPath || !configPath) return null
+// The --mcp-config value for one agent: inline JSON (the CLI accepts it as the
+// argument itself, so nothing is written to disk). `enabled` narrows the
+// advertised tools to what the user left on; `pane` tags every call this agent
+// makes with the chat pane it IS, so the renderer can route results back to
+// that exact conversation instead of the one the user happens to be viewing.
+export function mcpConfigJson(enabled?: string[], pane?: string | null): string | null {
+  if (!baseUrl) return null
   const allow = enabled ? new Set(enabled) : null
-  const defs = MCP_TOOLS.filter(
-    (t) => t.implemented && (!allow || allow.has(t.name))
-  ).map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))
-  try {
-    fs.writeFileSync(toolsJsonPath, JSON.stringify(defs))
-    // Run the relay as pure Node via the Electron binary (ELECTRON_RUN_AS_NODE),
-    // so we don't depend on a `node` being on the CLI's PATH.
-    const cfg = {
-      mcpServers: {
-        riven: {
-          command: process.execPath,
-          args: [relayPath, sockPath, toolsJsonPath],
-          env: { ELECTRON_RUN_AS_NODE: '1' }
-        }
+  const defs = toolDefs(allow)
+  if (defs.length === 0) return null
+  const url = new URL('/mcp', baseUrl)
+  if (pane) url.searchParams.set('pane', pane)
+  if (allow) url.searchParams.set('tools', defs.map((d) => d.name as string).join(','))
+  return JSON.stringify({
+    mcpServers: {
+      riven: {
+        type: 'http',
+        url: url.toString(),
+        headers: { Authorization: `Bearer ${authToken}` }
       }
     }
-    fs.writeFileSync(configPath, JSON.stringify(cfg))
-    return configPath
-  } catch (e) {
-    console.error('[mcp] failed to write config', e)
-    return null
-  }
+  })
 }
 
 // allowedTools entry so every riven tool auto-approves (like native toolPrefix).
@@ -668,13 +668,6 @@ export function stopMcpServer(): void {
     server?.close()
   } catch {
     /* ignore */
-  }
-  if (sockPath) {
-    try {
-      fs.rmSync(sockPath, { force: true })
-    } catch {
-      /* ignore */
-    }
   }
   pending.forEach((resolve) => resolve('riven: shutting down'))
   pending.clear()
