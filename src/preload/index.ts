@@ -209,9 +209,10 @@ const api = {
     logout: (configDir?: string): Promise<{ ok: boolean; output: string }> =>
       ipcRenderer.invoke('accounts:logout', configDir),
     sessionInfo: (
-      cwd: string
+      cwd: string,
+      configDir?: string
     ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>
-      ipcRenderer.invoke('chat:sessionInfo', cwd),
+      ipcRenderer.invoke('chat:sessionInfo', cwd, configDir),
     sessions: (
       cwd: string
     ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
@@ -226,13 +227,29 @@ const api = {
     ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> =>
       ipcRenderer.invoke('chat:sessionTranscript', cwd, id),
     mcpList: (
-      cwd: string
-    ): Promise<Array<{ name: string; url: string; status: 'connected' | 'needs-auth' | 'other' }>> =>
-      ipcRenderer.invoke('chat:mcpList', cwd),
-    mcpLogin: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
-      ipcRenderer.invoke('chat:mcpLogin', cwd, name),
-    mcpLogout: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
-      ipcRenderer.invoke('chat:mcpLogout', cwd, name),
+      cwd: string,
+      configDir?: string
+    ): Promise<
+      Array<{ name: string; url: string; status: 'connected' | 'needs-auth' | 'pending' | 'other' }>
+    > => ipcRenderer.invoke('chat:mcpList', cwd, configDir),
+    mcpSession: (
+      cwd: string,
+      configDir?: string,
+      fresh?: boolean
+    ): Promise<Array<{ name: string; status: string }>> =>
+      ipcRenderer.invoke('chat:mcpSession', cwd, configDir, fresh),
+    mcpApprove: (
+      cwd: string,
+      name: string,
+      configDir?: string
+    ): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpApprove', cwd, name, configDir),
+    mcpLogout: (
+      cwd: string,
+      name: string,
+      configDir?: string
+    ): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpLogout', cwd, name, configDir),
     onEvent: (cb: (e: ChatEvent) => void): (() => void) => onChatEvent(cb)
   },
   // Real Chromium browser: each tab is a main-process WebContentsView. The panel

@@ -557,6 +557,65 @@ export function registerMcpServer(webContentsGetter: () => WebContents | null): 
   server = net.createServer({ allowHalfOpen: true }, handleConnection)
   server.on('error', (e) => console.error('[mcp] socket error', e))
   server.listen(sockPath)
+  // Startup is the ONLY chance to collect the previous runs' sockets, so do it
+  // here rather than never. Detached: nothing about our own listener waits on it.
+  void sweepStaleSockets(dir, sockPath)
+}
+
+// A unix socket file outlives the process that bound it, and only a clean
+// `before-quit` unlinks ours — so an electron-vite hot restart, an
+// autoUpdater.quitAndInstall, a crash or a Force Quit each leave one behind. No
+// other process can collect it either: the one that knew it was alive is gone.
+//
+// The per-launch uid is NOT the bug and must stay — two riven instances really
+// do run at once (verified), and they cannot share one path. So staleness can't
+// be read off the name: connect to it. Refused = nobody is listening = orphaned.
+async function sweepStaleSockets(dir: string, keep: string): Promise<void> {
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return
+  }
+  const socks = names.filter((n) => n.startsWith('sock-') && n.endsWith('.sock'))
+  await Promise.all(
+    socks.map(async (n) => {
+      const p = path.join(dir, n)
+      if (p === keep) return
+      // A sibling instance starting right now may have created its socket but
+      // not reached listen() yet; unlinking it would break that instance. Only
+      // consider ones that have had time to settle.
+      try {
+        if (Date.now() - fs.statSync(p).mtimeMs < 60_000) return
+      } catch {
+        return
+      }
+      const alive = await new Promise<boolean>((resolve) => {
+        const c = net.connect(p)
+        // Guarded: the error handler and the timer below can both fire, and the
+        // second one must not re-enter destroy() or race the first verdict.
+        let settled = false
+        const timer = setTimeout(() => done(true), 1000)
+        function done(v: boolean): void {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          c.destroy()
+          resolve(v)
+        }
+        c.on('connect', () => done(true))
+        c.on('error', () => done(false))
+        // Silence is not proof of death — a busy peer may just be slow. Only an
+        // explicit refusal earns an unlink.
+      })
+      if (alive) return
+      try {
+        fs.rmSync(p, { force: true })
+      } catch {
+        /* someone else got there first */
+      }
+    })
+  )
 }
 
 // Build the --mcp-config file for a session given the enabled tool names, and

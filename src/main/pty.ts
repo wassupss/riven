@@ -1,8 +1,12 @@
 import { app, ipcMain, WebContents } from 'electron'
+import * as fs from 'fs'
 import * as os from 'os'
+import * as path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import * as pty from 'node-pty'
+import { writeMcpConfig, mcpSystemPrompt, implementedToolNames } from './mcpServer'
+import { resolveBin } from './shellPath'
 
 const pexec = promisify(execFile)
 
@@ -45,6 +49,9 @@ interface Session {
   // put a snippet of the reply in the notification.
   awaitingReply: boolean
   turnBuf: string
+  // OSC scan state, carried across reads. See hasBell.
+  // 0 = normal, 1 = saw ESC, 2 = inside an OSC string, 3 = inside an OSC, saw ESC.
+  osc: 0 | 1 | 2 | 3
 }
 
 const sessions = new Map<string, Session>()
@@ -78,12 +85,106 @@ function defaultShell(): string {
 // mangle multibyte input — typing Korean/CJK via an IME comes out corrupted.
 // If no UTF-8 locale is already present we set one (without clobbering a locale
 // the user has deliberately configured, e.g. ko_KR.UTF-8).
+// A zsh startup dir riven owns, sourced INSTEAD of the user's (it sources theirs
+// first, so nothing of theirs is lost). Its .zshrc defines a `claude` function
+// that injects riven's own MCP server, so a hand-typed `claude` in a riven
+// terminal can drive the IDE exactly like the native chat pane — without writing
+// anything into the user's global Claude config. Ported from the native app
+// (main.swift `setupShellShim`).
+//
+// Interactive shells only (.zshrc is not sourced for scripts), so a script that
+// calls `claude` is unaffected.
+function shimDir(): string {
+  return path.join(app.getPath('userData'), 'zdotdir')
+}
+
+let shimReady = false
+
+// Single-quote a path for the shell. userData sits under "Application Support",
+// so the space alone breaks an unquoted assignment.
+function sq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`
+}
+
+// 0700: everything here is SOURCED BY THE SHELL, so write access for another
+// local user would be code execution in this user's terminal. The explicit chmod
+// matters — mkdir's mode is ignored when the directory already exists, which it
+// does on every launch after the first.
+export function setupShellShim(): void {
+  const dir = shimDir()
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    fs.chmodSync(dir, 0o700)
+    const files: Record<string, string> = {
+      // $HOME/.zshenv is the conventional place to set ZDOTDIR, and a user who
+      // does that keeps their .zprofile/.zshrc THERE, not in $HOME. So hand it
+      // the real default first, let it speak, then record where it pointed —
+      // assuming $HOME would silently load none of their config in every riven
+      // terminal. ZDOTDIR goes back to ours so zsh finds the two files below.
+      // The dir is embedded, NOT derived from $0: zsh sets $0 to the shell name
+      // (not the file path) while sourcing a startup file, so `${0:A:h}` resolves
+      // against the CWD — verified, it clobbered ZDOTDIR and no user config loaded.
+      '.zshenv': `ZDOTDIR="$HOME"
+[ -r "$HOME/.zshenv" ] && source "$HOME/.zshenv"
+export RIVEN_USER_ZDOTDIR="\${ZDOTDIR:-$HOME}"
+ZDOTDIR=${sq(dir)}`,
+      '.zprofile':
+        '[ -r "$RIVEN_USER_ZDOTDIR/.zprofile" ] && source "$RIVEN_USER_ZDOTDIR/.zprofile"',
+      '.zshrc': `[ -r "$RIVEN_USER_ZDOTDIR/.zshrc" ] && source "$RIVEN_USER_ZDOTDIR/.zshrc"
+# riven: typing \`claude\` here gets riven's OWN tools (ask_user / open file /
+# panels / browser / notes), like the native chat pane.
+if [ -n "$RIVEN_MCP_CONFIG" ]; then
+  claude() {
+    # Build flags in a zsh array — NOT via \${VAR:+--flag "$VAR"}: zsh does not
+    # field-split parameter expansions, so that form passes '--flag value' to
+    # claude as a single argv word and it rejects it.
+    local -a rv
+    rv+=(--mcp-config "$RIVEN_MCP_CONFIG")
+    [ -n "$RIVEN_MCP_PROMPT" ] && rv+=(--append-system-prompt "$RIVEN_MCP_PROMPT")
+    command "\${RIVEN_REAL_CLAUDE:-claude}" "\${rv[@]}" "$@"
+  }
+fi
+# Restore so .zlogin and any nested shell use the user's own dir, not ours.
+export ZDOTDIR="$RIVEN_USER_ZDOTDIR"`
+    }
+    for (const [name, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(dir, name), body + '\n', { mode: 0o600 })
+    }
+    shimReady = true
+  } catch (e) {
+    // A terminal without riven's tools still runs; a terminal that fails to
+    // start does not. Never fatal.
+    console.error('[riven] shell shim setup failed', e)
+    shimReady = false
+  }
+}
+
+// Resolved once: `resolveBin` walks the user's real PATH, and ptyEnv is sync.
+let realClaude: string | null = null
+export function primeShellShim(): void {
+  setupShellShim()
+  void resolveBin('claude').then((p) => {
+    realClaude = p
+  })
+}
+
 function ptyEnv(configDir?: string): Record<string, string> {
   const env = { ...process.env, TERM: 'xterm-256color' } as Record<string, string>
   // Only when the workspace pins a Claude account profile, so a terminal and the
   // native chat in the same workspace run as the same account. Without a profile
   // we set nothing and the user's shell rc stays in charge.
   if (configDir) env.CLAUDE_CONFIG_DIR = configDir
+  // zsh only: ZDOTDIR is what makes the shim possible, and bash/fish have no
+  // equivalent that survives a login shell. Their terminals just run unshimmed.
+  const mcpConfig = shimReady && /zsh$/.test(defaultShell()) ? writeMcpConfig(implementedToolNames()) : null
+  if (mcpConfig) {
+    env.ZDOTDIR = shimDir()
+    env.RIVEN_MCP_CONFIG = mcpConfig
+    env.RIVEN_MCP_PROMPT = mcpSystemPrompt()
+    // The shim runs `command claude`, which is resolved against the shell's PATH.
+    // That is usually right, but riven knows the absolute path it found itself.
+    if (realClaude) env.RIVEN_REAL_CLAUDE = realClaude
+  }
   if (process.platform !== 'win32') {
     const hasUtf8 = [env.LC_ALL, env.LC_CTYPE, env.LANG].some((v) => v && /utf-?8/i.test(v))
     if (!hasUtf8) {
@@ -162,6 +263,46 @@ function extractSummary(raw: string): string {
   const content = lines.filter((l) => l.trim().length > 0)
   const tail = content.slice(-8).join('\n').replace(/[ \t]+/g, ' ').trim()
   return tail.length > 240 ? '…' + tail.slice(-240) : tail
+}
+
+// Does this chunk contain a REAL bell? A 0x07 that terminates an OSC string is
+// not one. Every shell that sets the window title emits `ESC ] 2 ; <title> BEL`,
+// and oh-my-zsh's auto-title does it TWICE per prompt (window + tab) — so
+// treating any 0x07 as a bell fired two spurious notifications for every command
+// the user ran. Verified against the user's own zsh in a real pty: 12 BEL bytes,
+// all 12 OSC terminators, zero actual bells.
+//
+// A state machine, NOT a lookahead: node-pty hands us arbitrary chunks, so every
+// boundary has to be resumable — including one falling BETWEEN the ESC and the
+// `]` that introduce the OSC. A version of this that peeked at `data[i + 1]`
+// looked correct and passed on realistic chunk sizes, but read `undefined` at
+// such a split, missed the OSC entirely, and then counted its terminator as a
+// bell: replaying a real capture one byte at a time fired all 16 times.
+function hasBell(s: Session, data: string): boolean {
+  let bell = false
+  for (const c of data) {
+    switch (s.osc) {
+      case 1: // saw ESC outside an OSC
+        if (c === ']') s.osc = 2
+        else if (c === '\x1b') s.osc = 1
+        else {
+          s.osc = 0
+          if (c === '\x07') bell = true
+        }
+        break
+      case 2: // inside an OSC string: BEL and ST both just end it
+        if (c === '\x07') s.osc = 0
+        else if (c === '\x1b') s.osc = 3
+        break
+      case 3: // inside an OSC, saw ESC — ST is ESC \
+        s.osc = c === '\\' ? 0 : c === '\x1b' ? 3 : 2
+        break
+      default:
+        if (c === '\x1b') s.osc = 1
+        else if (c === '\x07') bell = true
+    }
+  }
+  return bell
 }
 
 // "Working" = an agent is the foreground child AND output is actively flowing.
@@ -276,6 +417,7 @@ export function registerPtyHandlers(): void {
         busy: false,
         busyStart: 0,
         awaitingReply: false,
+        osc: 0,
         turnBuf: '',
         startupUntil: Date.now() + 3000,
         agentPresent: false,
@@ -298,7 +440,7 @@ export function registerPtyHandlers(): void {
         s.dataBuf += data
         if (s.dataBuf.length >= FLUSH_MAX) flushData(s)
         else if (!s.flushTimer) s.flushTimer = setTimeout(() => flushData(s), FLUSH_MS)
-        if (data.includes('\x07')) send(s, 'pty:bell', { key })
+        if (hasBell(s, data)) send(s, 'pty:bell', { key })
         // While waiting for a reply, accumulate the turn's output (capped) so the
         // done-notification can preview it.
         if (s.awaitingReply) {

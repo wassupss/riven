@@ -13,6 +13,10 @@ export interface TerminalParams {
   initialCommand?: string
 }
 
+// Ring at most once per this window — a terminal bell says "look at me", and
+// saying it ten times in a second says nothing extra.
+const BELL_COALESCE_MS = 10_000
+
 // Every terminal is a shell — run claude / codex / anything inside it. The tab
 // title auto-follows the running agent (unless renamed); a status dot on the tab
 // shows busy/attention (no more blinking overlay chip).
@@ -79,9 +83,17 @@ export default function TerminalPanel({
       contextBus.setAgent(paneId, agent)
       applyAutoTitle(agent ? name : null)
     })
+    // A bell is a stream, not an event: a beeping TUI can ring many times a
+    // second, and one notification each is unusable. Coalesce, and apply the same
+    // "is the user already looking at this terminal" rule the done path uses —
+    // without it a bell notified even while the pane was on screen and focused.
+    let lastBell = 0
     const offBell = window.api.pty.onBell(({ key }) => {
       if (key !== sessionKey) return
+      const looking = api?.isActive && document.hasFocus()
       if (!api?.isActive) setAttention(true)
+      if (looking || Date.now() - lastBell < BELL_COALESCE_MS) return
+      lastBell = Date.now()
       notify(staticT('term.bell'))
     })
     const offDone = window.api.pty.onDone(({ key, summary }) => {
