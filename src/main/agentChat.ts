@@ -1,5 +1,6 @@
 import { app, ipcMain, WebContents } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
+import { randomUUID } from 'crypto'
 import { promises as fsp } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -422,7 +423,15 @@ async function startSession(
   if (promptParts.length) args.push('--append-system-prompt', promptParts.join('\n\n'))
   if (opts.model && opts.model !== 'default') args.push('--model', opts.model)
   if (opts.agent) args.push('--agent', opts.agent)
+  // A pane with a session id resumes it. A pane WITHOUT one wants a new
+  // conversation — and must say so explicitly: given neither --resume nor
+  // --session-id, the CLI continues the most recent conversation for the cwd, so
+  // a pane the user had just opened came up already holding the last chat's
+  // history (verified: three freshly created panes all reported the newest
+  // session id in ~/.claude, whose file the CLI never even touched). Pinning a
+  // fresh uuid makes "no resume id" mean what it says.
   if (opts.resume) args.push('--resume', opts.resume)
+  else args.push('--session-id', randomUUID())
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, ...agentMcpEnv(), RIVEN_CHAT_KEY: key }
   if (opts.configDir) {
@@ -613,15 +622,17 @@ export function registerAgentChatHandlers(): void {
   )
 
   // List resumable past sessions for a cwd (native /resume), newest first.
-  ipcMain.handle('chat:sessions', async (_e, cwd: string) => listSessions(cwd))
+  ipcMain.handle('chat:sessions', async (_e, cwd: string, configDir?: string) =>
+    listSessions(cwd, configDir)
+  )
 
   // Custom agents defined in .claude/agents/<name>.md (project + ~), usable as
   // `claude --agent <name>`. Mirrors Claude Code's own agent discovery.
   ipcMain.handle('chat:agents', async (_e, cwd: string) => listAgents(cwd))
 
   // Reconstruct a past session's transcript for display when resuming.
-  ipcMain.handle('chat:sessionTranscript', async (_e, cwd: string, id: string) =>
-    readSessionTranscript(cwd, id)
+  ipcMain.handle('chat:sessionTranscript', async (_e, cwd: string, id: string, configDir?: string) =>
+    readSessionTranscript(cwd, id, configDir)
   )
 
   // MCP status/teardown via `claude mcp …`. Both take the pane's configDir: the
@@ -923,10 +934,18 @@ async function listAgents(cwd: string): Promise<AgentDef[]> {
 }
 
 // ---- past sessions for /resume ----------------------------------------------
-// Claude stores each session as ~/.claude/projects/<encoded-cwd>/<id>.jsonl,
+// Claude stores each session as <config>/projects/<encoded-cwd>/<id>.jsonl,
 // where the cwd's "/" and "." become "-".
-function projectDir(cwd: string): string {
-  return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'))
+//
+// <config> is CLAUDE_CONFIG_DIR when set, else ~/.claude — and a pane's chat is
+// spawned with the workspace's profile as CLAUDE_CONFIG_DIR. Reading this back
+// from ~/.claude unconditionally meant a profiled workspace's panes found NO
+// transcript: the CLI resumed fine (the child carries the profile, so the model
+// kept its context) while the panel came back blank. Every caller must pass the
+// same configDir the pane runs under.
+function projectDir(cwd: string, configDir?: string): string {
+  const base = configDir || path.join(os.homedir(), '.claude')
+  return path.join(base, 'projects', cwd.replace(/[/.]/g, '-'))
 }
 
 export interface SessionSummary {
@@ -936,8 +955,8 @@ export interface SessionSummary {
   messages: number
 }
 
-async function listSessions(cwd: string): Promise<SessionSummary[]> {
-  const dir = projectDir(cwd)
+async function listSessions(cwd: string, configDir?: string): Promise<SessionSummary[]> {
+  const dir = projectDir(cwd, configDir)
   let files: string[]
   try {
     files = (await fsp.readdir(dir)).filter((f) => f.endsWith('.jsonl'))
@@ -979,9 +998,10 @@ async function listSessions(cwd: string): Promise<SessionSummary[]> {
 // Reconstruct a session transcript for display (user text + assistant text/tools).
 async function readSessionTranscript(
   cwd: string,
-  id: string
+  id: string,
+  configDir?: string
 ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> {
-  const full = path.join(projectDir(cwd), `${id}.jsonl`)
+  const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
   let raw: string
   try {
     raw = await fsp.readFile(full, 'utf8')

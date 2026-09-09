@@ -20,7 +20,13 @@ import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from 
 import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
-import { useSession, loadPersistedSessions, pathOf, widForPane } from './state/session'
+import {
+  useSession,
+  loadPersistedSessions,
+  pathOf,
+  widForPane,
+  allPersistedPaneIds
+} from './state/session'
 import { loadEnv } from './state/env'
 import { loadSettings, getSettings, useSettings } from './state/settings'
 import { useAuth } from './state/auth'
@@ -34,7 +40,13 @@ import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { useUpdate } from './state/update'
 import { getEditorCloser, initFocusTracking } from './keybindings/focus'
-import { getActiveApi, confirmTerminalClose, addTerminal } from './dock/registry'
+import {
+  getActiveApi,
+  confirmTerminalClose,
+  addTerminal,
+  addChat,
+  bumpPaneSeq
+} from './dock/registry'
 import { useT } from './i18n'
 
 export default function App(): JSX.Element {
@@ -91,6 +103,7 @@ export default function App(): JSX.Element {
     if (import.meta.env.DEV) {
       ;(window as unknown as { __riven?: unknown }).__riven = {
         addTerminal,
+        addChat,
         getActiveApi,
         session: useSession,
         markPaneSeen,
@@ -112,6 +125,13 @@ export default function App(): JSX.Element {
       applyEditorKeymap(getSettings().editorKeymap)
       await keymap.load()
       await loadPersistedSessions()
+      // Seed the pane-id counter above every id this machine has ever persisted.
+      // It lives in localStorage (per renderer origin) while the ids live in
+      // sessions.json (shared), so without this a fresh counter re-issues an id
+      // whose pane state is still on disk and the new pane opens someone else's
+      // conversation. New chat panes use a uuid; this covers terminals and any
+      // pane created before that.
+      bumpPaneSeq(allPersistedPaneIds(useSession.getState().sessions))
       // Settings are loaded — now restore any cloud session and start sync.
       void useAuth.getState().initAuth()
     })()

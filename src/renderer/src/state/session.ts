@@ -28,6 +28,10 @@ export interface PaneState {
   avatar?: string | null // colour override ("glyph.color" | "none")
   title?: string // pinned tab title
   log?: unknown[] // transcript (Msg[]), capped
+  // The user opened this pane themselves, so it must start as an empty
+  // conversation — never adopt the workspace's most recent session (see the
+  // adopt effect in ChatPanel). Set once at creation and kept for the pane's life.
+  fresh?: boolean
 }
 
 export interface Session {
@@ -36,6 +40,20 @@ export interface Session {
   previewUrl: string
   dockLayout: unknown | null // dockview SerializedDockview
   panes?: Record<string, PaneState> // chatKey → pane state (the tree)
+}
+
+// Every pane id the session tree remembers, across all workspaces: the pane-state
+// keys AND the saved dock layouts. Used to seed the pane-id counter, which lives in
+// per-origin localStorage and so can otherwise fall behind this (shared) file and
+// re-issue an id whose state is still here.
+export function allPersistedPaneIds(sessions: Record<string, Session>): string[] {
+  const out: string[] = []
+  for (const s of Object.values(sessions)) {
+    for (const id of Object.keys(s.panes ?? {})) out.push(id)
+    const panels = (s.dockLayout as { panels?: Record<string, unknown> } | null)?.panels
+    if (panels) out.push(...Object.keys(panels))
+  }
+  return out
 }
 
 const emptySession = (): Session => ({
@@ -74,7 +92,12 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
     agent: rec?.agent ?? legacy(chatKey, 'chatagent') ?? null,
     avatar: rec?.avatar ?? legacy(chatKey, 'chatavatar') ?? null,
     title: rec?.title ?? legacy(chatKey, 'chattitle'),
-    log: rec?.log ?? legacyLog
+    log: rec?.log ?? legacyLog,
+    // NB: this object is a whitelist — a field missing here is invisible to the
+    // panel no matter what the tree holds. `fresh` was written by addChat and
+    // dropped here, so every new pane still looked adoptable and reopened the
+    // workspace's most recent conversation.
+    fresh: rec?.fresh
   }
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {

@@ -925,11 +925,15 @@ function McpCard({
 function ResumeCard({
   cwd,
   now,
+  configDir,
   onResume,
   onDismiss
 }: {
   cwd: string
   now: number
+  // The pane's CLAUDE_CONFIG_DIR — past sessions live under the profile the
+  // pane runs as, not under ~/.claude.
+  configDir?: string
   onResume: (id: string) => void
   onDismiss: () => void
 }): JSX.Element {
@@ -939,8 +943,8 @@ function ResumeCard({
   >(null)
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
   useEffect(() => {
-    window.api.chat.sessions(cwd).then(setSessions)
-  }, [cwd])
+    window.api.chat.sessions(cwd, configDir).then(setSessions)
+  }, [cwd, configDir])
   const list = sessions ?? []
   const { index, setIndex, ref, onKeyDown } = useCardNav(
     list.length,
@@ -1706,15 +1710,21 @@ export default function ChatPanel({
   // next first-message override it — and show a "continued" marker on top.
   const restoredRef = useRef(msgs.length > 0)
   const restoredSessionRef = useRef<string | null>(null)
-  // A brand-new pane (no session of its own) picks up the workspace's most recent
-  // conversation, so opening a chat continues where you left off instead of showing
-  // an empty window. Only until it has its own turn — once this pane owns a session
-  // that one wins.
+  // A pane that has no session of its own picks up the workspace's most recent
+  // conversation, so a pane whose session id was lost still shows something
+  // instead of an empty window.
+  //
+  // NOT for a pane the user just opened: `fresh` marks those (set in addChat),
+  // and adopting there meant "new chat" silently reopened the last conversation —
+  // and, worse, bound the new pane to that session id, so the next turn continued
+  // it. A new pane starts empty. The flag is never cleared: once a pane is the
+  // user's own, it must not adopt someone else's history on a later restart.
   useEffect(() => {
     if (liveSession || pane0.session || restoredSessionRef.current || pinnedTitle) return
+    if (pane0.fresh) return
     let cancelled = false
     void window.api.chat
-      .sessions(pathOf(workspace))
+      .sessions(pathOf(workspace), claudeConfigDirFor(workspace))
       .then((list) => {
         const latest = list?.[0]
         if (cancelled || !latest?.id) return
@@ -1734,7 +1744,7 @@ export default function ChatPanel({
     let cancelled = false
     setRestoring(true)
     void window.api.chat
-      .sessionTranscript(pathOf(workspace), sid)
+      .sessionTranscript(pathOf(workspace), sid, claudeConfigDirFor(workspace))
       .then((tr) => {
         if (cancelled || !tr?.length) return
         // Never clobber a turn that is already streaming here. If it started in
@@ -2232,7 +2242,11 @@ export default function ChatPanel({
     window.api.chat.stop(chatKey)
     setRestoring(true)
     try {
-      const transcript = await window.api.chat.sessionTranscript(cwd, id)
+      const transcript = await window.api.chat.sessionTranscript(
+        cwd,
+        id,
+        claudeConfigDirFor(workspace)
+      )
       setMsgs(transcriptToMsgs(transcript))
     } finally {
       setRestoring(false)
@@ -2341,6 +2355,7 @@ export default function ChatPanel({
           <ResumeCard
             key={msg.cardId ?? windowOffset + wi}
             cwd={pathOf(workspace)}
+            configDir={claudeConfigDirFor(workspace)}
             now={now}
             onResume={(id) => void handlers.current.resumeSession(id)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}

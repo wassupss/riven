@@ -263,18 +263,20 @@ const api = {
     ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>
       ipcRenderer.invoke('chat:sessionInfo', cwd, configDir),
     sessions: (
-      cwd: string
+      cwd: string,
+      configDir?: string
     ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
-      ipcRenderer.invoke('chat:sessions', cwd),
+      ipcRenderer.invoke('chat:sessions', cwd, configDir),
     agents: (
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
       ipcRenderer.invoke('chat:agents', cwd),
     sessionTranscript: (
       cwd: string,
-      id: string
+      id: string,
+      configDir?: string
     ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> =>
-      ipcRenderer.invoke('chat:sessionTranscript', cwd, id),
+      ipcRenderer.invoke('chat:sessionTranscript', cwd, id, configDir),
     mcpList: (
       cwd: string,
       configDir?: string
