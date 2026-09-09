@@ -20,7 +20,8 @@
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:all": "npm run build && electron-builder --mac --win --publish never",
     "release": "npm run build && electron-builder --mac --win --publish always",
-    "smoke:hooks": "node scripts/e2e-hooks-smoke.mjs"
+    "smoke:hooks": "node scripts/e2e-hooks-smoke.mjs",
+    "check:notify": "node scripts/notify-adhoc-check.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
