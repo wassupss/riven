@@ -25,6 +25,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   // ---- shared ----
   'common.close': { ko: '닫기', en: 'Close' },
   'common.cancel': { ko: '취소', en: 'Cancel' },
+  'common.send': { ko: '보내기', en: 'Send' },
   'common.confirm': { ko: '확인', en: 'OK' },
   'common.open': { ko: '열기', en: 'Open' },
   'common.search': { ko: '검색', en: 'Search' },
@@ -588,6 +589,15 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.restoring': { ko: '이전 대화 불러오는 중…', en: 'Loading previous conversation…' },
   'chat.loadEarlier': { ko: '이전 대화 {n}개 더 보기', en: 'Show {n} earlier messages' },
   'chat.jumpBottom': { ko: '맨 아래로', en: 'Jump to latest' },
+  'chat.mentionTerminal': { ko: '터미널 CLI', en: 'Terminal CLI' },
+  'chat.mentionBusyConfirm': {
+    ko: '{names} 실행 중입니다. 그래도 보낼까요?',
+    en: '{names} is still running. Send anyway?'
+  },
+  'chat.mentionUnreachable': {
+    ko: '{name} 패널이 화면에 올라와 있지 않아 전달하지 못했습니다. 해당 워크스페이스를 한 번 열어주세요.',
+    en: "{name}'s panel isn't mounted, so the message wasn't delivered. Open that workspace once and retry."
+  },
   'chat.help': { ko: '사용 가능한 명령', en: 'Available commands' },
   'chat.cmd.clear': { ko: '대화 지우기 (새 세션)', en: 'Clear conversation (new session)' },
   'chat.cmd.agents': { ko: '새 에이전트 챗 패널 열기', en: 'Open a new agent chat panel' },

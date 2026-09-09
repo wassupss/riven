@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
-import { useAgentEdits } from '../state/agentEdits'
+import { useAgentEdits, timelineFor, unseenFor } from '../state/agentEdits'
 import { useUpdate } from '../state/update'
 import { togglePanel } from '../dock/registry'
 import { useApiTarget } from '../state/apiTarget'
@@ -22,8 +22,10 @@ export default function StatusBar(): JSX.Element {
   const patch = useSession((s) => s.patch)
   const openSettings = useUI((s) => s.openSettings)
   const wsName = useSession((s) => (folder ? workspaceName(folder, s.names) : null))
-  const changeCount = useAgentEdits((s) => s.timeline.length)
-  const unseen = useAgentEdits((s) => s.unseen)
+  // Scoped to the workspace on screen. This counted EVERY workspace's edits, so
+  // the pill in one project reported files an agent had touched in another.
+  const changeCount = useAgentEdits((s) => timelineFor(s.timeline, folder).length)
+  const unseen = useAgentEdits((s) => unseenFor(s.timeline, s.seenAt, folder))
   const updateReady = useUpdate((s) => s.status.state === 'downloaded')
   const [info, setInfo] = useState<Info | null>(null)
   const [ports, setPorts] = useState<Array<{ port: number; pid: number; name: string }>>([])

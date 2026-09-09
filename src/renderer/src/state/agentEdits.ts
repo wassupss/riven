@@ -31,8 +31,10 @@ const MAX_TIMELINE = 300
 interface AgentEditsState {
   edits: Record<string, AgentEdit>
   timeline: TimelineEntry[]
-  // Count of timeline entries not yet looked at (drives the toolbar/status badge).
-  unseen: number
+  // When each workspace's Changes panel was last looked at. Unseen is derived
+  // from this PER WORKSPACE: a single global counter meant opening one
+  // workspace's panel cleared another's badge.
+  seenAt: Record<string, number>
   // Bumped per path to ask an open editor of that file to reload from disk (used
   // when the Changes panel reverts a file that's currently open).
   reloadNonce: Record<string, number>
@@ -40,13 +42,31 @@ interface AgentEditsState {
   clear: (path: string) => void
   // Record an agent edit: store its diff + prepend a timeline summary entry.
   record: (workspace: string, path: string, edit: AgentEdit, isNew: boolean) => void
-  markSeen: () => void
+  markSeen: (workspace: string) => void
   clearTimeline: () => void
   // Resolve one file (accept, or after a revert): drop its timeline entry + edit.
   resolve: (path: string) => void
-  // Accept every pending change: keep disk content, clear all reviews + timeline.
-  acceptAll: () => void
+  // Accept every pending change IN ONE WORKSPACE: keep disk content, drop that
+  // workspace's reviews and timeline entries. Another workspace's pending review
+  // must survive — it is a different project the user hasn't looked at yet.
+  acceptAll: (workspace: string) => void
   requestReload: (path: string) => void
+}
+
+// One workspace's entries, newest first (the timeline is already in that order).
+export function timelineFor(timeline: TimelineEntry[], workspace: string | null): TimelineEntry[] {
+  return workspace ? timeline.filter((e) => e.workspace === workspace) : []
+}
+
+// How many of a workspace's entries arrived since its panel was last read.
+export function unseenFor(
+  timeline: TimelineEntry[],
+  seenAt: Record<string, number>,
+  workspace: string | null
+): number {
+  if (!workspace) return 0
+  const since = seenAt[workspace] ?? 0
+  return timeline.reduce((n, e) => (e.workspace === workspace && e.at > since ? n + 1 : n), 0)
 }
 
 // Rough per-line add/remove counts for the timeline summary. Uses an LCS DP for
@@ -78,7 +98,7 @@ function diffCounts(before: string, after: string): { added: number; removed: nu
 export const useAgentEdits = create<AgentEditsState>((set) => ({
   edits: {},
   timeline: [],
-  unseen: 0,
+  seenAt: {},
   reloadNonce: {},
   set: (path, edit) => set((s) => ({ edits: { ...s.edits, [path]: edit } })),
   clear: (path) =>
@@ -95,18 +115,24 @@ export const useAgentEdits = create<AgentEditsState>((set) => ({
       // Collapse repeated edits to the same file into one (latest) entry at the top.
       const rest = s.timeline.filter((e) => e.path !== path)
       const timeline = [entry, ...rest].slice(0, MAX_TIMELINE)
-      return { edits: { ...s.edits, [path]: edit }, timeline, unseen: s.unseen + 1 }
+      return { edits: { ...s.edits, [path]: edit }, timeline }
     }),
-  markSeen: () => set((s) => (s.unseen === 0 ? s : { unseen: 0 })),
-  clearTimeline: () => set({ timeline: [], unseen: 0 }),
+  markSeen: (workspace) => set((s) => ({ seenAt: { ...s.seenAt, [workspace]: Date.now() } })),
+  clearTimeline: () => set({ timeline: [], seenAt: {} }),
   resolve: (path) =>
     set((s) => {
       const edits = { ...s.edits }
       delete edits[path]
-      const timeline = s.timeline.filter((e) => e.path !== path)
-      return { edits, timeline, unseen: Math.min(s.unseen, timeline.length) }
+      return { edits, timeline: s.timeline.filter((e) => e.path !== path) }
     }),
-  acceptAll: () => set({ edits: {}, timeline: [], unseen: 0 }),
+  acceptAll: (workspace) =>
+    set((s) => {
+      const mine = new Set(
+        s.timeline.filter((e) => e.workspace === workspace).map((e) => e.path)
+      )
+      const edits = Object.fromEntries(Object.entries(s.edits).filter(([p]) => !mine.has(p)))
+      return { edits, timeline: s.timeline.filter((e) => e.workspace !== workspace) }
+    }),
   requestReload: (path) =>
     set((s) => ({ reloadNonce: { ...s.reloadNonce, [path]: (s.reloadNonce[path] ?? 0) + 1 } }))
 }))
@@ -132,7 +158,8 @@ export function evictWorkspace(wid: string, path: string, evictBaselines: boolea
     const edits: Record<string, AgentEdit> = evictBaselines
       ? Object.fromEntries(Object.entries(s.edits).filter(([p]) => !under(p)))
       : s.edits
-    const timeline = s.timeline.filter((e) => e.workspace !== wid)
-    return { edits, timeline, unseen: Math.min(s.unseen, timeline.length) }
+    const seenAt = { ...s.seenAt }
+    delete seenAt[wid]
+    return { edits, timeline: s.timeline.filter((e) => e.workspace !== wid), seenAt }
   })
 }

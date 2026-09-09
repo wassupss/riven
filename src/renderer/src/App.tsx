@@ -16,6 +16,7 @@ import AskUserModal from './components/AskUserModal'
 import { useAskUser } from './state/askUser'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler } from './state/mcpTools'
+import { startRoster, useRoster, rosterFor } from './state/roster'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions, pathOf, widForPane } from './state/session'
@@ -84,7 +85,13 @@ export default function App(): JSX.Element {
     registerDefaultActions()
     // Dev/e2e only: lets scripts/e2e-terminal-smoke.mjs drive the real UI over CDP.
     if (import.meta.env.DEV) {
-      ;(window as unknown as { __riven?: unknown }).__riven = { addTerminal, getActiveApi }
+      ;(window as unknown as { __riven?: unknown }).__riven = {
+        addTerminal,
+        getActiveApi,
+        session: useSession,
+        roster: useRoster,
+        rosterFor
+      }
     }
     registerInlineComplete()
     registerSnippets()
@@ -107,6 +114,10 @@ export default function App(): JSX.Element {
     const offMcp = registerMcpToolHandler()
     // Fire due scheduled messages (명령 예약).
     startScheduler()
+    // Track every workspace's agent panes app-wide. This must NOT live in the
+    // panels: the mounted set is LRU-bounded, and a pane going off screen would
+    // otherwise take its status (and its very existence) with it.
+    const offRoster = startRoster()
     // Reflect Chromium browser navigation events into the tab chrome.
     const offBrowser = initBrowserEvents()
     // A focused browser view swallows keyboard; main forwards Cmd/Ctrl chords here
@@ -211,6 +222,7 @@ export default function App(): JSX.Element {
       window.removeEventListener('mousedown', touched, true)
       clearInterval(presenceBeat)
       offMcp()
+      offRoster()
       offBrowser()
       offBrowserKey()
       window.removeEventListener('keydown', onMetaDown, true)

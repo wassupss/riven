@@ -18,6 +18,26 @@ import { useT } from '../../i18n'
 const dirname = (p: string): string => p.slice(0, p.lastIndexOf('/')) || '/'
 const join = (dir: string, name: string): string => `${dir}/${name}`
 
+/* ---- drop from Finder ------------------------------------------------------ */
+// Does this drag carry OS files? Chromium exposes only the KINDS during dragover
+// (never the paths), so the decision to accept has to be made from `types`.
+function hasOsFiles(e: React.DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes('Files')
+}
+
+// Copy whatever Finder dropped into `dir`, then refresh that directory so the
+// new entries appear. Returns the paths written.
+async function importDrop(e: React.DragEvent, dir: string): Promise<string[]> {
+  const sources = Array.from(e.dataTransfer.files)
+    .map((f) => window.api.pathForFile(f))
+    .filter(Boolean)
+  if (sources.length === 0) return []
+  const { copied, errors } = await window.api.workspace.importPaths(dir, sources)
+  useTree.getState().bump(dir)
+  if (errors.length) window.alert(errors.join('\n'))
+  return copied
+}
+
 type Menu = { x: number; y: number; entry: DirEntry | null }
 type Edit =
   | { kind: 'new-file' | 'new-folder'; dir: string }
@@ -56,6 +76,7 @@ function TreeNode({
   const t = useT()
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<DirEntry[] | null>(null)
+  const [dropTarget, setDropTarget] = useState(false)
   const rowRef = useRef<HTMLDivElement>(null)
   const revealTarget = useExplorerReveal((s) => s.target)
   const activePath = useSession((s) =>
@@ -143,7 +164,7 @@ function TreeNode({
       <div
         ref={rowRef}
         data-path={entry.path}
-        className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}${gitCat ? ' git-' + gitCat : ''}`}
+        className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}${dropTarget ? ' drop-target' : ''}${gitCat ? ' git-' + gitCat : ''}`}
         onClick={toggle}
         onContextMenu={(e) => onMenu(e, entry)}
         draggable={!entry.isDirectory}
@@ -151,6 +172,27 @@ function TreeNode({
           // Drag a file onto the native chat to attach its path.
           e.dataTransfer.setData('text/plain', entry.path)
           e.dataTransfer.effectAllowed = 'copy'
+        }}
+        // Dropping files from Finder onto a row files them under that row: into
+        // the folder itself, or alongside a file (i.e. into its parent).
+        onDragOver={(e) => {
+          if (!hasOsFiles(e)) return
+          e.preventDefault()
+          e.stopPropagation()
+          e.dataTransfer.dropEffect = 'copy'
+          if (!dropTarget) setDropTarget(true)
+        }}
+        onDragLeave={() => setDropTarget(false)}
+        onDrop={(e) => {
+          if (!hasOsFiles(e)) return
+          e.preventDefault()
+          e.stopPropagation()
+          setDropTarget(false)
+          const dir = entry.isDirectory ? entry.path : dirname(entry.path)
+          void importDrop(e, dir).then((copied) => {
+            // Expand the folder we just filled, so the result is visible.
+            if (copied.length && entry.isDirectory && !expanded) setExpanded(true)
+          })
         }}
       >
         {Array.from({ length: depth }).map((_, i) => (
@@ -203,6 +245,7 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const [roots, setRoots] = useState<DirEntry[]>([])
   const [menu, setMenu] = useState<Menu | null>(null)
   const [edit, setEdit] = useState<Edit>(null)
+  const [rootDrop, setRootDrop] = useState(false)
   const bump = useTree((s) => s.bump)
   const collapseAll = useTree((s) => s.collapseAll)
   const rootVersion = useTree((s) => s.versions[workspace] ?? 0)
@@ -378,8 +421,25 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
         </span>
       </div>
       <div
-        className="tree-scroll"
+        className={`tree-scroll${rootDrop ? ' drop-target' : ''}`}
         tabIndex={0}
+        // Files dropped on empty space below the tree land in the workspace root.
+        // Rows stopPropagation, so this only ever sees drops that missed one.
+        onDragOver={(e) => {
+          if (!hasOsFiles(e)) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          if (!rootDrop) setRootDrop(true)
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setRootDrop(false)
+        }}
+        onDrop={(e) => {
+          if (!hasOsFiles(e)) return
+          e.preventDefault()
+          setRootDrop(false)
+          void importDrop(e, workspace)
+        }}
         onKeyDown={(e) => {
           // Delete / ⌘⌫ removes the current selection (the tree holds focus after
           // a row click). Confirmed in deletePaths.

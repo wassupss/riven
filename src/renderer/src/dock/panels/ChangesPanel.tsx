@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useSession } from '../../state/session'
-import { useAgentEdits, cacheSet, type TimelineEntry } from '../../state/agentEdits'
+import { useAgentEdits, cacheSet, timelineFor, type TimelineEntry } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
 import { FileCode, FilePlus2, Check, Undo2, CheckCheck } from 'lucide-react'
@@ -28,25 +28,26 @@ function fileParts(entry: TimelineEntry): { name: string; dir: string } {
 // The changes timeline: a running summary of files an agent edited this session.
 // Accept (keep) or revert (restore the pre-edit content) per file or in bulk;
 // clicking a row opens the file with its inline diff.
-export default function ChangesPanel(): JSX.Element {
+export default function ChangesPanel({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
-  const timeline = useAgentEdits((s) => s.timeline)
+  // This panel is one workspace's review queue. It used to list EVERY open
+  // workspace's edits — clicking a row then switched workspace under you, which
+  // was the tell that the two had been conflated.
+  const timeline = useAgentEdits((s) => timelineFor(s.timeline, workspace))
   const editsMap = useAgentEdits((s) => s.edits)
   const markSeen = useAgentEdits((s) => s.markSeen)
   const resolve = useAgentEdits((s) => s.resolve)
   const acceptAll = useAgentEdits((s) => s.acceptAll)
   const requestReload = useAgentEdits((s) => s.requestReload)
-  const openFile = useSession((s) => s.openFile)
-  const setActiveWorkspace = useSession((s) => s.setActiveWorkspace)
+  const openFileIn = useSession((s) => s.openFileIn)
 
-  // Viewing the panel clears the unseen badge.
+  // Viewing the panel clears THIS workspace's unseen badge.
   useEffect(() => {
-    markSeen()
-  }, [timeline.length, markSeen])
+    markSeen(workspace)
+  }, [timeline.length, markSeen, workspace])
 
   const open = (entry: TimelineEntry): void => {
-    setActiveWorkspace(entry.workspace)
-    openFile(entry.path)
+    openFileIn(entry.workspace, entry.path)
     ensureEditor()
   }
 
@@ -64,7 +65,7 @@ export default function ChangesPanel(): JSX.Element {
   const revertAll = async (): Promise<void> => {
     const { edits, timeline: tl } = useAgentEdits.getState()
     await Promise.all(
-      tl.map(async (en) => {
+      timelineFor(tl, workspace).map(async (en) => {
         const edit = edits[en.path]
         if (!edit) return
         await window.api.workspace.writeFile(en.path, edit.before)
@@ -72,7 +73,7 @@ export default function ChangesPanel(): JSX.Element {
         requestReload(en.path)
       })
     )
-    acceptAll()
+    acceptAll(workspace)
   }
 
   return (
@@ -84,7 +85,11 @@ export default function ChangesPanel(): JSX.Element {
         </span>
         {timeline.length > 0 && (
           <div className="changes-actions">
-            <button className="changes-act accept" onClick={acceptAll} title={t('changes.acceptAll')}>
+            <button
+              className="changes-act accept"
+              onClick={() => acceptAll(workspace)}
+              title={t('changes.acceptAll')}
+            >
               <CheckCheck size={13} /> {t('changes.acceptAll')}
             </button>
             <button className="changes-act revert" onClick={revertAll} title={t('changes.revertAll')}>

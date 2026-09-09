@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webFrame } from 'electron'
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 
 export interface DirEntry {
   name: string
@@ -120,8 +120,22 @@ const api = {
       ipcRenderer.invoke('workspace:rename', oldPath, newPath),
     delete: (p: string): Promise<void> => ipcRenderer.invoke('workspace:delete', p),
     reveal: (p: string): Promise<void> => ipcRenderer.invoke('workspace:reveal', p),
+    // Copy things dropped from Finder into a workspace directory.
+    importPaths: (destDir: string, sources: string[]): Promise<{ copied: string[]; errors: string[] }> =>
+      ipcRenderer.invoke('workspace:importPaths', destDir, sources),
     snapshotContents: (folder: string): Promise<Record<string, string>> =>
       ipcRenderer.invoke('workspace:snapshotContents', folder)
+  },
+  // The on-disk path of a dragged File. Electron removed the non-standard
+  // `File.path` property in v32, so every `(file as {path}).path` read silently
+  // yields undefined on the Electron we ship; webUtils is the replacement and
+  // must be called here, in the preload, with the real File object.
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ''
+    }
   },
   search: {
     inFiles: (opts: {

@@ -2464,6 +2464,16 @@ select {
 .ex-row.selected {
   background: var(--accent-2-muted);
 }
+/* Finder drop: the row (or the folder) files are about to land in. */
+.ex-row.drop-target {
+  background: var(--accent-2-muted);
+  outline: 1px solid var(--accent-2-border);
+  outline-offset: -1px;
+}
+.tree-scroll.drop-target {
+  outline: 2px dashed var(--accent-2-border);
+  outline-offset: -4px;
+}
 .ex-row.active.selected {
   background: var(--accent-muted);
 }

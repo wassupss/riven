@@ -60,6 +60,23 @@ function assertConfined(target: string): void {
   throw new Error(`refused: path is outside any open workspace: ${target}`)
 }
 
+// A path in `dir` for `name` that doesn't exist yet: "note.md", then "note 2.md",
+// "note 3.md", … (Finder's own scheme). Bounded so a pathological directory
+// can't spin here.
+async function freeName(dir: string, name: string): Promise<string> {
+  const ext = path.extname(name)
+  const stem = ext ? name.slice(0, -ext.length) : name
+  for (let n = 1; n < 1000; n++) {
+    const candidate = path.join(dir, n === 1 ? name : `${stem} ${n}${ext}`)
+    try {
+      await fs.access(candidate)
+    } catch {
+      return candidate // access threw = nothing there
+    }
+  }
+  throw new Error(`too many files named like "${name}"`)
+}
+
 export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:setRoots', (_e, list: string[]) => {
     roots.clear()
@@ -155,6 +172,45 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:reveal', (_e, target: string) => {
     shell.showItemInFolder(target)
   })
+
+  // Copy files/folders dropped from Finder (or any OS file manager) into a
+  // directory of the workspace. The destination is confined like every other
+  // write here; the SOURCES deliberately are not — the whole point is to bring
+  // something in from outside — so only the destination is validated.
+  //
+  // Never clobbers: a colliding name gets " 2", " 3", … before the extension,
+  // which is what Finder itself does. Returns what was actually written so the
+  // caller can reveal/refresh exactly those entries.
+  ipcMain.handle(
+    'workspace:importPaths',
+    async (
+      _e,
+      destDir: string,
+      sources: string[]
+    ): Promise<{ copied: string[]; errors: string[] }> => {
+      assertConfined(destDir)
+      const copied: string[] = []
+      const errors: string[] = []
+      for (const src of sources) {
+        try {
+          const base = path.basename(src)
+          // Dropping a folder onto itself (or into its own subtree) would recurse
+          // forever; fs.cp catches the exact case but not the nested one.
+          const rel = path.relative(src, destDir)
+          if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+            errors.push(`${base}: cannot copy a folder into itself`)
+            continue
+          }
+          const target = await freeName(destDir, base)
+          await fs.cp(src, target, { recursive: true, errorOnExist: true, force: false })
+          copied.push(target)
+        } catch (e) {
+          errors.push(`${path.basename(src)}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      return { copied, errors }
+    }
+  )
 
   // Snapshot text-file contents under the workspace → baselines for agent-edit
   // diffs (works without git). Bounded to stay cheap.

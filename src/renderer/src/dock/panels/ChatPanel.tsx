@@ -32,9 +32,10 @@ import {
   useAgents,
   setAgentStatus,
   getAgentStatus,
-  agentsForWorkspace,
   resolveAgent
 } from '../../state/agents'
+import { useRoster, rosterFor, type RosterEntry } from '../../state/roster'
+import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
 import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
@@ -1210,6 +1211,10 @@ export default function ChatPanel({
   // This pane's agent status drives the completion flash on the panel border.
   // (setAgentStatus bumps `version`, so this re-reads when the turn finishes.)
   useAgents((s) => s.version)
+  // Keep the @mention list live: a teammate opening, a CLI agent starting in a
+  // terminal, or a peer going busy all land in the roster.
+  useRoster((s) => s.rev)
+  useRoster((s) => s.live)
   const paneStatus = getAgentStatus(chatKey)
   // Acknowledge a finished turn only when the user actually turns to this pane:
   // it BECOMES the visible tab, or the window regains focus while it already is.
@@ -2017,7 +2022,11 @@ export default function ChatPanel({
     setDragOver(false)
     const paths: string[] = []
     for (const f of Array.from(e.dataTransfer.files)) {
-      const p = (f as unknown as { path?: string }).path
+      // Electron dropped the non-standard File.path in v32, so reading it here
+      // returned undefined on the Electron we ship and every Finder drop fell
+      // through to the text/uri-list branch. webUtils (via preload) is the
+      // supported way to get a dragged file's real path.
+      const p = window.api.pathForFile(f)
       if (p) paths.push(p)
     }
     if (paths.length === 0) {
@@ -2060,9 +2069,11 @@ export default function ChatPanel({
     slashItemRefs.current[i]?.scrollIntoView({ block: 'nearest' })
   }
 
-  // @mention: teammates in this workspace (exclude self). Menu opens on a trailing
-  // "@query" token; picking inserts "@name ", and sending delegates to them.
-  const peers = agentsForWorkspace(workspace).filter((a) => a.id !== chatKey)
+  // @mention: every agent pane in this workspace except self — native chats AND
+  // terminals with a CLI agent running in them. Menu opens on a trailing "@query"
+  // token; picking inserts "@name ", and sending hands the rest to the target: a
+  // chat pane gets a message, a terminal gets the line typed into its CLI.
+  const peers = rosterFor(workspace).filter((a) => a.id !== chatKey)
   // A mention handle is the member's name only (drop the " · group" suffix) — short
   // and stable, so "@리드 팀 붙이자" doesn't leak the group name into the token.
   const mentionQ = /(?:^|\s)@([^@]*)$/.exec(input)
@@ -2084,36 +2095,80 @@ export default function ChatPanel({
       inputRef.current.focus()
     }
   }
-  // Parse leading @mentions and delegate the rest to them. Peer titles can contain
+  // Deliver a mentioned line to one pane. A native chat takes it as a message; a
+  // terminal gets it typed into the CLI running there (Enter included, so the
+  // agent actually receives a turn rather than a half-filled prompt).
+  const sendToPane = (target: RosterEntry, body: string): boolean => {
+    if (target.kind === 'terminal') {
+      window.api.pty.write(target.id, body + '\r')
+      return true
+    }
+    const ctl = resolveAgent(target.id, chatKey, workspace)
+    if (ctl) {
+      ctl.send(body)
+      return true
+    }
+    // The pane exists (the layout says so) but its panel isn't mounted, so there
+    // is nothing to render the turn into. Say so instead of dropping the message.
+    setError(t('chat.mentionUnreachable', { name: mentionHandle(target.title) }))
+    return false
+  }
+
+  // Sending to an agent mid-turn makes the CLI read the line as an answer to
+  // whatever it is currently asking. Confirm, inline in this conversation.
+  const confirmBusySend = (names: string): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      useAskUser.getState().enqueue({
+        id: Math.random().toString(36).slice(2),
+        chatKey,
+        question: t('chat.mentionBusyConfirm', { names }),
+        options: [t('common.send'), t('common.cancel')],
+        resolve: (choice) => resolve(choice === t('common.send'))
+      })
+    })
+
+  // Parse leading @mentions and hand the rest to them. Peer titles can contain
   // spaces ("Claude Code", "리드 · 팀"), so a whitespace-delimited token is wrong —
   // match each "@..." against the known peer handles by longest prefix instead.
   const delegateMentions = (text: string): boolean => {
     const handles = peers
-      .map((p) => ({ id: p.id, handle: mentionHandle(p.title) }))
+      .map((p) => ({ entry: p, handle: mentionHandle(p.title) }))
       .filter((p) => p.handle)
       .sort((a, b) => b.handle.length - a.handle.length) // longest first (specificity)
     let rest = text.replace(/^\s+/, '')
-    const targetIds: string[] = []
+    const targets: RosterEntry[] = []
     for (;;) {
       if (!rest.startsWith('@')) break
       const after = rest.slice(1)
       const lc = after.toLowerCase()
       const hit = handles.find((p) => lc.startsWith(p.handle.toLowerCase()))
       if (!hit) break
-      if (!targetIds.includes(hit.id)) targetIds.push(hit.id)
+      if (!targets.some((t) => t.id === hit.entry.id)) targets.push(hit.entry)
       rest = after.slice(hit.handle.length).replace(/^\s+/, '')
     }
     const body = rest.trim()
-    if (targetIds.length === 0 || !body) return false
-    const targets = targetIds
-      .map((id) => resolveAgent(id, chatKey))
-      .filter((a): a is NonNullable<typeof a> => !!a)
-    if (targets.length === 0) return false
-    for (const tgt of targets) tgt.send(body)
-    setMsgs((all) => [
-      ...all,
-      { role: 'user', text, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0 }
-    ])
+    if (targets.length === 0 || !body) return false
+
+    // Interrupting a running agent is rarely what you meant — a CLI mid-turn will
+    // read the line as an answer to whatever it is doing. Ask first, and name who.
+    const running = targets.filter((tt) => tt.busy)
+    const deliver = (): void => {
+      let sent = 0
+      for (const tgt of targets) sent += sendToPane(tgt, body) ? 1 : 0
+      if (sent === 0) return
+      setMsgs((all) => [
+        ...all,
+        { role: 'user', text, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0 }
+      ])
+    }
+    if (running.length > 0) {
+      void (async () => {
+        const names = running.map((tt) => mentionHandle(tt.title)).join(', ')
+        if (await confirmBusySend(names)) deliver()
+      })()
+      return true
+    }
+    deliver()
     return true
   }
 
@@ -2371,7 +2426,11 @@ export default function ChatPanel({
                 }}
               >
                 <span className="slash-name">@{mentionHandle(p.title)}</span>
-                <span className="slash-desc">{p.busy ? t('chat.tools.run') : ''}</span>
+                <span className="slash-desc">
+                  {[p.kind === 'terminal' ? t('chat.mentionTerminal') : '', p.busy ? t('chat.tools.run') : '']
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
               </button>
             ))}
           </div>

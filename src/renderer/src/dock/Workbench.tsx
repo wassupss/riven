@@ -115,7 +115,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
         boxed('preview', <PreviewPanel workspace={workspace} api={props.api} />),
       search: () => boxed('search', <SearchPanel workspace={workspace} />),
       git: () => boxed('git', <GitPanel workspace={workspace} />),
-      changes: () => boxed('changes', <ChangesPanel />),
+      changes: () => boxed('changes', <ChangesPanel workspace={workspace} />),
       notes: () => boxed('notes', <NotesPanel workspace={workspace} />),
       api: () => boxed('api', <ApiClientPanel />),
       agentgroup: () => boxed('agentgroup', <AgentGroupPanel workspace={workspace} />),

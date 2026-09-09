@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSession, workspaceName, pathOf, loadPaneState } from '../state/session'
-import { useWorkspaceStatus, rollupActivity, type PaneActivity } from '../state/workspaceStatus'
-import { useAgents, agentsForWorkspace } from '../state/agents'
+import { type PaneActivity } from '../state/workspaceStatus'
+import { useAgents } from '../state/agents'
+import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
 import { getActiveApi } from '../dock/registry'
@@ -178,12 +179,24 @@ function WorkspaceCard({
   const setSettings = useSettings((s) => s.set)
   const name = useSession((s) => workspaceName(ws, s.names))
   const active = ws === activeWorkspace
-  const activity = useWorkspaceStatus((s) => rollupActivity(s.panes, ws))
   const openWorkspace = useSession((s) => s.openWorkspace)
   const metaHeld = useUI((s) => s.metaHeld)
-  // Re-read the (non-reactive) agent roster whenever it changes.
+  // Re-read the (non-reactive) roster whenever it changes. `rev` covers the
+  // layout-derived half, `version` the live chat controllers.
   useAgents((s) => s.version)
-  const agents = agentsForWorkspace(ws)
+  useRoster((s) => s.rev)
+  useRoster((s) => s.live)
+  // Every agent pane this workspace HAS — including terminals running a CLI
+  // agent, and including panes whose workspace is currently unmounted.
+  const agents = rosterFor(ws)
+  // Roll the card's activity up from the SAME source as the roster below it. It
+  // used to come from workspaceStatus, which only mounted panels write to, so an
+  // unmounted workspace went dark while its agents were still working.
+  const activity: PaneActivity = agents.some((a) => a.attention)
+    ? 'attn'
+    : agents.some((a) => a.busy)
+      ? 'busy'
+      : 'idle'
   // The card dot also reflects a just-finished agent: busy > waiting(attn) > done.
   const cardActivity: DotActivity =
     activity === 'busy'
