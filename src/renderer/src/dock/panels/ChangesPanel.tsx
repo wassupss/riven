@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useSession } from '../../state/session'
 import { useAgentEdits, cacheSet, timelineFor, type TimelineEntry } from '../../state/agentEdits'
 import { ensureEditor } from '../registry'
@@ -33,7 +33,15 @@ export default function ChangesPanel({ workspace }: { workspace: string }): JSX.
   // This panel is one workspace's review queue. It used to list EVERY open
   // workspace's edits — clicking a row then switched workspace under you, which
   // was the tell that the two had been conflated.
-  const timeline = useAgentEdits((s) => timelineFor(s.timeline, workspace))
+  //
+  // Select the STORE's array and narrow it in a memo, never in the selector.
+  // zustand 5 compares snapshots with Object.is, so a selector that filters
+  // hands React a new array on every render — useSyncExternalStore then sees the
+  // store change every time and re-renders forever (React #185, which is what
+  // this panel threw). StatusBar gets away with the same call because it selects
+  // `.length`, a number.
+  const allEdits = useAgentEdits((s) => s.timeline)
+  const timeline = useMemo(() => timelineFor(allEdits, workspace), [allEdits, workspace])
   const editsMap = useAgentEdits((s) => s.edits)
   const markSeen = useAgentEdits((s) => s.markSeen)
   const resolve = useAgentEdits((s) => s.resolve)
