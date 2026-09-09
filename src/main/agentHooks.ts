@@ -69,6 +69,16 @@ export function hookEnv(pane: string): Record<string, string> {
   }
 }
 
+// Hook delivery is the whole basis for busy/attention and completion
+// notifications, and a hook that goes nowhere fails silently by design (the
+// route always answers 204 so the agent is never blocked). Count both outcomes,
+// and with RIVEN_HOOK_DEBUG=1 say which pane each one landed on.
+const hookStats = { delivered: 0, dropped: 0 }
+const debugHooks = process.env.RIVEN_HOOK_DEBUG === '1'
+export function hookDeliveryStats(): { delivered: number; dropped: number } {
+  return { ...hookStats }
+}
+
 export function registerAgentHooks(
   handler: (pane: string, event: HookEvent, hook: string) => void
 ): void {
@@ -78,7 +88,11 @@ export function registerAgentHooks(
     const hook = url.searchParams.get('event') ?? ''
     // Always 204: a hook must never make the agent wait on riven's opinion.
     res.writeHead(204).end()
-    if (!pane) return
+    if (!pane) {
+      hookStats.dropped++
+      if (debugHooks) console.log(`[hooks] ${hook || '(none)'} dropped: no pane`)
+      return
+    }
     let payload: unknown = null
     try {
       payload = body ? JSON.parse(body) : null
@@ -86,6 +100,13 @@ export function registerAgentHooks(
       payload = null
     }
     const event = claudeHookToEvent(hook, payload)
-    if (event) onEvent?.(pane, event, hook)
+    if (!event) {
+      hookStats.dropped++
+      if (debugHooks) console.log(`[hooks] ${hook || '(none)'} dropped: unmapped, pane=${pane}`)
+      return
+    }
+    hookStats.delivered++
+    if (debugHooks) console.log(`[hooks] ${hook} pane=${pane} -> ${event} ok`)
+    onEvent?.(pane, event, hook)
   })
 }

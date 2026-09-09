@@ -4,7 +4,13 @@ import * as os from 'os'
 import * as path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { mcpConfigJson, mcpSystemPrompt, implementedToolNames, agentMcpEnv } from './mcpServer'
+import {
+  mcpConfigJson,
+  mcpSystemPrompt,
+  implementedToolNames,
+  agentMcpEnv,
+  mcpReady
+} from './mcpServer'
 import { resolveBin } from './shellPath'
 import { TerminalActivity, type AttentionReason } from './terminal/activity'
 import { hookEnv, registerAgentHooks } from './agentHooks'
@@ -425,6 +431,12 @@ export function registerPtyHandlers(): void {
         worker.post({ type: 'visible', key, visible: false })
         return { id: key, existed: true }
       }
+
+      // The hook env is built from the loopback server's base url, which is only
+      // known once it is listening. A terminal restored at startup can get here
+      // first, and hookEnv() would then hand back {} — that terminal would run
+      // with no hooks at all, for its whole life, without failing anywhere.
+      await mcpReady()
 
       const shell = defaultShell()
       // Spawn a LOGIN + INTERACTIVE shell like every real terminal emulator

@@ -374,6 +374,32 @@ export function implementedToolNames(): string[] {
 // dead socket. Same shape paseo uses (`/mcp/agents` + randomUUID token).
 let server: http.Server | null = null
 let baseUrl: string | null = null
+// Resolved once the loopback server is listening, i.e. once mcpBaseUrl() is
+// usable. hookEnv() returns {} without a base url, which leaves that terminal
+// with NO hooks for its whole life — silently, since nothing fails. A terminal
+// restored at startup can reach pty:open before listen's callback runs, so the
+// spawn waits on this rather than racing it.
+let markReady: (() => void) | null = null
+const readyPromise = new Promise<void>((resolve) => {
+  markReady = resolve
+})
+function settleReady(): void {
+  markReady?.()
+  markReady = null
+}
+
+// Never let a terminal hang on this: if the server failed to come up (or was
+// never registered) we still spawn, just without hooks — the old behaviour.
+export function mcpReady(timeoutMs = 3000): Promise<void> {
+  if (baseUrl) return Promise.resolve()
+  return Promise.race([
+    readyPromise,
+    new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, timeoutMs)
+      t.unref?.()
+    })
+  ])
+}
 let getWebContents: (() => WebContents | null) | null = null
 // Random per run and only ever handed to processes riven spawns (or shells riven
 // opens), so a config copied elsewhere cannot drive this app after a restart.
@@ -631,10 +657,14 @@ export function registerMcpServer(webContentsGetter: () => WebContents | null): 
   server.requestTimeout = 0
   server.headersTimeout = 60_000
   server.keepAliveTimeout = 65_000
-  server.on('error', (e) => console.error('[mcp] http error', e))
+  server.on('error', (e) => {
+    console.error('[mcp] http error', e)
+    settleReady() // don't strand pty:open waiting for a server that won't listen
+  })
   server.listen(0, '127.0.0.1', () => {
     const addr = server?.address()
     if (addr && typeof addr === 'object') baseUrl = `http://127.0.0.1:${addr.port}`
+    settleReady()
   })
 }
 
