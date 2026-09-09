@@ -81,11 +81,22 @@ export function setTabColor(wid: string, panelId: string, spec: string | null): 
   window.dispatchEvent(new CustomEvent('riven:chatavatar', { detail: panelId }))
 }
 
-// Pane ids (term-N / chat-N) double as GLOBAL localStorage keys (chatlog:, chatsession:,
-// chatagent:, …) and main-process session keys. They must therefore be unique across
-// EVERY pane, every workspace, and every restart — otherwise a new pane inherits a dead
-// pane's transcript/session (e.g. an agent-group member showing a pipeline stage's
-// content). So the counter is PERSISTED and only ever grows; ids are never reused.
+// Pane ids double as GLOBAL localStorage keys (chatlog:, chatsession:, chatagent:, …)
+// and main-process session keys. They must therefore be unique across EVERY pane, every
+// workspace, and every restart — otherwise a new pane inherits a dead pane's
+// transcript/session.
+//
+// The counter below was supposed to guarantee that, and does not: it lives in
+// localStorage, which is per renderer ORIGIN, while pane state lives in sessions.json,
+// which is shared. A dev build (localhost:5173) and a packaged one (file://) therefore
+// keep separate counters over one shared state file — observed handing out chat-52 when
+// chat-52's session was still on disk, and the new pane opened that stranger's
+// conversation. Clearing site data or copying a profile does the same.
+//
+// So: new CHAT panes get a uuid (see newChatKey) and can never collide. Terminals keep
+// the counter — their ids are parsed as numbers by the terminal context bus — but the
+// counter is now also seeded from every id the session tree remembers, not just the
+// mounted layout (see bumpPaneSeq's caller in App.tsx).
 const SEQ_KEY = 'paneSeq:v1'
 let seq = (() => {
   try {
@@ -115,6 +126,14 @@ export function nextPaneId(): number {
   const n = seq++
   persistSeq()
   return n
+}
+
+// A chat pane's key. Random, so it cannot collide with an id whose state is still
+// on disk — no counter to share, reset or fall behind. Existing panes keep their
+// chat-N keys: both forms are opaque strings everywhere that matters (`startsWith
+// ('chat-')`), so old and new panes coexist and nothing has to be migrated.
+export function newChatKey(): string {
+  return `chat-${crypto.randomUUID()}`
 }
 
 // First-message text for a freshly created chat pane, delivered ONE-SHOT so it is
@@ -187,7 +206,7 @@ export function addChat(
   const target = dockAndWidFor(inWorkspace)
   if (!target) return ''
   const { api, wid } = target
-  const id = `chat-${nextPaneId()}`
+  const id = newChatKey()
   // A freshly minted pane MUST start empty. chatKeys are globally unique now, but
   // clear defensively, then seed the pane's model/title/agent into the workspace
   // tree (single source of truth) so ChatPanel reads them on mount.
@@ -196,7 +215,11 @@ export function addChat(
     model: model && model !== 'default' ? model : undefined,
     title: title || undefined,
     agent: agent || undefined,
-    persona: persona || undefined
+    persona: persona || undefined,
+    // Newly created here, so it starts an empty conversation instead of adopting
+    // the workspace's most recent session. Only panes born through addChat get
+    // this; a pane restored from a saved layout keeps the old fallback.
+    fresh: true
   })
   flushSessionSaveSync() // durable immediately (survives quit/reload races)
   // "inactive" = don't end up focused. We do NOT use dockview's `inactive` add
