@@ -1,0 +1,162 @@
+/* The editor's viewer for files Monaco can't show: images, video, audio, PDF.
+   Sized to fill the editor pane exactly like Monaco does, so switching between a
+   code tab and an image tab doesn't shift the surrounding chrome. */
+.media-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.media-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--edge);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.media-name {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-meta {
+  font-variant-numeric: tabular-nums;
+}
+.media-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.media-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.media-actions button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+/* The zoom readout is also the fit / 1:1 toggle. It replaced a separate icon
+   button that read as "fullscreen" and wasn't. */
+.media-actions button.media-zoom {
+  width: auto;
+  min-width: 52px;
+  padding: 0 6px;
+  text-align: center;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  overflow: hidden;
+  /* A checkerboard reads transparency honestly — a flat background makes a
+     transparent PNG look like it has an opaque one. */
+  background-image:
+    linear-gradient(45deg, var(--bg-2) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--bg-2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--bg-2) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--bg-2) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+/* Zoomed past the frame: scroll rather than squash, and let the image be
+   dragged around. A zoomed image that can only be reached with scrollbars is
+   the thing every other viewer lets you grab. */
+.media-body.scroll {
+  overflow: auto;
+  align-items: flex-start;
+  justify-content: flex-start;
+  cursor: grab;
+}
+.media-body.panning {
+  cursor: grabbing;
+}
+/* Centre an image narrower than the frame while still allowing scroll. */
+.media-body.scroll img {
+  margin: auto;
+}
+.media-body img.fit,
+.media-body video.fit {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.media-body img {
+  image-rendering: auto;
+  display: block;
+}
+.media-body audio {
+  width: min(560px, 100%);
+}
+.media-pdf {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--bg-2);
+}
+.media-empty {
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+
+/* Rendered markdown, shown in place of Monaco by the tab strip's preview toggle. */
+.md-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 28px 40px;
+  background: var(--bg);
+}
+
+/* The preview toggle. `margin-left: auto` parks it at the right end of the tab
+   strip, and `sticky` keeps it there once there are enough tabs to scroll —
+   inline it trailed the last tab and slid out of reach. */
+.file-tabs-act {
+  position: sticky;
+  right: 0;
+  flex: 0 0 auto;
+  align-self: stretch;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  border: none;
+  border-left: 1px solid var(--hairline);
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.file-tabs-act:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.file-tabs-act.on {
+  background: var(--accent-muted);
+  color: var(--fg);
+}

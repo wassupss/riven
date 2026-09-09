@@ -4,9 +4,11 @@ import { pathOf } from '../../state/session'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { promptInput } from '../../components/promptInput'
+import DocPicker from '../../components/DocPicker'
 import {
   FileText,
   Plus,
+  FileInput,
   Trash2,
   Eye,
   Pencil,
@@ -121,6 +123,8 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
   // The note list costs 210px of a panel that is often docked narrow, so it can
   // be folded away to give the document the full width.
   const [sideOpen, setSideOpen] = useState(true)
+  // Workspace document picker (import) is open.
+  const [picking, setPicking] = useState(false)
 
   // Wikilink autocomplete state (while typing "[[").
   const [ac, setAc] = useState<{ start: number; query: string } | null>(null)
@@ -224,6 +228,36 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
     setMode((m) => (m === 'preview' ? 'edit' : m))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws, refresh])
+
+  // Import documents that already live in the workspace tree (docs/*.md and the
+  // like) as notes, so they can be searched, tagged and wikilinked with the rest.
+  // The note keeps a pointer back to the file it came from; it is a copy, not a
+  // live view, because notes are edited freely and must not rewrite the repo.
+  const importDocs = useCallback(
+    async (relPaths: string[]) => {
+      setPicking(false)
+      let last: string | null = null
+      for (const relPath of relPaths) {
+        const raw = await window.api.workspace.readFile(`${ws}/${relPath}`)
+        if (raw == null) continue
+        const base = relPath.split('/').pop() ?? relPath
+        const fallback = base.replace(/\.[^.]+$/, '')
+        const { title: tt, body: bb } = parseRaw(raw, fallback)
+        const source = t('notes.importedFrom', { path: relPath })
+        last = await window.api.notes.write(ws, null, tt, `> ${source}\n\n${bb}`)
+      }
+      const list = await refresh()
+      if (last) {
+        const meta = list.find((n) => n.name === last)
+        setSel(last)
+        setTitle(meta?.title ?? last)
+        const raw = (await window.api.notes.read(ws, last)) ?? ''
+        setBody(parseRaw(raw, meta?.title ?? last).body)
+        setMode((m) => (m === 'preview' ? 'edit' : m))
+      }
+    },
+    [ws, refresh, t]
+  )
 
   // Export the note as a real .md file in the workspace (repo).
   const saveToFile = async (): Promise<void> => {
@@ -620,9 +654,14 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
       <div className={`no-side${sideOpen ? '' : ' hidden'}`}>
         <div className="no-side-head">
           <span>{t('notes.title')}</span>
-          <button className="no-btn" title={t('notes.new')} onClick={newNote}>
-            <Plus size={14} />
-          </button>
+          <span className="no-side-acts">
+            <button className="no-btn" title={t('notes.import')} onClick={() => setPicking(true)}>
+              <FileInput size={14} />
+            </button>
+            <button className="no-btn" title={t('notes.new')} onClick={newNote}>
+              <Plus size={14} />
+            </button>
+          </span>
         </div>
         <div className="no-search">
           <Search size={13} />
@@ -808,6 +847,9 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
             )}
           </div>
         </div>
+      )}
+      {picking && (
+        <DocPicker root={ws} onCancel={() => setPicking(false)} onPick={(p) => void importDocs(p)} />
       )}
     </div>
   )

@@ -645,6 +645,7 @@ select {
 }
 /* cmux-style workspace card — compact: title · live status · path · git */
 .ws-card {
+  position: relative; /* anchors the completion ring */
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -656,6 +657,12 @@ select {
   transition:
     background var(--dur-fast) ease,
     border-color var(--dur-fast) ease;
+}
+/* A finished agent in a workspace you're not looking at wears the SAME travelling
+   ember ring the finished panel does, so the rail reads at a glance and the two
+   surfaces mean the same thing. It stays until the completion is acknowledged. */
+.ws-card > .chat-ring {
+  --ring-radius: var(--radius-md);
 }
 .ws-card:hover {
   background: var(--hover);
@@ -2463,6 +2470,16 @@ select {
 }
 .ex-row.selected {
   background: var(--accent-2-muted);
+}
+/* Finder drop: the row (or the folder) files are about to land in. */
+.ex-row.drop-target {
+  background: var(--accent-2-muted);
+  outline: 1px solid var(--accent-2-border);
+  outline-offset: -1px;
+}
+.tree-scroll.drop-target {
+  outline: 2px dashed var(--accent-2-border);
+  outline-offset: -4px;
 }
 .ex-row.active.selected {
   background: var(--accent-muted);
@@ -4992,6 +5009,35 @@ select {
   font-family: var(--font-mono);
   color: var(--fg-dim);
 }
+/* multi-select variant (notes document import) */
+.palette-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.palette-foot > span:first-child {
+  margin-right: auto;
+}
+.pick-box {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  color: var(--bg);
+}
+.pick-box.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .kb-tabs {
   display: flex;
   gap: 2px;
@@ -6882,6 +6928,20 @@ select {
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--accent) 7%, var(--bg-2));
 }
+/* The asking agent hung up: the card stays as a record of what was asked, but
+   loses the accent that says "you can act on this". */
+.ask-inline.expired {
+  border-color: var(--edge);
+  background: var(--bg-2);
+}
+.ask-inline.expired .ask-inline-q {
+  color: var(--fg-dim);
+}
+.ask-inline-note {
+  flex: 1 1 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
 .ask-inline-q {
   font-size: var(--text-sm);
   line-height: 1.5;
@@ -7034,7 +7094,9 @@ select {
   inset: 0;
   z-index: 4;
   pointer-events: none;
-  border-radius: 2px;
+  /* Radius is the host's, so the same ring can wrap a chat panel (square) or a
+     workspace card (rounded) without a second implementation. */
+  border-radius: var(--ring-radius, 2px);
   padding: 1.5px;
   overflow: hidden;
   -webkit-mask:

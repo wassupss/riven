@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { mcpConfigJson, mcpSystemPrompt, implementedToolNames } from './mcpServer'
+import { mcpConfigJson, mcpSystemPrompt, implementedToolNames, agentMcpEnv } from './mcpServer'
 import { resolveBin } from './shellPath'
 import { TerminalActivity, type AttentionReason } from './terminal/activity'
 import { hookEnv, registerAgentHooks } from './agentHooks'
@@ -187,7 +187,7 @@ function ptyEnv(configDir: string | undefined, key: string): Record<string, stri
     // That is usually right, but riven knows the absolute path it found itself.
     if (realClaude) env.RIVEN_REAL_CLAUDE = realClaude
   }
-  Object.assign(env, hookEnv(key))
+  Object.assign(env, hookEnv(key), agentMcpEnv())
   if (process.platform !== 'win32') {
     const hasUtf8 = [env.LC_ALL, env.LC_CTYPE, env.LANG].some((v) => v && /utf-?8/i.test(v))
     if (!hasUtf8) {

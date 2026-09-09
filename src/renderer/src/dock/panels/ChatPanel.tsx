@@ -32,9 +32,10 @@ import {
   useAgents,
   setAgentStatus,
   getAgentStatus,
-  agentsForWorkspace,
   resolveAgent
 } from '../../state/agents'
+import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
+import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
 import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
@@ -1157,6 +1158,22 @@ function transcriptToMsgs(transcript: CliTranscript): Msg[] {
   })
 }
 
+// The placeholder bubble a running turn streams into.
+function blankAssistant(): Msg {
+  return {
+    role: 'assistant',
+    text: '',
+    tools: [],
+    items: [],
+    done: false,
+    interrupted: false,
+    startedAt: Date.now(),
+    durationMs: 0,
+    tokensIn: 0,
+    tokensOut: 0
+  }
+}
+
 // A teammate's @mention handle: the name only, dropping the " · group" suffix that
 // group-member panes carry in their title.
 function mentionHandle(title: string): string {
@@ -1210,32 +1227,26 @@ export default function ChatPanel({
   // This pane's agent status drives the completion flash on the panel border.
   // (setAgentStatus bumps `version`, so this re-reads when the turn finishes.)
   useAgents((s) => s.version)
+  // Keep the @mention list live: a teammate opening, a CLI agent starting in a
+  // terminal, or a peer going busy all land in the roster.
+  useRoster((s) => s.rev)
+  useRoster((s) => s.live)
   const paneStatus = getAgentStatus(chatKey)
-  // Acknowledge a finished turn only when the user actually turns to this pane:
-  // it BECOMES the visible tab, or the window regains focus while it already is.
-  // We never ack on mount/state changes, so a completion that happens while you're
-  // elsewhere is still waiting when you come back.
-  useEffect(() => {
-    if (!api) return
-    const ack = (): void => {
-      if (api.isVisible && document.hasFocus() && getAgentStatus(chatKey) === 'done') {
-        setAgentStatus(chatKey, 'idle')
-      }
-    }
-    const subs = [
-      api.onDidActiveChange(() => {
-        if (api.isActive) ack()
-      }),
-      api.onDidVisibilityChange(() => {
-        if (api.isVisible) ack()
-      })
-    ]
-    window.addEventListener('focus', ack)
-    return () => {
-      subs.forEach((d) => d.dispose())
-      window.removeEventListener('focus', ack)
-    }
-  }, [api, chatKey])
+  // The roster remembers a completion across an unmount (the controller status
+  // does not), so a pane that finished while its workspace was evicted still
+  // shows its ring when you come back to it — matching the rail card.
+  const rosterDone = useRoster((s) => !!s.live[chatKey]?.done)
+  // Acknowledge a finished turn ONLY when the user actually interacts with this
+  // pane — a click or a keystroke inside it (see the panel root's handlers).
+  //
+  // This used to also ack when the pane merely became visible or when the window
+  // regained focus. Both happen without the user doing anything: alt-tabbing back
+  // to riven, or a workspace re-mounting, silently wiped the completion of every
+  // visible pane. A finished turn now waits until it is actually looked at.
+  const ackDone = useCallback((): void => {
+    if (getAgentStatus(chatKey) === 'done') setAgentStatus(chatKey, 'idle')
+    markPaneSeen(chatKey)
+  }, [chatKey])
   // How many recent turns are rendered (see `windowed` below), and whether the view
   // is pinned to the bottom (drives auto-scroll + the jump-to-latest button).
   const WINDOW_STEP = 50
@@ -1256,7 +1267,12 @@ export default function ChatPanel({
     [pane0.persona]
   )
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
+  // Seeded from the roster, not `false`: main streams a turn's events whether or
+  // not this panel exists, so a panel that remounts into a running turn (its
+  // workspace was LRU-evicted, or the window reloaded) has to come back busy —
+  // otherwise the composer looks ready and Stop isn't offered while the agent is
+  // still working.
+  const [busy, setBusy] = useState(() => !!useRoster.getState().live[chatKey]?.busy)
   const [model, setModel] = useState<string | null>(null)
   const [pickedModel, setPickedModel] = useState(
     () => pane0.model || getSettings().defaultChatModel || 'default'
@@ -1474,6 +1490,21 @@ export default function ChatPanel({
     // Reveal everything now (tool boundary / turn end) so nothing lags behind and
     // tool lines stay in order with the text.
     const flushText = (): void => flushPending()
+    // Events can arrive for a turn this panel didn't start: main keeps streaming
+    // while the workspace is unmounted, and on remount the transcript we restore
+    // from disk holds only COMPLETED turns. Without a bubble to stream into,
+    // patchLast would append the deltas to the PREVIOUS, finished answer. Open a
+    // fresh one instead, and mark the pane busy — it demonstrably is.
+    const ensureInFlight = (): void => {
+      setMsgs((all) => {
+        for (let i = all.length - 1; i >= 0; i--) {
+          if (all[i].role !== 'assistant') continue
+          return all[i].done ? [...all, blankAssistant()] : all
+        }
+        return [...all, blankAssistant()]
+      })
+      setBusy(true) // same-value setState is a no-op, so this costs nothing mid-turn
+    }
     const st = getSettings()
     const savedModel = pane0.model || st.defaultChatModel || 'default'
     // Resume the SAME Claude session across a restart so the agent keeps its full
@@ -1503,6 +1534,7 @@ export default function ChatPanel({
           if (e.sessionId) savePane({ session: e.sessionId })
           break
         case 'text': {
+          ensureInFlight()
           const now = performance.now()
           if (lastArrivalRef.current) {
             const gap = now - lastArrivalRef.current
@@ -1523,6 +1555,7 @@ export default function ChatPanel({
           break
         }
         case 'tool': {
+          ensureInFlight()
           if (pendingText.current) flushText() // keep tool lines in order with text
           const tool: ToolLine = {
             name: e.name,
@@ -1704,8 +1737,17 @@ export default function ChatPanel({
       .sessionTranscript(pathOf(workspace), sid)
       .then((tr) => {
         if (cancelled || !tr?.length) return
-        // Never clobber a turn the user started while this was loading.
-        setMsgs((cur) => (cur.some((m) => !m.done) ? cur : transcriptToMsgs(tr)))
+        // Never clobber a turn that is already streaming here. If it started in
+        // THIS panel the user's prompt is in `cur` and the transcript would
+        // duplicate it, so leave `cur` alone. If the streaming bubble is the
+        // whole of `cur`, the panel remounted into a turn that was already
+        // running (ensureInFlight opened it, prompt-less) — its prompt is in the
+        // transcript, so put the history in FRONT rather than dropping it.
+        setMsgs((cur) => {
+          const i = cur.findIndex((m) => !m.done)
+          if (i < 0) return transcriptToMsgs(tr)
+          return i === 0 ? [...transcriptToMsgs(tr), ...cur] : cur
+        })
         restoredRef.current = true
         titleSet.current = true // keep the restored tab title; don't re-title
         // Backfill: panes created before titles were composed still read just
@@ -1773,18 +1815,6 @@ export default function ChatPanel({
   // True when the user pressed Stop, so the turn's non-success end subtype isn't
   // surfaced as a red "error…" banner (a manual interrupt is expected, not a fault).
   const stoppedRef = useRef(false)
-  const blankAssistant = (): Msg => ({
-    role: 'assistant',
-    text: '',
-    tools: [],
-    items: [],
-    done: false,
-    interrupted: false,
-    startedAt: Date.now(),
-    durationMs: 0,
-    tokensIn: 0,
-    tokensOut: 0
-  })
   // Start the next queued message (if any) as a fresh turn: un-dim its bubble and
   // add the assistant placeholder. Returns true if a turn was started.
   const drainQueue = (): boolean => {
@@ -1870,6 +1900,12 @@ export default function ChatPanel({
       chatKey,
       workspace,
       getTitle: () => titleRef.current,
+      // A rename from the tab is the user's choice: adopt it AND stop the
+      // auto-titler, or the first message would overwrite the name they typed.
+      setTitle: (title: string) => {
+        titleRef.current = title
+        titleSet.current = true
+      },
       isBusy: () => busyRef.current,
       send: (text) => sendMessage(text),
       // Append context to the composer (not auto-send) so the user can add a note
@@ -2011,7 +2047,11 @@ export default function ChatPanel({
     setDragOver(false)
     const paths: string[] = []
     for (const f of Array.from(e.dataTransfer.files)) {
-      const p = (f as unknown as { path?: string }).path
+      // Electron dropped the non-standard File.path in v32, so reading it here
+      // returned undefined on the Electron we ship and every Finder drop fell
+      // through to the text/uri-list branch. webUtils (via preload) is the
+      // supported way to get a dragged file's real path.
+      const p = window.api.pathForFile(f)
       if (p) paths.push(p)
     }
     if (paths.length === 0) {
@@ -2054,9 +2094,11 @@ export default function ChatPanel({
     slashItemRefs.current[i]?.scrollIntoView({ block: 'nearest' })
   }
 
-  // @mention: teammates in this workspace (exclude self). Menu opens on a trailing
-  // "@query" token; picking inserts "@name ", and sending delegates to them.
-  const peers = agentsForWorkspace(workspace).filter((a) => a.id !== chatKey)
+  // @mention: every agent pane in this workspace except self — native chats AND
+  // terminals with a CLI agent running in them. Menu opens on a trailing "@query"
+  // token; picking inserts "@name ", and sending hands the rest to the target: a
+  // chat pane gets a message, a terminal gets the line typed into its CLI.
+  const peers = rosterFor(workspace).filter((a) => a.id !== chatKey)
   // A mention handle is the member's name only (drop the " · group" suffix) — short
   // and stable, so "@리드 팀 붙이자" doesn't leak the group name into the token.
   const mentionQ = /(?:^|\s)@([^@]*)$/.exec(input)
@@ -2078,36 +2120,80 @@ export default function ChatPanel({
       inputRef.current.focus()
     }
   }
-  // Parse leading @mentions and delegate the rest to them. Peer titles can contain
+  // Deliver a mentioned line to one pane. A native chat takes it as a message; a
+  // terminal gets it typed into the CLI running there (Enter included, so the
+  // agent actually receives a turn rather than a half-filled prompt).
+  const sendToPane = (target: RosterEntry, body: string): boolean => {
+    if (target.kind === 'terminal') {
+      window.api.pty.write(target.id, body + '\r')
+      return true
+    }
+    const ctl = resolveAgent(target.id, chatKey, workspace)
+    if (ctl) {
+      ctl.send(body)
+      return true
+    }
+    // The pane exists (the layout says so) but its panel isn't mounted, so there
+    // is nothing to render the turn into. Say so instead of dropping the message.
+    setError(t('chat.mentionUnreachable', { name: mentionHandle(target.title) }))
+    return false
+  }
+
+  // Sending to an agent mid-turn makes the CLI read the line as an answer to
+  // whatever it is currently asking. Confirm, inline in this conversation.
+  const confirmBusySend = (names: string): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
+      useAskUser.getState().enqueue({
+        id: Math.random().toString(36).slice(2),
+        chatKey,
+        question: t('chat.mentionBusyConfirm', { names }),
+        options: [t('common.send'), t('common.cancel')],
+        resolve: (choice) => resolve(choice === t('common.send'))
+      })
+    })
+
+  // Parse leading @mentions and hand the rest to them. Peer titles can contain
   // spaces ("Claude Code", "리드 · 팀"), so a whitespace-delimited token is wrong —
   // match each "@..." against the known peer handles by longest prefix instead.
   const delegateMentions = (text: string): boolean => {
     const handles = peers
-      .map((p) => ({ id: p.id, handle: mentionHandle(p.title) }))
+      .map((p) => ({ entry: p, handle: mentionHandle(p.title) }))
       .filter((p) => p.handle)
       .sort((a, b) => b.handle.length - a.handle.length) // longest first (specificity)
     let rest = text.replace(/^\s+/, '')
-    const targetIds: string[] = []
+    const targets: RosterEntry[] = []
     for (;;) {
       if (!rest.startsWith('@')) break
       const after = rest.slice(1)
       const lc = after.toLowerCase()
       const hit = handles.find((p) => lc.startsWith(p.handle.toLowerCase()))
       if (!hit) break
-      if (!targetIds.includes(hit.id)) targetIds.push(hit.id)
+      if (!targets.some((t) => t.id === hit.entry.id)) targets.push(hit.entry)
       rest = after.slice(hit.handle.length).replace(/^\s+/, '')
     }
     const body = rest.trim()
-    if (targetIds.length === 0 || !body) return false
-    const targets = targetIds
-      .map((id) => resolveAgent(id, chatKey))
-      .filter((a): a is NonNullable<typeof a> => !!a)
-    if (targets.length === 0) return false
-    for (const tgt of targets) tgt.send(body)
-    setMsgs((all) => [
-      ...all,
-      { role: 'user', text, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0 }
-    ])
+    if (targets.length === 0 || !body) return false
+
+    // Interrupting a running agent is rarely what you meant — a CLI mid-turn will
+    // read the line as an answer to whatever it is doing. Ask first, and name who.
+    const running = targets.filter((tt) => tt.busy)
+    const deliver = (): void => {
+      let sent = 0
+      for (const tgt of targets) sent += sendToPane(tgt, body) ? 1 : 0
+      if (sent === 0) return
+      setMsgs((all) => [
+        ...all,
+        { role: 'user', text, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0 }
+      ])
+    }
+    if (running.length > 0) {
+      void (async () => {
+        const names = running.map((tt) => mentionHandle(tt.title)).join(', ')
+        if (await confirmBusySend(names)) deliver()
+      })()
+      return true
+    }
+    deliver()
     return true
   }
 
@@ -2282,11 +2368,11 @@ export default function ChatPanel({
       // Native parity (AttnRingView): a running turn shows a STATIC ring, a
       // finished one shows the travelling ember ring until you acknowledge it.
       className={`chat-panel${dragOver ? ' drop-active' : ''}${paneStatus === 'busy' ? ' busy' : ''}`}
-      // Acknowledge a finished turn: clicking anywhere in the pane clears the
-      // "done" shimmer on its tab (that's the "I've seen it" signal).
-      onMouseDownCapture={() => {
-        if (getAgentStatus(chatKey) === 'done') setAgentStatus(chatKey, 'idle')
-      }}
+      // Acknowledge a finished turn: a click or a keystroke anywhere in the pane
+      // is the "I've seen it" signal, and the ONLY thing that clears it — for
+      // the tab, and for this workspace's card in the rail.
+      onMouseDownCapture={ackDone}
+      onKeyDownCapture={ackDone}
       ref={rootRef}
       // Explicitly activate this pane on a real click. dockview's default
       // "focusin activates the group" is unreliable once split groups exist (e.g.
@@ -2309,7 +2395,7 @@ export default function ChatPanel({
       onDrop={onDropFiles}
     >
       {/* Finished turn: the travelling ember ring stays until acknowledged. */}
-      {paneStatus === 'done' && <span className="chat-ring" aria-hidden />}
+      {(paneStatus === 'done' || rosterDone) && <span className="chat-ring" aria-hidden />}
       <div
         className="chat-scroll"
         ref={scrollRef}
@@ -2365,7 +2451,11 @@ export default function ChatPanel({
                 }}
               >
                 <span className="slash-name">@{mentionHandle(p.title)}</span>
-                <span className="slash-desc">{p.busy ? t('chat.tools.run') : ''}</span>
+                <span className="slash-desc">
+                  {[p.kind === 'terminal' ? t('chat.mentionTerminal') : '', p.busy ? t('chat.tools.run') : '']
+                    .filter(Boolean)
+                    .join(' · ')}
+                </span>
               </button>
             ))}
           </div>

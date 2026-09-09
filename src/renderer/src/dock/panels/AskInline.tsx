@@ -10,6 +10,7 @@ export default function AskInline({ chatKey }: { chatKey: string }): JSX.Element
   const req = useAskUser((s) => s.pending.find((r) => r.chatKey === chatKey))
   const answer = useAskUser((s) => s.answer)
   const cancel = useAskUser((s) => s.cancel)
+  const dismiss = useAskUser((s) => s.dismiss)
   const [text, setText] = useState('')
   const [sel, setSel] = useState(0)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -26,6 +27,22 @@ export default function AskInline({ chatKey }: { chatKey: string }): JSX.Element
   }, [req?.id])
 
   if (!req) return null
+
+  // The agent hung up before an answer arrived. Say so rather than leaving live
+  // looking buttons that quietly do nothing.
+  if (req.expired)
+    return (
+      <div className="ask-inline expired" ref={boxRef}>
+        <div className="ask-inline-q">{req.question}</div>
+        <div className="ask-inline-row">
+          <span className="ask-inline-note">{t('ask.expired')}</span>
+          <button className="ask-inline-cancel" onClick={() => dismiss(req.id)}>
+            {t('common.close')}
+          </button>
+        </div>
+      </div>
+    )
+
   const submitText = (): void => {
     const v = text.trim()
     if (v) answer(req.id, v)

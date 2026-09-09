@@ -14,6 +14,10 @@ export interface AskRequest {
   question: string
   options: string[]
   resolve: (choice: string) => void
+  // The asking agent gave up (killed, or its own tool timeout). The question
+  // stays visible but stops accepting answers: silently removing it would make
+  // the user think their click was registered.
+  expired?: boolean
 }
 
 interface AskUserState {
@@ -22,6 +26,10 @@ interface AskUserState {
   // Answer a specific request (a chosen option or free-typed text).
   answer: (id: string, choice: string) => void
   cancel: (id: string) => void
+  // The agent stopped listening: keep the card, mark it dead, unblock the tool.
+  expire: (id: string) => void
+  // Remove an expired card the user has acknowledged.
+  dismiss: (id: string) => void
   // The oldest request that isn't bound to a pane (drives the fallback modal).
   unattached: () => AskRequest | null
 }
@@ -31,7 +39,7 @@ export const useAskUser = create<AskUserState>((set, get) => ({
   enqueue: (req) => set((s) => ({ pending: [...s.pending, req] })),
   answer: (id, choice) => {
     const req = get().pending.find((r) => r.id === id)
-    if (!req) return
+    if (!req || req.expired) return
     req.resolve(choice)
     set((s) => ({ pending: s.pending.filter((r) => r.id !== id) }))
   },
@@ -41,5 +49,16 @@ export const useAskUser = create<AskUserState>((set, get) => ({
     req.resolve('riven: the user dismissed the question')
     set((s) => ({ pending: s.pending.filter((r) => r.id !== id) }))
   },
+  expire: (id) => {
+    const req = get().pending.find((r) => r.id === id)
+    if (!req || req.expired) return
+    // Resolve so the tool's promise isn't left hanging; nobody is listening for
+    // the value any more (main already dropped the call).
+    req.resolve('riven: the agent stopped waiting for an answer')
+    set((s) => ({
+      pending: s.pending.map((r) => (r.id === id ? { ...r, expired: true } : r))
+    }))
+  },
+  dismiss: (id) => set((s) => ({ pending: s.pending.filter((r) => r.id !== id) })),
   unattached: () => get().pending.find((r) => !r.chatKey) ?? null
 }))
