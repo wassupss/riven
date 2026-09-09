@@ -228,12 +228,18 @@ export default function TerminalPane({
           addon.onContextLoss(() => {
             addon.dispose()
             webgl = null
+            if (import.meta.env.DEV) {
+              const w = window as unknown as { __rivenTermWebgl?: Record<string, boolean> }
+              ;(w.__rivenTermWebgl ??= {})[sessionKey] = false
+            }
             // Disposing the WebGL addon reverts xterm to its DOM renderer, but an
             // idle full-screen TUI (no new output) won't trigger a redraw and would
             // stay blank. Force a full repaint so the screen comes back without a
-            // ⌘R. We deliberately do NOT re-attach WebGL (webglTried stays true):
-            // once the GPU context is unstable, the DOM renderer is the reliable
-            // fallback for the rest of the session.
+            // ⌘R. We deliberately do NOT re-attach WebGL here (webglTried stays
+            // true): once the GPU context is unstable, the DOM renderer is the
+            // reliable fallback for the rest of the session. The ONE exception is
+            // a wake from sleep — see the system:resumed handler below, where the
+            // cause is known not to be an unstable GPU.
             try {
               term.refresh(0, term.rows - 1)
             } catch {
@@ -244,6 +250,13 @@ export default function TerminalPane({
           webgl = addon
         } catch {
           webgl = null
+        }
+        // Dev/e2e: which renderer this terminal ended up on. The WebGL fallback
+        // is permanent by design, so a test that cares whether a recovery
+        // re-attached it has no other way to tell.
+        if (import.meta.env.DEV) {
+          const w = window as unknown as { __rivenTermWebgl?: Record<string, boolean> }
+          ;(w.__rivenTermWebgl ??= {})[sessionKey] = webgl !== null
         }
       }
 
@@ -404,6 +417,26 @@ export default function TerminalPane({
         tryAttachWebgl()
         reportVisible()
       }
+
+      // Waking the machine can take the GPU context with it, which would
+      // otherwise strand this terminal on the DOM renderer for good. That policy
+      // exists to avoid thrashing an unstable context; a sleep is not that. Allow
+      // exactly one re-attach per wake, and repaint either way so an idle
+      // full-screen TUI comes back without a keystroke.
+      disposers.push(
+        window.api.onSystemResumed(() => {
+          if (torn) return
+          if (!webgl) {
+            webglTried = false
+            tryAttachWebgl()
+          }
+          try {
+            term.refresh(0, term.rows - 1)
+          } catch {
+            /* term may be mid-dispose */
+          }
+        })
+      )
 
       safeFit()
 

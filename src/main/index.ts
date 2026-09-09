@@ -4,6 +4,7 @@ import * as os from 'os'
 import { existsSync } from 'fs'
 import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
+import { registerSystemResume } from './systemResume'
 import { registerWorkspaceHandlers } from './workspace'
 import { registerMediaScheme, registerMediaProtocol } from './media'
 import { registerLspHandlers } from './lsp'
@@ -281,6 +282,10 @@ app.whenReady().then(() => {
   }
 
   createWindow()
+
+  // Repaint every window when the machine wakes, and let terminals re-try WebGL
+  // once (see systemResume.ts).
+  registerSystemResume()
 
   // Auto-update: check GitHub Releases, surface status to the renderer, and make
   // the "update ready" notification actually install on click.
