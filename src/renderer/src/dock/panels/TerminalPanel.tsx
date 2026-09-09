@@ -75,7 +75,16 @@ export default function TerminalPanel({
   }
 
   useEffect(() => {
-    const notify = (body: string): void => window.api.notify.show(staticT('term.notifyTitle', { n: paneId }), body)
+    // paneId is what makes this a notification ABOUT a pane rather than a bare
+    // banner: main suppresses it when that pane is the focused one, keys the
+    // cooldown on it, and sends notify:click back with it so the click lands on
+    // this terminal. Omitting it (as this did) meant terminal bell/done
+    // notifications were never suppressed by the plan and did nothing when
+    // clicked — the chat panel had been passing it all along.
+    const notify = (body: string): void =>
+      window.api.notify.show(staticT('term.notifyTitle', { n: paneId }), body, {
+        paneId: sessionKey
+      })
     // Attention (finished / needs input) is main's flag: it survives remounts and
     // clears when the user looks (pty:seen), not when this component guesses.
     const offStatus = window.api.pty.onStatus(({ key, busy: b, attention: a }) => {

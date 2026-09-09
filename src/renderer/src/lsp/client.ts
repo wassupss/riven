@@ -554,3 +554,20 @@ export function ensureLspInitialized(workspaceRoot: string): void {
       // No servers reachable — Monaco's built-in workers still validate json/css/html.
     })
 }
+
+// Dev-only introspection: what the client believes about servers and models.
+export function lspDebug(): unknown {
+  return {
+    root,
+    initialized,
+    availableServers: [...availableServers],
+    started: [...started.keys()],
+    models: monaco.editor.getModels().map((m) => ({
+      uri: m.uri.toString(),
+      lang: m.getLanguageId(),
+      spec: LANG_SPECS[m.getLanguageId()] ?? null,
+      serverKey: serverKeyFor(m.getLanguageId()),
+      managed: isManaged(m)
+    }))
+  }
+}

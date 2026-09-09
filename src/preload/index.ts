@@ -491,6 +491,14 @@ const api = {
       return () => ipcRenderer.removeListener('fs:changed', listener)
     }
   },
+  // The machine woke from sleep / the screen unlocked. Main has already forced a
+  // repaint; the renderer uses this to undo decisions it made because the GPU
+  // context died (TerminalPane's permanent DOM-renderer fallback).
+  onSystemResumed: (cb: (reason: string) => void): (() => void) => {
+    const listener = (_e: unknown, reason: string): void => cb(reason)
+    ipcRenderer.on('system:resumed', listener)
+    return () => ipcRenderer.removeListener('system:resumed', listener)
+  },
   notify: {
     // Main decides whether and where to show it from every window's presence
     // (see main/notify.ts). opts.paneId names the pane it is about: a window
@@ -499,6 +507,14 @@ const api = {
       ipcRenderer.send('notify:show', { title, body, ...opts }),
     presence: (p: { visible: boolean; focused: boolean; activePane: string | null; at: number }): void =>
       ipcRenderer.send('notify:presence', p),
+    diag: (): Promise<{
+      requested: number
+      suppressed: number
+      cooled: number
+      shown: number
+      failed: number
+      clicked: number
+    }> => ipcRenderer.invoke('notify:diag'),
     onClick: (cb: (paneId: string) => void): (() => void) => {
       const listener = (_e: unknown, paneId: string): void => cb(paneId)
       ipcRenderer.on('notify:click', listener)

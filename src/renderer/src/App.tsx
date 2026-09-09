@@ -47,6 +47,8 @@ import {
   addChat,
   bumpPaneSeq
 } from './dock/registry'
+import { lspDebug } from './lsp/client'
+import { useTabBadge } from './state/tabBadge'
 import { useT } from './i18n'
 
 export default function App(): JSX.Element {
@@ -104,6 +106,8 @@ export default function App(): JSX.Element {
       ;(window as unknown as { __riven?: unknown }).__riven = {
         addTerminal,
         addChat,
+        lspDebug,
+        tabBadge: useTabBadge,
         getActiveApi,
         session: useSession,
         markPaneSeen,

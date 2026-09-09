@@ -83,6 +83,19 @@ const presenceByWc = new Map<number, Presence>()
 const recent = new Map<string, number>()
 const active = new Set<Notification>()
 
+// Whether a notification actually reached the user is not knowable from show():
+// on macOS an unsigned build fails at the OS layer (UNErrorDomain 1) long after
+// show() returns, and nothing here noticed. `failed` is the only definitive
+// signal — `shown` can over-report — so count both and let a smoke read them.
+const stats = { requested: 0, suppressed: 0, cooled: 0, shown: 0, failed: 0, clicked: 0 }
+const debugNotify = process.env.RIVEN_NOTIFY_DEBUG === '1'
+export function notifyStats(): typeof stats {
+  return { ...stats }
+}
+const trace = (what: string, req: NotifyRequest): void => {
+  if (debugNotify) console.log(`[notify] ${what} pane=${req.paneId ?? '-'} title=${req.title}`)
+}
+
 function retain(n: Notification): () => void {
   active.add(n)
   let released = false
@@ -122,12 +135,21 @@ export function ensureNotificationCenterRegistration(): void {
 
 function show(sender: WebContents, req: NotifyRequest): void {
   if (!Notification.isSupported()) return
+  stats.requested++
   const now = Date.now()
   const ids = [...presenceByWc.keys()]
   const states = ids.map((id) => presenceByWc.get(id) as Presence)
   const plan = computePlan(states, req.paneId ?? null, now)
-  if (plan.suppressed) return
-  if (!reserveCooldown(recent, req.paneId ?? req.title, now)) return
+  if (plan.suppressed) {
+    stats.suppressed++
+    trace('suppressed (user is on that pane)', req)
+    return
+  }
+  if (!reserveCooldown(recent, req.paneId ?? req.title, now)) {
+    stats.cooled++
+    trace('cooled down', req)
+    return
+  }
   // Land the click on the window the plan picked, else the sender, else any.
   const target =
     (plan.recipient !== null ? windowFor(ids[plan.recipient]) : null) ??
@@ -136,7 +158,20 @@ function show(sender: WebContents, req: NotifyRequest): void {
     null
   const n = new Notification({ title: req.title, body: req.body, silent: false })
   const release = retain(n)
+  // 'show' is the OS accepting it; 'failed' is definitive rejection (an unsigned
+  // macOS build never gets past here). Neither is guaranteed to fire, so this is
+  // reporting, not control flow.
+  n.on('show', () => {
+    stats.shown++
+    trace('shown', req)
+  })
+  n.on('failed', () => {
+    stats.failed++
+    trace('FAILED to display', req)
+  })
   n.on('click', () => {
+    stats.clicked++
+    trace('clicked', req)
     release()
     if (target && !target.isDestroyed()) {
       if (target.isMinimized()) target.restore()
@@ -154,4 +189,9 @@ export function registerNotifyHandlers(): void {
     e.sender.once('destroyed', () => presenceByWc.delete(e.sender.id))
   })
   ipcMain.on('notify:show', (e, req: NotifyRequest) => show(e.sender, req))
+  // Read-only counters for the smoke tests and for diagnosing "I never see
+  // notifications": on an unsigned macOS build `failed` climbs while `shown`
+  // stays at zero, which is the difference between "riven didn't ask" and "the
+  // OS refused".
+  ipcMain.handle('notify:diag', () => notifyStats())
 }

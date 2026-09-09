@@ -28,6 +28,11 @@ interface Spec {
   cwd: string
   initializationOptions?: unknown
   runAsNode?: boolean // spawn Electron in node mode (for JS-based servers we bundle)
+  // Tell the server the CLIENT owns file watching. Only set this for a server
+  // that otherwise watches the workspace itself and cannot survive failing to —
+  // we do not actually send workspace/didChangeWatchedFiles, so the server sees
+  // edits to OPEN documents (didChange) but not changes made outside the editor.
+  clientWatchesFiles?: boolean
 }
 
 const servers = new Map<string, Server>()
@@ -133,6 +138,14 @@ const SPECS: Record<string, Resolver> = {
         // Defaults for everything except completion filtering: the server
         // pre-filters incomplete lists against its own word heuristic, which
         // throws away items Monaco would have matched. Let Monaco filter.
+        // Without this the server builds its OWN chokidar watcher over the whole
+        // workspace root (server.js: the FallbackWatcher branch taken when the
+        // client doesn't advertise didChangeWatchedFiles.dynamicRegistration).
+        // On a large root that hits `EMFILE: too many open files, watch`, and
+        // chokidar's unhandled 'error' event kills the process — so the server
+        // died seconds after starting, every later request answered "server
+        // svelte not started", and nothing ever reached the Output panel.
+        clientWatchesFiles: true,
         initializationOptions: {
           configuration: { typescript: {}, javascript: {} },
           dontFilterIncompleteCompletions: true
@@ -222,7 +235,14 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
           typeDefinition: { dynamicRegistration: false, linkSupport: false },
           publishDiagnostics: { relatedInformation: true }
         },
-        workspace: { configuration: true, workspaceFolders: true, applyEdit: false }
+        workspace: {
+          configuration: true,
+          workspaceFolders: true,
+          applyEdit: false,
+          ...(spec.clientWatchesFiles
+            ? { didChangeWatchedFiles: { dynamicRegistration: true } }
+            : {})
+        }
       }
     })
     .then((caps) => {
@@ -232,7 +252,11 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
 
   server.initialized = initialized
   servers.set(serverKey, server)
-  proc.on('exit', () => {
+  // A server that dies leaves no trace otherwise: it drops out of the registry
+  // and every later request answers "not started", which reads to the user as
+  // the language simply not being supported. Say so out loud.
+  proc.on('exit', (code, signal) => {
+    if (code !== 0 || signal) console.error(`[lsp:${serverKey}] exited (code ${code}, signal ${signal})`)
     servers.delete(serverKey)
     starting.delete(serverKey)
   })
