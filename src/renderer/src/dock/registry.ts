@@ -54,13 +54,21 @@ export function getApiFor(wid: string | null | undefined): DockviewApi | null {
 // top of whatever the user is doing. Null when the workspace isn't mounted
 // (the mounted set is LRU-bounded), so callers report that instead of falling
 // back to the visible dock.
-function dockFor(wid?: string | null): { api: DockviewApi; wid: string } | null {
-  if (wid) {
-    const api = apiByWorkspace.get(wid)
-    return api ? { api, wid } : null
-  }
-  const active = useSession.getState().activeWorkspace
-  return activeApi && active ? { api: activeApi, wid: active } : null
+//
+// Deliberately does NOT require a resolved workspace id for the visible case:
+// opening a terminal or a singleton panel only needs a dock, and demanding a
+// workspace here would silently turn ⌘T into a no-op whenever `activeWorkspace`
+// lags the mounted dock.
+function dockFor(wid?: string | null): DockviewApi | null {
+  if (wid) return apiByWorkspace.get(wid) ?? null
+  return activeApi
+}
+// Same, for the callers that additionally need the workspace id (to seed pane
+// state under it). Null when there is no workspace to attribute the pane to.
+function dockAndWidFor(wid?: string | null): { api: DockviewApi; wid: string } | null {
+  const w = wid ?? useSession.getState().activeWorkspace
+  const api = dockFor(wid)
+  return api && w ? { api, wid: w } : null
 }
 export function widForApi(api: DockviewApi | null | undefined): string | null {
   return (api && apiWorkspace.get(api)) ?? null
@@ -176,7 +184,7 @@ export function addChat(
   // passes ITS OWN workspace so the pane never lands in the visible one.
   inWorkspace?: string | null
 ): string {
-  const target = dockFor(inWorkspace)
+  const target = dockAndWidFor(inWorkspace)
   if (!target) return ''
   const { api, wid } = target
   const id = `chat-${nextPaneId()}`
@@ -261,7 +269,7 @@ export function addTerminal(
   // See addChat's `inWorkspace`: agent-driven opens name their own workspace.
   inWorkspace?: string | null
 ): void {
-  const api = dockFor(inWorkspace)?.api
+  const api = dockFor(inWorkspace)
   if (!api) return
   const paneId = nextPaneId()
   api.addPanel({
@@ -574,7 +582,7 @@ export function togglePanel(
   // See addChat's `inWorkspace`: agent-driven opens name their own workspace.
   inWorkspace?: string | null
 ): void {
-  const api = dockFor(inWorkspace)?.api
+  const api = dockFor(inWorkspace)
   if (!api) return
   const existing = api.getPanel(id)
   if (existing) {
