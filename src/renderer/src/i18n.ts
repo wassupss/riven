@@ -311,6 +311,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'editor.nextChange': { ko: '다음 변경', en: 'Next change' },
   'editor.accept': { ko: '수락', en: 'Accept' },
   'editor.revert': { ko: '되돌리기', en: 'Revert' },
+  'editor.previewMd': { ko: '미리보기', en: 'Preview' },
+  'editor.showSource': { ko: '원본 보기', en: 'Show source' },
+  'editor.showImage': { ko: '이미지 보기', en: 'Show image' },
+  'media.fit': { ko: '창에 맞춤', en: 'Fit' },
+  'media.zoomIn': { ko: '확대', en: 'Zoom in' },
+  'media.zoomOut': { ko: '축소', en: 'Zoom out' },
+  'media.failed': { ko: '이 파일을 열 수 없습니다.', en: "This file couldn't be opened." },
   'editor.emptyTitle': { ko: '파일을 선택하면 여기서 편집할 수 있어요.', en: 'Select a file to edit it here.' },
   'editor.emptyHint': { ko: '저장 ⌘S · claude 전송 ⌘L', en: 'Save ⌘S · Send to claude ⌘L' },
 
@@ -691,6 +698,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'common.loading': { ko: '불러오는 중…', en: 'Loading…' },
   'notes.title': { ko: '메모', en: 'Notes' },
   'notes.new': { ko: '새 메모', en: 'New note' },
+  'notes.import': { ko: '워크스페이스 문서 가져오기', en: 'Import workspace document' },
+  'notes.importPlaceholder': {
+    ko: '가져올 문서 검색 (Space 선택, Enter 가져오기)',
+    en: 'Search documents (Space to select, Enter to import)'
+  },
+  'notes.importAction': { ko: '가져오기', en: 'Import' },
+  'notes.importCount': { ko: '{n}개 선택됨', en: '{n} selected' },
+  'notes.importedFrom': { ko: '`{path}` 에서 가져옴', en: 'Imported from `{path}`' },
   'notes.empty': { ko: '메모가 없습니다', en: 'No notes yet' },
   'notes.pick': { ko: '메모를 선택하세요', en: 'Pick a note' },
   'notes.delete': { ko: '삭제', en: 'Delete' },

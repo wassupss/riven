@@ -5,6 +5,7 @@ import { existsSync } from 'fs'
 import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
 import { registerWorkspaceHandlers } from './workspace'
+import { registerMediaScheme, registerMediaProtocol } from './media'
 import { registerLspHandlers } from './lsp'
 import { registerBridgeHandlers } from './bridge'
 import { registerGitHandlers } from './git'
@@ -82,6 +83,9 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       webviewTag: true,
+      // Chromium's built-in PDF viewer is a plugin; without this an <iframe>
+      // pointed at a PDF downloads it instead of rendering it.
+      plugins: true,
       contextIsolation: true
     }
   })
@@ -205,7 +209,12 @@ function createWindow(): void {
   }
 }
 
+// Scheme privileges have to be declared before 'ready', so this can't live in
+// the whenReady block below with the other registrations.
+registerMediaScheme()
+
 app.whenReady().then(() => {
+  registerMediaProtocol()
   registerPtyHandlers()
   registerWorkspaceHandlers()
   registerLspHandlers()

@@ -5009,6 +5009,35 @@ select {
   font-family: var(--font-mono);
   color: var(--fg-dim);
 }
+/* multi-select variant (notes document import) */
+.palette-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--hairline);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.palette-foot > span:first-child {
+  margin-right: auto;
+}
+.pick-box {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-xs);
+  color: var(--bg);
+}
+.pick-box.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
 .kb-tabs {
   display: flex;
   gap: 2px;

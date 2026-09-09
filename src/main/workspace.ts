@@ -50,13 +50,18 @@ function isHidden(name: string): boolean {
 // recursively delete arbitrary files outside an open project (defense-in-depth).
 const roots = new Set<string>()
 
-function assertConfined(target: string): void {
-  if (roots.size === 0) return // nothing open yet — no confinement to enforce
+export function isConfined(target: string): boolean {
+  if (roots.size === 0) return true // nothing open yet — no confinement to enforce
   const resolved = path.resolve(target)
   for (const root of roots) {
     const r = path.resolve(root)
-    if (resolved === r || resolved.startsWith(r + path.sep)) return
+    if (resolved === r || resolved.startsWith(r + path.sep)) return true
   }
+  return false
+}
+
+function assertConfined(target: string): void {
+  if (isConfined(target)) return
   throw new Error(`refused: path is outside any open workspace: ${target}`)
 }
 

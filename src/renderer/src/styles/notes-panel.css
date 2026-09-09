@@ -40,6 +40,11 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+.notes-obsidian .no-side-acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .notes-obsidian .no-search {
   display: flex;
   align-items: center;

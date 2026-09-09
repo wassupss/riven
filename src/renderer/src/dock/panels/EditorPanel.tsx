@@ -15,8 +15,12 @@ import EditorBottomDrawer from './EditorBottomDrawer'
 import EditorStatusBar from './EditorStatusBar'
 import DiffModal from '../../components/DiffModal'
 import { useT, t as staticT } from '../../i18n'
-import { X, Bot } from 'lucide-react'
+import { X, Bot, Eye, Code2 } from 'lucide-react'
+import MediaViewer from '../../components/MediaViewer'
+import Markdown from '../../components/Markdown'
+import { mediaKind, isMarkdown, isTextEditable } from '../../lib/mediaKind'
 import '../../styles/editor-bottom.css'
+import '../../styles/media.css'
 
 const EditorPane: EditorPaneComponent = MonacoEditorPane
 
@@ -98,11 +102,24 @@ function EditorGroupView({
   const stateRef = useRef({ activePath, dirty, isActiveWs })
   stateRef.current = { activePath, dirty, isActiveWs }
 
-  // Load the active file.
+  // What this tab shows: a viewer for media, otherwise the editor. Two file
+  // types have a second face and get a toggle in the tab strip: markdown can be
+  // rendered, and an SVG (drawn as a picture by default) can be edited as markup.
+  const kind = activePath ? mediaKind(activePath) : 'text'
+  const canPreviewMd = !!activePath && isMarkdown(activePath)
+  const canShowSvgSource = !!activePath && kind !== 'text' && isTextEditable(activePath)
+  const [altFor, setAltFor] = useState<string | null>(null)
+  const alt = !!activePath && altFor === activePath
+  const mdPreview = canPreviewMd && alt
+  const viewKind = canShowSvgSource && alt ? 'text' : kind
+
+  // Load the active file. Media is never read into a string — a video would be
+  // hundreds of megabytes of JS string for nothing; the viewer streams it from
+  // main instead.
   useEffect(() => {
     let cancelled = false
     appliedAgentAfter.current = null
-    if (activePath) {
+    if (activePath && isTextEditable(activePath)) {
       window.api.workspace.readFile(activePath).then((content) => {
         if (!cancelled) {
           cacheSet(activePath, content)
@@ -311,6 +328,35 @@ function EditorGroupView({
               </span>
             </div>
           ))}
+          {/* Markdown preview / SVG source toggle, pinned to the end of the strip
+              so it doesn't scroll away with the tabs. */}
+          {(canPreviewMd || canShowSvgSource) && (
+            <button
+              className={`file-tabs-act${alt ? ' on' : ''}`}
+              title={
+                canShowSvgSource
+                  ? alt
+                    ? t('editor.showImage')
+                    : t('editor.showSource')
+                  : alt
+                    ? t('editor.showSource')
+                    : t('editor.previewMd')
+              }
+              onClick={() => setAltFor(alt ? null : activePath)}
+            >
+              {canShowSvgSource ? (
+                alt ? (
+                  <Eye size={13} />
+                ) : (
+                  <Code2 size={13} />
+                )
+              ) : alt ? (
+                <Code2 size={13} />
+              ) : (
+                <Eye size={13} />
+              )}
+            </button>
+          )}
         </div>
       )}
 
@@ -349,18 +395,30 @@ function EditorGroupView({
         </div>
       )}
 
-      <EditorPane
-        file={file}
-        onSave={handleSave}
-        onDirtyChange={setDirty}
-        agentEdit={
-          agentEdit && agentEdit.hasBaseline && !dirty
-            ? { before: agentEdit.before, after: agentEdit.after }
-            : null
-        }
-        onAgentRevert={onAgentRevert}
-        onDismiss={() => activePath && clearEdit(activePath)}
-      />
+      {/* An image / video / audio / PDF gets a viewer instead of Monaco: reading
+          it as UTF-8 only ever produced mojibake. Markdown can toggle to its
+          rendered form, an SVG to its markup. Everything else is the editor,
+          unchanged. */}
+      {viewKind !== 'text' ? (
+        <MediaViewer path={activePath as string} kind={viewKind} />
+      ) : mdPreview && activePath ? (
+        <div className="md-preview">
+          <Markdown text={file?.content ?? ''} />
+        </div>
+      ) : (
+        <EditorPane
+          file={file}
+          onSave={handleSave}
+          onDirtyChange={setDirty}
+          agentEdit={
+            agentEdit && agentEdit.hasBaseline && !dirty
+              ? { before: agentEdit.before, after: agentEdit.after }
+              : null
+          }
+          onAgentRevert={onAgentRevert}
+          onDismiss={() => activePath && clearEdit(activePath)}
+        />
+      )}
 
       {/* Edge drop-zones: drag a file tab (from this or any group) onto an edge
           to split THIS group in that direction. Shown only while dragging. */}
