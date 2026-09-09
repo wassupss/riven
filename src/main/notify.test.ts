@@ -65,3 +65,34 @@ describe('reserveCooldown', () => {
     expect(reserveCooldown(m, 'term-1', now + 5_001)).toBe(true)
   })
 })
+
+// The bug this pins down: TerminalPanel used to call notify.show(title, body)
+// with no options, so paneId was undefined for every terminal bell/done. Both
+// the suppression rule and the click deep-link are gated on it, which made a
+// terminal notification unsuppressable and inert when clicked.
+describe('a request with no paneId', () => {
+  it('is NOT suppressed even by the window the user is looking at', () => {
+    const focusedOnThatPane = present({ activePane: 'term-7' })
+    expect(computePlan([focusedOnThatPane], 'term-7', now)).toEqual({
+      recipient: null,
+      suppressed: true
+    })
+    // …but without the id, the same state notifies anyway.
+    expect(computePlan([focusedOnThatPane], null, now)).toEqual({
+      recipient: 0,
+      suppressed: false
+    })
+  })
+
+  it('shares one cooldown key across panes, so distinct panes silence each other', () => {
+    // paneId absent → show() falls back to the title, which for terminals is
+    // per-pane, but for any two callers sharing a title it collapses them.
+    const m = new Map<string, number>()
+    expect(reserveCooldown(m, 'Claude', now)).toBe(true)
+    expect(reserveCooldown(m, 'Claude', now + 100)).toBe(false)
+    // With ids they stay independent.
+    const m2 = new Map<string, number>()
+    expect(reserveCooldown(m2, 'term-1', now)).toBe(true)
+    expect(reserveCooldown(m2, 'term-2', now + 100)).toBe(true)
+  })
+})

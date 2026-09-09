@@ -499,6 +499,14 @@ const api = {
       ipcRenderer.send('notify:show', { title, body, ...opts }),
     presence: (p: { visible: boolean; focused: boolean; activePane: string | null; at: number }): void =>
       ipcRenderer.send('notify:presence', p),
+    diag: (): Promise<{
+      requested: number
+      suppressed: number
+      cooled: number
+      shown: number
+      failed: number
+      clicked: number
+    }> => ipcRenderer.invoke('notify:diag'),
     onClick: (cb: (paneId: string) => void): (() => void) => {
       const listener = (_e: unknown, paneId: string): void => cb(paneId)
       ipcRenderer.on('notify:click', listener)
