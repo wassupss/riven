@@ -112,6 +112,17 @@ export function workspaceOfPane(paneKey: string): string | null {
   return layoutPanes().find((p) => p.id === paneKey)?.workspace ?? null
 }
 
+// Workspaces with at least one pane mid-turn. Layout-derived existence crossed
+// with the app-level live signals, so it stays true for a workspace that isn't
+// mounted — which is exactly the question App.tsx's LRU has to answer before it
+// unmounts one.
+export function busyWorkspaces(): Set<string> {
+  const { live } = useRoster.getState()
+  const out = new Set<string>()
+  for (const p of layoutPanes()) if (live[p.id]?.busy) out.add(p.workspace)
+  return out
+}
+
 // The agent panes of one workspace: every native chat, plus terminals that
 // currently have a CLI agent running.
 export function rosterFor(workspace: string): RosterEntry[] {

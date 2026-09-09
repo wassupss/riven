@@ -1158,6 +1158,22 @@ function transcriptToMsgs(transcript: CliTranscript): Msg[] {
   })
 }
 
+// The placeholder bubble a running turn streams into.
+function blankAssistant(): Msg {
+  return {
+    role: 'assistant',
+    text: '',
+    tools: [],
+    items: [],
+    done: false,
+    interrupted: false,
+    startedAt: Date.now(),
+    durationMs: 0,
+    tokensIn: 0,
+    tokensOut: 0
+  }
+}
+
 // A teammate's @mention handle: the name only, dropping the " · group" suffix that
 // group-member panes carry in their title.
 function mentionHandle(title: string): string {
@@ -1251,7 +1267,12 @@ export default function ChatPanel({
     [pane0.persona]
   )
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState(false)
+  // Seeded from the roster, not `false`: main streams a turn's events whether or
+  // not this panel exists, so a panel that remounts into a running turn (its
+  // workspace was LRU-evicted, or the window reloaded) has to come back busy —
+  // otherwise the composer looks ready and Stop isn't offered while the agent is
+  // still working.
+  const [busy, setBusy] = useState(() => !!useRoster.getState().live[chatKey]?.busy)
   const [model, setModel] = useState<string | null>(null)
   const [pickedModel, setPickedModel] = useState(
     () => pane0.model || getSettings().defaultChatModel || 'default'
@@ -1469,6 +1490,21 @@ export default function ChatPanel({
     // Reveal everything now (tool boundary / turn end) so nothing lags behind and
     // tool lines stay in order with the text.
     const flushText = (): void => flushPending()
+    // Events can arrive for a turn this panel didn't start: main keeps streaming
+    // while the workspace is unmounted, and on remount the transcript we restore
+    // from disk holds only COMPLETED turns. Without a bubble to stream into,
+    // patchLast would append the deltas to the PREVIOUS, finished answer. Open a
+    // fresh one instead, and mark the pane busy — it demonstrably is.
+    const ensureInFlight = (): void => {
+      setMsgs((all) => {
+        for (let i = all.length - 1; i >= 0; i--) {
+          if (all[i].role !== 'assistant') continue
+          return all[i].done ? [...all, blankAssistant()] : all
+        }
+        return [...all, blankAssistant()]
+      })
+      setBusy(true) // same-value setState is a no-op, so this costs nothing mid-turn
+    }
     const st = getSettings()
     const savedModel = pane0.model || st.defaultChatModel || 'default'
     // Resume the SAME Claude session across a restart so the agent keeps its full
@@ -1498,6 +1534,7 @@ export default function ChatPanel({
           if (e.sessionId) savePane({ session: e.sessionId })
           break
         case 'text': {
+          ensureInFlight()
           const now = performance.now()
           if (lastArrivalRef.current) {
             const gap = now - lastArrivalRef.current
@@ -1518,6 +1555,7 @@ export default function ChatPanel({
           break
         }
         case 'tool': {
+          ensureInFlight()
           if (pendingText.current) flushText() // keep tool lines in order with text
           const tool: ToolLine = {
             name: e.name,
@@ -1699,8 +1737,17 @@ export default function ChatPanel({
       .sessionTranscript(pathOf(workspace), sid)
       .then((tr) => {
         if (cancelled || !tr?.length) return
-        // Never clobber a turn the user started while this was loading.
-        setMsgs((cur) => (cur.some((m) => !m.done) ? cur : transcriptToMsgs(tr)))
+        // Never clobber a turn that is already streaming here. If it started in
+        // THIS panel the user's prompt is in `cur` and the transcript would
+        // duplicate it, so leave `cur` alone. If the streaming bubble is the
+        // whole of `cur`, the panel remounted into a turn that was already
+        // running (ensureInFlight opened it, prompt-less) — its prompt is in the
+        // transcript, so put the history in FRONT rather than dropping it.
+        setMsgs((cur) => {
+          const i = cur.findIndex((m) => !m.done)
+          if (i < 0) return transcriptToMsgs(tr)
+          return i === 0 ? [...transcriptToMsgs(tr), ...cur] : cur
+        })
         restoredRef.current = true
         titleSet.current = true // keep the restored tab title; don't re-title
         // Backfill: panes created before titles were composed still read just
@@ -1768,18 +1815,6 @@ export default function ChatPanel({
   // True when the user pressed Stop, so the turn's non-success end subtype isn't
   // surfaced as a red "error…" banner (a manual interrupt is expected, not a fault).
   const stoppedRef = useRef(false)
-  const blankAssistant = (): Msg => ({
-    role: 'assistant',
-    text: '',
-    tools: [],
-    items: [],
-    done: false,
-    interrupted: false,
-    startedAt: Date.now(),
-    durationMs: 0,
-    tokensIn: 0,
-    tokensOut: 0
-  })
   // Start the next queued message (if any) as a fresh turn: un-dim its bubble and
   // add the assistant placeholder. Returns true if a turn was started.
   const drainQueue = (): boolean => {

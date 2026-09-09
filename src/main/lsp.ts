@@ -1,5 +1,6 @@
 import { app, ipcMain, WebContents } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
+import { createRequire } from 'module'
 import { dirname, join } from 'path'
 import {
   createMessageConnection,
@@ -45,6 +46,19 @@ type Resolver = (rootPath: string) => Promise<Spec | null>
 function bundled(moduleId: string): string | null {
   try {
     return require.resolve(moduleId)
+  } catch {
+    return null
+  }
+}
+
+// Resolve a JS language server from the *workspace's* own node_modules (walking
+// up parent dirs, so monorepo hoisting works). A project that pins its own
+// server should win over the copy we bundle: the server has to agree with the
+// framework version the project compiles with, and ours is frozen per release.
+function fromWorkspace(rootPath: string, moduleId: string): string | null {
+  try {
+    // The path only anchors resolution — it doesn't have to exist.
+    return createRequire(join(rootPath, 'package.json')).resolve(moduleId)
   } catch {
     return null
   }
@@ -101,6 +115,30 @@ const SPECS: Record<string, Resolver> = {
     if (entry)
       return { command: process.execPath, args: [entry, '--stdio'], cwd: rootPath, runAsNode: true }
     const bin = await resolveBin('yaml-language-server')
+    return bin ? { command: bin, args: ['--stdio'], cwd: rootPath } : null
+  },
+  // Workspace copy first, then the bundled one — a SvelteKit project pins the
+  // server alongside its svelte version, and that pairing is what makes
+  // svelte2tsx produce the right types. Falls back to a system `svelteserver`.
+  svelte: async (rootPath) => {
+    const entry =
+      fromWorkspace(rootPath, 'svelte-language-server/bin/server.js') ??
+      bundled('svelte-language-server/bin/server.js')
+    if (entry)
+      return {
+        command: process.execPath,
+        args: [entry, '--stdio'],
+        cwd: rootPath,
+        runAsNode: true,
+        // Defaults for everything except completion filtering: the server
+        // pre-filters incomplete lists against its own word heuristic, which
+        // throws away items Monaco would have matched. Let Monaco filter.
+        initializationOptions: {
+          configuration: { typescript: {}, javascript: {} },
+          dontFilterIncompleteCompletions: true
+        }
+      }
+    const bin = await resolveBin('svelteserver')
     return bin ? { command: bin, args: ['--stdio'], cwd: rootPath } : null
   }
 }

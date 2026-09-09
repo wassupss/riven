@@ -23,6 +23,7 @@ asarUnpack:
   - node_modules/pyright/**
   - node_modules/yaml-language-server/**
   - node_modules/bash-language-server/**
+  - node_modules/svelte-language-server/**
 mac:
   target:
     - target: dmg

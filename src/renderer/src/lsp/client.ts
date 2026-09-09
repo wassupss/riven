@@ -24,7 +24,8 @@ const LANG_SPECS: Record<string, LangSpec> = {
   c: { server: 'clangd', lspId: 'c' },
   cpp: { server: 'clangd', lspId: 'cpp' },
   shell: { server: 'bash', lspId: 'shellscript' },
-  yaml: { server: 'yaml', lspId: 'yaml' }
+  yaml: { server: 'yaml', lspId: 'yaml' },
+  svelte: { server: 'svelte', lspId: 'svelte' }
 }
 const ALL_LANGS = Object.keys(LANG_SPECS)
 // Monaco's bundled TS worker already formats/renames ts/js(x); registering an LSP

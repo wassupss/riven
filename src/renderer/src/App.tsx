@@ -16,7 +16,8 @@ import AskUserModal from './components/AskUserModal'
 import { useAskUser } from './state/askUser'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler } from './state/mcpTools'
-import { startRoster, useRoster, rosterFor, markPaneSeen } from './state/roster'
+import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
+import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions, pathOf, widForPane } from './state/session'
@@ -60,17 +61,20 @@ export default function App(): JSX.Element {
   // visited workspace stayed mounted forever (hidden), so its panels — chats,
   // xterm terminals, Monaco editors — all stayed live. With several heavy
   // workspaces this ballooned the renderer heap (measured 2.5GB) and thrashed the
-  // GC, making the whole app lag on every action. An LRU bounds the live set;
-  // switching back re-mounts (PTYs survive in main, chat transcripts reload from
-  // the session tree), so no state is lost.
+  // GC, making the whole app lag on every action. An LRU bounds the live set.
+  //
+  // Unmounting is NOT free, though: the CLI child and the PTY survive in main,
+  // but the panel's React state does not. A chat that was mid-turn came back
+  // idle, with the streamed reply gone (the on-disk transcript only holds
+  // COMPLETED turns) and any riven_ask_agent waiter never resolving. So a
+  // workspace with a pane mid-turn is held mounted until it finishes — the
+  // roster tracks busy per pane at app level, which stays truthful while the
+  // workspace is unmounted. The held set drains by itself as turns end.
   const MAX_MOUNTED = 3
   const [activated, setActivated] = useState<string[]>([])
   useEffect(() => {
     if (!activeWorkspace) return
-    setActivated((a) => {
-      const recent = [...a.filter((w) => w !== activeWorkspace && openWorkspaces.includes(w)), activeWorkspace]
-      return recent.slice(-MAX_MOUNTED)
-    })
+    setActivated((a) => nextMounted(a, activeWorkspace, openWorkspaces, busyWorkspaces(), MAX_MOUNTED))
   }, [activeWorkspace, openWorkspaces])
 
   // Always watch the active workspace (independent of whether the editor is open)
