@@ -328,8 +328,9 @@ function EditorGroupView({
               </span>
             </div>
           ))}
-          {/* Markdown preview / SVG source toggle, pinned to the end of the strip
-              so it doesn't scroll away with the tabs. */}
+          {/* Markdown preview / SVG source toggle. It is the last child of the
+              strip but sticks to its right edge (see media.css), so it stays
+              put however many tabs are open. */}
           {(canPreviewMd || canShowSvgSource) && (
             <button
               className={`file-tabs-act${alt ? ' on' : ''}`}

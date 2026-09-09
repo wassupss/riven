@@ -51,9 +51,14 @@
   background: var(--hover);
   color: var(--fg);
 }
-.media-zoom {
-  min-width: 42px;
+/* The zoom readout is also the fit / 1:1 toggle. It replaced a separate icon
+   button that read as "fullscreen" and wasn't. */
+.media-actions button.media-zoom {
+  width: auto;
+  min-width: 52px;
+  padding: 0 6px;
   text-align: center;
+  font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -79,11 +84,21 @@
     8px -8px,
     -8px 0;
 }
-/* Zoomed past the frame: scroll rather than squash. */
+/* Zoomed past the frame: scroll rather than squash, and let the image be
+   dragged around. A zoomed image that can only be reached with scrollbars is
+   the thing every other viewer lets you grab. */
 .media-body.scroll {
   overflow: auto;
   align-items: flex-start;
   justify-content: flex-start;
+  cursor: grab;
+}
+.media-body.panning {
+  cursor: grabbing;
+}
+/* Centre an image narrower than the frame while still allowing scroll. */
+.media-body.scroll img {
+  margin: auto;
 }
 .media-body img.fit,
 .media-body video.fit {
@@ -118,19 +133,22 @@
   background: var(--bg);
 }
 
-/* The preview toggle itself, pinned after the tabs. */
+/* The preview toggle. `margin-left: auto` parks it at the right end of the tab
+   strip, and `sticky` keeps it there once there are enough tabs to scroll —
+   inline it trailed the last tab and slid out of reach. */
 .file-tabs-act {
+  position: sticky;
+  right: 0;
   flex: 0 0 auto;
-  align-self: center;
+  align-self: stretch;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 22px;
-  margin: 0 4px;
+  width: 30px;
   border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
+  border-left: 1px solid var(--hairline);
+  background: var(--bg-2);
   color: var(--fg-dim);
   cursor: pointer;
 }

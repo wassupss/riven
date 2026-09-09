@@ -314,6 +314,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'editor.previewMd': { ko: '미리보기', en: 'Preview' },
   'editor.showSource': { ko: '원본 보기', en: 'Show source' },
   'editor.showImage': { ko: '이미지 보기', en: 'Show image' },
+  'media.actualSize': { ko: '실제 크기', en: 'Actual size' },
   'media.fit': { ko: '창에 맞춤', en: 'Fit' },
   'media.zoomIn': { ko: '확대', en: 'Zoom in' },
   'media.zoomOut': { ko: '축소', en: 'Zoom out' },
