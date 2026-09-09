@@ -382,6 +382,15 @@ const sessionId = randomUUID()
 
 const pending = new Map<string, (result: string) => void>()
 const REQUEST_TIMEOUT_MS = 1_800_000 // 30 min — matches native (waits for the human)
+
+// Env every agent riven spawns needs. ask_user blocks the tool call until a
+// human answers, and the CLI's own tool timeout is far shorter than the 30
+// minutes riven is willing to wait — it would hang up first, so the answer the
+// user then clicked had nowhere to go. Telling the client to wait as long as we
+// do is what makes the round trip survive a person going to get coffee.
+export function agentMcpEnv(): Record<string, string> {
+  return { MCP_TOOL_TIMEOUT: String(REQUEST_TIMEOUT_MS) }
+}
 const MAX_BODY_BYTES = 1024 * 1024
 
 // Extra loopback routes (agent hooks post here too) share the port and token.
@@ -463,9 +472,14 @@ function invokeTool(
       clearTimeout(timer)
       resolve(result)
     })
-    // The agent hung up (killed, or its own timeout): stop waiting on the user.
+    // The agent hung up (killed, or its own timeout): stop waiting on the user,
+    // and tell the renderer so too. Without that last part the prompt stayed on
+    // screen and clicking an option did nothing — the answer was posted back to
+    // a call that no longer existed, with no sign anything was wrong.
     onAbort(() => {
-      if (pending.delete(id)) clearTimeout(timer)
+      if (!pending.delete(id)) return
+      clearTimeout(timer)
+      if (!wc.isDestroyed()) wc.send('mcp:cancel', { id })
     })
     wc.send('mcp:invoke', { id, tool, args, cwd, key })
   })

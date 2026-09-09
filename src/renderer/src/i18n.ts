@@ -567,6 +567,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'ask.otherPlaceholder': { ko: '직접 입력…', en: 'Type your own answer…' },
   'ask.send': { ko: '보내기', en: 'Send' },
   'ask.cancel': { ko: '취소', en: 'Dismiss' },
+  'ask.expired': {
+    ko: '에이전트가 더 이상 답을 기다리지 않습니다 (연결 종료됨)',
+    en: 'The agent stopped waiting for an answer (it hung up)'
+  },
   'ws.colorReset': { ko: '색상 초기화', en: 'Reset colour' },
   'tab.colorNone': { ko: '색상 없음', en: 'No color' },
   'launcher.title': { ko: '어떤 패널을 열까요?', en: 'What do you want to open?' },

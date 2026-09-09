@@ -69,6 +69,8 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
 interface Caller {
   key: string | null // the chat pane the agent IS (RIVEN_CHAT_KEY), when riven spawned it
   cwd: string | null // the directory it runs in, used when there is no key
+  // Register a callback for "the agent hung up". Only blocking tools need it.
+  onCancel?: (fn: () => void) => void
 }
 
 interface Ctx {
@@ -79,6 +81,7 @@ interface Ctx {
   // The workspace that owns this call; null when it cannot be established.
   ws: string | null
   cwd: string | null
+  onCancel?: (fn: () => void) => void
 }
 
 // The pane the call came from, if it is still open. Unlike getDelegator() this
@@ -162,13 +165,11 @@ async function askUser(args: Args, c: Ctx): Promise<string> {
   if (!pane)
     return 'riven: ask_user is only available to riven chat panes. Ask your question in plain text, listing the options, and let the user reply normally.'
   return new Promise<string>((resolve) => {
-    useAskUser.getState().enqueue({
-      id: Math.random().toString(36).slice(2),
-      chatKey: pane,
-      question,
-      options,
-      resolve
-    })
+    const id = Math.random().toString(36).slice(2)
+    useAskUser.getState().enqueue({ id, chatKey: pane, question, options, resolve })
+    // If the agent gives up first, the prompt must stop pretending it can still
+    // be answered — the click would go nowhere.
+    c.onCancel?.(() => useAskUser.getState().expire(id))
   })
 }
 
@@ -601,7 +602,7 @@ async function startPipeline(args: Args, c: Ctx): Promise<string> {
 async function dispatch(tool: string, args: Args, caller: Caller): Promise<string> {
   // Resolved once, here, and passed down. Nothing below re-derives the caller,
   // so an await inside a tool cannot pick up a different agent's attribution.
-  const c = resolveCtx(caller)
+  const c = { ...resolveCtx(caller), onCancel: caller.onCancel }
   switch (tool) {
     case 'ask_user':
       return askUser(args, c)
@@ -712,11 +713,27 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
 
 // Wire the main→renderer tool bridge. Call once at app start. Returns a disposer.
 export function registerMcpToolHandler(): () => void {
-  return window.api.mcp.onInvoke((e) => {
-    dispatch(e.tool, e.args, { key: e.key, cwd: e.cwd })
+  // Cancellers for calls still in flight, so main can tell the UI to stop
+  // waiting when the agent behind a blocking tool hangs up.
+  const cancels = new Map<string, () => void>()
+  const offInvoke = window.api.mcp.onInvoke((e) => {
+    dispatch(e.tool, e.args, {
+      key: e.key,
+      cwd: e.cwd,
+      onCancel: (fn) => cancels.set(e.id, fn)
+    })
       .then((result) => window.api.mcp.result(e.id, result))
       .catch((err) =>
         window.api.mcp.result(e.id, `error: ${err instanceof Error ? err.message : String(err)}`)
       )
+      .finally(() => cancels.delete(e.id))
   })
+  const offCancel = window.api.mcp.onCancel(({ id }) => {
+    cancels.get(id)?.()
+    cancels.delete(id)
+  })
+  return () => {
+    offInvoke()
+    offCancel()
+  }
 }

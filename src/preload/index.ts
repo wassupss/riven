@@ -451,6 +451,13 @@ const api = {
       ipcRenderer.on('mcp:invoke', listener)
       return () => ipcRenderer.removeListener('mcp:invoke', listener)
     },
+    // The calling agent hung up before the user answered (its own tool timeout,
+    // or it was killed). Whatever UI is blocking on this call must stop waiting.
+    onCancel: (cb: (e: { id: string }) => void): (() => void) => {
+      const listener = (_e: unknown, payload: { id: string }): void => cb(payload)
+      ipcRenderer.on('mcp:cancel', listener)
+      return () => ipcRenderer.removeListener('mcp:cancel', listener)
+    },
     result: (id: string, result: string): void => ipcRenderer.send('mcp:result', { id, result })
   },
   lsp: {

@@ -8,7 +8,8 @@ import {
   mcpConfigJson,
   mcpSystemPrompt,
   MCP_TOOL_PREFIX,
-  implementedToolNames
+  implementedToolNames,
+  agentMcpEnv
 } from './mcpServer'
 
 // Native-chat backend: drives the Claude Code CLI in headless stream-json mode
@@ -423,7 +424,7 @@ async function startSession(
   if (opts.agent) args.push('--agent', opts.agent)
   if (opts.resume) args.push('--resume', opts.resume)
 
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, RIVEN_CHAT_KEY: key }
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...agentMcpEnv(), RIVEN_CHAT_KEY: key }
   if (opts.configDir) {
     childEnv.CLAUDE_CONFIG_DIR = opts.configDir
     await ensureProfilePlugins(opts.configDir)

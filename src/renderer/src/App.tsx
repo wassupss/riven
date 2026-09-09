@@ -91,7 +91,8 @@ export default function App(): JSX.Element {
         session: useSession,
         markPaneSeen,
         roster: useRoster,
-        rosterFor
+        rosterFor,
+        askUser: useAskUser
       }
     }
     registerInlineComplete()

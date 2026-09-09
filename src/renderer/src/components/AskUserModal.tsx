@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAskUser } from '../state/askUser'
+import { useT } from '../i18n'
 
 // The `ask_user` MCP tool's UI: an arrow-selectable option list (native chat's
 // choice card). Enter/click picks, Esc dismisses. Only the current request shows.
@@ -9,6 +10,8 @@ export default function AskUserModal(): JSX.Element | null {
   const current = useAskUser((s) => s.pending.find((r) => !r.chatKey) ?? null)
   const answerFn = useAskUser((s) => s.answer)
   const cancelFn = useAskUser((s) => s.cancel)
+  const dismissFn = useAskUser((s) => s.dismiss)
+  const t = useT()
   const [sel, setSel] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -21,6 +24,23 @@ export default function AskUserModal(): JSX.Element | null {
 
   if (!current) return null
   const { question, options } = current
+
+  // The agent gave up first; keep the question visible but stop offering
+  // answers that can no longer reach anyone.
+  if (current.expired)
+    return (
+      <div className="askuser-backdrop" onClick={() => dismissFn(current.id)}>
+        <div className="askuser-card" onClick={(e) => e.stopPropagation()}>
+          <div className="askuser-q">{question}</div>
+          <div className="ask-inline-row">
+            <span className="ask-inline-note">{t('ask.expired')}</span>
+            <button className="ask-inline-cancel" onClick={() => dismissFn(current.id)}>
+              {t('common.close')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
 
   return (
     <div className="askuser-backdrop" onClick={() => cancelFn(current.id)}>
