@@ -5,7 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { resolveBin } from './shellPath'
 import {
-  writeMcpConfig,
+  mcpConfigJson,
   mcpSystemPrompt,
   MCP_TOOL_PREFIX,
   implementedToolNames
@@ -338,6 +338,43 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
 const DEFAULT_ALLOWED =
   'Task,Read,Grep,Glob,LS,Edit,Write,MultiEdit,NotebookEdit,Bash,BashOutput,WebFetch,WebSearch,TodoWrite'
 
+// Plugins — and therefore their skills AND their MCP servers — are resolved
+// under the CONFIG dir, so a profile riven created starts with none of them: the
+// same workspace silently loses figma/lsp/skills the moment it pins a profile.
+// Share the user's plugin store (a symlink, so installs stay in ONE place) and
+// seed enabledPlugins once. Idempotent, best-effort, never fatal: a session
+// without plugins is worse than a session, so nothing here may throw.
+async function ensureProfilePlugins(configDir: string): Promise<void> {
+  const home = path.join(os.homedir(), '.claude')
+  if (path.resolve(configDir) === path.resolve(home)) return
+  try {
+    await fsp.mkdir(configDir, { recursive: true })
+    const link = path.join(configDir, 'plugins')
+    // Only create it if nothing is there — never replace a real directory the
+    // user (or the CLI) has put plugins into.
+    if (!(await fsp.lstat(link).catch(() => null))) {
+      await fsp.symlink(path.join(home, 'plugins'), link, 'dir').catch(() => {})
+    }
+    const file = path.join(configDir, 'settings.json')
+    const read = async (p: string): Promise<Record<string, unknown>> => {
+      try {
+        return JSON.parse(await fsp.readFile(p, 'utf8')) as Record<string, unknown>
+      } catch {
+        return {}
+      }
+    }
+    const settings = await read(file)
+    // Seed once: after that the profile owns its own enabled set, so disabling a
+    // plugin in one profile is not undone on the next launch.
+    if (settings.enabledPlugins) return
+    const enabled = (await read(path.join(home, 'settings.json'))).enabledPlugins
+    if (!enabled) return
+    await fsp.writeFile(file, JSON.stringify({ ...settings, enabledPlugins: enabled }, null, 2))
+  } catch {
+    /* a profile without plugins still runs */
+  }
+}
+
 async function startSession(
   key: string,
   opts: StartOpts,
@@ -368,12 +405,13 @@ async function startSession(
     '--allowedTools',
     `${DEFAULT_ALLOWED},${MCP_TOOL_PREFIX}`
   ]
-  // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): wire
-  // the stdio relay via --mcp-config. Only implemented tools the user hasn't
-  // disabled are advertised.
+  // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): the
+  // loopback HTTP server, inline in --mcp-config. Only implemented tools the
+  // user hasn't disabled are advertised; the pane key rides on the URL so every
+  // call comes back tagged with WHICH conversation made it.
   const disabled = new Set(opts.mcpDisabled ?? [])
   const enabled = implementedToolNames().filter((n) => !disabled.has(n))
-  const mcpConfig = enabled.length ? writeMcpConfig(enabled) : null
+  const mcpConfig = enabled.length ? mcpConfigJson(enabled, key) : null
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
   // Document available tools + the user's global instruction (--append-system-prompt).
   const globalPrompt = (opts.globalPrompt ?? '').trim()
@@ -386,7 +424,10 @@ async function startSession(
   if (opts.resume) args.push('--resume', opts.resume)
 
   const childEnv: NodeJS.ProcessEnv = { ...process.env, RIVEN_CHAT_KEY: key }
-  if (opts.configDir) childEnv.CLAUDE_CONFIG_DIR = opts.configDir
+  if (opts.configDir) {
+    childEnv.CLAUDE_CONFIG_DIR = opts.configDir
+    await ensureProfilePlugins(opts.configDir)
+  }
   let proc: ChildProcess
   try {
     // childEnv carries the pane's key so its riven MCP calls come back tagged with
@@ -566,7 +607,9 @@ export function registerAgentChatHandlers(): void {
   // only emits `init` after the first input, so we send a nudge and kill at init
   // — this yields the exact list (built-ins + repo skills + MCP prompts) and MCP
   // connection/auth statuses WITHOUT the user having to send a message first.
-  ipcMain.handle('chat:sessionInfo', (_e, cwd: string) => fetchSessionInfo(cwd))
+  ipcMain.handle('chat:sessionInfo', (_e, cwd: string, configDir?: string) =>
+    fetchSessionInfo(cwd, configDir)
+  )
 
   // List resumable past sessions for a cwd (native /resume), newest first.
   ipcMain.handle('chat:sessions', async (_e, cwd: string) => listSessions(cwd))
@@ -580,13 +623,31 @@ export function registerAgentChatHandlers(): void {
     readSessionTranscript(cwd, id)
   )
 
-  // MCP management via `claude mcp …` run in the background (no visible terminal).
-  ipcMain.handle('chat:mcpList', async (_e, cwd: string) => mcpList(cwd))
-  ipcMain.handle('chat:mcpLogin', async (_e, cwd: string, name: string) =>
-    runClaudeMcp(cwd, ['mcp', 'login', name], 180000)
+  // MCP status/teardown via `claude mcp …`. Both take the pane's configDir: the
+  // chat itself runs under the workspace's CLAUDE_CONFIG_DIR, so asking the CLI
+  // without it reports a DIFFERENT config's servers — the card then shows a
+  // server as missing or unauthenticated while the agent is happily using it.
+  // `mcp login`/`mcp add` are NOT here: they are interactive and run in a real
+  // terminal panel (see McpCard), which a hidden spawn with no stdin cannot do.
+  ipcMain.handle('chat:mcpList', async (_e, cwd: string, configDir?: string) =>
+    mcpList(cwd, configDir)
   )
-  ipcMain.handle('chat:mcpLogout', async (_e, cwd: string, name: string) =>
-    runClaudeMcp(cwd, ['mcp', 'logout', name], 20000)
+  // What the AGENT actually gets, which `mcp list` does NOT answer: it reports a
+  // claude.ai connector as connected off stored credentials while a real session
+  // reports the same one as needs-auth, and it omits connectors (Figma) and
+  // plugin servers entirely. The card has to show the session's own answer or it
+  // keeps telling the user something is fine when the agent cannot use it.
+  ipcMain.handle('chat:mcpSession', async (_e, cwd: string, configDir?: string, fresh?: boolean) =>
+    (await fetchSessionInfo(cwd, configDir, fresh)).mcpServers
+  )
+  ipcMain.handle('chat:mcpLogout', async (_e, cwd: string, name: string, configDir?: string) =>
+    runClaudeMcp(cwd, ['mcp', 'logout', name], 20000, configDir)
+  )
+  // Approving a .mcp.json server is a stored decision, not a conversation: the
+  // CLI only offers it as an interactive trust prompt, so write the same record
+  // instead of parking an invisible REPL that nobody can answer.
+  ipcMain.handle('chat:mcpApprove', async (_e, cwd: string, name: string, configDir?: string) =>
+    approveMcpJson(cwd, name, configDir)
   )
 
   // Generate a short AI title from the user's first message (native refreshAITitle).
@@ -707,20 +768,56 @@ export interface SessionInfo {
   mcpServers: Array<{ name: string; status: string }>
 }
 const sessionInfoCache = new Map<string, SessionInfo>()
+// Keyed by config dir too: the same cwd under two Claude profiles has different
+// slash commands, plugins and MCP servers.
+const sessionInfoKey = (cwd: string, configDir?: string): string => `${configDir ?? ''} ${cwd}`
 
-async function fetchSessionInfo(cwd: string): Promise<SessionInfo> {
-  const cached = sessionInfoCache.get(cwd)
-  if (cached) return cached
+// One probe per key at a time. Two callers want this at once on every chat open
+// (slash commands + the MCP card), and each miss is a whole CLI session — without
+// this they spawn two and both wait the full latency.
+const sessionInfoInflight = new Map<string, Promise<SessionInfo>>()
+
+// `fresh` re-probes instead of trusting the cache — after a login the whole point
+// is that the answer has changed.
+async function fetchSessionInfo(
+  cwd: string,
+  configDir?: string,
+  fresh = false
+): Promise<SessionInfo> {
+  const key = sessionInfoKey(cwd, configDir)
+  const cached = sessionInfoCache.get(key)
+  if (cached && !fresh) return cached
+  const running = sessionInfoInflight.get(key)
+  if (running) return await running
+  const probe = probeSessionInfo(cwd, configDir, key)
+  sessionInfoInflight.set(key, probe)
+  try {
+    return await probe
+  } finally {
+    sessionInfoInflight.delete(key)
+  }
+}
+
+async function probeSessionInfo(
+  cwd: string,
+  configDir: string | undefined,
+  key: string
+): Promise<SessionInfo> {
   const cmd = await resolveBin('claude')
   const empty: SessionInfo = { slashCommands: [], mcpServers: [] }
   if (!cmd) return empty
-  const mcpConfig = writeMcpConfig(implementedToolNames())
+  const mcpConfig = mcpConfigJson(implementedToolNames())
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
+  const env = { ...process.env }
+  if (configDir) {
+    env.CLAUDE_CONFIG_DIR = configDir
+    await ensureProfilePlugins(configDir)
+  }
   return await new Promise<SessionInfo>((resolve) => {
     let done = false
     let buf = ''
-    const proc = spawn(cmd, args, { cwd, env: { ...process.env }, stdio: ['pipe', 'pipe', 'ignore'] })
+    const proc = spawn(cmd, args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] })
     const finish = (v: SessionInfo): void => {
       if (done) return
       done = true
@@ -729,7 +826,7 @@ async function fetchSessionInfo(cwd: string): Promise<SessionInfo> {
       } catch {
         /* ignore */
       }
-      if (v.slashCommands.length) sessionInfoCache.set(cwd, v)
+      if (v.slashCommands.length) sessionInfoCache.set(key, v)
       resolve(v)
     }
     proc.stdout?.on('data', (d: Buffer) => {
@@ -762,7 +859,10 @@ async function fetchSessionInfo(cwd: string): Promise<SessionInfo> {
     } catch {
       /* ignore */
     }
-    setTimeout(() => finish(empty), 8000)
+    // Measured at ~7s in a workspace with plugins enabled — the old 8s budget sat
+    // right on top of that, so a normal probe timed out, returned nothing, and
+    // (caching only a non-empty result) paid the full wait again on every call.
+    setTimeout(() => finish(empty), 25000)
   })
 }
 
@@ -919,19 +1019,21 @@ async function readSessionTranscript(
   return msgs
 }
 
-// ---- MCP management via `claude mcp …` (background, no visible terminal) -----
+// ---- MCP management via `claude mcp …` ---------------------------------------
 export interface McpServer {
   name: string
   url: string
-  status: 'connected' | 'needs-auth' | 'other'
+  status: 'connected' | 'needs-auth' | 'pending' | 'other'
 }
 
-async function mcpList(cwd: string): Promise<McpServer[]> {
+async function mcpList(cwd: string, configDir?: string): Promise<McpServer[]> {
   const cmd = await resolveBin('claude')
   if (!cmd) return []
+  const env = { ...process.env }
+  if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   const out = await new Promise<string>((resolve) => {
     let s = ''
-    const p = spawn(cmd, ['mcp', 'list'], { cwd, env: { ...process.env }, stdio: ['ignore', 'pipe', 'ignore'] })
+    const p = spawn(cmd, ['mcp', 'list'], { cwd, env, stdio: ['ignore', 'pipe', 'ignore'] })
     p.stdout?.on('data', (b: Buffer) => (s += b.toString()))
     p.on('close', () => resolve(s))
     p.on('error', () => resolve(''))
@@ -949,14 +1051,44 @@ async function mcpList(cwd: string): Promise<McpServer[]> {
     // "<name>: <url>[ (HTTP)] - <status>"
     const m = line.match(/^(.+?):\s+(\S+).*?\s-\s(.+)$/)
     if (!m) continue
+    // A .mcp.json server the project has not approved yet reports "Pending
+    // approval", NOT a failure — it is one keypress away from working, so it
+    // gets its own state instead of being lumped in with the broken ones.
     const status = /connected/i.test(m[3])
       ? 'connected'
       : /needs? auth/i.test(m[3])
         ? 'needs-auth'
-        : 'other'
+        : /pending approval/i.test(m[3])
+          ? 'pending'
+          : 'other'
     servers.push({ name: m[1].trim(), url: m[2], status })
   }
   return servers
+}
+
+// Record the approval Claude Code would otherwise only take through its
+// interactive trust prompt: the server moves out of `disabled` and into
+// `enabled` for THIS project, in whichever config dir the session uses.
+async function approveMcpJson(
+  cwd: string,
+  name: string,
+  configDir?: string
+): Promise<{ ok: boolean; output: string }> {
+  const file = path.join(configDir ?? path.join(os.homedir(), '.claude'), '.claude.json')
+  try {
+    const cfg = JSON.parse(await fsp.readFile(file, 'utf8')) as {
+      projects?: Record<string, { enabledMcpjsonServers?: string[]; disabledMcpjsonServers?: string[] }>
+    }
+    const projects = (cfg.projects ??= {})
+    const proj = (projects[cwd] ??= {})
+    const enabled = (proj.enabledMcpjsonServers ??= [])
+    if (!enabled.includes(name)) enabled.push(name)
+    proj.disabledMcpjsonServers = (proj.disabledMcpjsonServers ?? []).filter((n) => n !== name)
+    await fsp.writeFile(file, JSON.stringify(cfg, null, 2))
+    return { ok: true, output: '' }
+  } catch (e) {
+    return { ok: false, output: e instanceof Error ? e.message : String(e) }
+  }
 }
 
 async function runClaudeMcp(

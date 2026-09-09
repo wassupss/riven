@@ -3,6 +3,7 @@ import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
 import { listAgents, resolveAgent } from './agents'
+import { contextBus } from '../bridge/contextBus'
 import {
   ensureEditorIn,
   addTerminal,
@@ -85,6 +86,13 @@ function callerPane(): string | null {
 function callerWs(): string | null {
   const pane = callerPane()
   if (pane) return widForPane(pane)
+  // A CLI typed into a riven terminal: its key names the terminal pane, whose
+  // sink knows the workspace. Beats cwd — the user may have cd'd anywhere.
+  const term = activeCaller.key?.match(/^term-(\d+)$/)
+  if (term) {
+    const ws = contextBus.workspaceOfPane(Number(term[1]))
+    if (ws) return ws
+  }
   // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
   // directory it runs in. riven always spawns an agent with cwd = its workspace,
   // so this covers everything the key doesn't.

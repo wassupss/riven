@@ -1,0 +1,91 @@
+import { app } from 'electron'
+import * as fs from 'fs'
+import * as path from 'path'
+import { mcpAuthToken, mcpBaseUrl, registerHttpRoute } from './mcpServer'
+import { claudeHookToEvent, type HookEvent } from './terminal/activity'
+
+// Agent lifecycle hooks: Claude Code tells riven when a turn starts, ends and
+// when it is waiting on the user, instead of riven guessing from output flow
+// and `pgrep`. This is the design the native app uses (AgentHookServer.swift)
+// and the one paseo and orca both settled on.
+//
+// Mechanics: riven writes a settings file with `hooks` entries and hands it to
+// the CLI with --settings (the CLI deep-merges it, so the user's own hooks keep
+// firing). Each hook is a one-line shell command that POSTs the hook's stdin to
+// riven's loopback server, tagged with the pane it runs in. The pane is known
+// from RIVEN_PANE, which every terminal riven opens exports; a `claude` started
+// anywhere else finds the variable empty and the command is a no-op — no
+// spawn, no cost, no error.
+//
+// curl: present on every macOS and on virtually all Linux desktops. A missing
+// curl makes the hook a silent no-op (2>/dev/null), never a failed hook.
+
+const HOOK_EVENTS = ['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'Notification'] as const
+
+let settingsPath: string | null = null
+let onEvent: ((pane: string, event: HookEvent, hook: string) => void) | null = null
+
+function hookCommand(event: string): string {
+  // Everything the hook needs comes from the environment the CLI inherited from
+  // its terminal; the token on the query string keeps this dependency-free.
+  return (
+    `if [ -n "$RIVEN_PANE" ] && [ -n "$RIVEN_HOOK_URL" ]; then ` +
+    `curl -s -m 2 -X POST -H 'content-type: application/json' --data-binary @- ` +
+    `"$RIVEN_HOOK_URL?pane=$RIVEN_PANE&event=${event}&token=$RIVEN_HOOK_TOKEN" >/dev/null 2>&1; fi; exit 0`
+  )
+}
+
+// Write the --settings file once per run. Returns its path, or null if it could
+// not be written (a terminal without hooks still works — the heuristic stays).
+export function ensureHookSettings(): string | null {
+  if (settingsPath) return settingsPath
+  try {
+    const dir = path.join(app.getPath('userData'), 'hooks')
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const file = path.join(dir, 'claude-settings.json')
+    const hooks: Record<string, unknown> = {}
+    for (const ev of HOOK_EVENTS) {
+      hooks[ev] = [{ matcher: '', hooks: [{ type: 'command', command: hookCommand(ev), timeout: 5 }] }]
+    }
+    fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2) + '\n', { mode: 0o600 })
+    settingsPath = file
+  } catch (e) {
+    console.error('[hooks] settings write failed', e)
+    settingsPath = null
+  }
+  return settingsPath
+}
+
+// Environment a terminal (or chat CLI) needs so its hooks reach us.
+export function hookEnv(pane: string): Record<string, string> {
+  const base = mcpBaseUrl()
+  const settings = ensureHookSettings()
+  if (!base || !settings) return {}
+  return {
+    RIVEN_PANE: pane,
+    RIVEN_HOOK_URL: `${base}/hook`,
+    RIVEN_HOOK_TOKEN: mcpAuthToken(),
+    RIVEN_HOOKS_SETTINGS: settings
+  }
+}
+
+export function registerAgentHooks(
+  handler: (pane: string, event: HookEvent, hook: string) => void
+): void {
+  onEvent = handler
+  registerHttpRoute('/hook', (_req, res, url, body) => {
+    const pane = url.searchParams.get('pane')
+    const hook = url.searchParams.get('event') ?? ''
+    // Always 204: a hook must never make the agent wait on riven's opinion.
+    res.writeHead(204).end()
+    if (!pane) return
+    let payload: unknown = null
+    try {
+      payload = body ? JSON.parse(body) : null
+    } catch {
+      payload = null
+    }
+    const event = claudeHookToEvent(hook, payload)
+    if (event) onEvent?.(pane, event, hook)
+  })
+}

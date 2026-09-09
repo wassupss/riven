@@ -76,6 +76,12 @@ class ContextBus {
     }, 400)
   }
 
+  // The workspace a terminal pane belongs to — what an MCP call from a CLI typed
+  // in that terminal is attributed to, independent of where the user has cd'd.
+  workspaceOfPane(paneId: number): string | null {
+    return this.sinks.find((s) => s.paneId === paneId)?.workspace ?? null
+  }
+
   unregisterSink(paneId: number): void {
     const gone = this.sinks.find((s) => s.paneId === paneId)
     this.sinks = this.sinks.filter((s) => s.paneId !== paneId)

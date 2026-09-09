@@ -1,4 +1,4 @@
-import { ipcMain, WebContents, Notification, BrowserWindow, shell } from 'electron'
+import { app, ipcMain, WebContents, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import chokidar, { FSWatcher } from 'chokidar'
@@ -13,12 +13,20 @@ const CAPTURE_CAP = 40 // keep only the newest N preview screenshots on disk
 
 export function registerBridgeHandlers(): void {
   ipcMain.handle('capture:save', async (_event, folder: string, dataUrl: string): Promise<string> => {
-    const dir = path.join(folder, '.riven', 'captures')
+    // Under userData, NOT the workspace. These are riven's scratch files and the
+    // user never asked for them to be in their repo — a `.riven/` appearing at
+    // every workspace root just forces a .gitignore entry on them. Kept per
+    // workspace so the retention cap below stays per workspace.
+    const dir = path.join(
+      app.getPath('userData'),
+      'captures',
+      folder.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace'
+    )
     await fs.mkdir(dir, { recursive: true })
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
     const file = path.join(dir, `shot-${Date.now()}-${++shotSeq}.png`)
     await fs.writeFile(file, Buffer.from(base64, 'base64'))
-    // Retention: prune old shots so .riven/captures never grows unbounded.
+    // Retention: prune old shots so the capture dir never grows unbounded.
     // Names are shot-<ms>-<seq>.png, so a lexical sort is chronological.
     try {
       const shots = (await fs.readdir(dir))
@@ -87,26 +95,4 @@ export function registerBridgeHandlers(): void {
     if (wc.isLoading()) wc.once('did-finish-load', () => wc.setZoomFactor(f))
   })
 
-  ipcMain.on(
-    'notify:show',
-    (e, opts: { title: string; body: string; force?: boolean; paneId?: string }) => {
-      // Default: only when the app is unfocused. `force` (renderer already decided
-      // the relevant pane isn't the one being viewed) shows even while focused, so a
-      // completion in a BACKGROUND workspace/pane still notifies.
-      if (!opts.force && BrowserWindow.getAllWindows().some((w) => w.isFocused())) return
-      if (!Notification.isSupported()) return
-      const n = new Notification({ title: opts.title, body: opts.body, silent: false })
-      n.on('click', () => {
-        const win =
-          BrowserWindow.fromWebContents(e.sender) ?? BrowserWindow.getAllWindows()[0]
-        if (win) {
-          if (win.isMinimized()) win.restore()
-          win.show()
-          win.focus()
-        }
-        if (opts.paneId) e.sender.send('notify:click', opts.paneId)
-      })
-      n.show()
-    }
-  )
 }

@@ -1,6 +1,6 @@
 {
   "name": "riven",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "riven — AI-first IDE with fully dockable panels, own Monaco editor, integrated terminals",
   "productName": "riven",
   "main": "./out/main/index.js",
@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "typecheck": "tsc -b",
+    "test": "vitest run src",
+    "smoke:terminal": "node scripts/e2e-terminal-smoke.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "rebuild": "electron-rebuild -f -w node-pty",
@@ -28,6 +30,7 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/headless": "^5.5.0",
     "@xterm/xterm": "^5.5.0",
     "bash-language-server": "^5.6.0",
     "chokidar": "^3.6.0",
@@ -62,6 +65,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^5.9.3",
-    "vite": "^7.3.6"
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
   }
 }

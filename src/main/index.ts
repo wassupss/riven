@@ -3,7 +3,7 @@ import { join } from 'path'
 import * as os from 'os'
 import { existsSync } from 'fs'
 import { execSync } from 'child_process'
-import { registerPtyHandlers } from './pty'
+import { registerPtyHandlers, primeShellShim } from './pty'
 import { registerWorkspaceHandlers } from './workspace'
 import { registerLspHandlers } from './lsp'
 import { registerBridgeHandlers } from './bridge'
@@ -24,6 +24,7 @@ import { registerApiHandlers } from './apiclient'
 import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
+import { registerNotifyHandlers, ensureNotificationCenterRegistration } from './notify'
 import { buildMenu } from './menu'
 
 // Chromium switches. Deliberately conservative — we do NOT disable
@@ -225,12 +226,17 @@ app.whenReady().then(() => {
     const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
     return w ? w.webContents : null
   })
+  // AFTER registerMcpServer: the shim hands terminals the --mcp-config that call
+  // writes, so the paths have to exist before the first terminal opens.
+  primeShellShim()
   // Real Chromium browser surface (WebContentsView per tab), floated over the
   // window at the bounds the browser panel reports.
   registerBrowserHandlers(
     () => BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null
   )
   registerNotesHandlers()
+  registerNotifyHandlers()
+  ensureNotificationCenterRegistration()
   registerApiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()

@@ -13,6 +13,10 @@ export interface TerminalParams {
   initialCommand?: string
 }
 
+// Ring at most once per this window — a terminal bell says "look at me", and
+// saying it ten times in a second says nothing extra.
+const BELL_COALESCE_MS = 10_000
+
 // Every terminal is a shell — run claude / codex / anything inside it. The tab
 // title auto-follows the running agent (unless renamed); a status dot on the tab
 // shows busy/attention (no more blinking overlay chip).
@@ -71,33 +75,49 @@ export default function TerminalPanel({
 
   useEffect(() => {
     const notify = (body: string): void => window.api.notify.show(staticT('term.notifyTitle', { n: paneId }), body)
-    const offStatus = window.api.pty.onStatus(({ key, busy: b }) => {
-      if (key === sessionKey) setBusy(b)
+    // Attention (finished / needs input) is main's flag: it survives remounts and
+    // clears when the user looks (pty:seen), not when this component guesses.
+    const offStatus = window.api.pty.onStatus(({ key, busy: b, attention: a }) => {
+      if (key !== sessionKey) return
+      setBusy(b)
+      setAttention(a !== null)
     })
     const offAgent = window.api.pty.onAgent(({ key, agent, name }) => {
       if (key !== sessionKey) return
       contextBus.setAgent(paneId, agent)
       applyAutoTitle(agent ? name : null)
     })
+    // A bell is a stream, not an event: a beeping TUI can ring many times a
+    // second, and one notification each is unusable. Coalesce, and apply the same
+    // "is the user already looking at this terminal" rule the done path uses —
+    // without it a bell notified even while the pane was on screen and focused.
+    let lastBell = 0
     const offBell = window.api.pty.onBell(({ key }) => {
       if (key !== sessionKey) return
+      const looking = api?.isActive && document.hasFocus()
       if (!api?.isActive) setAttention(true)
+      if (looking || Date.now() - lastBell < BELL_COALESCE_MS) return
+      lastBell = Date.now()
       notify(staticT('term.bell'))
     })
-    const offDone = window.api.pty.onDone(({ key, summary }) => {
+    const offDone = window.api.pty.onDone(({ key, reason, summary }) => {
       if (key !== sessionKey) return
       // Only fire when the user isn't already looking at this terminal (else the
       // reply is right in front of them). Body previews the agent's reply.
       const looking = api?.isActive && document.hasFocus()
-      if (!api?.isActive) setAttention(true)
-      if (!looking) notify(summary?.trim() || staticT('term.done'))
+      if (looking) {
+        window.api.pty.seen(sessionKey)
+        return
+      }
+      notify(
+        reason === 'needs_input' ? staticT('term.needsInput') : summary?.trim() || staticT('term.done')
+      )
     })
-    const offActive = api?.onDidActiveChange?.(() => {
-      if (api?.isActive) setAttention(false)
-    })
-    const onWinFocus = (): void => {
-      if (api?.isActive) setAttention(false)
+    const seen = (): void => {
+      if (api?.isActive && document.hasFocus()) window.api.pty.seen(sessionKey)
     }
+    const offActive = api?.onDidActiveChange?.(seen)
+    const onWinFocus = (): void => seen()
     window.addEventListener('focus', onWinFocus)
     return () => {
       offStatus()
@@ -113,7 +133,7 @@ export default function TerminalPanel({
   return (
     <div
       className={`terminal-panel${attention ? ' attn' : busy ? ' busy' : ''}`}
-      onMouseDown={() => setAttention(false)}
+      onMouseDown={() => window.api.pty.seen(sessionKey)}
     >
       <TerminalPane
         sessionKey={sessionKey}
@@ -124,7 +144,7 @@ export default function TerminalPanel({
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}
         onFocus={() => {
           contextBus.setActive(workspace, paneId)
-          setAttention(false)
+          window.api.pty.seen(sessionKey)
         }}
       />
     </div>

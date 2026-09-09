@@ -290,6 +290,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.notifyTitle': { ko: 'riven — 터미널 {n}', en: 'riven — Terminal {n}' },
   'term.bell': { ko: '알림 🔔', en: 'Bell 🔔' },
   'term.done': { ko: '작업 완료 ✓', en: 'Done ✓' },
+  'term.needsInput': { ko: '입력을 기다리는 중 ✋', en: 'Waiting for your input ✋' },
   'term.attn': { ko: '🔔 알림', en: '🔔 Alert' },
   'term.label': { ko: '터미널', en: 'Terminal' },
   'term.closeBusyConfirm': {
@@ -604,11 +605,23 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.mcpConnected': { ko: '연결됨', en: 'Connected' },
   'chat.mcpNeedsAuth': { ko: '인증 필요', en: 'Needs auth' },
   'chat.mcpFailed': { ko: '실패', en: 'Failed' },
+  'chat.mcpPending': { ko: '승인 대기', en: 'Pending approval' },
+  'chat.mcpApprove': { ko: '승인', en: 'Approve' },
   'chat.mcpLoginBtn': { ko: '인증', en: 'Authenticate' },
   'chat.mcpLogout': { ko: '로그아웃', en: 'Sign out' },
+  'chat.mcpGroupCustom': { ko: '직접 추가한 서버', en: 'Your servers' },
+  'chat.mcpGroupManaged': { ko: '커넥터 · 플러그인', en: 'Connectors & plugins' },
   'chat.mcpRivenTools': { ko: 'riven MCP 도구 설정', en: 'riven MCP tool settings' },
   'chat.mcpAdd': { ko: 'MCP 서버 추가', en: 'Add MCP server' },
-  'chat.mcpAuthNote': { ko: '인증을 누르면 브라우저에서 OAuth 로그인 창이 열립니다.', en: 'Authenticate opens an OAuth login in your browser.' },
+  'chat.mcpAddName': { ko: 'MCP 서버 이름', en: 'MCP server name' },
+  'chat.mcpAddTarget': {
+    ko: 'URL(HTTP) 또는 실행할 명령(stdio)',
+    en: 'URL (HTTP) or the command to run (stdio)'
+  },
+  'chat.mcpAuthNote': {
+    ko: '인증·추가는 터미널에서 실행되고, 끝나면 이 목록이 자동으로 갱신됩니다.',
+    en: 'Authenticate and add run in a terminal; this list refreshes when they finish.'
+  },
   'chat.toolCount': { ko: '명령 {n}개', en: '{n} commands' },
   'chat.tools.changed': { ko: '{n} 변경', en: '{n} changed' },
   'chat.tools.read': { ko: '읽는 중', en: 'Reading' },

@@ -30,10 +30,29 @@ function multiplexed<T>(channel: string): (cb: (payload: T) => void) => () => vo
   }
 }
 
-const onPtyStatus = multiplexed<{ key: string; busy: boolean }>('pty:status')
+export type PtyAttention = 'finished' | 'needs_input' | null
+const onPtyStatus = multiplexed<{ key: string; busy: boolean; attention: PtyAttention }>('pty:status')
 const onPtyAgent = multiplexed<{ key: string; agent: boolean; name?: string | null }>('pty:agent')
 const onPtyBell = multiplexed<{ key: string }>('pty:bell')
-const onPtyDone = multiplexed<{ key: string; duration: number; summary?: string }>('pty:done')
+const onPtyTitle = multiplexed<{ key: string; title: string }>('pty:title')
+const onPtyDone = multiplexed<{ key: string; reason: 'finished' | 'needs_input'; summary?: string }>(
+  'pty:done'
+)
+
+// Terminal output carries the main-side model revision and flow-control epoch;
+// a snapshot restores the model and starts a new epoch (see main/pty.ts).
+export interface PtyChunk {
+  data: string
+  rev: number
+  epoch: number
+}
+export interface PtySnapshot {
+  data: string
+  rev: number
+  epoch: number
+  cols: number
+  rows: number
+}
 
 // Native agent-chat events all share one channel; the payload's `key` scopes it
 // to a pane. Renderer chat panels filter by their own key.
@@ -140,18 +159,30 @@ const api = {
       cols?: number
       rows?: number
       configDir?: string
-    }): Promise<{ id: string; existed: boolean; buffer: string; error?: string }> =>
+    }): Promise<{ id: string; existed: boolean; error?: string }> =>
       ipcRenderer.invoke('pty:open', opts),
     write: (id: string, data: string): void => ipcRenderer.send('pty:write', id, data),
-    ack: (id: string, bytes: number): void => ipcRenderer.send('pty:ack', id, bytes),
-    resume: (id: string): void => ipcRenderer.send('pty:resume', id),
-    snapshot: (id: string, data: string): void => ipcRenderer.send('pty:snapshot', id, data),
+    // Cumulative chars parsed in this epoch (TCP-style, so a lost ack never
+    // becomes permanent in-flight debt).
+    ack: (id: string, epoch: number, processed: number): void =>
+      ipcRenderer.send('pty:ack', id, epoch, processed),
+    // Whether a live, sized xterm wants bytes. Hidden panes receive nothing and
+    // are restored from main's model on reveal.
+    visible: (id: string, visible: boolean): void => ipcRenderer.send('pty:visible', id, visible),
+    // The user looked at this terminal: clear its attention flag.
+    seen: (id: string): void => ipcRenderer.send('pty:seen', id),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id: string): void => ipcRenderer.send('pty:kill', id),
-    onData: (id: string, cb: (data: string) => void): (() => void) => {
+    onData: (id: string, cb: (chunk: PtyChunk) => void): (() => void) => {
       const channel = `pty:data:${id}`
-      const listener = (_e: unknown, data: string): void => cb(data)
+      const listener = (_e: unknown, chunk: PtyChunk): void => cb(chunk)
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
+    onSnapshot: (id: string, cb: (snap: PtySnapshot) => void): (() => void) => {
+      const channel = `pty:snapshot:${id}`
+      const listener = (_e: unknown, snap: PtySnapshot): void => cb(snap)
       ipcRenderer.on(channel, listener)
       return () => ipcRenderer.removeListener(channel, listener)
     },
@@ -161,12 +192,16 @@ const api = {
       ipcRenderer.on(channel, listener)
       return () => ipcRenderer.removeListener(channel, listener)
     },
-    onStatus: (cb: (e: { key: string; busy: boolean }) => void): (() => void) => onPtyStatus(cb),
+    onStatus: (
+      cb: (e: { key: string; busy: boolean; attention: PtyAttention }) => void
+    ): (() => void) => onPtyStatus(cb),
     onAgent: (cb: (e: { key: string; agent: boolean; name?: string | null }) => void): (() => void) =>
       onPtyAgent(cb),
     onBell: (cb: (e: { key: string }) => void): (() => void) => onPtyBell(cb),
-    onDone: (cb: (e: { key: string; duration: number; summary?: string }) => void): (() => void) =>
-      onPtyDone(cb)
+    onTitle: (cb: (e: { key: string; title: string }) => void): (() => void) => onPtyTitle(cb),
+    onDone: (
+      cb: (e: { key: string; reason: 'finished' | 'needs_input'; summary?: string }) => void
+    ): (() => void) => onPtyDone(cb)
   },
   chat: {
     start: (
@@ -209,9 +244,10 @@ const api = {
     logout: (configDir?: string): Promise<{ ok: boolean; output: string }> =>
       ipcRenderer.invoke('accounts:logout', configDir),
     sessionInfo: (
-      cwd: string
+      cwd: string,
+      configDir?: string
     ): Promise<{ slashCommands: string[]; mcpServers: Array<{ name: string; status: string }> }> =>
-      ipcRenderer.invoke('chat:sessionInfo', cwd),
+      ipcRenderer.invoke('chat:sessionInfo', cwd, configDir),
     sessions: (
       cwd: string
     ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
@@ -226,13 +262,29 @@ const api = {
     ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> =>
       ipcRenderer.invoke('chat:sessionTranscript', cwd, id),
     mcpList: (
-      cwd: string
-    ): Promise<Array<{ name: string; url: string; status: 'connected' | 'needs-auth' | 'other' }>> =>
-      ipcRenderer.invoke('chat:mcpList', cwd),
-    mcpLogin: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
-      ipcRenderer.invoke('chat:mcpLogin', cwd, name),
-    mcpLogout: (cwd: string, name: string): Promise<{ ok: boolean; output: string }> =>
-      ipcRenderer.invoke('chat:mcpLogout', cwd, name),
+      cwd: string,
+      configDir?: string
+    ): Promise<
+      Array<{ name: string; url: string; status: 'connected' | 'needs-auth' | 'pending' | 'other' }>
+    > => ipcRenderer.invoke('chat:mcpList', cwd, configDir),
+    mcpSession: (
+      cwd: string,
+      configDir?: string,
+      fresh?: boolean
+    ): Promise<Array<{ name: string; status: string }>> =>
+      ipcRenderer.invoke('chat:mcpSession', cwd, configDir, fresh),
+    mcpApprove: (
+      cwd: string,
+      name: string,
+      configDir?: string
+    ): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpApprove', cwd, name, configDir),
+    mcpLogout: (
+      cwd: string,
+      name: string,
+      configDir?: string
+    ): Promise<{ ok: boolean; output: string }> =>
+      ipcRenderer.invoke('chat:mcpLogout', cwd, name, configDir),
     onEvent: (cb: (e: ChatEvent) => void): (() => void) => onChatEvent(cb)
   },
   // Real Chromium browser: each tab is a main-process WebContentsView. The panel
@@ -417,11 +469,13 @@ const api = {
     }
   },
   notify: {
-    // opts.force shows even when a window is focused (the renderer already decided
-    // the relevant pane isn't the one being looked at). opts.paneId lets a click
-    // focus + navigate to that pane.
+    // Main decides whether and where to show it from every window's presence
+    // (see main/notify.ts). opts.paneId names the pane it is about: a window
+    // already looking at that pane suppresses it, and a click lands there.
     show: (title: string, body: string, opts?: { force?: boolean; paneId?: string }): void =>
       ipcRenderer.send('notify:show', { title, body, ...opts }),
+    presence: (p: { visible: boolean; focused: boolean; activePane: string | null; at: number }): void =>
+      ipcRenderer.send('notify:presence', p),
     onClick: (cb: (paneId: string) => void): (() => void) => {
       const listener = (_e: unknown, paneId: string): void => cb(paneId)
       ipcRenderer.on('notify:click', listener)
