@@ -203,7 +203,7 @@ function WorkspaceCard({
       ? 'busy'
       : activity === 'attn'
         ? 'waiting'
-        : agents.some((a) => a.status === 'done')
+        : agents.some((a) => a.done)
           ? 'done'
           : 'idle'
   // Collapse the agent roster per workspace (persisted), like native's rail.
@@ -278,6 +278,9 @@ function WorkspaceCard({
       }}
       onDragEnd={onDragEnd}
     >
+      {/* Same ring the finished chat panel wears — a completion you haven't
+          acknowledged is visible from the rail, not just from inside the pane. */}
+      {cardActivity === 'done' && <span className="chat-ring" aria-hidden />}
       <div className="ws-card-top">
         <StatusDot
           activity={cardActivity}

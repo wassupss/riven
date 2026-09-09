@@ -1,6 +1,7 @@
 import { create } from 'zustand'
+import { activityOf, type Live, type PaneKind, type RosterEntry } from './rosterActivity'
 import { useSession } from './session'
-import { getAgentStatus, type AgentActivity } from './agents'
+import { getAgentStatus } from './agents'
 
 // Every agent pane in every OPEN workspace — whether or not that workspace is
 // currently mounted.
@@ -16,34 +17,19 @@ import { getAgentStatus, type AgentActivity } from './agents'
 // A terminal counts as an agent only while a CLI agent is actually running in it
 // (main's `pty:agent`), so a plain shell never shows up as a teammate.
 
-export type PaneKind = 'chat' | 'terminal'
-
-export interface RosterEntry {
-  id: string // pane key: chat-N | term-N
-  workspace: string
-  kind: PaneKind
-  title: string
-  busy: boolean
-  attention: boolean
-  status: AgentActivity
-}
-
-// Live signals, keyed by pane key. Fed by ONE app-level subscription to main's
-// broadcasts rather than by each panel, so a pane going off screen no longer
-// takes its status with it.
-interface Live {
-  agent?: boolean // terminal: a CLI agent is running
-  name?: string | null // terminal: the agent's name, from pty:agent
-  title?: string // terminal: the pty title
-  busy?: boolean
-  attention?: boolean
-}
+export type { PaneKind, RosterEntry, Live } from './rosterActivity'
+export { activityOf } from './rosterActivity'
 
 interface RosterState {
   live: Record<string, Live>
   // Bumped when the layout-derived side changes, so views re-read it.
   rev: number
   patch: (key: string, p: Live) => void
+  // The user interacted with this pane, so its completion has been seen. This is
+  // the ONLY thing that clears `done` — not the pane becoming visible, not the
+  // window regaining focus. A completion you never looked at must still be there
+  // when you come back.
+  seen: (key: string) => void
   drop: (key: string) => void
   bump: () => void
 }
@@ -60,6 +46,19 @@ export const useRoster = create<RosterState>((set) => ({
       if (prev && (Object.keys(next) as Array<keyof Live>).every((k) => prev[k] === next[k])) return s
       return { live: { ...s.live, [key]: next } }
     }),
+  seen: (key) =>
+    set((s) => {
+      const prev = s.live[key]
+      if (!prev) return s
+      // A terminal's completion arrives as attention:'finished' from main, which
+      // also clears it on pty:seen — but clear it here too rather than waiting on
+      // that round trip, so the ring goes out the instant the user clicks.
+      // needs_input is left to main: it is authoritative about whether the agent
+      // is still actually blocked.
+      const attention = prev.attention === 'finished' ? null : prev.attention
+      if (!prev.done && attention === prev.attention) return s
+      return { live: { ...s.live, [key]: { ...prev, done: false, attention } } }
+    }),
   drop: (key) =>
     set((s) => {
       if (!(key in s.live)) return s
@@ -69,6 +68,13 @@ export const useRoster = create<RosterState>((set) => ({
     }),
   bump: () => set((s) => ({ rev: s.rev + 1 }))
 }))
+
+// The user touched this pane. Clears the renderer-side completion flag and, for
+// a terminal, tells main its attention flag has been delivered.
+export function markPaneSeen(paneKey: string): void {
+  useRoster.getState().seen(paneKey)
+  if (paneKey.startsWith('term-')) window.api.pty.seen(paneKey)
+}
 
 // Panes the persisted layout says exist, per workspace. dockview serializes its
 // panels as { id: { contentComponent, title } }, which is exactly what we need
@@ -118,16 +124,11 @@ export function rosterFor(workspace: string): RosterEntry[] {
     // A terminal's name comes from the running agent (pty:agent); fall back to
     // the tab title so it is never blank.
     const title = p.kind === 'terminal' ? l.name || l.title || p.title : p.title
-    const status = p.kind === 'chat' ? getAgentStatus(p.id) : l.attention ? 'waiting' : l.busy ? 'busy' : 'idle'
-    out.push({
-      id: p.id,
-      workspace,
-      kind: p.kind,
-      title,
-      busy: !!l.busy,
-      attention: !!l.attention,
-      status
-    })
+    // A mounted chat pane's own controller has the richer live view (it knows
+    // mid-turn), so it gets a say; completion still comes from the roster,
+    // because the panel may not exist to report it.
+    const paneStatus = p.kind === 'chat' ? getAgentStatus(p.id) : null
+    out.push({ id: p.id, workspace, kind: p.kind, title, ...activityOf(l, paneStatus) })
   }
   return out
 }
@@ -139,16 +140,21 @@ export function startRoster(): () => void {
   const offAgent = window.api.pty.onAgent(({ key, agent, name }) =>
     patch(key, { agent, name: name ?? null })
   )
+  // A terminal's attention flag is main's, and main only clears it on pty:seen —
+  // i.e. on a real interaction — so `finished` persists here for free.
   const offStatus = window.api.pty.onStatus(({ key, busy, attention }) =>
-    patch(key, { busy, attention: attention !== null })
+    patch(key, { busy, attention })
   )
   const offTitle = window.api.pty.onTitle(({ key, title }) => patch(key, { title }))
 
   // Chat panes: main streams a turn's events regardless of whether the pane is
-  // on screen, so busy stays truthful for a workspace that has been unmounted.
+  // on screen, so both busy AND the completion stay truthful for a workspace
+  // that has been unmounted — which is precisely when the panel can't record it.
   const offChat = window.api.chat.onEvent((e) => {
-    if (e.kind === 'turnDone' || e.kind === 'exit') patch(e.key, { busy: false })
-    else if (e.kind === 'text' || e.kind === 'tool' || e.kind === 'usage') patch(e.key, { busy: true })
+    if (e.kind === 'turnDone') patch(e.key, { busy: false, done: !e.error })
+    else if (e.kind === 'exit') patch(e.key, { busy: false })
+    else if (e.kind === 'text' || e.kind === 'tool' || e.kind === 'usage')
+      patch(e.key, { busy: true, done: false })
   })
 
   // The layout-derived half changes when a pane is added/closed or a workspace

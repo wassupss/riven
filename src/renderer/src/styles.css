@@ -645,6 +645,7 @@ select {
 }
 /* cmux-style workspace card — compact: title · live status · path · git */
 .ws-card {
+  position: relative; /* anchors the completion ring */
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -656,6 +657,12 @@ select {
   transition:
     background var(--dur-fast) ease,
     border-color var(--dur-fast) ease;
+}
+/* A finished agent in a workspace you're not looking at wears the SAME travelling
+   ember ring the finished panel does, so the rail reads at a glance and the two
+   surfaces mean the same thing. It stays until the completion is acknowledged. */
+.ws-card > .chat-ring {
+  --ring-radius: var(--radius-md);
 }
 .ws-card:hover {
   background: var(--hover);
@@ -7044,7 +7051,9 @@ select {
   inset: 0;
   z-index: 4;
   pointer-events: none;
-  border-radius: 2px;
+  /* Radius is the host's, so the same ring can wrap a chat panel (square) or a
+     workspace card (rounded) without a second implementation. */
+  border-radius: var(--ring-radius, 2px);
   padding: 1.5px;
   overflow: hidden;
   -webkit-mask:

@@ -16,7 +16,7 @@ import AskUserModal from './components/AskUserModal'
 import { useAskUser } from './state/askUser'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler } from './state/mcpTools'
-import { startRoster, useRoster, rosterFor } from './state/roster'
+import { startRoster, useRoster, rosterFor, markPaneSeen } from './state/roster'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
 import { useSession, loadPersistedSessions, pathOf, widForPane } from './state/session'
@@ -89,6 +89,7 @@ export default function App(): JSX.Element {
         addTerminal,
         getActiveApi,
         session: useSession,
+        markPaneSeen,
         roster: useRoster,
         rosterFor
       }

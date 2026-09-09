@@ -6,6 +6,7 @@ import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { pathOf } from '../../state/session'
 import { claudeConfigDirFor } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
+import { markPaneSeen } from '../../state/roster'
 import { t as staticT } from '../../i18n'
 
 export interface TerminalParams {
@@ -102,30 +103,20 @@ export default function TerminalPanel({
     })
     const offDone = window.api.pty.onDone(({ key, reason, summary }) => {
       if (key !== sessionKey) return
-      // Only fire when the user isn't already looking at this terminal (else the
-      // reply is right in front of them). Body previews the agent's reply.
-      const looking = api?.isActive && document.hasFocus()
-      if (looking) {
-        window.api.pty.seen(sessionKey)
-        return
-      }
+      // Don't NOTIFY when the reply is already in front of the user — but don't
+      // mark it seen either. Only a real interaction does that (see below), so a
+      // completion still shows on the tab and on the workspace card until the
+      // user actually turns to it.
+      if (api?.isActive && document.hasFocus()) return
       notify(
         reason === 'needs_input' ? staticT('term.needsInput') : summary?.trim() || staticT('term.done')
       )
     })
-    const seen = (): void => {
-      if (api?.isActive && document.hasFocus()) window.api.pty.seen(sessionKey)
-    }
-    const offActive = api?.onDidActiveChange?.(seen)
-    const onWinFocus = (): void => seen()
-    window.addEventListener('focus', onWinFocus)
     return () => {
       offStatus()
       offAgent()
       offBell()
       offDone()
-      offActive?.dispose()
-      window.removeEventListener('focus', onWinFocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey, paneId, api])
@@ -133,7 +124,11 @@ export default function TerminalPanel({
   return (
     <div
       className={`terminal-panel${attention ? ' attn' : busy ? ' busy' : ''}`}
-      onMouseDown={() => window.api.pty.seen(sessionKey)}
+      // A click or a keystroke in this pane is the only "I've seen it" signal.
+      // Becoming the active tab or the window regaining focus deliberately are
+      // NOT: neither means the user looked at this terminal.
+      onMouseDown={() => markPaneSeen(sessionKey)}
+      onKeyDownCapture={() => markPaneSeen(sessionKey)}
     >
       <TerminalPane
         sessionKey={sessionKey}
@@ -142,10 +137,7 @@ export default function TerminalPanel({
         paneId={paneId}
         initialCommand={initialCommand}
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}
-        onFocus={() => {
-          contextBus.setActive(workspace, paneId)
-          window.api.pty.seen(sessionKey)
-        }}
+        onFocus={() => contextBus.setActive(workspace, paneId)}
       />
     </div>
   )

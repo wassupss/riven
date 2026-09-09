@@ -34,7 +34,7 @@ import {
   getAgentStatus,
   resolveAgent
 } from '../../state/agents'
-import { useRoster, rosterFor, type RosterEntry } from '../../state/roster'
+import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
 import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
@@ -1216,31 +1216,21 @@ export default function ChatPanel({
   useRoster((s) => s.rev)
   useRoster((s) => s.live)
   const paneStatus = getAgentStatus(chatKey)
-  // Acknowledge a finished turn only when the user actually turns to this pane:
-  // it BECOMES the visible tab, or the window regains focus while it already is.
-  // We never ack on mount/state changes, so a completion that happens while you're
-  // elsewhere is still waiting when you come back.
-  useEffect(() => {
-    if (!api) return
-    const ack = (): void => {
-      if (api.isVisible && document.hasFocus() && getAgentStatus(chatKey) === 'done') {
-        setAgentStatus(chatKey, 'idle')
-      }
-    }
-    const subs = [
-      api.onDidActiveChange(() => {
-        if (api.isActive) ack()
-      }),
-      api.onDidVisibilityChange(() => {
-        if (api.isVisible) ack()
-      })
-    ]
-    window.addEventListener('focus', ack)
-    return () => {
-      subs.forEach((d) => d.dispose())
-      window.removeEventListener('focus', ack)
-    }
-  }, [api, chatKey])
+  // The roster remembers a completion across an unmount (the controller status
+  // does not), so a pane that finished while its workspace was evicted still
+  // shows its ring when you come back to it — matching the rail card.
+  const rosterDone = useRoster((s) => !!s.live[chatKey]?.done)
+  // Acknowledge a finished turn ONLY when the user actually interacts with this
+  // pane — a click or a keystroke inside it (see the panel root's handlers).
+  //
+  // This used to also ack when the pane merely became visible or when the window
+  // regained focus. Both happen without the user doing anything: alt-tabbing back
+  // to riven, or a workspace re-mounting, silently wiped the completion of every
+  // visible pane. A finished turn now waits until it is actually looked at.
+  const ackDone = useCallback((): void => {
+    if (getAgentStatus(chatKey) === 'done') setAgentStatus(chatKey, 'idle')
+    markPaneSeen(chatKey)
+  }, [chatKey])
   // How many recent turns are rendered (see `windowed` below), and whether the view
   // is pinned to the bottom (drives auto-scroll + the jump-to-latest button).
   const WINDOW_STEP = 50
@@ -2343,11 +2333,11 @@ export default function ChatPanel({
       // Native parity (AttnRingView): a running turn shows a STATIC ring, a
       // finished one shows the travelling ember ring until you acknowledge it.
       className={`chat-panel${dragOver ? ' drop-active' : ''}${paneStatus === 'busy' ? ' busy' : ''}`}
-      // Acknowledge a finished turn: clicking anywhere in the pane clears the
-      // "done" shimmer on its tab (that's the "I've seen it" signal).
-      onMouseDownCapture={() => {
-        if (getAgentStatus(chatKey) === 'done') setAgentStatus(chatKey, 'idle')
-      }}
+      // Acknowledge a finished turn: a click or a keystroke anywhere in the pane
+      // is the "I've seen it" signal, and the ONLY thing that clears it — for
+      // the tab, and for this workspace's card in the rail.
+      onMouseDownCapture={ackDone}
+      onKeyDownCapture={ackDone}
       ref={rootRef}
       // Explicitly activate this pane on a real click. dockview's default
       // "focusin activates the group" is unreliable once split groups exist (e.g.
@@ -2370,7 +2360,7 @@ export default function ChatPanel({
       onDrop={onDropFiles}
     >
       {/* Finished turn: the travelling ember ring stays until acknowledged. */}
-      {paneStatus === 'done' && <span className="chat-ring" aria-hidden />}
+      {(paneStatus === 'done' || rosterDone) && <span className="chat-ring" aria-hidden />}
       <div
         className="chat-scroll"
         ref={scrollRef}
