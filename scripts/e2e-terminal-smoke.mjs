@@ -91,15 +91,21 @@ const BUFFER_TEXT = `(() => {
   const b = t.buffer.active
   const out = []
   for (let y = 0; y < b.length; y++) out.push(b.getLine(y)?.translateToString(true) ?? '')
-  return { key: keys[keys.length - 1], text: out.join('\\n'), cols: t.cols, rows: t.rows }
+  // Text left of the cursor on the cursor line: what the user typed, without
+  // whatever the shell paints AFTER the cursor (zsh-autosuggestions' grey
+  // history completion), which otherwise defeats an ends-with check.
+  const cur = (b.getLine(b.cursorY + b.viewportY)?.translateToString(true) ?? '').slice(0, b.cursorX)
+  return { key: keys[keys.length - 1], text: out.join('\\n'), cur, cols: t.cols, rows: t.rows }
 })()`
 
 async function waitFor(cdp, predicate, timeoutMs, label) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     const v = await cdp.eval(BUFFER_TEXT)
-    if (v && predicate(v.text)) return v
-    await sleep(50)
+    if (v && predicate(v.text, v)) return v
+    // 5ms, not 50: at 50 a 15ms echo reads as 55 and the measurement is the
+    // poll interval, not the pipeline.
+    await sleep(5)
   }
   throw new Error(`timeout waiting for ${label}`)
 }
@@ -146,24 +152,40 @@ async function main() {
 
   // Echo latency: one printable key at a time, measure until it appears.
   const latencies = []
-  const marker = 'rvsmoke'
+  const marker = 'rvsmoke' + Date.now().toString(36)
+  // The predicate is "the last non-empty line ends with everything typed so
+  // far", not a length comparison: a prompt that redraws itself (p10k, transient
+  // prompts) changes the buffer's length without changing what we typed.
+  // This shell must not write the gibberish below into the user's real
+  // ~/.zsh_history — earlier runs did, and their leftovers came back as
+  // autosuggestions that broke the very check that typed them.
+  await cdp.type('unset HISTFILE\r')
+  await sleep(300)
+  let typed = ''
   for (let i = 0; i < KEY_SAMPLES; i++) {
     const ch = String.fromCharCode(97 + (i % 26))
-    const before = (await cdp.eval(BUFFER_TEXT)).text
+    typed += ch
     const t0 = performance.now()
     await cdp.type(ch)
-    await waitFor(cdp, (t) => t.length > before.length && t.trimEnd().endsWith(ch), 3000, `echo of ${ch}`)
+    await waitFor(cdp, (_t, v) => v.cur.endsWith(typed), 3000, `echo of ${ch}`)
     latencies.push(performance.now() - t0)
   }
-  // Clear the line and run a real command.
-  await cdp.type('')
+  // Kill the leftover letters with Ctrl+U rather than submitting them: with
+  // oh-my-zsh's correction on, a submitted gibberish command parks the shell at
+  // a `[nyae]?` prompt and swallows whatever is typed next.
+  await cdp.send('Input.insertText', { text: '\u0015' })
+  await sleep(100)
   await cdp.type(`echo ${marker}_$((6*7))\r`)
   await waitFor(cdp, (t) => t.includes(`${marker}_42`), 5000, 'command output')
 
-  // A burst: 3000 lines must land without dropping the tail.
-  await cdp.type(`for i in $(seq 1 3000); do echo line_$i; done; echo ${marker}_END\r`)
+  // A burst: 3000 lines must land without dropping the tail. The end marker is
+  // split in the typed command (`EN""D`) so the shell's echo of the command line
+  // cannot satisfy the wait — only the real output can. Matching the typed line
+  // is how an earlier version of this test passed by accident, and `marker` is
+  // unique per run so a reused terminal's old output cannot either.
+  await cdp.type(`for i in $(seq 1 3000); do echo ${marker}_line_$i; done; echo ${marker}_EN""D\r`)
   const burst = await waitFor(cdp, (t) => t.includes(`${marker}_END`), 20000, 'burst end')
-  const sawTail = burst.text.includes('line_3000')
+  const sawTail = burst.text.includes(`${marker}_line_3000`)
 
   latencies.sort((a, b) => a - b)
   const median = latencies[Math.floor(latencies.length / 2)]
