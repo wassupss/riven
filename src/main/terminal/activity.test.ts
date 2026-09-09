@@ -60,10 +60,45 @@ describe('claudeHookToEvent', () => {
     expect(claudeHookToEvent('PreToolUse', null)).toBeNull()
   })
 
-  it('only an idle/permission Notification means needs_input', () => {
-    expect(claudeHookToEvent('Notification', { notification_type: 'idle_prompt' })).toBe('needs_input')
-    expect(claudeHookToEvent('Notification', { matcher: 'permission_prompt' })).toBe('needs_input')
-    expect(claudeHookToEvent('Notification', { notification_type: 'auth_success' })).toBeNull()
-    expect(claudeHookToEvent('Notification', null)).toBeNull()
+  // Regression: this used to read notification_type/matcher/reason, none of
+  // which exist in Claude Code's payload, so needs_input never fired and every
+  // agent could only report "finished". These are the REAL payload shapes.
+  it('a Notification means needs_input, whatever its message says', () => {
+    const base = {
+      session_id: 'abc',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/repo',
+      hook_event_name: 'Notification'
+    }
+    expect(
+      claudeHookToEvent('Notification', {
+        ...base,
+        message: 'Claude needs your permission to use Bash'
+      })
+    ).toBe('needs_input')
+    expect(
+      claudeHookToEvent('Notification', {
+        ...base,
+        message: 'Claude is waiting for your input'
+      })
+    ).toBe('needs_input')
+    // Reworded or localised messages must not silently stop reporting.
+    expect(claudeHookToEvent('Notification', { ...base, message: '입력을 기다리는 중' })).toBe(
+      'needs_input'
+    )
+    // A payload we can't parse at all still means the agent wants the user.
+    expect(claudeHookToEvent('Notification', null)).toBe('needs_input')
+  })
+
+  it('a hook-driven turn can still report needs_input after finishing', () => {
+    const a = new TerminalActivity(() => 1)
+    a.hook(claudeHookToEvent('UserPromptSubmit', null) as 'working')
+    expect(a.hook(claudeHookToEvent('Stop', null) as 'idle')).toBe('finished')
+    // The permission prompt arrives next; the heuristic is off by now, so this
+    // is the ONLY way needs_input can still be reported.
+    expect(a.hook(claudeHookToEvent('Notification', { message: 'permission' }) as 'needs_input')).toBe(
+      'needs_input'
+    )
+    expect(a.snapshot().attention).toBe('needs_input')
   })
 })

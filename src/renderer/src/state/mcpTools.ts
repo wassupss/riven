@@ -57,73 +57,100 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
 // EVERY tool acts on the workspace of the agent that called it, never on the one
 // the user happens to be looking at.
 //
-// Who made the call currently being dispatched. Set synchronously at the top of
-// dispatch() and read synchronously by the helpers below, so a second agent's
-// call can never retag the first one's.
+// The attribution is resolved ONCE, synchronously, when the call arrives, and
+// then carried explicitly as `Ctx` through every helper. It used to live in a
+// module-level "current caller" that helpers re-read on demand — which held only
+// until the first `await`. Any tool that resolved its workspace after awaiting
+// (browserOpen/browserGo re-reading state for their reply, and worst of all
+// group_remove_agent / group_delete resolving their dock AFTER a confirmation
+// the human might sit on for minutes) would pick up whichever agent had called
+// in since, and act on that workspace instead. group_delete closing every chat
+// pane in an unrelated workspace was the sharpest edge of it.
 interface Caller {
   key: string | null // the chat pane the agent IS (RIVEN_CHAT_KEY), when riven spawned it
   cwd: string | null // the directory it runs in, used when there is no key
 }
-let activeCaller: Caller = { key: null, cwd: null }
 
-// The calling pane, ONLY if it is still open. Unlike getDelegator() this does not
-// care which workspace is on screen: the key came with the call itself.
-function callerPane(): string | null {
-  const k = activeCaller.key
-  if (!k) return null
+interface Ctx {
+  // The calling pane, ONLY if it is still open, and ONLY if it is a chat pane.
+  chatPane: string | null
+  // The calling pane whatever its kind (chat or terminal), for attribution.
+  pane: string | null
+  // The workspace that owns this call; null when it cannot be established.
+  ws: string | null
+  cwd: string | null
+}
+
+// The pane the call came from, if it is still open. Unlike getDelegator() this
+// does not care which workspace is on screen: the key came with the call itself.
+function livePane(key: string | null): string | null {
+  if (!key) return null
   const st = useSession.getState()
-  for (const s of Object.values(st.sessions)) if (s.panes?.[k]) return k
+  for (const s of Object.values(st.sessions)) if (s.panes?.[key]) return key
   return null
 }
 
-// The workspace that owns this call, or null when it cannot be established.
-//
-// There is deliberately NO fallback to the active workspace. That fallback is
-// what made a background agent's browser tab, file or panel appear in whatever
-// workspace the user was looking at: attribution failed silently and the visible
-// workspace absorbed the action. Null is the honest answer, and the tools below
-// report it instead of acting on the wrong workspace.
-function callerWs(): string | null {
-  const pane = callerPane()
-  if (pane) return widForPane(pane)
-  // A CLI typed into a riven terminal: its key names the terminal pane, whose
-  // sink knows the workspace. Beats cwd — the user may have cd'd anywhere.
-  const term = activeCaller.key?.match(/^term-(\d+)$/)
-  if (term) {
-    const ws = contextBus.workspaceOfPane(Number(term[1]))
-    if (ws) return ws
-  }
-  // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
-  // directory it runs in. riven always spawns an agent with cwd = its workspace,
-  // so this covers everything the key doesn't.
-  const cwd = activeCaller.cwd
-  if (!cwd) return null
-  const open = useSession.getState().openWorkspaces
-  const exact = open.find((w) => pathOf(w) === cwd)
-  if (exact) return exact
-  // A subdirectory of an open workspace still belongs to it; prefer the deepest
-  // match so nested workspaces resolve to the closest one.
-  const inside = open
-    .filter((w) => cwd.startsWith(pathOf(w).replace(/\/?$/, '/')))
-    .sort((a, b) => pathOf(b).length - pathOf(a).length)
-  return inside[0] ?? null
+// Resolve a call's workspace. There is deliberately NO fallback to the active
+// workspace. That fallback is what made a background agent's browser tab, file
+// or panel appear in whatever workspace the user was looking at: attribution
+// failed silently and the visible workspace absorbed the action. Null is the
+// honest answer, and the tools below report it instead of acting on the wrong
+// workspace.
+function resolveCtx(caller: Caller): Ctx {
+  const pane = livePane(caller.key)
+  // Only a chat pane can host a blocking prompt or receive a delegation. A pane
+  // key that is a TERMINAL must not be treated as one: `panes` holds any pane the
+  // user has customised (colouring a terminal tab puts term-N in it), so a
+  // "is it in panes" test alone let ask_user queue against a terminal, where
+  // nothing renders it and the call simply blocked until it timed out.
+  const chatPane = pane && pane.startsWith('chat-') ? pane : null
+  const ws = ((): string | null => {
+    // widForPane falls back to the active workspace for an unknown pane; go
+    // direct so attribution can fail honestly instead of hitting the screen.
+    if (pane) {
+      const st = useSession.getState()
+      for (const [wid, s] of Object.entries(st.sessions)) if (s.panes?.[pane]) return wid
+    }
+    // A CLI typed into a riven terminal: its key names the terminal pane, whose
+    // sink knows the workspace. Beats cwd — the user may have cd'd anywhere.
+    const term = caller.key?.match(/^term-(\d+)$/)
+    if (term) {
+      const w = contextBus.workspaceOfPane(Number(term[1]))
+      if (w) return w
+    }
+    // No pane (a terminal agent, or a CLI riven did not spawn): attribute by the
+    // directory it runs in. riven always spawns an agent with cwd = its workspace,
+    // so this covers everything the key doesn't.
+    const cwd = caller.cwd
+    if (!cwd) return null
+    const open = useSession.getState().openWorkspaces
+    const exact = open.find((w) => pathOf(w) === cwd)
+    if (exact) return exact
+    // A subdirectory of an open workspace still belongs to it; prefer the deepest
+    // match so nested workspaces resolve to the closest one.
+    const inside = open
+      .filter((w) => cwd.startsWith(pathOf(w).replace(/\/?$/, '/')))
+      .sort((a, b) => pathOf(b).length - pathOf(a).length)
+    return inside[0] ?? null
+  })()
+  return { chatPane, pane, ws, cwd: caller.cwd }
 }
 
 // Message used whenever a UI action cannot be attributed to a workspace. Naming
 // the cwd makes the fix obvious (open that folder as a workspace).
-function unattributed(): string {
-  return `error: riven could not tell which workspace this call belongs to (cwd: ${activeCaller.cwd ?? 'unknown'}), so it refused to act on the one on screen. Run the agent from a riven chat pane, or from a directory inside an open workspace.`
+function unattributed(c: Ctx): string {
+  return `error: riven could not tell which workspace this call belongs to (cwd: ${c.cwd ?? 'unknown'}), so it refused to act on the one on screen. Run the agent from a riven chat pane, or from a directory inside an open workspace.`
 }
 // The caller's dock. Null when that workspace isn't mounted right now (LRU), in
 // which case dock-manipulating tools report it instead of acting on the wrong one.
-function callerApi(): ReturnType<typeof getApiFor> {
-  return getApiFor(callerWs())
+function callerApi(c: Ctx): ReturnType<typeof getApiFor> {
+  return getApiFor(c.ws)
 }
 
 type Args = Record<string, unknown>
 const s = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 
-async function askUser(args: Args): Promise<string> {
+async function askUser(args: Args, c: Ctx): Promise<string> {
   const question = s(args.question)
   const options = Array.isArray(args.options) ? (args.options as unknown[]).map(s) : []
   if (!options.length) return 'error: options is required'
@@ -131,7 +158,7 @@ async function askUser(args: Args): Promise<string> {
   // caller is not a riven chat pane there is nowhere it can render without
   // interrupting an unrelated workspace, so refuse rather than guess: the agent
   // asks in plain text instead.
-  const pane = callerPane()
+  const pane = c.chatPane
   if (!pane)
     return 'riven: ask_user is only available to riven chat panes. Ask your question in plain text, listing the options, and let the user reply normally.'
   return new Promise<string>((resolve) => {
@@ -145,11 +172,11 @@ async function askUser(args: Args): Promise<string> {
   })
 }
 
-function openFile(args: Args): string {
+function openFile(args: Args, c: Ctx): string {
   const p = s(args.path)
   if (!p) return 'error: path is required'
-  const ws = callerWs()
-  if (!ws) return unattributed()
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   // Open the tab and the editor panel in the CALLER's workspace. Previously both
   // went to the active workspace, so a background agent's file opened on top of
   // whatever the user was doing.
@@ -160,8 +187,8 @@ function openFile(args: Args): string {
   return `opened ${p}${line ? `:${line}` : ''} in ${pathOf(ws)}`
 }
 
-function listPanels(): string {
-  const api = callerApi()
+function listPanels(c: Ctx): string {
+  const api = callerApi(c)
   if (!api) return 'no panels'
   const panels = api.panels.map((p) => ({
     id: p.id,
@@ -172,63 +199,76 @@ function listPanels(): string {
 }
 
 const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
-function openPanel(args: Args): string {
+function openPanel(args: Args, c: Ctx): string {
   const kind = s(args.kind)
+  // Every open names the caller's workspace. Without it these three went to the
+  // dock on screen, so a background agent's terminal/chat/panel appeared on top
+  // of whatever the user was doing in a different workspace.
+  const ws = c.ws
+  if (!ws) return unattributed(c)
+  if (!callerApi(c)) return notMounted(c)
   if (kind === 'terminal') {
-    addTerminal()
+    addTerminal(undefined, undefined, undefined, ws)
     return 'opened terminal'
   }
   if (kind === 'chat') {
-    addChat()
+    addChat(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ws)
     return 'opened chat'
   }
   if (PANEL_KINDS.has(kind)) {
-    togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api')
+    togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api', ws)
     return `opened ${kind}`
   }
   return `error: unknown panel kind "${kind}"`
+}
+
+// The caller's workspace is known but isn't mounted right now (the mounted set is
+// LRU-bounded), so its dock cannot be manipulated. Say so rather than acting on
+// the mounted one.
+function notMounted(c: Ctx): string {
+  return `error: workspace ${c.ws ? pathOf(c.ws) : '?'} is not currently mounted in riven, so its panels can't be changed. Switch to it and try again.`
 }
 
 // ---- notes / docs tools ----
 function notesChanged(): void {
   window.dispatchEvent(new Event('riven:notes-changed'))
 }
-async function noteList(): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function noteList(c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const list = await window.api.notes.list(pathOf(ws))
   return JSON.stringify(list.map((n) => ({ note: n.name, title: n.title })))
 }
-async function noteRead(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function noteRead(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const content = await window.api.notes.read(pathOf(ws), s(args.note))
   return content ?? 'error: note not found'
 }
-async function noteWrite(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function noteWrite(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const name = await window.api.notes.write(
     pathOf(ws),
     args.note ? s(args.note) : null,
     s(args.title),
     s(args.body)
   )
-  togglePanel('notes')
+  togglePanel('notes', ws)
   notesChanged()
   return `wrote note "${name}"`
 }
-async function noteAppend(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function noteAppend(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const name = await window.api.notes.append(pathOf(ws), s(args.note), s(args.body))
   if (!name) return 'error: note not found'
   notesChanged()
   return `appended to "${name}"`
 }
-async function docWrite(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function docWrite(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const res = await window.api.notes.writeFile(pathOf(ws), s(args.path), s(args.body), !!args.overwrite)
   if (!res.ok) return `error: ${res.error}`
   if (res.path) {
@@ -238,9 +278,9 @@ async function docWrite(args: Args): Promise<string> {
   }
   return `wrote ${res.path}`
 }
-async function noteSaveFile(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function noteSaveFile(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const res = await window.api.notes.saveToFile(
     pathOf(ws),
     s(args.note),
@@ -250,10 +290,10 @@ async function noteSaveFile(args: Args): Promise<string> {
   return res.ok ? `saved to ${res.path}` : `error: ${res.error}`
 }
 
-function closePanel(args: Args): string {
+function closePanel(args: Args, c: Ctx): string {
   const id = s(args.id)
-  const api = callerApi()
-  if (!api) return 'error: no active workspace'
+  const api = callerApi(c)
+  if (!api) return c.ws ? notMounted(c) : unattributed(c)
   const panel = api.getPanel(id)
   if (!panel) return `error: no panel with id "${id}"`
   api.removePanel(panel)
@@ -285,11 +325,14 @@ const clip = (v: unknown): string => {
 
 // Ensure the active workspace has an open browser panel with a ready tab, and
 // return its tab id. (v1 drives the active workspace's browser.)
-async function ensureBrowser(url?: string): Promise<{ ws: string; tabId: string } | string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
-  const api = callerApi()
-  if (api && !api.getPanel('preview')) togglePanel('preview')
+async function ensureBrowser(c: Ctx, url?: string): Promise<{ ws: string; tabId: string } | string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
+  const api = callerApi(c)
+  // Check AND open in the caller's dock. These disagreed: the check asked the
+  // caller's dock whether it had a preview panel, then opened one in the dock on
+  // screen — so a background agent's browsing surfaced in the visible workspace.
+  if (api && !api.getPanel('preview')) togglePanel('preview', ws)
   useBrowser.getState().ensureWs(ws)
   const cur = useBrowser.getState().byWs[ws]
   if (!cur || cur.tabs.length === 0) {
@@ -309,15 +352,15 @@ async function ensureBrowser(url?: string): Promise<{ ws: string; tabId: string 
   return 'error: browser did not become ready'
 }
 
-async function browserEval(code: string): Promise<string> {
-  const b = await ensureBrowser()
+async function browserEval(code: string, c: Ctx): Promise<string> {
+  const b = await ensureBrowser(c)
   if (typeof b === 'string') return b
   return clip(await window.api.browser.execJs(b.tabId, code))
 }
 
-function browserStateText(): string {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+function browserStateText(c: Ctx): string {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const cur = useBrowser.getState().byWs[ws]
   const tab = activeTab(ws)
   return JSON.stringify({
@@ -330,29 +373,29 @@ function browserStateText(): string {
   })
 }
 
-async function browserOpen(args: Args): Promise<string> {
+async function browserOpen(args: Args, c: Ctx): Promise<string> {
   const url = s(args.url)
   if (!url) return 'error: url is required'
   const full = /^https?:\/\//i.test(url) ? url : 'http://' + url
   if (args.new_tab) {
-    const ws = callerWs()
-    if (!ws) return unattributed()
-    const api = callerApi()
-    if (api && !api.getPanel('preview')) togglePanel('preview')
+    const ws = c.ws
+    if (!ws) return unattributed(c)
+    const api = callerApi(c)
+    if (api && !api.getPanel('preview')) togglePanel('preview', ws)
     useBrowser.getState().ensureWs(ws)
     useBrowser.getState().newTab(ws, full)
     await sleep(150)
   } else {
-    const b = await ensureBrowser(full)
+    const b = await ensureBrowser(c, full)
     if (typeof b === 'string') return b
     await sleep(150)
   }
-  return browserStateText()
+  return browserStateText(c)
 }
 
-async function browserTab(args: Args): Promise<string> {
-  const ws = callerWs()
-  if (!ws) return unattributed()
+async function browserTab(args: Args, c: Ctx): Promise<string> {
+  const ws = c.ws
+  if (!ws) return unattributed(c)
   const cur = useBrowser.getState().byWs[ws]
   // No index means "the one in front" — closing the current tab is the common
   // case, and it used to fail with "no tab at index -1".
@@ -366,24 +409,24 @@ async function browserTab(args: Args): Promise<string> {
       : 'error: no open tab in this workspace'
   if (s(args.action) === 'close') useBrowser.getState().closeTab(ws, tab.id)
   else useBrowser.getState().selectTab(ws, tab.id)
-  return browserStateText()
+  return browserStateText(c)
 }
 
-async function browserGo(args: Args): Promise<string> {
-  const b = await ensureBrowser()
+async function browserGo(args: Args, c: Ctx): Promise<string> {
+  const b = await ensureBrowser(c)
   if (typeof b === 'string') return b
   const a = s(args.action)
   if (!['back', 'forward', 'reload', 'stop'].includes(a)) return `error: unknown action "${a}"`
   await window.api.browser.go(b.tabId, a as 'back' | 'forward' | 'reload' | 'stop')
   await sleep(300)
-  return browserStateText()
+  return browserStateText(c)
 }
 
-async function browserWait(args: Args): Promise<string> {
+async function browserWait(args: Args, c: Ctx): Promise<string> {
   const sel = s(args.selector)
   if (!sel) return 'error: selector is required'
   const timeout = Math.min(60000, typeof args.timeout_ms === 'number' ? args.timeout_ms : 5000)
-  const b = await ensureBrowser()
+  const b = await ensureBrowser(c)
   if (typeof b === 'string') return b
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
@@ -399,9 +442,14 @@ async function browserWait(args: Args): Promise<string> {
 
 // ---- agent delegation tools ----
 const ASK_TIMEOUT_MS = 300_000 // 5 min per delegated turn
-async function askOneAgent(ref: string, message: string, wait: boolean): Promise<string> {
-  const target = resolveAgent(ref)
-  if (!target) return `error: no agent matching "${ref}" (see riven_agents)`
+// Delegation NEVER crosses a workspace. Title matching is fuzzy, so an unscoped
+// lookup let "ask the agent next to me" land on a same-named pane in a workspace
+// the caller cannot see — and the caller had no way to tell it had happened.
+async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx): Promise<string> {
+  if (!c.ws) return unattributed(c)
+  const target = resolveAgent(ref, c.chatPane ?? undefined, c.ws)
+  if (!target)
+    return `error: no agent matching "${ref}" in this workspace (see riven_agents)`
   const replyP = target.waitNext()
   target.send(message)
   if (!wait) return `delegated to "${target.getTitle()}" (async)`
@@ -411,19 +459,19 @@ async function askOneAgent(ref: string, message: string, wait: boolean): Promise
   ])
   return `[${target.getTitle()}] ${reply}`
 }
-async function askAgent(args: Args): Promise<string> {
-  return askOneAgent(s(args.agent), s(args.message), args.wait !== false)
+async function askAgent(args: Args, c: Ctx): Promise<string> {
+  return askOneAgent(s(args.agent), s(args.message), args.wait !== false, c)
 }
-async function askAgents(args: Args): Promise<string> {
+async function askAgents(args: Args, c: Ctx): Promise<string> {
   const tasks = Array.isArray(args.tasks) ? (args.tasks as Array<Record<string, unknown>>) : []
   if (!tasks.length) return 'error: tasks is required'
   const wait = args.wait !== false
   const results = await Promise.all(
-    tasks.map((tk) => askOneAgent(s(tk.agent), s(tk.message), wait))
+    tasks.map((tk) => askOneAgent(s(tk.agent), s(tk.message), wait, c))
   )
   return results.join('\n\n')
 }
-function groupAddAgent(args: Args): string {
+function groupAddAgent(args: Args, c: Ctx): string {
   const name = s(args.name)
   const persona = s(args.persona)
   const model = s(args.model)
@@ -437,41 +485,59 @@ function groupAddAgent(args: Args): string {
   if (name) lines.push(`[이름] ${name}`)
   if (parent) lines.push(`[보고 대상] ${parent}`)
   const initial = lines.length ? `${lines.join('\n')}\n이 역할로 이후 작업을 수행하세요.` : undefined
-  // Open the teammate BESIDE the pane that asked for it — identified by the key
-  // that came with the call, so a background agent's teammate lands in ITS
-  // workspace rather than in whichever dock is on screen. `inactive` so the
-  // asking pane (where the user may be typing) keeps focus.
-  addChat(initial, 'right', model || undefined, callerPane() ?? undefined, name || undefined, true)
+  // Open the teammate BESIDE the pane that asked for it, IN the caller's
+  // workspace — `refId` only picks a neighbour within a dock, so without naming
+  // the workspace the pane still materialised in whichever dock was on screen.
+  // `inactive` so the asking pane (where the user may be typing) keeps focus.
+  if (!c.ws) return unattributed(c)
+  if (!callerApi(c)) return notMounted(c)
+  addChat(
+    initial,
+    'right',
+    model || undefined,
+    c.chatPane ?? undefined,
+    name || undefined,
+    true,
+    undefined,
+    undefined,
+    c.ws
+  )
   return `added agent "${name || persona || 'chat'}"${model && model !== 'default' ? ` · ${model}` : ''}`
 }
-async function confirmAsk(question: string): Promise<boolean> {
+async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     useAskUser.getState().enqueue({
       id: Math.random().toString(36).slice(2),
-      chatKey: callerPane(),
+      chatKey: c.chatPane,
       question,
       options: ['예', '아니오'],
       resolve: (choice) => resolve(choice === '예')
     })
   })
 }
-async function groupRemoveAgent(args: Args): Promise<string> {
+async function groupRemoveAgent(args: Args, c: Ctx): Promise<string> {
   const name = s(args.name)
-  const target = resolveAgent(name)
-  if (!target) return `error: no agent matching "${name}"`
-  if (!(await confirmAsk(`"${target.getTitle()}" 에이전트를 닫을까요?`)))
+  if (!c.ws) return unattributed(c)
+  const target = resolveAgent(name, undefined, c.ws)
+  if (!target) return `error: no agent matching "${name}" in this workspace`
+  if (!(await confirmAsk(`"${target.getTitle()}" 에이전트를 닫을까요?`, c)))
     return 'the user declined'
-  const api = callerApi()
-  const panel = api?.getPanel(target.chatKey)
-  if (panel && api) api.removePanel(panel)
+  // Resolve the dock from the ctx captured at call time. Reading it here from a
+  // shared "current caller" was the bug: the confirmation above can sit for
+  // minutes, and any other agent's tool call in that window retagged it.
+  const api = callerApi(c)
+  if (!api) return notMounted(c)
+  const panel = api.getPanel(target.chatKey)
+  if (panel) api.removePanel(panel)
   return `removed "${target.getTitle()}"`
 }
-async function groupDelete(args: Args): Promise<string> {
+async function groupDelete(args: Args, c: Ctx): Promise<string> {
   const group = s(args.group)
-  if (!(await confirmAsk(`그룹 "${group}"의 모든 에이전트 패널을 닫을까요?`)))
+  if (!c.ws) return unattributed(c)
+  if (!(await confirmAsk(`그룹 "${group}"의 모든 에이전트 패널을 닫을까요?`, c)))
     return 'the user declined'
-  const api = callerApi()
-  if (!api) return 'error: no active workspace'
+  const api = callerApi(c)
+  if (!api) return notMounted(c)
   let n = 0
   for (const p of api.panels.filter((p) => p.id.startsWith('chat-'))) {
     api.removePanel(p)
@@ -479,16 +545,19 @@ async function groupDelete(args: Args): Promise<string> {
   }
   return `deleted group "${group}" (${n} agents closed)`
 }
-async function startPipeline(args: Args): Promise<string> {
+async function startPipeline(args: Args, c: Ctx): Promise<string> {
   const name = s(args.name)
   const task = s(args.task)
   const stages = Array.isArray(args.stages) ? (args.stages as Array<Record<string, unknown>>) : []
   if (!stages.length) return 'error: stages is required'
+  if (!c.ws) return unattributed(c)
+  if (!callerApi(c)) return notMounted(c)
   let carry = task
   const out: string[] = []
   // Lay stage panes out in a row beside the pane that started the pipeline, each
-  // next to the previous.
-  let ref = callerPane() ?? undefined
+  // next to the previous — and all of them in the CALLER's workspace, so a
+  // pipeline started by a background agent doesn't build itself on screen.
+  let ref = c.chatPane ?? undefined
   for (const st of stages) {
     const stageName = s(st.name)
     const instruction = s(st.instruction)
@@ -496,12 +565,25 @@ async function startPipeline(args: Args): Promise<string> {
     const stageModel = s(st.model)
     // Reuse an existing agent if the stage names one; otherwise spawn a fresh pane
     // for the stage (on its own model if given).
-    let target = stageAgent ? resolveAgent(stageAgent) : null
+    let target = stageAgent ? resolveAgent(stageAgent, undefined, c.ws) : null
     if (!target) {
-      const id = addChat(undefined, 'right', stageModel || undefined, ref, stageName || undefined, true)
+      const id = addChat(
+        undefined,
+        'right',
+        stageModel || undefined,
+        ref,
+        stageName || undefined,
+        true,
+        undefined,
+        undefined,
+        c.ws
+      )
       ref = id // next stage opens beside this one
       await sleep(400) // let the new pane register as an agent
-      target = resolveAgent(id) ?? resolveAgent(listAgents()[listAgents().length - 1]?.id ?? '')
+      const roster = listAgents(c.ws)
+      target =
+        resolveAgent(id, undefined, c.ws) ??
+        resolveAgent(roster[roster.length - 1]?.id ?? '', undefined, c.ws)
     }
     if (!target) return `error: could not open a pane for stage "${stageName}"`
     const prompt = `${instruction ? instruction + '\n\n' : ''}[이전 단계 산출물]\n${carry}`
@@ -517,47 +599,50 @@ async function startPipeline(args: Args): Promise<string> {
 }
 
 async function dispatch(tool: string, args: Args, caller: Caller): Promise<string> {
-  activeCaller = caller
+  // Resolved once, here, and passed down. Nothing below re-derives the caller,
+  // so an await inside a tool cannot pick up a different agent's attribution.
+  const c = resolveCtx(caller)
   switch (tool) {
     case 'ask_user':
-      return askUser(args)
+      return askUser(args, c)
     case 'riven_open_file':
-      return openFile(args)
+      return openFile(args, c)
     case 'riven_panels':
-      return listPanels()
+      return listPanels(c)
     case 'riven_open_panel':
-      return openPanel(args)
+      return openPanel(args, c)
     case 'riven_close_panel':
-      return closePanel(args)
+      return closePanel(args, c)
     case 'riven_workspaces':
       return listWorkspaces()
     case 'riven_open_workspace':
       return openWorkspace(args)
     case 'riven_open_browser':
-      return browserOpen({ url: args.url })
+      return browserOpen({ url: args.url }, c)
     case 'riven_browser_open':
-      return browserOpen(args)
+      return browserOpen(args, c)
     case 'riven_browser_state':
-      return browserStateText()
+      return browserStateText(c)
     case 'riven_browser_tab':
-      return browserTab(args)
+      return browserTab(args, c)
     case 'riven_browser_go':
-      return browserGo(args)
+      return browserGo(args, c)
     case 'riven_browser_wait':
-      return browserWait(args)
+      return browserWait(args, c)
     case 'riven_browser_read': {
       const sel = s(args.selector)
       const html = !!args.html
       const code = sel
         ? `(()=>{const el=document.querySelector(${JSON.stringify(sel)});return el?(${html}?el.outerHTML:el.innerText):'(no match)'})()`
         : `(${html}?document.documentElement.outerHTML:document.body.innerText)`
-      return browserEval(code)
+      return browserEval(code, c)
     }
     case 'riven_browser_click': {
       const sel = s(args.selector)
       if (!sel) return 'error: selector is required'
       return browserEval(
-        `(()=>{const el=document.querySelector(${JSON.stringify(sel)});if(!el)return'(no match)';el.scrollIntoView({block:'center'});el.click();return'clicked'})()`
+        `(()=>{const el=document.querySelector(${JSON.stringify(sel)});if(!el)return'(no match)';el.scrollIntoView({block:'center'});el.click();return'clicked'})()`,
+        c
       )
     }
     case 'riven_browser_fill': {
@@ -568,7 +653,8 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
         ? `if(el.form){el.form.requestSubmit?el.form.requestSubmit():el.form.submit();}`
         : ''
       return browserEval(
-        `(()=>{const el=document.querySelector(${JSON.stringify(sel)});if(!el)return'(no match)';el.focus();el.value=${JSON.stringify(val)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));${submit}return'filled'})()`
+        `(()=>{const el=document.querySelector(${JSON.stringify(sel)});if(!el)return'(no match)';el.focus();el.value=${JSON.stringify(val)};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));${submit}return'filled'})()`,
+        c
       )
     }
     case 'riven_browser_scroll': {
@@ -579,38 +665,40 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
         : y != null
           ? `(window.scrollTo(0,${y}),'scrolled')`
           : `(window.scrollTo(0,document.body.scrollHeight),'scrolled')`
-      return browserEval(code)
+      return browserEval(code, c)
     }
     case 'riven_browser_eval':
-      return browserEval(s(args.js))
+      return browserEval(s(args.js), c)
     case 'riven_note_list':
-      return noteList()
+      return noteList(c)
     case 'riven_note_read':
-      return noteRead(args)
+      return noteRead(args, c)
     case 'riven_note_write':
-      return noteWrite(args)
+      return noteWrite(args, c)
     case 'riven_note_append':
-      return noteAppend(args)
+      return noteAppend(args, c)
     case 'riven_doc_write':
-      return docWrite(args)
+      return docWrite(args, c)
     case 'riven_note_save_file':
-      return noteSaveFile(args)
+      return noteSaveFile(args, c)
     case 'riven_agents':
-      return JSON.stringify(listAgents())
+      // Only this workspace's agents: listing panes the caller must not delegate
+      // to only invites it to try.
+      return c.ws ? JSON.stringify(listAgents(c.ws)) : unattributed(c)
     case 'riven_ask_agent':
-      return askAgent(args)
+      return askAgent(args, c)
     case 'riven_ask_agents':
-      return askAgents(args)
+      return askAgents(args, c)
     case 'riven_group_add_agent':
-      return groupAddAgent(args)
+      return groupAddAgent(args, c)
     case 'riven_group_remove_agent':
-      return groupRemoveAgent(args)
+      return groupRemoveAgent(args, c)
     case 'riven_group_delete':
-      return groupDelete(args)
+      return groupDelete(args, c)
     case 'riven_start_pipeline':
-      return startPipeline(args)
+      return startPipeline(args, c)
     case 'riven_screenshot': {
-      const b = await ensureBrowser(args.url ? s(args.url) : undefined)
+      const b = await ensureBrowser(c, args.url ? s(args.url) : undefined)
       if (typeof b === 'string') return b
       await sleep(500)
       const dataUrl = await window.api.browser.capture(b.tabId)

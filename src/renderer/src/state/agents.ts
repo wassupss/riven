@@ -9,6 +9,11 @@ export interface AgentController {
   chatKey: string
   workspace: string
   getTitle: () => string
+  // Adopt a title chosen OUTSIDE the panel (a tab rename). Without this the
+  // pane's own titleRef keeps the auto-generated name, so the rail roster, the
+  // notification title and `riven_ask_agent`'s name lookup all stay stale while
+  // the tab shows something else.
+  setTitle?: (title: string) => void
   isBusy: () => boolean
   send: (text: string) => void
   // Append context into the composer without sending (browser "send to chat").
@@ -69,8 +74,20 @@ const infoOf = (c: AgentController): AgentInfo => ({
   status: getAgentStatus(c.chatKey)
 })
 
-export function listAgents(): AgentInfo[] {
-  return [...controllers.values()].map(infoOf)
+// Push a title chosen outside the panel into the controller, so every consumer
+// of getTitle() (rail roster, delegation, notifications) matches the tab.
+export function renameAgent(chatKey: string, title: string): void {
+  const c = controllers.get(chatKey)
+  if (!c) return
+  c.setTitle?.(title)
+  useAgents.getState().bump()
+}
+
+// `ws` scopes the roster to one workspace. Agent tools ALWAYS pass the caller's
+// workspace: delegation across workspaces is the bug where "ask the agent in the
+// next pane" reached a same-named pane in an unrelated workspace.
+export function listAgents(ws?: string | null): AgentInfo[] {
+  return [...controllers.values()].filter((c) => !ws || c.workspace === ws).map(infoOf)
 }
 
 // Agents belonging to a workspace, for the workspace-card roster.
@@ -79,9 +96,17 @@ export function agentsForWorkspace(ws: string): AgentInfo[] {
 }
 
 // Resolve an agent reference (chatKey, exact title, or case-insensitive title
-// contains) to a controller, excluding the caller if given.
-export function resolveAgent(ref: string, exclude?: string): AgentController | null {
-  const list = [...controllers.values()].filter((c) => c.chatKey !== exclude)
+// contains) to a controller, excluding the caller if given. `ws` restricts the
+// search to one workspace — title matching is fuzzy, so without it "coder"
+// happily resolves to a "coder" pane in a workspace the caller cannot see.
+export function resolveAgent(
+  ref: string,
+  exclude?: string,
+  ws?: string | null
+): AgentController | null {
+  const list = [...controllers.values()].filter(
+    (c) => c.chatKey !== exclude && (!ws || c.workspace === ws)
+  )
   const byKey = list.find((c) => c.chatKey === ref)
   if (byKey) return byKey
   const byTitle = list.find((c) => c.getTitle() === ref)

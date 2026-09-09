@@ -1870,6 +1870,12 @@ export default function ChatPanel({
       chatKey,
       workspace,
       getTitle: () => titleRef.current,
+      // A rename from the tab is the user's choice: adopt it AND stop the
+      // auto-titler, or the first message would overwrite the name they typed.
+      setTitle: (title: string) => {
+        titleRef.current = title
+        titleSet.current = true
+      },
       isBusy: () => busyRef.current,
       send: (text) => sendMessage(text),
       // Append context to the composer (not auto-send) so the user can add a note

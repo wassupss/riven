@@ -4,6 +4,7 @@ import { isPaneBusy } from '../state/workspaceStatus'
 import { focusPane, focusEditor } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
+import { renameAgent } from '../state/agents'
 import { splitPrimaryRight } from '../state/editorSplit'
 
 // Confirm before closing a terminal whose agent is actively running (busy).
@@ -44,6 +45,22 @@ export function unregisterApiWorkspace(wid: string): void {
 }
 export function getApiFor(wid: string | null | undefined): DockviewApi | null {
   return wid ? (apiByWorkspace.get(wid) ?? null) : null
+}
+
+// The dock a panel-creating call should act on. With no `wid` this is the
+// workspace on screen (a toolbar button, a keybinding — the user is looking at
+// it). With a `wid` it is THAT workspace's dock, which is what an agent-driven
+// call must use: a background agent opening a panel must not have it appear on
+// top of whatever the user is doing. Null when the workspace isn't mounted
+// (the mounted set is LRU-bounded), so callers report that instead of falling
+// back to the visible dock.
+function dockFor(wid?: string | null): { api: DockviewApi; wid: string } | null {
+  if (wid) {
+    const api = apiByWorkspace.get(wid)
+    return api ? { api, wid } : null
+  }
+  const active = useSession.getState().activeWorkspace
+  return activeApi && active ? { api: activeApi, wid: active } : null
 }
 export function widForApi(api: DockviewApi | null | undefined): string | null {
   return (api && apiWorkspace.get(api)) ?? null
@@ -154,25 +171,26 @@ export function addChat(
   // A custom agent (.claude/agents/<name>.md) to run this pane as `claude --agent`.
   agent?: string,
   // Role/persona sent as a SYSTEM prompt at spawn (never as a chat turn).
-  persona?: string
+  persona?: string,
+  // The workspace to open in. Omitted = the one on screen; an agent-driven call
+  // passes ITS OWN workspace so the pane never lands in the visible one.
+  inWorkspace?: string | null
 ): string {
-  const api = activeApi
-  if (!api) return ''
+  const target = dockFor(inWorkspace)
+  if (!target) return ''
+  const { api, wid } = target
   const id = `chat-${nextPaneId()}`
-  const wid = useSession.getState().activeWorkspace
   // A freshly minted pane MUST start empty. chatKeys are globally unique now, but
   // clear defensively, then seed the pane's model/title/agent into the workspace
   // tree (single source of truth) so ChatPanel reads them on mount.
-  if (wid) {
-    clearPaneState(wid, id)
-    setPaneState(wid, id, {
-      model: model && model !== 'default' ? model : undefined,
-      title: title || undefined,
-      agent: agent || undefined,
-      persona: persona || undefined
-    })
-    flushSessionSaveSync() // durable immediately (survives quit/reload races)
-  }
+  clearPaneState(wid, id)
+  setPaneState(wid, id, {
+    model: model && model !== 'default' ? model : undefined,
+    title: title || undefined,
+    agent: agent || undefined,
+    persona: persona || undefined
+  })
+  flushSessionSaveSync() // durable immediately (survives quit/reload races)
   // "inactive" = don't end up focused. We do NOT use dockview's `inactive` add
   // option for this: a panel added inactive is lazily rendered (its content stays
   // blank until first activated). Instead add it ACTIVE (so it renders eagerly),
@@ -195,12 +213,18 @@ export function addChat(
   return id
 }
 
-// Rename a live chat pane's tab (agent-group edit) and re-pin the title so it
-// survives a reload and never gets clobbered by an auto-generated title.
+// Rename a live pane's tab and re-pin the title so it survives a reload and
+// never gets clobbered by an auto-generated title. This is the ONE rename path:
+// the agent-group editor, the MCP tools and a double-click on the tab itself all
+// come through here, so the tab, the persisted tree and the agent roster can
+// never disagree about a pane's name.
 export function setChatTitle(chatKey: string, title: string): void {
   const wid = widForPane(chatKey)
   if (wid) setPaneState(wid, chatKey, { title })
-  activeApi?.getPanel(chatKey)?.api.setTitle(title)
+  // The pane's OWN dock, not the visible one — renaming a pane in a background
+  // workspace used to silently do nothing to its tab.
+  ;(getApiFor(wid) ?? activeApi)?.getPanel(chatKey)?.api.setTitle(title)
+  renameAgent(chatKey, title)
 }
 
 // Set/clear a chat pane's avatar override ("glyph.color"). The tab reads this on
@@ -230,8 +254,14 @@ export function launchAgent(command: string, initialText?: string): void {
   else addTerminal(command)
 }
 
-export function addTerminal(initialCommand?: string, dir?: SplitDir, refId?: string): void {
-  const api = activeApi
+export function addTerminal(
+  initialCommand?: string,
+  dir?: SplitDir,
+  refId?: string,
+  // See addChat's `inWorkspace`: agent-driven opens name their own workspace.
+  inWorkspace?: string | null
+): void {
+  const api = dockFor(inWorkspace)?.api
   if (!api) return
   const paneId = nextPaneId()
   api.addPanel({
@@ -539,8 +569,12 @@ export function closeTerminalById(paneId: number): void {
   if (panel) api.removePanel(panel)
 }
 
-export function togglePanel(id: keyof typeof SINGLETONS): void {
-  const api = activeApi
+export function togglePanel(
+  id: keyof typeof SINGLETONS,
+  // See addChat's `inWorkspace`: agent-driven opens name their own workspace.
+  inWorkspace?: string | null
+): void {
+  const api = dockFor(inWorkspace)?.api
   if (!api) return
   const existing = api.getPanel(id)
   if (existing) {

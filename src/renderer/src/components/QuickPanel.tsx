@@ -197,7 +197,10 @@ export default function QuickPanel(): JSX.Element | null {
       {
         id: 'popout',
         label: t('toolbar.popout'),
-        hint: '⌘⇧P',
+        // ⌘⇧O — matches the `panel.popout` binding. It read ⌘⇧P, which is the
+        // command palette, so following the hint opened the palette and the
+        // pop-out looked like it had been removed.
+        hint: '⌘⇧O',
         section: sView,
         icon: <ExternalLink size={15} />,
         run: () => popoutActive()

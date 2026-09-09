@@ -88,7 +88,7 @@ export class TerminalActivity {
 
 // Map a Claude Code hook name (+ its stdin payload) onto our events. Returns
 // null for hooks that carry no activity meaning.
-export function claudeHookToEvent(hook: string, payload: unknown): HookEvent | null {
+export function claudeHookToEvent(hook: string, _payload?: unknown): HookEvent | null {
   switch (hook) {
     case 'UserPromptSubmit':
       return 'working'
@@ -97,9 +97,19 @@ export function claudeHookToEvent(hook: string, payload: unknown): HookEvent | n
     case 'SessionEnd':
       return 'idle'
     case 'Notification': {
-      const p = payload as { matcher?: unknown; reason?: unknown; notification_type?: unknown } | null
-      const kind = String(p?.notification_type ?? p?.matcher ?? p?.reason ?? '')
-      return /idle_prompt|permission_prompt|elicitation/i.test(kind) ? 'needs_input' : null
+      // Claude Code's Notification payload is
+      //   { session_id, transcript_path, cwd, hook_event_name, message }
+      // — there is no notification_type/matcher/reason field ("matcher" is a
+      // hook CONFIG key, not payload). Reading only those meant `kind` was
+      // always "" and needs_input never fired: since the first UserPromptSubmit
+      // also sets hookDriven (switching the heuristic off), every agent could
+      // only ever report "finished".
+      //
+      // The event exists for exactly one reason — Claude wants the user, either
+      // for a permission decision or because it has been idle waiting on input —
+      // so the event ITSELF is the signal. Don't gate it on message wording,
+      // which is prose and can be reworded or localised at any time.
+      return 'needs_input'
     }
     default:
       return null

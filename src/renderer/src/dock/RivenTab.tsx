@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { IDockviewPanelHeaderProps } from 'dockview-react'
 import { useTabBadge } from '../state/tabBadge'
-import { confirmTerminalClose, setTabColor, widForApi } from './registry'
+import { confirmTerminalClose, setChatTitle, setTabColor, widForApi } from './registry'
 import { useAgents, getAgentStatus } from '../state/agents'
 import { loadPaneState, useSession } from '../state/session'
 import { tintStyle, hueColor, encodeAvatar, AVATAR_COLOR_COUNT, AVATAR_NONE } from '../lib/avatar'
@@ -46,7 +46,11 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
 
   const commit = (v: string): void => {
     const tv = v.trim()
-    if (tv) api.setTitle(tv)
+    // Go through setChatTitle rather than api.setTitle: a bare setTitle only
+    // repaints this tab, leaving the persisted pane state and — for a chat pane
+    // — the agent's own title behind, so the rail roster and `riven_ask_agent`
+    // kept using the auto-generated name the user had just renamed away.
+    if (tv) setChatTitle(api.id, tv)
     setEditing(false)
   }
 
