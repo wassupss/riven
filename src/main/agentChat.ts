@@ -10,7 +10,8 @@ import {
   mcpSystemPrompt,
   MCP_TOOL_PREFIX,
   implementedToolNames,
-  agentMcpEnv
+  agentMcpEnv,
+  mcpReady
 } from './mcpServer'
 
 // Native-chat backend: drives the Claude Code CLI in headless stream-json mode
@@ -391,6 +392,14 @@ async function startSession(
   // Starting explicitly supersedes a parked child: this call carries the pane's
   // own resume id, so the parked copy would only respawn a duplicate.
   parked.delete(key)
+  // The riven MCP config is built from the loopback server's base url, and
+  // mcpConfigJson() returns NULL until it is listening. A chat pane starts as
+  // soon as its panel mounts — which is during startup, exactly when the server
+  // may still be coming up — and a null config means the CLI is spawned with
+  // neither --mcp-config nor the prompt describing the tools. The agent then has
+  // no riven tools at all and says so, for the life of that session, with
+  // nothing logged. Same guard as pty:open.
+  await mcpReady()
   const cmd = await resolveBin('claude')
   if (!cmd) return { ok: false, error: 'claude CLI not found on PATH' }
 
@@ -415,6 +424,12 @@ async function startSession(
   const enabled = implementedToolNames().filter((n) => !disabled.has(n))
   const mcpConfig = enabled.length ? mcpConfigJson(enabled, key) : null
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
+  else if (enabled.length) {
+    // Tools are switched on but we could not build a config: the server never
+    // came up. Say it — this used to be silent, and the only symptom was the
+    // agent claiming it has no riven tools.
+    console.error(`[chat:${key}] starting WITHOUT riven MCP (no loopback server)`)
+  }
   // Document available tools + the user's global instruction (--append-system-prompt).
   const globalPrompt = (opts.globalPrompt ?? '').trim()
   const promptParts: string[] = []

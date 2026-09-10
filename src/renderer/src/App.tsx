@@ -15,7 +15,7 @@ import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
 import { useAskUser } from './state/askUser'
 import { initBrowserEvents } from './state/browser'
-import { registerMcpToolHandler } from './state/mcpTools'
+import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
@@ -108,6 +108,7 @@ export default function App(): JSX.Element {
         addChat,
         lspDebug,
         tabBadge: useTabBadge,
+        mcpDispatch: __devDispatch,
         getActiveApi,
         session: useSession,
         markPaneSeen,

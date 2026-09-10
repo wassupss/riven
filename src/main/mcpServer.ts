@@ -67,8 +67,10 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '패널 열기',
     en: 'Open panel',
     description:
-      'Open a riven panel. kind: editor | terminal | chat | search | git | preview | changes.',
-    inputSchema: obj({ kind: str }, ['kind']),
+      'Open a riven panel. kind: editor | terminal | chat | search | git | preview | changes. ' +
+      'For a terminal you may pass `command` to run in it (e.g. "claude") and `dir` to place it ' +
+      'beside the active panel: right | below | left | above.',
+    inputSchema: obj({ kind: str, command: str, dir: str }, ['kind']),
     implemented: true
   },
   {
@@ -206,7 +208,8 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '에이전트 목록',
     en: 'List agents',
     description:
-      'List the other agent chat panes open in riven (id, title, busy). Use before delegating.',
+      'List the agents in this workspace — chat panes AND terminals with a CLI agent running ' +
+      '(id, title, kind, busy). Use before delegating.',
     inputSchema: obj({}),
     implemented: true
   },
@@ -215,7 +218,10 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '에이전트에 위임',
     en: 'Delegate to an agent',
     description:
-      "Delegate work to ANOTHER agent pane. `agent` is a title or id from riven_agents; the message appears in that agent's chat. By default WAITS for the reply and returns it; pass wait=false to return at once.",
+      "Delegate work to ANOTHER agent in this workspace. `agent` is a title or id from riven_agents. " +
+      "A chat pane receives it as a message and, by default, its reply is WAITED for and returned " +
+      "(pass wait=false to return at once). A TERMINAL agent is typed into instead, so delivery is " +
+      "always async — there is no reply boundary to wait on.",
     inputSchema: obj({ agent: str, message: str, wait: bool }, ['agent', 'message']),
     implemented: true
   },
@@ -700,7 +706,7 @@ export function mcpSystemPrompt(): string {
   return `이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
 - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 ask_user(question, options)를 호출하세요(방향키로 고른 값을 돌려줍니다).
 - 코드/파일을 사용자와 함께 볼 땐 riven_open_file(path, line?)로 riven 에디터에 엽니다.
-- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind), riven_close_panel(id), riven_workspaces, riven_open_workspace(path).
+- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 터미널은 riven_open_panel(kind='terminal', command='claude', dir='right') 처럼 명령까지 지정해 열 수 있습니다.
 - HTTP/API 테스트는 riven_api_request(method, url, headers?, body?)로 실행하고 상태/본문을 돌려받습니다.
 - riven 브라우저를 직접 운전할 수 있습니다: riven_browser_open(url, new_tab?), riven_browser_state(), riven_browser_read(selector?, html?), riven_browser_click/fill/wait/scroll, riven_browser_go(action), riven_screenshot(url?). 페이지는 쿠키·세션을 유지합니다.
 - 긴 결과(요약·계획·조사)는 대화에 쏟지 말고 riven_note_write(title, body, note?)로 메모에 남기세요(note 주면 갈아끼움). 이어쓰기 riven_note_append, 읽기 riven_note_read, 목록 riven_note_list. 문서로 저장소에 남길 땐 riven_doc_write(path, body)(.claude/docs 기준), 메모를 파일로는 riven_note_save_file.
