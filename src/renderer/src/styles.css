@@ -2067,6 +2067,13 @@ select {
   box-shadow: 0 0 0 2px var(--accent-muted);
   animation: dotFade 1.1s ease-in-out infinite;
 }
+/* Finished, unread. Steady rather than pulsing: it is a result waiting to be
+   read, not a request for input — and it must not animate forever on a tab the
+   user has not opened yet. */
+.tab-dot.done {
+  background: var(--ok, #3fb950);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #3fb950) 30%, transparent);
+}
 @keyframes dotFade {
   0%,
   100% {

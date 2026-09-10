@@ -5,6 +5,7 @@ import { existsSync } from 'fs'
 import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
 import { registerSystemResume } from './systemResume'
+import { registerPerfHandlers } from './perf'
 import { registerWorkspaceHandlers } from './workspace'
 import { registerMediaScheme, registerMediaProtocol } from './media'
 import { registerLspHandlers } from './lsp'
@@ -303,6 +304,8 @@ app.whenReady().then(() => {
   // Repaint every window when the machine wakes, and let terminals re-try WebGL
   // once (see systemResume.ts).
   registerSystemResume()
+  // Per-process CPU, so a slowdown can be attributed to a specific helper.
+  registerPerfHandlers()
 
   // Auto-update: check GitHub Releases, surface status to the renderer, and make
   // the "update ready" notification actually install on click.

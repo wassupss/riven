@@ -33,6 +33,9 @@ function multiplexed<T>(channel: string): (cb: (payload: T) => void) => () => vo
 export type PtyAttention = 'finished' | 'needs_input' | null
 const onPtyStatus = multiplexed<{ key: string; busy: boolean; attention: PtyAttention }>('pty:status')
 const onPtyAgent = multiplexed<{ key: string; agent: boolean; name?: string | null }>('pty:agent')
+// Which CLI conversation a terminal's agent is in, so the pane can resume it
+// after a restart. Null when that session ended.
+const onPtyAgentSession = multiplexed<{ key: string; sessionId: string | null }>('pty:agentSession')
 const onPtyBell = multiplexed<{ key: string }>('pty:bell')
 const onPtyTitle = multiplexed<{ key: string; title: string }>('pty:title')
 const onPtyDone = multiplexed<{ key: string; reason: 'finished' | 'needs_input'; summary?: string }>(
@@ -185,6 +188,7 @@ const api = {
     visible: (id: string, visible: boolean): void => ipcRenderer.send('pty:visible', id, visible),
     // The user looked at this terminal: clear its attention flag.
     seen: (id: string): void => ipcRenderer.send('pty:seen', id),
+    onAgentSession: onPtyAgentSession,
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id: string): void => ipcRenderer.send('pty:kill', id),
@@ -271,6 +275,9 @@ const api = {
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
       ipcRenderer.invoke('chat:agents', cwd),
+    // The conversation's own title, for a terminal tab running that session.
+    sessionTitle: (cwd: string, id: string, configDir?: string): Promise<string | null> =>
+      ipcRenderer.invoke('chat:sessionTitle', cwd, id, configDir),
     sessionTranscript: (
       cwd: string,
       id: string,
@@ -498,6 +505,13 @@ const api = {
     const listener = (_e: unknown, reason: string): void => cb(reason)
     ipcRenderer.on('system:resumed', listener)
     return () => ipcRenderer.removeListener('system:resumed', listener)
+  },
+  // Per-process CPU by Chromium process TYPE — Activity Monitor shows three
+  // identically-named "riven Helper" processes and cannot tell them apart.
+  perf: {
+    metrics: (): Promise<
+      Array<{ pid: number; type: string; serviceName?: string; name?: string; cpu: number }>
+    > => ipcRenderer.invoke('perf:metrics')
   },
   notify: {
     // Main decides whether and where to show it from every window's presence

@@ -74,6 +74,22 @@ export class TerminalActivity {
     this.changedAt = this.now()
   }
 
+  // The agent EXITED. Not the same as reset(): a one-shot run (`claude -p`)
+  // finishes and quits in the same breath, and wiping its attention here meant a
+  // completed run never showed as done — the Stop hook had just set 'finished'
+  // and the exit erased it a moment later.
+  //
+  // State still goes idle, unconditionally: nothing is running, so a terminal
+  // can never be left stuck "working" and notifying forever. Only an UNREAD
+  // result survives, and only 'finished' — 'needs_input' dies with the process
+  // it was waiting for, since there is no longer anything to answer.
+  agentGone(): void {
+    this.state = 'idle'
+    this.hookDriven = false
+    if (this.attention === 'needs_input') this.attention = null
+    this.changedAt = this.now()
+  }
+
   private set(state: ActivityState, attention: AttentionReason): AttentionReason {
     const wasState = this.state
     const wasAttention = this.attention

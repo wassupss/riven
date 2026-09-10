@@ -23,7 +23,22 @@ import { claudeHookToEvent, type HookEvent } from './terminal/activity'
 const HOOK_EVENTS = ['UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'Notification'] as const
 
 let settingsPath: string | null = null
-let onEvent: ((pane: string, event: HookEvent, hook: string) => void) | null = null
+let onEvent:
+  | ((pane: string, event: HookEvent, hook: string, sessionId: string | null) => void)
+  | null = null
+
+// The CLI puts its session id in every hook payload. It is the only way riven
+// learns which conversation a TERMINAL agent is having — a chat pane gets it
+// from the stream, but a hand-typed `claude` tells us nothing else.
+//
+// It ends up interpolated into a shell command (`claude --resume <id>`), so it
+// is accepted ONLY in the exact shape the CLI emits. The hook route is
+// loopback + token, but a value that reaches a shell gets checked on its own.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function sessionIdOf(payload: unknown): string | null {
+  const raw = (payload as { session_id?: unknown } | null)?.session_id
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : null
+}
 
 function hookCommand(event: string): string {
   // Everything the hook needs comes from the environment the CLI inherited from
@@ -80,7 +95,7 @@ export function hookDeliveryStats(): { delivered: number; dropped: number } {
 }
 
 export function registerAgentHooks(
-  handler: (pane: string, event: HookEvent, hook: string) => void
+  handler: (pane: string, event: HookEvent, hook: string, sessionId: string | null) => void
 ): void {
   onEvent = handler
   registerHttpRoute('/hook', (_req, res, url, body) => {
@@ -107,6 +122,6 @@ export function registerAgentHooks(
     }
     hookStats.delivered++
     if (debugHooks) console.log(`[hooks] ${hook} pane=${pane} -> ${event} ok`)
-    onEvent?.(pane, event, hook)
+    onEvent?.(pane, event, hook, sessionIdOf(payload))
   })
 }

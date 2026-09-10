@@ -42,6 +42,7 @@ import { useUpdate } from './state/update'
 import { getEditorCloser, initFocusTracking } from './keybindings/focus'
 import {
   getActiveApi,
+  getApiFor,
   confirmTerminalClose,
   addTerminal,
   addChat,
@@ -110,6 +111,9 @@ export default function App(): JSX.Element {
         tabBadge: useTabBadge,
         mcpDispatch: __devDispatch,
         getActiveApi,
+        // A specific workspace's dock, so a perf check can ask about panels in a
+        // workspace that is not on screen.
+        apiFor: getApiFor,
         session: useSession,
         markPaneSeen,
         roster: useRoster,
