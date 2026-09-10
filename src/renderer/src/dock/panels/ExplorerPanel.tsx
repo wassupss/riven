@@ -5,6 +5,7 @@ import { useTree } from '../../state/tree'
 import { useAgentEdits } from '../../state/agentEdits'
 import { useGitStatus, GIT_BADGE } from '../../state/gitStatus'
 import { useSelection } from '../../state/selection'
+import { planMove } from '../../lib/movePlan'
 import { useExplorerReveal } from '../../state/explorerReveal'
 import { contextBus } from '../../bridge/contextBus'
 import { closeDocument } from '../../lsp/client'
@@ -23,6 +24,28 @@ const join = (dir: string, name: string): string => `${dir}/${name}`
 // (never the paths), so the decision to accept has to be made from `types`.
 function hasOsFiles(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes('Files')
+}
+
+/* ---- move within the explorer ---------------------------------------------- */
+// A drag that started on a row of THIS tree. It needs its own mime: `text/plain`
+// alone would also match a text selection dragged in from anywhere, and 'Files'
+// is what Finder sets — the two mean different things here (copy in vs move
+// within), so they must be distinguishable during dragover, where only the
+// types are readable.
+const RIVEN_PATHS = 'application/x-riven-paths'
+
+function hasRivenPaths(e: React.DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes(RIVEN_PATHS)
+}
+
+function readRivenPaths(e: React.DragEvent): string[] {
+  try {
+    const raw = e.dataTransfer.getData(RIVEN_PATHS)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 // Copy whatever Finder dropped into `dir`, then refresh that directory so the
@@ -66,11 +89,15 @@ function TreeNode({
   entry,
   depth,
   onMenu,
+  onMove,
   onNew
 }: {
   entry: DirEntry
   depth: number
   onMenu: (e: ReactMouseEvent, entry: DirEntry) => void
+  // Move rows dropped onto this one. Owned by the panel (it holds the session +
+  // tree stores); the row only knows where the drop landed.
+  onMove: (sources: string[], destDir: string) => Promise<boolean>
   onNew: (kind: 'new-file' | 'new-folder', dir: string) => void
 }): JSX.Element {
   const t = useT()
@@ -167,28 +194,42 @@ function TreeNode({
         className={`ex-row${activePath === entry.path ? ' active' : ''}${isSelected ? ' selected' : ''}${edited ? ' edited' : ''}${dropTarget ? ' drop-target' : ''}${gitCat ? ' git-' + gitCat : ''}`}
         onClick={toggle}
         onContextMenu={(e) => onMenu(e, entry)}
-        draggable={!entry.isDirectory}
+        draggable
         onDragStart={(e) => {
-          // Drag a file onto the native chat to attach its path.
-          e.dataTransfer.setData('text/plain', entry.path)
-          e.dataTransfer.effectAllowed = 'copy'
+          // Dragging a row that is part of the multi-selection takes the whole
+          // selection (Finder's rule, and the one delete already follows).
+          const sel = useSelection.getState().selected
+          const paths = sel.includes(entry.path) && sel.length > 1 ? sel : [entry.path]
+          e.dataTransfer.setData(RIVEN_PATHS, JSON.stringify(paths))
+          // text/plain stays for dropping onto the chat to attach the path.
+          e.dataTransfer.setData('text/plain', paths.join('\n'))
+          e.dataTransfer.effectAllowed = 'copyMove'
         }}
-        // Dropping files from Finder onto a row files them under that row: into
-        // the folder itself, or alongside a file (i.e. into its parent).
+        // A row accepts two different drags: files from Finder are COPIED in,
+        // rows from this tree are MOVED. Either way the destination is the
+        // folder itself, or the parent of a file.
         onDragOver={(e) => {
-          if (!hasOsFiles(e)) return
+          const internal = hasRivenPaths(e)
+          if (!internal && !hasOsFiles(e)) return
           e.preventDefault()
           e.stopPropagation()
-          e.dataTransfer.dropEffect = 'copy'
+          e.dataTransfer.dropEffect = internal ? 'move' : 'copy'
           if (!dropTarget) setDropTarget(true)
         }}
         onDragLeave={() => setDropTarget(false)}
         onDrop={(e) => {
-          if (!hasOsFiles(e)) return
+          const internal = hasRivenPaths(e)
+          if (!internal && !hasOsFiles(e)) return
           e.preventDefault()
           e.stopPropagation()
           setDropTarget(false)
           const dir = entry.isDirectory ? entry.path : dirname(entry.path)
+          if (internal) {
+            void onMove(readRivenPaths(e), dir).then((moved) => {
+              if (moved && entry.isDirectory && !expanded) setExpanded(true)
+            })
+            return
+          }
           void importDrop(e, dir).then((copied) => {
             // Expand the folder we just filled, so the result is visible.
             if (copied.length && entry.isDirectory && !expanded) setExpanded(true)
@@ -233,7 +274,14 @@ function TreeNode({
       </div>
       {expanded &&
         children?.map((child) => (
-          <TreeNode key={child.path} entry={child} depth={depth + 1} onMenu={onMenu} onNew={onNew} />
+          <TreeNode
+            key={child.path}
+            entry={child}
+            depth={depth + 1}
+            onMenu={onMenu}
+            onMove={onMove}
+            onNew={onNew}
+          />
         ))}
     </div>
   )
@@ -368,6 +416,55 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
     clearSelection()
   }
 
+  // Move dropped rows into `destDir`. Returns whether anything actually moved.
+  //
+  // The rules live in planMove (pure, tested) because this is where a mistake
+  // costs data: fs.rename overwrites silently, and a folder dropped into its own
+  // subtree detaches everything under it. Anything refused is reported rather
+  // than worked around — renaming the user's file to "x (2).ts" is a guess, and
+  // replacing one they forgot about is worse.
+  const movePaths = async (sources: string[], destDir: string): Promise<boolean> => {
+    if (sources.length === 0) return false
+    const existing = await window.api.workspace.readDir(destDir).catch(() => [])
+    const plan = planMove(sources, destDir, existing.map((c) => c.name))
+    const openTabs = useSession.getState().sessions[workspace]?.openTabs ?? []
+    const dirs = new Set<string>([destDir])
+    for (const { from, to } of plan.moves) {
+      try {
+        await window.api.workspace.rename(from, to)
+      } catch (err) {
+        plan.skipped.push({ path: from, reason: 'name-taken' })
+        console.error('[explorer] move failed', from, err)
+        continue
+      }
+      dirs.add(dirname(from))
+      // Follow the file in the editor, but only if it was actually open —
+      // openFile() on a path nobody had open would pop up a new tab.
+      if (openTabs.includes(from)) {
+        closeTab(from)
+        closeDocument(from)
+        openFile(to)
+      } else {
+        closeDocument(from)
+      }
+    }
+    for (const d of dirs) bump(d)
+    if (plan.moves.length) clearSelection()
+    const refused = plan.skipped.filter((sk) => sk.reason !== 'already-there')
+    if (refused.length) {
+      window.alert(
+        refused
+          .map((sk) =>
+            sk.reason === 'into-itself'
+              ? t('explorer.moveIntoItself', { name: sk.path.slice(sk.path.lastIndexOf('/') + 1) })
+              : t('explorer.moveNameTaken', { name: sk.path.slice(sk.path.lastIndexOf('/') + 1) })
+          )
+          .join('\n')
+      )
+    }
+    return plan.moves.length > 0
+  }
+
   // Delete the whole selection when the right-clicked row is part of it (Finder
   // rule), otherwise just that one entry.
   const doDelete = (entry: DirEntry): Promise<void> =>
@@ -426,19 +523,23 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
         // Files dropped on empty space below the tree land in the workspace root.
         // Rows stopPropagation, so this only ever sees drops that missed one.
         onDragOver={(e) => {
-          if (!hasOsFiles(e)) return
+          const internal = hasRivenPaths(e)
+          if (!internal && !hasOsFiles(e)) return
           e.preventDefault()
-          e.dataTransfer.dropEffect = 'copy'
+          e.dataTransfer.dropEffect = internal ? 'move' : 'copy'
           if (!rootDrop) setRootDrop(true)
         }}
         onDragLeave={(e) => {
           if (e.currentTarget === e.target) setRootDrop(false)
         }}
         onDrop={(e) => {
-          if (!hasOsFiles(e)) return
+          const internal = hasRivenPaths(e)
+          if (!internal && !hasOsFiles(e)) return
           e.preventDefault()
           setRootDrop(false)
-          void importDrop(e, workspace)
+          // Dropping on the empty space below the tree moves back to the root.
+          if (internal) void movePaths(readRivenPaths(e), workspace)
+          else void importDrop(e, workspace)
         }}
         onKeyDown={(e) => {
           // Delete / ⌘⌫ removes the current selection (the tree holds focus after
@@ -450,7 +551,14 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
         }}
       >
         {roots.map((entry) => (
-          <TreeNode key={entry.path} entry={entry} depth={0} onMenu={openMenu} onNew={onNew} />
+          <TreeNode
+            key={entry.path}
+            entry={entry}
+            depth={0}
+            onMenu={openMenu}
+            onMove={movePaths}
+            onNew={onNew}
+          />
         ))}
       </div>
 

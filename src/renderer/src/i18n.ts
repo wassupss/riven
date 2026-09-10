@@ -215,6 +215,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'explorer.collapseAll': { ko: '모두 접기', en: 'Collapse all' },
   'explorer.mentionInTerminal': { ko: '터미널로 @멘션 ({n})', en: 'Mention in terminal ({n})' },
   'explorer.sendToTerminal': { ko: '터미널로 내용 전송 ({n})', en: 'Send contents to terminal ({n})' },
+  'explorer.moveNameTaken': {
+    ko: "'{name}' 은(는) 그 폴더에 이미 있어서 옮기지 않았어요. 덮어쓰지 않습니다.",
+    en: "'{name}' already exists there, so it was not moved. Nothing is overwritten."
+  },
+  'explorer.moveIntoItself': {
+    ko: "'{name}' 은(는) 자기 자신 안으로 옮길 수 없어요.",
+    en: "'{name}' cannot be moved inside itself."
+  },
   'explorer.rename': { ko: '이름 변경', en: 'Rename' },
   'explorer.delete': { ko: '삭제', en: 'Delete' },
   'explorer.revealInFinder': { ko: 'Finder에서 보기', en: 'Reveal in Finder' },
