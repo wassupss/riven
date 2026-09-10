@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+    <title>riven</title>
+    <!--
+      The document a dockview pop-out group opens into. It stays empty on
+      purpose: dockview MOVES the group's live DOM into this window, so the
+      panel keeps its React state, its xterm and its PTY. Loading the app bundle
+      here would boot a second riven inside the pop-out.
+
+      Its only job is to exist and not flash white — dockview defaults popoutUrl
+      to '/popout.html', which under the packaged app's file:// origin resolves
+      to the filesystem ROOT and can never load, so the pop-out silently opened
+      a dead window. The real URL is passed explicitly (see Workbench.tsx);
+      this file just has to be emitted next to index.html.
+
+      Theme variables are copied in from the opener by main (did-create-window),
+      which is why the background below is only a stand-in for the first frame.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #1e1e1e;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body></body>
+</html>

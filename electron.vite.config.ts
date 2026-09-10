@@ -29,6 +29,18 @@ export default defineConfig({
       }
     },
     plugins: [react()],
+    build: {
+      rollupOptions: {
+        // popout.html is a SECOND renderer entry. dockview opens a pop-out group
+        // into its own document and defaults that url to '/popout.html'; without
+        // this the file is never emitted, so the packaged app opened a window
+        // pointing at a path that does not exist.
+        input: {
+          index: resolve('src/renderer/index.html'),
+          popout: resolve('src/renderer/popout.html')
+        }
+      }
+    },
     worker: {
       format: 'es'
     }

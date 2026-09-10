@@ -87,6 +87,11 @@ function pruneUnknownComponents(
   return { layout: layout as SavedLayout, removed: [...dead] }
 }
 
+// Where a popped-out group's document lives, for both the dev server
+// (http://localhost:5173/popout.html) and the packaged app
+// (file://…/out/renderer/popout.html).
+const POPOUT_URL = new URL('popout.html', window.location.href).href
+
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
   const apiRef = useRef<DockviewApi | null>(null)
@@ -338,6 +343,11 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     <div className="workbench-wrap">
       <DockviewReact
         className="workbench"
+        // Resolved against THIS document, not the site root. dockview's default
+        // is the absolute path '/popout.html', which is right for a web app but
+        // points at the filesystem root under the packaged app's file:// origin
+        // — the pop-out window then opens on a url that cannot load.
+        popoutUrl={POPOUT_URL}
         theme={themeAbyss}
         defaultRenderer="always"
         defaultTabComponent={RivenTab}
