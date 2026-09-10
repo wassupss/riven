@@ -15,7 +15,7 @@ import LauncherPanel from './panels/LauncherPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import ErrorBoundary from '../components/ErrorBoundary'
-import { useSession, flushSessionSaveSync, clearPaneState } from '../state/session'
+import { useSession, flushSessionSaveSync, clearPaneState, workspaceName } from '../state/session'
 import {
   setActiveApi,
   getActiveApi,
@@ -87,10 +87,29 @@ function pruneUnknownComponents(
   return { layout: layout as SavedLayout, removed: [...dead] }
 }
 
+// Where a popped-out group's document lives, for both the dev server
+// (http://localhost:5173/popout.html) and the packaged app
+// (file://…/out/renderer/popout.html).
+//
+// The workspace rides on the query string rather than being set on the window
+// afterwards, because dockview only hands us the new Window for a popout WE
+// open — one restored from a saved layout is opened by dockview itself. The url
+// is serialized with the group, so the name survives a restart. Main reads it
+// back and titles the window (see did-create-window in main/index.ts).
+function popoutUrlFor(name: string): string {
+  const u = new URL('popout.html', window.location.href)
+  if (name) u.searchParams.set('ws', name)
+  return u.href
+}
+
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
   const apiRef = useRef<DockviewApi | null>(null)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
+  const wsNames = useSession((s) => s.names)
+  // A popped-out panel is still one workspace's panel; with several open you
+  // cannot tell which window belongs to which project without this.
+  const popoutUrl = useMemo(() => popoutUrlFor(workspaceName(workspace, wsNames)), [workspace, wsNames])
   const patch = useSession((s) => s.patch)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Last persisted panel count — a change means a structural edit (open/close),
@@ -338,6 +357,11 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     <div className="workbench-wrap">
       <DockviewReact
         className="workbench"
+        // Resolved against THIS document, not the site root. dockview's default
+        // is the absolute path '/popout.html', which is right for a web app but
+        // points at the filesystem root under the packaged app's file:// origin
+        // — the pop-out window then opens on a url that cannot load.
+        popoutUrl={popoutUrl}
         theme={themeAbyss}
         defaultRenderer="always"
         defaultTabComponent={RivenTab}

@@ -168,8 +168,25 @@ function createWindow(): void {
   // A dockview pop-out is a separate document, so the theme CSS variables (set
   // inline on <html> by applyTheme) and the theme-mode attribute don't reach it —
   // it renders white. Copy them from the opener once the child DOM is ready.
-  mainWindow.webContents.on('did-create-window', (child) => {
+  mainWindow.webContents.on('did-create-window', (child, details) => {
     child.setBackgroundColor('#1e1e1e')
+    // Title the pop-out with the workspace its panel belongs to. The renderer
+    // puts the name on the popout url (Workbench.tsx) because dockview only
+    // hands the opener a Window reference for a pop-out the user just made — one
+    // restored from a saved layout is opened by dockview itself, and the url is
+    // what survives in the layout. With several projects open, "riven" on every
+    // window tells you nothing.
+    try {
+      const ws = new URL(details.url).searchParams.get('ws')
+      if (ws) {
+        // popout.html carries <title>riven</title>, and Chromium would apply it
+        // the moment the document loads, overwriting this.
+        child.on('page-title-updated', (e) => e.preventDefault())
+        child.setTitle(`${ws} — riven`)
+      }
+    } catch {
+      /* not a url we control */
+    }
     const syncTheme = (): void => {
       child.webContents
         .executeJavaScript(
