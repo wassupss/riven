@@ -13,6 +13,7 @@ import {
   type SplitDir
 } from '../dock/registry'
 import { rosterFor, type RosterEntry } from './roster'
+import { classifyTerminalCommand } from '../lib/terminalCommand'
 
 // Executes a riven MCP tool call forwarded from the main process and returns a
 // result string. UI actions run against the active workspace's dock. Mirrors the
@@ -208,7 +209,7 @@ function listPanels(c: Ctx): string {
 
 const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
 const SPLIT_DIRS = new Set(['right', 'below', 'left', 'above'])
-function openPanel(args: Args, c: Ctx): string {
+async function openPanel(args: Args, c: Ctx): Promise<string> {
   const kind = s(args.kind)
   // Every open names the caller's workspace. Without it these three went to the
   // dock on screen, so a background agent's terminal/chat/panel appeared on top
@@ -222,6 +223,20 @@ function openPanel(args: Args, c: Ctx): string {
     // of the point of opening one. addTerminal has always taken both.
     const command = s(args.command).trim() || undefined
     const dir = SPLIT_DIRS.has(s(args.dir)) ? (s(args.dir) as SplitDir) : undefined
+    // The command goes to a login shell, so this is arbitrary code execution
+    // with the user's privileges, asked for by a model. Starting a known agent
+    // CLI is the intended use and runs outright; anything else asks first —
+    // including a launcher with shell syntax stapled to it (`claude; rm -rf ~`).
+    if (command) {
+      const verdict = classifyTerminalCommand(command)
+      if (!verdict.allow) {
+        const ok = await confirmAsk(
+          `에이전트가 새 터미널에서 이 명령을 실행하려고 합니다:\n\n${command}\n\n실행할까요?`,
+          c
+        )
+        if (!ok) return `refused by the user: ${command}`
+      }
+    }
     addTerminal(command, dir, undefined, ws)
     return command ? `opened terminal running ${command}` : 'opened terminal'
   }
@@ -499,7 +514,20 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   if (entry.kind === 'terminal') {
     if (entry.busy)
       return `error: "${entry.title}" is mid-turn; its CLI would read this as an answer to what it is currently asking. Try again when riven_agents shows it idle.`
-    window.api.pty.write(entry.id, message + '\r')
+    // Delivered the way a person types it: the text, a pause, then Enter as its
+    // own write. `message + '\r'` in a single write left the message sitting
+    // unsent in the CLI's input box — a TUI reading one burst that happens to end
+    // in CR does not treat that CR as a keypress.
+    //
+    // Not a bracketed paste either: inside paste markers an ink app treats the
+    // content as pasted rather than typed, and may then want a separate confirm.
+    // Typing is the interaction we actually mean.
+    //
+    // Newlines collapse to spaces, because each one WOULD submit — a two-line
+    // message would otherwise arrive as two half-questions.
+    window.api.pty.write(entry.id, message.replace(/\r?\n/g, ' '))
+    await sleep(120)
+    window.api.pty.write(entry.id, '\r')
     return `typed into "${entry.title}" (${entry.id}) — terminal delivery is async, no reply is waited for`
   }
 

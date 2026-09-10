@@ -50,8 +50,9 @@ run_hook() {
 
 run_hook UserPromptSubmit
 # Long enough that the smoke test can observe the busy badge, short enough not
-# to slow the run down.
-sleep 1.5
+# to slow the run down. FAKE_CLAUDE_SLEEP stretches it when a test also needs
+# riven's agent probe (1.5s poll) to notice the process.
+sleep "${FAKE_CLAUDE_SLEEP:-1.5}"
 echo "FAKE-CLAUDE-OK"
 run_hook Stop
 # FAKE_CLAUDE_END=1 also ends the session, the way quitting the CLI does — riven

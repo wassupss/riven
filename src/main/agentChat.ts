@@ -649,6 +649,9 @@ export function registerAgentChatHandlers(): void {
   ipcMain.handle('chat:sessionTranscript', async (_e, cwd: string, id: string, configDir?: string) =>
     readSessionTranscript(cwd, id, configDir)
   )
+  ipcMain.handle('chat:sessionTitle', async (_e, cwd: string, id: string, configDir?: string) =>
+    readSessionTitle(cwd, id, configDir)
+  )
 
   // MCP status/teardown via `claude mcp …`. Both take the pane's configDir: the
   // chat itself runs under the workspace's CLAUDE_CONFIG_DIR, so asking the CLI
@@ -1011,6 +1014,42 @@ async function listSessions(cwd: string, configDir?: string): Promise<SessionSum
 }
 
 // Reconstruct a session transcript for display (user text + assistant text/tools).
+// The title of ONE session, without listSessions' scan of every file in the
+// project directory. A terminal running a CLI knows its session id (from the
+// hooks) but nothing about the conversation, and "claude" on ten tabs says
+// nothing — this is what the tab can show instead.
+export async function readSessionTitle(
+  cwd: string,
+  id: string,
+  configDir?: string
+): Promise<string | null> {
+  const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
+  let raw: string
+  try {
+    raw = await fsp.readFile(full, 'utf8')
+  } catch {
+    return null
+  }
+  let firstUser = ''
+  for (const line of raw.split('\n')) {
+    if (!line) continue
+    let j: Record<string, unknown>
+    try {
+      j = JSON.parse(line)
+    } catch {
+      continue
+    }
+    // The CLI writes an ai-title entry once it has summarised the conversation;
+    // prefer it, and fall back to the opening message the way the picker does.
+    if (j.type === 'ai-title' && typeof j.title === 'string' && j.title.trim()) return j.title.trim()
+    if (!firstUser && j.type === 'user') {
+      const c = (j.message as Record<string, unknown>)?.content
+      if (typeof c === 'string' && !c.startsWith('<')) firstUser = c.split('\n')[0].trim()
+    }
+  }
+  return firstUser ? (firstUser.length > 48 ? firstUser.slice(0, 48) + '…' : firstUser) : null
+}
+
 async function readSessionTranscript(
   cwd: string,
   id: string,

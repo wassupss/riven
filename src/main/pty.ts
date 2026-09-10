@@ -533,7 +533,9 @@ export function registerPtyHandlers(): void {
         if (!s.agentPresent && was) {
           if (s.activeTimer) clearTimeout(s.activeTimer)
           s.activeTimer = null
-          s.activity.reset()
+          // Keep an unread "finished" — a one-shot CLI exits the instant it is
+          // done, and reset() used to erase the completion along with it.
+          s.activity.agentGone()
           publishActivity(s, null)
         }
       }, POLL_MS)

@@ -102,3 +102,38 @@ describe('claudeHookToEvent', () => {
     expect(a.snapshot().attention).toBe('needs_input')
   })
 })
+
+// A one-shot run (`claude -p`) finishes and exits in the same breath. The exit
+// used to wipe the completion that the Stop hook had just recorded, so work run
+// from a terminal never showed as done.
+describe('agentGone', () => {
+  it('keeps an unread completion when the CLI exits', () => {
+    const a = new TerminalActivity()
+    a.hook('working')
+    expect(a.hook('idle')).toBe('finished')
+    a.agentGone()
+    expect(a.snapshot()).toMatchObject({ state: 'idle', attention: 'finished' })
+  })
+
+  it('never leaves the terminal stuck working', () => {
+    const a = new TerminalActivity()
+    a.hook('working')
+    a.agentGone()
+    expect(a.snapshot().state).toBe('idle')
+  })
+
+  it('drops needs_input, which has nothing left to answer', () => {
+    const a = new TerminalActivity()
+    a.hook('needs_input')
+    a.agentGone()
+    expect(a.snapshot().attention).toBe(null)
+  })
+
+  it('forgets that hooks were driving, so a later CLI can use the heuristic', () => {
+    const a = new TerminalActivity()
+    a.hook('working')
+    a.agentGone()
+    expect(a.heuristic('working')).toBe(null)
+    expect(a.snapshot().state).toBe('working')
+  })
+})

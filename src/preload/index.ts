@@ -275,6 +275,9 @@ const api = {
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
       ipcRenderer.invoke('chat:agents', cwd),
+    // The conversation's own title, for a terminal tab running that session.
+    sessionTitle: (cwd: string, id: string, configDir?: string): Promise<string | null> =>
+      ipcRenderer.invoke('chat:sessionTitle', cwd, id, configDir),
     sessionTranscript: (
       cwd: string,
       id: string,
