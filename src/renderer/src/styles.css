@@ -4794,6 +4794,13 @@ select {
   background: color-mix(in srgb, var(--danger) 22%, transparent);
   color: var(--fg); /* mode-aware: near-white on dark, near-black on light */
 }
+/* Armed: the next click actually kills. Reads as committed rather than merely
+   hoverable, so the second click is a decision and not a reflex. */
+.context-item.danger.armed {
+  background: var(--danger-muted, rgba(248, 81, 73, 0.16));
+  color: var(--danger, #f85149);
+  font-weight: 600;
+}
 .context-sep {
   height: 1px;
   background: var(--hairline);

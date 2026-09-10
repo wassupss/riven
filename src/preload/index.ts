@@ -569,7 +569,15 @@ const api = {
   },
   ports: {
     list: (folder: string): Promise<Array<{ port: number; pid: number; name: string }>> =>
-      ipcRenderer.invoke('ports:list', folder)
+      ipcRenderer.invoke('ports:list', folder),
+    // Stop the process holding one of this workspace's ports. Main re-derives the
+    // pid from its own scan, so this cannot be used to kill an arbitrary process.
+    kill: (
+      folder: string,
+      port: number,
+      pid: number
+    ): Promise<{ ok: boolean; forced?: boolean; error?: string }> =>
+      ipcRenderer.invoke('ports:kill', folder, port, pid)
   },
   diagnostics: {
     run: (

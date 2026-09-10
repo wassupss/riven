@@ -53,7 +53,32 @@ export default function StatusBar(): JSX.Element {
   // Clicking a port asks WHERE to open it: the API client (to poke an endpoint),
   // the in-app browser, or the system browser. Previously it always hijacked the
   // browser panel, which is rarely what you want for an API server.
-  const [portMenu, setPortMenu] = useState<{ port: number; x: number; y: number } | null>(null)
+  const [portMenu, setPortMenu] = useState<{
+    port: number
+    pid: number
+    name: string
+    x: number
+    y: number
+  } | null>(null)
+  // Killing is two clicks, not one: the menu item arms first and only then does
+  // it. A dev server dies instantly and takes its state with it, and this menu
+  // is one stray click away from the port number you meant to open.
+  const [armedKill, setArmedKill] = useState<number | null>(null)
+  const [killError, setKillError] = useState<string | null>(null)
+
+  const killPort = async (p: { port: number; pid: number }): Promise<void> => {
+    if (!folder) return
+    setPortMenu(null)
+    setArmedKill(null)
+    const res = await window.api.ports.kill(pathOf(folder), p.port, p.pid)
+    if (!res.ok) {
+      setKillError(res.error ?? 'failed')
+      setTimeout(() => setKillError(null), 4000)
+      return
+    }
+    // Reflect it immediately rather than waiting up to 4s for the next poll.
+    setPorts((cur) => cur.filter((x) => x.port !== p.port))
+  }
   const openPortIn = (port: number, where: 'api' | 'browser' | 'external'): void => {
     const url = `http://localhost:${port}`
     setPortMenu(null)
@@ -115,7 +140,8 @@ export default function StatusBar(): JSX.Element {
                   title={`${p.name} · pid ${p.pid} · :${p.port}`}
                   onClick={(e) => {
                     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                    setPortMenu({ port: p.port, x: r.left, y: r.top })
+                    setArmedKill(null)
+                    setPortMenu({ port: p.port, pid: p.pid, name: p.name, x: r.left, y: r.top })
                   }}
                 >
                   <i className="port-dot" />
@@ -161,11 +187,28 @@ export default function StatusBar(): JSX.Element {
               <div className="context-item" onClick={() => openPortIn(portMenu.port, 'external')}>
                 {t('port.openExternal')}
               </div>
+              <div className="context-sep" />
+              <div
+                className={`context-item danger${armedKill === portMenu.port ? ' armed' : ''}`}
+                onClick={() => {
+                  if (armedKill === portMenu.port) void killPort(portMenu)
+                  else setArmedKill(portMenu.port)
+                }}
+              >
+                {armedKill === portMenu.port
+                  ? t('port.killConfirm', { name: portMenu.name, pid: portMenu.pid })
+                  : t('port.kill')}
+              </div>
             </div>
           </div>,
           document.body
         )}
 
+      {killError && (
+        <span className="status-item dim" title={killError}>
+          {t('port.killFailed')}
+        </span>
+      )}
       {updateReady && (
         <span
           className="status-item click update-pill"

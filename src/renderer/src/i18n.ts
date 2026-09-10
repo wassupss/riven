@@ -210,6 +210,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
 
   // ---- InputModal / Explorer name prompts ----
   'explorer.agentEdited': { ko: '에이전트가 수정함', en: 'Edited by agent' },
+  'port.kill': { ko: '이 포트의 프로세스 종료', en: 'Kill the process on this port' },
+  'port.killConfirm': {
+    ko: '한 번 더 누르면 종료: {name} (pid {pid})',
+    en: 'Click again to kill: {name} (pid {pid})'
+  },
+  'port.killFailed': { ko: '종료 실패', en: "Couldn't kill it" },
   'explorer.newFile': { ko: '새 파일', en: 'New file' },
   'explorer.newFolder': { ko: '새 폴더', en: 'New folder' },
   'explorer.collapseAll': { ko: '모두 접기', en: 'Collapse all' },
