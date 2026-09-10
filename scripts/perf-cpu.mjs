@@ -20,8 +20,26 @@
 const PORT = Number(process.env.RIVEN_CDP_PORT ?? 9333)
 const args = process.argv.slice(2)
 const SECONDS = Number(args.find((a) => /^\d+$/.test(a)) ?? 20)
-const labelIdx = args.indexOf('--label')
-const LABEL = labelIdx >= 0 ? args[labelIdx + 1] : ''
+const argOf = (name) => {
+  const i = args.indexOf(name)
+  return i >= 0 ? args[i + 1] : undefined
+}
+const LABEL = argOf('--label') ?? ''
+// --regime R-F|R-B|R-O declares which regime this run is SUPPOSED to be in.
+// A reading taken in the wrong one is not a pass or a failure, it is INVALID —
+// an occluded window reads ~0% however much is animating, so letting it count as
+// a pass is how a regression gets shipped.
+const WANT_REGIME = argOf('--regime')
+// --expect "renderer<=3,frames<=1,gpu<=2,script<=5" — exits non-zero if exceeded.
+const EXPECT = (argOf('--expect') ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((clause) => {
+    const m = /^(\w+)\s*<=\s*([\d.]+)$/.exec(clause)
+    if (!m) throw new Error(`--expect clause must look like "renderer<=3", got "${clause}"`)
+    return { key: m[1], max: Number(m[2]) }
+  })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -175,14 +193,17 @@ const where = await cdp.eval(`JSON.stringify({
   terminals: Object.keys(window.__rivenTerms || {}).length
 })`)
 const w = JSON.parse(where)
+// Decide the regime from the window's own state, NOT from the frame rate. The
+// first version inferred "occluded" from "no frames + animations running", which
+// mislabels a genuinely still visible window and, worse, would call an occluded
+// window "idle and still" whenever nothing happened to be animating.
+const code = w.visibility !== 'visible' ? 'R-O' : w.focused ? 'R-F' : 'R-B'
 const regime =
-  frames / elapsed < 0.5
-    ? w.animations > 0
-      ? 'OCCLUDED (or fully hidden) — Chromium is not painting at all; this is NOT the costly case'
-      : 'idle and still'
-    : w.focused
-      ? 'visible + focused'
-      : 'visible but UNFOCUSED — the case this plan is about'
+  code === 'R-O'
+    ? 'R-O  OCCLUDED (or minimised) — Chromium is not painting at all; this is NOT the costly case'
+    : code === 'R-F'
+      ? 'R-F  visible + focused'
+      : 'R-B  visible but UNFOCUSED — the case this plan is about'
 
 console.log(`\n=== riven CPU over ${elapsed.toFixed(0)}s${LABEL ? ` — ${LABEL}` : ''} ===`)
 console.log(`  state: ${regime}`)
@@ -211,5 +232,37 @@ if (frames / elapsed > 5) {
   console.log('        purpose, that is the cost — not the GPU process, which only rasters')
   console.log('        what the renderer commits.')
 }
+
+const cpuOf = (label) => perSample.find((r) => r.label === label)?.cpu ?? 0
+const measured = {
+  renderer: cpuOf('renderer'),
+  gpu: cpuOf('GPU process'),
+  main: cpuOf('main'),
+  frames: frames / elapsed,
+  paints: paints / elapsed,
+  script: (d('ScriptDuration') / elapsed) * 100
+}
+
+let exitCode = 0
+if (WANT_REGIME && WANT_REGIME !== code) {
+  console.log(`\n  INVALID: asked for ${WANT_REGIME}, measured in ${code}.`)
+  console.log('           Numbers from the wrong regime mean nothing — fix the window state and')
+  console.log('           run it again. This is not a pass and not a failure.')
+  exitCode = 2
+} else if (EXPECT.length) {
+  console.log('\n  expectations:')
+  for (const { key, max } of EXPECT) {
+    const got = measured[key]
+    if (got === undefined) {
+      console.log(`    ${key.padEnd(10)} UNKNOWN key (use ${Object.keys(measured).join('/')})`)
+      exitCode = Math.max(exitCode, 1)
+      continue
+    }
+    const pass = got <= max
+    console.log(`    ${key.padEnd(10)} ${got.toFixed(1).padStart(6)} <= ${String(max).padStart(5)}   ${pass ? 'ok' : 'EXCEEDED'}`)
+    if (!pass) exitCode = Math.max(exitCode, 1)
+  }
+}
 console.log()
 cdp.ws.close()
+process.exit(exitCode)
