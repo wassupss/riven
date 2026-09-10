@@ -503,6 +503,13 @@ const api = {
     ipcRenderer.on('system:resumed', listener)
     return () => ipcRenderer.removeListener('system:resumed', listener)
   },
+  // Per-process CPU by Chromium process TYPE — Activity Monitor shows three
+  // identically-named "riven Helper" processes and cannot tell them apart.
+  perf: {
+    metrics: (): Promise<
+      Array<{ pid: number; type: string; serviceName?: string; name?: string; cpu: number }>
+    > => ipcRenderer.invoke('perf:metrics')
+  },
   notify: {
     // Main decides whether and where to show it from every window's presence
     // (see main/notify.ts). opts.paneId names the pane it is about: a window
