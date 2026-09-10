@@ -9,8 +9,10 @@ import {
   addTerminal,
   addChat,
   togglePanel,
-  getApiFor
+  getApiFor,
+  type SplitDir
 } from '../dock/registry'
+import { rosterFor, type RosterEntry } from './roster'
 
 // Executes a riven MCP tool call forwarded from the main process and returns a
 // result string. UI actions run against the active workspace's dock. Mirrors the
@@ -78,6 +80,11 @@ interface Ctx {
   chatPane: string | null
   // The calling pane whatever its kind (chat or terminal), for attribution.
   pane: string | null
+  // The caller's OWN key as it identified itself, whether or not it resolved to
+  // a known pane. `pane` requires an entry in the session tree, which a terminal
+  // only gets once the user customises it — so it is null for most terminals and
+  // cannot be used to keep an agent from delegating to itself.
+  self: string | null
   // The workspace that owns this call; null when it cannot be established.
   ws: string | null
   cwd: string | null
@@ -136,7 +143,7 @@ function resolveCtx(caller: Caller): Ctx {
       .sort((a, b) => pathOf(b).length - pathOf(a).length)
     return inside[0] ?? null
   })()
-  return { chatPane, pane, ws, cwd: caller.cwd }
+  return { chatPane, pane, self: caller.key ?? null, ws, cwd: caller.cwd }
 }
 
 // Message used whenever a UI action cannot be attributed to a workspace. Naming
@@ -200,6 +207,7 @@ function listPanels(c: Ctx): string {
 }
 
 const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
+const SPLIT_DIRS = new Set(['right', 'below', 'left', 'above'])
 function openPanel(args: Args, c: Ctx): string {
   const kind = s(args.kind)
   // Every open names the caller's workspace. Without it these three went to the
@@ -209,8 +217,13 @@ function openPanel(args: Args, c: Ctx): string {
   if (!ws) return unattributed(c)
   if (!callerApi(c)) return notMounted(c)
   if (kind === 'terminal') {
-    addTerminal(undefined, undefined, undefined, ws)
-    return 'opened terminal'
+    // `command` and `dir` were being dropped, so an agent could open a terminal
+    // but never start anything in it or say where it should go — which is most
+    // of the point of opening one. addTerminal has always taken both.
+    const command = s(args.command).trim() || undefined
+    const dir = SPLIT_DIRS.has(s(args.dir)) ? (s(args.dir) as SplitDir) : undefined
+    addTerminal(command, dir, undefined, ws)
+    return command ? `opened terminal running ${command}` : 'opened terminal'
   }
   if (kind === 'chat') {
     addChat(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ws)
@@ -446,11 +459,53 @@ const ASK_TIMEOUT_MS = 300_000 // 5 min per delegated turn
 // Delegation NEVER crosses a workspace. Title matching is fuzzy, so an unscoped
 // lookup let "ask the agent next to me" land on a same-named pane in a workspace
 // the caller cannot see — and the caller had no way to tell it had happened.
+// Everything in a workspace that can be delegated to, minus the caller itself.
+// Terminals count only while a CLI agent is actually running in them — that is
+// what rosterFor already decides (pty:agent), so a plain shell never appears.
+function agentList(ws: string, self: string | null): Array<{
+  id: string
+  title: string
+  kind: RosterEntry['kind']
+  busy: boolean
+  status: RosterEntry['status']
+}> {
+  return rosterFor(ws)
+    .filter((e) => e.id !== self)
+    .map((e) => ({ id: e.id, title: e.title, kind: e.kind, busy: e.busy, status: e.status }))
+}
+
+// Match by exact id, then exact title, then a case-insensitive contains — the
+// same ladder resolveAgent uses, but over the roster so terminals are eligible.
+function resolveRosterAgent(ref: string, ws: string, self: string | null): RosterEntry | null {
+  const list = rosterFor(ws).filter((e) => e.id !== self)
+  const needle = ref.trim()
+  return (
+    list.find((e) => e.id === needle) ??
+    list.find((e) => e.title === needle) ??
+    list.find((e) => e.title.toLowerCase().includes(needle.toLowerCase())) ??
+    null
+  )
+}
+
 async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx): Promise<string> {
   if (!c.ws) return unattributed(c)
-  const target = resolveAgent(ref, c.chatPane ?? undefined, c.ws)
+  const entry = resolveRosterAgent(ref, c.ws, c.self)
+  if (!entry) return `error: no agent matching "${ref}" in this workspace (see riven_agents)`
+
+  // A CLI in a terminal is driven by typing at it. There is no reply boundary in
+  // a PTY stream, so delivery is always async — and writing into a running turn
+  // would be read as an answer to whatever it is currently asking, so refuse
+  // rather than corrupt it (the @mention path in the UI asks the user instead).
+  if (entry.kind === 'terminal') {
+    if (entry.busy)
+      return `error: "${entry.title}" is mid-turn; its CLI would read this as an answer to what it is currently asking. Try again when riven_agents shows it idle.`
+    window.api.pty.write(entry.id, message + '\r')
+    return `typed into "${entry.title}" (${entry.id}) — terminal delivery is async, no reply is waited for`
+  }
+
+  const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
   if (!target)
-    return `error: no agent matching "${ref}" in this workspace (see riven_agents)`
+    return `error: "${entry.title}" exists but its panel isn't mounted, so it cannot receive a message. Switch to that workspace and try again.`
   const replyP = target.waitNext()
   target.send(message)
   if (!wait) return `delegated to "${target.getTitle()}" (async)`
@@ -599,6 +654,13 @@ async function startPipeline(args: Args, c: Ctx): Promise<string> {
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`
 }
 
+// Exported for dev/e2e only: lets a test drive a tool call exactly as an agent
+// would (same dispatch, same caller attribution) without standing up an MCP
+// client and its per-run token.
+export function __devDispatch(tool: string, args: Args, caller: Caller): Promise<string> {
+  return dispatch(tool, args, caller)
+}
+
 async function dispatch(tool: string, args: Args, caller: Caller): Promise<string> {
   // Resolved once, here, and passed down. Nothing below re-derives the caller,
   // so an await inside a tool cannot pick up a different agent's attribution.
@@ -684,8 +746,10 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
       return noteSaveFile(args, c)
     case 'riven_agents':
       // Only this workspace's agents: listing panes the caller must not delegate
-      // to only invites it to try.
-      return c.ws ? JSON.stringify(listAgents(c.ws)) : unattributed(c)
+      // to only invites it to try. The ROSTER is the source, not the chat
+      // controller registry — a CLI running in a riven terminal is an agent you
+      // can delegate to, and it was invisible here.
+      return c.ws ? JSON.stringify(agentList(c.ws, c.self)) : unattributed(c)
     case 'riven_ask_agent':
       return askAgent(args, c)
     case 'riven_ask_agents':
