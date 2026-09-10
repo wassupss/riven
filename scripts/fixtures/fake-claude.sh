@@ -43,7 +43,9 @@ run_hook() {
     echo "fake-claude: no $event hook in $SETTINGS" >&2
     return 0
   fi
-  printf '{"hook_event_name":"%s","session_id":"fake"}' "$event" | bash -c "$cmd" >/dev/null 2>&1
+  # A real uuid: riven only accepts a session id in the CLI's exact shape,
+  # because it ends up in a `claude --resume <id>` command line.
+  printf '{"hook_event_name":"%s","session_id":"%s"}' "$event" "${FAKE_CLAUDE_SESSION:-11111111-2222-4333-8444-555555555555}" | bash -c "$cmd" >/dev/null 2>&1
 }
 
 run_hook UserPromptSubmit
@@ -52,4 +54,7 @@ run_hook UserPromptSubmit
 sleep 1.5
 echo "FAKE-CLAUDE-OK"
 run_hook Stop
+# FAKE_CLAUDE_END=1 also ends the session, the way quitting the CLI does — riven
+# should then forget the conversation instead of resuming it next launch.
+[ "${FAKE_CLAUDE_END:-0}" = "1" ] && run_hook SessionEnd
 exit 0

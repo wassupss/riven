@@ -49,6 +49,9 @@ interface Session {
   activity: TerminalActivity
   agentPresent: boolean
   agentName: string | null
+  // The CLI session id this terminal's agent is using, learned from its hook
+  // payloads. Null once the CLI session ends (SessionEnd) — see the hook handler.
+  agentSessionId: string | null
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
@@ -382,7 +385,7 @@ function dispose(s: Session): void {
 
 export function registerPtyHandlers(): void {
   // Agent hooks arrive on the loopback server tagged with the pane they ran in.
-  registerAgentHooks((pane, event) => {
+  registerAgentHooks((pane, event, hook, sessionId) => {
     const s = sessions.get(pane)
     if (!s) return
     if (s.activeTimer) {
@@ -390,6 +393,15 @@ export function registerPtyHandlers(): void {
       s.activeTimer = null
     }
     s.awaitingReply = false
+    // Remember WHICH conversation this terminal's CLI is having, so the pane can
+    // come back to it after a restart instead of to a bare shell. SessionEnd
+    // means the user left the CLI on purpose — forget it, or the next launch
+    // would reopen a conversation they had closed.
+    const next = hook === 'SessionEnd' ? null : sessionId ?? s.agentSessionId ?? null
+    if (next !== (s.agentSessionId ?? null)) {
+      s.agentSessionId = next
+      send(s, 'pty:agentSession', { key: pane, sessionId: next })
+    }
     publishActivity(s, s.activity.hook(event))
   })
 
@@ -462,6 +474,7 @@ export function registerPtyHandlers(): void {
         rows,
         activity: new TerminalActivity(),
         agentPresent: false,
+        agentSessionId: null,
         agentName: null,
         poll: null,
         polling: false,

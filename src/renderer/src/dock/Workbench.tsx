@@ -228,8 +228,13 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       // (user close) — NOT on renderer reload, so sessions survive ⌘R.
       disposers.current.push(
         api.onDidRemovePanel((panel) => {
-          if (panel.id.startsWith('term-')) window.api.pty.kill(panel.id)
-          else if (panel.id.startsWith('chat-')) {
+          if (panel.id.startsWith('term-')) {
+            window.api.pty.kill(panel.id)
+            // A terminal's pane state now holds the CLI session it was in, so a
+            // closed terminal has to forget it — otherwise the record outlives
+            // the pane, and "closed" would not mean closed.
+            clearPaneState(workspace, panel.id)
+          } else if (panel.id.startsWith('chat-')) {
             window.api.chat.stop(panel.id)
             clearPaneState(workspace, panel.id)
           }

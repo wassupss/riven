@@ -3,7 +3,7 @@ import type { DockviewPanelApi } from 'dockview-core'
 import TerminalPane from '../../components/TerminalPane'
 import { contextBus } from '../../bridge/contextBus'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
-import { pathOf } from '../../state/session'
+import { pathOf, loadPaneState, setPaneState } from '../../state/session'
 import { claudeConfigDirFor } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
 import { markPaneSeen } from '../../state/roster'
@@ -32,6 +32,12 @@ export default function TerminalPanel({
 }): JSX.Element {
   const { paneId, initialCommand } = params
   const sessionKey = `term-${paneId}`
+  // What the CLI in this terminal was last talking to, read ONCE at mount. On a
+  // fresh app start that is the conversation the pane had before quitting, so it
+  // can come back to it instead of to a bare shell — the terminal equivalent of
+  // a chat pane's --resume. A pane the user closed is gone from the layout and
+  // never gets here, so a closed conversation is not reopened.
+  const [resumeSession] = useState(() => loadPaneState(workspace, sessionKey).session ?? null)
   const [busy, setBusy] = useState(false)
   const [attention, setAttention] = useState(false)
 
@@ -97,6 +103,13 @@ export default function TerminalPanel({
       contextBus.setAgent(paneId, agent)
       applyAutoTitle(agent ? name : null)
     })
+    // Main learns the CLI's session id from its hook payloads and clears it when
+    // that session ends, so persisting it verbatim keeps "resume to this
+    // conversation" and "come back to a plain shell" both truthful.
+    const offAgentSession = window.api.pty.onAgentSession(({ key, sessionId }) => {
+      if (key !== sessionKey) return
+      setPaneState(workspace, sessionKey, { session: sessionId })
+    })
     // A bell is a stream, not an event: a beeping TUI can ring many times a
     // second, and one notification each is unusable. Coalesce, and apply the same
     // "is the user already looking at this terminal" rule the done path uses —
@@ -125,6 +138,7 @@ export default function TerminalPanel({
       offStatus()
       offAgent()
       offBell()
+      offAgentSession()
       offDone()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,7 +158,13 @@ export default function TerminalPanel({
         cwd={pathOf(workspace)}
         configDir={claudeConfigDirFor(workspace)}
         paneId={paneId}
-        initialCommand={initialCommand}
+        initialCommand={
+          // A recorded session wins over the command the pane was opened with:
+          // re-running a bare `claude` would start a NEW conversation, which is
+          // exactly the thing being fixed. main ignores this entirely when the
+          // PTY is still alive (⌘R), so it only applies to a real restart.
+          resumeSession ? `claude --resume ${resumeSession}` : initialCommand
+        }
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}
         onFocus={() => contextBus.setActive(workspace, paneId)}
       />
