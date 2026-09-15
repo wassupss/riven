@@ -5,6 +5,7 @@ import { promises as fsp } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { resolveBin } from './shellPath'
+import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import {
   mcpConfigJson,
   mcpSystemPrompt,
@@ -1104,6 +1105,16 @@ export interface McpServer {
 async function mcpList(cwd: string, configDir?: string): Promise<McpServer[]> {
   const cmd = await resolveBin('claude')
   if (!cmd) return []
+  // Before listing, replace any server that was registered as its own
+  // `claude mcp add` line with what that line meant to add (see mcpRepair.ts).
+  // Listing first would only show the user a server that cannot ever connect.
+  const repaired = await repairPastedAddServers(cwd, configDir, (args) =>
+    runClaudeMcp(cwd, args, 20000, configDir)
+  )
+  for (const r of repaired) {
+    if (r.ok) console.log(`[mcp] repaired "${r.name}": it was registered as its own add command`)
+    else console.warn(`[mcp] could not repair "${r.name}"`, r.output.slice(0, 300))
+  }
   const env = { ...process.env }
   if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   const out = await new Promise<string>((resolve) => {
@@ -1149,7 +1160,10 @@ async function approveMcpJson(
   name: string,
   configDir?: string
 ): Promise<{ ok: boolean; output: string }> {
-  const file = path.join(configDir ?? path.join(os.homedir(), '.claude'), '.claude.json')
+  // ~/.claude.json at the home root when there is no profile — the old
+  // ~/.claude/.claude.json is not a file the CLI reads, so approvals written
+  // there without a profile were silently ignored.
+  const file = claudeStateFile(configDir)
   try {
     const cfg = JSON.parse(await fsp.readFile(file, 'utf8')) as {
       projects?: Record<string, { enabledMcpjsonServers?: string[]; disabledMcpjsonServers?: string[] }>

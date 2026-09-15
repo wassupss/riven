@@ -179,19 +179,12 @@ export default function TerminalPane({
         // shows a fallback font while composing and only snaps to D2Coding on commit.
         container.style.setProperty('--term-font', cfg.terminalFontFamily)
         container.style.setProperty('--term-font-size', `${cfg.terminalFontSize}px`)
-        // The canvas/webgl renderer measures glyphs at init; if a bundled webfont
-        // (D2Coding) isn't loaded yet it measures the fallback and Korean looks off
-        // until a reflow. Re-render once fonts are ready so it picks up the real
-        // metrics. (No-op when the font is already installed/loaded.)
-        document.fonts?.ready
-          .then(() => {
-            if (!opened || !container.isConnected) return
-            try {
-              term.refresh(0, term.rows - 1)
-            } catch {
-              /* repainted by a later fit */
-            }
-          })
+        // The cell was just measured with whatever face is loaded right now. Ask
+        // for the configured stack explicitly — a canvas measure doesn't wait for
+        // a web font — and re-measure once it (or anything else) has arrived.
+        document.fonts
+          ?.load(`${term.options.fontSize}px ${term.options.fontFamily}`)
+          .then(() => remeasureFont(true))
           .catch(() => {})
         return true
       }
@@ -418,6 +411,48 @@ export default function TerminalPane({
         reportVisible()
       }
 
+      // xterm measures its cell when it opens and otherwise almost never again.
+      // The bundled faces (JetBrains Mono Web, D2Coding Web) are font-display:
+      // swap, so a terminal that opens before they load is sized for the
+      // fallback: at 12px D2Coding measures 6px a cell where JetBrains Mono
+      // draws 7.2px, and every glyph overruns its cell — garbled text that a
+      // panel resize "fixes" only by repainting. Reassigning fontFamily did not
+      // re-measure when tested, so call the measure directly (internal, hence
+      // guarded), then rebuild the glyph atlas and refit to the real cell size.
+      //
+      // A face that loads without changing the cell (the bold weight, fetched the
+      // first time bold text shows up) still leaves glyphs in the atlas that were
+      // drawn with the fallback, so a font load always rebuilds the atlas.
+      const remeasureFont = (fontLoaded = false): void => {
+        if (torn || !opened) return
+        const cs = (
+          term as unknown as {
+            _core?: { _charSizeService?: { width: number; height: number; measure?: () => void } }
+          }
+        )._core?._charSizeService
+        let changed = false
+        if (cs?.measure) {
+          const { width, height } = cs
+          try {
+            cs.measure()
+            changed = cs.width !== width || cs.height !== height
+          } catch {
+            /* keep the old cell; still repaint below */
+          }
+        }
+        if (!changed && !fontLoaded) return
+        try {
+          term.clearTextureAtlas()
+          term.refresh(0, term.rows - 1)
+        } catch {
+          /* repainted by the next fit */
+        }
+        if (changed) safeFit()
+      }
+      const onFontsLoaded = (): void => remeasureFont(true)
+      document.fonts?.addEventListener('loadingdone', onFontsLoaded)
+      disposers.push(() => document.fonts?.removeEventListener('loadingdone', onFontsLoaded))
+
       // Waking the machine can take the GPU context with it, which would
       // otherwise strand this terminal on the DOM renderer for good. That policy
       // exists to avoid thrashing an unstable context; a sleep is not that. Allow
@@ -492,6 +527,7 @@ export default function TerminalPane({
           requestAnimationFrame(() => {
             term.options.theme = terminalTheme()
           })
+          remeasureFont()
           safeFit()
         })
       )
