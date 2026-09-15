@@ -811,10 +811,19 @@ function McpCard({
       })
     )?.trim()
     if (!target) return
+    // Server setup pages hand out a ready-made `claude mcp add …` line, and that
+    // is what gets pasted here. Treating it as a stdio command wrapped it in a
+    // SECOND add — `claude mcp add <name> -- claude mcp add --transport http …` —
+    // which registers a "server" whose command is the add line itself: it cannot
+    // speak MCP, so its tools silently never load (and the bearer token lands in
+    // the config as a plain argv entry). A pasted add line is run as-is instead.
+    const pastedAdd = /^claude\s+mcp\s+add(\s|$)/i.test(target)
     // A URL is an HTTP server; anything else is the stdio command to run.
-    const command = /^https?:\/\//i.test(target)
-      ? `claude mcp add --transport http ${shq(name)} ${shq(target)}`
-      : `claude mcp add ${shq(name)} -- ${target}`
+    const command = pastedAdd
+      ? target
+      : /^https?:\/\//i.test(target)
+        ? `claude mcp add --transport http ${shq(name)} ${shq(target)}`
+        : `claude mcp add ${shq(name)} -- ${target}`
     // `add` is done the moment the server exists at all — its status afterwards
     // is a separate question the card answers on the next row.
     await run(command, name, (s) => !!s)
