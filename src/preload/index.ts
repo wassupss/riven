@@ -746,6 +746,14 @@ const api = {
                 diffHunk: string
               }>
             }>
+            // Reviews (verdict + summary) and discussion not tied to a line.
+            conversation: Array<{
+              kind: 'review' | 'comment'
+              author: string
+              body: string
+              at: string
+              state?: string
+            }>
           }
         }
       | { ok: false; error: string }

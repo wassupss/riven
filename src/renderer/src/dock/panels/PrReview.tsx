@@ -23,6 +23,20 @@ type Thread = Detail['threads'][number]
 type FileEntry = Detail['files'][number]
 type Draft = { path: string; line: number; side: 'LEFT' | 'RIGHT'; body: string }
 
+// A review's verdict, as a badge. COMMENTED reviews only reach the timeline when
+// they carry words, so they read as a plain comment rather than a verdict.
+function reviewBadgeClass(state?: string): string {
+  if (state === 'APPROVED') return 'approved'
+  if (state === 'CHANGES_REQUESTED') return 'changes'
+  return 'required'
+}
+function reviewLabelKey(state?: string): string {
+  if (state === 'APPROVED') return 'pr.approved'
+  if (state === 'CHANGES_REQUESTED') return 'pr.changesRequested'
+  if (state === 'DISMISSED') return 'pr.dismissed'
+  return 'pr.reviewed'
+}
+
 // Reviewing a pull request without leaving the editor: the diff, the threads
 // already on it, and the three things you can do about them — reply, resolve,
 // and submit a review.
@@ -119,7 +133,8 @@ function FileDiff({
   repo,
   onChanged,
   onDraft,
-  onOpenInEditor
+  onOpenInEditor,
+  defaultOpen
 }: {
   file: FileEntry
   threads: Thread[]
@@ -128,9 +143,12 @@ function FileDiff({
   onChanged: () => void
   onDraft: (d: Draft) => void
   onOpenInEditor: () => void
+  // A PR touching many files opens with them folded: every diff expanded at
+  // once is a wall nobody reads top to bottom.
+  defaultOpen: boolean
 }): JSX.Element {
   const t = useT()
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(defaultOpen)
   const [composing, setComposing] = useState<{ line: number; side: 'LEFT' | 'RIGHT' } | null>(null)
   const [text, setText] = useState('')
   const hunks = useMemo(() => parsePatch(file.patch), [file.patch])
@@ -288,6 +306,7 @@ export default function PrReview({
   const [loading, setLoading] = useState(false)
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [view, setView] = useState<'conversation' | 'files'>('conversation')
   // Pending comments live outside this component: the same review can be
   // written here and in a diff editor tab, and GitHub takes it in one call.
   const key = prKey(repo, number)
@@ -417,17 +436,69 @@ export default function PrReview({
             )}
           </div>
 
-          <div className="pr-review">
-            {/* A PR description is markdown — checklists, tables, code fences
-                and all. Showing the raw source was showing the reviewer the
-                wrong thing: the parts that matter most (task lists, headings)
-                are the parts markup carries. */}
-            {detail.body.trim() && (
-              <div className="pr-review-body">
-                <Markdown text={detail.body} />
-              </div>
-            )}
+          {/* Two things a reviewer does, kept apart: read what people have said,
+              and read the code. On one long page the conversation was buried
+              under every diff expanded at once. */}
+          <div className="pr-view-tabs">
+            <button
+              className={`pr-view-tab${view === 'conversation' ? ' active' : ''}`}
+              onClick={() => setView('conversation')}
+            >
+              {t('pr.tab.conversation')}
+              {detail.conversation.length > 0 && <span className="pr-view-count">{detail.conversation.length}</span>}
+            </button>
+            <button
+              className={`pr-view-tab${view === 'files' ? ' active' : ''}`}
+              onClick={() => setView('files')}
+            >
+              {t('pr.tab.files')}
+              <span className="pr-view-count">{detail.files.length}</span>
+              {detail.threads.some((th) => !th.isResolved) && (
+                <span className="pr-view-open" title={t('pr.openThreads')}>
+                  {detail.threads.filter((th) => !th.isResolved).length}
+                </span>
+              )}
+            </button>
+          </div>
 
+          <div className="pr-review">
+            {view === 'conversation' ? (
+              <div className="pr-convo">
+                {/* A PR description is markdown — checklists, tables, code
+                    fences and all. Raw source hid exactly the parts that carry
+                    meaning (task lists, headings). */}
+                <div className="pr-convo-item author">
+                  <div className="pr-convo-head">
+                    <span className="pr-convo-who">{detail.author}</span>
+                    <span className="pr-convo-what">{t('pr.opened')}</span>
+                  </div>
+                  <div className="pr-convo-body">
+                    {detail.body.trim() ? <Markdown text={detail.body} /> : <span className="dim">{t('pr.noDescription')}</span>}
+                  </div>
+                </div>
+                {detail.conversation.map((c, i) => (
+                  <div key={i} className={`pr-convo-item ${c.kind}${c.state ? ' ' + c.state.toLowerCase() : ''}`}>
+                    <div className="pr-convo-head">
+                      <span className="pr-convo-who">{c.author}</span>
+                      {c.kind === 'review' ? (
+                        <span className={`pr-badge ${reviewBadgeClass(c.state)}`}>{t(reviewLabelKey(c.state))}</span>
+                      ) : (
+                        <span className="pr-convo-what">{t('pr.commented')}</span>
+                      )}
+                      <span className="pr-convo-at" title={c.at}>
+                        {c.at ? new Date(c.at).toLocaleString() : ''}
+                      </span>
+                    </div>
+                    {c.body && (
+                      <div className="pr-convo-body">
+                        <Markdown text={c.body} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {detail.conversation.length === 0 && <div className="pr-empty">{t('pr.noConversation')}</div>}
+              </div>
+            ) : (
             <div className="pr-files">
             {detail.files.map((f) => (
               <FileDiff
@@ -439,9 +510,11 @@ export default function PrReview({
                 onChanged={() => void load()}
                 onDraft={(d) => addDraft(key, d)}
                 onOpenInEditor={() => openPrDiff(repo, number, f.filename)}
+                defaultOpen={detail.files.length <= 5}
               />
               ))}
             </div>
+            )}
           </div>
 
           {/* Submitting is the one thing here that publishes, so it says how

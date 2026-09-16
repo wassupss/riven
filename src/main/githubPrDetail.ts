@@ -83,6 +83,7 @@ export interface PrDetail {
   changedFiles: number
   files: PrFile[]
   threads: PrThread[]
+  conversation: PrConversationItem[]
 }
 
 export type DetailResult =
@@ -116,8 +117,43 @@ async function repoSlug(cwd: string): Promise<string | null> {
   return /^[\w.-]+\/[\w.-]+$/.test(slug) ? slug : null
 }
 
+// `reviews` and `comments` are the conversation: a review's verdict and its
+// summary, and the discussion that isn't attached to a line. Fetching only the
+// line threads meant a PR someone had approved with "LGTM, one nit below" showed
+// the nit and neither the approval nor the words around it.
 const VIEW_FIELDS =
-  'number,title,url,body,author,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,additions,deletions,changedFiles'
+  'number,title,url,body,author,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,additions,deletions,changedFiles,reviews,comments'
+
+export interface PrConversationItem {
+  kind: 'review' | 'comment'
+  author: string
+  body: string
+  at: string
+  // For a review: APPROVED | CHANGES_REQUESTED | COMMENTED | DISMISSED.
+  state?: string
+}
+
+// One timeline of what people said, oldest first. A review with no body and
+// state COMMENTED is the empty shell GitHub creates to carry line comments;
+// those comments are already shown on their lines, so the shell is noise.
+export function toConversation(reviews: unknown, comments: unknown): PrConversationItem[] {
+  const out: PrConversationItem[] = []
+  for (const r of Array.isArray(reviews) ? reviews : []) {
+    const rv = r as { author?: { login?: string }; body?: string; submittedAt?: string; state?: string }
+    const body = (rv.body ?? '').trim()
+    const state = String(rv.state ?? '')
+    if (!body && state === 'COMMENTED') continue
+    if (state === 'PENDING') continue // an unsubmitted draft is nobody's business yet
+    out.push({ kind: 'review', author: rv.author?.login ?? '', body, at: rv.submittedAt ?? '', state })
+  }
+  for (const c of Array.isArray(comments) ? comments : []) {
+    const cm = c as { author?: { login?: string }; body?: string; createdAt?: string }
+    const body = (cm.body ?? '').trim()
+    if (!body) continue
+    out.push({ kind: 'comment', author: cm.author?.login ?? '', body, at: cm.createdAt ?? '' })
+  }
+  return out.sort((a, b) => a.at.localeCompare(b.at))
+}
 
 interface RawCheck {
   __typename?: string
@@ -299,7 +335,8 @@ export async function prDetail(repoDir: string, number: number): Promise<DetailR
       deletions: Number(v.deletions ?? 0),
       changedFiles: Number(v.changedFiles ?? 0),
       files,
-      threads
+      threads,
+      conversation: toConversation(v.reviews, v.comments)
     }
   }
 }
