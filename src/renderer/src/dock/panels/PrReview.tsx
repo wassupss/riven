@@ -388,7 +388,12 @@ export default function PrReview({
           </div>
         </div>
       ) : (
-        <div className="pr-review">
+        // Three bands: the facts, the scrolling review, and the submit bar.
+        // The submit bar used to live INSIDE the scroller as a sticky footer,
+        // where it collided with the sticky file headers — the composer ended
+        // up drawn through the middle of a file row. A panel footer cannot
+        // collide with anything.
+        <>
           <div className="pr-review-meta">
             <span className="pr-review-branch">
               {detail.headRefName} → {detail.baseRefName}
@@ -412,17 +417,18 @@ export default function PrReview({
             )}
           </div>
 
-          {/* A PR description is markdown — checklists, tables, code fences and
-              all. Showing the raw source was showing the reviewer the wrong
-              thing: the parts that matter most (task lists, headings) are the
-              parts markup carries. */}
-          {detail.body.trim() && (
-            <div className="pr-review-body">
-              <Markdown text={detail.body} />
-            </div>
-          )}
+          <div className="pr-review">
+            {/* A PR description is markdown — checklists, tables, code fences
+                and all. Showing the raw source was showing the reviewer the
+                wrong thing: the parts that matter most (task lists, headings)
+                are the parts markup carries. */}
+            {detail.body.trim() && (
+              <div className="pr-review-body">
+                <Markdown text={detail.body} />
+              </div>
+            )}
 
-          <div className="pr-files">
+            <div className="pr-files">
             {detail.files.map((f) => (
               <FileDiff
                 key={f.filename}
@@ -434,7 +440,8 @@ export default function PrReview({
                 onDraft={(d) => addDraft(key, d)}
                 onOpenInEditor={() => openPrDiff(repo, number, f.filename)}
               />
-            ))}
+              ))}
+            </div>
           </div>
 
           {/* Submitting is the one thing here that publishes, so it says how
@@ -476,7 +483,7 @@ export default function PrReview({
               </button>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   )

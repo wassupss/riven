@@ -108,6 +108,12 @@ export function claudeHookToEvent(hook: string, _payload?: unknown): HookEvent |
   switch (hook) {
     case 'UserPromptSubmit':
       return 'working'
+    // A CLI that has just started (or resumed) is present but not working. It
+    // matters because this is the FIRST moment riven can learn which
+    // conversation the pane is in — waiting for the first prompt meant a
+    // terminal opened, left sitting, and restarted came back to a bare shell
+    // with the conversation stranded.
+    case 'SessionStart':
     case 'Stop':
     case 'StopFailure':
     case 'SessionEnd':

@@ -4862,6 +4862,7 @@ select {
   min-height: 0;
 }
 .pr-review-meta {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -5082,9 +5083,11 @@ select {
   gap: 6px;
   padding-top: 5px;
 }
+/* The panel's own footer, not a sticky block inside the scroller: a sticky
+   footer and the sticky file headers occupy the same scroll container, and the
+   composer ended up drawn through the middle of a file row. */
 .pr-submit {
-  position: sticky;
-  bottom: 0;
+  flex: 0 0 auto;
   padding: 8px 10px;
   background: var(--bg-2);
   border-top: 1px solid var(--hairline);
