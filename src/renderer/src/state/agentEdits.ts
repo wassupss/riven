@@ -146,9 +146,10 @@ export const cacheSet = (p: string, content: string): void => {
 }
 
 // Free a closed workspace's state. Timeline entries are wid-keyed and always
-// dropped. The baseline caches (fed by snapshotContents — up to 2000 files) are
-// keyed by absolute file path and thus SHARED between instances of the same
-// folder, so they're only pruned when `evictBaselines` is set (i.e. the last
+// dropped. The baseline caches (fed by the editor as files are opened, saved
+// and reverted) are keyed by absolute file path and thus SHARED between
+// instances of the same folder, so they're only pruned when `evictBaselines`
+// is set (i.e. the last
 // instance of that path is closing) — otherwise a sibling instance keeps them.
 export function evictWorkspace(wid: string, path: string, evictBaselines: boolean): void {
   const prefix = path.endsWith('/') ? path : `${path}/`

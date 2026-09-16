@@ -498,6 +498,19 @@ const api = {
       return () => ipcRenderer.removeListener('fs:changed', listener)
     }
   },
+  // A file an agent actually wrote, with the content from either side of the
+  // tool call. `pane` is the agent's pane, which the renderer maps to a
+  // workspace — a pane belonging to another window is simply ignored there.
+  onAgentFileEdit: (
+    cb: (edit: { pane: string; path: string; before: string | null; after: string }) => void
+  ): (() => void) => {
+    const listener = (
+      _e: unknown,
+      edit: { pane: string; path: string; before: string | null; after: string }
+    ): void => cb(edit)
+    ipcRenderer.on('agent:fileEdit', listener)
+    return () => ipcRenderer.removeListener('agent:fileEdit', listener)
+  },
   // The machine woke from sleep / the screen unlocked. Main has already forced a
   // repaint; the renderer uses this to undo decisions it made because the GPU
   // context died (TerminalPane's permanent DOM-renderer fallback).

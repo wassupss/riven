@@ -6,6 +6,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
+import { hookEnv } from './agentHooks'
 import {
   mcpConfigJson,
   mcpSystemPrompt,
@@ -449,7 +450,19 @@ async function startSession(
   if (opts.resume) args.push('--resume', opts.resume)
   else args.push('--session-id', randomUUID())
 
-  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...agentMcpEnv(), RIVEN_CHAT_KEY: key }
+  // The same hooks a terminal CLI gets. Lifecycle hooks are redundant here (a
+  // chat pane reads its own stream) and land on a pane main has no PTY session
+  // for, which is a no-op — but PreToolUse/PostToolUse are how this pane's file
+  // edits reach the changes timeline, and they must be reported the same way a
+  // terminal's are (see agentEdits.ts).
+  const hooks = hookEnv(key)
+  if (hooks.RIVEN_HOOKS_SETTINGS) args.push('--settings', hooks.RIVEN_HOOKS_SETTINGS)
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...agentMcpEnv(),
+    ...hooks,
+    RIVEN_CHAT_KEY: key
+  }
   if (opts.configDir) {
     childEnv.CLAUDE_CONFIG_DIR = opts.configDir
     await ensureProfilePlugins(opts.configDir)
