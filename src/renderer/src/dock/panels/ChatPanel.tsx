@@ -2418,8 +2418,13 @@ export default function ChatPanel({
       }}
       onDrop={onDropFiles}
     >
-      {/* Finished turn: the travelling ember ring stays until acknowledged. */}
-      {(paneStatus === 'done' || rosterDone) && <span className="chat-ring" aria-hidden />}
+      {/* Finished turn: the travelling ember ring stays until acknowledged.
+          Never while a turn is running — `rosterDone` can still be set from the
+          previous turn for a moment after a new one starts, and the two rings
+          then drew on top of each other, 1.5px apart, reading as a flicker. */}
+      {paneStatus !== 'busy' && (paneStatus === 'done' || rosterDone) && (
+        <span className="chat-ring" aria-hidden />
+      )}
       <div
         className="chat-scroll"
         ref={scrollRef}

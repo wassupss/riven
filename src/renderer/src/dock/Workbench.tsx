@@ -12,6 +12,7 @@ import NotesPanel from './panels/NotesPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import ChatPanel from './panels/ChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
+import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import ErrorBoundary from '../components/ErrorBoundary'
@@ -156,6 +157,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             api={props.api}
           />
         ),
+      prdiff: (props: IDockviewPanelProps<PrDiffParams>) =>
+        boxed('prdiff', <PrDiffPanel params={props.params} />),
       terminal: (props: IDockviewPanelProps<TerminalParams>) =>
         boxed('terminal', <TerminalPanel workspace={workspace} params={props.params} api={props.api} />),
       launcher: (props: IDockviewPanelProps) =>

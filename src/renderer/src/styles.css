@@ -113,6 +113,28 @@
   --on-accent: black; /* text on solid accent fills (dark accents are bright) */
   --well: black; /* input wells sink toward this, away from the canvas */
 
+  /* ---- stacking order ------------------------------------------------------
+     Six layers, in the order things are allowed to cover each other. These were
+     26 unrelated numbers before, and they disagreed: a modal sat at 100 while a
+     toolbar menu sat at 500, so opening a menu could cover the dialog it
+     belonged to. Anything new picks a layer here; if nothing fits, the layer
+     list is what changes, not the number at the call site.
+
+       base     in-flow chrome that only needs to beat its own siblings
+       panel    overlays drawn ON a panel: state rings, the focus frame, seams
+       float    things a panel pops over its own content: search, drop hints
+       popover  menus attached to a control: slash, branch, usage, suggestions
+       modal    a dialog and its overlay — above every menu, by definition
+       context  right-click menus, which must work even over a modal
+       blocking full-screen asks: the agent's question, the quick panel  */
+  --z-base: 1;
+  --z-panel: 5;
+  --z-float: 10;
+  --z-popover: 100;
+  --z-modal: 500;
+  --z-context: 800;
+  --z-blocking: 1000;
+
   /* ---- hairlines & edges (white-alpha reads crisper than solid gray on
          dark; the light block below flips the whole family to black-alpha) ---- */
   --hairline: rgb(255 255 255 / 0.06); /* structural dividers */
@@ -292,7 +314,7 @@ select {
 .askuser-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-blocking);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -350,7 +372,7 @@ select {
   align-items: center;
   justify-content: center;
   background: var(--bg);
-  z-index: 2;
+  z-index: var(--z-base);
 }
 .dock-empty-inner {
   display: flex;
@@ -463,7 +485,7 @@ select {
   height: 100%;
   background: var(--tab-seam);
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--z-panel);
 }
 .dv-tab.dv-active-tab {
   color: var(--fg);
@@ -489,9 +511,16 @@ select {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: var(--z-panel);
   pointer-events: none;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* One ring per panel. A pane that is drawing its OWN border — a turn running, a
+   completion waiting, a terminal asking for input — already says "this is the
+   pane"; the focus frame on top of it landed half a pixel off and read as a
+   doubled, shimmering edge. The state ring carries more meaning, so it wins. */
+.workbench .dv-groupview.dv-active-group:has(.chat-ring, .terminal-panel.attn, .chat-panel.busy)::after {
+  content: none;
 }
 /* Window dragging now lives in the full-width TopHeader, so the dock tab strip
    is fully interactive (no drag region here). */
@@ -1176,7 +1205,7 @@ select {
 }
 .tb-menu {
   position: fixed;
-  z-index: 500;
+  z-index: var(--z-popover);
   min-width: 180px;
   padding: 4px;
   background: var(--glass);
@@ -1899,7 +1928,7 @@ select {
   position: absolute;
   bottom: calc(100% + 8px);
   right: 0;
-  z-index: 500;
+  z-index: var(--z-popover);
   width: 268px;
   padding: 12px;
   background: var(--bg-2);
@@ -2130,7 +2159,7 @@ select {
   position: absolute;
   top: 4px;
   right: 6px;
-  z-index: 1;
+  z-index: var(--z-base);
   display: flex;
   align-items: center;
   color: var(--fg-dim);
@@ -2281,7 +2310,7 @@ select {
 .editor-drop-edges {
   position: absolute;
   inset: 34px 0 0 0;
-  z-index: 9;
+  z-index: var(--z-float);
   pointer-events: none;
 }
 .editor-drop-edge {
@@ -2333,7 +2362,7 @@ select {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: var(--z-panel);
   pointer-events: none;
 }
 /* Attention: a themed light that travels around the panel border — a bright
@@ -2386,7 +2415,7 @@ select {
   position: absolute;
   top: 7px;
   right: 11px;
-  z-index: 5;
+  z-index: var(--z-panel);
   padding: 2px 9px;
   border-radius: var(--radius-full);
   font-size: var(--text-2xs);
@@ -2454,7 +2483,7 @@ select {
 /* The composition overlay must sit ABOVE the text canvas (z-index 2) or it's
    occluded during composition. */
 .xterm .composition-view {
-  z-index: 10;
+  z-index: var(--z-float);
 }
 .terminal-pane-outer {
   position: relative;
@@ -2465,7 +2494,7 @@ select {
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: 6;
+  z-index: var(--z-float);
   display: flex;
   align-items: center;
   gap: 3px;
@@ -3453,7 +3482,7 @@ select {
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 28px rgb(0 0 0 / 0.4);
-  z-index: 30;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -3866,7 +3895,7 @@ select {
   position: absolute;
   right: 10px;
   bottom: calc(100% + 6px);
-  z-index: 40;
+  z-index: var(--z-popover);
   width: 288px;
   max-width: calc(100vw - 24px);
   display: flex;
@@ -4118,7 +4147,7 @@ select {
 /* Floating "send selection to terminal LLM" chip — appears at the selection. */
 .sel-send {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-float);
   height: 26px;
   padding: 0 11px;
   font-size: var(--text-xs);
@@ -4272,7 +4301,7 @@ select {
   position: sticky;
   top: 0;
   background: var(--bg-2);
-  z-index: 1;
+  z-index: var(--z-base);
 }
 .search-file-name:hover {
   color: var(--fg);
@@ -4434,7 +4463,7 @@ select {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 20;
+  z-index: var(--z-popover);
   min-width: 180px;
   max-height: 280px;
   overflow-y: auto;
@@ -4880,7 +4909,7 @@ select {
   background: var(--bg-2);
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-base);
 }
 .pr-file-head:hover {
   background: var(--hover);
@@ -5064,6 +5093,121 @@ select {
   flex: 1 1 auto;
   font-size: var(--text-2xs);
   color: var(--accent);
+}
+.pr-file-open {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+}
+.pr-file-head:hover .pr-file-open {
+  opacity: 1;
+}
+.pr-file-open:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+/* ---- one PR file, in a real diff editor ---- */
+.pr-diff-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+.pr-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+.pr-diff-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+}
+.pr-diff-pending {
+  color: var(--accent);
+}
+.pr-diff-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pr-diff-loading {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 6px 10px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+/* The gutter marks: a line someone has already commented on, and a line this
+   review is about to comment on. Drawn in the glyph margin so they sit outside
+   the code rather than over it. */
+.pr-glyph {
+  background: var(--accent);
+  width: 3px !important;
+  margin-left: 4px;
+  border-radius: 999px;
+}
+.pr-glyph.resolved {
+  background: var(--success);
+  opacity: 0.6;
+}
+.pr-glyph.pending {
+  background: var(--accent-2);
+}
+.pr-line-mark {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  width: 2px !important;
+}
+.pr-diff-composer {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-2);
+}
+.pr-diff-composer-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-diff-composer-x {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: inline-flex;
+}
+.pr-diff-hint {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
 }
 .git-head-actions {
   display: inline-flex;
@@ -5344,7 +5488,7 @@ select {
 .hunk-hover {
   position: absolute;
   right: 84px;
-  z-index: 7;
+  z-index: var(--z-float);
   display: flex;
   gap: 4px;
   padding: 3px;
@@ -5391,7 +5535,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal);
   animation: overlay-in var(--dur-fast) ease-out;
 }
 @keyframes overlay-in {
@@ -5442,7 +5586,7 @@ select {
 
 .context-menu {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-context);
   background: var(--glass);
   backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
@@ -6598,7 +6742,7 @@ select {
   top: 100%;
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: var(--z-popover);
   margin-top: 3px;
   padding: 4px;
   background: var(--bg-2);
@@ -7125,7 +7269,7 @@ select {
 .qp-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-blocking);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -7238,7 +7382,7 @@ select {
 .ctx-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-context);
 }
 .ctx-menu {
   position: fixed;
@@ -7614,7 +7758,7 @@ select {
   position: absolute;
   right: 18px;
   bottom: 96px;
-  z-index: 6;
+  z-index: var(--z-float);
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -7821,7 +7965,7 @@ select {
 .chat-ring {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: var(--z-panel);
   pointer-events: none;
   /* Radius is the host's, so the same ring can wrap a chat panel (square) or a
      workspace card (rounded) without a second implementation. */

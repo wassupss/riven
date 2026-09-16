@@ -736,6 +736,20 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('gh:prDetail', repoDir, number),
+    // Both sides of one file, for a diff editor: the patch alone only carries
+    // the changed hunks with three lines of context.
+    prFile: (
+      repoDir: string,
+      number: number,
+      filePath: string
+    ): Promise<{
+      ok: boolean
+      base: string
+      head: string
+      baseRefOid: string
+      headRefOid: string
+      error?: string
+    }> => ipcRenderer.invoke('gh:prFile', repoDir, number, filePath),
     // Publishes under the user's GitHub account — only ever called from a
     // button that says so.
     submitReview: (

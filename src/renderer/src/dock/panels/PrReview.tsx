@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useT } from '../../i18n'
+import Markdown from '../../components/Markdown'
+import { openPrDiff } from '../registry'
+import { usePrReview, prKey, draftsFor } from '../../state/prReview'
 import { parsePatch, threadAnchor, lineAnchor, type PatchLine } from '../../lib/patch'
 import {
   ArrowLeft,
@@ -8,6 +11,7 @@ import {
   Check,
   X,
   MessageSquare,
+  FileCode2,
   CornerDownRight,
   ChevronRight,
   ChevronDown
@@ -81,7 +85,9 @@ function Thread({
               <div className="pr-comment-head">
                 <span className="pr-comment-who">{c.author}</span>
               </div>
-              <div className="pr-comment-body">{c.body}</div>
+              <div className="pr-comment-body">
+                <Markdown text={c.body} />
+              </div>
             </div>
           ))}
           <div className="pr-reply">
@@ -112,7 +118,8 @@ function FileDiff({
   drafts,
   repo,
   onChanged,
-  onDraft
+  onDraft,
+  onOpenInEditor
 }: {
   file: FileEntry
   threads: Thread[]
@@ -120,6 +127,7 @@ function FileDiff({
   repo: string
   onChanged: () => void
   onDraft: (d: Draft) => void
+  onOpenInEditor: () => void
 }): JSX.Element {
   const t = useT()
   const [open, setOpen] = useState(true)
@@ -234,6 +242,19 @@ function FileDiff({
             <MessageSquare size={11} /> {threads.length}
           </span>
         )}
+        {/* The panel's inline diff is for skimming; the editor is for reading.
+            It has the untouched parts of the file, real highlighting, and
+            comments on any line — not just the ones near a hunk. */}
+        <button
+          className="pr-file-open"
+          title={t('pr.openInEditor')}
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenInEditor()
+          }}
+        >
+          <FileCode2 size={12} />
+        </button>
       </div>
       {open && (
         <div className="pr-file-body">
@@ -265,18 +286,29 @@ export default function PrReview({
   const t = useT()
   const [data, setData] = useState<DetailResult | null>(null)
   const [loading, setLoading] = useState(false)
-  const [drafts, setDrafts] = useState<Draft[]>([])
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Pending comments live outside this component: the same review can be
+  // written here and in a diff editor tab, and GitHub takes it in one call.
+  const key = prKey(repo, number)
+  const allDrafts = usePrReview((s) => s.drafts)
+  const drafts = useMemo(() => draftsFor(allDrafts, key), [allDrafts, key])
+  const addDraft = usePrReview((s) => s.addDraft)
+  const clearDrafts = usePrReview((s) => s.clearDrafts)
+  const setThreads = usePrReview((s) => s.setThreads)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await window.api.gh.detail(repo, number))
+      const res = await window.api.gh.detail(repo, number)
+      setData(res)
+      // Hand the threads to the store so a diff editor tab can mark them in the
+      // gutter without fetching the whole PR a second time.
+      if (res.ok) setThreads(key, res.detail.threads)
     } finally {
       setLoading(false)
     }
-  }, [repo, number])
+  }, [repo, number, key, setThreads])
 
   useEffect(() => {
     void load()
@@ -293,7 +325,7 @@ export default function PrReview({
       window.alert(r.error ?? 'review failed')
       return
     }
-    setDrafts([])
+    clearDrafts(key)
     setBody('')
     void load()
   }
@@ -380,7 +412,15 @@ export default function PrReview({
             )}
           </div>
 
-          {detail.body.trim() && <div className="pr-review-body">{detail.body}</div>}
+          {/* A PR description is markdown — checklists, tables, code fences and
+              all. Showing the raw source was showing the reviewer the wrong
+              thing: the parts that matter most (task lists, headings) are the
+              parts markup carries. */}
+          {detail.body.trim() && (
+            <div className="pr-review-body">
+              <Markdown text={detail.body} />
+            </div>
+          )}
 
           <div className="pr-files">
             {detail.files.map((f) => (
@@ -391,7 +431,8 @@ export default function PrReview({
                 threads={detail.threads.filter((th) => th.path === f.filename)}
                 drafts={drafts.filter((d) => d.path === f.filename)}
                 onChanged={() => void load()}
-                onDraft={(d) => setDrafts((list) => [...list, d])}
+                onDraft={(d) => addDraft(key, d)}
+                onOpenInEditor={() => openPrDiff(repo, number, f.filename)}
               />
             ))}
           </div>
