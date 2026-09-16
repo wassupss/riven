@@ -288,6 +288,35 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'git.newBranchPrompt': { ko: '새 브랜치 이름', en: 'New branch name' },
   'git.tab.changes': { ko: '변경사항', en: 'Changes' },
   'git.tab.graph': { ko: '그래프', en: 'Graph' },
+  'git.tab.pr': { ko: 'PR', en: 'PR' },
+
+  // ---- pull requests ----
+  'pr.needsMyReview': { ko: '내 리뷰 대기', en: 'Needs your review' },
+  'pr.mine': { ko: '내 PR', en: 'Your PRs' },
+  'pr.others': { ko: '그 외 열린 PR', en: 'Other open PRs' },
+  'pr.empty': { ko: '열린 PR이 없어요.', en: 'No open pull requests.' },
+  'pr.refresh': { ko: '새로고침', en: 'Refresh' },
+  'pr.create': { ko: '새 PR', en: 'New PR' },
+  'pr.open': { ko: '브라우저에서 열기', en: 'Open in browser' },
+  'pr.checkout': { ko: '이 브랜치로 전환', en: 'Check out this branch' },
+  'pr.draft': { ko: '초안', en: 'Draft' },
+  'pr.approved': { ko: '승인됨', en: 'Approved' },
+  'pr.changesRequested': { ko: '변경 요청', en: 'Changes requested' },
+  'pr.reviewRequired': { ko: '리뷰 필요', en: 'Review required' },
+  'pr.stackedOn': { ko: '#{n} 위에 쌓임', en: 'Stacked on #{n}' },
+  'pr.checksPassing': { ko: '검사 {passed}/{total} 통과', en: '{passed}/{total} checks passed' },
+  'pr.checksFailing': { ko: '검사 {failed}개 실패', en: '{failed} checks failing' },
+  'pr.checksPending': { ko: '검사 진행 중', en: 'Checks running' },
+  'pr.noGh': {
+    ko: 'GitHub CLI(gh)가 없어요. 설치하면 PR을 여기서 볼 수 있어요.',
+    en: 'GitHub CLI (gh) not found. Install it to see pull requests here.'
+  },
+  'pr.notAuthed': {
+    ko: 'GitHub에 로그인되어 있지 않아요. 터미널에서 `gh auth login`을 실행해 주세요.',
+    en: 'Not logged in to GitHub. Run `gh auth login` in a terminal.'
+  },
+  'pr.noRemote': { ko: '이 저장소에는 GitHub 원격이 없어요.', en: 'This repository has no GitHub remote.' },
+  'pr.failed': { ko: 'PR을 불러오지 못했어요: {err}', en: "Couldn't load pull requests: {err}" },
   'git.discard': { ko: '변경 버리기', en: 'Discard changes' },
   'git.discardConfirm': { ko: "'{name}' 의 변경을 버릴까요? 되돌릴 수 없어요.", en: "Discard changes to '{name}'? This can't be undone." },
   'git.syncFailed': { ko: '동기화 실패:\n{err}', en: 'Sync failed:\n{err}' },

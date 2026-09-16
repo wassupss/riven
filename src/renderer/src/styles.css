@@ -4418,6 +4418,205 @@ select {
   color: var(--fg);
   border-bottom-color: var(--accent);
 }
+
+/* --------------------------------------------------------------------------
+   pull requests (PR tab) — a review queue, sectioned by what it wants from you
+   -------------------------------------------------------------------------- */
+.pr-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: inline-size;
+}
+.pr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.pr-count {
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-2-muted);
+  color: var(--accent-2);
+}
+.pr-head-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+.pr-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pr-act:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.pr-empty {
+  padding: 22px 16px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  line-height: 1.6;
+}
+.pr-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+.pr-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 3px;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.pr-section-count {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+.pr-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.pr-row:hover {
+  background: var(--hover);
+}
+/* The PR for the branch you are actually on. */
+.pr-row.current {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.pr-stack-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--fg-dim);
+  opacity: 0.6;
+}
+.pr-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--success);
+}
+.pr-ico.draft {
+  color: var(--fg-dim);
+}
+.pr-num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.pr-badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.pr-badge.approved {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+.pr-badge.changes {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+.pr-badge.required,
+.pr-badge.draft {
+  background: var(--bg-3);
+  color: var(--fg-dim);
+}
+.pr-checks {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.pr-checks.pass {
+  color: var(--success);
+}
+.pr-checks.fail {
+  color: var(--danger);
+}
+.pr-checks.pending {
+  color: var(--fg-dim);
+}
+.pr-row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 2px;
+  padding-left: 8px;
+  background: var(--hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease;
+}
+.pr-row:hover .pr-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pr-row-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pr-row-act:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+/* Narrow panel: the badges go before the title does. */
+@container (max-width: 260px) {
+  .pr-badge {
+    display: none;
+  }
+}
 .git-head-actions {
   display: inline-flex;
   align-items: center;

@@ -5,6 +5,7 @@ import { existsSync } from 'fs'
 import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
 import { registerAgentEditHooks } from './agentHooks'
+import { registerGithubHandlers } from './githubPr'
 import { registerSystemResume } from './systemResume'
 import { registerPerfHandlers } from './perf'
 import { registerWorkspaceHandlers } from './workspace'
@@ -248,6 +249,7 @@ app.whenReady().then(() => {
   registerLspHandlers()
   registerBridgeHandlers()
   registerGitHandlers()
+  registerGithubHandlers()
   registerDiagnosticsHandlers()
   registerDebuggerHandlers()
   registerSessionsHandlers()

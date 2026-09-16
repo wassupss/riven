@@ -636,6 +636,36 @@ const api = {
       return () => ipcRenderer.removeListener('debug:event', listener)
     }
   },
+  // Pull requests, through the `gh` CLI the user has already authenticated —
+  // riven keeps no GitHub token of its own.
+  gh: {
+    prs: (
+      repoDir: string
+    ): Promise<{
+      ok: boolean
+      login: string | null
+      error?: 'no-gh' | 'not-authed' | 'no-remote' | 'failed'
+      detail?: string
+      prs: Array<{
+        number: number
+        title: string
+        url: string
+        author: string
+        isMine: boolean
+        needsMyReview: boolean
+        headRefName: string
+        baseRefName: string
+        isDraft: boolean
+        review: 'approved' | 'changes_requested' | 'review_required' | 'none'
+        checks: { total: number; passed: number; failed: number; pending: number }
+        updatedAt: string
+        parent: number | null
+        depth: number
+      }>
+    }> => ipcRenderer.invoke('gh:prs', repoDir),
+    createWeb: (repoDir: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:createWeb', repoDir)
+  },
   git: {
     info: (folder: string): Promise<{ repoName: string; branch: string | null; isRepo: boolean }> =>
       ipcRenderer.invoke('git:info', folder),
