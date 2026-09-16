@@ -498,6 +498,19 @@ const api = {
       return () => ipcRenderer.removeListener('fs:changed', listener)
     }
   },
+  // A file an agent actually wrote, with the content from either side of the
+  // tool call. `pane` is the agent's pane, which the renderer maps to a
+  // workspace — a pane belonging to another window is simply ignored there.
+  onAgentFileEdit: (
+    cb: (edit: { pane: string; path: string; before: string | null; after: string }) => void
+  ): (() => void) => {
+    const listener = (
+      _e: unknown,
+      edit: { pane: string; path: string; before: string | null; after: string }
+    ): void => cb(edit)
+    ipcRenderer.on('agent:fileEdit', listener)
+    return () => ipcRenderer.removeListener('agent:fileEdit', listener)
+  },
   // The machine woke from sleep / the screen unlocked. Main has already forced a
   // repaint; the renderer uses this to undo decisions it made because the GPU
   // context died (TerminalPane's permanent DOM-renderer fallback).
@@ -622,6 +635,162 @@ const api = {
       ipcRenderer.on('debug:event', listener)
       return () => ipcRenderer.removeListener('debug:event', listener)
     }
+  },
+  // Pull requests, through the `gh` CLI the user has already authenticated —
+  // riven keeps no GitHub token of its own.
+  gh: {
+    prs: (
+      repoDir: string,
+      state?: 'open' | 'closed' | 'all'
+    ): Promise<{
+      ok: boolean
+      login: string | null
+      error?: 'no-gh' | 'not-authed' | 'no-remote' | 'failed'
+      detail?: string
+      prs: Array<{
+        number: number
+        title: string
+        url: string
+        state: string
+        author: string
+        isMine: boolean
+        needsMyReview: boolean
+        headRefName: string
+        baseRefName: string
+        isDraft: boolean
+        review: 'approved' | 'changes_requested' | 'review_required' | 'none'
+        checks: { total: number; passed: number; failed: number; pending: number }
+        updatedAt: string
+        parent: number | null
+        depth: number
+      }>
+    }> => ipcRenderer.invoke('gh:prs', repoDir, state ?? 'open'),
+    // What a new PR from this branch would start as: the base it lands on, the
+    // title GitHub itself would choose, and the repo's PR template.
+    newPrDraft: (
+      repoDir: string
+    ): Promise<{
+      branch: string
+      base: string
+      title: string
+      body: string
+      commits: number
+      hasTemplate: boolean
+      pushed: boolean
+      error?: string
+    }> => ipcRenderer.invoke('gh:newPrDraft', repoDir),
+    // Opens a pull request from inside riven. The body goes to `gh` on stdin.
+    createPr: (
+      repoDir: string,
+      input: { title: string; body: string; base: string; draft: boolean }
+    ): Promise<{ ok: boolean; url?: string; error?: string; needsPush?: boolean }> =>
+      ipcRenderer.invoke('gh:createPr', repoDir, input),
+    // Publishing the branch is its own step — it puts commits on a server.
+    pushBranch: (repoDir: string, branch: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:pushBranch', repoDir, branch),
+    createWeb: (repoDir: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:createWeb', repoDir),
+    // One PR with everything needed to review it: status, changed files with
+    // their patches, and the review threads on those lines.
+    detail: (
+      repoDir: string,
+      number: number
+    ): Promise<
+      | {
+          ok: true
+          detail: {
+            number: number
+            title: string
+            url: string
+            body: string
+            author: string
+            state: string
+            isDraft: boolean
+            baseRefName: string
+            headRefName: string
+            headRefOid: string
+            mergeable: string
+            mergeStateStatus: string
+            review: 'approved' | 'changes_requested' | 'review_required' | 'none'
+            checks: { total: number; passed: number; failed: number; pending: number }
+            checkRuns: Array<{ name: string; state: string; url: string | null }>
+            additions: number
+            deletions: number
+            changedFiles: number
+            files: Array<{
+              filename: string
+              previousFilename?: string
+              status: string
+              additions: number
+              deletions: number
+              changes: number
+              patch: string | null
+            }>
+            threads: Array<{
+              id: string
+              path: string
+              line: number | null
+              originalLine: number | null
+              startLine: number | null
+              diffSide: 'LEFT' | 'RIGHT'
+              isResolved: boolean
+              isOutdated: boolean
+              resolvedBy: string | null
+              comments: Array<{
+                id: string
+                databaseId: number | null
+                author: string
+                body: string
+                createdAt: string
+                outdated: boolean
+                diffHunk: string
+              }>
+            }>
+            // Reviews (verdict + summary) and discussion not tied to a line.
+            conversation: Array<{
+              kind: 'review' | 'comment'
+              author: string
+              body: string
+              at: string
+              state?: string
+            }>
+          }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('gh:prDetail', repoDir, number),
+    // Both sides of one file, for a diff editor: the patch alone only carries
+    // the changed hunks with three lines of context.
+    prFile: (
+      repoDir: string,
+      number: number,
+      filePath: string
+    ): Promise<{
+      ok: boolean
+      base: string
+      head: string
+      baseRefOid: string
+      headRefOid: string
+      error?: string
+    }> => ipcRenderer.invoke('gh:prFile', repoDir, number, filePath),
+    // Publishes under the user's GitHub account — only ever called from a
+    // button that says so.
+    submitReview: (
+      repoDir: string,
+      number: number,
+      event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+      body: string,
+      comments: Array<{ path: string; line: number; side: 'LEFT' | 'RIGHT'; startLine?: number; body: string }>,
+      commitId: string
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:submitReview', repoDir, number, event, body, comments, commitId),
+    replyThread: (repoDir: string, threadId: string, body: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:replyThread', repoDir, threadId, body),
+    resolveThread: (
+      repoDir: string,
+      threadId: string,
+      resolved: boolean
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:resolveThread', repoDir, threadId, resolved)
   },
   git: {
     info: (folder: string): Promise<{ repoName: string; branch: string | null; isRepo: boolean }> =>

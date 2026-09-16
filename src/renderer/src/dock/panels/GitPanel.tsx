@@ -5,6 +5,7 @@ import { ensureEditor } from '../registry'
 import { useT } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
 import GitGraphPanel from './GitGraphPanel'
+import PrPanel from './PrPanel'
 import {
   GitBranch,
   RefreshCw,
@@ -72,7 +73,7 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
   const [message, setMessage] = useState('')
   const [committing, setCommitting] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [tab, setTab] = useState<'changes' | 'graph'>('changes')
+  const [tab, setTab] = useState<'changes' | 'graph' | 'pr'>('changes')
   const [branchMenu, setBranchMenu] = useState(false)
   const [branches, setBranches] = useState<Array<{ name: string; current: boolean }>>([])
   const openFile = useSession((s) => s.openFile)
@@ -329,9 +330,14 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
         >
           {t('git.tab.graph')}
         </button>
+        <button className={`git-tab${tab === 'pr' ? ' active' : ''}`} onClick={() => setTab('pr')}>
+          {t('git.tab.pr')}
+        </button>
       </div>
 
-      {tab === 'graph' ? (
+      {tab === 'pr' ? (
+        <PrPanel repo={repo} branch={status.branch} onCheckout={checkout} />
+      ) : tab === 'graph' ? (
         <GitGraphPanel workspace={wid} repo={repo} />
       ) : (
         <>

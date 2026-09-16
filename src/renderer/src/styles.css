@@ -113,9 +113,34 @@
   --on-accent: black; /* text on solid accent fills (dark accents are bright) */
   --well: black; /* input wells sink toward this, away from the canvas */
 
+  /* ---- stacking order ------------------------------------------------------
+     Six layers, in the order things are allowed to cover each other. These were
+     26 unrelated numbers before, and they disagreed: a modal sat at 100 while a
+     toolbar menu sat at 500, so opening a menu could cover the dialog it
+     belonged to. Anything new picks a layer here; if nothing fits, the layer
+     list is what changes, not the number at the call site.
+
+       base     in-flow chrome that only needs to beat its own siblings
+       panel    overlays drawn ON a panel: state rings, the focus frame, seams
+       float    things a panel pops over its own content: search, drop hints
+       popover  menus attached to a control: slash, branch, usage, suggestions
+       modal    a dialog and its overlay — above every menu, by definition
+       context  right-click menus, which must work even over a modal
+       blocking full-screen asks: the agent's question, the quick panel  */
+  --z-base: 1;
+  --z-panel: 5;
+  --z-float: 10;
+  --z-popover: 100;
+  --z-modal: 500;
+  --z-context: 800;
+  --z-blocking: 1000;
+
   /* ---- hairlines & edges (white-alpha reads crisper than solid gray on
          dark; the light block below flips the whole family to black-alpha) ---- */
   --hairline: rgb(255 255 255 / 0.06); /* structural dividers */
+  /* The seam between dock tabs. Stronger than a structural hairline on purpose:
+     it runs only 30px and has to separate two same-coloured tabs at a glance. */
+  --tab-seam: rgb(255 255 255 / 0.12);
   --border-soft: rgb(255 255 255 / 0.07); /* legacy alias, kept */
   --edge: rgb(255 255 255 / 0.09); /* control borders */
   --edge-strong: rgb(255 255 255 / 0.14);
@@ -186,6 +211,7 @@
 
   /* structure: black-alpha hairlines on a light canvas */
   --hairline: rgb(0 0 0 / 0.08);
+  --tab-seam: rgb(0 0 0 / 0.14);
   --border-soft: rgb(0 0 0 / 0.09);
   --edge: rgb(0 0 0 / 0.12);
   --edge-strong: rgb(0 0 0 / 0.18);
@@ -288,7 +314,7 @@ select {
 .askuser-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-blocking);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -346,7 +372,7 @@ select {
   align-items: center;
   justify-content: center;
   background: var(--bg);
-  z-index: 2;
+  z-index: var(--z-base);
 }
 .dock-empty-inner {
   display: flex;
@@ -413,6 +439,8 @@ select {
   --dv-activegroup-hiddenpanel-tab-color: var(--fg-dim);
   --dv-inactivegroup-visiblepanel-tab-color: var(--fg-dim);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--fg-dim);
+  /* Left transparent: this variable also paints dockview's focus outline and
+     context-menu borders. The seam between tabs is drawn by .dv-tab::before. */
   --dv-tab-divider-color: transparent;
   --dv-separator-border: var(--hairline);
   --dv-paneview-header-border-color: var(--hairline);
@@ -441,10 +469,34 @@ select {
   color: var(--fg);
   background: var(--hover);
 }
+/* Seam between tabs — the native strip draws a hairline down every tab's edge
+   (Dock/DockTabBar.swift: "right divider hairline"). Without it a row of
+   identically named panes ("❯ 터미널" ×7) reads as one continuous bar with no
+   sign of where a tab ends. dockview ships the same rule but scopes it to
+   .dv-tabs-container.dv-horizontal, a class this version never sets, so it
+   never renders. Drawn above the tab's content on purpose: an agent-tinted tab
+   paints its colour across the full tab and would otherwise swallow the seam. */
+.dv-tab:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--tab-seam);
+  pointer-events: none;
+  z-index: var(--z-panel);
+}
 .dv-tab.dv-active-tab {
   color: var(--fg);
   background: var(--bg);
   box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+/* Only the FOCUSED group shows the hot ember marker; elsewhere the active tab
+   still reads as active, just not as the place you are typing. Native parity —
+   DockTabBar.swift fades the same underline to 25% for an unfocused group. */
+.dv-groupview:not(.dv-active-group) .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .dv-sash.dv-active,
 .dv-sash:hover {
@@ -459,9 +511,16 @@ select {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: var(--z-panel);
   pointer-events: none;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* One ring per panel. A pane that is drawing its OWN border — a turn running, a
+   completion waiting, a terminal asking for input — already says "this is the
+   pane"; the focus frame on top of it landed half a pixel off and read as a
+   doubled, shimmering edge. The state ring carries more meaning, so it wins. */
+.workbench .dv-groupview.dv-active-group:has(.chat-ring, .terminal-panel.attn, .chat-panel.busy)::after {
+  content: none;
 }
 /* Window dragging now lives in the full-width TopHeader, so the dock tab strip
    is fully interactive (no drag region here). */
@@ -518,6 +577,44 @@ select {
   font-size: var(--text-xs);
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
+}
+/* Budget in the dock top bar: which agent, and how much of its tightest window
+   is gone, as a bar you read without stopping. Replaces a gauge icon, the word
+   "usage" and two unlabelled percentages. */
+.usage-agent {
+  font-weight: 550;
+  color: var(--fg-dim);
+}
+.usage-track {
+  width: 64px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.usage-track-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition:
+    width var(--dur-slow) ease,
+    background var(--dur-slow) ease;
+}
+.usage-pct {
+  font-variant-numeric: tabular-nums;
+}
+/* A narrow window drops the bar first, then the agent's name — the percentage
+   is the part that is acted on. */
+@media (max-width: 900px) {
+  .usage-track {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .usage-agent {
+    display: none;
+  }
 }
 .top-header-btn {
   -webkit-app-region: no-drag;
@@ -1108,7 +1205,7 @@ select {
 }
 .tb-menu {
   position: fixed;
-  z-index: 500;
+  z-index: var(--z-popover);
   min-width: 180px;
   padding: 4px;
   background: var(--glass);
@@ -1831,7 +1928,7 @@ select {
   position: absolute;
   bottom: calc(100% + 8px);
   right: 0;
-  z-index: 500;
+  z-index: var(--z-popover);
   width: 268px;
   padding: 12px;
   background: var(--bg-2);
@@ -1950,6 +2047,7 @@ select {
 }
 /* pinned usage view — a resizable sidebar region */
 .usage-pinned {
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
@@ -2008,10 +2106,31 @@ select {
   font-size: 9px;
   line-height: 14px;
 }
-.usage-acc-sum {
+/* The folded row's own bar: it takes the slack in the header, so the row reads
+   "which agent — how much is left" without being expanded. */
+.usage-acc-bar {
+  flex: 1 1 auto;
+  min-width: 24px;
   margin-left: auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.usage-acc-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-slow) ease;
+}
+.usage-acc-sum {
+  margin-left: 0;
   flex: none;
   font-variant-numeric: tabular-nums;
+}
+/* Nothing to draw a bar for (no plan window): the number takes the slack back. */
+.usage-acc-head > .usage-acc-sum:last-child {
+  margin-left: auto;
 }
 .usage-acc-sum.dim,
 .usage-acc-today.dim {
@@ -2033,16 +2152,27 @@ select {
   color: var(--fg-dim);
   font-size: var(--text-xs);
 }
+/* Just the unpin control now that the section has no title of its own. Floated
+   over the first row's right edge rather than given a line: an empty line with
+   one icon on it costs as much vertical space as a whole account row. */
 .usage-pinned-head {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: var(--z-base);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 6px 6px;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
   color: var(--fg-dim);
+  /* It sits over the first row's numbers, so it only appears when the pointer
+     is in the panel — where it is also the only moment it can be clicked. */
+  opacity: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  transition: opacity var(--dur-fast) ease;
+}
+.usage-pinned:hover .usage-pinned-head,
+.usage-pinned-head:focus-within {
+  opacity: 1;
 }
 .usage-pinned-today {
   padding: 4px 6px 0;
@@ -2180,7 +2310,7 @@ select {
 .editor-drop-edges {
   position: absolute;
   inset: 34px 0 0 0;
-  z-index: 9;
+  z-index: var(--z-float);
   pointer-events: none;
 }
 .editor-drop-edge {
@@ -2232,7 +2362,7 @@ select {
   content: '';
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: var(--z-panel);
   pointer-events: none;
 }
 /* Attention: a themed light that travels around the panel border — a bright
@@ -2285,7 +2415,7 @@ select {
   position: absolute;
   top: 7px;
   right: 11px;
-  z-index: 5;
+  z-index: var(--z-panel);
   padding: 2px 9px;
   border-radius: var(--radius-full);
   font-size: var(--text-2xs);
@@ -2353,7 +2483,7 @@ select {
 /* The composition overlay must sit ABOVE the text canvas (z-index 2) or it's
    occluded during composition. */
 .xterm .composition-view {
-  z-index: 10;
+  z-index: var(--z-float);
 }
 .terminal-pane-outer {
   position: relative;
@@ -2364,7 +2494,7 @@ select {
   position: absolute;
   top: 8px;
   right: 12px;
-  z-index: 6;
+  z-index: var(--z-float);
   display: flex;
   align-items: center;
   gap: 3px;
@@ -3352,7 +3482,7 @@ select {
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 28px rgb(0 0 0 / 0.4);
-  z-index: 30;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -3765,7 +3895,7 @@ select {
   position: absolute;
   right: 10px;
   bottom: calc(100% + 6px);
-  z-index: 40;
+  z-index: var(--z-popover);
   width: 288px;
   max-width: calc(100vw - 24px);
   display: flex;
@@ -4017,7 +4147,7 @@ select {
 /* Floating "send selection to terminal LLM" chip — appears at the selection. */
 .sel-send {
   position: absolute;
-  z-index: 6;
+  z-index: var(--z-float);
   height: 26px;
   padding: 0 11px;
   font-size: var(--text-xs);
@@ -4171,7 +4301,7 @@ select {
   position: sticky;
   top: 0;
   background: var(--bg-2);
-  z-index: 1;
+  z-index: var(--z-base);
 }
 .search-file-name:hover {
   color: var(--fg);
@@ -4333,7 +4463,7 @@ select {
   position: absolute;
   top: 100%;
   left: 0;
-  z-index: 20;
+  z-index: var(--z-popover);
   min-width: 180px;
   max-height: 280px;
   overflow-y: auto;
@@ -4387,6 +4517,923 @@ select {
 .git-tab.active {
   color: var(--fg);
   border-bottom-color: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   pull requests (PR tab) — a review queue, sectioned by what it wants from you
+   -------------------------------------------------------------------------- */
+.pr-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  container-type: inline-size;
+}
+.pr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.pr-count {
+  font-size: var(--text-2xs);
+  font-family: var(--font-mono);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-2-muted);
+  color: var(--accent-2);
+}
+.pr-head-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+.pr-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pr-act:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.pr-empty {
+  padding: 22px 16px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  line-height: 1.6;
+}
+/* Loading: the shape of what is coming, not a lone ellipsis. Rows match the
+   real ones' geometry so nothing jumps when the data lands. */
+.pr-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+}
+.pr-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+}
+.pr-skel-row > span {
+  height: 9px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-3) 0%,
+    color-mix(in srgb, var(--fg) 8%, var(--bg-3)) 50%,
+    var(--bg-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel 1.2s ease-in-out infinite;
+}
+.pr-skel-ico {
+  width: 12px;
+  height: 12px !important;
+  border-radius: 50% !important;
+  flex: 0 0 auto;
+}
+.pr-skel-num {
+  width: 34px;
+  flex: 0 0 auto;
+}
+.pr-skel-title {
+  flex: 1 1 auto;
+  max-width: 62%;
+}
+.pr-skel-tail {
+  width: 26px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+/* Each row starts its sweep a beat later, so the list reads as one object
+   settling rather than a row of blinking bars. */
+.pr-skel-row:nth-child(2) > span {
+  animation-delay: 0.08s;
+}
+.pr-skel-row:nth-child(3) > span {
+  animation-delay: 0.16s;
+}
+.pr-skel-row:nth-child(4) > span {
+  animation-delay: 0.24s;
+}
+.pr-skel-row:nth-child(5) > span {
+  animation-delay: 0.32s;
+}
+.pr-skel-row:nth-child(6) > span {
+  animation-delay: 0.4s;
+}
+.pr-skel-block {
+  height: 13px !important;
+  width: 100%;
+}
+.pr-filters {
+  display: flex;
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-filter {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.pr-filter:hover {
+  background: var(--hover);
+}
+.pr-filter.active {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.pr-create {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+}
+.pr-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-branches {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pr-create-branch {
+  font-family: var(--font-mono);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-create-arrow {
+  opacity: 0.6;
+}
+/* The base is the one field here that changes where the work lands, so it is
+   editable in place rather than buried under the body. */
+.pr-create-base {
+  width: 140px;
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.pr-create-commits {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+}
+.pr-create-title {
+  font-size: var(--text-sm);
+}
+.pr-create-body {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  padding: 7px 9px;
+}
+.pr-create-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pr-create-note {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-note.warn {
+  color: var(--warning);
+}
+.pr-create-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: 5px 8px;
+}
+.pr-create-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-error {
+  font-size: var(--text-2xs);
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+.pr-badge.merged {
+  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  color: var(--accent-2);
+}
+.pr-ico.merged {
+  color: var(--accent-2);
+}
+.pr-ico.closed {
+  color: var(--danger);
+}
+.pr-list {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+.pr-section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 3px;
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-dim);
+}
+.pr-section-count {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+.pr-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.pr-row:hover {
+  background: var(--hover);
+}
+/* The PR for the branch you are actually on. */
+.pr-row.current {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+}
+.pr-stack-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--fg-dim);
+  opacity: 0.6;
+}
+.pr-ico {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--success);
+}
+.pr-ico.draft {
+  color: var(--fg-dim);
+}
+.pr-num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.pr-badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.pr-badge.approved {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+.pr-badge.changes {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+.pr-badge.required,
+.pr-badge.draft {
+  background: var(--bg-3);
+  color: var(--fg-dim);
+}
+.pr-checks {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.pr-checks.pass {
+  color: var(--success);
+}
+.pr-checks.fail {
+  color: var(--danger);
+}
+.pr-checks.pending {
+  color: var(--fg-dim);
+}
+.pr-row-actions {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 2px;
+  padding-left: 8px;
+  background: var(--hover);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) ease;
+}
+.pr-row:hover .pr-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pr-row-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pr-row-act:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+/* Narrow panel: the badges go before the title does. */
+@container (max-width: 260px) {
+  .pr-badge {
+    display: none;
+  }
+}
+
+/* ---- one PR, being reviewed ---- */
+.pr-review-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-review {
+  flex: 1 1 auto;
+  overflow: auto;
+  min-height: 0;
+}
+.pr-review-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--hairline);
+}
+/* Separators between the facts, so "+262 −90 24 files 18/18" doesn't read as
+   one run-on number. */
+.pr-review-meta > * + *::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--fg-dim);
+  opacity: 0.5;
+}
+.pr-review-branch {
+  font-family: var(--font-mono);
+}
+.pr-review-counts {
+  display: inline-flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+}
+.pr-review-body {
+  padding: 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  border-bottom: 1px solid var(--hairline);
+  max-height: 220px;
+  overflow: auto;
+}
+/* Conversation | Files */
+.pr-view-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.pr-view-tab:hover {
+  color: var(--fg);
+}
+.pr-view-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+.pr-view-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-3);
+}
+/* Unresolved threads — the number the author actually has to act on. */
+.pr-view-open {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
+/* The conversation: one column of who said what, oldest first. */
+.pr-convo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 12px 16px;
+}
+.pr-convo-item {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-2);
+  overflow: hidden;
+}
+/* A verdict is marked on its edge, so the timeline reads at a glance. */
+.pr-convo-item.approved {
+  border-left: 3px solid var(--success);
+}
+.pr-convo-item.changes_requested {
+  border-left: 3px solid var(--danger);
+}
+.pr-convo-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-convo-who {
+  color: var(--fg);
+  font-weight: 600;
+}
+.pr-convo-at {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.pr-convo-body {
+  padding: 8px 12px;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  line-height: 1.6;
+  overflow-x: auto;
+}
+.pr-convo-body .dim {
+  color: var(--fg-dim);
+}
+.pr-convo-item:not(:has(.pr-convo-body)) .pr-convo-head {
+  border-bottom: none;
+}
+
+.pr-file {
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-file-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: var(--text-xs);
+  background: var(--bg-2);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-base);
+}
+.pr-file-head:hover {
+  background: var(--hover);
+}
+.pr-file-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+.pr-file-stats,
+.pr-file-threads {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-file-nopatch {
+  padding: 10px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-hunk {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.55;
+}
+.pr-dl {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  white-space: pre;
+}
+.pr-dl.add {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.pr-dl.del {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.pr-dl.hunk {
+  background: var(--bg-3);
+  color: var(--fg-dim);
+}
+.pr-dl-gutter {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  color: var(--fg-dim);
+  opacity: 0.65;
+  user-select: none;
+}
+.pr-dl-num {
+  display: inline-block;
+  width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* The affordance that makes this a review and not a diff viewer. */
+.pr-dl-comment {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  line-height: 1;
+}
+.pr-dl:hover .pr-dl-comment {
+  opacity: 1;
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.pr-dl-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  padding-right: 8px;
+}
+.pr-dl-notes {
+  flex: 1 0 100%;
+  white-space: normal;
+  padding: 4px 10px 6px 52px;
+}
+.pr-thread {
+  border-left: 2px solid var(--accent-border);
+  background: var(--bg-2);
+  border-radius: var(--radius-sm);
+  margin: 4px 0;
+}
+.pr-thread.resolved {
+  border-left-color: var(--success);
+  opacity: 0.75;
+}
+.pr-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-thread-who {
+  color: var(--fg);
+}
+.pr-thread-count {
+  font-family: var(--font-mono);
+}
+.pr-thread-body {
+  padding: 0 8px 8px;
+}
+.pr-comment + .pr-comment {
+  border-top: 1px solid var(--hairline);
+}
+.pr-comment-head {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding-top: 5px;
+}
+.pr-comment-who {
+  color: var(--fg);
+}
+.pr-comment-body {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  white-space: pre-wrap;
+  padding: 2px 0 5px;
+}
+.pr-draft {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0;
+  padding: 4px 8px;
+  border-left: 2px dashed var(--accent);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+}
+.pr-reply {
+  padding: 4px 0;
+}
+.pr-reply-input,
+.pr-submit-body {
+  width: 100%;
+  min-height: 52px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: 6px 8px;
+}
+.pr-reply-actions,
+.pr-submit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 5px;
+}
+/* The panel's own footer, not a sticky block inside the scroller: a sticky
+   footer and the sticky file headers occupy the same scroll container, and the
+   composer ended up drawn through the middle of a file row. */
+.pr-submit {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-top: 1px solid var(--hairline);
+}
+.pr-submit-count {
+  flex: 1 1 auto;
+  font-size: var(--text-2xs);
+  color: var(--accent);
+}
+/* The last thing that ran, still on show because nothing has replaced it yet.
+   Reads as settled, not running: no shimmer, but not dimmed into the
+   summary's grey either. */
+.tg-title.tg-last {
+  color: var(--fg-dim);
+}
+
+/* Delegated agents still out there — pinned above the composer, so work that
+   scrolled out of the transcript is still accounted for. */
+.chat-agents-live {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 10px 0;
+}
+.cal-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-muted);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.cal-item:hover {
+  color: var(--fg);
+}
+/* Gone quiet: still listed, but no longer claiming to be busy. */
+.cal-item.quiet {
+  border-color: var(--edge);
+  background: var(--bg-3);
+  opacity: 0.8;
+}
+.cal-label {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-steps {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+.cal-time {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.cal-item.quiet .cal-time {
+  color: var(--fg-dim);
+}
+/* Same rotation as .spin, slowed right down: this one says "still out there",
+   not "working hard", and a fast spinner next to a 30-minute counter reads as
+   activity that isn't happening. */
+.spin-slow {
+  animation: qp-spin 3s linear infinite;
+}
+
+.pr-file-open {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+}
+.pr-file-head:hover .pr-file-open {
+  opacity: 1;
+}
+.pr-file-open:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+/* ---- one PR file, in a real diff editor ---- */
+.pr-diff-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+.pr-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--fg);
+}
+.pr-diff-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+}
+.pr-diff-pending {
+  color: var(--accent);
+}
+.pr-diff-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pr-diff-loading {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 6px 10px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+/* The gutter marks: a line someone has already commented on, and a line this
+   review is about to comment on. Drawn in the glyph margin so they sit outside
+   the code rather than over it. */
+.pr-glyph {
+  background: var(--accent);
+  width: 3px !important;
+  margin-left: 4px;
+  border-radius: 999px;
+}
+.pr-glyph.resolved {
+  background: var(--success);
+  opacity: 0.6;
+}
+.pr-glyph.pending {
+  background: var(--accent-2);
+}
+.pr-line-mark {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  width: 2px !important;
+}
+.pr-diff-composer {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg-2);
+}
+.pr-diff-composer-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-diff-composer-x {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  display: inline-flex;
+}
+.pr-diff-hint {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
 }
 .git-head-actions {
   display: inline-flex;
@@ -4667,7 +5714,7 @@ select {
 .hunk-hover {
   position: absolute;
   right: 84px;
-  z-index: 7;
+  z-index: var(--z-float);
   display: flex;
   gap: 4px;
   padding: 3px;
@@ -4714,7 +5761,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
+  z-index: var(--z-modal);
   animation: overlay-in var(--dur-fast) ease-out;
 }
 @keyframes overlay-in {
@@ -4765,7 +5812,7 @@ select {
 
 .context-menu {
   position: fixed;
-  z-index: 200;
+  z-index: var(--z-context);
   background: var(--glass);
   backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
@@ -5921,7 +6968,7 @@ select {
   top: 100%;
   left: 0;
   right: 0;
-  z-index: 30;
+  z-index: var(--z-popover);
   margin-top: 3px;
   padding: 4px;
   background: var(--bg-2);
@@ -6448,7 +7495,7 @@ select {
 .qp-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-blocking);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6561,7 +7608,7 @@ select {
 .ctx-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--z-context);
 }
 .ctx-menu {
   position: fixed;
@@ -6646,6 +7693,10 @@ select {
   height: 100%;
   min-height: 0;
   background: var(--bg-2);
+  /* This panel is docked: its width is whatever the user dragged it to, with no
+     relation to the window's. Everything narrow-width below is therefore keyed
+     off the PANEL, not the viewport. */
+  container-type: inline-size;
 }
 .changes-head {
   display: flex;
@@ -6717,6 +7768,10 @@ select {
   cursor: pointer;
   font-size: var(--text-2xs);
   color: var(--fg-dim);
+  /* Never let "모두 되돌리기" wrap inside the button: a squeezed panel pushed the
+     label onto two or three lines and the header grew from 30px to 83px. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .changes-act.accept:hover {
   color: var(--success);
@@ -6777,15 +7832,45 @@ select {
   color: var(--success);
 }
 .changes-name {
-  flex: 0 0 auto;
+  /* Shrinkable, so the filename gives way before the row overflows — but it is
+     the one thing that must always be readable, so it goes last. */
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--fg);
   max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* As the panel narrows, drop what the row can do without, in order: the labels
+   on the bulk actions (each keeps its tooltip), then the directory, then the
+   per-file counts. The filename and its age always survive — at 170px the row
+   used to overflow by 16px and cut the age off entirely. */
+@container (max-width: 300px) {
+  .changes-act-label {
+    display: none;
+  }
+  .changes-act {
+    padding: 2px;
+  }
+}
+@container (max-width: 250px) {
+  .changes-dir {
+    display: none;
+  }
+}
+@container (max-width: 190px) {
+  .changes-stats {
+    display: none;
+  }
+  .changes-name {
+    max-width: none;
+  }
+}
 .changes-dir {
-  flex: 1 1 auto;
+  /* Shrinks far more eagerly than the filename next to it (shrink 8 vs 1), so a
+     squeezed row eats into the directory first and keeps the name readable. */
+  flex: 1 8 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6899,7 +7984,7 @@ select {
   position: absolute;
   right: 18px;
   bottom: 96px;
-  z-index: 6;
+  z-index: var(--z-float);
   width: 30px;
   height: 30px;
   display: inline-flex;
@@ -7106,7 +8191,7 @@ select {
 .chat-ring {
   position: absolute;
   inset: 0;
-  z-index: 4;
+  z-index: var(--z-panel);
   pointer-events: none;
   /* Radius is the host's, so the same ring can wrap a chat panel (square) or a
      workspace card (rounded) without a second implementation. */

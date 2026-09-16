@@ -4,6 +4,10 @@ import * as os from 'os'
 import { existsSync } from 'fs'
 import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
+import { registerAgentEditHooks } from './agentHooks'
+import { registerGithubHandlers } from './githubPr'
+import { registerGithubDetailHandlers } from './githubPrDetail'
+import { registerGithubReviewHandlers } from './githubPrReview'
 import { registerSystemResume } from './systemResume'
 import { registerPerfHandlers } from './perf'
 import { registerWorkspaceHandlers } from './workspace'
@@ -235,10 +239,21 @@ registerMediaScheme()
 app.whenReady().then(() => {
   registerMediaProtocol()
   registerPtyHandlers()
+  // Files an agent actually wrote, tagged with the pane that wrote them. Every
+  // window gets them; each one keeps only the panes its own layout owns, so a
+  // popout doesn't duplicate the main window's review queue.
+  registerAgentEditHooks((edit) => {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('agent:fileEdit', edit)
+    }
+  })
   registerWorkspaceHandlers()
   registerLspHandlers()
   registerBridgeHandlers()
   registerGitHandlers()
+  registerGithubHandlers()
+  registerGithubDetailHandlers()
+  registerGithubReviewHandlers()
   registerDiagnosticsHandlers()
   registerDebuggerHandlers()
   registerSessionsHandlers()

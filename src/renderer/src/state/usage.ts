@@ -156,6 +156,34 @@ export function remaining(l: PlanLimit): number {
 export function used(l: PlanLimit): number {
   return Math.min(100, Math.max(0, Math.round(l.usedPct)))
 }
+// Which account's numbers belong to a given workspace: its own pinned profile
+// first, then the global default, then the single implicit login. Shared by the
+// header strip and the sidebar accordion so the two can never disagree about
+// whose usage they are showing — they read the same rule, not two copies of it.
+export function pickAccount(
+  accounts: AccountUsage[],
+  opts: { byWorkspace: Record<string, string>; globalId?: string | null; workspace?: string | null }
+): AccountUsage | null {
+  if (!accounts.length) return null
+  const wanted = (opts.workspace && opts.byWorkspace[opts.workspace]) || opts.globalId || 'claude'
+  return (
+    accounts.find((a) => a.id === wanted) ??
+    accounts.find((a) => a.cli === 'claude') ??
+    accounts[0] ??
+    null
+  )
+}
+
+// The window an at-a-glance bar should show: the tightest one the account
+// reports. A weekly figure with the 5-hour session already exhausted would be
+// reassuring and wrong.
+export function tightestLimit(a: AccountUsage | null): PlanLimit | null {
+  if (!a?.limits) return null
+  const { session, weekly } = a.limits
+  if (session && weekly) return used(session) >= used(weekly) ? session : weekly
+  return session ?? weekly ?? null
+}
+
 // Remaining-based color: <20% danger, <50% warning, else accent.
 export function remainingColor(pct: number): string {
   if (pct < 20) return 'var(--danger)'

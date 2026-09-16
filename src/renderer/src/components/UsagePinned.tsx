@@ -23,8 +23,10 @@ export default function UsagePinned(): JSX.Element | null {
 
   return (
     <div className="usage-pinned">
+      {/* No "Usage" label: each row below now names its own agent (Claude Code,
+          Codex) and carries its own bar, so a heading that repeats the panel's
+          purpose only costs a line. */}
       <div className="usage-pinned-head">
-        <span>{t('usage.limitsHead')}</span>
         <button
           className="usage-pin"
           title={t('usage.unpin')}

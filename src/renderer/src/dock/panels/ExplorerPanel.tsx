@@ -26,6 +26,31 @@ function hasOsFiles(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes('Files')
 }
 
+// Every drop indicator in the tree, cleared together when the drag is over.
+//
+// A highlight is turned on by `dragover` and off by `dragleave` — and there are
+// two ways to end a drag that fire NEITHER: dropping on a row (which stops the
+// event before the container that lit up ever sees it) and pressing Escape.
+// Both left the dashed outline on screen with no drag in progress, and nothing
+// but another drag could clear it. `dragend`/`drop` on the window always fire,
+// so that is what clears everything.
+const dropClears = new Set<() => void>()
+let dropClearsBound = false
+function useClearDropOnDragEnd(clear: () => void): void {
+  useEffect(() => {
+    dropClears.add(clear)
+    if (!dropClearsBound) {
+      dropClearsBound = true
+      const all = (): void => dropClears.forEach((fn) => fn())
+      window.addEventListener('dragend', all, true)
+      window.addEventListener('drop', all, true)
+    }
+    return () => {
+      dropClears.delete(clear)
+    }
+  }, [clear])
+}
+
 /* ---- move within the explorer ---------------------------------------------- */
 // A drag that started on a row of THIS tree. It needs its own mime: `text/plain`
 // alone would also match a text selection dragged in from anywhere, and 'Files'
@@ -104,6 +129,7 @@ function TreeNode({
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<DirEntry[] | null>(null)
   const [dropTarget, setDropTarget] = useState(false)
+  useClearDropOnDragEnd(useCallback(() => setDropTarget(false), []))
   const rowRef = useRef<HTMLDivElement>(null)
   const revealTarget = useExplorerReveal((s) => s.target)
   const activePath = useSession((s) =>
@@ -294,6 +320,7 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const [menu, setMenu] = useState<Menu | null>(null)
   const [edit, setEdit] = useState<Edit>(null)
   const [rootDrop, setRootDrop] = useState(false)
+  useClearDropOnDragEnd(useCallback(() => setRootDrop(false), []))
   const bump = useTree((s) => s.bump)
   const collapseAll = useTree((s) => s.collapseAll)
   const rootVersion = useTree((s) => s.versions[workspace] ?? 0)

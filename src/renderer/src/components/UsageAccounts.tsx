@@ -70,17 +70,25 @@ export default function UsageAccounts(): JSX.Element | null {
   const title = (cli: 'claude' | 'codex'): string =>
     cli === 'codex' ? t('usage.cli.codex') : t('usage.cli.claude')
 
-  // A one-glance number for a folded row: the tightest window's remaining %, or
-  // today's tokens when the account reports no window.
+  // A folded row still has to answer "how much is left, for which agent" — so
+  // the tightest window is drawn as a bar right in the header, next to the name
+  // of the tool it belongs to. Without it you had to expand a row to learn
+  // anything, and the section header said "usage" without saying whose.
   const summary = (a: AccountUsage | undefined): JSX.Element => {
     if (!a) return <span className="usage-acc-sum dim">{t('settings.account.aiChecking')}</span>
     const l = a.limits?.session ?? a.limits?.weekly
     if (l) {
       const rem = remaining(l)
+      const color = remainingColor(rem)
       return (
-        <span className="usage-acc-sum" style={{ color: remainingColor(rem) }}>
-          {rem}%
-        </span>
+        <>
+          <span className="usage-acc-bar" title={`${rem}%`}>
+            <span className="usage-acc-bar-fill" style={{ width: `${rem}%`, background: color }} />
+          </span>
+          <span className="usage-acc-sum" style={{ color }}>
+            {rem}%
+          </span>
+        </>
       )
     }
     if (a.today?.totalTokens) return <span className="usage-acc-sum">{fmtTokens(a.today.totalTokens)}</span>

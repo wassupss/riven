@@ -342,6 +342,29 @@ export function openNamedPanel(id: NamedPanel, dir?: SplitDir, refId?: string): 
   })
 }
 
+// One PR file, opened as its own diff editor tab. The id is derived from the PR
+// and the path, so asking for the same file twice focuses the tab already open
+// instead of stacking duplicates of the same diff.
+export function openPrDiff(repo: string, number: number, path: string): void {
+  const api = activeApi
+  if (!api) return
+  const id = `prdiff-${number}-${path}`
+  const existing = api.getPanel(id)
+  if (existing) {
+    existing.api.setActive()
+    return
+  }
+  api.addPanel({
+    id,
+    component: 'prdiff',
+    // The filename alone: a tab strip full of full paths is unreadable, and the
+    // panel header carries the path in full.
+    title: path.split('/').pop() || path,
+    renderer: 'always',
+    params: { repo, number, path }
+  })
+}
+
 // A "launcher" pane: an empty panel showing a picker of what to open. Used as the
 // first panel of a new workspace and for ⌘D / ⌘⇧D splits — the panel appears
 // first, then the user chooses its contents (instead of defaulting to a terminal).
