@@ -304,6 +304,68 @@ export async function prDetail(repoDir: string, number: number): Promise<DetailR
   }
 }
 
+export interface PrFileContents {
+  ok: boolean
+  // The file as the base branch has it and as the PR leaves it. Either can be
+  // empty: a file the PR adds has no base side, one it deletes has no head side.
+  base: string
+  head: string
+  baseRefOid: string
+  headRefOid: string
+  error?: string
+}
+
+// Both sides of one file, for a real diff editor rather than a patch fragment.
+// The patch from `pulls/{n}/files` only carries the changed hunks with three
+// lines of context — enough to render a review, not enough to read the file or
+// to comment on a line the hunks don't reach.
+export async function prFileContents(
+  repoDir: string,
+  number: number,
+  filePath: string
+): Promise<PrFileContents> {
+  const empty = { ok: false, base: '', head: '', baseRefOid: '', headRefOid: '' }
+  if (!Number.isInteger(number) || number <= 0) return { ...empty, error: 'bad pr number' }
+  if (!filePath || filePath.startsWith('/') || filePath.includes('..'))
+    return { ...empty, error: 'bad path' }
+  const view = await gh(repoDir, ['pr', 'view', String(number), '--json', 'baseRefOid,headRefOid'])
+  if (!view.ok) return { ...empty, error: view.stderr.trim().slice(0, 300) }
+  let oids: { baseRefOid?: string; headRefOid?: string }
+  try {
+    oids = JSON.parse(view.stdout)
+  } catch {
+    return { ...empty, error: 'unreadable response' }
+  }
+  const slug = await repoSlug(repoDir)
+  if (!slug) return { ...empty, error: 'could not resolve the GitHub repository' }
+
+  // A missing side is normal (added / deleted file), so a 404 here is data, not
+  // an error — it is what "this file did not exist yet" looks like.
+  const at = async (ref: string): Promise<string> => {
+    if (!ref) return ''
+    const r = await gh(repoDir, [
+      'api',
+      `repos/${slug}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`,
+      '-H',
+      'Accept: application/vnd.github.raw',
+      '--cache',
+      '5m'
+    ])
+    return r.ok ? r.stdout : ''
+  }
+  const [base, head] = await Promise.all([at(oids.baseRefOid ?? ''), at(oids.headRefOid ?? '')])
+  return {
+    ok: true,
+    base,
+    head,
+    baseRefOid: oids.baseRefOid ?? '',
+    headRefOid: oids.headRefOid ?? ''
+  }
+}
+
 export function registerGithubDetailHandlers(): void {
   ipcMain.handle('gh:prDetail', (_e, repoDir: string, number: number) => prDetail(repoDir, number))
+  ipcMain.handle('gh:prFile', (_e, repoDir: string, number: number, filePath: string) =>
+    prFileContents(repoDir, number, String(filePath ?? ''))
+  )
 }

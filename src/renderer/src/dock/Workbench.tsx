@@ -303,11 +303,46 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     [workspace, buildDefault, patch, components]
   )
 
-  // Point the registry at the active workspace's api. dockview relayouts itself
-  // via its container ResizeObserver when this workspace becomes visible.
+  // Point the registry at the active workspace's api.
   useEffect(() => {
     if (workspace === activeWorkspace && apiRef.current) setActiveApi(apiRef.current)
   }, [activeWorkspace, workspace])
+
+  // Keep the dock the size of the space it has.
+  //
+  // dockview writes a pixel height onto its own root (style="height: 995px") and
+  // recalculates it from its own ResizeObserver. An inactive workspace is
+  // display:none, so while it is hidden its container measures 0 and any size
+  // change the window makes in the meantime is one dockview never sees — the
+  // stale pixel height comes back with it, leaving a strip of dead space above
+  // the status bar until something else forces a relayout. Measuring the
+  // wrapper ourselves and pushing the size in is the cheap, always-correct
+  // version: a no-op when the numbers already agree.
+  const hostRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    const sync = (): void => {
+      const api = apiRef.current
+      if (!api) return
+      const { width, height } = host.getBoundingClientRect()
+      // A hidden workspace measures 0×0; laying a dock out at zero is what
+      // mangles group positions, so leave it until it is on screen again.
+      if (width < 1 || height < 1) return
+      const w = Math.round(width)
+      const h = Math.round(height)
+      if (api.width !== w || api.height !== h) api.layout(w, h)
+    }
+    const ro = new ResizeObserver(sync)
+    ro.observe(host)
+    // Becoming visible is not a resize of this element in every case (the parent
+    // flips display), so re-check on the frame after it is shown too.
+    const raf = requestAnimationFrame(sync)
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [activeWorkspace])
 
   // On real workspace close, dockview disposes WITHOUT firing onDidRemovePanel,
   // so the per-panel PTY kill above never runs and shells/agents orphan. Kill
@@ -359,7 +394,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
   }, [workspace])
 
   return (
-    <div className="workbench-wrap">
+    <div className="workbench-wrap" ref={hostRef}>
       <DockviewReact
         className="workbench"
         // Resolved against THIS document, not the site root. dockview's default
