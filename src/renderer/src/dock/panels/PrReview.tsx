@@ -336,7 +336,25 @@ export default function PrReview({
       </div>
 
       {!detail ? (
-        <div className="pr-empty">…</div>
+        // A PR's diff takes a few seconds to fetch; show its shape meanwhile.
+        <div className="pr-review">
+          <div className="pr-skeleton" aria-busy="true">
+            <div className="pr-skel-row">
+              <span className="pr-skel-title" style={{ maxWidth: '55%' }} />
+              <span className="pr-skel-tail" />
+            </div>
+            <div className="pr-skel-row">
+              <span className="pr-skel-block" />
+            </div>
+            {Array.from({ length: 4 }, (_, i) => (
+              <div className="pr-skel-row" key={i}>
+                <span className="pr-skel-ico" />
+                <span className="pr-skel-title" style={{ maxWidth: `${64 - (i % 3) * 12}%` }} />
+                <span className="pr-skel-tail" />
+              </div>
+            ))}
+          </div>
+        </div>
       ) : (
         <div className="pr-review">
           <div className="pr-review-meta">

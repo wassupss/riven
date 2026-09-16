@@ -549,6 +549,44 @@ select {
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
 }
+/* Budget in the dock top bar: which agent, and how much of its tightest window
+   is gone, as a bar you read without stopping. Replaces a gauge icon, the word
+   "usage" and two unlabelled percentages. */
+.usage-agent {
+  font-weight: 550;
+  color: var(--fg-dim);
+}
+.usage-track {
+  width: 64px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.usage-track-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition:
+    width var(--dur-slow) ease,
+    background var(--dur-slow) ease;
+}
+.usage-pct {
+  font-variant-numeric: tabular-nums;
+}
+/* A narrow window drops the bar first, then the agent's name — the percentage
+   is the part that is acted on. */
+@media (max-width: 900px) {
+  .usage-track {
+    display: none;
+  }
+}
+@media (max-width: 720px) {
+  .usage-agent {
+    display: none;
+  }
+}
 .top-header-btn {
   -webkit-app-region: no-drag;
   display: inline-flex;
@@ -1980,6 +2018,7 @@ select {
 }
 /* pinned usage view — a resizable sidebar region */
 .usage-pinned {
+  position: relative;
   height: 100%;
   min-height: 0;
   overflow-y: auto;
@@ -2038,10 +2077,31 @@ select {
   font-size: 9px;
   line-height: 14px;
 }
-.usage-acc-sum {
+/* The folded row's own bar: it takes the slack in the header, so the row reads
+   "which agent — how much is left" without being expanded. */
+.usage-acc-bar {
+  flex: 1 1 auto;
+  min-width: 24px;
   margin-left: auto;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.usage-acc-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--dur-slow) ease;
+}
+.usage-acc-sum {
+  margin-left: 0;
   flex: none;
   font-variant-numeric: tabular-nums;
+}
+/* Nothing to draw a bar for (no plan window): the number takes the slack back. */
+.usage-acc-head > .usage-acc-sum:last-child {
+  margin-left: auto;
 }
 .usage-acc-sum.dim,
 .usage-acc-today.dim {
@@ -2063,16 +2123,27 @@ select {
   color: var(--fg-dim);
   font-size: var(--text-xs);
 }
+/* Just the unpin control now that the section has no title of its own. Floated
+   over the first row's right edge rather than given a line: an empty line with
+   one icon on it costs as much vertical space as a whole account row. */
 .usage-pinned-head {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 6px 6px;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: var(--track-caps);
   color: var(--fg-dim);
+  /* It sits over the first row's numbers, so it only appears when the pointer
+     is in the panel — where it is also the only moment it can be clicked. */
+  opacity: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  transition: opacity var(--dur-fast) ease;
+}
+.usage-pinned:hover .usage-pinned-head,
+.usage-pinned-head:focus-within {
+  opacity: 1;
 }
 .usage-pinned-today {
   padding: 4px 6px 0;
@@ -4477,6 +4548,138 @@ select {
   color: var(--fg-dim);
   line-height: 1.6;
 }
+/* Loading: the shape of what is coming, not a lone ellipsis. Rows match the
+   real ones' geometry so nothing jumps when the data lands. */
+.pr-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+}
+.pr-skel-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 22px;
+}
+.pr-skel-row > span {
+  height: 9px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-3) 0%,
+    color-mix(in srgb, var(--fg) 8%, var(--bg-3)) 50%,
+    var(--bg-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel 1.2s ease-in-out infinite;
+}
+.pr-skel-ico {
+  width: 12px;
+  height: 12px !important;
+  border-radius: 50% !important;
+  flex: 0 0 auto;
+}
+.pr-skel-num {
+  width: 34px;
+  flex: 0 0 auto;
+}
+.pr-skel-title {
+  flex: 1 1 auto;
+  max-width: 62%;
+}
+.pr-skel-tail {
+  width: 26px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+/* Each row starts its sweep a beat later, so the list reads as one object
+   settling rather than a row of blinking bars. */
+.pr-skel-row:nth-child(2) > span {
+  animation-delay: 0.08s;
+}
+.pr-skel-row:nth-child(3) > span {
+  animation-delay: 0.16s;
+}
+.pr-skel-row:nth-child(4) > span {
+  animation-delay: 0.24s;
+}
+.pr-skel-row:nth-child(5) > span {
+  animation-delay: 0.32s;
+}
+.pr-skel-row:nth-child(6) > span {
+  animation-delay: 0.4s;
+}
+.pr-skel-block {
+  height: 13px !important;
+  width: 100%;
+}
+.pr-filters {
+  display: flex;
+  gap: 2px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.pr-filter {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.pr-filter:hover {
+  background: var(--hover);
+}
+.pr-filter.active {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+.pr-create {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+}
+.pr-create-head {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: 5px 8px;
+}
+.pr-create-draft {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-error {
+  font-size: var(--text-2xs);
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+.pr-badge.merged {
+  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  color: var(--accent-2);
+}
+.pr-ico.merged {
+  color: var(--accent-2);
+}
+.pr-ico.closed {
+  color: var(--danger);
+}
 .pr-list {
   flex: 1 1 auto;
   overflow: auto;
@@ -4633,11 +4836,19 @@ select {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 10px;
+  padding: 8px 10px;
   font-size: var(--text-2xs);
   color: var(--fg-dim);
   border-bottom: 1px solid var(--hairline);
+}
+/* Separators between the facts, so "+262 −90 24 files 18/18" doesn't read as
+   one run-on number. */
+.pr-review-meta > * + *::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--fg-dim);
+  opacity: 0.5;
 }
 .pr-review-branch {
   font-family: var(--font-mono);

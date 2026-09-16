@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { execFile } from 'child_process'
+import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
 import { resolveBin } from './shellPath'
 
@@ -26,11 +26,16 @@ export interface CheckSummary {
   pending: number
 }
 
+export type PrState = 'open' | 'closed' | 'all'
+
 export interface PullRequest {
   number: number
   title: string
   url: string
   author: string
+  // OPEN | CLOSED | MERGED — a closed PR that was merged is not the same as one
+  // that was abandoned, and the list has to say which.
+  state: string
   isMine: boolean
   // Someone asked THIS user to review it — the top section of the inbox.
   needsMyReview: boolean
@@ -142,6 +147,7 @@ interface RawPr {
   number: number
   title: string
   url: string
+  state?: string
   author?: { login?: string }
   headRefName: string
   baseRefName: string
@@ -157,6 +163,7 @@ export function toPullRequests(raw: RawPr[], login: string | null): PullRequest[
     number: p.number,
     title: p.title,
     url: p.url,
+    state: String(p.state ?? 'OPEN').toUpperCase(),
     author: p.author?.login ?? '',
     isMine: !!login && p.author?.login === login,
     needsMyReview:
@@ -179,6 +186,7 @@ const PR_FIELDS = [
   'number',
   'title',
   'url',
+  'state',
   'author',
   'headRefName',
   'baseRefName',
@@ -225,9 +233,12 @@ function classify(stderr: string): PrListResult['error'] {
   return 'failed'
 }
 
-export async function listPullRequests(repoDir: string): Promise<PrListResult> {
+export async function listPullRequests(repoDir: string, state: PrState = 'open'): Promise<PrListResult> {
   const login = await viewerLogin(repoDir)
-  const r = await gh(repoDir, ['pr', 'list', '--state', 'open', '--limit', '50', '--json', PR_FIELDS])
+  // Only the three states gh accepts, chosen here rather than passed through —
+  // this value goes into an argv that runs a command.
+  const s: PrState = state === 'closed' || state === 'all' ? state : 'open'
+  const r = await gh(repoDir, ['pr', 'list', '--state', s, '--limit', '50', '--json', PR_FIELDS])
   if (!r.ok) return { ok: false, prs: [], login, error: classify(r.stderr), detail: r.stderr.trim().slice(0, 300) }
   let raw: RawPr[]
   try {
@@ -238,10 +249,110 @@ export async function listPullRequests(repoDir: string): Promise<PrListResult> {
   return { ok: true, prs: toPullRequests(raw, login), login }
 }
 
+// Same as gh(), but the process gets something on stdin — how a PR body (or a
+// review body) is passed without ever putting it on a command line.
+async function ghStdin(
+  cwd: string,
+  args: string[],
+  stdin: string,
+  timeoutMs = 30000
+): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  const bin = await resolveBin('gh')
+  if (!bin) return { ok: false, stdout: '', stderr: 'no-gh' }
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      err += '\ntimed out'
+    }, timeoutMs)
+    child.stdout.on('data', (d) => (out += String(d)))
+    child.stderr.on('data', (d) => (err += String(d)))
+    child.on('error', (e) => {
+      clearTimeout(timer)
+      resolve({ ok: false, stdout: out, stderr: e.message })
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ ok: code === 0, stdout: out, stderr: err })
+    })
+    child.stdin.end(stdin)
+  })
+}
+
+// Publish the current branch. Separate from creating the PR because it is a
+// separate decision: this is the step that puts the user's commits on a server.
+export async function pushBranch(repoDir: string, branch: string): Promise<CreatePrResult> {
+  if (!/^[\w][\w./-]*$/.test(branch)) return { ok: false, error: 'bad branch name' }
+  try {
+    await pexec('git', ['-C', repoDir, 'push', '-u', 'origin', branch], { timeout: 120000 })
+    return { ok: true }
+  } catch (e) {
+    const err = e as { stderr?: string; message?: string }
+    return { ok: false, error: (err.stderr || err.message || 'push failed').trim().slice(0, 400) }
+  }
+}
+
+export interface CreatePrInput {
+  title: string
+  body: string
+  base: string
+  draft: boolean
+}
+
+export interface CreatePrResult {
+  ok: boolean
+  url?: string
+  error?: string
+  // The branch has no remote counterpart yet. Pushing is a separate, explicit
+  // step: it publishes the user's commits, so riven asks rather than assumes.
+  needsPush?: boolean
+}
+
+// `gh pr create` refuses, by design, when the branch was never pushed. Its
+// wording is what has to be recognised, since there is no exit code for it.
+function looksUnpushed(stderr: string): boolean {
+  const s = stderr.toLowerCase()
+  return s.includes('must first push') || s.includes('no git remote found') || s.includes('head branch')
+}
+
+export async function createPullRequest(
+  repoDir: string,
+  input: CreatePrInput
+): Promise<CreatePrResult> {
+  const title = input.title.trim()
+  if (!title) return { ok: false, error: 'a pull request needs a title' }
+  const args = ['pr', 'create', '--title', title, '--body-file', '-']
+  if (input.base.trim()) args.push('--base', input.base.trim())
+  if (input.draft) args.push('--draft')
+  // The body arrives on stdin, so newlines, quotes and backticks in a
+  // description are data rather than anything a shell could read.
+  const r = await ghStdin(repoDir, args, input.body, 60000)
+  if (r.ok) {
+    const url = r.stdout.trim().split('\n').find((l) => l.startsWith('http')) ?? ''
+    return { ok: true, url }
+  }
+  return {
+    ok: false,
+    error: r.stderr.trim().slice(0, 400),
+    needsPush: looksUnpushed(r.stderr)
+  }
+}
+
 export function registerGithubHandlers(): void {
-  ipcMain.handle('gh:prs', (_e, repoDir: string) => listPullRequests(repoDir))
-  // Opening the "create PR" flow in the browser is deliberate: riven is not
-  // going to invent a PR description and push it somewhere public on one click.
+  ipcMain.handle('gh:prs', (_e, repoDir: string, state: PrState) => listPullRequests(repoDir, state))
+  ipcMain.handle('gh:createPr', (_e, repoDir: string, input: CreatePrInput) =>
+    createPullRequest(repoDir, {
+      title: String(input?.title ?? ''),
+      body: String(input?.body ?? ''),
+      base: String(input?.base ?? ''),
+      draft: !!input?.draft
+    })
+  )
+  // Publishing the branch, as its own step with its own button.
+  ipcMain.handle('gh:pushBranch', (_e, repoDir: string, branch: string) => pushBranch(repoDir, branch))
+  // The browser flow stays available for anyone who wants GitHub's own form.
   ipcMain.handle('gh:createWeb', async (_e, repoDir: string) => {
     const r = await gh(repoDir, ['pr', 'create', '--web'], 30000)
     return { ok: r.ok, error: r.ok ? undefined : r.stderr.trim().slice(0, 300) }

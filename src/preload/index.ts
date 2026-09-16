@@ -640,7 +640,8 @@ const api = {
   // riven keeps no GitHub token of its own.
   gh: {
     prs: (
-      repoDir: string
+      repoDir: string,
+      state?: 'open' | 'closed' | 'all'
     ): Promise<{
       ok: boolean
       login: string | null
@@ -650,6 +651,7 @@ const api = {
         number: number
         title: string
         url: string
+        state: string
         author: string
         isMine: boolean
         needsMyReview: boolean
@@ -662,7 +664,16 @@ const api = {
         parent: number | null
         depth: number
       }>
-    }> => ipcRenderer.invoke('gh:prs', repoDir),
+    }> => ipcRenderer.invoke('gh:prs', repoDir, state ?? 'open'),
+    // Opens a pull request from inside riven. The body goes to `gh` on stdin.
+    createPr: (
+      repoDir: string,
+      input: { title: string; body: string; base: string; draft: boolean }
+    ): Promise<{ ok: boolean; url?: string; error?: string; needsPush?: boolean }> =>
+      ipcRenderer.invoke('gh:createPr', repoDir, input),
+    // Publishing the branch is its own step — it puts commits on a server.
+    pushBranch: (repoDir: string, branch: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:pushBranch', repoDir, branch),
     createWeb: (repoDir: string): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke('gh:createWeb', repoDir),
     // One PR with everything needed to review it: status, changed files with

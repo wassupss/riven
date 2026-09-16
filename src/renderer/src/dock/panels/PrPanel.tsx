@@ -6,6 +6,8 @@ import {
   ExternalLink,
   GitPullRequest,
   GitPullRequestDraft,
+  GitPullRequestClosed,
+  GitMerge,
   Check,
   X,
   Loader,
@@ -23,6 +25,24 @@ type Pr = PrList['prs'][number]
 // then everything else — with each PR's CI and review state readable without
 // opening it, and PRs that are stacked on one another shown as the stack they
 // are instead of as unrelated rows.
+
+// What is about to appear, in outline. Shown while the first fetch runs — a
+// list that arrives in one piece reads as faster than a spinner does, and an
+// ellipsis says nothing about what is coming.
+export function PrSkeleton({ rows = 5 }: { rows?: number }): JSX.Element {
+  return (
+    <div className="pr-skeleton" aria-busy="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="pr-skel-row" key={i}>
+          <span className="pr-skel-ico" />
+          <span className="pr-skel-num" />
+          <span className="pr-skel-title" style={{ maxWidth: `${70 - (i % 3) * 14}%` }} />
+          <span className="pr-skel-tail" />
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function Checks({ pr }: { pr: Pr }): JSX.Element | null {
   const t = useT()
@@ -84,12 +104,26 @@ function Row({
           <CornerDownRight size={12} />
         </span>
       )}
-      <span className={`pr-ico${pr.isDraft ? ' draft' : ''}`}>
-        {pr.isDraft ? <GitPullRequestDraft size={14} /> : <GitPullRequest size={14} />}
+      <span
+        className={`pr-ico${pr.isDraft ? ' draft' : ''}${pr.state === 'MERGED' ? ' merged' : ''}${
+          pr.state === 'CLOSED' ? ' closed' : ''
+        }`}
+      >
+        {pr.state === 'MERGED' ? (
+          <GitMerge size={14} />
+        ) : pr.state === 'CLOSED' ? (
+          <GitPullRequestClosed size={14} />
+        ) : pr.isDraft ? (
+          <GitPullRequestDraft size={14} />
+        ) : (
+          <GitPullRequest size={14} />
+        )}
       </span>
       <span className="pr-num">#{pr.number}</span>
       <span className="pr-title">{pr.title}</span>
-      {pr.isDraft && <span className="pr-badge draft">{t('pr.draft')}</span>}
+      {pr.state === 'MERGED' && <span className="pr-badge merged">{t('pr.merged')}</span>}
+      {pr.state === 'CLOSED' && <span className="pr-badge required">{t('pr.closed')}</span>}
+      {pr.isDraft && pr.state === 'OPEN' && <span className="pr-badge draft">{t('pr.draft')}</span>}
       <ReviewBadge pr={pr} />
       <Checks pr={pr} />
       <span className="pr-row-actions">
@@ -120,6 +154,105 @@ function Row({
   )
 }
 
+// Opening a pull request without going to github.com. The body is sent to `gh`
+// on stdin, and publishing the branch — which is what actually puts commits on
+// a server — stays a separate press, offered only when gh says it is missing.
+function CreateForm({
+  repo,
+  branch,
+  onDone,
+  onCancel
+}: {
+  repo: string
+  branch: string | null
+  onDone: () => void
+  onCancel: () => void
+}): JSX.Element {
+  const t = useT()
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [base, setBase] = useState('')
+  const [draft, setDraft] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [needsPush, setNeedsPush] = useState(false)
+
+  const create = async (): Promise<void> => {
+    if (!title.trim() || busy) return
+    setBusy(true)
+    setError(null)
+    const r = await window.api.gh.createPr(repo, { title, body, base, draft })
+    setBusy(false)
+    if (r.ok) {
+      if (r.url) window.api.openExternal(r.url)
+      onDone()
+      return
+    }
+    setError(r.error ?? 'failed')
+    setNeedsPush(!!r.needsPush)
+  }
+
+  const push = async (): Promise<void> => {
+    if (!branch || busy) return
+    setBusy(true)
+    const r = await window.api.gh.pushBranch(repo, branch)
+    setBusy(false)
+    if (!r.ok) {
+      setError(r.error ?? 'push failed')
+      return
+    }
+    setNeedsPush(false)
+    setError(null)
+    void create()
+  }
+
+  return (
+    <div className="pr-create">
+      <div className="pr-create-head">{t('pr.createTitle', { branch: branch ?? '' })}</div>
+      <input
+        className="pr-create-input"
+        autoFocus
+        placeholder={t('pr.titlePlaceholder')}
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+      />
+      <textarea
+        className="pr-reply-input"
+        placeholder={t('pr.bodyPlaceholder')}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <input
+        className="pr-create-input"
+        placeholder={t('pr.basePlaceholder')}
+        value={base}
+        onChange={(e) => setBase(e.target.value)}
+      />
+      <label className="pr-create-draft">
+        <input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} />
+        {t('pr.draft')}
+      </label>
+      {error && <div className="pr-create-error">{error}</div>}
+      <div className="pr-reply-actions">
+        {needsPush && branch && (
+          <button className="btn-small" disabled={busy} onClick={() => void push()}>
+            {t('pr.pushBranch', { branch })}
+          </button>
+        )}
+        <button className="btn-small primary" disabled={busy || !title.trim()} onClick={() => void create()}>
+          {t('pr.create')}
+        </button>
+        <button className="btn-small" disabled={busy} onClick={onCancel}>
+          {t('common.cancel')}
+        </button>
+        <button className="btn-small" disabled={busy} onClick={() => void window.api.gh.createWeb(repo)}>
+          {t('pr.createWeb')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function PrPanel({
   repo,
   branch,
@@ -135,15 +268,23 @@ export default function PrPanel({
   // Which PR is being reviewed, if any. The inbox stays mounted underneath so
   // going back costs nothing.
   const [reviewing, setReviewing] = useState<number | null>(null)
+  const [state, setState] = useState<'open' | 'closed' | 'all'>('open')
+  const [creating, setCreating] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setData(await window.api.gh.prs(repo))
+      setData(await window.api.gh.prs(repo, state))
     } finally {
       setLoading(false)
     }
-  }, [repo])
+  }, [repo, state])
+
+  // Changing the filter (or the repo) drops the old rows rather than leaving
+  // open PRs on screen under a "Closed" filter for the seconds the fetch takes.
+  useEffect(() => {
+    setData(null)
+  }, [state, repo])
 
   // Load when the tab is opened or the repo changes. Deliberately NOT polled:
   // every refresh spends GitHub API budget, and a review queue that updates when
@@ -176,7 +317,7 @@ export default function PrPanel({
           {prs.length > 0 && <span className="pr-count">{prs.length}</span>}
         </span>
         <div className="pr-head-actions">
-          <button className="pr-act" title={t('pr.create')} onClick={() => void window.api.gh.createWeb(repo)}>
+          <button className="pr-act" title={t('pr.create')} onClick={() => setCreating((v) => !v)}>
             <Plus size={13} />
           </button>
           <button className="pr-act" title={t('pr.refresh')} onClick={() => void load()} disabled={loading}>
@@ -184,6 +325,32 @@ export default function PrPanel({
           </button>
         </div>
       </div>
+
+      {/* Closed and merged PRs are part of the history you review against —
+          "what did we decide last time" lives there. */}
+      <div className="pr-filters">
+        {(['open', 'closed', 'all'] as const).map((s) => (
+          <button
+            key={s}
+            className={`pr-filter${state === s ? ' active' : ''}`}
+            onClick={() => setState(s)}
+          >
+            {t(`pr.state.${s}`)}
+          </button>
+        ))}
+      </div>
+
+      {creating && (
+        <CreateForm
+          repo={repo}
+          branch={branch}
+          onDone={() => {
+            setCreating(false)
+            void load()
+          }}
+          onCancel={() => setCreating(false)}
+        />
+      )}
 
       {problem ? (
         <div className="pr-empty">
@@ -195,8 +362,10 @@ export default function PrPanel({
                 ? t('pr.noRemote')
                 : t('pr.failed', { err: data?.detail ?? '' })}
         </div>
+      ) : loading && prs.length === 0 ? (
+        <PrSkeleton />
       ) : prs.length === 0 ? (
-        <div className="pr-empty">{loading ? '…' : t('pr.empty')}</div>
+        <div className="pr-empty">{t('pr.empty')}</div>
       ) : (
         <div className="pr-list">
           {sections.map((s) => (
