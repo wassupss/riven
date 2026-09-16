@@ -7,6 +7,7 @@ import * as path from 'path'
 import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
+import { configuredMcpServers, allowedToolsValue } from './mcpServers'
 import {
   mcpConfigJson,
   mcpSystemPrompt,
@@ -31,7 +32,12 @@ export interface StartOpts {
   resume?: string
   model?: string
   permissionMode?: string
+  // riven's OWN tools the user switched off (ask_user, open_file, …).
   mcpDisabled?: string[]
+  // Whole MCP SERVERS the user does not want riven's agents to use without
+  // being asked. Everything else the project has configured is allowed, since
+  // a pane cannot show a permission prompt.
+  mcpServersDisabled?: string[]
   globalPrompt?: string
   // A custom agent defined in .claude/agents/<name>.md (project or ~). Runs the
   // pane as `claude --agent <name>` so it uses that agent's system prompt/tools.
@@ -414,10 +420,21 @@ async function startSession(
     '--verbose',
     '--include-partial-messages',
     '--permission-mode',
-    opts.permissionMode || 'acceptEdits',
-    '--allowedTools',
-    `${DEFAULT_ALLOWED},${MCP_TOOL_PREFIX}`
+    opts.permissionMode || 'acceptEdits'
   ]
+  // Every MCP server this project has, allowed by name.
+  //
+  // The CLI refuses a tool that isn't pre-allowed, and a chat pane is
+  // non-interactive — there is nobody to answer its permission prompt. Passing
+  // only riven's own prefix meant a server the user had deliberately added
+  // (devhub, sentry, …) failed here while working in a terminal, where a human
+  // can approve it, and the agent reported it simply had no such tool.
+  const externalServers = await configuredMcpServers(opts.cwd, opts.configDir)
+  args.push(
+    '--allowedTools',
+    allowedToolsValue(DEFAULT_ALLOWED, MCP_TOOL_PREFIX, externalServers, opts.mcpServersDisabled ?? [])
+  )
+  if (externalServers.length) console.log(`[chat:${key}] mcp servers allowed: ${externalServers.join(', ')}`)
   // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): the
   // loopback HTTP server, inline in --mcp-config. Only implemented tools the
   // user hasn't disabled are advertised; the pane key rides on the URL so every
