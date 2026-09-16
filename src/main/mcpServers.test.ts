@@ -1,5 +1,57 @@
 import { describe, it, expect } from 'vitest'
-import { serverNames, allowedToolsValue } from './mcpServers'
+import { serverNames, allowedToolsValue, parseMcpList, toolPrefix } from './mcpServers'
+
+// Copied verbatim from a real `claude mcp list` run: connectors, a plugin
+// server and a project server, which is exactly the mix that was failing.
+const REAL_LIST = `Checking MCP server health…
+
+claude.ai Notion: https://mcp.notion.com/mcp - ✔ Connected
+claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ✔ Connected
+plugin:figma:figma: https://mcp.figma.com/mcp (HTTP) - ! Needs authentication
+devhub: http://192.168.219.71/api/mcp (HTTP) - ✔ Connected
+`
+
+describe('parseMcpList', () => {
+  it('reads every server the CLI reports, whatever its origin', () => {
+    expect(parseMcpList(REAL_LIST)).toEqual([
+      'claude.ai Notion',
+      'claude.ai Google Drive',
+      'plugin:figma:figma',
+      'devhub'
+    ])
+  })
+
+  // The name itself contains colons; only the first ": " separates it.
+  it('keeps a plugin name with colons intact', () => {
+    expect(parseMcpList('plugin:figma:figma: https://x (HTTP) - ✔ Connected')).toEqual([
+      'plugin:figma:figma'
+    ])
+  })
+
+  it('ignores the health-check banner and blank lines', () => {
+    expect(parseMcpList('Checking MCP server health…\n\n')).toEqual([])
+  })
+
+  it('ignores prose that happens to contain a colon', () => {
+    expect(parseMcpList('No MCP servers configured: run claude mcp add')).toEqual([])
+  })
+})
+
+describe('toolPrefix', () => {
+  // Verified against a live session: the "claude.ai Notion" server's tools
+  // arrive as mcp__claude_ai_Notion__notion-search.
+  it('spells a connector the way its tools are named', () => {
+    expect(toolPrefix('claude.ai Notion')).toBe('mcp__claude_ai_Notion')
+  })
+
+  it('folds every non-identifier character, so a plugin name still matches', () => {
+    expect(toolPrefix('plugin:figma:figma')).toBe('mcp__plugin_figma_figma')
+  })
+
+  it('leaves a plain name alone', () => {
+    expect(toolPrefix('devhub')).toBe('mcp__devhub')
+  })
+})
 
 const P = '/Users/me/workspace/app'
 
@@ -57,6 +109,19 @@ describe('allowedToolsValue', () => {
   it("keeps riven's own tools and adds a prefix per server", () => {
     expect(allowedToolsValue('Read,Edit', 'mcp__riven', ['devhub', 'sentry'])).toBe(
       'Read,Edit,mcp__riven,mcp__devhub,mcp__sentry'
+    )
+  })
+
+  it('allows connectors and plugin servers under the names their tools use', () => {
+    expect(allowedToolsValue('Read', 'mcp__riven', ['claude.ai Notion', 'plugin:figma:figma'])).toBe(
+      'Read,mcp__riven,mcp__claude_ai_Notion,mcp__plugin_figma_figma'
+    )
+  })
+
+  // riven's own server is already in the list; naming it twice is noise.
+  it('does not repeat riven itself', () => {
+    expect(allowedToolsValue('Read', 'mcp__riven', ['riven', 'devhub'])).toBe(
+      'Read,mcp__riven,mcp__devhub'
     )
   })
 

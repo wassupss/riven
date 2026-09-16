@@ -7,7 +7,7 @@ import * as path from 'path'
 import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
-import { configuredMcpServers, allowedToolsValue } from './mcpServers'
+import { configuredMcpServers, allowedToolsValue, setMcpListRunner, setMcpCacheFile } from './mcpServers'
 import {
   mcpConfigJson,
   mcpSystemPrompt,
@@ -605,6 +605,11 @@ export function killAllChatSessions(): void {
 
 export function registerAgentChatHandlers(): void {
   setInterval(reapIdleSessions, REAP_EVERY_MS).unref()
+  // Here, not at module load: userData only exists once the app is ready, and
+  // this list is what lets the FIRST pane of a cold start know which MCP
+  // servers exist — asking the CLI takes seconds (it health-checks each one),
+  // and every restored pane spawns in the first moment after launch.
+  setMcpCacheFile(path.join(app.getPath('userData'), 'mcp-servers.json'))
 
   ipcMain.handle('chat:start', (event, key: string, opts: StartOpts) =>
     startSession(key, opts, event.sender)
@@ -1209,6 +1214,14 @@ async function approveMcpJson(
     return { ok: false, output: e instanceof Error ? e.message : String(e) }
   }
 }
+
+// How mcpServers.ts asks the CLI what servers exist. It lives here because this
+// module already owns finding and spawning the CLI; the list itself is cached
+// there, so this runs at most once every few minutes per project.
+setMcpListRunner(async (cwd, configDir) => {
+  const r = await runClaudeMcp(cwd, ['mcp', 'list'], 20000, configDir)
+  return r.ok ? r.output : ''
+})
 
 async function runClaudeMcp(
   cwd: string,
