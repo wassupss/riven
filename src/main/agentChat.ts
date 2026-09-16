@@ -7,7 +7,13 @@ import * as path from 'path'
 import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
-import { configuredMcpServers, allowedToolsValue, setMcpListRunner, setMcpCacheFile } from './mcpServers'
+import {
+  configuredMcpServers,
+  allowedToolsValue,
+  setMcpListRunner,
+  setMcpCacheFile,
+  rememberSessionServers
+} from './mcpServers'
 import {
   mcpConfigJson,
   mcpSystemPrompt,
@@ -240,6 +246,15 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   if (type === 'system' && ev.subtype === 'init') {
     s.sawInit = true
     s.sessionId = (ev.session_id as string) ?? s.sessionId
+    // The servers this session really has, so the next pane in this folder is
+    // allowed them even where `claude mcp list` leaves some out.
+    if (Array.isArray(ev.mcp_servers)) {
+      void rememberSessionServers(
+        s.opts.cwd,
+        s.opts.configDir,
+        (ev.mcp_servers as Array<{ name?: string }>).map((m) => m?.name ?? '')
+      )
+    }
     emit(s, {
       key: s.key,
       kind: 'init',

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { serverNames, allowedToolsValue, parseMcpList, toolPrefix } from './mcpServers'
+import { serverNames, allowedToolsValue, parseMcpList, toolPrefix, unionNames } from './mcpServers'
 
 // Copied verbatim from a real `claude mcp list` run: connectors, a plugin
 // server and a project server, which is exactly the mix that was failing.
@@ -139,5 +139,25 @@ describe('allowedToolsValue', () => {
 
   it('is just the built-ins when the project has no servers', () => {
     expect(allowedToolsValue('Read,Edit', 'mcp__riven', [])).toBe('Read,Edit,mcp__riven')
+  })
+})
+
+describe('unionNames', () => {
+  it('adds what is new and keeps what was known', () => {
+    expect(unionNames(['devhub', 'claude.ai Notion'], ['devhub', 'plugin:figma:figma'])).toEqual([
+      'devhub',
+      'claude.ai Notion',
+      'plugin:figma:figma'
+    ])
+  })
+
+  // The refresh must not drop a server only a live session reported — that is
+  // the whole reason the list is unioned rather than replaced.
+  it('never drops a name the second list happens to leave out', () => {
+    expect(unionNames(['from-session'], ['from-list'])).toEqual(['from-session', 'from-list'])
+  })
+
+  it('ignores empty names', () => {
+    expect(unionNames([], ['', 'x'])).toEqual(['x'])
   })
 })
