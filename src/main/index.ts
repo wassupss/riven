@@ -6,6 +6,8 @@ import { execSync } from 'child_process'
 import { registerPtyHandlers, primeShellShim } from './pty'
 import { registerAgentEditHooks } from './agentHooks'
 import { registerGithubHandlers } from './githubPr'
+import { registerGithubDetailHandlers } from './githubPrDetail'
+import { registerGithubReviewHandlers } from './githubPrReview'
 import { registerSystemResume } from './systemResume'
 import { registerPerfHandlers } from './perf'
 import { registerWorkspaceHandlers } from './workspace'
@@ -250,6 +252,8 @@ app.whenReady().then(() => {
   registerBridgeHandlers()
   registerGitHandlers()
   registerGithubHandlers()
+  registerGithubDetailHandlers()
+  registerGithubReviewHandlers()
   registerDiagnosticsHandlers()
   registerDebuggerHandlers()
   registerSessionsHandlers()

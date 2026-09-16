@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useT } from '../../i18n'
+import PrReview from './PrReview'
 import {
   RefreshCw,
   ExternalLink,
@@ -59,11 +60,13 @@ function ReviewBadge({ pr }: { pr: Pr }): JSX.Element | null {
 function Row({
   pr,
   currentBranch,
-  onCheckout
+  onCheckout,
+  onOpen
 }: {
   pr: Pr
   currentBranch: string | null
   onCheckout: (branch: string) => void
+  onOpen: (number: number) => void
 }): JSX.Element {
   const t = useT()
   const isCurrent = !!currentBranch && pr.headRefName === currentBranch
@@ -71,7 +74,7 @@ function Row({
     <div
       className={`pr-row${isCurrent ? ' current' : ''}`}
       style={{ paddingLeft: 10 + pr.depth * 14 }}
-      onDoubleClick={() => window.api.openExternal(pr.url)}
+      onClick={() => onOpen(pr.number)}
       title={`#${pr.number} ${pr.title}\n${pr.headRefName} → ${pr.baseRefName}`}
     >
       {/* A stacked PR is drawn as sitting ON the one below it — the whole point
@@ -129,6 +132,9 @@ export default function PrPanel({
   const t = useT()
   const [data, setData] = useState<PrList | null>(null)
   const [loading, setLoading] = useState(false)
+  // Which PR is being reviewed, if any. The inbox stays mounted underneath so
+  // going back costs nothing.
+  const [reviewing, setReviewing] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -158,6 +164,9 @@ export default function PrPanel({
   ].filter((s) => s.rows.length > 0)
 
   const problem = data && !data.ok ? data.error : null
+
+  if (reviewing !== null)
+    return <PrReview repo={repo} number={reviewing} onBack={() => setReviewing(null)} />
 
   return (
     <div className="pr-panel">
@@ -197,7 +206,13 @@ export default function PrPanel({
                 <span className="pr-section-count">{s.rows.length}</span>
               </div>
               {s.rows.map((pr) => (
-                <Row key={pr.number} pr={pr} currentBranch={branch} onCheckout={onCheckout} />
+                <Row
+                  key={pr.number}
+                  pr={pr}
+                  currentBranch={branch}
+                  onCheckout={onCheckout}
+                  onOpen={setReviewing}
+                />
               ))}
             </div>
           ))}

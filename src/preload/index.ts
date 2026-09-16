@@ -664,7 +664,86 @@ const api = {
       }>
     }> => ipcRenderer.invoke('gh:prs', repoDir),
     createWeb: (repoDir: string): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('gh:createWeb', repoDir)
+      ipcRenderer.invoke('gh:createWeb', repoDir),
+    // One PR with everything needed to review it: status, changed files with
+    // their patches, and the review threads on those lines.
+    detail: (
+      repoDir: string,
+      number: number
+    ): Promise<
+      | {
+          ok: true
+          detail: {
+            number: number
+            title: string
+            url: string
+            body: string
+            author: string
+            state: string
+            isDraft: boolean
+            baseRefName: string
+            headRefName: string
+            headRefOid: string
+            mergeable: string
+            mergeStateStatus: string
+            review: 'approved' | 'changes_requested' | 'review_required' | 'none'
+            checks: { total: number; passed: number; failed: number; pending: number }
+            checkRuns: Array<{ name: string; state: string; url: string | null }>
+            additions: number
+            deletions: number
+            changedFiles: number
+            files: Array<{
+              filename: string
+              previousFilename?: string
+              status: string
+              additions: number
+              deletions: number
+              changes: number
+              patch: string | null
+            }>
+            threads: Array<{
+              id: string
+              path: string
+              line: number | null
+              originalLine: number | null
+              startLine: number | null
+              diffSide: 'LEFT' | 'RIGHT'
+              isResolved: boolean
+              isOutdated: boolean
+              resolvedBy: string | null
+              comments: Array<{
+                id: string
+                databaseId: number | null
+                author: string
+                body: string
+                createdAt: string
+                outdated: boolean
+                diffHunk: string
+              }>
+            }>
+          }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('gh:prDetail', repoDir, number),
+    // Publishes under the user's GitHub account — only ever called from a
+    // button that says so.
+    submitReview: (
+      repoDir: string,
+      number: number,
+      event: 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
+      body: string,
+      comments: Array<{ path: string; line: number; side: 'LEFT' | 'RIGHT'; startLine?: number; body: string }>,
+      commitId: string
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:submitReview', repoDir, number, event, body, comments, commitId),
+    replyThread: (repoDir: string, threadId: string, body: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:replyThread', repoDir, threadId, body),
+    resolveThread: (
+      repoDir: string,
+      threadId: string,
+      resolved: boolean
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('gh:resolveThread', repoDir, threadId, resolved)
   },
   git: {
     info: (folder: string): Promise<{ repoName: string; branch: string | null; isRepo: boolean }> =>
