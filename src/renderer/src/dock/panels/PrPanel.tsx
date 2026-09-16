@@ -176,6 +176,26 @@ function CreateForm({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [needsPush, setNeedsPush] = useState(false)
+  const [info, setInfo] = useState<Awaited<ReturnType<typeof window.api.gh.newPrDraft>> | null>(null)
+
+  // Open with what the PR would be: GitHub's own title rule (one commit lends
+  // its subject, several fall back to the branch), the repo's template, and the
+  // default branch as the base. An empty form asks the user to retype what the
+  // tools already know — and to remember a template they may not have read.
+  useEffect(() => {
+    let alive = true
+    void window.api.gh.newPrDraft(repo).then((d) => {
+      if (!alive) return
+      setInfo(d)
+      setTitle((cur) => cur || d.title)
+      setBody((cur) => cur || d.body)
+      setBase((cur) => cur || d.base)
+      setNeedsPush(!d.pushed)
+    })
+    return () => {
+      alive = false
+    }
+  }, [repo])
 
   const create = async (): Promise<void> => {
     if (!title.trim() || busy) return
@@ -206,32 +226,50 @@ function CreateForm({
     void create()
   }
 
+  const head = info?.branch ?? branch ?? ''
   return (
     <div className="pr-create">
-      <div className="pr-create-head">{t('pr.createTitle', { branch: branch ?? '' })}</div>
+      {/* What is about to be proposed, where, and how much of it. */}
+      <div className="pr-create-head">
+        <span className="pr-create-branches">
+          <span className="pr-create-branch">{head}</span>
+          <span className="pr-create-arrow">→</span>
+          <input
+            className="pr-create-base"
+            value={base}
+            placeholder={t('pr.basePlaceholder')}
+            onChange={(e) => setBase(e.target.value)}
+            title={t('pr.basePlaceholder')}
+          />
+        </span>
+        {info && info.commits > 0 && (
+          <span className="pr-create-commits">{t('pr.nCommits', { n: info.commits })}</span>
+        )}
+      </div>
       <input
-        className="pr-create-input"
+        className="pr-create-input pr-create-title"
         autoFocus
         placeholder={t('pr.titlePlaceholder')}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
       />
       <textarea
-        className="pr-reply-input"
+        className="pr-create-body"
         placeholder={t('pr.bodyPlaceholder')}
         value={body}
         onChange={(e) => setBody(e.target.value)}
       />
-      <input
-        className="pr-create-input"
-        placeholder={t('pr.basePlaceholder')}
-        value={base}
-        onChange={(e) => setBase(e.target.value)}
-      />
-      <label className="pr-create-draft">
-        <input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} />
-        {t('pr.draft')}
-      </label>
+      <div className="pr-create-row">
+        <label className="pr-create-draft">
+          <input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} />
+          {t('pr.draft')}
+        </label>
+        {/* Say where the body came from: a template the user never opened is
+            otherwise indistinguishable from something riven made up. */}
+        {info?.hasTemplate && <span className="pr-create-note">{t('pr.templateUsed')}</span>}
+        {info && !info.pushed && <span className="pr-create-note warn">{t('pr.notPushed')}</span>}
+        {info?.error && <span className="pr-create-note warn">{info.error}</span>}
+      </div>
       {error && <div className="pr-create-error">{error}</div>}
       <div className="pr-reply-actions">
         {needsPush && branch && (

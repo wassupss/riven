@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron'
 import { execFile, spawn } from 'child_process'
+import { promises as fsp } from 'fs'
+import * as path from 'path'
 import { promisify } from 'util'
 import { resolveBin } from './shellPath'
 
@@ -294,6 +296,100 @@ export async function pushBranch(repoDir: string, branch: string): Promise<Creat
   }
 }
 
+export interface NewPrDraft {
+  // What the form should open with: the branch, where it would land, the title
+  // GitHub itself would pick, and the repo's own template.
+  branch: string
+  base: string
+  title: string
+  body: string
+  // Commits this branch has that the base does not — the form says how much is
+  // about to be proposed, and an empty list is why "create" would fail.
+  commits: number
+  hasTemplate: boolean
+  pushed: boolean
+  error?: string
+}
+
+// The repo's PR template, if it keeps one. GitHub looks in these places (and is
+// case-insensitive about the name); riven reads the same ones so the form opens
+// with what the project expects a PR to say, instead of an empty box that the
+// user then has to remember to fill from memory.
+const TEMPLATE_PATHS = [
+  '.github/pull_request_template.md',
+  '.github/PULL_REQUEST_TEMPLATE.md',
+  'docs/pull_request_template.md',
+  'docs/PULL_REQUEST_TEMPLATE.md',
+  'pull_request_template.md',
+  'PULL_REQUEST_TEMPLATE.md'
+]
+
+async function readTemplate(repoDir: string): Promise<string> {
+  for (const rel of TEMPLATE_PATHS) {
+    try {
+      return await fsp.readFile(path.join(repoDir, rel), 'utf8')
+    } catch {
+      /* try the next place GitHub would look */
+    }
+  }
+  // A directory of templates (.github/PULL_REQUEST_TEMPLATE/*.md) is a choice
+  // GitHub makes via a query parameter; picking one for the user would be
+  // guessing, so that case falls through to an empty body.
+  return ''
+}
+
+async function git(repoDir: string, args: string[]): Promise<string> {
+  try {
+    const { stdout } = await pexec('git', ['-C', repoDir, ...args], { timeout: 10000 })
+    return stdout.trim()
+  } catch {
+    return ''
+  }
+}
+
+export async function newPrDraft(repoDir: string): Promise<NewPrDraft> {
+  const branch = await git(repoDir, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const empty: NewPrDraft = {
+    branch,
+    base: '',
+    title: '',
+    body: '',
+    commits: 0,
+    hasTemplate: false,
+    pushed: false
+  }
+  if (!branch || branch === 'HEAD') return { ...empty, error: 'not on a branch' }
+
+  // The repo's default branch is what a PR lands on unless told otherwise.
+  const viewed = await gh(repoDir, ['repo', 'view', '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name'])
+  const base = viewed.ok ? viewed.stdout.trim() : ''
+  const range = base ? `origin/${base}..HEAD` : ''
+  const log = range ? await git(repoDir, ['log', '--format=%s', range]) : ''
+  const subjects = log ? log.split('\n').filter(Boolean) : []
+  // GitHub's own rule, reproduced: one commit lends the PR its subject, several
+  // fall back to the branch name — nobody wants "wip" as a pull request title.
+  const title = subjects.length === 1 ? subjects[0] : humanizeBranch(branch)
+  const body = await readTemplate(repoDir)
+  const pushed = !!(await git(repoDir, ['rev-parse', '--verify', `origin/${branch}`]))
+  return {
+    branch,
+    base,
+    title,
+    body,
+    commits: subjects.length,
+    hasTemplate: !!body,
+    pushed
+  }
+}
+
+// feat/some-thing → "Some thing". A branch name is the one description that
+// always exists, and this is how it reads as a sentence.
+export function humanizeBranch(branch: string): string {
+  const last = branch.split('/').pop() ?? branch
+  const words = last.replace(/[-_]+/g, ' ').trim()
+  return words ? words[0].toUpperCase() + words.slice(1) : branch
+}
+
 export interface CreatePrInput {
   title: string
   body: string
@@ -342,6 +438,7 @@ export async function createPullRequest(
 
 export function registerGithubHandlers(): void {
   ipcMain.handle('gh:prs', (_e, repoDir: string, state: PrState) => listPullRequests(repoDir, state))
+  ipcMain.handle('gh:newPrDraft', (_e, repoDir: string) => newPrDraft(repoDir))
   ipcMain.handle('gh:createPr', (_e, repoDir: string, input: CreatePrInput) =>
     createPullRequest(repoDir, {
       title: String(input?.title ?? ''),

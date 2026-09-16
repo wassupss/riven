@@ -665,6 +665,20 @@ const api = {
         depth: number
       }>
     }> => ipcRenderer.invoke('gh:prs', repoDir, state ?? 'open'),
+    // What a new PR from this branch would start as: the base it lands on, the
+    // title GitHub itself would choose, and the repo's PR template.
+    newPrDraft: (
+      repoDir: string
+    ): Promise<{
+      branch: string
+      base: string
+      title: string
+      body: string
+      commits: number
+      hasTemplate: boolean
+      pushed: boolean
+      error?: string
+    }> => ipcRenderer.invoke('gh:newPrDraft', repoDir),
     // Opens a pull request from inside riven. The body goes to `gh` on stdin.
     createPr: (
       repoDir: string,

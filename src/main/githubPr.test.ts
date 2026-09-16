@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { summariseChecks, reviewStateOf, buildStacks, toPullRequests } from './githubPr'
+import { summariseChecks, reviewStateOf, buildStacks, toPullRequests, humanizeBranch } from './githubPr'
 
 describe('summariseChecks', () => {
   // gh puts both shapes in one array — a CheckRun reports status+conclusion, a
@@ -164,5 +164,24 @@ describe('toPullRequests', () => {
     const mine = toPullRequests(raw, 'me').find((p) => p.number === 1)!
     expect(mine.review).toBe('approved')
     expect(mine.checks).toEqual({ total: 1, passed: 1, failed: 0, pending: 0 })
+  })
+})
+
+describe('humanizeBranch', () => {
+  it('reads a branch name as a sentence', () => {
+    expect(humanizeBranch('feat/kill-port')).toBe('Kill port')
+    expect(humanizeBranch('fix/pr_review_layout')).toBe('Pr review layout')
+  })
+
+  it('keeps a branch that is already a word', () => {
+    expect(humanizeBranch('main')).toBe('Main')
+  })
+
+  it('uses the last segment of a nested branch', () => {
+    expect(humanizeBranch('users/hs/feat/new-thing')).toBe('New thing')
+  })
+
+  it('gives back something rather than nothing for an odd name', () => {
+    expect(humanizeBranch('feat/')).toBe('feat/')
   })
 })

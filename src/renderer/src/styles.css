@@ -4674,8 +4674,73 @@ select {
   background: var(--bg);
 }
 .pr-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: var(--text-2xs);
   color: var(--fg-dim);
+}
+.pr-create-branches {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.pr-create-branch {
+  font-family: var(--font-mono);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-create-arrow {
+  opacity: 0.6;
+}
+/* The base is the one field here that changes where the work lands, so it is
+   editable in place rather than buried under the body. */
+.pr-create-base {
+  width: 140px;
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+.pr-create-commits {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+}
+.pr-create-title {
+  font-size: var(--text-sm);
+}
+.pr-create-body {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  padding: 7px 9px;
+}
+.pr-create-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pr-create-note {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.pr-create-note.warn {
+  color: var(--warning);
 }
 .pr-create-input {
   width: 100%;
