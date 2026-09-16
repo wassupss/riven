@@ -30,6 +30,25 @@ export interface RunningSubagent {
 
 export const isSubagentTool = (name: string): boolean => name === 'Agent' || name === 'Task'
 
+// What a group of tool calls should say about itself.
+//
+//   running  — something in it is still going: the live verb + what it is on
+//   last     — all finished, but nothing has happened since: keep naming the
+//              one that just ran, because it is still the newest thing the
+//              agent did. Folding straight to "3 commands" dropped the only
+//              line that said what was going on and made the pane look idle
+//              between steps.
+//   summary  — the turn moved on (the agent spoke, or it ended): the count and
+//              the edit totals are the useful residue.
+export function toolGroupMode(
+  tools: Array<{ done?: boolean; interrupted?: boolean }>,
+  trailing: boolean
+): 'running' | 'last' | 'summary' {
+  if (tools.some((tl) => !tl.done)) return 'running'
+  if (tools.some((tl) => tl.interrupted)) return 'summary'
+  return trailing ? 'last' : 'summary'
+}
+
 export function activeSubagents(lines: SubagentLine[]): RunningSubagent[] {
   const running = new Map<string, RunningSubagent>()
   for (const l of lines) {

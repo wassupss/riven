@@ -44,7 +44,7 @@ import { useUI } from '../../state/ui'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
-import { activeSubagents, isQuiet } from '../../lib/subagents'
+import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 
 // Nothing from a delegated agent for this long and the strip says so. Three
 // minutes is past any normal single step; it is not a verdict, just the point
@@ -377,7 +377,15 @@ function SubagentCard({
   )
 }
 
-const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolLine[] }): JSX.Element {
+const ToolGroup = memo(function ToolGroup({
+  tools,
+  // This group is the last thing in a turn that is still going — nothing has
+  // been said since it ran.
+  trailing = false
+}: {
+  tools: ToolLine[]
+  trailing?: boolean
+}): JSX.Element {
   const t = useT()
   // Running = a tool in this group is still awaiting its result. Derived per-tool
   // (each ToolLine gets `done` when its toolResult arrives) so a finished tool
@@ -386,6 +394,7 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolLine[] }): JSX
   // Interrupted is likewise per-tool: stopping a turn only labels the calls that
   // were still in flight, so tools that already returned keep reading as done.
   const interrupted = tools.some((tl) => tl.interrupted)
+  const mode = toolGroupMode(tools, trailing)
   const [open, setOpen] = useState(false)
   let added = 0
   let removed = 0
@@ -407,8 +416,18 @@ const ToolGroup = memo(function ToolGroup({ tools }: { tools: ToolLine[] }): JSX
         <span className="chat-tool-ico">
           <Wrench size={12} />
         </span>
-        {running ? (
+        {mode === 'running' ? (
           <span className="chat-shimmer-text">
+            {t(TOOL_VERB[latest?.name ?? ''] ?? 'chat.tools.run')}
+            {latest?.detail ? ` · ${latest.detail}` : ''}
+          </span>
+        ) : mode === 'last' ? (
+          // A finished command, still the newest thing that happened. Folding
+          // straight back to "3 commands" threw away the one line that said what
+          // the agent is actually doing, and left the pane looking idle between
+          // steps. It keeps saying what just ran until something replaces it: the
+          // next tool call, or the agent starting to speak.
+          <span className="tg-title tg-last">
             {t(TOOL_VERB[latest?.name ?? ''] ?? 'chat.tools.run')}
             {latest?.detail ? ` · ${latest.detail}` : ''}
           </span>
@@ -536,7 +555,9 @@ const ChatMessage = memo(function ChatMessage({
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
-          <ToolGroup key={`g${i}`} tools={g.tools} />
+          // Trailing only while the turn is live: once it is over, the summary
+          // ("3 commands · +12 −4") is the more useful thing to leave behind.
+          <ToolGroup key={`g${i}`} tools={g.tools} trailing={!msg.done && i === groups.length - 1} />
         )
       )}
       <div className="chat-turn-foot">

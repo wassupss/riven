@@ -1,5 +1,32 @@
 import { describe, it, expect } from 'vitest'
-import { activeSubagents, isQuiet, isSubagentTool, type SubagentLine } from './subagents'
+import { activeSubagents, isQuiet, isSubagentTool, toolGroupMode, type SubagentLine } from './subagents'
+
+describe('toolGroupMode', () => {
+  const run = { done: false }
+  const fin = { done: true }
+
+  it('is running while any call in the group is still out', () => {
+    expect(toolGroupMode([fin, run], true)).toBe('running')
+    expect(toolGroupMode([fin, run], false)).toBe('running')
+  })
+
+  // The point of the change: a finished command stays named until something
+  // replaces it, instead of collapsing to "1 command" the instant it returns.
+  it('keeps naming the last command while nothing has happened since', () => {
+    expect(toolGroupMode([fin], true)).toBe('last')
+    expect(toolGroupMode([fin, fin], true)).toBe('last')
+  })
+
+  // Once the agent speaks, a text block follows this group — it is no longer
+  // trailing — and the count is the more useful thing to leave behind.
+  it('falls back to the summary once the turn has moved on', () => {
+    expect(toolGroupMode([fin], false)).toBe('summary')
+  })
+
+  it('summarises a group that was cut off, so "stopped" is not hidden', () => {
+    expect(toolGroupMode([{ done: true, interrupted: true }], true)).toBe('summary')
+  })
+})
 
 const T0 = 1_000_000
 

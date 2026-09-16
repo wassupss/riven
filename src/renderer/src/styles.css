@@ -5094,6 +5094,13 @@ select {
   font-size: var(--text-2xs);
   color: var(--accent);
 }
+/* The last thing that ran, still on show because nothing has replaced it yet.
+   Reads as settled, not running: no shimmer, but not dimmed into the
+   summary's grey either. */
+.tg-title.tg-last {
+  color: var(--fg-dim);
+}
+
 /* Delegated agents still out there — pinned above the composer, so work that
    scrolled out of the transcript is still accounted for. */
 .chat-agents-live {
