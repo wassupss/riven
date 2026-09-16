@@ -347,6 +347,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pr.approve': { ko: '승인', en: 'Approve' },
   'pr.diffTooLarge': { ko: 'GitHub이 이 파일의 diff를 보내지 않았어요 (너무 큼).', en: "GitHub didn't send a diff for this file (too large)." },
   'pr.binaryFile': { ko: '바이너리 파일', en: 'Binary file' },
+  'chat.subagent.quiet': { ko: '{t}째 아무 활동 없음', en: 'nothing for {t}' },
   'pr.openInEditor': { ko: '에디터에서 열기', en: 'Open in editor' },
   'pr.loadingDiff': { ko: 'diff 불러오는 중…', en: 'Loading diff…' },
   'pr.pending': { ko: '작성 중', en: 'Pending' },

@@ -44,6 +44,12 @@ import { useUI } from '../../state/ui'
 import { useT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
+import { activeSubagents, isQuiet } from '../../lib/subagents'
+
+// Nothing from a delegated agent for this long and the strip says so. Three
+// minutes is past any normal single step; it is not a verdict, just the point
+// where "still working?" becomes a fair question.
+const QUIET_AGENT_MS = 3 * 60_000
 
 // Native agent-chat panel — visual design ported 1:1 from the Swift ChatViews:
 // user turns are a left-aligned accent-tinted bubble, assistant turns are an
@@ -64,6 +70,9 @@ interface ToolLine {
   // Tools that already returned keep their own "done" — stopping a turn must not
   // retroactively re-label work that actually completed.
   interrupted?: boolean
+  // When the call appeared. For a delegated agent this is what makes "running
+  // for 12 minutes" and "nothing since 15:41" possible to say at all.
+  startedAt?: number
 }
 // Ordered content of an assistant turn: text and tool calls in the exact sequence
 // they streamed, so a tool/subagent card renders in its real position (not hoisted
@@ -334,7 +343,7 @@ function SubagentCard({
   const stopped = !!task.error || !!task.interrupted
   const state = stopped ? ' err' : running ? ' running' : ' done'
   return (
-    <div className={`chat-subagent${state}`}>
+    <div className={`chat-subagent${state}`} data-agent-id={task.toolId ?? undefined}>
       <button className="chat-subagent-head" onClick={() => setOpen((o) => !o)}>
         <span className={`tg-chevron${open ? ' open' : ''}`}>›</span>
         <Bot size={13} />
@@ -1356,10 +1365,25 @@ export default function ChatPanel({
     }
   }, [workspace])
 
+  // Delegated agents that have not come back yet. Only the turn in flight can
+  // have any, so this looks at the last message rather than the whole
+  // transcript.
+  const lastMsg = msgs[msgs.length - 1]
+  const runningAgents = useMemo(
+    () =>
+      lastMsg && lastMsg.role === 'assistant' && !lastMsg.done ? activeSubagents(lastMsg.tools) : [],
+    [lastMsg]
+  )
+
+  // The clock ticks once a minute normally — enough for "2h ago" on old turns.
+  // While something is delegated it has to tick faster, because that counter is
+  // the only thing that distinguishes an agent that is working from one that
+  // has silently died.
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000)
+    const every = runningAgents.length > 0 ? 5_000 : 60_000
+    const id = setInterval(() => setNow(Date.now()), every)
     return () => clearInterval(id)
-  }, [])
+  }, [runningAgents.length])
 
   useEffect(() => {
     busyRef.current = busy
@@ -1576,7 +1600,8 @@ export default function ChatPanel({
             code: e.code,
             path: e.path,
             toolId: e.toolId,
-            parent: e.parent
+            parent: e.parent,
+            startedAt: Date.now()
           }
           patchLast((m) => ({ ...m, tools: [...m.tools, tool], items: [...m.items, { type: 'tool', tool }] }))
           break
@@ -2464,6 +2489,38 @@ export default function ChatPanel({
         <button className="chat-jump-bottom" onClick={scrollToBottom} title={t('chat.jumpBottom')}>
           <ChevronDown size={16} />
         </button>
+      )}
+
+      {/* Work that is happening somewhere else. A delegated agent's card sits
+          where it appeared in the transcript, which stops being visible the
+          moment the conversation scrolls on — and an agent that dies looks
+          exactly like one that is thinking, so the strip carries how long it
+          has run and says when nothing has happened for a while. */}
+      {runningAgents.length > 0 && (
+        <div className="chat-agents-live">
+          {runningAgents.map((a) => {
+            const quiet = isQuiet(a, now, QUIET_AGENT_MS)
+            return (
+              <button
+                key={a.toolId}
+                className={`cal-item${quiet ? ' quiet' : ''}`}
+                title={`${a.label} · ${fmtDur(now - a.startedAt)}${
+                  quiet ? ` · ${t('chat.subagent.quiet', { t: fmtDur(now - a.lastActivityAt) })}` : ''
+                }`}
+                onClick={() => {
+                  document
+                    .querySelector(`[data-agent-id="${a.toolId}"]`)
+                    ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                }}
+              >
+                <Bot size={11} className={quiet ? undefined : 'spin-slow'} />
+                <span className="cal-label">{a.label}</span>
+                {a.steps > 0 && <span className="cal-steps">{a.steps}</span>}
+                <span className="cal-time">{fmtDur(now - a.startedAt)}</span>
+              </button>
+            )
+          })}
+        </div>
       )}
 
       <div className={`chat-composer${input.trim().startsWith('/') ? ' is-command' : ''}`}>
