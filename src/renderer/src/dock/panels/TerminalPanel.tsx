@@ -87,6 +87,17 @@ export default function TerminalPanel({
   const convoTitleRef = useRef<string | null>(null)
   const agentRef = useRef(false)
   const agentNameRef = useRef<string | null>(null)
+  // The conversation this pane's CLI is in, plus the machinery to keep asking
+  // for its name. A generation counter invalidates in-flight reads when the
+  // session changes, so a slow answer for the previous conversation can never
+  // land on the new one.
+  const sessionIdRef = useRef<string | null>(null)
+  const titleGenRef = useRef(0)
+  const titleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
+  const clearTitleTimers = (): void => {
+    for (const t of titleTimersRef.current) clearTimeout(t)
+    titleTimersRef.current = []
+  }
 
   const applyAutoTitle = (name?: string | null): void => {
     if (!api || manualRef.current) return
@@ -100,6 +111,34 @@ export default function TerminalPanel({
       autoSetRef.current = title
       api.setTitle(title)
     }
+  }
+
+  // Ask what this conversation is called, and keep asking.
+  //
+  // The hook that tells riven the session id fires when the user SUBMITS a
+  // prompt — before the CLI has written that turn to the transcript. A single
+  // read right then usually finds no file at all, and reading once per session
+  // id meant that miss was permanent: the tab stayed "claude" for the whole
+  // conversation. So an empty answer is retried on a short backoff, and every
+  // finished turn refreshes it — the CLI replaces the opening line with a
+  // summarised title later, and that is the name worth showing.
+  const refreshConvoTitle = (sessionId: string, gen: number, backoff: number[]): void => {
+    void window.api.chat
+      .sessionTitle(pathOf(workspace), sessionId, claudeConfigDirFor(workspace))
+      .then((title) => {
+        if (gen !== titleGenRef.current) return // a different conversation now
+        const clean = title?.trim()
+        if (clean) {
+          if (clean === convoTitleRef.current) return
+          convoTitleRef.current = clean
+          if (agentRef.current) applyAutoTitle(agentNameRef.current)
+          return
+        }
+        const [next, ...rest] = backoff
+        if (next === undefined) return
+        titleTimersRef.current.push(setTimeout(() => refreshConvoTitle(sessionId, gen, rest), next))
+      })
+      .catch(() => {})
   }
 
   useEffect(() => {
@@ -118,10 +157,17 @@ export default function TerminalPanel({
       })
     // Attention (finished / needs input) is main's flag: it survives remounts and
     // clears when the user looks (pty:seen), not when this component guesses.
+    let wasBusy = false
     const offStatus = window.api.pty.onStatus(({ key, busy: b, attention: a }) => {
       if (key !== sessionKey) return
       setBusy(b)
       setAttention(a)
+      // A finished turn is when the CLI has just written to the transcript, and
+      // eventually when it replaces the opening line with a summarised title.
+      if (wasBusy && !b && sessionIdRef.current) {
+        refreshConvoTitle(sessionIdRef.current, titleGenRef.current, [])
+      }
+      wasBusy = b
     })
     const offAgent = window.api.pty.onAgent(({ key, agent, name }) => {
       if (key !== sessionKey) return
@@ -136,24 +182,19 @@ export default function TerminalPanel({
     const offAgentSession = window.api.pty.onAgentSession(({ key, sessionId }) => {
       if (key !== sessionKey) return
       setPaneState(workspace, sessionKey, { session: sessionId })
-      if (!sessionId) {
-        // The CLI session ended, so the tab is a plain terminal again.
-        convoTitleRef.current = null
-        applyAutoTitle(agentNameRef.current)
-        return
-      }
-      // The title only exists once the CLI has written enough of the transcript,
-      // so this is re-read on each hook rather than once: an early call returns
-      // the opening message, a later one the summarised title.
-      void window.api.chat
-        .sessionTitle(pathOf(workspace), sessionId, claudeConfigDirFor(workspace))
-        .then((title) => {
-          const clean = title?.trim()
-          if (!clean) return
-          convoTitleRef.current = clean
-          if (agentRef.current) applyAutoTitle(agentNameRef.current)
-        })
-        .catch(() => {})
+      if (sessionId === sessionIdRef.current) return
+      // A different conversation: abandon the old one's pending reads and its
+      // name. Keeping the name would leave the PREVIOUS conversation's title on
+      // a tab that has moved on — which is what happened whenever the new
+      // conversation's transcript wasn't readable yet.
+      titleGenRef.current++
+      clearTitleTimers()
+      sessionIdRef.current = sessionId
+      convoTitleRef.current = null
+      applyAutoTitle(agentNameRef.current)
+      // The CLI session ended, so the tab is a plain terminal again.
+      if (!sessionId) return
+      refreshConvoTitle(sessionId, titleGenRef.current, [800, 2000, 5000, 12000, 30000])
     })
     // A bell is a stream, not an event: a beeping TUI can ring many times a
     // second, and one notification each is unusable. Coalesce, and apply the same
@@ -185,6 +226,7 @@ export default function TerminalPanel({
       offBell()
       offAgentSession()
       offDone()
+      clearTitleTimers()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey, paneId, api])

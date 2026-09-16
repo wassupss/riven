@@ -98,10 +98,11 @@ export default function ChangesPanel({ workspace }: { workspace: string }): JSX.
               onClick={() => acceptAll(workspace)}
               title={t('changes.acceptAll')}
             >
-              <CheckCheck size={13} /> {t('changes.acceptAll')}
+              <CheckCheck size={13} />{' '}
+              <span className="changes-act-label">{t('changes.acceptAll')}</span>
             </button>
             <button className="changes-act revert" onClick={revertAll} title={t('changes.revertAll')}>
-              <Undo2 size={13} /> {t('changes.revertAll')}
+              <Undo2 size={13} /> <span className="changes-act-label">{t('changes.revertAll')}</span>
             </button>
           </div>
         )}

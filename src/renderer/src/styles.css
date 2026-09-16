@@ -116,6 +116,9 @@
   /* ---- hairlines & edges (white-alpha reads crisper than solid gray on
          dark; the light block below flips the whole family to black-alpha) ---- */
   --hairline: rgb(255 255 255 / 0.06); /* structural dividers */
+  /* The seam between dock tabs. Stronger than a structural hairline on purpose:
+     it runs only 30px and has to separate two same-coloured tabs at a glance. */
+  --tab-seam: rgb(255 255 255 / 0.12);
   --border-soft: rgb(255 255 255 / 0.07); /* legacy alias, kept */
   --edge: rgb(255 255 255 / 0.09); /* control borders */
   --edge-strong: rgb(255 255 255 / 0.14);
@@ -186,6 +189,7 @@
 
   /* structure: black-alpha hairlines on a light canvas */
   --hairline: rgb(0 0 0 / 0.08);
+  --tab-seam: rgb(0 0 0 / 0.14);
   --border-soft: rgb(0 0 0 / 0.09);
   --edge: rgb(0 0 0 / 0.12);
   --edge-strong: rgb(0 0 0 / 0.18);
@@ -413,6 +417,8 @@ select {
   --dv-activegroup-hiddenpanel-tab-color: var(--fg-dim);
   --dv-inactivegroup-visiblepanel-tab-color: var(--fg-dim);
   --dv-inactivegroup-hiddenpanel-tab-color: var(--fg-dim);
+  /* Left transparent: this variable also paints dockview's focus outline and
+     context-menu borders. The seam between tabs is drawn by .dv-tab::before. */
   --dv-tab-divider-color: transparent;
   --dv-separator-border: var(--hairline);
   --dv-paneview-header-border-color: var(--hairline);
@@ -441,10 +447,34 @@ select {
   color: var(--fg);
   background: var(--hover);
 }
+/* Seam between tabs — the native strip draws a hairline down every tab's edge
+   (Dock/DockTabBar.swift: "right divider hairline"). Without it a row of
+   identically named panes ("❯ 터미널" ×7) reads as one continuous bar with no
+   sign of where a tab ends. dockview ships the same rule but scopes it to
+   .dv-tabs-container.dv-horizontal, a class this version never sets, so it
+   never renders. Drawn above the tab's content on purpose: an agent-tinted tab
+   paints its colour across the full tab and would otherwise swallow the seam. */
+.dv-tab:not(:first-child)::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--tab-seam);
+  pointer-events: none;
+  z-index: 5;
+}
 .dv-tab.dv-active-tab {
   color: var(--fg);
   background: var(--bg);
   box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+/* Only the FOCUSED group shows the hot ember marker; elsewhere the active tab
+   still reads as active, just not as the place you are typing. Native parity —
+   DockTabBar.swift fades the same underline to 25% for an unfocused group. */
+.dv-groupview:not(.dv-active-group) .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 0 color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .dv-sash.dv-active,
 .dv-sash:hover {
@@ -6646,6 +6676,10 @@ select {
   height: 100%;
   min-height: 0;
   background: var(--bg-2);
+  /* This panel is docked: its width is whatever the user dragged it to, with no
+     relation to the window's. Everything narrow-width below is therefore keyed
+     off the PANEL, not the viewport. */
+  container-type: inline-size;
 }
 .changes-head {
   display: flex;
@@ -6717,6 +6751,10 @@ select {
   cursor: pointer;
   font-size: var(--text-2xs);
   color: var(--fg-dim);
+  /* Never let "모두 되돌리기" wrap inside the button: a squeezed panel pushed the
+     label onto two or three lines and the header grew from 30px to 83px. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .changes-act.accept:hover {
   color: var(--success);
@@ -6777,15 +6815,45 @@ select {
   color: var(--success);
 }
 .changes-name {
-  flex: 0 0 auto;
+  /* Shrinkable, so the filename gives way before the row overflows — but it is
+     the one thing that must always be readable, so it goes last. */
+  flex: 0 1 auto;
+  min-width: 0;
   color: var(--fg);
   max-width: 45%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* As the panel narrows, drop what the row can do without, in order: the labels
+   on the bulk actions (each keeps its tooltip), then the directory, then the
+   per-file counts. The filename and its age always survive — at 170px the row
+   used to overflow by 16px and cut the age off entirely. */
+@container (max-width: 300px) {
+  .changes-act-label {
+    display: none;
+  }
+  .changes-act {
+    padding: 2px;
+  }
+}
+@container (max-width: 250px) {
+  .changes-dir {
+    display: none;
+  }
+}
+@container (max-width: 190px) {
+  .changes-stats {
+    display: none;
+  }
+  .changes-name {
+    max-width: none;
+  }
+}
 .changes-dir {
-  flex: 1 1 auto;
+  /* Shrinks far more eagerly than the filename next to it (shrink 8 vs 1), so a
+     squeezed row eats into the directory first and keeps the name readable. */
+  flex: 1 8 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

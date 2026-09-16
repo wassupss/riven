@@ -4,6 +4,8 @@ import type { IDockviewPanelHeaderProps } from 'dockview-react'
 import { useTabBadge } from '../state/tabBadge'
 import { confirmTerminalClose, setChatTitle, setTabColor, widForApi } from './registry'
 import { useAgents, getAgentStatus } from '../state/agents'
+import { useRoster } from '../state/roster'
+import { activityOf } from '../state/rosterActivity'
 import { loadPaneState, useSession } from '../state/session'
 import { tintStyle, hueColor, encodeAvatar, AVATAR_COLOR_COUNT, AVATAR_NONE } from '../lib/avatar'
 import { useT } from '../i18n'
@@ -28,7 +30,13 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   // Re-read the pane's agent status on every roster change so the tab title can
   // shimmer while it's running (native dock-tab parity).
   useAgents((s) => s.version)
-  const status = isChat ? getAgentStatus(api.id) : 'idle'
+  // A TERMINAL's activity doesn't live in the agent registry — that only knows
+  // native chat panes. It comes from main (pty:status / pty:agent) via the
+  // roster, which is also why it survives the pane being unmounted. Reading only
+  // the registry, as this did, pinned every terminal tab to 'idle': a CLI
+  // running in a terminal never shimmered and never showed its done ring.
+  const live = useRoster((s) => s.live[api.id])
+  const status = activityOf(live ?? {}, isChat ? getAgentStatus(api.id) : null).status
 
   useEffect(() => {
     const d = api.onDidTitleChange(() => setTitle(api.title ?? ''))
