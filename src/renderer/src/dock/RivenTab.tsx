@@ -43,7 +43,15 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const dot = status === 'waiting' ? 'attn' : status === 'done' ? 'done' : null
 
   useEffect(() => {
-    const d = api.onDidTitleChange(() => setTitle(api.title ?? ''))
+    // The workspace rail names panes too; tell it whenever this tab is retitled
+    // (a CLI's conversation title, a rename) so the two never disagree.
+    const publish = (): void => {
+      const next = api.title ?? ''
+      setTitle(next)
+      if (useRoster.getState().live[api.id]?.tabTitle !== next) useRoster.getState().patch(api.id, { tabTitle: next })
+    }
+    publish()
+    const d = api.onDidTitleChange(publish)
     return () => d.dispose()
   }, [api])
 

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { activityOf, type Live, type PaneKind, type RosterEntry } from './rosterActivity'
+import { activityOf, terminalRosterTitle, type Live, type PaneKind, type RosterEntry } from './rosterActivity'
 import { useSession } from './session'
 import { getAgentStatus } from './agents'
 
@@ -132,9 +132,9 @@ export function rosterFor(workspace: string): RosterEntry[] {
     if (p.workspace !== workspace) continue
     const l = live[p.id] ?? {}
     if (p.kind === 'terminal' && !l.agent) continue
-    // A terminal's name comes from the running agent (pty:agent); fall back to
-    // the tab title so it is never blank.
-    const title = p.kind === 'terminal' ? l.name || l.title || p.title : p.title
+    // The live tab title wins over the persisted one: a hidden or unmounted
+    // workspace's layout isn't re-saved when a tab is retitled.
+    const title = p.kind === 'terminal' ? terminalRosterTitle(l, p.title) : l.tabTitle || p.title
     // A mounted chat pane's own controller has the richer live view (it knows
     // mid-turn), so it gets a say; completion still comes from the roster,
     // because the panel may not exist to report it.
