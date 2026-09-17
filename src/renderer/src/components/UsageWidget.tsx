@@ -7,7 +7,6 @@ import {
   usedColor,
   remaining,
   remainingColor,
-  fmtTokens,
   pickAccount,
   type PlanLimit
 } from '../state/usage'
@@ -112,8 +111,20 @@ export default function UsageWidget(): JSX.Element | null {
       )}
       {open && (
         <div className="usage-pop usage-pop-left" onClick={(e) => e.stopPropagation()}>
-          <div className="usage-pop-headrow">
-            <span className="usage-pop-head">{t('usage.limitsHead')}</span>
+          {/* The one choice that changes every number here, right where the
+              numbers are: are they what was spent, or what is left. */}
+          <div className="usage-pop-bar">
+            <div className="usage-mode" role="group">
+              {([true, false] as const).map((u) => (
+                <button
+                  key={String(u)}
+                  className={showUsed === u ? 'on' : ''}
+                  onClick={() => setSetting({ usageShowUsed: u })}
+                >
+                  {u ? t('usage.showUsed') : t('usage.showLeft')}
+                </button>
+              ))}
+            </div>
             <button
               className="usage-pin"
               title={t('usage.pin')}
@@ -122,27 +133,13 @@ export default function UsageWidget(): JSX.Element | null {
                 setOpen(false)
               }}
             >
-              <Pin size={12} /> {t('usage.pin')}
+              <Pin size={12} />
             </button>
           </div>
-          {/* Per-account accordion: which CLI, which login, and the current
-              workspace's account open by default. */}
+          {/* Per account: which agent, both plan windows, today's spend and
+              what it went on. */}
           <UsageAccounts />
-          {hasToday && (
-            <>
-              <div className="usage-pop-head">
-                {t('usage.today')} — ${today!.totalCost.toFixed(2)} · {fmtTokens(today!.totalTokens)}
-              </div>
-              {today!.perModel.map((m) => (
-                <div key={m.model} className="usage-row">
-                  <span className="usage-model">{m.model}</span>
-                  <span className="usage-tok">{fmtTokens(m.input + m.output + m.cacheWrite + m.cacheRead)}</span>
-                  <span className="usage-cost">${m.cost.toFixed(2)}</span>
-                </div>
-              ))}
-            </>
-          )}
-          <div className="usage-note">{t('usage.note')}</div>
+          <div className="usage-note">{t('usage.estimate')}</div>
         </div>
       )}
     </span>
