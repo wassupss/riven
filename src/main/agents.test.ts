@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { agentKindOf, codexConfigOverrides, hookToEvent, replyOf, sessionIdOf } from './agents'
 import { titleFromRollout, transcriptFromRollout } from './codexSessions'
-import { codexPolicy, codexToolLines, codexUserInput, itemFailed } from './codexChat'
+import { codexPolicy, codexToolLines, codexUserInput, isPlainApproval, itemFailed } from './codexChat'
 
 describe('hookToEvent', () => {
   it('maps Codex turns and its permission prompt', () => {
@@ -146,5 +146,13 @@ describe('codex chat mapping', () => {
     expect(itemFailed({ status: 'completed', exitCode: 0 })).toBe(false)
     expect(itemFailed({ status: 'completed', exitCode: 2 })).toBe(true)
     expect(itemFailed({ status: 'failed' })).toBe(true)
+  })
+
+  it('accepts only an approval with nothing to fill in', () => {
+    expect(isPlainApproval({ mode: 'form', message: 'Allow notion.search?', requestedSchema: { type: 'object', properties: {} } })).toBe(true)
+    expect(
+      isPlainApproval({ mode: 'form', requestedSchema: { type: 'object', properties: { token: { type: 'string' } }, required: ['token'] } })
+    ).toBe(false)
+    expect(isPlainApproval({ mode: 'url', url: 'https://example.com/login' })).toBe(false)
   })
 })

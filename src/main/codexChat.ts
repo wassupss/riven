@@ -134,6 +134,15 @@ export function codexToolLines(item: Record<string, unknown>): CodexToolLine[] {
   }
 }
 
+// An elicitation that only asks "may I?": a form with no fields to fill in.
+export function isPlainApproval(params: Record<string, unknown>): boolean {
+  if (params.mode !== 'form' && params.mode !== 'openai/form' && params.mode !== 'openaiForm') return false
+  const schema = params.requestedSchema as { properties?: Record<string, unknown>; required?: unknown[] } | null
+  const props = schema?.properties ? Object.keys(schema.properties) : []
+  const required = Array.isArray(schema?.required) ? schema.required : []
+  return props.length === 0 && required.length === 0
+}
+
 export function itemFailed(item: Record<string, unknown>): boolean {
   const status = item.status
   return status === 'failed' || status === 'declined' || (typeof item.exitCode === 'number' && item.exitCode !== 0)
@@ -199,6 +208,12 @@ export class CodexChat {
       args.push('-c', `mcp_servers.riven.url=${JSON.stringify(url)}`)
       args.push('-c', 'mcp_servers.riven.bearer_token_env_var="RIVEN_MCP_TOKEN"')
       args.push('-c', `mcp_servers.riven.tool_timeout_sec=${Math.round(mcpRequestTimeoutMs() / 1000)}`)
+      // Codex asks before every MCP tool call, and a chat pane has nobody to ask
+      // — riven declined on the pane's behalf, so "open a Claude pane" came back
+      // as "user rejected MCP tool call". riven's own tools already confirm with
+      // the user where it matters (an arbitrary terminal command, closing panes),
+      // the same trust a Claude chat pane gives them via --allowedTools.
+      args.push('-c', 'mcp_servers.riven.default_tools_approval_mode="approve"')
     }
     args.push('app-server')
     try {
@@ -345,9 +360,19 @@ export class CodexChat {
       case 'applyPatchApproval':
         this.write({ id, result: { decision: plan ? 'decline' : 'accept' } })
         return
-      case 'mcpServer/elicitation/request':
-        this.write({ id, result: { action: 'decline', content: null, _meta: null } })
+      case 'mcpServer/elicitation/request': {
+        // Another MCP server's tool-call approval: a message with nothing to
+        // fill in. A Claude chat pane allows the servers the user configured, so
+        // this does too (not in plan mode). A form that asks for actual input,
+        // or a URL to visit, needs a person — declined, and said so in the log.
+        const accept = !plan && isPlainApproval(params)
+        if (!accept)
+          console.log(
+            `[codex:${this.key}] declined MCP elicitation from ${String(params.serverName)}: ${String(params.message ?? '').slice(0, 160)}`
+          )
+        this.write({ id, result: accept ? { action: 'accept', content: {}, _meta: null } : { action: 'decline', content: null, _meta: null } })
         return
+      }
       default:
         console.log(`[codex:${this.key}] unanswered request ${method}`, JSON.stringify(params).slice(0, 200))
         this.write({ id, error: { code: -32601, message: `riven does not handle ${method}` } })
