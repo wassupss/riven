@@ -2080,7 +2080,8 @@ export default function ChatPanel({
           el.focus()
         }
       },
-      waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve))
+      waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve)),
+      hasPendingOpening: () => hasInitialText(chatKey)
     })
   }, [chatKey, workspace, sendMessage])
 

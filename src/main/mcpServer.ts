@@ -69,11 +69,13 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     description:
       'Open a riven panel. kind: editor | terminal | chat | search | git | preview | changes. ' +
       'An AGENT to work with belongs in a chat pane: kind="chat" with `agent` = claude (default) or ' +
-      'codex opens that agent natively, with `message` as its first prompt and `title` as its tab ' +
-      'name; the reply is the new pane id, usable with riven_ask_agent. Use kind="terminal" with ' +
+      'codex opens that agent natively, with `model` (claude: opus/sonnet/haiku/fable; codex: ' +
+      'gpt-5.6-terra/gpt-5.6-luna/gpt-5.5), `message` as its first prompt (sent, not waited for) and ' +
+      '`title` as its tab name; the reply is the new pane id. To get an ANSWER, do not pass `message` ' +
+      '— open the pane, then riven_ask_agent(id, question) returns the reply. Use kind="terminal" with ' +
       '`command` only when the user asks for a terminal/CLI or for a command that is not an agent. ' +
       '`dir` places the pane beside the active one: right | below | left | above.',
-    inputSchema: obj({ kind: str, command: str, dir: str, agent: str, message: str, title: str }, ['kind']),
+    inputSchema: obj({ kind: str, command: str, dir: str, agent: str, model: str, message: str, title: str }, ['kind']),
     implemented: true
   },
   {
@@ -225,7 +227,8 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     description:
       "Delegate work to ANOTHER agent in this workspace. `agent` is a title or id from riven_agents. " +
       "A chat pane receives it as a message and, by default, its reply is WAITED for and returned " +
-      "(pass wait=false to return at once). A TERMINAL agent is typed into instead; when riven_agents " +
+      "(pass wait=false to return at once); if it is mid-turn the message waits for that turn to " +
+      "finish, so the reply is always the answer to THIS message. A TERMINAL agent is typed into instead; when riven_agents " +
       "shows replies=true (Claude Code, Codex) its answer is waited for and returned the same way, " +
       "otherwise delivery is async. A busy agent is refused — ask again once it is idle.",
     inputSchema: obj({ agent: str, message: str, wait: bool }, ['agent', 'message']),

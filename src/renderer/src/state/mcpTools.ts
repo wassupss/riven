@@ -2,7 +2,7 @@ import { useSession, pathOf, widForPane, loadPaneState } from './session'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
-import { listAgents, resolveAgent } from './agents'
+import { askChatTurn, listAgents, resolveAgent } from './agents'
 import { contextBus } from '../bridge/contextBus'
 import {
   ensureEditorIn,
@@ -256,7 +256,8 @@ async function openPanel(args: Args, c: Ctx): Promise<string> {
     const title = s(args.title).trim() || undefined
     const message = s(args.message).trim() || undefined
     // Beside the pane that asked, without taking the user's focus.
-    const id = addChat(message, dir ?? 'right', undefined, c.chatPane ?? undefined, title, true, undefined, undefined, ws, cli)
+    const model = s(args.model).trim() || undefined
+    const id = addChat(message, dir ?? 'right', model, c.chatPane ?? undefined, title, true, undefined, undefined, ws, cli)
     if (!id) return notMounted(c)
     return JSON.stringify({ opened: 'chat', agent: cli, id, title: title ?? (cli === 'codex' ? 'Codex' : 'chat') })
   }
@@ -571,14 +572,12 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
   if (!target)
     return `error: "${entry.title}" exists but its panel isn't mounted, so it cannot receive a message. Switch to that workspace and try again.`
-  const replyP = target.waitNext()
-  target.send(message)
-  if (!wait) return `delegated to "${target.getTitle()}" (async)`
-  const reply = await Promise.race([
-    replyP,
-    new Promise<string>((r) => setTimeout(() => r('(no reply within 5 min)'), ASK_TIMEOUT_MS))
-  ])
-  return `[${target.getTitle()}] ${reply}`
+  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)')
+  if (!wait) {
+    void answer
+    return `delegated to "${target.getTitle()}" (async)`
+  }
+  return `[${target.getTitle()}] ${await answer}`
 }
 // The next answer a terminal's CLI ends a turn with. Registered BEFORE the
 // message is typed, so a quick turn can't finish in between.
@@ -614,15 +613,16 @@ function groupAddAgent(args: Args, c: Ctx): string {
   const persona = s(args.persona)
   const model = s(args.model)
   const parent = s(args.parent)
-  // Prime the teammate with its role/persona as the first message, and spawn it on
-  // the requested model so a team can mix models (engineering: opus architect +
-  // sonnet coder). `parent` is recorded in the priming so the agent knows who it
-  // reports to.
+  // The teammate's role goes in as its SYSTEM prompt, on the requested model so
+  // a team can mix models (engineering: opus architect + sonnet coder). It used
+  // to be sent as the first chat message, which spent a whole turn on "OK, I'll
+  // be that" — and a question asked right after landed behind that turn and got
+  // its answer back instead. `parent` is recorded so it knows who it reports to.
   const lines: string[] = []
   if (persona) lines.push(`[역할] ${persona}`)
   if (name) lines.push(`[이름] ${name}`)
   if (parent) lines.push(`[보고 대상] ${parent}`)
-  const initial = lines.length ? `${lines.join('\n')}\n이 역할로 이후 작업을 수행하세요.` : undefined
+  const role = lines.length ? lines.join('\n') : undefined
   // Open the teammate BESIDE the pane that asked for it, IN the caller's
   // workspace — `refId` only picks a neighbour within a dock, so without naming
   // the workspace the pane still materialised in whichever dock was on screen.
@@ -632,14 +632,14 @@ function groupAddAgent(args: Args, c: Ctx): string {
   const cli = chatCli(args.agent)
   if (typeof cli !== 'string') return cli.error
   const id = addChat(
-    initial,
+    undefined,
     'right',
     model || undefined,
     c.chatPane ?? undefined,
     name || undefined,
     true,
     undefined,
-    undefined,
+    role,
     c.ws,
     cli
   )
@@ -728,12 +728,7 @@ async function startPipeline(args: Args, c: Ctx): Promise<string> {
     }
     if (!target) return `error: could not open a pane for stage "${stageName}"`
     const prompt = `${instruction ? instruction + '\n\n' : ''}[이전 단계 산출물]\n${carry}`
-    const replyP = target.waitNext()
-    target.send(prompt)
-    carry = await Promise.race([
-      replyP,
-      new Promise<string>((r) => setTimeout(() => r('(stage timed out)'), ASK_TIMEOUT_MS))
-    ])
+    carry = await askChatTurn(target, prompt, ASK_TIMEOUT_MS, '(stage timed out)')
     out.push(`## ${stageName}\n${carry}`)
   }
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`

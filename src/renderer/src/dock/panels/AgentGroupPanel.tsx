@@ -15,7 +15,7 @@ import {
   AlertCircle,
   Square
 } from 'lucide-react'
-import { useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
+import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
 import {
   useAgentGroups,
   type GroupMember,
@@ -586,12 +586,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         // The next stage is a FRESH agent — it needs the prior stage's result as
         // input. That handoff is the header shown in the stage's chat.
         const prompt = `${st.role.trim() ? st.role.trim() + '\n\n' : ''}${t('pipe.handoffHeader')}\n${carry}`
-        const replyP = target.waitNext()
-        target.send(prompt)
-        carry = await Promise.race([
-          replyP,
-          new Promise<string>((r) => setTimeout(() => r('(timeout)'), PIPE_TIMEOUT_MS))
-        ])
+        carry = await askChatTurn(target, prompt, PIPE_TIMEOUT_MS, '(timeout)')
         if (isRunCanceled(runId)) break // canceled while this stage was running
         setRunStage(runId, i, { status: carry === '(timeout)' ? 'error' : 'done' })
       }
