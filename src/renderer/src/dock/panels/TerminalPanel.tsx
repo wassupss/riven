@@ -240,10 +240,12 @@ export default function TerminalPanel({
       onMouseDown={() => markPaneSeen(sessionKey)}
       onKeyDownCapture={() => markPaneSeen(sessionKey)}
     >
-      {/* A finished CLI turn wears the same travelling ember ring as a finished
-          chat turn, until someone looks. It had no ring at all — only a tab dot —
-          so the two kinds of agent announced the same event differently. */}
-      {attention === 'finished' && <span className="chat-ring" aria-hidden />}
+      {/* A finished turn, or a CLI waiting on you, wears the same travelling
+          ember ring as a chat pane, until someone looks — the native rule: the
+          ring means "done or needs you", the tab dot says which. (A finished
+          terminal had no ring at all, and "needs you" had its own ring that
+          repainted every frame.) */}
+      {(attention === 'finished' || attention === 'needs_input') && <span className="chat-ring" aria-hidden />}
       <TerminalPane
         sessionKey={sessionKey}
         cwd={pathOf(workspace)}

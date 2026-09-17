@@ -519,7 +519,7 @@ select {
    completion waiting, a terminal asking for input — already says "this is the
    pane"; the focus frame on top of it landed half a pixel off and read as a
    doubled, shimmering edge. The state ring carries more meaning, so it wins. */
-.workbench .dv-groupview.dv-active-group:has(.chat-ring, .terminal-panel.attn)::after {
+.workbench .dv-groupview.dv-active-group:has(.chat-ring)::after {
   content: none;
 }
 /* Window dragging now lives in the full-width TopHeader, so the dock tab strip
@@ -2369,54 +2369,18 @@ select {
   background: var(--bg);
   position: relative;
 }
-/* State ring drawn as an overlay ABOVE the terminal — the xterm canvas fills the
-   panel edge-to-edge, so an inset box-shadow on the panel itself sits behind it
-   and is invisible. */
-.terminal-panel.attn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: var(--z-panel);
-  pointer-events: none;
-}
-/* Attention: a themed light that travels around the panel border — a bright
-   ember head chasing a dim tail, instead of a whole-border blink. The mask
-   clips the rotating conic gradient to a 1.5px ring. */
-@property --attn-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-.terminal-panel.attn::after {
-  padding: 1.5px;
-  border-radius: 2px;
-  background: conic-gradient(
-    from var(--attn-angle),
-    color-mix(in srgb, var(--accent) 6%, transparent) 0deg,
-    color-mix(in srgb, var(--accent) 6%, transparent) 200deg,
-    color-mix(in srgb, var(--accent) 55%, transparent) 300deg,
-    var(--accent) 350deg,
-    color-mix(in srgb, var(--accent) 6%, transparent) 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: attn-run 2.2s linear infinite;
-}
-@keyframes attn-run {
-  to {
-    --attn-angle: 360deg;
-  }
-}
+/* A terminal that needs you wears the same ember ring as every other agent
+   pane (the .chat-ring element, see TerminalPanel). It used to draw its own:
+   an animated custom property inside a conic-gradient, which the browser can
+   only honour by REPAINTING the whole ring on every frame, on the main thread —
+   for as long as the terminal waited, which can be hours. The chat ring turns a
+   pre-drawn layer instead, which the compositor does without repainting. */
 /* Working has no ring, on any agent pane. The native app keeps the running
    indicator to the rail (and here, the tab title's shimmer) and reserves the
    ring for "done" and "needs you". A chat pane drew a static ring while busy
    and a terminal did not, so the same state looked different by pane kind. */
 
 @media (prefers-reduced-motion: reduce) {
-  .terminal-panel.attn::after,
   .chat-ring::before {
     animation: none;
     background: none;
@@ -8305,8 +8269,23 @@ select {
     rotate: 360deg;
   }
 }
-/* Nobody is looking at an unfocused window — freeze the ring (it stays visible,
-   it just stops costing frames). */
-body.win-blurred .chat-ring::before {
+/* Decorative motion stops when it is not earning its frames. Everything keeps
+   its colour, dot and ring — only the movement pauses.
+     win-blurred     nobody is looking at the window
+     browser-active  the browser panel is in front: its page is drawn by the
+                     same GPU process as this UI, and every ring, shimmer and
+                     pulse animating here was frames taken from its scrolling.
+   Measured on the installed app: the browser tab's own process sat near 0%
+   while the app UI renderer ran 16-34% and the shared GPU process 12-37%. */
+body.win-blurred .chat-ring::before,
+body.browser-active .chat-ring::before,
+body.win-blurred .riven-tab-label.shimmer,
+body.browser-active .riven-tab-label.shimmer,
+body.win-blurred .ws-agent-title.shimmer,
+body.browser-active .ws-agent-title.shimmer,
+body.win-blurred .chat-shimmer-text,
+body.browser-active .chat-shimmer-text,
+body.win-blurred .tab-dot.attn,
+body.browser-active .tab-dot.attn {
   animation-play-state: paused;
 }
