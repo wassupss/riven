@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase'
-import { useSettings, type Settings } from './settings'
+import { useSettings, REMOVED_SETTINGS, type Settings } from './settings'
 
 // Cloud settings sync. A signed-in user's preferences live in one row of the
 // `user_settings` table (user_id PK + a `settings` jsonb blob), protected by
@@ -7,15 +7,16 @@ import { useSettings, type Settings } from './settings'
 
 const TABLE = 'user_settings'
 
-// Never synced. `aiApiKey` is a secret; `importedFonts` holds multi-MB base64
-// data URLs that would blow past the row/payload limits and get re-uploaded on
-// every unrelated settings change — fonts stay device-local.
-const SYNC_EXCLUDE: ReadonlyArray<keyof Settings> = ['aiApiKey', 'importedFonts']
+// Never synced. `importedFonts` holds multi-MB base64 data URLs that would blow
+// past the row/payload limits and get re-uploaded on every unrelated settings
+// change — fonts stay device-local. Settings of removed features aren't synced
+// either; among them is the old inline-completion API key, a secret.
+const SYNC_EXCLUDE: ReadonlySet<string> = new Set(['importedFonts', ...REMOVED_SETTINGS])
 
 export function pickSyncable(s: Settings): Partial<Settings> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(s)) {
-    if (!SYNC_EXCLUDE.includes(k as keyof Settings)) out[k] = v
+    if (!SYNC_EXCLUDE.has(k)) out[k] = v
   }
   return out as Partial<Settings>
 }
@@ -54,8 +55,7 @@ export async function pushRemote(userId: string, settings: Settings): Promise<vo
 }
 
 // Merge cloud settings into the local store without triggering a push back.
-// Unknown/secret keys are ignored; anything the cloud omits (e.g. aiApiKey)
-// keeps its local value.
+// Excluded keys are ignored; anything the cloud omits keeps its local value.
 export function applyRemote(remote: Partial<Settings>): void {
   // Base the merge on the CURRENT local settings, not DEFAULT_SETTINGS, so a key
   // the cloud row omits (e.g. a setting added after that row was written) keeps

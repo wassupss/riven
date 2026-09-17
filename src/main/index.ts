@@ -22,7 +22,6 @@ import { registerConfigHandlers } from './config'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
-import { registerAiHandlers } from './ai'
 import { registerAgentChatHandlers, killAllChatSessions } from './agentChat'
 import { registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerBrowserHandlers } from './browser'
@@ -261,7 +260,6 @@ app.whenReady().then(() => {
   registerSearchHandlers()
   registerCliHandlers()
   registerPortsHandlers()
-  registerAiHandlers()
   registerAgentChatHandlers()
   // riven's own MCP tool server (relays agent tool calls into the UI). Routes to
   // the first live window's renderer.

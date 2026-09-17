@@ -33,7 +33,6 @@ import { loadSettings, getSettings, useSettings } from './state/settings'
 import { useAuth } from './state/auth'
 import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
-import { registerInlineComplete } from './editor/inlineComplete'
 import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
 import UsagePinned from './components/UsagePinned'
@@ -122,7 +121,6 @@ export default function App(): JSX.Element {
         askUser: useAskUser
       }
     }
-    registerInlineComplete()
     registerSnippets()
     useUpdate.getState().init()
     void (async () => {

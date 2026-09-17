@@ -566,14 +566,6 @@ const api = {
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
       ipcRenderer.invoke('cli:list')
   },
-  ai: {
-    complete: (
-      prefix: string,
-      suffix: string,
-      opts: { mode: string; endpoint: string; model: string; apiKey?: string }
-    ): Promise<{ text: string } | { error: string }> =>
-      ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
-  },
   usage: {
     today: (configDir?: string): Promise<{
       totalCost: number

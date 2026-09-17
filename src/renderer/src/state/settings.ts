@@ -14,12 +14,6 @@ export interface Settings {
   terminalBackground: string
   terminalForeground: string
   terminalCursor: string
-  // AI inline completion (ghost text) — off by default to stay lightweight.
-  aiComplete: boolean
-  aiProvider: string
-  aiCompleteEndpoint: string
-  aiCompleteModel: string
-  aiApiKey: string
   language: 'ko' | 'en'
   importedFonts: Array<{ family: string; dataUrl: string }>
   usagePinned: boolean
@@ -76,11 +70,6 @@ export const DEFAULT_SETTINGS: Settings = {
   editorWordWrap: false,
   editorMinimap: true,
   editorLigatures: false,
-  aiComplete: false,
-  aiProvider: 'ollama',
-  aiCompleteEndpoint: 'http://localhost:11434',
-  aiCompleteModel: 'qwen2.5-coder:1.5b',
-  aiApiKey: '',
   language: 'ko',
   importedFonts: [],
   usagePinned: false,
@@ -121,6 +110,15 @@ interface SettingsState {
   reset: () => void
 }
 
+// Editor inline completion (ghost text) was removed.
+export const REMOVED_SETTINGS: ReadonlyArray<string> = [
+  'aiComplete',
+  'aiProvider',
+  'aiCompleteEndpoint',
+  'aiCompleteModel',
+  'aiApiKey'
+]
+
 // Old default terminal-font stacks. Users who never customized the terminal font
 // (their saved value matches one of these) are migrated to the current default so
 // Korean renders crisply — including the interim "D2Coding"-first value that
@@ -145,6 +143,10 @@ export const useSettings = create<SettingsState>((set) => ({
   ready: false,
   hydrate: (partial) => {
     const merged = { ...DEFAULT_SETTINGS, ...partial }
+    // Settings of features that no longer exist. Dropped rather than carried
+    // along forever — one of them is an API key, which should not sit in
+    // settings.json (or ride along to settings sync) for a feature that is gone.
+    for (const k of REMOVED_SETTINGS) delete (merged as Record<string, unknown>)[k]
     if (partial.terminalFontFamily && LEGACY_TERMINAL_FONTS.has(partial.terminalFontFamily))
       merged.terminalFontFamily = DEFAULT_SETTINGS.terminalFontFamily
     // Unify font sizes to 12px: migrate the old per-panel defaults (editor 13,
