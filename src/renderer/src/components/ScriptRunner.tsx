@@ -10,8 +10,9 @@ import { useT } from '../i18n'
 export default function ScriptRunner(): JSX.Element {
   const t = useT()
   const activeWorkspace = useSession((s) => s.activeWorkspace)
-  // Opens upward (it lives in the bottom status bar).
-  const [pos, setPos] = useState<{ bottom: number; left: number } | null>(null)
+  // Opens toward the middle of the window: down from the header, up from a bar
+  // at the bottom.
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number } | null>(null)
   const [data, setData] = useState<{ manager: string; scripts: string[] } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
 
@@ -34,7 +35,10 @@ export default function ScriptRunner(): JSX.Element {
     setData(null)
     window.api.workspace.scripts(pathOf(activeWorkspace)).then(setData).catch(() => setData({ manager: 'npm', scripts: [] }))
     const r = btnRef.current?.getBoundingClientRect()
-    if (r) setPos({ bottom: window.innerHeight - r.top + 4, left: r.left })
+    if (!r) return
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - 180))
+    if (r.top < window.innerHeight / 2) setPos({ top: r.bottom + 6, left })
+    else setPos({ bottom: window.innerHeight - r.top + 6, left })
   }
   const run = (name: string): void => {
     if (activeWorkspace) addTerminal(`${data?.manager ?? 'npm'} run ${name}`)
@@ -54,7 +58,7 @@ export default function ScriptRunner(): JSX.Element {
       </button>
       {pos &&
         createPortal(
-          <div className="tb-menu" style={{ bottom: pos.bottom, left: pos.left }}>
+          <div className="tb-menu" style={{ top: pos.top, bottom: pos.bottom, left: pos.left }}>
             {data && data.scripts.length === 0 && <div className="tb-menu-empty">{t('run.none')}</div>}
             {!data && <div className="tb-menu-empty">…</div>}
             {data?.scripts.map((s) => (

@@ -1417,6 +1417,27 @@ select {
   text-overflow: ellipsis;
   min-width: 0;
 }
+.dock-topbar .status-item {
+  -webkit-app-region: no-drag;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.dock-topbar .status-item.click:hover {
+  color: var(--fg);
+}
+.dock-topbar .run-btn {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+}
+.dock-topbar .run-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+}
+.dock-topbar .ports {
+  min-width: 0;
+  overflow: hidden;
+}
 .dock-topbar-spacer {
   flex: 1 1 auto;
   align-self: stretch;
@@ -1956,6 +1977,11 @@ select {
 .usage-pop.usage-pop-right {
   bottom: auto;
   top: calc(100% + 8px);
+}
+/* In the status bar's left run: open upward, left edges aligned. */
+.usage-pop.usage-pop-left {
+  right: auto;
+  left: 0;
 }
 .usage-pop-head {
   font-size: var(--text-xs);
@@ -8222,6 +8248,11 @@ select {
    or the system browser. */
 .port-menu {
   min-width: 200px;
+}
+.port-chip.open {
+  background: var(--accent);
+  color: color-mix(in srgb, var(--accent) 12%, var(--on-accent));
+  box-shadow: none;
 }
 
 

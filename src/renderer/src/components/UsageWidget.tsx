@@ -111,7 +111,7 @@ export default function UsageWidget(): JSX.Element | null {
         <span>{`$${today!.totalCost.toFixed(2)}`}</span>
       )}
       {open && (
-        <div className="usage-pop usage-pop-right" onClick={(e) => e.stopPropagation()}>
+        <div className="usage-pop usage-pop-left" onClick={(e) => e.stopPropagation()}>
           <div className="usage-pop-headrow">
             <span className="usage-pop-head">{t('usage.limitsHead')}</span>
             <button
