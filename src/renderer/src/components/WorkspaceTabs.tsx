@@ -370,7 +370,22 @@ function WorkspaceCard({
       )}
       {menu &&
         createPortal(
-          <div className="ctx-backdrop" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null) }}>
+          // The menu is portalled to <body>, but React still bubbles its events
+          // through the COMPONENT tree — up to this card's onClick. A click on the
+          // backdrop meant to dismiss the menu therefore also switched to this
+          // workspace. Dismissing must do nothing else.
+          <div
+            className="ctx-backdrop"
+            onClick={(e) => {
+              e.stopPropagation()
+              setMenu(null)
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setMenu(null)
+            }}
+          >
             <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
               <button
                 className="ctx-item"

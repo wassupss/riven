@@ -81,6 +81,9 @@ export function normalizeUrl(input: string): string {
   return tmpl.replace('{q}', encodeURIComponent(s))
 }
 
+// Browser panels currently in front (see the browser-active effect below).
+const activeBrowsers = new Set<string>()
+
 export default function PreviewPanel({
   workspace,
   api
@@ -203,6 +206,29 @@ export default function PreviewPanel({
   }, [syncBounds, tabs.length, activeId, isStart])
 
   useEffect(() => () => window.api.browser.sync(null, null), [])
+
+  // While this browser panel is the one in front, the app's decorative motion
+  // (rings, shimmers, pulses) pauses — see body.browser-active in styles.css.
+  // The page is drawn by the same GPU process as the rest of riven, and every
+  // animation running elsewhere in the window was frames taken from scrolling
+  // it. Several panels (one per workspace) can exist, so each one registers
+  // itself and the class is on while any of them is active.
+  useEffect(() => {
+    if (!api) return
+    const id = api.id + '@' + workspace
+    const update = (): void => {
+      if (api.isActive && api.isVisible) activeBrowsers.add(id)
+      else activeBrowsers.delete(id)
+      document.body.classList.toggle('browser-active', activeBrowsers.size > 0)
+    }
+    update()
+    const subs = [api.onDidActiveChange(update), api.onDidVisibilityChange(update)]
+    return () => {
+      subs.forEach((d) => d.dispose())
+      activeBrowsers.delete(id)
+      document.body.classList.toggle('browser-active', activeBrowsers.size > 0)
+    }
+  }, [api, workspace])
 
   const navigate = (raw: string): void => {
     const url = normalizeUrl(raw)

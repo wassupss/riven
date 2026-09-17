@@ -5,7 +5,6 @@ import { useUI } from '../state/ui'
 import { useSettings, getSettings, type Settings } from '../state/settings'
 import { THEMES, applyTheme } from '../state/themes'
 import { CURATED_FONTS, injectFont } from '../state/fonts'
-import { AI_PROVIDERS, getProvider } from '../state/aiProviders'
 import { MCP_TOOL_LABELS } from '../state/mcpTools'
 import { Button, NumberInput, Segmented, Select, Switch, TextArea, TextInput } from './ui/Controls'
 import KeybindingsSettings from '../keybindings/KeybindingsSettings'
@@ -149,9 +148,6 @@ export default function SettingsModal(): JSX.Element | null {
     { id: 'about', label: t('settings.tab.about'), icon: <Info size={15} /> }
   ]
   const sectionTitle = NAV.find((n) => n.id === tab)?.label ?? ''
-
-  const provider = getProvider(settings.aiProvider)
-  const modelInList = provider.models.includes(settings.aiCompleteModel)
 
   return createPortal(
     <div className="modal-overlay" onClick={() => setOpen(false)}>
@@ -487,83 +483,6 @@ export default function SettingsModal(): JSX.Element | null {
                     }}
                   />
                 ))}
-
-                <div className="section-label">{t('settings.ai.inlineSection')}</div>
-                <ToggleRow
-                  title={t('settings.ai.enable')}
-                  desc={t('settings.ai.note1')}
-                  checked={settings.aiComplete}
-                  onChange={(v) => upd('aiComplete', v)}
-                />
-                <Row title={t('settings.ai.provider')}>
-                  <Select
-                    disabled={!settings.aiComplete}
-                    value={settings.aiProvider}
-                    onChange={(e) => {
-                      const p = getProvider(e.target.value)
-                      set({
-                        aiProvider: p.id,
-                        aiCompleteEndpoint: p.endpoint,
-                        aiCompleteModel: p.models[0] ?? settings.aiCompleteModel
-                      })
-                    }}
-                  >
-                    {AI_PROVIDERS.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.label}
-                      </option>
-                    ))}
-                  </Select>
-                </Row>
-                <Row title={t('settings.ai.model')}>
-                  {provider.models.length > 0 ? (
-                    <Select
-                      disabled={!settings.aiComplete}
-                      value={modelInList ? settings.aiCompleteModel : '__custom'}
-                      onChange={(e) => {
-                        if (e.target.value !== '__custom') upd('aiCompleteModel', e.target.value)
-                      }}
-                    >
-                      {provider.models.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                      <option value="__custom">{t('settings.ai.customModel')}</option>
-                    </Select>
-                  ) : null}
-                  {(!modelInList || provider.models.length === 0) && (
-                    <TextInput
-                      disabled={!settings.aiComplete}
-                      value={settings.aiCompleteModel}
-                      placeholder="model"
-                      onChange={(e) => upd('aiCompleteModel', e.target.value)}
-                    />
-                  )}
-                </Row>
-                <Row title={t('settings.ai.endpoint')}>
-                  <TextInput
-                    className="set-grow"
-                    disabled={!settings.aiComplete}
-                    value={settings.aiCompleteEndpoint}
-                    onChange={(e) => upd('aiCompleteEndpoint', e.target.value)}
-                  />
-                </Row>
-                {!provider.keyless && (
-                  <Row title={t('settings.ai.apiKey')}>
-                    <TextInput
-                      className="set-grow"
-                      type="password"
-                      disabled={!settings.aiComplete}
-                      value={settings.aiApiKey}
-                      placeholder="sk-… / api key"
-                      onChange={(e) => upd('aiApiKey', e.target.value)}
-                    />
-                  </Row>
-                )}
-                <div className="set-note">
-                  {provider.keyless ? t('settings.ai.ollamaHint') : t('settings.ai.apiHint')}
-                </div>
               </>
             )}
 

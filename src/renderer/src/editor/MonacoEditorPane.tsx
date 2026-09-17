@@ -335,8 +335,7 @@ export default function MonacoEditorPane({
       scrollBeyondLastLine: false,
       tabSize: cfg.editorTabSize,
       wordWrap: cfg.editorWordWrap ? 'on' : 'off',
-      renderWhitespace: 'selection',
-      inlineSuggest: { enabled: true }
+      renderWhitespace: 'selection'
     })
     editorRef.current = ed
     blameDecoRef.current = ed.createDecorationsCollection([])

@@ -235,7 +235,13 @@ const api = {
         configDir?: string
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
-    send: (key: string, text: string): void => ipcRenderer.send('chat:send', key, text),
+    // Images go as content blocks in the same message — the model sees them
+    // in that turn, with no Read call on a pasted path.
+    send: (
+      key: string,
+      text: string,
+      images?: Array<{ mediaType: string; data: string; name?: string }>
+    ): void => ipcRenderer.send('chat:send', key, text, images),
     interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
     setModel: (key: string, model: string): void => ipcRenderer.send('chat:setModel', key, model),
     setMode: (key: string, mode: string): void => ipcRenderer.send('chat:setMode', key, mode),
@@ -282,8 +288,16 @@ const api = {
       cwd: string,
       id: string,
       configDir?: string
-    ): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> =>
-      ipcRenderer.invoke('chat:sessionTranscript', cwd, id, configDir),
+    ): Promise<
+      Array<{
+        role: 'user' | 'assistant'
+        text: string
+        tools: Array<{ name: string; detail: string }>
+        // How many images a user message carried (the pictures themselves are
+        // not sent back — they are large, and the bubble only names them).
+        images?: number
+      }>
+    > => ipcRenderer.invoke('chat:sessionTranscript', cwd, id, configDir),
     mcpList: (
       cwd: string,
       configDir?: string
@@ -551,14 +565,6 @@ const api = {
   cli: {
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
       ipcRenderer.invoke('cli:list')
-  },
-  ai: {
-    complete: (
-      prefix: string,
-      suffix: string,
-      opts: { mode: string; endpoint: string; model: string; apiKey?: string }
-    ): Promise<{ text: string } | { error: string }> =>
-      ipcRenderer.invoke('ai:complete', prefix, suffix, opts)
   },
   usage: {
     today: (configDir?: string): Promise<{

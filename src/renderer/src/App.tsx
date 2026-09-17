@@ -4,7 +4,8 @@ import Workbench from './dock/Workbench'
 import ExplorerPanel from './dock/panels/ExplorerPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { PanelTop, Folder, Settings as SettingsIcon } from 'lucide-react'
-import UsageWidget from './components/UsageWidget'
+import PortsWidget from './components/PortsWidget'
+import ScriptRunner from './components/ScriptRunner'
 import StatusBar from './components/StatusBar'
 import ErrorBoundary from './components/ErrorBoundary'
 import AgentWatch from './components/AgentWatch'
@@ -32,7 +33,6 @@ import { loadSettings, getSettings, useSettings } from './state/settings'
 import { useAuth } from './state/auth'
 import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
-import { registerInlineComplete } from './editor/inlineComplete'
 import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
 import UsagePinned from './components/UsagePinned'
@@ -121,7 +121,6 @@ export default function App(): JSX.Element {
         askUser: useAskUser
       }
     }
-    registerInlineComplete()
     registerSnippets()
     useUpdate.getState().init()
     void (async () => {
@@ -341,7 +340,10 @@ export default function App(): JSX.Element {
               </span>
             )}
             <div className="dock-topbar-spacer" />
-            <UsageWidget />
+            {/* Dev servers and the script runner, up where the workspace is named;
+                usage moved to the status bar so it can be read while working. */}
+            <PortsWidget />
+            {activeWorkspace && <ScriptRunner />}
             <button
               className="dock-topbar-icon"
               title={t('status.settingsTitle')}

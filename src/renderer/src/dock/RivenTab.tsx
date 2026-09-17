@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { IDockviewPanelHeaderProps } from 'dockview-react'
-import { useTabBadge } from '../state/tabBadge'
 import { confirmTerminalClose, setChatTitle, setTabColor, widForApi } from './registry'
 import { useAgents, getAgentStatus } from '../state/agents'
 import { useRoster } from '../state/roster'
@@ -25,7 +24,6 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const [editing, setEditing] = useState(false)
   const [avatarRev, setAvatarRev] = useState(0) // bump to re-read the override
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const badge = useTabBadge((s) => s.badges[api.id])
   const isChat = api.id.startsWith('chat-')
   // Re-read the pane's agent status on every roster change so the tab title can
   // shimmer while it's running (native dock-tab parity).
@@ -37,9 +35,23 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   // running in a terminal never shimmered and never showed its done ring.
   const live = useRoster((s) => s.live[api.id])
   const status = activityOf(live ?? {}, isChat ? getAgentStatus(api.id) : null).status
+  // One rule for every agent pane, terminal CLI or native chat — the native
+  // app's: a finished turn or a request for input puts a dot on the tab; work in
+  // progress does not (it shows on the rail and as the title's shimmer). The
+  // dot used to come from a store only terminals wrote, so a chat tab never got
+  // one, while a terminal tab also showed a dot for plain "busy".
+  const dot = status === 'waiting' ? 'attn' : status === 'done' ? 'done' : null
 
   useEffect(() => {
-    const d = api.onDidTitleChange(() => setTitle(api.title ?? ''))
+    // The workspace rail names panes too; tell it whenever this tab is retitled
+    // (a CLI's conversation title, a rename) so the two never disagree.
+    const publish = (): void => {
+      const next = api.title ?? ''
+      setTitle(next)
+      if (useRoster.getState().live[api.id]?.tabTitle !== next) useRoster.getState().patch(api.id, { tabTitle: next })
+    }
+    publish()
+    const d = api.onDidTitleChange(publish)
     return () => d.dispose()
   }, [api])
 
@@ -103,7 +115,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
         />
       ) : (
         <span className="riven-tab-title">
-          {badge && <span className={`tab-dot ${badge}`} />}
+          {dot && <span className={`tab-dot ${dot}`} />}
           <span className={`riven-tab-label${status === 'busy' ? ' shimmer' : ''}`}>{title}</span>
         </span>
       )}

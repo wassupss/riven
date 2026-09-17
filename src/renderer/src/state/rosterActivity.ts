@@ -16,6 +16,7 @@ export interface Live {
   agent?: boolean // terminal: a CLI agent is running
   name?: string | null // terminal: the agent's name, from pty:agent
   title?: string // terminal: the pty title
+  tabTitle?: string // the pane's tab title as currently shown in the dock
   busy?: boolean
   attention?: 'finished' | 'needs_input' | null
   done?: boolean
@@ -52,4 +53,15 @@ export function activityOf(
   const done = !busy && (!!l.done || l.attention === 'finished' || pane === 'done')
   const status: AgentActivity = busy ? 'busy' : attention ? 'waiting' : done ? 'done' : 'idle'
   return { busy, attention, done, status }
+}
+
+// What the rail calls a terminal pane: the same name its tab shows. The tab is
+// retitled to the CLI's conversation (or renamed by the user), and the rail kept
+// saying "claude" for all of them because it read the agent's process name
+// first. The process name is only the better label while the tab still carries
+// its generic "❯ …" placeholder.
+export function terminalRosterTitle(l: Live, layoutTitle: string): string {
+  const tab = l.tabTitle || layoutTitle
+  if (tab && !tab.startsWith('❯')) return tab
+  return l.name || l.title || tab
 }

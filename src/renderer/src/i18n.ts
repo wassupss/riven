@@ -359,6 +359,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pr.approve': { ko: '승인', en: 'Approve' },
   'pr.diffTooLarge': { ko: 'GitHub이 이 파일의 diff를 보내지 않았어요 (너무 큼).', en: "GitHub didn't send a diff for this file (too large)." },
   'pr.binaryFile': { ko: '바이너리 파일', en: 'Binary file' },
+  'chat.image': { ko: '이미지', en: 'image' },
+  'chat.removeAttachment': { ko: '첨부 빼기', en: 'Remove attachment' },
   'chat.subagent.quiet': { ko: '{t}째 아무 활동 없음', en: 'nothing for {t}' },
   'pr.openInEditor': { ko: '에디터에서 열기', en: 'Open in editor' },
   'pr.loadingDiff': { ko: 'diff 불러오는 중…', en: 'Loading diff…' },
@@ -573,21 +575,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     ko: '에이전트가 riven 안에서 쓸 수 있는 도구. 끄면 그 도구는 에이전트에게 보이지 않습니다 (새 세션부터).',
     en: 'Tools the agent can use inside riven. Disabling one hides it from the agent (new sessions).'
   },
-  'settings.ai.inlineSection': { ko: '인라인 완성 (고스트 텍스트)', en: 'Inline completion (ghost text)' },
-  'settings.ai.enable': { ko: '에디터 인라인 완성 사용', en: 'Enable editor inline completion' },
-  'settings.ai.note1': {
-    ko: '끄면 아무 백엔드도 안 돌아서 완전 경량이에요. 켜면 아래 백엔드로 커서 위치를 채워요 (Tab 수락).',
-    en: 'Off means no backend runs — fully lightweight. On, the backend below fills in at the cursor (Tab to accept).'
-  },
-  'settings.ai.backend': { ko: '백엔드', en: 'Backend' },
-  'settings.ai.ollama': { ko: 'Ollama (로컬 · 무료)', en: 'Ollama (local · free)' },
-  'settings.ai.openai': { ko: 'OpenAI 호환 (API 키)', en: 'OpenAI-compatible (API key)' },
-  'settings.ai.endpoint': { ko: '엔드포인트', en: 'Endpoint' },
-  'settings.ai.model': { ko: '모델', en: 'Model' },
-  'settings.ai.apiKey': { ko: 'API 키', en: 'API key' },
-  'settings.ai.note2a': { ko: 'Ollama 예:', en: 'Ollama example:' },
-  'settings.ai.note2b': { ko: '. OpenAI 호환은', en: '. OpenAI-compatible uses' },
-  'settings.ai.note2c': { ko: '(suffix 지원 모델, 예', en: '(models supporting suffix, e.g.' },
   'usage.title': { ko: '오늘 에이전트 사용량 (로컬 로그 기반, 추정 비용)', en: "Today's agent usage (from local logs, estimated cost)" },
   'usage.today': { ko: '오늘 사용량', en: 'Usage today' },
   'usage.limitsHead': { ko: '사용량', en: 'Usage' },
@@ -605,6 +592,9 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'usage.pin': { ko: '사이드바에 고정', en: 'Pin to sidebar' },
   'usage.unpin': { ko: '고정 해제', en: 'Unpin' },
   'usage.resetIn': { ko: '{t} 후 초기화돼요', en: 'resets in {t}' },
+  'usage.sessionShort': { ko: '세션', en: 'Session' },
+  'usage.weeklyShort': { ko: '주간', en: 'Weekly' },
+  'usage.daysShort': { ko: '{d}일', en: '{d}d' },
   'usage.usedPct': { ko: '{n}% 사용', en: '{n}% used' },
   'usage.leftPct': { ko: '{n}% 남음', en: '{n}% left' },
   'usage.note': { ko: 'Claude Code 로컬 로그 기반 · API 가격 추정', en: 'From local Claude Code logs · estimated at API rates' },
@@ -896,16 +886,6 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.time.min': { ko: '{n}분 전', en: '{n}m ago' },
   'chat.time.hour': { ko: '{n}시간 전', en: '{n}h ago' },
   'chat.time.day': { ko: '{n}일 전', en: '{n}d ago' },
-  'settings.ai.provider': { ko: '제공자', en: 'Provider' },
-  'settings.ai.customModel': { ko: '커스텀…', en: 'Custom…' },
-  'settings.ai.ollamaHint': {
-    ko: '로컬 Ollama. 예: 터미널에서 ollama pull qwen2.5-coder:1.5b 후 사용. FIM 지원 코드 모델 권장.',
-    en: 'Local Ollama. e.g. run `ollama pull qwen2.5-coder:1.5b`, then use it. FIM-capable code models recommended.'
-  },
-  'settings.ai.apiHint': {
-    ko: '제공자를 고르면 엔드포인트가 자동 입력돼요. API 키만 넣으면 돼요. FIM(Codestral/DeepSeek)이 가장 정확, 나머지는 chat 기반.',
-    en: 'Picking a provider auto-fills the endpoint — just add your API key. FIM (Codestral/DeepSeek) is most precise; others use chat.'
-  },
 
   // ---- KeybindingsSettings ----
   'kb.tab.editor': { ko: '코드 에디터', en: 'Code editor' },

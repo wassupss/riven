@@ -41,10 +41,47 @@ import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMe
 import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
-import { useT, type TFn } from '../../i18n'
+import { useT, t as staticT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
+
+// An image waiting in the composer to go with the next message.
+export interface ChatImage {
+  id: string
+  name: string
+  mediaType: string
+  data: string // base64, no data: prefix
+  preview: string // data URL, for the thumbnail
+}
+
+// The formats and size the API takes (see main/chatContent.ts, which checks
+// again). Anything else is left to the old path-insert, so a huge PNG or a HEIC
+// still reaches the agent — as a file it can Read — instead of failing at send.
+const ATTACHABLE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+const MAX_ATTACH_BYTES = 5 * 1024 * 1024
+function attachableImage(file: File): boolean {
+  return ATTACHABLE_TYPES.includes(file.type) && file.size > 0 && file.size <= MAX_ATTACH_BYTES
+}
+function readImage(file: File): Promise<ChatImage | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const url = String(reader.result)
+      const comma = url.indexOf(',')
+      if (comma < 0) return resolve(null)
+      resolve({
+        id: crypto.randomUUID(),
+        name: file.name || 'image',
+        mediaType: file.type,
+        data: url.slice(comma + 1),
+        preview: url
+      })
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
 
 // Nothing from a delegated agent for this long and the strip says so. Three
 // minutes is past any normal single step; it is not a verdict, just the point
@@ -96,6 +133,10 @@ interface Msg {
   // A user message typed while a turn was still running — shown dimmed until it's
   // dequeued and sent (native lets you queue/steer mid-turn).
   queued?: boolean
+  // Images sent with this message. `preview` is an in-memory data URL for the
+  // bubble; riven does not persist transcripts (the CLI does), so after a
+  // restart the bubble shows the image's name instead.
+  images?: Array<{ name: string; preview?: string }>
 }
 
 // Fill in `items` for messages that predate the ordered model (restored logs /
@@ -512,7 +553,22 @@ const ChatMessage = memo(function ChatMessage({
   if (msg.role === 'user') {
     return (
       <div className={`chat-turn user${msg.queued ? ' queued' : ''}`}>
-        <div className="chat-user-bubble">{msg.text}</div>
+        <div className="chat-user-bubble">
+          {msg.images && msg.images.length > 0 && (
+            <div className="chat-user-images">
+              {msg.images.map((im, i) =>
+                im.preview ? (
+                  <img key={i} className="chat-user-image" src={im.preview} alt={im.name} title={im.name} />
+                ) : (
+                  <span key={i} className="chat-user-image-name">
+                    {im.name}
+                  </span>
+                )
+              )}
+            </div>
+          )}
+          {msg.text}
+        </div>
         {msg.queued && <span className="chat-queued-tag">{t('chat.queued')}</span>}
       </div>
     )
@@ -1196,7 +1252,8 @@ function transcriptToMsgs(transcript: CliTranscript): Msg[] {
       startedAt: 0,
       durationMs: 0,
       tokensIn: 0,
-      tokensOut: 0
+      tokensOut: 0,
+      images: m.images ? Array.from({ length: m.images }, () => ({ name: staticT('chat.image') })) : undefined
     }
   })
 }
@@ -1326,6 +1383,15 @@ export default function ChatPanel({
 
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  // Images to send with the next message, shown as thumbnails above the input.
+  const [attachments, setAttachments] = useState<ChatImage[]>([])
+  const addImages = (files: File[]): void => {
+    void Promise.all(files.map(readImage)).then((imgs) => {
+      const ok = imgs.filter((x): x is ChatImage => !!x)
+      if (ok.length) setAttachments((cur) => [...cur, ...ok])
+      inputRef.current?.focus()
+    })
+  }
   // Slash-command menu: open while the input is a bare "/query" (no space yet).
   // The available commands come from the session's init `slash_commands`.
   const [slashIndex, setSlashIndex] = useState(0)
@@ -1873,7 +1939,7 @@ export default function ChatPanel({
   const busyRef = useRef(false)
   const waitersRef = useRef<Array<(reply: string) => void>>([])
   // Messages typed while a turn was running, sent one-by-one as turns finish.
-  const queuedRef = useRef<string[]>([])
+  const queuedRef = useRef<Array<{ text: string; images: ChatImage[] }>>([])
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
@@ -1892,7 +1958,7 @@ export default function ChatPanel({
     })
     setBusy(true)
     setAgentStatus(chatKey, 'busy')
-    window.api.chat.send(chatKey, next)
+    window.api.chat.send(chatKey, next.text, next.images)
     return true
   }
   // Stop means stop: interrupt the current turn AND drop anything queued.
@@ -1903,9 +1969,11 @@ export default function ChatPanel({
     window.api.chat.interrupt(chatKey)
   }
   const sendMessage = useCallback(
-    (text: string): void => {
+    (text: string, images: ChatImage[] = []): void => {
       const clean = text.trim()
-      if (!clean) return
+      // An image with nothing typed is a real message ("what's wrong here?" is
+      // often just the screenshot).
+      if (!clean && images.length === 0) return
       setError(null)
       // /clear resets the CLI's context AND the visible transcript, matching
       // Claude's own behaviour (no lingering history bubbles).
@@ -1919,7 +1987,7 @@ export default function ChatPanel({
       // Title the tab from the first message (CLI-style short title), like native.
       if (!titleSet.current) {
         titleSet.current = true
-        const first = clean.split('\n')[0].trim()
+        const first = (clean || images[0]?.name || '').split('\n')[0].trim()
         const short = first.length > 40 ? first.slice(0, 40) + '…' : first
         titleRef.current = composeTitle(short)
         setTitle?.(titleRef.current)
@@ -1935,11 +2003,27 @@ export default function ChatPanel({
       }
       setMsgs((all) => [
         ...all,
-        { role: 'user', text: clean, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0 },
+        {
+          role: 'user',
+          text: clean,
+          tools: [],
+          items: [],
+          done: true,
+          interrupted: false,
+          startedAt: 0,
+          durationMs: 0,
+          tokensIn: 0,
+          tokensOut: 0,
+          images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
+        },
         { role: 'assistant', text: '', tools: [], items: [], done: false, interrupted: false, startedAt: Date.now(), durationMs: 0, tokensIn: 0, tokensOut: 0 }
       ])
       setBusy(true)
-      window.api.chat.send(chatKey, clean)
+      window.api.chat.send(
+        chatKey,
+        clean,
+        images.map(({ mediaType, data, name }) => ({ mediaType, data, name }))
+      )
     },
     [chatKey, setTitle, savePane]
   )
@@ -1996,10 +2080,12 @@ export default function ChatPanel({
   // the DOM is the authoritative source when we send on composition end.
   const submit = (): void => {
     const text = (inputRef.current?.value ?? input).trim()
-    if (!text) return
+    const images = attachments
+    if (!text && images.length === 0) return
     // A bare native command opens riven UI. Anything else — including skills and
     // commands with args — is sent to the CLI so it runs inline in the answer.
-    if (runNativeCommand(text)) return
+    if (images.length === 0 && runNativeCommand(text)) return
+    setAttachments([])
     setInput('')
     if (inputRef.current) {
       inputRef.current.value = ''
@@ -2011,16 +2097,29 @@ export default function ChatPanel({
     // the CLI session context is retained, so the model reconsiders with the prior
     // content combined (native behaviour). The queued message fires from turnDone.
     if (busy) {
-      queuedRef.current.push(text)
+      queuedRef.current.push({ text, images })
       setMsgs((all) => [
         ...all,
-        { role: 'user', text, tools: [], items: [], done: true, interrupted: false, startedAt: 0, durationMs: 0, tokensIn: 0, tokensOut: 0, queued: true }
+        {
+          role: 'user',
+          text,
+          tools: [],
+          items: [],
+          done: true,
+          interrupted: false,
+          startedAt: 0,
+          durationMs: 0,
+          tokensIn: 0,
+          tokensOut: 0,
+          queued: true,
+          images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
+        }
       ])
       steerRef.current = true
       window.api.chat.interrupt(chatKey)
       return
     }
-    sendMessage(text)
+    sendMessage(text, images)
   }
   // IME state: while composing, Enter must commit the syllable first, then send
   // once — otherwise the committing keystroke leaves its last char behind (the
@@ -2091,8 +2190,20 @@ export default function ChatPanel({
     const images = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
     if (images.length === 0) return
     e.preventDefault()
+    // A pasted screenshot is attached as the image itself, not saved to a temp
+    // file whose path the agent may or may not decide to open.
+    const files = images.map((it) => it.getAsFile()).filter((f): f is File => !!f)
+    const direct = files.filter(attachableImage)
+    if (direct.length) addImages(direct)
+    const rest = images.filter((it) => {
+      const f = it.getAsFile()
+      return !f || !attachableImage(f)
+    })
+    if (rest.length === 0) return
+    // What could not be attached directly (too large, or a format the API does
+    // not take) still reaches the agent the old way: as a file it can Read.
     void Promise.all(
-      images.map(
+      rest.map(
         (it) =>
           new Promise<string | null>((resolve) => {
             const file = it.getAsFile()
@@ -2111,7 +2222,13 @@ export default function ChatPanel({
     e.preventDefault()
     setDragOver(false)
     const paths: string[] = []
-    for (const f of Array.from(e.dataTransfer.files)) {
+    const dropped = Array.from(e.dataTransfer.files)
+    // Images the API can take are attached as images; everything else (other
+    // files, oversized or unsupported images) still goes in as a path the agent
+    // can Read.
+    const imgs = dropped.filter(attachableImage)
+    if (imgs.length) addImages(imgs)
+    for (const f of dropped.filter((f) => !attachableImage(f))) {
       // Electron dropped the non-standard File.path in v32, so reading it here
       // returned undefined on the Electron we ship and every Finder drop fell
       // through to the text/uri-list branch. webUtils (via preload) is the
@@ -2119,7 +2236,7 @@ export default function ChatPanel({
       const p = window.api.pathForFile(f)
       if (p) paths.push(p)
     }
-    if (paths.length === 0) {
+    if (paths.length === 0 && imgs.length === 0) {
       const txt = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list')
       for (const line of txt.split('\n')) {
         const p = line.trim().replace(/^file:\/\//, '')
@@ -2545,6 +2662,25 @@ export default function ChatPanel({
       )}
 
       <div className={`chat-composer${input.trim().startsWith('/') ? ' is-command' : ''}`}>
+        {/* What will go with the message, visible before it is sent — and
+            removable, since a wrong screenshot is the easiest thing to drop in. */}
+        {attachments.length > 0 && (
+          <div className="chat-attachments">
+            {attachments.map((a) => (
+              <div key={a.id} className="chat-attachment" title={a.name}>
+                <img src={a.preview} alt={a.name} />
+                <button
+                  className="chat-attachment-x"
+                  aria-label={t('chat.removeAttachment')}
+                  title={t('chat.removeAttachment')}
+                  onClick={() => setAttachments((cur) => cur.filter((x) => x.id !== a.id))}
+                >
+                  <XIcon size={10} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {mentionOpen && (
           <div className="slash-menu">
             {mentionMatches.map((p, i) => (

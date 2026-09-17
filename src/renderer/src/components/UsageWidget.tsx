@@ -9,7 +9,6 @@ import {
   remainingColor,
   fmtTokens,
   pickAccount,
-  tightestLimit,
   type PlanLimit
 } from '../state/usage'
 import { useSettings } from '../state/settings'
@@ -51,21 +50,35 @@ export default function UsageWidget(): JSX.Element | null {
   // The per-window bars in the popover come from UsageAccounts, which draws
   // them per account — the widget itself only needs the headline.
 
-  // The header shows ONE bar: the account this workspace runs as, and its
-  // tightest window. Two bare percentages side by side said neither whose they
-  // were nor which window was which — with Codex and several Claude logins in
-  // play, a number with no name on it can't be acted on. The rest (both
-  // windows, every account, today's spend) is one click away, below.
+  // The header names whose budget this is and shows BOTH windows as bars:
+  // the 5-hour session is what stops you this afternoon, the weekly one what
+  // stops you on Thursday, and showing only the tighter of the two hid
+  // whichever was not currently winning. Details stay one click away.
   const account = pickAccount(accounts, { byWorkspace, globalId, workspace: activeWorkspace })
-  const headline = tightestLimit(account) ?? limits?.session ?? limits?.weekly ?? null
+  const session = account?.limits?.session ?? limits?.session ?? null
+  const weekly = account?.limits?.weekly ?? limits?.weekly ?? null
   const agentName = account?.cli === 'codex' ? t('usage.cli.codex') : t('usage.cli.claude')
-  const headlineValue = headline ? val(headline) : 0
-  const headlineColor = headline ? valColor(headlineValue) : undefined
-  const reset = headline ? resetIn(headline.resetsAt) : ''
+  // Codex reports its own window length; "weekly" is only right when it is 7 days.
+  const codexDays = account?.cli === 'codex' ? Math.round((account.codexWindowMinutes ?? 0) / 1440) : 0
+  const weeklyLabel = codexDays && codexDays !== 7 ? t('usage.daysShort', { d: String(codexDays) }) : t('usage.weeklyShort')
+  const windows = [
+    session && { key: 'session', label: t('usage.sessionShort'), l: session },
+    weekly && { key: 'weekly', label: weeklyLabel, l: weekly }
+  ].filter(Boolean) as Array<{ key: string; label: string; l: PlanLimit }>
+
+  const describe = (label: string, l: PlanLimit): string => {
+    const v = val(l)
+    const reset = resetIn(l.resetsAt)
+    return [
+      `${label} ${showUsed ? t('usage.usedPct', { n: v }) : t('usage.leftPct', { n: v })}`,
+      reset ? t('usage.resetIn', { t: reset }) : ''
+    ]
+      .filter(Boolean)
+      .join(' ')
+  }
   const compactTitle = [
     agentName,
-    headline ? (showUsed ? t('usage.usedPct', { n: headlineValue }) : t('usage.leftPct', { n: headlineValue })) : '',
-    reset ? t('usage.resetIn', { t: reset }) : '',
+    ...windows.map((w) => describe(w.label, w.l)),
     hasToday ? `$${today!.totalCost.toFixed(2)}` : ''
   ]
     .filter(Boolean)
@@ -77,24 +90,28 @@ export default function UsageWidget(): JSX.Element | null {
       title={compactTitle || t('usage.title')}
       onClick={() => setOpen((o) => !o)}
     >
-      {headline ? (
-        <>
-          <span className="usage-agent">{agentName}</span>
-          <span className="usage-track">
-            <span className="usage-track-fill" style={{ width: `${headlineValue}%`, background: headlineColor }} />
-          </span>
-          <span className="usage-pct" style={{ color: headlineColor }}>
-            {headlineValue}%
-          </span>
-        </>
+      <span className="usage-agent">{agentName}</span>
+      {windows.length ? (
+        windows.map((w) => {
+          const v = val(w.l)
+          const color = valColor(v)
+          return (
+            <span key={w.key} className="usage-window">
+              <span className="usage-window-label">{w.label}</span>
+              <span className="usage-track">
+                <span className="usage-track-fill" style={{ width: `${v}%`, background: color }} />
+              </span>
+              <span className="usage-pct" style={{ color }}>
+                {v}%
+              </span>
+            </span>
+          )
+        })
       ) : (
-        <>
-          <span className="usage-agent">{agentName}</span>
-          <span>{`$${today!.totalCost.toFixed(2)}`}</span>
-        </>
+        <span>{`$${today!.totalCost.toFixed(2)}`}</span>
       )}
       {open && (
-        <div className="usage-pop usage-pop-right" onClick={(e) => e.stopPropagation()}>
+        <div className="usage-pop usage-pop-left" onClick={(e) => e.stopPropagation()}>
           <div className="usage-pop-headrow">
             <span className="usage-pop-head">{t('usage.limitsHead')}</span>
             <button

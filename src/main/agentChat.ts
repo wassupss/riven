@@ -7,6 +7,7 @@ import * as path from 'path'
 import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
+import { userContent, type ChatImageInput } from './chatContent'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -629,8 +630,12 @@ export function registerAgentChatHandlers(): void {
   ipcMain.handle('chat:start', (event, key: string, opts: StartOpts) =>
     startSession(key, opts, event.sender)
   )
-  ipcMain.on('chat:send', (event, key: string, text: string) => {
-    const line = { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null }
+  ipcMain.on('chat:send', (event, key: string, text: string, images?: ChatImageInput[]) => {
+    const line = {
+      type: 'user',
+      message: { role: 'user', content: userContent(text, images) },
+      parent_tool_use_id: null
+    }
     const s = sessions.get(key)
     if (s) {
       s.turnBusy = true
@@ -1105,7 +1110,9 @@ async function readSessionTranscript(
   cwd: string,
   id: string,
   configDir?: string
-): Promise<Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }>> {
+): Promise<
+  Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }>; images?: number }>
+> {
   const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
   let raw: string
   try {
@@ -1113,7 +1120,12 @@ async function readSessionTranscript(
   } catch {
     return []
   }
-  const msgs: Array<{ role: 'user' | 'assistant'; text: string; tools: Array<{ name: string; detail: string }> }> = []
+  const msgs: Array<{
+    role: 'user' | 'assistant'
+    text: string
+    tools: Array<{ name: string; detail: string }>
+    images?: number
+  }> = []
   for (const line of raw.split('\n').filter(Boolean)) {
     let j: Record<string, unknown>
     try {
@@ -1127,6 +1139,20 @@ async function readSessionTranscript(
       if (typeof c === 'string') {
         if (c.startsWith('<') || c.startsWith('/')) continue // caveats / slash echoes
         msgs.push({ role: 'user', text: c, tools: [] })
+      } else if (Array.isArray(c)) {
+        // A message sent with images is stored as blocks. Skipping every array
+        // (which is also how tool results are stored) made a question asked
+        // with a screenshot vanish from the restored conversation.
+        const blocks = c as Array<Record<string, unknown>>
+        if (blocks.some((b) => b.type === 'tool_result')) continue
+        const text = blocks
+          .filter((b) => b.type === 'text' && typeof b.text === 'string')
+          .map((b) => b.text as string)
+          .join('\n')
+        const images = blocks.filter((b) => b.type === 'image').length
+        if (!text && !images) continue
+        if (text.startsWith('<')) continue
+        msgs.push({ role: 'user', text, tools: [], images })
       }
     } else if (j.type === 'assistant' && msg && Array.isArray(msg.content)) {
       let text = ''
