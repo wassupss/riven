@@ -604,6 +604,21 @@ select {
 .usage-pct {
   font-variant-numeric: tabular-nums;
 }
+/* One window: its name, its bar, its number. Two of them sit side by side with
+   a little air between, so "세션 ▓░ 16%" and "주간 ▓▓▓░ 74%" read as a pair. */
+.usage-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.usage-window + .usage-window {
+  margin-left: 6px;
+  padding-left: 8px;
+  border-left: 1px solid var(--hairline);
+}
+.usage-window-label {
+  color: var(--fg-dim);
+}
 /* A narrow window drops the bar first, then the agent's name — the percentage
    is the part that is acted on. */
 @media (max-width: 900px) {
