@@ -139,7 +139,14 @@ export function rosterFor(workspace: string): RosterEntry[] {
     // mid-turn), so it gets a say; completion still comes from the roster,
     // because the panel may not exist to report it.
     const paneStatus = p.kind === 'chat' ? getAgentStatus(p.id) : null
-    out.push({ id: p.id, workspace, kind: p.kind, title, ...activityOf(l, paneStatus) })
+    out.push({
+      id: p.id,
+      workspace,
+      kind: p.kind,
+      title,
+      ...activityOf(l, paneStatus),
+      ...(p.kind === 'terminal' ? { replies: !!l.hooked, agent: l.name ?? null } : {})
+    })
   }
   return out
 }
@@ -153,8 +160,8 @@ export function startRoster(): () => void {
   )
   // A terminal's attention flag is main's, and main only clears it on pty:seen —
   // i.e. on a real interaction — so `finished` persists here for free.
-  const offStatus = window.api.pty.onStatus(({ key, busy, attention }) =>
-    patch(key, { busy, attention })
+  const offStatus = window.api.pty.onStatus(({ key, busy, attention, hooked }) =>
+    patch(key, { busy, attention, hooked: !!hooked })
   )
   const offTitle = window.api.pty.onTitle(({ key, title }) => patch(key, { title }))
 

@@ -477,16 +477,29 @@ const ASK_TIMEOUT_MS = 300_000 // 5 min per delegated turn
 // Everything in a workspace that can be delegated to, minus the caller itself.
 // Terminals count only while a CLI agent is actually running in them — that is
 // what rosterFor already decides (pty:agent), so a plain shell never appears.
+// `cli` says which agent is behind the pane (a chat pane is Claude Code), so a
+// caller putting a team together can tell one model from another. `replies` is
+// whether riven_ask_agent will bring back its answer.
 function agentList(ws: string, self: string | null): Array<{
   id: string
   title: string
   kind: RosterEntry['kind']
+  cli: string | null
   busy: boolean
   status: RosterEntry['status']
+  replies: boolean
 }> {
   return rosterFor(ws)
     .filter((e) => e.id !== self)
-    .map((e) => ({ id: e.id, title: e.title, kind: e.kind, busy: e.busy, status: e.status }))
+    .map((e) => ({
+      id: e.id,
+      title: e.title,
+      kind: e.kind,
+      cli: e.kind === 'chat' ? 'claude' : e.agent ?? null,
+      busy: e.busy,
+      status: e.status,
+      replies: e.kind === 'chat' ? true : !!e.replies
+    }))
 }
 
 // Match by exact id, then exact title, then a case-insensitive contains — the
@@ -507,13 +520,17 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   const entry = resolveRosterAgent(ref, c.ws, c.self)
   if (!entry) return `error: no agent matching "${ref}" in this workspace (see riven_agents)`
 
-  // A CLI in a terminal is driven by typing at it. There is no reply boundary in
-  // a PTY stream, so delivery is always async — and writing into a running turn
-  // would be read as an answer to whatever it is currently asking, so refuse
-  // rather than corrupt it (the @mention path in the UI asks the user instead).
+  // A CLI in a terminal is driven by typing at it. A PTY stream has no reply
+  // boundary of its own, but a CLI that reports through hooks (Claude Code,
+  // Codex) ends every turn with a Stop that carries its answer — so for those
+  // the question gets its reply, like a chat pane, whichever model is behind
+  // it. Anything else stays fire-and-forget. Writing into a running turn would
+  // be read as an answer to whatever it is currently asking, so refuse rather
+  // than corrupt it (the @mention path in the UI asks the user instead).
   if (entry.kind === 'terminal') {
     if (entry.busy)
       return `error: "${entry.title}" is mid-turn; its CLI would read this as an answer to what it is currently asking. Try again when riven_agents shows it idle.`
+    const replyP = wait && entry.replies ? terminalReply(entry.id, ASK_TIMEOUT_MS) : null
     // Delivered the way a person types it: the text, a pause, then Enter as its
     // own write. `message + '\r'` in a single write left the message sitting
     // unsent in the CLI's input box — a TUI reading one burst that happens to end
@@ -528,7 +545,11 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
     window.api.pty.write(entry.id, message.replace(/\r?\n/g, ' '))
     await sleep(120)
     window.api.pty.write(entry.id, '\r')
-    return `typed into "${entry.title}" (${entry.id}) — terminal delivery is async, no reply is waited for`
+    if (!replyP)
+      return `typed into "${entry.title}" (${entry.id}) — ${
+        wait ? "this terminal's CLI doesn't report its turns, so no reply is waited for" : 'async'
+      }`
+    return `[${entry.title}] ${await replyP}`
   }
 
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
@@ -543,6 +564,23 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   ])
   return `[${target.getTitle()}] ${reply}`
 }
+// The next answer a terminal's CLI ends a turn with. Registered BEFORE the
+// message is typed, so a quick turn can't finish in between.
+function terminalReply(pane: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      off()
+      resolve('(no reply within 5 min)')
+    }, timeoutMs)
+    const off = window.api.pty.onReply(({ key, text }) => {
+      if (key !== pane) return
+      clearTimeout(timer)
+      off()
+      resolve(text)
+    })
+  })
+}
+
 async function askAgent(args: Args, c: Ctx): Promise<string> {
   return askOneAgent(s(args.agent), s(args.message), args.wait !== false, c)
 }

@@ -17,6 +17,7 @@ export interface Live {
   name?: string | null // terminal: the agent's name, from pty:agent
   title?: string // terminal: the pty title
   tabTitle?: string // the pane's tab title as currently shown in the dock
+  hooked?: boolean // terminal: its agent reports turns through hooks, so replies can be awaited
   busy?: boolean
   attention?: 'finished' | 'needs_input' | null
   done?: boolean
@@ -33,6 +34,10 @@ export interface RosterEntry {
   // Finished a turn and nobody has acknowledged it yet.
   done: boolean
   status: AgentActivity
+  // Terminal only: a message put to it can wait for the answer (hooked CLI).
+  replies?: boolean
+  // Terminal only: which CLI is running (pty:agent's process name).
+  agent?: string | null
 }
 
 // Fold one pane's signals into the activity the UI shows. The priority order —

@@ -31,11 +31,18 @@ function multiplexed<T>(channel: string): (cb: (payload: T) => void) => () => vo
 }
 
 export type PtyAttention = 'finished' | 'needs_input' | null
-const onPtyStatus = multiplexed<{ key: string; busy: boolean; attention: PtyAttention }>('pty:status')
+const onPtyStatus = multiplexed<{ key: string; busy: boolean; attention: PtyAttention; hooked?: boolean }>(
+  'pty:status'
+)
 const onPtyAgent = multiplexed<{ key: string; agent: boolean; name?: string | null }>('pty:agent')
 // Which CLI conversation a terminal's agent is in, so the pane can resume it
 // after a restart. Null when that session ended.
-const onPtyAgentSession = multiplexed<{ key: string; sessionId: string | null }>('pty:agentSession')
+export type AgentKind = 'claude' | 'codex'
+const onPtyAgentSession = multiplexed<{ key: string; sessionId: string | null; agent?: AgentKind | null }>(
+  'pty:agentSession'
+)
+// The answer a terminal agent ended its turn with (from its Stop hook).
+const onPtyReply = multiplexed<{ key: string; text: string }>('pty:reply')
 const onPtyBell = multiplexed<{ key: string }>('pty:bell')
 const onPtyTitle = multiplexed<{ key: string; title: string }>('pty:title')
 const onPtyDone = multiplexed<{ key: string; reason: 'finished' | 'needs_input'; summary?: string }>(
@@ -189,6 +196,7 @@ const api = {
     // The user looked at this terminal: clear its attention flag.
     seen: (id: string): void => ipcRenderer.send('pty:seen', id),
     onAgentSession: onPtyAgentSession,
+    codexSessionTitle: (id: string): Promise<string | null> => ipcRenderer.invoke('pty:codexSessionTitle', id),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id: string): void => ipcRenderer.send('pty:kill', id),
@@ -211,8 +219,9 @@ const api = {
       return () => ipcRenderer.removeListener(channel, listener)
     },
     onStatus: (
-      cb: (e: { key: string; busy: boolean; attention: PtyAttention }) => void
+      cb: (e: { key: string; busy: boolean; attention: PtyAttention; hooked?: boolean }) => void
     ): (() => void) => onPtyStatus(cb),
+    onReply: (cb: (e: { key: string; text: string }) => void): (() => void) => onPtyReply(cb),
     onAgent: (cb: (e: { key: string; agent: boolean; name?: string | null }) => void): (() => void) =>
       onPtyAgent(cb),
     onBell: (cb: (e: { key: string }) => void): (() => void) => onPtyBell(cb),
