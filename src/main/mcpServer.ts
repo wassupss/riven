@@ -413,6 +413,9 @@ const authToken = randomUUID()
 const sessionId = randomUUID()
 
 const pending = new Map<string, (result: string) => void>()
+// In-flight tools/call requests by the CLIENT's JSON-RPC id (scoped to the pane
+// that made it), so a `notifications/cancelled` naming that id can stop the wait.
+const inflightByRpc = new Map<string, () => void>()
 const REQUEST_TIMEOUT_MS = 1_800_000 // 30 min — matches native (waits for the human)
 
 // Env every agent riven spawns needs. ask_user blocks the tool call until a
@@ -498,7 +501,11 @@ function invokeTool(
   return new Promise((resolve) => {
     const id = randomUUID()
     const timer = setTimeout(() => {
-      if (pending.delete(id)) resolve('riven: timed out waiting for the user')
+      if (!pending.delete(id)) return
+      // Riven's own wait is over too: the card must stop offering choices, or a
+      // click after this point goes to a call that already returned.
+      if (!wc.isDestroyed()) wc.send('mcp:cancel', { id })
+      resolve('riven: timed out waiting for the user')
     }, REQUEST_TIMEOUT_MS)
     pending.set(id, (result) => {
       clearTimeout(timer)
@@ -512,9 +519,18 @@ function invokeTool(
       if (!pending.delete(id)) return
       clearTimeout(timer)
       if (!wc.isDestroyed()) wc.send('mcp:cancel', { id })
+      // The caller gave up; let its HTTP request finish rather than hang.
+      resolve('riven: the caller cancelled this request')
     })
     wc.send('mcp:invoke', { id, tool, args, cwd, key })
   })
+}
+
+// A client's request ids are only unique per client, so they are scoped by the
+// pane (every agent riven starts carries its pane on the URL).
+export function rpcKey(pane: string | null, requestId: unknown): string | null {
+  if (typeof requestId !== 'string' && typeof requestId !== 'number') return null
+  return `${pane ?? ''}\u0000${String(requestId)}`
 }
 
 function readBody(req: http.IncomingMessage): Promise<string | null> {
@@ -564,8 +580,19 @@ async function handleMcp(
     return
   }
   const id = msg.id
-  // Notifications (no id) are acknowledged and otherwise ignored.
+  // Notifications (no id) are acknowledged. One of them matters: a client that
+  // gives up on a request — its own timeout, the user pressing Esc — says so
+  // with `notifications/cancelled`, WITHOUT necessarily closing the HTTP request
+  // it is abandoning. Ignoring it left an ask_user card on screen, answerable,
+  // for a call nobody was waiting on any more: the user picked an option and it
+  // went nowhere.
   if (id === undefined || id === null) {
+    if (msg.method === 'notifications/cancelled') {
+      const requestId = (msg.params as { requestId?: unknown } | undefined)?.requestId
+      const key = rpcKey(url.searchParams.get('pane'), requestId)
+      const cancel = key ? inflightByRpc.get(key) : undefined
+      if (cancel) cancel()
+    }
     res.writeHead(202).end()
     return
   }
@@ -598,7 +625,12 @@ async function handleMcp(
       // of the pane it runs in on its URL, so the renderer routes the call to
       // that pane's workspace. `cwd` is only for a config built by hand.
       const cwd = url.searchParams.get('cwd')
-      const text = await invokeTool(name, args, cwd, pane, (cancel) => res.on('close', cancel))
+      const key = rpcKey(pane, id)
+      const text = await invokeTool(name, args, cwd, pane, (cancel) => {
+        res.on('close', cancel)
+        if (key) inflightByRpc.set(key, cancel)
+      })
+      if (key) inflightByRpc.delete(key)
       if (res.destroyed) return
       sendJson(res, 200, {
         jsonrpc: '2.0',
@@ -692,7 +724,15 @@ export function mcpConfigJson(enabled?: string[], pane?: string | null): string 
       riven: {
         type: 'http',
         url: url.toString(),
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
+        // How long the CLI lets a call to THIS server go silent. Claude Code
+        // added an idle timeout — 5 minutes with no response or progress, then
+        // it aborts — separate from MCP_TOOL_TIMEOUT (see agentMcpEnv). ask_user
+        // is silent by nature while a person thinks, so riven's calls were cut
+        // at 5 minutes regardless of the 30 riven set: "sent no response or
+        // progress for 300s; aborting". The CLI's own message recommends this
+        // per-server setting, which leaves every other server's timeout alone.
+        timeout: REQUEST_TIMEOUT_MS
       }
     }
   })
