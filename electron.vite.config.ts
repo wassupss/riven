@@ -1,6 +1,7 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import { dockviewFilePopout } from './vite/dockviewFilePopout'
 
 export default defineConfig({
   main: {
@@ -28,7 +29,9 @@ export default defineConfig({
         '@': resolve('src/renderer/src')
       }
     },
-    plugins: [react()],
+    // dockviewFilePopout: see the file — without it ⌘⇧O does nothing in the
+    // packaged app, which loads its renderer from file://.
+    plugins: [react(), dockviewFilePopout()],
     build: {
       rollupOptions: {
         // popout.html is a SECOND renderer entry. dockview opens a pop-out group
