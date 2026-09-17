@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { agentKindOf, codexConfigOverrides, hookToEvent, replyOf, sessionIdOf } from './agents'
-import { titleFromRollout } from './codexSessions'
+import { titleFromRollout, transcriptFromRollout } from './codexSessions'
+import { codexPolicy, codexToolLines, codexUserInput, itemFailed } from './codexChat'
 
 describe('hookToEvent', () => {
   it('maps Codex turns and its permission prompt', () => {
@@ -92,5 +93,58 @@ describe('titleFromRollout', () => {
 
   it('has no title before the first message', () => {
     expect(titleFromRollout(JSON.stringify({ type: 'session_meta', payload: {} }))).toBeNull()
+  })
+})
+
+describe('transcriptFromRollout', () => {
+  it('restores the conversation, one answer per turn', () => {
+    const ev = (type: string, message: string): string => JSON.stringify({ type: 'event_msg', payload: { type, message } })
+    const text = [ev('user_message', 'hi'), ev('agent_message', 'one'), ev('agent_message', 'two'), ev('user_message', 'bye')].join('\n')
+    expect(transcriptFromRollout(text)).toEqual([
+      { role: 'user', text: 'hi', tools: [] },
+      { role: 'assistant', text: 'one\n\ntwo', tools: [] },
+      { role: 'user', text: 'bye', tools: [] }
+    ])
+  })
+})
+
+describe('codex chat mapping', () => {
+  it('maps pane modes onto a sandbox and approval policy', () => {
+    expect(codexPolicy('plan')).toEqual({ sandbox: 'read-only', approvalPolicy: 'never' })
+    expect(codexPolicy('acceptEdits')).toEqual({ sandbox: 'workspace-write', approvalPolicy: 'on-request' })
+    expect(codexPolicy('bypassPermissions').sandbox).toBe('danger-full-access')
+  })
+
+  it('sends images as data URLs after the text', () => {
+    const input = codexUserInput('look', [{ mediaType: 'image/png', data: 'AAAA' }])
+    expect(input).toEqual([
+      { type: 'text', text: 'look', text_elements: [] },
+      { type: 'image', url: 'data:image/png;base64,AAAA' }
+    ])
+  })
+
+  it('names Codex items the way the pane names tools', () => {
+    expect(codexToolLines({ type: 'commandExecution', command: 'npm test' })[0]).toMatchObject({ name: 'Bash', detail: 'npm test' })
+    const patch = codexToolLines({
+      type: 'fileChange',
+      changes: [
+        { path: '/w/a.ts', kind: { type: 'update', move_path: null }, diff: '@@\n-a\n+b\n+c' },
+        { path: '/w/new.ts', kind: { type: 'add' }, diff: '+x' }
+      ]
+    })
+    expect(patch.map((p) => [p.name, p.detail])).toEqual([
+      ['Edit', '/w/a.ts  +2 -1'],
+      ['Write', '/w/new.ts']
+    ])
+    expect(codexToolLines({ type: 'mcpToolCall', server: 'riven', tool: 'ask_user', arguments: {} })[0].name).toBe(
+      'mcp__riven__ask_user'
+    )
+    expect(codexToolLines({ type: 'reasoning' })).toEqual([])
+  })
+
+  it('treats a failed or non-zero item as an error', () => {
+    expect(itemFailed({ status: 'completed', exitCode: 0 })).toBe(false)
+    expect(itemFailed({ status: 'completed', exitCode: 2 })).toBe(true)
+    expect(itemFailed({ status: 'failed' })).toBe(true)
   })
 })

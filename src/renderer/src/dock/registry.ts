@@ -201,7 +201,9 @@ export function addChat(
   persona?: string,
   // The workspace to open in. Omitted = the one on screen; an agent-driven call
   // passes ITS OWN workspace so the pane never lands in the visible one.
-  inWorkspace?: string | null
+  inWorkspace?: string | null,
+  // Which agent backs the pane. Omitted = Claude Code.
+  cli?: 'claude' | 'codex'
 ): string {
   const target = dockAndWidFor(inWorkspace)
   if (!target) return ''
@@ -216,6 +218,7 @@ export function addChat(
     title: title || undefined,
     agent: agent || undefined,
     persona: persona || undefined,
+    cli: cli === 'codex' ? 'codex' : undefined,
     // Newly created here, so it starts an empty conversation instead of adopting
     // the workspace's most recent session. Only panes born through addChat get
     // this; a pane restored from a saved layout keeps the old fallback.
@@ -235,7 +238,7 @@ export function addChat(
   api.addPanel({
     id,
     component: 'chat',
-    title: title || t('title.chat'), // else updated to the conversation's short title
+    title: title || (cli === 'codex' ? 'Codex' : t('title.chat')), // else updated to the conversation's short title
     params: { chatKey: id, pinnedTitle: title || undefined, agent: agent || undefined },
     renderer: 'always',
     position: placement(api, dir, refId)
@@ -278,10 +281,20 @@ export function openAgentChat(agent: string): string {
 // native driver (Claude), otherwise a terminal running the command. This removes
 // the "sometimes CLI, sometimes chat" inconsistency.
 export function isNativeChatAgent(command: string): boolean {
-  return /^claude(\s|$)/.test(command.trim())
+  return nativeChatCli(command) !== null
+}
+// The agent a bare launcher command maps to in a chat pane, or null when the
+// command has to run in a terminal (arguments, another CLI).
+export function nativeChatCli(command: string): 'claude' | 'codex' | null {
+  const c = command.trim()
+  if (/^claude(\s|$)/.test(c)) return 'claude'
+  if (c === 'codex') return 'codex'
+  return null
 }
 export function launchAgent(command: string, initialText?: string): void {
-  if (getSettings().agentChatUI && isNativeChatAgent(command)) addChat(initialText)
+  const cli = nativeChatCli(command)
+  if (getSettings().agentChatUI && cli)
+    addChat(initialText, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, cli)
   else addTerminal(command)
 }
 
@@ -406,8 +419,9 @@ export function pickAgentInLauncher(launcherId: string, agent: string): void {
 export function pickCliInLauncher(launcherId: string, cmd: string): void {
   const api = activeApi
   if (!api) return
-  if (getSettings().agentChatUI && isNativeChatAgent(cmd)) {
-    addChat(undefined, 'within', undefined, launcherId)
+  const cli = nativeChatCli(cmd)
+  if (getSettings().agentChatUI && cli) {
+    addChat(undefined, 'within', undefined, launcherId, undefined, undefined, undefined, undefined, undefined, cli)
   } else {
     addTerminal(cmd, 'within', launcherId)
   }

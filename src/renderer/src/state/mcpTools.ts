@@ -1,4 +1,4 @@
-import { useSession, pathOf, widForPane } from './session'
+import { useSession, pathOf, widForPane, loadPaneState } from './session'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
@@ -209,6 +209,15 @@ function listPanels(c: Ctx): string {
 
 const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
 const SPLIT_DIRS = new Set(['right', 'below', 'left', 'above'])
+// The agent a chat pane runs. Claude when unsaid; the CLI's own names and the
+// product names are both understood, since that is how a model will say it.
+function chatCli(v: unknown): 'claude' | 'codex' | { error: string } {
+  const a = s(v).trim().toLowerCase()
+  if (!a || a === 'claude' || a === 'claude code' || a === 'claude-code') return 'claude'
+  if (a === 'codex' || a === 'openai codex' || a === 'gpt') return 'codex'
+  return { error: `error: unknown agent "${s(v)}" — use claude or codex` }
+}
+
 async function openPanel(args: Args, c: Ctx): Promise<string> {
   const kind = s(args.kind)
   // Every open names the caller's workspace. Without it these three went to the
@@ -241,8 +250,15 @@ async function openPanel(args: Args, c: Ctx): Promise<string> {
     return command ? `opened terminal running ${command}` : 'opened terminal'
   }
   if (kind === 'chat') {
-    addChat(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ws)
-    return 'opened chat'
+    const cli = chatCli(args.agent)
+    if (typeof cli !== 'string') return cli.error
+    const dir = SPLIT_DIRS.has(s(args.dir)) ? (s(args.dir) as SplitDir) : undefined
+    const title = s(args.title).trim() || undefined
+    const message = s(args.message).trim() || undefined
+    // Beside the pane that asked, without taking the user's focus.
+    const id = addChat(message, dir ?? 'right', undefined, c.chatPane ?? undefined, title, true, undefined, undefined, ws, cli)
+    if (!id) return notMounted(c)
+    return JSON.stringify({ opened: 'chat', agent: cli, id, title: title ?? (cli === 'codex' ? 'Codex' : 'chat') })
   }
   if (PANEL_KINDS.has(kind)) {
     togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api', ws)
@@ -495,7 +511,7 @@ function agentList(ws: string, self: string | null): Array<{
       id: e.id,
       title: e.title,
       kind: e.kind,
-      cli: e.kind === 'chat' ? 'claude' : e.agent ?? null,
+      cli: e.kind === 'chat' ? (loadPaneState(ws, e.id).cli === 'codex' ? 'codex' : 'claude') : e.agent ?? null,
       busy: e.busy,
       status: e.status,
       replies: e.kind === 'chat' ? true : !!e.replies
@@ -613,7 +629,9 @@ function groupAddAgent(args: Args, c: Ctx): string {
   // `inactive` so the asking pane (where the user may be typing) keeps focus.
   if (!c.ws) return unattributed(c)
   if (!callerApi(c)) return notMounted(c)
-  addChat(
+  const cli = chatCli(args.agent)
+  if (typeof cli !== 'string') return cli.error
+  const id = addChat(
     initial,
     'right',
     model || undefined,
@@ -622,9 +640,10 @@ function groupAddAgent(args: Args, c: Ctx): string {
     true,
     undefined,
     undefined,
-    c.ws
+    c.ws,
+    cli
   )
-  return `added agent "${name || persona || 'chat'}"${model && model !== 'default' ? ` · ${model}` : ''}`
+  return `added agent "${name || persona || 'chat'}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
 }
 async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {

@@ -86,3 +86,48 @@ export function readCodexSessionTitle(sessionId: string): string | null {
     if (fd !== null) fs.closeSync(fd)
   }
 }
+
+export interface RolloutMessage {
+  role: 'user' | 'assistant'
+  text: string
+  tools: Array<{ name: string; detail: string }>
+  images?: number
+}
+
+// A Codex conversation as the chat pane shows a restored one: what the user
+// said and what Codex answered, in order.
+export function transcriptFromRollout(text: string): RolloutMessage[] {
+  const out: RolloutMessage[] = []
+  for (const line of text.split('\n')) {
+    if (!line.includes('"event_msg"')) continue
+    let ev: { type?: string; payload?: { type?: string; message?: unknown; images?: unknown; local_images?: unknown } }
+    try {
+      ev = JSON.parse(line)
+    } catch {
+      continue
+    }
+    const p = ev.payload
+    if (ev.type !== 'event_msg' || !p || typeof p.message !== 'string') continue
+    if (p.type === 'user_message') {
+      const images =
+        (Array.isArray(p.images) ? p.images.length : 0) + (Array.isArray(p.local_images) ? p.local_images.length : 0)
+      out.push({ role: 'user', text: p.message, tools: [], ...(images ? { images } : {}) })
+    } else if (p.type === 'agent_message' && p.message.trim()) {
+      const last = out[out.length - 1]
+      // One turn can say several things; the pane shows it as one answer.
+      if (last && last.role === 'assistant') last.text += `\n\n${p.message}`
+      else out.push({ role: 'assistant', text: p.message, tools: [] })
+    }
+  }
+  return out
+}
+
+export function readCodexTranscript(sessionId: string): RolloutMessage[] {
+  const file = findRollout(sessionId)
+  if (!file) return []
+  try {
+    return transcriptFromRollout(fs.readFileSync(file, 'utf8'))
+  } catch {
+    return []
+  }
+}

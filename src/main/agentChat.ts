@@ -8,6 +8,8 @@ import { resolveBin } from './shellPath'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
 import { userContent, type ChatImageInput } from './chatContent'
+import { CodexChat } from './codexChat'
+import { readCodexTranscript } from './codexSessions'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -52,6 +54,42 @@ export interface StartOpts {
   // CLAUDE_CONFIG_DIR for this pane, when the user runs more than one Claude
   // account. Absent means inject nothing (the default, single-account setup).
   configDir?: string
+  // Which agent backs the pane. Absent = Claude Code.
+  cli?: 'claude' | 'codex'
+}
+
+// Codex-backed panes (codexChat.ts), keyed like `sessions`.
+const codexChats = new Map<string, CodexChat>()
+
+function startCodexChat(key: string, opts: StartOpts, sender: WebContents): Promise<{ ok: boolean; error?: string }> {
+  const existing = codexChats.get(key)
+  if (existing) {
+    existing.sender = sender
+    return Promise.resolve({ ok: true })
+  }
+  const chat = new CodexChat(
+    key,
+    {
+      cwd: opts.cwd,
+      resume: opts.resume,
+      model: opts.model,
+      permissionMode: opts.permissionMode,
+      mcpDisabled: opts.mcpDisabled,
+      globalPrompt: opts.globalPrompt
+    },
+    sender,
+    (ev) => {
+      if (!chat.sender.isDestroyed()) chat.sender.send('chat:event', ev)
+    },
+    (c) => {
+      if (codexChats.get(key) === c) codexChats.delete(key)
+    }
+  )
+  codexChats.set(key, chat)
+  return chat.start().then((r) => {
+    if (!r.ok) codexChats.delete(key)
+    return r
+  })
 }
 
 interface Session {
@@ -85,7 +123,7 @@ const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
 
 // A single fan-out channel (payload carries `key`) so the renderer attaches one
 // listener regardless of how many chat panes are open — same pattern as pty:*.
-type ChatEvent =
+export type ChatEvent =
   | {
       key: string
       kind: 'init'
@@ -407,6 +445,7 @@ async function startSession(
   opts: StartOpts,
   sender: WebContents
 ): Promise<{ ok: boolean; error?: string }> {
+  if (opts.cli === 'codex') return startCodexChat(key, opts, sender)
   const existing = sessions.get(key)
   if (existing) {
     existing.sender = sender // reattach after a renderer reload
@@ -571,6 +610,11 @@ async function startSession(
 
 function stopSession(key: string): void {
   parked.delete(key)
+  const codex = codexChats.get(key)
+  if (codex) {
+    codexChats.delete(key)
+    codex.stop()
+  }
   const s = sessions.get(key)
   if (!s) return
   s.alive = false
@@ -607,6 +651,8 @@ function reapIdleSessions(): void {
 // which would otherwise leave these children reparented to launchd and running
 // (each one holding its memory) long after riven is gone.
 export function killAllChatSessions(): void {
+  for (const c of codexChats.values()) c.stop()
+  codexChats.clear()
   for (const s of sessions.values()) {
     s.parking = true // suppress exit events during teardown
     try {
@@ -631,6 +677,11 @@ export function registerAgentChatHandlers(): void {
     startSession(key, opts, event.sender)
   )
   ipcMain.on('chat:send', (event, key: string, text: string, images?: ChatImageInput[]) => {
+    const codex = codexChats.get(key)
+    if (codex) {
+      void codex.send(text, images)
+      return
+    }
     const line = {
       type: 'user',
       message: { role: 'user', content: userContent(text, images) },
@@ -657,12 +708,14 @@ export function registerAgentChatHandlers(): void {
     })
   })
   ipcMain.on('chat:interrupt', (_e, key: string) => {
+    codexChats.get(key)?.interrupt()
     const s = sessions.get(key)
     if (!s) return
     s.lastActive = Date.now()
     writeLine(s, { type: 'control_request', request_id: `i${++s.ctrlSeq}`, request: { subtype: 'interrupt' } })
   })
   ipcMain.on('chat:setModel', (_e, key: string, model: string) => {
+    codexChats.get(key)?.setModel(model)
     const s = sessions.get(key)
     if (s)
       writeLine(s, {
@@ -672,6 +725,7 @@ export function registerAgentChatHandlers(): void {
       })
   })
   ipcMain.on('chat:setMode', (_e, key: string, mode: string) => {
+    codexChats.get(key)?.setMode(mode)
     const s = sessions.get(key)
     // riven's "auto" is a riven-side auto-allow policy; the CLI's own name is "default".
     if (s)
@@ -702,9 +756,11 @@ export function registerAgentChatHandlers(): void {
   ipcMain.handle('chat:agents', async (_e, cwd: string) => listAgents(cwd))
 
   // Reconstruct a past session's transcript for display when resuming.
-  ipcMain.handle('chat:sessionTranscript', async (_e, cwd: string, id: string, configDir?: string) =>
-    readSessionTranscript(cwd, id, configDir)
-  )
+  // A Codex pane's conversation lives in Codex's rollout, not in ~/.claude.
+  ipcMain.handle('chat:sessionTranscript', async (_e, cwd: string, id: string, configDir?: string) => {
+    const claude = await readSessionTranscript(cwd, id, configDir)
+    return claude.length ? claude : readCodexTranscript(id)
+  })
   ipcMain.handle('chat:sessionTitle', async (_e, cwd: string, id: string, configDir?: string) =>
     readSessionTitle(cwd, id, configDir)
   )

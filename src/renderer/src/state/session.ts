@@ -100,7 +100,11 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
     // panel no matter what the tree holds. `fresh` was written by addChat and
     // dropped here, so every new pane still looked adoptable and reopened the
     // workspace's most recent conversation.
-    fresh: rec?.fresh
+    fresh: rec?.fresh,
+    // Which CLI the pane's conversation belongs to (a Codex chat pane, or the
+    // agent a terminal was last running) — without it every pane reads as Claude.
+    cli: rec?.cli ?? null,
+    persona: rec?.persona
   }
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {

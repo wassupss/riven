@@ -68,9 +68,12 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     en: 'Open panel',
     description:
       'Open a riven panel. kind: editor | terminal | chat | search | git | preview | changes. ' +
-      'For a terminal you may pass `command` to run in it (e.g. "claude") and `dir` to place it ' +
-      'beside the active panel: right | below | left | above.',
-    inputSchema: obj({ kind: str, command: str, dir: str }, ['kind']),
+      'An AGENT to work with belongs in a chat pane: kind="chat" with `agent` = claude (default) or ' +
+      'codex opens that agent natively, with `message` as its first prompt and `title` as its tab ' +
+      'name; the reply is the new pane id, usable with riven_ask_agent. Use kind="terminal" with ' +
+      '`command` only when the user asks for a terminal/CLI or for a command that is not an agent. ' +
+      '`dir` places the pane beside the active one: right | below | left | above.',
+    inputSchema: obj({ kind: str, command: str, dir: str, agent: str, message: str, title: str }, ['kind']),
     implemented: true
   },
   {
@@ -251,8 +254,10 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에 에이전트 추가',
     en: 'Add agent to group',
     description:
-      'Open a new agent chat pane, optionally primed with a persona and nickname.',
-    inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str }, [
+      'Open a new agent chat pane, optionally primed with a persona and nickname. `agent` picks who ' +
+      'runs it: claude (default) or codex — a team can mix them. `model` is that agent\'s model ' +
+      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5).',
+    inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str, agent: str }, [
       'group',
       'name'
     ]),
@@ -762,7 +767,7 @@ export function mcpSystemPrompt(): string {
   return `이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
 - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 ask_user(question, options)를 호출하세요(방향키로 고른 값을 돌려줍니다).
 - 코드/파일을 사용자와 함께 볼 땐 riven_open_file(path, line?)로 riven 에디터에 엽니다.
-- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 터미널은 riven_open_panel(kind='terminal', command='claude', dir='right') 처럼 명령까지 지정해 열 수 있습니다.
+- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 에이전트(Claude Code·Codex)를 새로 띄울 땐 터미널이 아니라 채팅 패널로 엽니다: riven_open_panel(kind='chat', agent='codex', message='첫 지시', dir='right') — 돌려받은 패널 id로 riven_ask_agent를 쓸 수 있습니다. 터미널(kind='terminal', command=...)은 사용자가 터미널/CLI를 원할 때나 에이전트가 아닌 명령에만 씁니다.
 - HTTP/API 테스트는 riven_api_request(method, url, headers?, body?)로 실행하고 상태/본문을 돌려받습니다.
 - riven 브라우저를 직접 운전할 수 있습니다: riven_browser_open(url, new_tab?), riven_browser_state(), riven_browser_read(selector?, html?), riven_browser_click/fill/wait/scroll, riven_browser_go(action), riven_screenshot(url?). 페이지는 쿠키·세션을 유지합니다.
 - 긴 결과(요약·계획·조사)는 대화에 쏟지 말고 riven_note_write(title, body, note?)로 메모에 남기세요(note 주면 갈아끼움). 이어쓰기 riven_note_append, 읽기 riven_note_read, 목록 riven_note_list. 문서로 저장소에 남길 땐 riven_doc_write(path, body)(.claude/docs 기준), 메모를 파일로는 riven_note_save_file.

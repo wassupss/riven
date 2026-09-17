@@ -242,6 +242,8 @@ const api = {
         globalPrompt?: string
         agent?: string
         configDir?: string
+        // Which agent backs the pane. Absent = Claude Code.
+        cli?: 'claude' | 'codex'
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them
