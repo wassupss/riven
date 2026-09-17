@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { listAgents, registerAgent, renameAgent, resolveAgent } from './agents'
+import { askChatTurn, listAgents, registerAgent, renameAgent, resolveAgent, type AgentController } from './agents'
 
 // The agent roster is what riven_agents / riven_ask_agent resolve against. It is
 // GLOBAL (one map for every workspace), so the workspace filter is the only
@@ -75,5 +75,73 @@ describe('renameAgent', () => {
 
   it('is a no-op for a pane that is not a registered agent', () => {
     expect(() => renameAgent('term-9', 'whatever')).not.toThrow()
+  })
+})
+
+// A fake chat pane: each sent message becomes a turn that takes `ms` and answers
+// "re: <message>". Waiters resolve with whichever turn completes next.
+function fakePane(opening?: string): { pane: AgentController; sent: string[] } {
+  const sent: string[] = []
+  let busy = false
+  let queue: string[] = []
+  let waiters: Array<(r: string) => void> = []
+  let pending = opening
+  const run = (): void => {
+    const msg = queue.shift()
+    if (msg === undefined) return
+    busy = true
+    setTimeout(() => {
+      busy = false
+      const ws = waiters
+      waiters = []
+      for (const w of ws) w(`re: ${msg}`)
+      run()
+    }, 40)
+  }
+  const pane: AgentController = {
+    chatKey: 'chat-x',
+    workspace: 'ws',
+    getTitle: () => 'x',
+    isBusy: () => busy,
+    send: (t) => {
+      sent.push(t)
+      queue.push(t)
+      if (!busy) run()
+    },
+    waitNext: () => new Promise((r) => waiters.push(r)),
+    hasPendingOpening: () => pending !== undefined
+  }
+  if (opening !== undefined)
+    setTimeout(() => {
+      pending = undefined
+      pane.send(opening)
+    }, 30)
+  return { pane, sent }
+}
+
+describe('askChatTurn', () => {
+  it('returns the answer to its own message, not to a turn already running', async () => {
+    const { pane, sent } = fakePane()
+    pane.send('role priming')
+    expect(await askChatTurn(pane, 'dinner?', 2000, 'timeout')).toBe('re: dinner?')
+    expect(sent).toEqual(['role priming', 'dinner?'])
+  })
+
+  it('waits for the message a pane was opened with', async () => {
+    const { pane, sent } = fakePane('opening')
+    expect(await askChatTurn(pane, 'question', 2000, 'timeout')).toBe('re: question')
+    expect(sent).toEqual(['opening', 'question'])
+  })
+
+  it('gives up at the deadline', async () => {
+    const pane: AgentController = {
+      chatKey: 'c',
+      workspace: 'w',
+      getTitle: () => 'c',
+      isBusy: () => true,
+      send: () => {},
+      waitNext: () => new Promise(() => {})
+    }
+    expect(await askChatTurn(pane, 'q', 100, 'timeout')).toBe('timeout')
   })
 })

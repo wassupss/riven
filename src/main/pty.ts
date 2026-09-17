@@ -6,14 +6,19 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import {
   mcpConfigJson,
+  mcpPaneUrl,
   mcpSystemPrompt,
+  mcpAuthToken,
+  mcpRequestTimeoutMs,
   implementedToolNames,
   agentMcpEnv,
   mcpReady
 } from './mcpServer'
+import { codexConfigOverrides, type AgentKind } from './agents'
+import { readCodexSessionTitle } from './codexSessions'
 import { resolveBin } from './shellPath'
 import { TerminalActivity, type AttentionReason } from './terminal/activity'
-import { hookEnv, registerAgentHooks } from './agentHooks'
+import { hookCommand, hookEnv, registerAgentHooks } from './agentHooks'
 import { TerminalWorkerHost } from './terminal/worker-host'
 import type { WorkerToMain } from './terminal/worker-protocol'
 
@@ -52,6 +57,8 @@ interface Session {
   // The CLI session id this terminal's agent is using, learned from its hook
   // payloads. Null once the CLI session ends (SessionEnd) — see the hook handler.
   agentSessionId: string | null
+  // Which CLI that conversation belongs to, so it is resumed with the right one.
+  agentSessionKind: AgentKind | null
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
   activeTimer: ReturnType<typeof setTimeout> | null
@@ -143,6 +150,16 @@ if [ -n "$RIVEN_MCP_CONFIG" ]; then
     command "\${RIVEN_REAL_CLAUDE:-claude}" "\${rv[@]}" "$@"
   }
 fi
+# The same for Codex: riven's MCP server and its hooks, as \`-c\` overrides (one
+# per line of RIVEN_CODEX_ARGS), so the user's ~/.codex is never written to.
+if [ -n "$RIVEN_CODEX_ARGS" ]; then
+  codex() {
+    local -a rv
+    local line
+    for line in "\${(@f)RIVEN_CODEX_ARGS}"; do rv+=(-c "$line"); done
+    command "\${RIVEN_REAL_CODEX:-codex}" "\${rv[@]}" "$@"
+  }
+fi
 # Restore so .zlogin and any nested shell use the user's own dir, not ours.
 export ZDOTDIR="$RIVEN_USER_ZDOTDIR"`
     }
@@ -160,11 +177,36 @@ export ZDOTDIR="$RIVEN_USER_ZDOTDIR"`
 
 // Resolved once: `resolveBin` walks the user's real PATH, and ptyEnv is sync.
 let realClaude: string | null = null
+let realCodex: string | null = null
 export function primeShellShim(): void {
   setupShellShim()
   void resolveBin('claude').then((p) => {
     realClaude = p
   })
+  void resolveBin('codex').then((p) => {
+    realCodex = p
+  })
+}
+
+// riven's tool guide goes to Codex as developer_instructions — unless the user
+// has set their own, which a `-c` override would silently replace.
+function userHasCodexInstructions(): boolean {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex')
+  try {
+    return /^\s*developer_instructions\s*=/m.test(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+function codexArgs(key: string): string {
+  const url = mcpPaneUrl(implementedToolNames(), key)
+  return codexConfigOverrides({
+    mcpUrl: url,
+    hookCommand: (event) => hookCommand(event, 'codex'),
+    instructions: url && !userHasCodexInstructions() ? mcpSystemPrompt() : null,
+    toolTimeoutSec: Math.round(mcpRequestTimeoutMs() / 1000)
+  }).join('\n')
 }
 
 // Build the PTY environment, guaranteeing a UTF-8 locale (issue #5). When the app
@@ -195,6 +237,11 @@ function ptyEnv(configDir: string | undefined, key: string): Record<string, stri
     // The shim runs `command claude`, which is resolved against the shell's PATH.
     // That is usually right, but riven knows the absolute path it found itself.
     if (realClaude) env.RIVEN_REAL_CLAUDE = realClaude
+    env.RIVEN_CODEX_ARGS = codexArgs(key)
+    // Codex reads the MCP bearer token from here (bearer_token_env_var), so it
+    // never appears on a command line. The same token as RIVEN_HOOK_TOKEN.
+    env.RIVEN_MCP_TOKEN = mcpAuthToken()
+    if (realCodex) env.RIVEN_REAL_CODEX = realCodex
   }
   Object.assign(env, hookEnv(key), agentMcpEnv())
   if (process.platform !== 'win32') {
@@ -344,7 +391,14 @@ function handleWorkerCrash(): void {
 
 function publishActivity(s: Session, notify: AttentionReason): void {
   const snap = s.activity.snapshot()
-  send(s, 'pty:status', { key: s.key, busy: snap.state === 'working', attention: snap.attention })
+  send(s, 'pty:status', {
+    key: s.key,
+    busy: snap.state === 'working',
+    attention: snap.attention,
+    // The agent reports its turns through hooks, so a question put to it can
+    // wait for the answer.
+    hooked: s.activity.hookDriven
+  })
   if (notify && Date.now() >= s.startupUntil) {
     // The preview comes from the worker's model, so this lands a tick later than
     // the status above. Only the notification body depends on it.
@@ -385,7 +439,7 @@ function dispose(s: Session): void {
 
 export function registerPtyHandlers(): void {
   // Agent hooks arrive on the loopback server tagged with the pane they ran in.
-  registerAgentHooks((pane, event, hook, sessionId) => {
+  registerAgentHooks(({ pane, agent, event, hook, sessionId, reply }) => {
     const s = sessions.get(pane)
     if (!s) return
     if (s.activeTimer) {
@@ -398,11 +452,16 @@ export function registerPtyHandlers(): void {
     // means the user left the CLI on purpose — forget it, or the next launch
     // would reopen a conversation they had closed.
     const next = hook === 'SessionEnd' ? null : sessionId ?? s.agentSessionId ?? null
-    if (next !== (s.agentSessionId ?? null)) {
+    const nextKind = next ? (sessionId ? agent : s.agentSessionKind ?? agent) : null
+    if (next !== (s.agentSessionId ?? null) || nextKind !== s.agentSessionKind) {
       s.agentSessionId = next
-      send(s, 'pty:agentSession', { key: pane, sessionId: next })
+      s.agentSessionKind = nextKind
+      send(s, 'pty:agentSession', { key: pane, sessionId: next, agent: nextKind })
     }
     publishActivity(s, s.activity.hook(event))
+    // A finished turn's answer, for whoever asked this pane something
+    // (riven_ask_agent). Sent after the status so "idle" is already true.
+    if (reply) send(s, 'pty:reply', { key: pane, text: reply })
   })
 
   // Clean quit. The PTYs live in the worker now, so the worker is what has to
@@ -475,6 +534,7 @@ export function registerPtyHandlers(): void {
         activity: new TerminalActivity(),
         agentPresent: false,
         agentSessionId: null,
+        agentSessionKind: null,
         agentName: null,
         poll: null,
         polling: false,
@@ -542,6 +602,12 @@ export function registerPtyHandlers(): void {
 
       return { id: key, existed: false }
     }
+  )
+
+  // A Codex conversation's name, from its rollout (Claude's comes from
+  // chat:sessionTitle, which knows its per-account config dirs).
+  ipcMain.handle('pty:codexSessionTitle', (_e, id: string) =>
+    typeof id === 'string' ? readCodexSessionTitle(id) : null
   )
 
   ipcMain.on('pty:write', (_event, key: string, data: string) => {

@@ -1965,8 +1965,8 @@ select {
   bottom: calc(100% + 8px);
   right: 0;
   z-index: var(--z-popover);
-  width: 268px;
-  padding: 12px;
+  width: 296px;
+  padding: 8px;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -2095,6 +2095,121 @@ select {
   padding: 8px 6px 10px;
   background: var(--bg-2);
 }
+/* Popover top line: used/left switch on the left, pin on the right. */
+.usage-pop-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.usage-mode {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+}
+.usage-mode button {
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  padding: 2px 9px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+.usage-mode button.on {
+  background: var(--bg-2);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--hairline);
+}
+/* One plan window: name + span on the left, the number in words on the right,
+   the bar beneath, when it resets under that. */
+.usage-win {
+  padding: 6px 8px 8px;
+}
+.usage-win-top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.usage-win-name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+.usage-win-span {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.usage-win-pct {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.usage-win-reset {
+  margin-top: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.usage-acc-note {
+  padding: 0 8px 6px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+/* Today's spend: its own block under the windows, total on the heading line and
+   the per-model split beneath it. */
+.usage-today {
+  margin: 4px 0 0;
+  padding: 8px 8px 2px;
+  border-top: 1px solid var(--hairline);
+}
+.usage-today-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+.usage-today-total {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.usage-today-total b {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+.usage-today-total.dim {
+  font-size: var(--text-2xs);
+}
+.usage-today .usage-row {
+  padding: 2px 0;
+  font-size: var(--text-xs);
+}
+.usage-acc-head.static {
+  cursor: default;
+  padding-top: 6px;
+  padding-bottom: 2px;
+}
+.usage-acc-head.static:hover {
+  background: none;
+}
+.usage-acc + .usage-acc {
+  border-top: 1px solid var(--hairline);
+  padding-top: 2px;
+}
 /* Per-account usage accordion (pinned sidebar + status-bar popover). */
 .usage-accs {
   display: flex;
@@ -2129,6 +2244,7 @@ select {
 .usage-acc-name {
   flex: none;
   font-weight: 600;
+  font-size: var(--text-sm);
 }
 .usage-acc-sub {
   min-width: 0;
@@ -2165,7 +2281,7 @@ select {
   transition: width var(--dur-slow) ease;
 }
 .usage-acc-sum {
-  margin-left: 0;
+  margin-left: auto;
   flex: none;
   font-variant-numeric: tabular-nums;
 }

@@ -8,6 +8,7 @@ import { claudeConfigDirFor } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
 import { markPaneSeen } from '../../state/roster'
 import { t as staticT } from '../../i18n'
+import { resumeCommand, type TerminalCli } from '../../lib/agentResume'
 
 export interface TerminalParams {
   paneId: number
@@ -37,7 +38,10 @@ export default function TerminalPanel({
   // can come back to it instead of to a bare shell — the terminal equivalent of
   // a chat pane's --resume. A pane the user closed is gone from the layout and
   // never gets here, so a closed conversation is not reopened.
-  const [resumeSession] = useState(() => loadPaneState(workspace, sessionKey).session ?? null)
+  const [resume] = useState(() => {
+    const st = loadPaneState(workspace, sessionKey)
+    return resumeCommand(st.session, st.cli)
+  })
   const [busy, setBusy] = useState(false)
   // The REASON, not a boolean: 'needs_input' wants the user, 'finished' is a
   // result waiting to be read. Collapsing them made a finished CLI show the
@@ -92,6 +96,7 @@ export default function TerminalPanel({
   // session changes, so a slow answer for the previous conversation can never
   // land on the new one.
   const sessionIdRef = useRef<string | null>(null)
+  const sessionCliRef = useRef<TerminalCli>('claude')
   const titleGenRef = useRef(0)
   const titleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const clearTitleTimers = (): void => {
@@ -123,8 +128,11 @@ export default function TerminalPanel({
   // finished turn refreshes it — the CLI replaces the opening line with a
   // summarised title later, and that is the name worth showing.
   const refreshConvoTitle = (sessionId: string, gen: number, backoff: number[]): void => {
-    void window.api.chat
-      .sessionTitle(pathOf(workspace), sessionId, claudeConfigDirFor(workspace))
+    const read =
+      sessionCliRef.current === 'codex'
+        ? window.api.pty.codexSessionTitle(sessionId)
+        : window.api.chat.sessionTitle(pathOf(workspace), sessionId, claudeConfigDirFor(workspace))
+    void read
       .then((title) => {
         if (gen !== titleGenRef.current) return // a different conversation now
         const clean = title?.trim()
@@ -179,10 +187,12 @@ export default function TerminalPanel({
     // Main learns the CLI's session id from its hook payloads and clears it when
     // that session ends, so persisting it verbatim keeps "resume to this
     // conversation" and "come back to a plain shell" both truthful.
-    const offAgentSession = window.api.pty.onAgentSession(({ key, sessionId }) => {
+    const offAgentSession = window.api.pty.onAgentSession(({ key, sessionId, agent }) => {
       if (key !== sessionKey) return
-      setPaneState(workspace, sessionKey, { session: sessionId })
+      const cli: TerminalCli = agent === 'codex' ? 'codex' : 'claude'
+      setPaneState(workspace, sessionKey, { session: sessionId, cli: sessionId ? cli : null })
       if (sessionId === sessionIdRef.current) return
+      sessionCliRef.current = cli
       // A different conversation: abandon the old one's pending reads and its
       // name. Keeping the name would leave the PREVIOUS conversation's title on
       // a tab that has moved on — which is what happened whenever the new
@@ -256,7 +266,7 @@ export default function TerminalPanel({
           // re-running a bare `claude` would start a NEW conversation, which is
           // exactly the thing being fixed. main ignores this entirely when the
           // PTY is still alive (⌘R), so it only applies to a real restart.
-          resumeSession ? `claude --resume ${resumeSession}` : initialCommand
+          resume ?? initialCommand
         }
         onReady={(ptyId) => contextBus.registerSink({ paneId, ptyId, label: staticT('term.label'), workspace })}
         onFocus={() => contextBus.setActive(workspace, paneId)}

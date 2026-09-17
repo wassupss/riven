@@ -1,8 +1,8 @@
-import { useSession, pathOf, widForPane } from './session'
+import { useSession, pathOf, widForPane, loadPaneState } from './session'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
-import { listAgents, resolveAgent } from './agents'
+import { askChatTurn, listAgents, resolveAgent } from './agents'
 import { contextBus } from '../bridge/contextBus'
 import {
   ensureEditorIn,
@@ -209,6 +209,15 @@ function listPanels(c: Ctx): string {
 
 const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
 const SPLIT_DIRS = new Set(['right', 'below', 'left', 'above'])
+// The agent a chat pane runs. Claude when unsaid; the CLI's own names and the
+// product names are both understood, since that is how a model will say it.
+function chatCli(v: unknown): 'claude' | 'codex' | { error: string } {
+  const a = s(v).trim().toLowerCase()
+  if (!a || a === 'claude' || a === 'claude code' || a === 'claude-code') return 'claude'
+  if (a === 'codex' || a === 'openai codex' || a === 'gpt') return 'codex'
+  return { error: `error: unknown agent "${s(v)}" — use claude or codex` }
+}
+
 async function openPanel(args: Args, c: Ctx): Promise<string> {
   const kind = s(args.kind)
   // Every open names the caller's workspace. Without it these three went to the
@@ -241,8 +250,16 @@ async function openPanel(args: Args, c: Ctx): Promise<string> {
     return command ? `opened terminal running ${command}` : 'opened terminal'
   }
   if (kind === 'chat') {
-    addChat(undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, ws)
-    return 'opened chat'
+    const cli = chatCli(args.agent)
+    if (typeof cli !== 'string') return cli.error
+    const dir = SPLIT_DIRS.has(s(args.dir)) ? (s(args.dir) as SplitDir) : undefined
+    const title = s(args.title).trim() || undefined
+    const message = s(args.message).trim() || undefined
+    // Beside the pane that asked, without taking the user's focus.
+    const model = s(args.model).trim() || undefined
+    const id = addChat(message, dir ?? 'right', model, c.chatPane ?? undefined, title, true, undefined, undefined, ws, cli)
+    if (!id) return notMounted(c)
+    return JSON.stringify({ opened: 'chat', agent: cli, id, title: title ?? (cli === 'codex' ? 'Codex' : 'chat') })
   }
   if (PANEL_KINDS.has(kind)) {
     togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api', ws)
@@ -477,16 +494,29 @@ const ASK_TIMEOUT_MS = 300_000 // 5 min per delegated turn
 // Everything in a workspace that can be delegated to, minus the caller itself.
 // Terminals count only while a CLI agent is actually running in them — that is
 // what rosterFor already decides (pty:agent), so a plain shell never appears.
+// `cli` says which agent is behind the pane (a chat pane is Claude Code), so a
+// caller putting a team together can tell one model from another. `replies` is
+// whether riven_ask_agent will bring back its answer.
 function agentList(ws: string, self: string | null): Array<{
   id: string
   title: string
   kind: RosterEntry['kind']
+  cli: string | null
   busy: boolean
   status: RosterEntry['status']
+  replies: boolean
 }> {
   return rosterFor(ws)
     .filter((e) => e.id !== self)
-    .map((e) => ({ id: e.id, title: e.title, kind: e.kind, busy: e.busy, status: e.status }))
+    .map((e) => ({
+      id: e.id,
+      title: e.title,
+      kind: e.kind,
+      cli: e.kind === 'chat' ? (loadPaneState(ws, e.id).cli === 'codex' ? 'codex' : 'claude') : e.agent ?? null,
+      busy: e.busy,
+      status: e.status,
+      replies: e.kind === 'chat' ? true : !!e.replies
+    }))
 }
 
 // Match by exact id, then exact title, then a case-insensitive contains — the
@@ -507,13 +537,17 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   const entry = resolveRosterAgent(ref, c.ws, c.self)
   if (!entry) return `error: no agent matching "${ref}" in this workspace (see riven_agents)`
 
-  // A CLI in a terminal is driven by typing at it. There is no reply boundary in
-  // a PTY stream, so delivery is always async — and writing into a running turn
-  // would be read as an answer to whatever it is currently asking, so refuse
-  // rather than corrupt it (the @mention path in the UI asks the user instead).
+  // A CLI in a terminal is driven by typing at it. A PTY stream has no reply
+  // boundary of its own, but a CLI that reports through hooks (Claude Code,
+  // Codex) ends every turn with a Stop that carries its answer — so for those
+  // the question gets its reply, like a chat pane, whichever model is behind
+  // it. Anything else stays fire-and-forget. Writing into a running turn would
+  // be read as an answer to whatever it is currently asking, so refuse rather
+  // than corrupt it (the @mention path in the UI asks the user instead).
   if (entry.kind === 'terminal') {
     if (entry.busy)
       return `error: "${entry.title}" is mid-turn; its CLI would read this as an answer to what it is currently asking. Try again when riven_agents shows it idle.`
+    const replyP = wait && entry.replies ? terminalReply(entry.id, ASK_TIMEOUT_MS) : null
     // Delivered the way a person types it: the text, a pause, then Enter as its
     // own write. `message + '\r'` in a single write left the message sitting
     // unsent in the CLI's input box — a TUI reading one burst that happens to end
@@ -528,21 +562,40 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
     window.api.pty.write(entry.id, message.replace(/\r?\n/g, ' '))
     await sleep(120)
     window.api.pty.write(entry.id, '\r')
-    return `typed into "${entry.title}" (${entry.id}) — terminal delivery is async, no reply is waited for`
+    if (!replyP)
+      return `typed into "${entry.title}" (${entry.id}) — ${
+        wait ? "this terminal's CLI doesn't report its turns, so no reply is waited for" : 'async'
+      }`
+    return `[${entry.title}] ${await replyP}`
   }
 
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
   if (!target)
     return `error: "${entry.title}" exists but its panel isn't mounted, so it cannot receive a message. Switch to that workspace and try again.`
-  const replyP = target.waitNext()
-  target.send(message)
-  if (!wait) return `delegated to "${target.getTitle()}" (async)`
-  const reply = await Promise.race([
-    replyP,
-    new Promise<string>((r) => setTimeout(() => r('(no reply within 5 min)'), ASK_TIMEOUT_MS))
-  ])
-  return `[${target.getTitle()}] ${reply}`
+  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)')
+  if (!wait) {
+    void answer
+    return `delegated to "${target.getTitle()}" (async)`
+  }
+  return `[${target.getTitle()}] ${await answer}`
 }
+// The next answer a terminal's CLI ends a turn with. Registered BEFORE the
+// message is typed, so a quick turn can't finish in between.
+function terminalReply(pane: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      off()
+      resolve('(no reply within 5 min)')
+    }, timeoutMs)
+    const off = window.api.pty.onReply(({ key, text }) => {
+      if (key !== pane) return
+      clearTimeout(timer)
+      off()
+      resolve(text)
+    })
+  })
+}
+
 async function askAgent(args: Args, c: Ctx): Promise<string> {
   return askOneAgent(s(args.agent), s(args.message), args.wait !== false, c)
 }
@@ -560,33 +613,37 @@ function groupAddAgent(args: Args, c: Ctx): string {
   const persona = s(args.persona)
   const model = s(args.model)
   const parent = s(args.parent)
-  // Prime the teammate with its role/persona as the first message, and spawn it on
-  // the requested model so a team can mix models (engineering: opus architect +
-  // sonnet coder). `parent` is recorded in the priming so the agent knows who it
-  // reports to.
+  // The teammate's role goes in as its SYSTEM prompt, on the requested model so
+  // a team can mix models (engineering: opus architect + sonnet coder). It used
+  // to be sent as the first chat message, which spent a whole turn on "OK, I'll
+  // be that" — and a question asked right after landed behind that turn and got
+  // its answer back instead. `parent` is recorded so it knows who it reports to.
   const lines: string[] = []
   if (persona) lines.push(`[역할] ${persona}`)
   if (name) lines.push(`[이름] ${name}`)
   if (parent) lines.push(`[보고 대상] ${parent}`)
-  const initial = lines.length ? `${lines.join('\n')}\n이 역할로 이후 작업을 수행하세요.` : undefined
+  const role = lines.length ? lines.join('\n') : undefined
   // Open the teammate BESIDE the pane that asked for it, IN the caller's
   // workspace — `refId` only picks a neighbour within a dock, so without naming
   // the workspace the pane still materialised in whichever dock was on screen.
   // `inactive` so the asking pane (where the user may be typing) keeps focus.
   if (!c.ws) return unattributed(c)
   if (!callerApi(c)) return notMounted(c)
-  addChat(
-    initial,
+  const cli = chatCli(args.agent)
+  if (typeof cli !== 'string') return cli.error
+  const id = addChat(
+    undefined,
     'right',
     model || undefined,
     c.chatPane ?? undefined,
     name || undefined,
     true,
     undefined,
-    undefined,
-    c.ws
+    role,
+    c.ws,
+    cli
   )
-  return `added agent "${name || persona || 'chat'}"${model && model !== 'default' ? ` · ${model}` : ''}`
+  return `added agent "${name || persona || 'chat'}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
 }
 async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -671,12 +728,7 @@ async function startPipeline(args: Args, c: Ctx): Promise<string> {
     }
     if (!target) return `error: could not open a pane for stage "${stageName}"`
     const prompt = `${instruction ? instruction + '\n\n' : ''}[이전 단계 산출물]\n${carry}`
-    const replyP = target.waitNext()
-    target.send(prompt)
-    carry = await Promise.race([
-      replyP,
-      new Promise<string>((r) => setTimeout(() => r('(stage timed out)'), ASK_TIMEOUT_MS))
-    ])
+    carry = await askChatTurn(target, prompt, ASK_TIMEOUT_MS, '(stage timed out)')
     out.push(`## ${stageName}\n${carry}`)
   }
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`

@@ -20,6 +20,46 @@ export interface AgentController {
   attach?: (text: string) => void
   // Resolves with the assistant reply text of the next turn that completes.
   waitNext: () => Promise<string>
+  // The pane was opened with a first message it hasn't sent yet.
+  hasPendingOpening?: () => boolean
+}
+
+const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+// Put a message to a chat pane and return the answer to THAT message.
+//
+// Sending while the pane was mid-turn (or before it had sent the message it was
+// opened with) queued the message behind that turn, and waitNext resolved with
+// whatever turn finished first — the caller got the answer to the earlier
+// message, and the pane then answered the real question again. Across two
+// agents that looked like the same exchange repeating. So: let the running turn
+// and the opening message finish first, then send and wait for the next reply.
+export async function askChatTurn(
+  target: AgentController,
+  message: string,
+  timeoutMs: number,
+  timeoutText: string
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs
+  const left = (): number => Math.max(0, deadline - Date.now())
+  for (;;) {
+    if (Date.now() >= deadline) return timeoutText
+    if (target.hasPendingOpening?.()) {
+      await pause(150)
+      continue
+    }
+    if (target.isBusy()) {
+      await Promise.race([target.waitNext(), pause(left())])
+      continue
+    }
+    // Busy is published a render after a send, so an opening message sent a
+    // moment ago can still read as idle. Look once more before going.
+    await pause(120)
+    if (!target.isBusy() && !target.hasPendingOpening?.()) break
+  }
+  const reply = target.waitNext()
+  target.send(message)
+  return Promise.race([reply, pause(left()).then(() => timeoutText)])
 }
 
 interface AgentsState {

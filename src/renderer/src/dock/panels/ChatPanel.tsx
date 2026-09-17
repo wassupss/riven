@@ -38,7 +38,7 @@ import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../stat
 import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
-import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
+import { ensureEditor, addTerminal, setDelegator, hasInitialText, takeInitialText, getActiveApi } from '../registry'
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
 import { useT, t as staticT, type TFn } from '../../i18n'
@@ -180,9 +180,12 @@ const TOOL_VERB: Record<string, string> = {
   WebSearch: 'chat.tools.web',
   TodoWrite: 'chat.tools.todo'
 }
+// Codex's models (from its app-server model/list). "default" is the account's.
+const CODEX_MODELS = ['default', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
 // Map a raw CLI model id (e.g. "claude-opus-5[1m]") to the chip's short alias.
 const modelAlias = (m: string | null): string => {
   if (!m) return 'default'
+  if (/^gpt-/i.test(m)) return m
   if (/opus/i.test(m)) return 'opus'
   if (/sonnet/i.test(m)) return 'sonnet'
   if (/haiku/i.test(m)) return 'haiku'
@@ -193,6 +196,7 @@ const modelAlias = (m: string | null): string => {
 const fmtModel = (raw: string): string =>
   raw
     .replace(/^claude-/, '')
+    .replace(/^gpt-/, 'GPT ')
     .replace(/\[.*\]$/, '')
     .replace(/-/g, ' ')
     .trim()
@@ -1302,6 +1306,8 @@ export default function ChatPanel({
   // The pane's persisted state (single source of truth) — read once at mount from
   // the workspace tree (sessions.json), with a one-time fallback to legacy keys.
   const [pane0] = useState(() => loadPaneState(workspace, chatKey))
+  // Which agent backs this pane — fixed for its life, like its conversation.
+  const cli: 'claude' | 'codex' = pane0.cli === 'codex' ? 'codex' : 'claude'
   const savePane = useCallback(
     (patch: Parameters<typeof setPaneState>[2]) => setPaneState(workspace, chatKey, patch),
     [workspace, chatKey]
@@ -1443,6 +1449,8 @@ export default function ChatPanel({
   // first message. The pane's own init later refines it for this exact session.
   useEffect(() => {
     let alive = true
+    // Claude Code's command list; a Codex pane has none of those commands.
+    if (cli === 'codex') return
     window.api.chat.sessionInfo(pathOf(workspace), claudeConfigDirFor(workspace)).then((info) => {
       if (!alive) return
       if (info.slashCommands.length) setSlashCommands(info.slashCommands)
@@ -1639,6 +1647,7 @@ export default function ChatPanel({
     // Custom agent: prop on first mount, pane state after a reload/restore.
     const savedAgent = agent || pane0.agent || undefined
     void window.api.chat.start(chatKey, {
+      cli,
       cwd: pathOf(workspace),
       resume: savedSession,
       model: savedModel !== 'default' ? savedModel : undefined,
@@ -2071,7 +2080,8 @@ export default function ChatPanel({
           el.focus()
         }
       },
-      waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve))
+      waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve)),
+      hasPendingOpening: () => hasInitialText(chatKey)
     })
   }, [chatKey, workspace, sendMessage])
 
@@ -2129,18 +2139,24 @@ export default function ChatPanel({
 
   // First-message priming: consumed ONE-SHOT from the registry (not from params),
   // so a restored pane never re-sends it. Only fresh panes have pending text.
-  const initSent = useRef(false)
+  //
+  // Taken when the timer FIRES, not when the effect runs. Taking it up front and
+  // guarding the effect with a ref lost the message whenever the pane mounted
+  // twice in a row (React's dev double-mount, or a dock re-render): the first
+  // mount took the text and its cleanup cancelled the send, and the second mount
+  // found nothing — so a pane an agent opened with a first message just sat
+  // there empty.
   useEffect(() => {
-    if (initSent.current) return
-    initSent.current = true
-    const initial = takeInitialText(chatKey)
-    if (!initial) return
-    const id = setTimeout(() => sendMessage(initial), 300)
+    if (!hasInitialText(chatKey)) return
+    const id = setTimeout(() => {
+      const initial = takeInitialText(chatKey)
+      if (initial) sendMessage(initial)
+    }, 300)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = ['default', 'fable', 'sonnet', 'opus', 'haiku']
+  const MODELS = cli === 'codex' ? CODEX_MODELS : ['default', 'fable', 'sonnet', 'opus', 'haiku']
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],
@@ -2157,6 +2173,7 @@ export default function ChatPanel({
       window.api.chat.stop(chatKey)
       const st = getSettings()
       void window.api.chat.start(chatKey, {
+      cli,
         cwd: pathOf(workspace),
         model: m,
         mcpDisabled: st.mcpDisabledTools,
@@ -2430,6 +2447,7 @@ export default function ChatPanel({
     setTimeout(
       () =>
         void window.api.chat.start(chatKey, {
+      cli,
           cwd,
           resume: id,
           model: savedModel !== 'default' ? savedModel : undefined,

@@ -68,9 +68,14 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     en: 'Open panel',
     description:
       'Open a riven panel. kind: editor | terminal | chat | search | git | preview | changes. ' +
-      'For a terminal you may pass `command` to run in it (e.g. "claude") and `dir` to place it ' +
-      'beside the active panel: right | below | left | above.',
-    inputSchema: obj({ kind: str, command: str, dir: str }, ['kind']),
+      'An AGENT to work with belongs in a chat pane: kind="chat" with `agent` = claude (default) or ' +
+      'codex opens that agent natively, with `model` (claude: opus/sonnet/haiku/fable; codex: ' +
+      'gpt-5.6-terra/gpt-5.6-luna/gpt-5.5), `message` as its first prompt (sent, not waited for) and ' +
+      '`title` as its tab name; the reply is the new pane id. To get an ANSWER, do not pass `message` ' +
+      '— open the pane, then riven_ask_agent(id, question) returns the reply. Use kind="terminal" with ' +
+      '`command` only when the user asks for a terminal/CLI or for a command that is not an agent. ' +
+      '`dir` places the pane beside the active one: right | below | left | above.',
+    inputSchema: obj({ kind: str, command: str, dir: str, agent: str, model: str, message: str, title: str }, ['kind']),
     implemented: true
   },
   {
@@ -209,7 +214,9 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     en: 'List agents',
     description:
       'List the agents in this workspace — chat panes AND terminals with a CLI agent running ' +
-      '(id, title, kind, busy). Use before delegating.',
+      '(id, title, kind, cli = which agent/model family, e.g. claude or codex, busy, replies = whether ' +
+      'riven_ask_agent brings back its answer). Use before delegating; mixing agents lets different ' +
+      'models check and build on each other.',
     inputSchema: obj({}),
     implemented: true
   },
@@ -220,8 +227,10 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     description:
       "Delegate work to ANOTHER agent in this workspace. `agent` is a title or id from riven_agents. " +
       "A chat pane receives it as a message and, by default, its reply is WAITED for and returned " +
-      "(pass wait=false to return at once). A TERMINAL agent is typed into instead, so delivery is " +
-      "always async — there is no reply boundary to wait on.",
+      "(pass wait=false to return at once); if it is mid-turn the message waits for that turn to " +
+      "finish, so the reply is always the answer to THIS message. A TERMINAL agent is typed into instead; when riven_agents " +
+      "shows replies=true (Claude Code, Codex) its answer is waited for and returned the same way, " +
+      "otherwise delivery is async. A busy agent is refused — ask again once it is idle.",
     inputSchema: obj({ agent: str, message: str, wait: bool }, ['agent', 'message']),
     implemented: true
   },
@@ -248,8 +257,10 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에 에이전트 추가',
     en: 'Add agent to group',
     description:
-      'Open a new agent chat pane, optionally primed with a persona and nickname.',
-    inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str }, [
+      'Open a new agent chat pane, optionally primed with a persona and nickname. `agent` picks who ' +
+      'runs it: claude (default) or codex — a team can mix them. `model` is that agent\'s model ' +
+      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5).',
+    inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str, agent: str }, [
       'group',
       'name'
     ]),
@@ -711,7 +722,9 @@ export function registerMcpServer(webContentsGetter: () => WebContents | null): 
 // advertised tools to what the user left on; `pane` tags every call this agent
 // makes with the chat pane it IS, so the renderer can route results back to
 // that exact conversation instead of the one the user happens to be viewing.
-export function mcpConfigJson(enabled?: string[], pane?: string | null): string | null {
+// The MCP endpoint for one pane: the pane attributes calls to its workspace, and
+// `tools` narrows what the agent is offered. null when there is nothing to offer.
+export function mcpPaneUrl(enabled?: string[], pane?: string | null): string | null {
   if (!baseUrl) return null
   const allow = enabled ? new Set(enabled) : null
   const defs = toolDefs(allow)
@@ -719,11 +732,22 @@ export function mcpConfigJson(enabled?: string[], pane?: string | null): string 
   const url = new URL('/mcp', baseUrl)
   if (pane) url.searchParams.set('pane', pane)
   if (allow) url.searchParams.set('tools', defs.map((d) => d.name as string).join(','))
+  return url.toString()
+}
+
+// How long riven waits on a tool call that needs a person (ask_user).
+export function mcpRequestTimeoutMs(): number {
+  return REQUEST_TIMEOUT_MS
+}
+
+export function mcpConfigJson(enabled?: string[], pane?: string | null): string | null {
+  const url = mcpPaneUrl(enabled, pane)
+  if (!url) return null
   return JSON.stringify({
     mcpServers: {
       riven: {
         type: 'http',
-        url: url.toString(),
+        url,
         headers: { Authorization: `Bearer ${authToken}` },
         // How long the CLI lets a call to THIS server go silent. Claude Code
         // added an idle timeout — 5 minutes with no response or progress, then
@@ -746,11 +770,11 @@ export function mcpSystemPrompt(): string {
   return `이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:
 - 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 ask_user(question, options)를 호출하세요(방향키로 고른 값을 돌려줍니다).
 - 코드/파일을 사용자와 함께 볼 땐 riven_open_file(path, line?)로 riven 에디터에 엽니다.
-- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 터미널은 riven_open_panel(kind='terminal', command='claude', dir='right') 처럼 명령까지 지정해 열 수 있습니다.
+- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 에이전트(Claude Code·Codex)를 새로 띄울 땐 터미널이 아니라 채팅 패널로 엽니다: riven_open_panel(kind='chat', agent='codex', message='첫 지시', dir='right') — 돌려받은 패널 id로 riven_ask_agent를 쓸 수 있습니다. 터미널(kind='terminal', command=...)은 사용자가 터미널/CLI를 원할 때나 에이전트가 아닌 명령에만 씁니다.
 - HTTP/API 테스트는 riven_api_request(method, url, headers?, body?)로 실행하고 상태/본문을 돌려받습니다.
 - riven 브라우저를 직접 운전할 수 있습니다: riven_browser_open(url, new_tab?), riven_browser_state(), riven_browser_read(selector?, html?), riven_browser_click/fill/wait/scroll, riven_browser_go(action), riven_screenshot(url?). 페이지는 쿠키·세션을 유지합니다.
 - 긴 결과(요약·계획·조사)는 대화에 쏟지 말고 riven_note_write(title, body, note?)로 메모에 남기세요(note 주면 갈아끼움). 이어쓰기 riven_note_append, 읽기 riven_note_read, 목록 riven_note_list. 문서로 저장소에 남길 땐 riven_doc_write(path, body)(.claude/docs 기준), 메모를 파일로는 riven_note_save_file.
-- 다른 에이전트와 협업: riven_agents로 열린 동료를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다.`
+- 다른 에이전트와 협업: riven_agents로 열린 동료(채팅·터미널의 Claude Code, Codex 등 — cli 필드로 구분)를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 다른 모델에게 검토·반론을 맡기면 서로의 결과를 교차 확인할 수 있습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다.`
 }
 
 export function stopMcpServer(): void {

@@ -19,7 +19,10 @@ export function setOrphanModelDisposer(fn: (paths: string[]) => void): void {
 export interface PaneState {
   model?: string
   mode?: string
-  session?: string | null // Claude CLI session id (for --resume)
+  session?: string | null // CLI session id (for resume)
+  // Which CLI that session belongs to (terminal panes). Absent = claude, which is
+  // all a terminal could resume before Codex was supported.
+  cli?: 'claude' | 'codex' | null
   agent?: string | null // custom agent (.claude/agents)
   // Role/persona for this pane (agent-group member). Sent as a SYSTEM prompt at
   // spawn (--append-system-prompt) instead of burning a real turn priming the
@@ -97,7 +100,11 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
     // panel no matter what the tree holds. `fresh` was written by addChat and
     // dropped here, so every new pane still looked adoptable and reopened the
     // workspace's most recent conversation.
-    fresh: rec?.fresh
+    fresh: rec?.fresh,
+    // Which CLI the pane's conversation belongs to (a Codex chat pane, or the
+    // agent a terminal was last running) — without it every pane reads as Claude.
+    cli: rec?.cli ?? null,
+    persona: rec?.persona
   }
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {
