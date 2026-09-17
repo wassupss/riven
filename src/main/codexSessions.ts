@@ -30,9 +30,16 @@ export function titleFromRollout(text: string): string | null {
     const msg = typeof ev.payload.message === 'string' ? ev.payload.message : ''
     const first = msg.split('\n').map((l) => l.trim()).find(Boolean)
     if (!first) continue
-    return first.length > TITLE_MAX ? `${first.slice(0, TITLE_MAX - 1)}…` : first
+    return clip(first)
   }
-  return null
+  // A thread run through app-server logs no user_message events.
+  const firstUser = transcriptFromRollout(text).find((m) => m.role === 'user')
+  const line = firstUser?.text.split('\n').map((l) => l.trim()).find(Boolean)
+  return line ? clip(line) : null
+}
+
+function clip(s: string): string {
+  return s.length > TITLE_MAX ? `${s.slice(0, TITLE_MAX - 1)}…` : s
 }
 
 // Newest first, so a conversation from today is found without walking years.
@@ -94,30 +101,49 @@ export interface RolloutMessage {
   images?: number
 }
 
+// Text of a response_item message, when it is something a person said or read:
+// Codex also records injected context (environment, AGENTS.md, plugin lists)
+// as "user" messages, all of which open with a tag or a heading.
+function messageText(p: { role?: unknown; content?: unknown }): string | null {
+  if (!Array.isArray(p.content)) return null
+  const text = (p.content as Array<{ type?: string; text?: unknown }>)
+    .filter((c) => (c.type === 'input_text' || c.type === 'output_text') && typeof c.text === 'string')
+    .map((c) => c.text as string)
+    .join('\n')
+  if (!text.trim()) return null
+  if (p.role === 'user' && /^\s*(<|# AGENTS\.md|# Context from my IDE)/.test(text)) return null
+  return text
+}
+
 // A Codex conversation as the chat pane shows a restored one: what the user
 // said and what Codex answered, in order.
+//
+// Read from the model-facing messages (response_item), which every rollout has.
+// The TUI additionally logs user_message/agent_message events, but a thread run
+// through app-server — a riven chat pane — writes none, so reading only those
+// restored an empty conversation.
 export function transcriptFromRollout(text: string): RolloutMessage[] {
   const out: RolloutMessage[] = []
   for (const line of text.split('\n')) {
-    if (!line.includes('"event_msg"')) continue
-    let ev: { type?: string; payload?: { type?: string; message?: unknown; images?: unknown; local_images?: unknown } }
+    if (!line.includes('"response_item"')) continue
+    let ev: { type?: string; payload?: { type?: string; role?: unknown; content?: unknown } }
     try {
       ev = JSON.parse(line)
     } catch {
       continue
     }
     const p = ev.payload
-    if (ev.type !== 'event_msg' || !p || typeof p.message !== 'string') continue
-    if (p.type === 'user_message') {
-      const images =
-        (Array.isArray(p.images) ? p.images.length : 0) + (Array.isArray(p.local_images) ? p.local_images.length : 0)
-      out.push({ role: 'user', text: p.message, tools: [], ...(images ? { images } : {}) })
-    } else if (p.type === 'agent_message' && p.message.trim()) {
-      const last = out[out.length - 1]
-      // One turn can say several things; the pane shows it as one answer.
-      if (last && last.role === 'assistant') last.text += `\n\n${p.message}`
-      else out.push({ role: 'assistant', text: p.message, tools: [] })
-    }
+    if (ev.type !== 'response_item' || p?.type !== 'message') continue
+    if (p.role !== 'user' && p.role !== 'assistant') continue
+    const body = messageText(p)
+    if (body === null) continue
+    const images = Array.isArray(p.content)
+      ? (p.content as Array<{ type?: string }>).filter((c) => c.type === 'input_image').length
+      : 0
+    const last = out[out.length - 1]
+    // One turn can say several things; the pane shows it as one answer.
+    if (p.role === 'assistant' && last && last.role === 'assistant') last.text += `\n\n${body}`
+    else out.push({ role: p.role, text: body, tools: [], ...(images ? { images } : {}) })
   }
   return out
 }

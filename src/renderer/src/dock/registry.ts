@@ -140,6 +140,9 @@ export function newChatKey(): string {
 // never serialized into the dock layout (which caused the priming message to be
 // re-sent on every restart). ChatPanel consumes+clears it on mount.
 const pendingInitial = new Map<string, string>()
+export function hasInitialText(chatKey: string): boolean {
+  return pendingInitial.has(chatKey)
+}
 export function takeInitialText(chatKey: string): string | undefined {
   const v = pendingInitial.get(chatKey)
   if (v !== undefined) pendingInitial.delete(chatKey)

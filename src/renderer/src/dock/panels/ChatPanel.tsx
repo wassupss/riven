@@ -38,7 +38,7 @@ import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../stat
 import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
-import { ensureEditor, addTerminal, setDelegator, takeInitialText, getActiveApi } from '../registry'
+import { ensureEditor, addTerminal, setDelegator, hasInitialText, takeInitialText, getActiveApi } from '../registry'
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
 import { useT, t as staticT, type TFn } from '../../i18n'
@@ -2138,13 +2138,19 @@ export default function ChatPanel({
 
   // First-message priming: consumed ONE-SHOT from the registry (not from params),
   // so a restored pane never re-sends it. Only fresh panes have pending text.
-  const initSent = useRef(false)
+  //
+  // Taken when the timer FIRES, not when the effect runs. Taking it up front and
+  // guarding the effect with a ref lost the message whenever the pane mounted
+  // twice in a row (React's dev double-mount, or a dock re-render): the first
+  // mount took the text and its cleanup cancelled the send, and the second mount
+  // found nothing — so a pane an agent opened with a first message just sat
+  // there empty.
   useEffect(() => {
-    if (initSent.current) return
-    initSent.current = true
-    const initial = takeInitialText(chatKey)
-    if (!initial) return
-    const id = setTimeout(() => sendMessage(initial), 300)
+    if (!hasInitialText(chatKey)) return
+    const id = setTimeout(() => {
+      const initial = takeInitialText(chatKey)
+      if (initial) sendMessage(initial)
+    }, 300)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

@@ -97,14 +97,24 @@ describe('titleFromRollout', () => {
 })
 
 describe('transcriptFromRollout', () => {
-  it('restores the conversation, one answer per turn', () => {
-    const ev = (type: string, message: string): string => JSON.stringify({ type: 'event_msg', payload: { type, message } })
-    const text = [ev('user_message', 'hi'), ev('agent_message', 'one'), ev('agent_message', 'two'), ev('user_message', 'bye')].join('\n')
+  const msg = (role: string, text: string, kind = role === 'assistant' ? 'output_text' : 'input_text'): string =>
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role, content: [{ type: kind, text }] } })
+
+  it('restores an app-server thread, one answer per turn, without injected context', () => {
+    const text = [
+      msg('developer', 'tool guide'),
+      msg('user', '<recommended_plugins>…'),
+      msg('user', '저녁 메뉴 추천해줘'),
+      msg('assistant', '패널을 열겠습니다.'),
+      msg('assistant', '열었습니다.'),
+      msg('user', 'bye')
+    ].join('\n')
     expect(transcriptFromRollout(text)).toEqual([
-      { role: 'user', text: 'hi', tools: [] },
-      { role: 'assistant', text: 'one\n\ntwo', tools: [] },
+      { role: 'user', text: '저녁 메뉴 추천해줘', tools: [] },
+      { role: 'assistant', text: '패널을 열겠습니다.\n\n열었습니다.', tools: [] },
       { role: 'user', text: 'bye', tools: [] }
     ])
+    expect(titleFromRollout(text)).toBe('저녁 메뉴 추천해줘')
   })
 })
 
