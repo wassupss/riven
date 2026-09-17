@@ -3267,12 +3267,26 @@ select {
   background: var(--hover);
 }
 .tg-chevron {
-  display: inline-block;
+  flex: 0 0 auto;
+  margin-left: auto;
   color: var(--fg-dim);
-  transition: transform var(--dur-fast) ease;
+  opacity: 0.7;
+  transition: transform var(--dur-fast) ease, opacity var(--dur-fast) ease;
+}
+.chat-toolgroup-head:hover .tg-chevron,
+.chat-subagent-head:hover .tg-chevron {
+  opacity: 1;
 }
 .tg-chevron.open {
-  transform: rotate(90deg);
+  transform: rotate(180deg);
+}
+/* A long running command must not push the expander out of the row. */
+.chat-toolgroup-head > .chat-shimmer-text,
+.chat-toolgroup-head > .tg-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tg-title {
   color: var(--fg-dim);

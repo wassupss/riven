@@ -390,7 +390,6 @@ function SubagentCard({
   return (
     <div className={`chat-subagent${state}`} data-agent-id={task.toolId ?? undefined}>
       <button className="chat-subagent-head" onClick={() => setOpen((o) => !o)}>
-        <span className={`tg-chevron${open ? ' open' : ''}`}>›</span>
         <Bot size={13} />
         <span className="chat-subagent-title">{t('chat.subagent')}</span>
         {task.detail && <span className="chat-subagent-desc">{task.detail}</span>}
@@ -410,6 +409,9 @@ function SubagentCard({
           )}
         </span>
         {kids.length > 0 && <span className="chat-subagent-count">{kids.length}</span>}
+        {/* The expander sits at the end of the row, not in front of the icon —
+            two glyphs stacked at the start read as one smudge. */}
+        <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && kids.length > 0 && (
         <div className="chat-subagent-kids">
@@ -457,7 +459,6 @@ const ToolGroup = memo(function ToolGroup({
   return (
     <div className={`chat-toolgroup${state}`}>
       <button className="chat-toolgroup-head" onClick={() => setOpen((o) => !o)}>
-        <span className={`tg-chevron${open ? ' open' : ''}`}>›</span>
         <span className="chat-tool-ico">
           <Wrench size={12} />
         </span>
@@ -491,6 +492,7 @@ const ToolGroup = memo(function ToolGroup({
             )}
           </span>
         )}
+        <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && (
         <div className="chat-toolgroup-body">
