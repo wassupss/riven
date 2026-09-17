@@ -519,7 +519,7 @@ select {
    completion waiting, a terminal asking for input — already says "this is the
    pane"; the focus frame on top of it landed half a pixel off and read as a
    doubled, shimmering edge. The state ring carries more meaning, so it wins. */
-.workbench .dv-groupview.dv-active-group:has(.chat-ring, .terminal-panel.attn, .chat-panel.busy)::after {
+.workbench .dv-groupview.dv-active-group:has(.chat-ring, .terminal-panel.attn)::after {
   content: none;
 }
 /* Window dragging now lives in the full-width TopHeader, so the dock tab strip
@@ -2372,8 +2372,7 @@ select {
 /* State ring drawn as an overlay ABOVE the terminal — the xterm canvas fills the
    panel edge-to-edge, so an inset box-shadow on the panel itself sits behind it
    and is invisible. */
-.terminal-panel.attn::after,
-.chat-panel.busy::after {
+.terminal-panel.attn::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2411,12 +2410,10 @@ select {
     --attn-angle: 360deg;
   }
 }
-/* Working: a STATIC ring in the accent (native draws the same distinction —
-   busy is a still ring, attention is the travelling ember). */
-.chat-panel.busy::after {
-  border-radius: 2px;
-  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent-2) 55%, transparent);
-}
+/* Working has no ring, on any agent pane. The native app keeps the running
+   indicator to the rail (and here, the tab title's shimmer) and reserves the
+   ring for "done" and "needs you". A chat pane drew a static ring while busy
+   and a terminal did not, so the same state looked different by pane kind. */
 
 @media (prefers-reduced-motion: reduce) {
   .terminal-panel.attn::after,
