@@ -103,6 +103,28 @@ function popoutUrlFor(name: string): string {
   return u.href
 }
 
+// Never lay a dock out at zero size.
+//
+// A workspace that is not on screen is display:none, and dockview 7.0.2's shell
+// watches its element with a ResizeObserver that — unlike its grid's — has no
+// "am I hidden" check. Hiding a workspace therefore laid its whole dock out at
+// 0×0, which clamps every group to its 100px minimum and parks every panel's
+// content at 0×0. dockview defers that work to the next animation frame, and a
+// background window's frames are throttled, so the collapse could land AFTER the
+// workspace was shown again: a dock of tab strips over blank space, even with
+// agents running in it. The shell still records the zero, so the next real size
+// differs and lays out normally.
+function ignoreZeroShellLayout(api: DockviewApi): void {
+  const shell = (api as unknown as { component?: { _shellManager?: { layout: (w: number, h: number) => void } } })
+    .component?._shellManager
+  if (!shell || typeof shell.layout !== 'function') return
+  const layout = shell.layout.bind(shell)
+  shell.layout = (w, h) => {
+    if (w < 1 || h < 1) return
+    layout(w, h)
+  }
+}
+
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
   const apiRef = useRef<DockviewApi | null>(null)
@@ -182,6 +204,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       const api = event.api
       apiRef.current = api
       registerApiWorkspace(api, workspace) // so tab headers can resolve their workspace
+      ignoreZeroShellLayout(api)
       // onReady fires once per dockview INSTANCE. Refs survive a StrictMode
       // remount (and a renderer reload remounts too), so a stale `restoredRef`
       // from the previous instance made tryRestore() bail out — the new dock never
@@ -325,7 +348,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const sync = (): void => {
+    const sync = (force = false): void => {
       const api = apiRef.current
       if (!api) return
       const { width, height } = host.getBoundingClientRect()
@@ -334,16 +357,23 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       if (width < 1 || height < 1) return
       const w = Math.round(width)
       const h = Math.round(height)
-      if (api.width !== w || api.height !== h) api.layout(w, h)
+      // Forced on the way back on screen: panels rendered "always" sit in an
+      // overlay positioned from their group's box, and a group whose box ends up
+      // where it was never re-positions them — their content stays at 0×0, a
+      // dock of tab strips over blank space.
+      if (force || api.width !== w || api.height !== h) api.layout(w, h, force)
     }
-    const ro = new ResizeObserver(sync)
+    const ro = new ResizeObserver(() => sync())
     ro.observe(host)
     // Becoming visible is not a resize of this element in every case (the parent
-    // flips display), so re-check on the frame after it is shown too.
-    const raf = requestAnimationFrame(sync)
+    // flips display), so re-check on the frame after it is shown too — and once
+    // more after dockview's own deferred resize handling has run.
+    const raf = requestAnimationFrame(() => sync(true))
+    const late = setTimeout(() => sync(true), 250)
     return () => {
       ro.disconnect()
       cancelAnimationFrame(raf)
+      clearTimeout(late)
     }
   }, [activeWorkspace])
 
