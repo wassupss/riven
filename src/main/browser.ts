@@ -58,6 +58,13 @@ function win(): BrowserWindow | null {
   return getWindow?.() ?? null
 }
 
+// The window whose renderer sent this message — the only window whose content
+// bounds the message's coordinates mean anything against.
+function senderWindow(e: { sender: Electron.WebContents }): BrowserWindow | null {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  return w && !w.isDestroyed() ? w : null
+}
+
 function send(channel: string, payload: unknown): void {
   const w = win()
   if (w && !w.webContents.isDestroyed()) w.webContents.send(channel, payload)
@@ -265,14 +272,14 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   ipcMain.on(
     'browser:sync',
     (
-      _e,
+      e,
       a: {
         activeId: string | null
         rect: { x: number; y: number; width: number; height: number } | null
         css?: { w: number; h: number }
       }
     ) => {
-      const w = win()
+      const w = senderWindow(e) ?? win()
       const showId = hiddenAll ? null : a.activeId
       // The renderer measures in CSS px; setBounds wants window DIP. If the web
       // content's CSS viewport differs from the window's DIP content size (page
@@ -358,7 +365,7 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         selected: number
       }
     ) => {
-      const w = win()
+      const w = senderWindow(e) ?? win()
       if (!w) return
       if (!payload.rect || payload.items.length === 0) {
         closeSuggest()

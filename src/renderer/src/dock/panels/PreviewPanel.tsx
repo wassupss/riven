@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf } from '../../state/session'
 import { contextBus } from '../../bridge/contextBus'
+import { placeable } from '../../lib/viewRect'
 import { attachToWorkspaceAgent } from '../../state/agents'
 import { useT } from '../../i18n'
 import { useBrowser, activeTab, activeTabId } from '../../state/browser'
@@ -165,8 +166,11 @@ export default function PreviewPanel({
     // panel becomes an inactive tab (e.g. a terminal opened beside it), so we must
     // explicitly hide it then instead of relying on the viewport rect alone.
     const panelVisible = api ? api.isVisible : true
-    const visible =
-      panelVisible && r.width > 2 && r.height > 2 && document.visibilityState !== 'hidden'
+    // A box that isn't inside the window is a stale measurement, not a panel —
+    // obeying it is what threw the page view into a corner (see placeable).
+    const sane = placeable(r, { width: window.innerWidth, height: window.innerHeight })
+    if (panelVisible && !sane && document.visibilityState !== 'hidden') return
+    const visible = panelVisible && sane && document.visibilityState !== 'hidden'
     const id = activeTabId(workspace)
     const tab = activeTab(workspace)
     // Hide all views on the blank start page (no view for this tab).
@@ -198,10 +202,20 @@ export default function PreviewPanel({
     if (viewportRef.current) ro.observe(viewportRef.current)
     const id = setInterval(syncBounds, 250)
     window.addEventListener('resize', syncBounds)
+    // Coming back from another app: the dock re-lays out, and the rect measured
+    // while riven was in the background was not trustworthy.
+    const refresh = (): void => {
+      lastSent.current = ''
+      requestAnimationFrame(syncBounds)
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       ro.disconnect()
       clearInterval(id)
       window.removeEventListener('resize', syncBounds)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [syncBounds, tabs.length, activeId, isStart])
 
@@ -302,6 +316,10 @@ export default function PreviewPanel({
       return
     }
     const r = el.getBoundingClientRect()
+    if (!placeable(r, { width: window.innerWidth, height: window.innerHeight }, 0)) {
+      window.api.browser.suggest(null, [], 0)
+      return
+    }
     const rowH = 30
     window.api.browser.suggest(
       { x: r.left, y: r.bottom + 3, width: r.width, height: Math.min(suggestions.length, 8) * rowH + 8 },

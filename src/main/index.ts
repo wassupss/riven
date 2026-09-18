@@ -91,6 +91,13 @@ function createWindow(): void {
       // Chromium's built-in PDF viewer is a plugin; without this an <iframe>
       // pointed at a PDF downloads it instead of rendering it.
       plugins: true,
+      // Chromium stops animation frames for a window it considers hidden, and an
+      // occluded riven then stops laying its dock out: panels keep their old
+      // boxes, and anything positioned from those boxes — the browser's page
+      // view, its address-bar dropdown — lands somewhere wrong when the user
+      // comes back. Measured: with the window occluded, requestAnimationFrame
+      // never ran and dockview never positioned a newly opened panel.
+      backgroundThrottling: false,
       contextIsolation: true
     }
   })
@@ -273,7 +280,11 @@ app.whenReady().then(() => {
   // Real Chromium browser surface (WebContentsView per tab), floated over the
   // window at the bounds the browser panel reports.
   registerBrowserHandlers(
-    () => BrowserWindow.getAllWindows().find((win) => !win.isDestroyed()) ?? null
+    // riven's own window, never a helper: the address-bar dropdown is a
+    // focusable:false window, and picking IT as "the window" put the page view
+    // and the dropdown itself at coordinates measured against a 419x98 box.
+    () =>
+      BrowserWindow.getAllWindows().find((win) => !win.isDestroyed() && win.isFocusable()) ?? null
   )
   registerNotesHandlers()
   registerNotifyHandlers()
