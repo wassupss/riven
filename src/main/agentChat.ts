@@ -650,6 +650,14 @@ function reapIdleSessions(): void {
 // Kill every CLI child. Called at quit: the app's shutdown path SIGKILLs itself,
 // which would otherwise leave these children reparented to launchd and running
 // (each one holding its memory) long after riven is gone.
+// Chat panes whose agent is mid-turn — what quitting would cut off.
+export function runningChatCount(): number {
+  let n = 0
+  for (const s of sessions.values()) if (s.turnBusy) n++
+  for (const c of codexChats.values()) if (c.turnBusy) n++
+  return n
+}
+
 export function killAllChatSessions(): void {
   for (const c of codexChats.values()) c.stop()
   codexChats.clear()
