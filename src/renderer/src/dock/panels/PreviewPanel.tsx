@@ -289,38 +289,23 @@ export default function PreviewPanel({
       : []
 
   // A WebContentsView is a native layer that ALWAYS paints above renderer DOM, so
-  // the suggestions dropdown was drawn underneath the page. Hide the page while the
-  // dropdown is open (you're typing an address, not reading the page) and restore it
-  // as soon as it closes.
+  // the dropdown would be drawn underneath the page, because a native view always
+  // paints above renderer DOM. So the page view steps aside while the dropdown is
+  // open — you are typing an address, not reading the page — and the dropdown is
+  // ordinary DOM, which (unlike a native overlay) cannot steal the keyboard.
   const suggestVisible = suggestOpen && suggestions.length > 0
-  const suggestKey = suggestions.map((x) => x.url).join('|')
   useEffect(() => {
-    const el = addrWrapRef.current
-    if (!suggestVisible || !el) {
-      window.api.browser.suggest(null, [], 0)
-      return
+    window.api.browser.hideAll(suggestVisible)
+    if (!suggestVisible) {
+      // hideAll(false) only clears the flag; the next sync is what shows the page
+      // again, and syncBounds skips a payload it has already sent.
+      lastSent.current = ''
+      syncBounds()
     }
-    const r = el.getBoundingClientRect()
-    const rowH = 30
-    window.api.browser.suggest(
-      { x: r.left, y: r.bottom + 3, width: r.width, height: Math.min(suggestions.length, 8) * rowH + 8 },
-      suggestions.map((x) => ({ url: x.url, title: x.title })),
-      suggestIndex
-    )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestVisible, suggestKey, suggestIndex])
+  }, [suggestVisible, syncBounds])
 
-  // Clicking a row in the overlay navigates here.
-  useEffect(() => {
-    return window.api.browser.onSuggestPick((i) => {
-      const s = suggestions[i]
-      if (s) navigate(s.url)
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [suggestKey])
-
-  // Never leave the overlay behind when the panel unmounts/hides.
-  useEffect(() => () => window.api.browser.suggest(null, [], 0), [])
+  // Never leave the page hidden behind a dropdown this panel no longer shows.
+  useEffect(() => () => window.api.browser.hideAll(false), [])
 
   return (
     <div
@@ -398,7 +383,7 @@ export default function PreviewPanel({
               setSuggestIndex(0)
             }}
             onKeyDown={(e) => {
-              // Arrow keys move the highlight in the native suggestion overlay;
+              // Arrow keys move the highlight in the suggestion list;
               // Enter takes the highlighted row (or the typed text when none).
               if (suggestVisible && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                 e.preventDefault()
@@ -413,6 +398,25 @@ export default function PreviewPanel({
               } else if (e.key === 'Escape') setSuggestOpen(false)
             }}
           />
+          {suggestVisible && (
+            <div className="browser-suggest">
+              {suggestions.map((sg, i) => (
+                <button
+                  key={sg.url}
+                  className={`browser-suggest-item${i === suggestIndex ? ' on' : ''}`}
+                  // mousedown, not click: the input's blur would close the list first.
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    navigate(sg.url)
+                  }}
+                  onMouseEnter={() => setSuggestIndex(i)}
+                >
+                  <span className="browser-suggest-title">{sg.title || sg.url}</span>
+                  <span className="browser-suggest-url">{sg.url}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {active?.view && (
             <button
               className={`browser-star${isBookmarked ? ' on' : ''}`}
