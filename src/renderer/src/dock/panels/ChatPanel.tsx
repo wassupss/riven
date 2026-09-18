@@ -45,6 +45,8 @@ import { useT, t as staticT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
+import { settleStaleTurns } from '../../lib/chatTurns'
+import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
 export interface ChatImage {
@@ -564,7 +566,14 @@ const ChatMessage = memo(function ChatMessage({
             <div className="chat-user-images">
               {msg.images.map((im, i) =>
                 im.preview ? (
-                  <img key={i} className="chat-user-image" src={im.preview} alt={im.name} title={im.name} />
+                  <img
+                    key={i}
+                    className="chat-user-image"
+                    src={im.preview}
+                    alt={im.name}
+                    title={im.name ? `${im.name} — 클릭하면 크게 보기` : '클릭하면 크게 보기'}
+                    onClick={() => viewImage({ src: im.preview!, name: im.name })}
+                  />
                 ) : (
                   <span key={i} className="chat-user-image-name">
                     {im.name}
@@ -1320,10 +1329,11 @@ export default function ChatPanel({
   // an instant placeholder until the real transcript arrives.
   const [msgs, setMsgs] = useState<Msg[]>(() => {
     const arr = (pane0.log as Msg[] | undefined) ?? []
-    // A turn that was still streaming when the app reloaded isn't running anymore.
-    const last = arr[arr.length - 1]
-    if (last && last.role === 'assistant' && !last.done) last.done = true
-    return arr
+    // A turn that was still streaming when this pane last went away is only
+    // still running if main says so (the pane can be remounted mid-turn); any
+    // OTHER open bubble is stale and would shimmer "생각 중" forever.
+    const running = !!useRoster.getState().live[chatKey]?.busy
+    return settleStaleTurns(arr, Date.now(), running)
   })
   const [restoring, setRestoring] = useState(false)
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
@@ -1759,6 +1769,10 @@ export default function ChatPanel({
               completedAt: Date.now()
             }
           })
+          // Close any OLDER answer bubble that was left open (a message queued
+          // mid-turn opens a second one) — an open bubble shimmers "생각 중"
+          // forever, in the middle of a finished conversation.
+          setMsgs((all) => settleStaleTurns(all))
           // If the user queued messages mid-turn, run the next one now (stays
           // busy). Otherwise the turn is truly done: settle status + notify.
           const drained = drainQueue()
@@ -1799,6 +1813,8 @@ export default function ChatPanel({
         }
         case 'exit':
           setBusy(false)
+          // Nothing is running any more, so no bubble may stay open.
+          setMsgs((all) => settleStaleTurns(all, Date.now(), false))
           // In -p mode the CLI exits right after each turn, so this fired moments
           // after turnDone set 'done' and wiped the completion ring before anyone
           // could see it. A finished turn keeps its state until the user looks.
@@ -2688,7 +2704,7 @@ export default function ChatPanel({
           <div className="chat-attachments">
             {attachments.map((a) => (
               <div key={a.id} className="chat-attachment" title={a.name}>
-                <img src={a.preview} alt={a.name} />
+                <img src={a.preview} alt={a.name} onClick={() => viewImage({ src: a.preview, name: a.name })} />
                 <button
                   className="chat-attachment-x"
                   aria-label={t('chat.removeAttachment')}
