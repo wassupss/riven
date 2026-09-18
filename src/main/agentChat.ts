@@ -585,6 +585,11 @@ async function startSession(
   proc.stderr?.on('data', (d: Buffer) => console.log(`[chat:${key}]`, d.toString().trim()))
   proc.on('exit', (code) => {
     s.alive = false
+    // A child exits ASYNCHRONOUSLY: by the time this runs, the pane may already
+    // have been given a NEW child (chat:restart). Only clear the map when it
+    // still holds THIS one, or the restart's session is deleted out from under
+    // it and the pane's next message reaches nothing.
+    if (sessions.get(key) !== s) return
     sessions.delete(key)
     // Parked by the idle reaper — the pane is still open and will respawn on its
     // next message, so this exit must not reach the renderer as a session end.
@@ -736,6 +741,48 @@ export function registerAgentChatHandlers(): void {
       })
   })
   ipcMain.on('chat:stop', (_e, key: string) => stopSession(key))
+
+  // Restart the CLI behind a pane (or every pane) WITHOUT losing the
+  // conversation: the child is replaced and resumes the same session, which is
+  // what makes "update the CLI" mean anything for panes that are already open —
+  // a running child keeps the binary it started with. A pane mid-turn is left
+  // alone: killing it there would throw away the answer being written.
+  ipcMain.handle('chat:restart', async (event, key?: string) => {
+    const keys = key ? [key] : [...sessions.keys(), ...codexChats.keys()]
+    let restarted = 0
+    let busy = 0
+    for (const k of keys) {
+      const claude = sessions.get(k)
+      if (claude) {
+        if (claude.turnBusy) {
+          busy++
+          continue
+        }
+        const opts = { ...claude.opts, resume: claude.sessionId ?? claude.opts.resume }
+        const sender = claude.sender
+        // The pane is not ending — it is getting a new process — so its exit
+        // must not reach the renderer as a session that stopped.
+        claude.parking = true
+        stopSession(k)
+        const res = await startSession(k, opts, sender)
+        if (res.ok) restarted++
+        continue
+      }
+      const codex = codexChats.get(k)
+      if (!codex) continue
+      if (codex.turnBusy) {
+        busy++
+        continue
+      }
+      const opts = codex.restartOpts()
+      const sender = codex.sender
+      stopSession(k)
+      const res = await startCodexChat(k, { ...opts, cli: 'codex' }, sender)
+      if (res.ok) restarted++
+    }
+    void event
+    return { restarted, busy }
+  })
 
   // The session's REAL command list + MCP servers, fetched up front (cached per
   // cwd) by spawning a throwaway headless claude in that directory. stream-json

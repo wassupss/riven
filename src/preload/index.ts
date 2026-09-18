@@ -254,6 +254,10 @@ const api = {
       images?: Array<{ mediaType: string; data: string; name?: string }>
     ): void => ipcRenderer.send('chat:send', key, text, images),
     interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
+    // Replace the CLI behind a pane (or every pane) with a fresh process that
+    // resumes the same conversation — how a CLI update reaches open panes.
+    restart: (key?: string): Promise<{ restarted: number; busy: number }> =>
+      ipcRenderer.invoke('chat:restart', key),
     setModel: (key: string, model: string): void => ipcRenderer.send('chat:setModel', key, model),
     setMode: (key: string, mode: string): void => ipcRenderer.send('chat:setMode', key, mode),
     stop: (key: string): void => ipcRenderer.send('chat:stop', key),

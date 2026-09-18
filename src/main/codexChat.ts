@@ -552,4 +552,10 @@ export class CodexChat {
   get opened(): boolean {
     return this.sawThread
   }
+
+  // What it takes to bring this pane back on a newer Codex: the same options,
+  // resuming the thread it is in.
+  restartOpts(): CodexStartOpts {
+    return { ...this.opts, model: this.model, resume: this.threadId ?? this.opts.resume }
+  }
 }

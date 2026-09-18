@@ -94,13 +94,16 @@ function DetectedClis(): JSX.Element {
   const [clis, setClis] = useState<
     Array<{ name: string; cmd: string; path: string; version: string | null }> | null
   >(null)
+  // Bumped after an update runs, to re-read the versions.
+  const [rev, setRev] = useState(0)
+  const [restart, setRestart] = useState<{ restarted: number; busy: number } | null>(null)
   useEffect(() => {
     let alive = true
     window.api.chat.detectClis().then((r) => alive && setClis(r))
     return () => {
       alive = false
     }
-  }, [])
+  }, [rev])
 
   if (clis === null) return <div className="set-note">{t('settings.cliDetecting')}</div>
   if (clis.length === 0) return <div className="set-note">{t('settings.cliNone')}</div>
@@ -120,6 +123,25 @@ function DetectedClis(): JSX.Element {
           </Button>
         </Row>
       ))}
+      {/* An update only reaches panes that start afterwards: a running CLI keeps
+          the binary it launched with. Restarting them here replaces the process
+          and resumes the same conversation, so nothing is lost. */}
+      <Row title={t('settings.cliRestart')} desc={t('settings.cliRestartDesc')}>
+        <Button
+          onClick={() => {
+            setRev((n) => n + 1)
+            void window.api.chat.restart().then(setRestart)
+          }}
+        >
+          {t('settings.cliRestart')}
+        </Button>
+      </Row>
+      {restart && (
+        <div className="set-note">
+          {t('settings.cliRestarted', { n: String(restart.restarted) })}
+          {restart.busy > 0 ? ' · ' + t('settings.cliRestartBusy', { n: String(restart.busy) }) : ''}
+        </div>
+      )}
       <div className="set-note">{t('settings.cliUpdateDesc')}</div>
     </>
   )
