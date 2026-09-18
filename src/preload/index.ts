@@ -381,6 +381,8 @@ const api = {
     find: (id: string, text: string): void => ipcRenderer.send('browser:find', { id, text }),
     openDevtools: (id: string): Promise<void> => ipcRenderer.invoke('browser:openDevtools', { id }),
     setLang: (l: 'ko' | 'en'): void => ipcRenderer.send('browser:setLang', l),
+    // Take keyboard focus back from the page (see browser:focusApp).
+    focusApp: (): void => ipcRenderer.send('browser:focusApp'),
     barMenu: (id: string): Promise<void> => ipcRenderer.invoke('browser:barMenu', { id }),
     pickElement: (
       id: string

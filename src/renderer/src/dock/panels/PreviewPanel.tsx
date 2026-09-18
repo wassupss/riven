@@ -323,7 +323,15 @@ export default function PreviewPanel({
   useEffect(() => () => window.api.browser.suggest(null, [], 0), [])
 
   return (
-    <div className="browser-panel">
+    <div
+      className="browser-panel"
+      // Clicking riven's own chrome (tabs, toolbar, the address bar) takes the
+      // keyboard back from the page: a WebContentsView keeps focus once it has
+      // it, so the address bar showed a caret and swallowed every keystroke —
+      // the URL could never be changed after the first load. The page keeps
+      // focus for clicks inside itself, which never reach this handler.
+      onMouseDownCapture={() => window.api.browser.focusApp()}
+    >
       <div className="browser-tabs">
         {tabs.map((tb) => (
           <div
@@ -376,6 +384,7 @@ export default function PreviewPanel({
             value={addr}
             placeholder={t('browser.addrPlaceholder')}
             onFocus={() => {
+              window.api.browser.focusApp()
               setEditing(true)
               setSuggestOpen(true)
             }}

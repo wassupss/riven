@@ -251,6 +251,11 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   // The single source of truth for visibility + position: the renderer reports
   // the active tab and the viewport rect; everything else is hidden. rect=null or
   // activeId=null (panel hidden / modal open) hides all.
+  // The panel draws a 1px frame around itself, and a native view paints above all
+  // renderer DOM — so a page laid out edge to edge ate that frame on three sides.
+  // Keep the view just inside it (the top edge is under the toolbar already).
+  const VIEW_INSET = 1
+
   ipcMain.on(
     'browser:sync',
     (
@@ -274,15 +279,18 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         sx = cb.width / a.css.w
         sy = cb.height / a.css.h
       }
+      // The frame is 1 CSS px of riven's UI, which is more than one device-
+      // independent pixel whenever the UI is zoomed.
+      const inset = Math.max(1, Math.ceil(VIEW_INSET * sx))
       for (const [id, t] of tabs) {
         const on = id === showId && a.rect != null
         t.view.setVisible(on)
         if (on && a.rect)
           t.view.setBounds({
-            x: Math.round(a.rect.x * sx),
+            x: Math.round(a.rect.x * sx) + inset,
             y: Math.round(a.rect.y * sy),
-            width: Math.round(a.rect.width * sx),
-            height: Math.round(a.rect.height * sy)
+            width: Math.max(1, Math.round(a.rect.width * sx) - inset * 2),
+            height: Math.max(1, Math.round(a.rect.height * sy) - inset)
           })
       }
     }
@@ -368,6 +376,18 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       )
     }
   )
+
+  // Keyboard focus back to riven's own UI.
+  //
+  // A page runs in its own WebContentsView, and once it has focus the keystrokes
+  // keep going to it even after clicking riven's address bar: the caret shows,
+  // typing does nothing, and the URL can never be changed again. Clicking riven's
+  // own chrome says the app wants the keys back.
+  ipcMain.on('browser:focusApp', (e) => {
+    const w = win()
+    if (w && !w.webContents.isDestroyed()) w.webContents.focus()
+    else if (!e.sender.isDestroyed()) e.sender.focus()
+  })
 
   ipcMain.on('browser:hideAll', (_e, hidden: boolean) => {
     hiddenAll = hidden
