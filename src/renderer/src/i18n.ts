@@ -387,6 +387,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.needsInput': { ko: '입력을 기다리는 중 ✋', en: 'Waiting for your input ✋' },
   'term.attn': { ko: '🔔 알림', en: '🔔 Alert' },
   'term.label': { ko: '터미널', en: 'Terminal' },
+  'chat.noResponse': {
+    ko: '에이전트가 응답하지 않아 이 턴을 중단했어요. 다시 보내보세요.',
+    en: 'The agent stopped responding, so this turn was ended. Try sending again.'
+  },
   'pane.closeBusyConfirm': {
     ko: '이 패널에서 에이전트가 작업 중입니다. 닫으면 진행 중인 작업이 중단됩니다. 닫을까요?',
     en: 'An agent is still working in this pane. Closing it stops that work. Close anyway?'
