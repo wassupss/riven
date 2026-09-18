@@ -323,7 +323,7 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   // construction can never take the keyboard, shown with showInactive() above
   // the app window, over a page that does not move.
   let suggestWin: BrowserWindow | null = null
-  const suggestHtml = (items: Array<{ url: string; title: string }>, sel: number): string => {
+  const suggestHtml = (items: Array<{ url: string; title: string }>, sel: number, zoom: number): string => {
     const esc = (v: string): string =>
       v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
     const rows = items
@@ -336,14 +336,20 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       .join('')
     return `<!doctype html><meta charset="utf-8"><style>
       :root{color-scheme:dark}
-      body{margin:0;font:12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
-           background:#14100d;color:#e7e3df;border:1px solid #2a2723;border-radius:8px;
-           overflow:hidden}
-      .i{display:flex;gap:8px;align-items:baseline;padding:6px 10px;cursor:pointer;white-space:nowrap}
-      .i:hover,.i.on{background:#221d18}
-      .t{overflow:hidden;text-overflow:ellipsis;max-width:55%}
-      .u{color:#928779;overflow:hidden;text-overflow:ellipsis;font-size:11px}
-    </style><body>${rows}</body>
+      html,body{margin:0;overflow:hidden;background:transparent}
+      body{font:13px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#e7e3df}
+      /* The window itself is at 100%; the list is drawn at riven's UI zoom so
+         its text is the same size as the app's. */
+      #l{zoom:${zoom};background:#17130f;border:1px solid #2f2b26;border-radius:10px;
+         overflow:hidden;padding:4px}
+      .i{display:flex;gap:10px;align-items:baseline;padding:6px 10px;border-radius:6px;
+         cursor:default;white-space:nowrap;line-height:1.35}
+      .i:hover{background:#221d18}
+      .i.on{background:rgba(217,119,66,.16);box-shadow:inset 2px 0 0 #d97742}
+      .t{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+      .u{flex:1 1 auto;min-width:0;color:#9b8f81;overflow:hidden;text-overflow:ellipsis;
+         font-size:12px;text-align:right}
+    </style><body><div id="l">${rows}</div></body>
     <script>
       document.body.addEventListener('mousedown', function (e) {
         var el = e.target.closest('.i'); if (!el) return;
@@ -405,15 +411,30 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       // content origin turns that into screen coordinates.
       const cb = w.getContentBounds()
       const sx = uiScale(w)
-      suggestWin.setBounds({
-        x: Math.round(cb.x + payload.rect.x * sx),
-        y: Math.round(cb.y + payload.rect.y * sx),
-        width: Math.max(80, Math.round(payload.rect.width * sx)),
-        height: Math.max(24, Math.round(payload.rect.height * sx))
-      })
+      const place = (cssHeight: number): void => {
+        if (!suggestWin || suggestWin.isDestroyed() || !payload.rect) return
+        suggestWin.setBounds({
+          x: Math.round(cb.x + payload.rect.x * sx),
+          y: Math.round(cb.y + payload.rect.y * sx),
+          width: Math.max(80, Math.round(payload.rect.width * sx)),
+          height: Math.max(24, Math.round(cssHeight * sx))
+        })
+      }
+      place(payload.rect.height)
       void suggestWin.webContents
-        .loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(suggestHtml(payload.items, payload.selected)))
-        .then(() => {
+        .loadURL(
+          'data:text/html;charset=utf-8,' + encodeURIComponent(suggestHtml(payload.items, payload.selected, sx))
+        )
+        .then(async () => {
+          if (!suggestWin || suggestWin.isDestroyed()) return
+          // The window is exactly as tall as the rows it drew — guessing a row
+          // height left a strip of empty background under the last one.
+          const h = (await suggestWin.webContents
+            .executeJavaScript('document.getElementById("l").getBoundingClientRect().height')
+            .catch(() => null)) as number | null
+          // `h` is already in device-independent px (the list carries the zoom),
+          // so it is the window's height as-is.
+          if (typeof h === 'number' && h > 0) place(Math.ceil(h) / sx)
           if (suggestWin && !suggestWin.isDestroyed()) suggestWin.showInactive()
         })
     }
