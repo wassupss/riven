@@ -548,6 +548,32 @@ const AssistantText = memo(function AssistantText({
   )
 })
 
+// The footer of a turn that is still running: what it is doing, for how long,
+// and what it has spent so far. The clock is its own — a turn's cost and elapsed
+// time are the two things you want while waiting, and the transcript's shared
+// "now" only ticks once a minute.
+function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
+  const t = useT()
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const elapsed = Math.max(0, Date.now() - msg.startedAt)
+  const spent = msg.tokensIn > 0 || msg.tokensOut > 0
+  return (
+    <span className="chat-foot-running">
+      <Loader2 size={12} className="spin" />
+      {/* 생각 중 → (텍스트가 흐르기 시작하면) 작성 중, native와 동일 */}
+      <span className="chat-shimmer-text">{msg.text ? t('chat.writing') : t('chat.thinking')}</span>
+      <span className="chat-foot-live">
+        {fmtDur(elapsed)}
+        {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
+      </span>
+    </span>
+  )
+}
+
 // One transcript turn. Memoized so that while the latest turn streams, the
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
@@ -633,13 +659,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <span className="chat-foot-running">
-            <Loader2 size={12} className="spin" />
-            {/* 생각 중 → (텍스트가 흐르기 시작하면) 작성 중, native와 동일 */}
-            <span className="chat-shimmer-text">
-              {msg.text ? t('chat.writing') : t('chat.thinking')}
-            </span>
-          </span>
+          <RunningFoot msg={msg} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
