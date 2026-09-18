@@ -4,6 +4,7 @@ import Workbench from './dock/Workbench'
 import ExplorerPanel from './dock/panels/ExplorerPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { PanelTop, Folder, Settings as SettingsIcon } from 'lucide-react'
+import ImageLightbox from './components/ImageLightbox'
 import PortsWidget from './components/PortsWidget'
 import ScriptRunner from './components/ScriptRunner'
 import StatusBar from './components/StatusBar'
@@ -376,6 +377,7 @@ export default function App(): JSX.Element {
       <ErrorBoundary label={t('app.statusBarLabel')}>
         <StatusBar />
       </ErrorBoundary>
+      <ImageLightbox />
       <SettingsModal />
       <Palette />
       <QuickPanel />
