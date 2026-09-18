@@ -1,5 +1,5 @@
 import '../../styles/browser-bookmarks.css'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf } from '../../state/session'
 import { contextBus } from '../../bridge/contextBus'
@@ -114,6 +114,8 @@ export default function PreviewPanel({
   const [suggestOpen, setSuggestOpen] = useState(false)
   const viewportRef = useRef<HTMLDivElement>(null)
   const lastSent = useRef('')
+  // How much of the viewport the open dropdown is using (CSS px).
+  const reserveTopRef = useRef(0)
   // The omnibox dropdown is drawn by a NATIVE overlay view (renderer DOM can't
   // paint above a WebContentsView), positioned right under the address bar.
   const addrWrapRef = useRef<HTMLDivElement | null>(null)
@@ -160,6 +162,11 @@ export default function PreviewPanel({
     const el = viewportRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
+    // The address-bar dropdown is renderer DOM and the page is a native view,
+    // which always paints on top — so the page steps DOWN by the height of the
+    // open dropdown and keeps showing underneath it. (Hiding the page instead
+    // blanked the panel the moment the caret entered the address bar.)
+    const reserve = Math.min(reserveTopRef.current, Math.max(0, r.height - 40))
     // Also require the dock panel itself to be the visible tab of its group — the
     // WebContentsView is a native overlay that keeps painting on top when this
     // panel becomes an inactive tab (e.g. a terminal opened beside it), so we must
@@ -172,7 +179,7 @@ export default function PreviewPanel({
     // Hide all views on the blank start page (no view for this tab).
     const payload =
       visible && id && tab?.view
-        ? { activeId: id, rect: { x: r.left, y: r.top, width: r.width, height: r.height } }
+        ? { activeId: id, rect: { x: r.left, y: r.top + reserve, width: r.width, height: r.height - reserve } }
         : { activeId: null, rect: null }
     const key = JSON.stringify(payload)
     if (key === lastSent.current) return
@@ -290,21 +297,20 @@ export default function PreviewPanel({
 
   // A WebContentsView is a native layer that ALWAYS paints above renderer DOM, so
   // the dropdown would be drawn underneath the page, because a native view always
-  // paints above renderer DOM. So the page view steps aside while the dropdown is
-  // open — you are typing an address, not reading the page — and the dropdown is
-  // ordinary DOM, which (unlike a native overlay) cannot steal the keyboard.
+  // paints above renderer DOM. So the page is pushed down by exactly the height
+  // of the open dropdown — it stays visible, and the list has that strip to
+  // itself.
   const suggestVisible = suggestOpen && suggestions.length > 0
-  useEffect(() => {
-    window.api.browser.hideAll(suggestVisible)
-    if (!suggestVisible) {
-      // hideAll(false) only clears the flag; the next sync is what shows the page
-      // again, and syncBounds skips a payload it has already sent.
-      lastSent.current = ''
-      syncBounds()
-    }
-  }, [suggestVisible, syncBounds])
+  const suggestRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const h = suggestVisible ? Math.ceil(suggestRef.current?.getBoundingClientRect().height ?? 0) + 6 : 0
+    if (h === reserveTopRef.current) return
+    reserveTopRef.current = h
+    lastSent.current = ''
+    syncBounds()
+  })
 
-  // Never leave the page hidden behind a dropdown this panel no longer shows.
+  // Never leave a view hidden by something this panel no longer shows.
   useEffect(() => () => window.api.browser.hideAll(false), [])
 
   return (
@@ -399,7 +405,7 @@ export default function PreviewPanel({
             }}
           />
           {suggestVisible && (
-            <div className="browser-suggest">
+            <div className="browser-suggest" ref={suggestRef}>
               {suggestions.map((sg, i) => (
                 <button
                   key={sg.url}
