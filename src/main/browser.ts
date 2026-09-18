@@ -251,6 +251,12 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   // The single source of truth for visibility + position: the renderer reports
   // the active tab and the viewport rect; everything else is hidden. rect=null or
   // activeId=null (panel hidden / modal open) hides all.
+  // CSS px inside the window → device-independent px, i.e. the UI's zoom factor.
+  const uiScale = (w: BrowserWindow): number => {
+    const z = w.webContents.getZoomFactor()
+    return z > 0 ? z : 1
+  }
+
   // The panel draws a 1px frame around itself, and a native view paints above all
   // renderer DOM — so a page laid out edge to edge ate that frame on three sides.
   // Keep the view just inside it (the top edge is under the toolbar already).
@@ -296,13 +302,116 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
     }
   )
   // Modal z-order guard: hide every browser view while a renderer overlay is up.
-  // The address-bar dropdown is plain renderer DOM. It used to be a native
-  // overlay view, because a WebContentsView always paints above DOM — but a
-  // native view also TAKES THE KEYBOARD when it appears, which is precisely when
-  // the user is typing an address: the caret stayed in the address bar and every
-  // keystroke went to the overlay, so a url could never be edited after the
-  // first page had loaded. The page view is hidden while the dropdown is open
-  // (browser:hideAll) so DOM has the box to itself.
+  // ---- address-bar suggestions -------------------------------------------
+  //
+  // The dropdown has to paint over the page, and the page is a native view which
+  // always paints above renderer DOM. Two things were tried and are recorded
+  // here so they are not tried again:
+  //   · a WebContentsView overlay — it TAKES THE KEYBOARD the moment it is
+  //     created (measured), and focusing the window afterwards does not win it
+  //     back, so the address bar kept a caret and swallowed every keystroke;
+  //   · pushing the page down by the height of the list — the page jumped
+  //     around while typing.
+  // So the list is its own window, marked `focusable: false`: a window that by
+  // construction can never take the keyboard, shown with showInactive() above
+  // the app window, over a page that does not move.
+  let suggestWin: BrowserWindow | null = null
+  const suggestHtml = (items: Array<{ url: string; title: string }>, sel: number): string => {
+    const esc = (v: string): string =>
+      v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
+    const rows = items
+      .map(
+        (it, i) =>
+          `<div class="i${i === sel ? ' on' : ''}" data-i="${i}"><span class="t">${esc(
+            it.title || it.url
+          )}</span><span class="u">${esc(it.url)}</span></div>`
+      )
+      .join('')
+    return `<!doctype html><meta charset="utf-8"><style>
+      :root{color-scheme:dark}
+      body{margin:0;font:12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+           background:#14100d;color:#e7e3df;border:1px solid #2a2723;border-radius:8px;
+           overflow:hidden}
+      .i{display:flex;gap:8px;align-items:baseline;padding:6px 10px;cursor:pointer;white-space:nowrap}
+      .i:hover,.i.on{background:#221d18}
+      .t{overflow:hidden;text-overflow:ellipsis;max-width:55%}
+      .u{color:#928779;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+    </style><body>${rows}</body>
+    <script>
+      document.body.addEventListener('mousedown', function (e) {
+        var el = e.target.closest('.i'); if (!el) return;
+        // No preload here: report the pick through the title, which main observes.
+        document.title = 'pick:' + el.dataset.i + ':' + Date.now();
+      });
+    </script>`
+  }
+  const closeSuggest = (): void => {
+    if (suggestWin && !suggestWin.isDestroyed()) suggestWin.hide()
+  }
+  ipcMain.on(
+    'browser:suggest',
+    (
+      e,
+      payload: {
+        rect: { x: number; y: number; width: number; height: number } | null
+        items: Array<{ url: string; title: string }>
+        selected: number
+      }
+    ) => {
+      const w = win()
+      if (!w) return
+      if (!payload.rect || payload.items.length === 0) {
+        closeSuggest()
+        return
+      }
+      if (!suggestWin || suggestWin.isDestroyed()) {
+        suggestWin = new BrowserWindow({
+          parent: w,
+          frame: false,
+          transparent: true,
+          hasShadow: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
+          skipTaskbar: true,
+          focusable: false,
+          show: false,
+          webPreferences: { javascript: true }
+        })
+        suggestWin.setMenuBarVisibility(false)
+        suggestWin.webContents.on('page-title-updated', (_ev, title) => {
+          const m = /^pick:(\d+):/.exec(title)
+          if (m && !e.sender.isDestroyed()) e.sender.send('browser:suggestPick', Number(m[1]))
+        })
+        // The list belongs to a moment in the parent window; anything that moves
+        // it out from under the address bar closes it rather than leaving it
+        // floating somewhere wrong.
+        w.on('move', closeSuggest)
+        w.on('resize', closeSuggest)
+        w.on('hide', closeSuggest)
+        w.on('minimize', closeSuggest)
+        w.on('blur', closeSuggest)
+      }
+      // The renderer measures in CSS px inside the window; the window's own
+      // content origin turns that into screen coordinates.
+      const cb = w.getContentBounds()
+      const sx = uiScale(w)
+      suggestWin.setBounds({
+        x: Math.round(cb.x + payload.rect.x * sx),
+        y: Math.round(cb.y + payload.rect.y * sx),
+        width: Math.max(80, Math.round(payload.rect.width * sx)),
+        height: Math.max(24, Math.round(payload.rect.height * sx))
+      })
+      void suggestWin.webContents
+        .loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(suggestHtml(payload.items, payload.selected)))
+        .then(() => {
+          if (suggestWin && !suggestWin.isDestroyed()) suggestWin.showInactive()
+        })
+    }
+  )
+
   ipcMain.on('browser:hideAll', (_e, hidden: boolean) => {
     hiddenAll = hidden
     if (hidden) for (const t of tabs.values()) t.view.setVisible(false)
