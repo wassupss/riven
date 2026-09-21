@@ -8513,3 +8513,9 @@ body.browser-active .tab-dot.attn {
     opacity: 0;
   }
 }
+/* Live cost/elapsed beside "thinking / writing" — the two things worth knowing
+   while a turn runs. */
+.chat-foot-live {
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}

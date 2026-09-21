@@ -387,6 +387,22 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.needsInput': { ko: '입력을 기다리는 중 ✋', en: 'Waiting for your input ✋' },
   'term.attn': { ko: '🔔 알림', en: '🔔 Alert' },
   'term.label': { ko: '터미널', en: 'Terminal' },
+  'chat.noResponse': {
+    ko: '에이전트가 응답하지 않아 이 턴을 중단했어요. 다시 보내보세요.',
+    en: 'The agent stopped responding, so this turn was ended. Try sending again.'
+  },
+  'pane.closeBusyConfirm': {
+    ko: '이 패널에서 에이전트가 작업 중입니다. 닫으면 진행 중인 작업이 중단됩니다. 닫을까요?',
+    en: 'An agent is still working in this pane. Closing it stops that work. Close anyway?'
+  },
+  'pane.closeBusyMany': {
+    ko: '에이전트 {n}개가 작업 중입니다. 닫으면 진행 중인 작업이 중단됩니다. 닫을까요?',
+    en: '{n} agents are still working. Closing stops that work. Close anyway?'
+  },
+  'ws.closeBusy': {
+    ko: '이 워크스페이스에서 에이전트 {n}개가 작업 중입니다. 닫을까요?',
+    en: '{n} agents are still working in this workspace. Close it anyway?'
+  },
   'term.closeBusyConfirm': {
     ko: '이 터미널에서 에이전트가 실행 중입니다. 닫고 중지할까요?',
     en: 'An agent is still running in this terminal. Close and stop it?'
@@ -508,7 +524,17 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.cliNone': { ko: 'PATH에서 AI CLI를 찾지 못했습니다 (claude, codex).', en: 'No AI CLI found on PATH (claude, codex).' },
   'settings.cliFound': { ko: '설치됨', en: 'Installed' },
   'settings.cliUpdate': { ko: '업데이트', en: 'Update' },
-  'settings.cliUpdateDesc': { ko: '터미널에서 CLI 업데이트를 실행합니다. 새 버전은 대화를 다시 시작하면 적용됩니다.', en: 'Runs the CLI update in a terminal. Restart a chat to pick up the new version.' },
+  'settings.cliUpdateDesc': {
+    ko: '터미널에서 CLI 업데이트를 실행합니다. 이미 열려 있는 채팅은 아래에서 다시 시작해야 새 버전이 적용됩니다.',
+    en: 'Runs the CLI update in a terminal. Chats that are already open pick up the new version only after the restart below.'
+  },
+  'settings.cliRestart': { ko: '에이전트 다시 시작', en: 'Restart agents' },
+  'settings.cliRestartDesc': {
+    ko: '열려 있는 채팅 패널의 CLI를 새 프로세스로 교체합니다. 대화는 그대로 이어집니다 (터미널에서 직접 실행한 CLI는 제외).',
+    en: "Replaces the CLI behind each open chat pane; the conversation continues. (A CLI you started in a terminal isn't touched.)"
+  },
+  'settings.cliRestarted': { ko: '채팅 {n}개를 새 프로세스로 다시 시작했어요', en: 'Restarted {n} chat(s) on a fresh process' },
+  'settings.cliRestartBusy': { ko: '답변 중인 {n}개는 건너뛰었어요', en: 'skipped {n} mid-turn' },
   'settings.agentDefaults': { ko: '에이전트 기본값', en: 'Agent defaults' },
   'settings.termColors': { ko: '색상', en: 'Colors' },
   'settings.configFile': { ko: '설정 파일', en: 'Config file' },

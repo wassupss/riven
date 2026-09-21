@@ -437,6 +437,15 @@ function dispose(s: Session): void {
   sessions.delete(s.key)
 }
 
+// Terminals whose CLI agent is working right now.
+export function runningTerminalAgentCount(): number {
+  let n = 0
+  for (const s of sessions.values()) {
+    if (s.agentPresent && s.activity.snapshot().state === 'working') n++
+  }
+  return n
+}
+
 export function registerPtyHandlers(): void {
   // Agent hooks arrive on the loopback server tagged with the pane they ran in.
   registerAgentHooks(({ pane, agent, event, hook, sessionId, reply }) => {

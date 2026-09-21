@@ -548,6 +548,32 @@ const AssistantText = memo(function AssistantText({
   )
 })
 
+// The footer of a turn that is still running: what it is doing, for how long,
+// and what it has spent so far. The clock is its own — a turn's cost and elapsed
+// time are the two things you want while waiting, and the transcript's shared
+// "now" only ticks once a minute.
+function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
+  const t = useT()
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const elapsed = Math.max(0, Date.now() - msg.startedAt)
+  const spent = msg.tokensIn > 0 || msg.tokensOut > 0
+  return (
+    <span className="chat-foot-running">
+      <Loader2 size={12} className="spin" />
+      {/* 생각 중 → (텍스트가 흐르기 시작하면) 작성 중, native와 동일 */}
+      <span className="chat-shimmer-text">{msg.text ? t('chat.writing') : t('chat.thinking')}</span>
+      <span className="chat-foot-live">
+        {fmtDur(elapsed)}
+        {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
+      </span>
+    </span>
+  )
+}
+
 // One transcript turn. Memoized so that while the latest turn streams, the
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
@@ -633,13 +659,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <span className="chat-foot-running">
-            <Loader2 size={12} className="spin" />
-            {/* 생각 중 → (텍스트가 흐르기 시작하면) 작성 중, native와 동일 */}
-            <span className="chat-shimmer-text">
-              {msg.text ? t('chat.writing') : t('chat.thinking')}
-            </span>
-          </span>
+          <RunningFoot msg={msg} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
@@ -1671,6 +1691,7 @@ export default function ChatPanel({
     })
     const off = window.api.chat.onEvent((e) => {
       if (e.key !== chatKey) return
+      lastEventRef.current = Date.now()
       switch (e.kind) {
         case 'init':
           setModel(e.model)
@@ -1965,6 +1986,9 @@ export default function ChatPanel({
   )
   const busyRef = useRef(false)
   const waitersRef = useRef<Array<(reply: string) => void>>([])
+  // When this pane last heard ANYTHING from its agent, so a turn that goes
+  // silent can be given up on instead of shimmering forever.
+  const lastEventRef = useRef(0)
   // Messages typed while a turn was running, sent one-by-one as turns finish.
   const queuedRef = useRef<Array<{ text: string; images: ChatImage[] }>>([])
   // True when we interrupted the current turn to steer it with a new message —
@@ -1989,11 +2013,55 @@ export default function ChatPanel({
     return true
   }
   // Stop means stop: interrupt the current turn AND drop anything queued.
+  // End the running turn HERE as well as asking the CLI to stop. A child that
+  // has died, or one that never got the message, answers nothing — and the pane
+  // would stay "writing" forever with Stop and Escape doing nothing at all.
+  const endTurnLocally = (note?: string): void => {
+    setMsgs((all) =>
+      settleStaleTurns(
+        note
+          ? all.map((m, i) =>
+              i === all.length - 1 || (m.role === 'assistant' && !m.done)
+                ? { ...m, items: m.text || m.items.length ? m.items : [{ type: 'text' as const, text: note }] }
+                : m
+            )
+          : all,
+        Date.now(),
+        false
+      )
+    )
+    setBusy(false)
+    setAgentStatus(chatKey, 'idle')
+  }
+  // A turn that stops saying anything at all: the child died, or the message
+  // never reached one. Without this the pane sits on "writing" and every later
+  // message piles up behind it as "queued".
+  const SILENT_TURN_MS = 60_000
+  useEffect(() => {
+    if (!busy) return
+    const id = setInterval(() => {
+      if (!busyRef.current) return
+      if (Date.now() - lastEventRef.current < SILENT_TURN_MS) return
+      clearInterval(id)
+      setError(t('chat.noResponse'))
+      endTurnLocally()
+      // Anything the user queued behind the dead turn is sent now.
+      drainQueue()
+    }, 5000)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy])
+
   const stopTurn = (): void => {
     queuedRef.current = []
     stoppedRef.current = true
     setMsgs((all) => all.filter((m) => !m.queued))
     window.api.chat.interrupt(chatKey)
+    // The CLI normally answers with a turnDone; if it doesn't (dead child, a
+    // message that never reached it), stop still means stop.
+    setTimeout(() => {
+      if (busyRef.current) endTurnLocally()
+    }, 1500)
   }
   const sendMessage = useCallback(
     (text: string, images: ChatImage[] = []): void => {
@@ -2028,6 +2096,7 @@ export default function ChatPanel({
           }
         })
       }
+      lastEventRef.current = Date.now()
       setMsgs((all) => [
         ...all,
         {

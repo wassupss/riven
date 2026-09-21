@@ -109,6 +109,11 @@ interface Session {
 }
 
 const sessions = new Map<string, Session>()
+// What each pane was last started with. A message for a pane whose child is gone
+// (killed, crashed, stopped) used to be dropped on the floor — the pane sat on
+// "writing" forever with nothing to answer it. With this, the child is started
+// again and the message goes to it.
+const lastStart = new Map<string, { opts: StartOpts; sender: WebContents }>()
 
 // A CLI child stays alive between turns to hold its context, so a pane left open
 // pins ~200-500MB (and whatever its MCP workers spin) for as long as the app runs
@@ -382,6 +387,9 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   if (type === 'result') {
     s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
     s.sessionId = (ev.session_id as string) ?? s.sessionId
+    // Resume THIS conversation if the pane ever has to be revived.
+    const prev = lastStart.get(s.key)
+    if (prev && s.sessionId) lastStart.set(s.key, { ...prev, opts: { ...prev.opts, resume: s.sessionId } })
     // Slash commands (e.g. /usage, /context) return their output ONLY in the
     // result — nothing streams as assistant text. Surface it so the pane shows the
     // command's answer instead of an empty turn.
@@ -564,6 +572,7 @@ async function startSession(
     parking: false
   }
   sessions.set(key, s)
+  lastStart.set(key, { opts, sender })
 
   proc.stdout?.on('data', (chunk: Buffer) => {
     s.lastActive = Date.now()
@@ -585,6 +594,11 @@ async function startSession(
   proc.stderr?.on('data', (d: Buffer) => console.log(`[chat:${key}]`, d.toString().trim()))
   proc.on('exit', (code) => {
     s.alive = false
+    // A child exits ASYNCHRONOUSLY: by the time this runs, the pane may already
+    // have been given a NEW child (chat:restart). Only clear the map when it
+    // still holds THIS one, or the restart's session is deleted out from under
+    // it and the pane's next message reaches nothing.
+    if (sessions.get(key) !== s) return
     sessions.delete(key)
     // Parked by the idle reaper — the pane is still open and will respawn on its
     // next message, so this exit must not reach the renderer as a session end.
@@ -650,6 +664,14 @@ function reapIdleSessions(): void {
 // Kill every CLI child. Called at quit: the app's shutdown path SIGKILLs itself,
 // which would otherwise leave these children reparented to launchd and running
 // (each one holding its memory) long after riven is gone.
+// Chat panes whose agent is mid-turn — what quitting would cut off.
+export function runningChatCount(): number {
+  let n = 0
+  for (const s of sessions.values()) if (s.turnBusy) n++
+  for (const c of codexChats.values()) if (c.turnBusy) n++
+  return n
+}
+
 export function killAllChatSessions(): void {
   for (const c of codexChats.values()) c.stop()
   codexChats.clear()
@@ -694,10 +716,23 @@ export function registerAgentChatHandlers(): void {
       writeLine(s, line)
       return
     }
-    // Parked while idle: respawn the child (with --resume) and deliver the message
-    // to it, so parking is invisible to the pane apart from the resume itself.
-    const p = parked.get(key)
-    if (!p) return
+    // Parked while idle, or simply gone (killed, crashed): respawn the child —
+    // resuming the conversation it was in — and deliver the message to it, so a
+    // message is never silently dropped.
+    const p = parked.get(key) ?? lastStart.get(key)
+    if (!p) {
+      // Nothing to revive: tell the pane instead of leaving it waiting forever.
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('chat:event', {
+          key,
+          kind: 'turnDone',
+          costUSD: null,
+          sessionId: null,
+          error: 'no agent for this pane'
+        })
+      }
+      return
+    }
     parked.delete(key)
     void startSession(key, p.opts, event.sender).then(() => {
       const revived = sessions.get(key)
@@ -735,7 +770,54 @@ export function registerAgentChatHandlers(): void {
         request: { subtype: 'set_permission_mode', mode: mode === 'auto' ? 'default' : mode }
       })
   })
-  ipcMain.on('chat:stop', (_e, key: string) => stopSession(key))
+  // The pane is gone (closed): forget how to revive it, or a stray message
+  // would bring a closed conversation back.
+  ipcMain.on('chat:stop', (_e, key: string) => {
+    lastStart.delete(key)
+    stopSession(key)
+  })
+
+  // Restart the CLI behind a pane (or every pane) WITHOUT losing the
+  // conversation: the child is replaced and resumes the same session, which is
+  // what makes "update the CLI" mean anything for panes that are already open —
+  // a running child keeps the binary it started with. A pane mid-turn is left
+  // alone: killing it there would throw away the answer being written.
+  ipcMain.handle('chat:restart', async (event, key?: string) => {
+    const keys = key ? [key] : [...sessions.keys(), ...codexChats.keys()]
+    let restarted = 0
+    let busy = 0
+    for (const k of keys) {
+      const claude = sessions.get(k)
+      if (claude) {
+        if (claude.turnBusy) {
+          busy++
+          continue
+        }
+        const opts = { ...claude.opts, resume: claude.sessionId ?? claude.opts.resume }
+        const sender = claude.sender
+        // The pane is not ending — it is getting a new process — so its exit
+        // must not reach the renderer as a session that stopped.
+        claude.parking = true
+        stopSession(k)
+        const res = await startSession(k, opts, sender)
+        if (res.ok) restarted++
+        continue
+      }
+      const codex = codexChats.get(k)
+      if (!codex) continue
+      if (codex.turnBusy) {
+        busy++
+        continue
+      }
+      const opts = codex.restartOpts()
+      const sender = codex.sender
+      stopSession(k)
+      const res = await startCodexChat(k, { ...opts, cli: 'codex' }, sender)
+      if (res.ok) restarted++
+    }
+    void event
+    return { restarted, busy }
+  })
 
   // The session's REAL command list + MCP servers, fetched up front (cached per
   // cwd) by spawning a throwaway headless claude in that directory. stream-json
