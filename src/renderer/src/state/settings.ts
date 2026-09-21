@@ -27,7 +27,8 @@ export interface Settings {
   // How much of the device is drawn: the whole handheld, just its screen, or
   // nothing but the creature itself on a transparent background.
   petChrome: PetChrome
-  // Living in its own always-on-top window instead of inside riven's.
+  // Living in its own window on the desktop instead of inside riven's. On by
+  // default: a desk pet belongs on the desk.
   petDetached: boolean
   // Run the language formatter on ⌘S before writing to disk.
   formatOnSave: boolean
@@ -88,7 +89,7 @@ export const DEFAULT_SETTINGS: Settings = {
   petShow: true,
   petPos: null,
   petChrome: 'full',
-  petDetached: false,
+  petDetached: true,
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],

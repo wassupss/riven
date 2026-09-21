@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
+import { DEFAULT_SETTINGS } from './settings'
 import {
   archive,
   awardsOf,
@@ -629,5 +630,17 @@ describe('normalize', () => {
   it('keeps a good save intact', () => {
     const saved = base({ xp: 120, fullness: 55, mood: 44, neglectMs: 3 * HOUR, name: '리븐이' })
     expect(normalize(saved, T0 + HOUR)).toEqual(saved)
+  })
+})
+
+describe('how it ships', () => {
+  // The pet lives on the desk, not in the dock: a first-run riven shows the
+  // floating device straight away. It is also NOT always-on-top, so main/pet.ts
+  // has to open it BESIDE riven's window — inside those bounds it would be
+  // covered the moment riven took focus, i.e. open but invisible.
+  it('is out on the desk by default', () => {
+    expect(DEFAULT_SETTINGS.petShow).toBe(true)
+    expect(DEFAULT_SETTINGS.petDetached).toBe(true)
+    expect(DEFAULT_SETTINGS.petChrome).toBe('full')
   })
 })

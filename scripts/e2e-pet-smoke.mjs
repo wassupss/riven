@@ -649,6 +649,58 @@ async function main() {
       JSON.stringify(grabbable)
     )
 
+    // The three keys are bound to Mod+Alt+a/s/d. The keystroke lands in whichever
+    // riven window has focus, so the press is relayed through main to every
+    // window — pressing from the APP has to drive the device in its OWN window.
+    const relayed = await (async () => {
+      await petCdp.eval(`(async () => {
+        for (let i = 0; i < 4; i++) {
+          if (document.querySelector('.pet-yard')) break
+          document.querySelector('[data-key="c"]').click()
+          await new Promise((r) => setTimeout(r, 160))
+        }
+      })()`)
+      // A walks the icon strip. Stop on an icon that OPENS something (meter) so
+      // B and C have a visible effect: the screen shows, then C comes home.
+      let landed = null
+      for (let i = 0; i < 12; i++) {
+        landed = await petCdp.eval(`document.querySelector('.pet-ic.picked')?.dataset.ic ?? null`)
+        if (landed === 'meter') break
+        await cdp.eval(`window.api.pet.press('a')`)
+        await sleep(200)
+      }
+      await cdp.eval(`window.api.pet.press('b')`)
+      await sleep(400)
+      const opened = await petCdp.eval(`!document.querySelector('.pet-yard')`)
+      await cdp.eval(`window.api.pet.press('c')`)
+      await sleep(400)
+      const home = await petCdp.eval(`!!document.querySelector('.pet-yard')`)
+      return { landed, opened, home }
+    })()
+    check(
+      'the keyboard shortcuts reach the device in its own window',
+      relayed.landed === 'meter' && relayed.opened && relayed.home,
+      JSON.stringify(relayed)
+    )
+
+    // Nothing may paint behind the frameless window: a background on the page or
+    // a drop shadow on the case shows up as a grey smudge on the desktop.
+    const clean = await petCdp.eval(`(() => {
+      const bg = (el) => getComputedStyle(el).backgroundColor
+      const clear = (c) => c === 'rgba(0, 0, 0, 0)' || c === 'transparent'
+      const outer = [...document.querySelectorAll('.pet-case, .pet-mini, .pet-stand, .pet-stand i')]
+        .map((e) => getComputedStyle(e).boxShadow)
+        .filter((v) => v && v !== 'none' && !v.includes('inset'))
+      return { html: bg(document.documentElement), body: bg(document.body), root: bg(document.getElementById('root')),
+               transparent: [document.documentElement, document.body, document.getElementById('root')].every((e) => clear(bg(e))),
+               outer }
+    })()`)
+    check(
+      'nothing paints behind its window',
+      clean.transparent && clean.outer.length === 0,
+      JSON.stringify(clean)
+    )
+
     check(
       'its window fits the device exactly, whatever is showing',
       !fit.error &&
@@ -728,7 +780,9 @@ async function main() {
   )
   check(
     'answers how much of the plan is left',
-    /6/.test(talk.limit ?? '') && /리셋|resets/.test(talk.limit ?? ''),
+    // The number is whatever the live account has left today, so the shape is
+    // what is checked: a percentage, and when the window rolls over.
+    /\d+%/.test(talk.limit ?? '') && /리셋|resets/.test(talk.limit ?? ''),
     String(talk.limit)
   )
   check(

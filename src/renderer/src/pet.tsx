@@ -6,7 +6,7 @@ import { applyTheme } from './state/themes'
 import './styles.css'
 
 // ---------------------------------------------------------------------------
-// The entry for 리븐펫's own always-on-top window. Deliberately minimal: it boots
+// The entry for 리븐펫's own desktop window. Deliberately minimal: it boots
 // the theme + language and mounts the same device the app embeds — no dock, no
 // editor, no terminals. The pet's save (pet.json) is shared with the app,
 // and only one of the two is ever mounted, so there is no second feeder.

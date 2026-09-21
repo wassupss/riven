@@ -88,6 +88,7 @@ const NOTICE_MS = 4000
 // An answer is a sentence, not a mood — give it time to be read.
 const ANSWER_MS = 7000
 const GRAPH_DAYS = 7
+const NOOP = (): void => {}
 
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
@@ -472,6 +473,34 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
   }, [])
 
+  // The three buttons, driven from riven's keyboard shortcuts. The press is
+  // relayed through main, so it works whether the device is in the app window or
+  // out on the desktop — and the pet window answers its own keys when focused.
+  // The handlers are declared far below, past an early return, so the listener
+  // reaches them through a ref: a hook may not sit on the far side of a `return`
+  // (React counts hooks per render — the in-app device crashed on being hidden).
+  const keysRef = useRef<Record<'a' | 'b' | 'c', () => void>>({
+    a: NOOP,
+    b: NOOP,
+    c: NOOP
+  })
+  useEffect(() => {
+    const off = window.api.pet.onPress((k) => keysRef.current[k]?.())
+    const local = (e: KeyboardEvent): void => {
+      if (!e.altKey || !(e.metaKey || e.ctrlKey)) return
+      const k = e.key.toLowerCase()
+      const hit = k === 'a' ? 'a' : k === 's' ? 'b' : k === 'd' ? 'c' : null
+      if (!hit) return
+      e.preventDefault()
+      keysRef.current[hit]()
+    }
+    window.addEventListener('keydown', local)
+    return () => {
+      off()
+      window.removeEventListener('keydown', local)
+    }
+  }, [])
+
   useEffect(() => {
     if (detached) return
     const reclamp = (): void => {
@@ -596,7 +625,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const diet = useMemo(() => dietOf(pet), [pet])
   const awards = useMemo(() => awardsOf(pet, nowTick), [pet, nowTick])
 
-  if (!show && !detached) return null
+  if (!show && !detached) {
+    // Put away: the shortcut must not go on feeding and cleaning a pet that is
+    // not on screen, so the relayed presses land on nothing.
+    keysRef.current = { a: NOOP, b: NOOP, c: NOOP }
+    return null
+  }
 
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
@@ -824,6 +858,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     hour: '2-digit',
     minute: '2-digit'
   })
+
+  // The handlers exist only past the early return above; the listener that calls
+  // them is a hook and must not be (see keysRef, up with the other hooks).
+  keysRef.current = { a: pressA, b: pressB, c: pressC }
 
   const graph = pet.history.slice(-GRAPH_DAYS)
   const peak = Math.max(1, ...graph.map((d) => d.kibble))

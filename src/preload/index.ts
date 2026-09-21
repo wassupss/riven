@@ -925,6 +925,14 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    // A key press on the pet's three buttons, sent from wherever the shortcut was
+    // pressed and delivered to whichever window is showing the device.
+    press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),
+    onPress: (cb: (key: 'a' | 'b' | 'c') => void): (() => void) => {
+      const l = (_e: unknown, key: 'a' | 'b' | 'c'): void => cb(key)
+      ipcRenderer.on('pet:press', l)
+      return () => ipcRenderer.removeListener('pet:press', l)
+    },
     // Fired for EVERY window: the floating pet was closed / put away, so the app
     // can put its own state back in step.
     onClosed: (cb: () => void): (() => void) => {

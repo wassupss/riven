@@ -6,8 +6,9 @@ import PetDevice from './PetDevice'
 // Decides WHERE 리븐펫 lives, so only one of the two ever runs.
 //
 //  · attached  → the device is rendered inside riven's window.
-//  · detached  → main opens its own always-on-top window (src/main/pet.ts),
-//                which mounts the same device; nothing is rendered here.
+//  · detached  → main opens its own desktop window (src/main/pet.ts), which
+//                mounts the same device; nothing is rendered here. The default:
+//                a desk pet belongs on the desk.
 //
 // Main owns the window's existence and tells every renderer when it goes away,
 // so the setting can never claim a pet that is not on screen — including after a

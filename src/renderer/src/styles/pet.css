@@ -171,6 +171,24 @@
 .pet-detached * {
   -webkit-app-region: drag;
 }
+/* On a transparent window a soft box-shadow is not a shadow — it is a grey
+   smudge around the device, because there is nothing behind it to fall on.
+   (Measured: alpha 5–71 over the whole margin.) Keep the crisp inner lighting,
+   drop everything that blurs outward. */
+.pet-detached .pet-case,
+.pet-detached .pet-mini {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+.pet-detached .pet-stand i,
+.pet-detached .pet-balloon,
+.pet-detached .pet-key,
+.pet-detached .pet-tools {
+  box-shadow: none;
+}
+.pet-detached .pet-bare {
+  filter: none;
+}
+
 /* What you press, type in or scroll must stay clickable. */
 .pet-detached button,
 .pet-detached button *,

@@ -41,22 +41,31 @@ function onScreen(x: number, y: number, width: number, height: number): boolean 
 }
 
 /**
- * Where the pet appears the first time. Beside riven's own window, NOT in the
- * far corner of the display: on a wide screen that corner can be a metre from
- * what you are looking at, and popping the pet out looked like losing it.
+ * Where the pet appears the first time: on the desk BESIDE riven, never on top
+ * of it. It is not an always-on-top window any more, so a spot inside riven's
+ * bounds would simply be covered the moment riven has focus — the pet would be
+ * open and invisible. Right of the window, else left, else the display corner.
  */
 function firstSpot(): { x: number; y: number } {
   const app = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w !== win)
   const area = app
     ? screen.getDisplayMatching(app.getBounds()).workArea
     : screen.getPrimaryDisplay().workArea
-  const anchor = app ? app.getBounds() : area
-  // Just inside the app's bottom-right corner, then clamped onto the display.
-  const x = anchor.x + anchor.width - DEFAULT_SIZE.width - 28
-  const y = anchor.y + anchor.height - DEFAULT_SIZE.height - 28
+  const { width: w, height: h } = DEFAULT_SIZE
+  const gap = 14
+  const bottom = (top: number): number =>
+    Math.min(Math.max(area.y + 8, top), area.y + area.height - h - 8)
+
+  if (app) {
+    const b = app.getBounds()
+    const right = b.x + b.width + gap
+    if (right + w <= area.x + area.width) return { x: right, y: bottom(b.y + b.height - h) }
+    const left = b.x - gap - w
+    if (left >= area.x) return { x: left, y: bottom(b.y + b.height - h) }
+  }
   return {
-    x: Math.min(Math.max(area.x + 8, x), area.x + area.width - DEFAULT_SIZE.width - 8),
-    y: Math.min(Math.max(area.y + 8, y), area.y + area.height - DEFAULT_SIZE.height - 8)
+    x: area.x + area.width - w - 24,
+    y: area.y + area.height - h - 24
   }
 }
 
@@ -87,15 +96,16 @@ async function open(): Promise<void> {
     minimizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    // 'floating' keeps it above ordinary windows without fighting menus/panels.
-    alwaysOnTop: true,
+    // Deliberately NOT always-on-top: a pet that covers your work is a pet you
+    // close. It sits on the desktop like any other window and comes forward when
+    // you click it.
+    alwaysOnTop: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true
     }
   })
-  win.setAlwaysOnTop(true, 'floating')
   // Follow the user across spaces — a desk pet that vanishes when you switch
   // desktops is not much of a desk pet.
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -151,4 +161,10 @@ export function registerPetHandlers(): void {
     win.setBounds({ x: b.x, y: b.y + (b.height - h), width: b.width, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
+  // The three buttons, pressed from a keyboard shortcut. Relayed to every window
+  // because the device lives in one of two of them and only that one listens.
+  ipcMain.handle('pet:press', (_e, key: string) => {
+    for (const w of BrowserWindow.getAllWindows())
+      if (!w.isDestroyed()) w.webContents.send('pet:press', key)
+  })
 }
