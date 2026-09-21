@@ -8402,6 +8402,9 @@ select {
   border-radius: var(--ring-radius, 2px);
   padding: 1.5px;
   overflow: hidden;
+  /* So the spinning layer below can size itself from the LONGER side of the
+     pane (cqw/cqh), not just its width. */
+  container-type: size;
   -webkit-mask:
     linear-gradient(#000 0 0) content-box,
     linear-gradient(#000 0 0);
@@ -8413,7 +8416,13 @@ select {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 220%;
+  /* The square must cover the pane in EVERY rotation, so its side has to beat
+     the pane's diagonal (≤ √2 × the longer side — 150% of it, with margin).
+     Sized from the width alone it fell short on any pane taller than about
+     twice its width: the band went dark top and bottom, and the square's own
+     corners swept across the sides, which read as the ember doubling back on
+     itself halfway round. */
+  width: max(150cqw, 150cqh);
   aspect-ratio: 1;
   translate: -50% -50%;
   will-change: transform;
