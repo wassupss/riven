@@ -24,6 +24,24 @@ const TERMINAL = '터미널'
 // Registers the default set of app actions (code-editor shortcuts live in
 // editorKeymaps.ts). Bindings are customizable at runtime.
 export function registerDefaultActions(): void {
+  // The pet's three buttons. The press is relayed through main so the shortcut
+  // works from anywhere in riven, whether the device is docked in this window or
+  // out on the desktop in its own.
+  const PET_KEYS: Array<{ key: 'a' | 'b' | 'c'; def: string; label: string }> = [
+    { key: 'a', def: 'Mod+Alt+a', label: '리븐펫 A · 아이콘 이동' },
+    { key: 'b', def: 'Mod+Alt+s', label: '리븐펫 B · 실행' },
+    { key: 'c', def: 'Mod+Alt+d', label: '리븐펫 C · 취소 / 뒤로' }
+  ]
+  for (const { key, def, label } of PET_KEYS)
+    keymap.register({
+      id: `pet.key.${key}`,
+      label,
+      category: RIVEN,
+      context: 'riven',
+      def,
+      run: () => void window.api.pet.press(key)
+    })
+
   // Workspace switching: Mod+1 .. Mod+9
   for (let i = 1; i <= 9; i++) {
     keymap.register({

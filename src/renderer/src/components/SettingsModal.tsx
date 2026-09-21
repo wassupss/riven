@@ -352,6 +352,22 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(v) => upd('usageShowUsed', v)}
                 />
 
+                <div className="section-label">{t('pet.title')}</div>
+                <ToggleRow
+                  title={t('settings.petShow')}
+                  desc={t('settings.petShowDesc')}
+                  checked={settings.petShow}
+                  onChange={(v) => upd('petShow', v)}
+                />
+                {settings.petShow && (
+                  <ToggleRow
+                    title={t('settings.petDetached')}
+                    desc={t('settings.petDetachedDesc')}
+                    checked={settings.petDetached}
+                    onChange={(v) => upd('petDetached', v)}
+                  />
+                )}
+
                 <div className="section-label">{t('settings.browserSection')}</div>
                 <Row title={t('settings.searchEngine')} desc={t('settings.searchEngineDesc')}>
                   <TextInput

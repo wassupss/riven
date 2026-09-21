@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+export type PetChrome = 'full' | 'screen' | 'bare'
+
 export interface Settings {
   theme: string
   editorKeymap: string
@@ -17,6 +19,17 @@ export interface Settings {
   language: 'ko' | 'en'
   importedFonts: Array<{ family: string; dataUrl: string }>
   usagePinned: boolean
+  // 리븐펫: the floating virtual-pet device. Where the user parked it and whether
+  // it is showing / folded down to just its screen. (The pet ITSELF — what it has
+  // eaten, how it grew — lives in pet.json, not here.)
+  petShow: boolean
+  petPos: { x: number; y: number } | null
+  // How much of the device is drawn: the whole handheld, just its screen, or
+  // nothing but the creature itself on a transparent background.
+  petChrome: PetChrome
+  // Living in its own window on the desktop instead of inside riven's. On by
+  // default: a desk pet belongs on the desk.
+  petDetached: boolean
   // Run the language formatter on ⌘S before writing to disk.
   formatOnSave: boolean
   // Named "new terminal" presets: each runs `command` in a fresh terminal.
@@ -73,6 +86,10 @@ export const DEFAULT_SETTINGS: Settings = {
   language: 'ko',
   importedFonts: [],
   usagePinned: false,
+  petShow: true,
+  petPos: null,
+  petChrome: 'full',
+  petDetached: true,
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
