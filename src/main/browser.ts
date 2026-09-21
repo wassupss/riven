@@ -58,6 +58,13 @@ function win(): BrowserWindow | null {
   return getWindow?.() ?? null
 }
 
+// The window whose renderer sent this message — the only window whose content
+// bounds the message's coordinates mean anything against.
+function senderWindow(e: { sender: Electron.WebContents }): BrowserWindow | null {
+  const w = BrowserWindow.fromWebContents(e.sender)
+  return w && !w.isDestroyed() ? w : null
+}
+
 function send(channel: string, payload: unknown): void {
   const w = win()
   if (w && !w.webContents.isDestroyed()) w.webContents.send(channel, payload)
@@ -251,17 +258,28 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   // The single source of truth for visibility + position: the renderer reports
   // the active tab and the viewport rect; everything else is hidden. rect=null or
   // activeId=null (panel hidden / modal open) hides all.
+  // CSS px inside the window → device-independent px, i.e. the UI's zoom factor.
+  const uiScale = (w: BrowserWindow): number => {
+    const z = w.webContents.getZoomFactor()
+    return z > 0 ? z : 1
+  }
+
+  // The panel draws a 1px frame around itself, and a native view paints above all
+  // renderer DOM — so a page laid out edge to edge ate that frame on three sides.
+  // Keep the view just inside it (the top edge is under the toolbar already).
+  const VIEW_INSET = 1
+
   ipcMain.on(
     'browser:sync',
     (
-      _e,
+      e,
       a: {
         activeId: string | null
         rect: { x: number; y: number; width: number; height: number } | null
         css?: { w: number; h: number }
       }
     ) => {
-      const w = win()
+      const w = senderWindow(e) ?? win()
       const showId = hiddenAll ? null : a.activeId
       // The renderer measures in CSS px; setBounds wants window DIP. If the web
       // content's CSS viewport differs from the window's DIP content size (page
@@ -274,26 +292,38 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         sx = cb.width / a.css.w
         sy = cb.height / a.css.h
       }
+      // The frame is 1 CSS px of riven's UI, which is more than one device-
+      // independent pixel whenever the UI is zoomed.
+      const inset = Math.max(1, Math.ceil(VIEW_INSET * sx))
       for (const [id, t] of tabs) {
         const on = id === showId && a.rect != null
         t.view.setVisible(on)
         if (on && a.rect)
           t.view.setBounds({
-            x: Math.round(a.rect.x * sx),
+            x: Math.round(a.rect.x * sx) + inset,
             y: Math.round(a.rect.y * sy),
-            width: Math.round(a.rect.width * sx),
-            height: Math.round(a.rect.height * sy)
+            width: Math.max(1, Math.round(a.rect.width * sx) - inset * 2),
+            height: Math.max(1, Math.round(a.rect.height * sy) - inset)
           })
       }
     }
   )
   // Modal z-order guard: hide every browser view while a renderer overlay is up.
-  // ---- address-bar suggestion overlay ---------------------------------------
-  // A WebContentsView always paints above renderer DOM, so the omnibox dropdown
-  // can't be plain DOM. It gets its own view, added AFTER the page views (later
-  // child = drawn on top), so the page stays full-size and untouched underneath.
-  let overlay: WebContentsView | null = null
-  const overlayHtml = (items: Array<{ url: string; title: string }>, sel: number): string => {
+  // ---- address-bar suggestions -------------------------------------------
+  //
+  // The dropdown has to paint over the page, and the page is a native view which
+  // always paints above renderer DOM. Two things were tried and are recorded
+  // here so they are not tried again:
+  //   · a WebContentsView overlay — it TAKES THE KEYBOARD the moment it is
+  //     created (measured), and focusing the window afterwards does not win it
+  //     back, so the address bar kept a caret and swallowed every keystroke;
+  //   · pushing the page down by the height of the list — the page jumped
+  //     around while typing.
+  // So the list is its own window, marked `focusable: false`: a window that by
+  // construction can never take the keyboard, shown with showInactive() above
+  // the app window, over a page that does not move.
+  let suggestWin: BrowserWindow | null = null
+  const suggestHtml = (items: Array<{ url: string; title: string }>, sel: number, zoom: number): string => {
     const esc = (v: string): string =>
       v.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] as string)
     const rows = items
@@ -306,14 +336,20 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       .join('')
     return `<!doctype html><meta charset="utf-8"><style>
       :root{color-scheme:dark}
-      body{margin:0;font:12px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
-           background:#14100d;color:#e7e3df;border:1px solid #2a2723;border-radius:8px;
-           overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.45)}
-      .i{display:flex;gap:8px;align-items:baseline;padding:6px 10px;cursor:pointer;white-space:nowrap}
-      .i:hover,.i.on{background:#221d18}
-      .t{overflow:hidden;text-overflow:ellipsis;max-width:55%}
-      .u{color:#928779;overflow:hidden;text-overflow:ellipsis;font-size:11px}
-    </style><body>${rows}</body>
+      html,body{margin:0;overflow:hidden;background:transparent}
+      body{font:13px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#e7e3df}
+      /* The window itself is at 100%; the list is drawn at riven's UI zoom so
+         its text is the same size as the app's. */
+      #l{zoom:${zoom};background:#17130f;border:1px solid #2f2b26;border-radius:10px;
+         overflow:hidden;padding:4px}
+      .i{display:flex;gap:10px;align-items:baseline;padding:6px 10px;border-radius:6px;
+         cursor:default;white-space:nowrap;line-height:1.35}
+      .i:hover{background:#221d18}
+      .i.on{background:rgba(217,119,66,.16);box-shadow:inset 2px 0 0 #d97742}
+      .t{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+      .u{flex:1 1 auto;min-width:0;color:#9b8f81;overflow:hidden;text-overflow:ellipsis;
+         font-size:12px;text-align:right}
+    </style><body><div id="l">${rows}</div></body>
     <script>
       document.body.addEventListener('mousedown', function (e) {
         var el = e.target.closest('.i'); if (!el) return;
@@ -322,11 +358,8 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       });
     </script>`
   }
-  const destroyOverlay = (): void => {
-    const w = win()
-    if (overlay && w) w.contentView.removeChildView(overlay)
-    overlay?.webContents.close()
-    overlay = null
+  const closeSuggest = (): void => {
+    if (suggestWin && !suggestWin.isDestroyed()) suggestWin.hide()
   }
   ipcMain.on(
     'browser:suggest',
@@ -338,34 +371,72 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         selected: number
       }
     ) => {
-      const w = win()
+      const w = senderWindow(e) ?? win()
       if (!w) return
       if (!payload.rect || payload.items.length === 0) {
-        destroyOverlay()
+        closeSuggest()
         return
       }
-      if (!overlay) {
-        overlay = new WebContentsView({ webPreferences: { javascript: true } })
-        overlay.setBackgroundColor('#00000000')
-        w.contentView.addChildView(overlay) // last child ⇒ above the page views
-        overlay.webContents.on('page-title-updated', (_ev, title) => {
+      if (!suggestWin || suggestWin.isDestroyed()) {
+        suggestWin = new BrowserWindow({
+          parent: w,
+          frame: false,
+          transparent: true,
+          hasShadow: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
+          skipTaskbar: true,
+          focusable: false,
+          show: false,
+          webPreferences: { javascript: true }
+        })
+        suggestWin.setMenuBarVisibility(false)
+        suggestWin.webContents.on('page-title-updated', (_ev, title) => {
           const m = /^pick:(\d+):/.exec(title)
           if (m && !e.sender.isDestroyed()) e.sender.send('browser:suggestPick', Number(m[1]))
         })
-      } else {
-        // Keep it on top if page views were added after it.
-        w.contentView.removeChildView(overlay)
-        w.contentView.addChildView(overlay)
+        // The list belongs to a moment in the parent window; anything that moves
+        // it out from under the address bar closes it rather than leaving it
+        // floating somewhere wrong.
+        w.on('move', closeSuggest)
+        w.on('resize', closeSuggest)
+        w.on('hide', closeSuggest)
+        w.on('minimize', closeSuggest)
+        w.on('blur', closeSuggest)
       }
-      overlay.setBounds({
-        x: Math.round(payload.rect.x),
-        y: Math.round(payload.rect.y),
-        width: Math.round(payload.rect.width),
-        height: Math.round(payload.rect.height)
-      })
-      void overlay.webContents.loadURL(
-        'data:text/html;charset=utf-8,' + encodeURIComponent(overlayHtml(payload.items, payload.selected))
-      )
+      // The renderer measures in CSS px inside the window; the window's own
+      // content origin turns that into screen coordinates.
+      const cb = w.getContentBounds()
+      const sx = uiScale(w)
+      const place = (cssHeight: number): void => {
+        if (!suggestWin || suggestWin.isDestroyed() || !payload.rect) return
+        suggestWin.setBounds({
+          x: Math.round(cb.x + payload.rect.x * sx),
+          y: Math.round(cb.y + payload.rect.y * sx),
+          width: Math.max(80, Math.round(payload.rect.width * sx)),
+          height: Math.max(24, Math.round(cssHeight * sx))
+        })
+      }
+      place(payload.rect.height)
+      void suggestWin.webContents
+        .loadURL(
+          'data:text/html;charset=utf-8,' + encodeURIComponent(suggestHtml(payload.items, payload.selected, sx))
+        )
+        .then(async () => {
+          if (!suggestWin || suggestWin.isDestroyed()) return
+          // The window is exactly as tall as the rows it drew — guessing a row
+          // height left a strip of empty background under the last one.
+          const h = (await suggestWin.webContents
+            .executeJavaScript('document.getElementById("l").getBoundingClientRect().height')
+            .catch(() => null)) as number | null
+          // `h` is already in device-independent px (the list carries the zoom),
+          // so it is the window's height as-is.
+          if (typeof h === 'number' && h > 0) place(Math.ceil(h) / sx)
+          if (suggestWin && !suggestWin.isDestroyed()) suggestWin.showInactive()
+        })
     }
   )
 

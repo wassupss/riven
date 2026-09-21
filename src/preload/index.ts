@@ -355,18 +355,6 @@ const api = {
       css?: { w: number; h: number }
     ): void => ipcRenderer.send('browser:sync', { activeId, rect, css }),
     hideAll: (hidden: boolean): void => ipcRenderer.send('browser:hideAll', hidden),
-    // Omnibox suggestions are drawn by a native overlay view (renderer DOM can't
-    // paint above a WebContentsView). rect=null closes it.
-    suggest: (
-      rect: { x: number; y: number; width: number; height: number } | null,
-      items: Array<{ url: string; title: string }>,
-      selected: number
-    ): void => ipcRenderer.send('browser:suggest', { rect, items, selected }),
-    onSuggestPick: (cb: (index: number) => void): (() => void) => {
-      const l = (_e: unknown, i: number): void => cb(i)
-      ipcRenderer.on('browser:suggestPick', l)
-      return () => ipcRenderer.removeListener('browser:suggestPick', l)
-    },
     execJs: (id: string, code: string): Promise<unknown> =>
       ipcRenderer.invoke('browser:execJs', { id, code }),
     capture: (id: string): Promise<string | null> => ipcRenderer.invoke('browser:capture', { id }),
@@ -385,6 +373,20 @@ const api = {
     find: (id: string, text: string): void => ipcRenderer.send('browser:find', { id, text }),
     openDevtools: (id: string): Promise<void> => ipcRenderer.invoke('browser:openDevtools', { id }),
     setLang: (l: 'ko' | 'en'): void => ipcRenderer.send('browser:setLang', l),
+    // Omnibox suggestions live in their own non-focusable window (renderer DOM
+    // cannot paint above a page's native view). rect=null closes it.
+    suggest: (
+      rect: { x: number; y: number; width: number; height: number } | null,
+      items: Array<{ url: string; title: string }>,
+      selected: number
+    ): void => ipcRenderer.send('browser:suggest', { rect, items, selected }),
+    onSuggestPick: (cb: (index: number) => void): (() => void) => {
+      const l = (_e: unknown, i: number): void => cb(i)
+      ipcRenderer.on('browser:suggestPick', l)
+      return () => ipcRenderer.removeListener('browser:suggestPick', l)
+    },
+    // Take keyboard focus back from the page (see browser:focusApp).
+    focusApp: (): void => ipcRenderer.send('browser:focusApp'),
     barMenu: (id: string): Promise<void> => ipcRenderer.invoke('browser:barMenu', { id }),
     pickElement: (
       id: string

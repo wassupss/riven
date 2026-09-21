@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf } from '../../state/session'
 import { contextBus } from '../../bridge/contextBus'
+import { placeable } from '../../lib/viewRect'
 import { attachToWorkspaceAgent } from '../../state/agents'
 import { useT } from '../../i18n'
 import { useBrowser, activeTab, activeTabId } from '../../state/browser'
@@ -165,8 +166,11 @@ export default function PreviewPanel({
     // panel becomes an inactive tab (e.g. a terminal opened beside it), so we must
     // explicitly hide it then instead of relying on the viewport rect alone.
     const panelVisible = api ? api.isVisible : true
-    const visible =
-      panelVisible && r.width > 2 && r.height > 2 && document.visibilityState !== 'hidden'
+    // A box that isn't inside the window is a stale measurement, not a panel —
+    // obeying it is what threw the page view into a corner (see placeable).
+    const sane = placeable(r, { width: window.innerWidth, height: window.innerHeight })
+    if (panelVisible && !sane && document.visibilityState !== 'hidden') return
+    const visible = panelVisible && sane && document.visibilityState !== 'hidden'
     const id = activeTabId(workspace)
     const tab = activeTab(workspace)
     // Hide all views on the blank start page (no view for this tab).
@@ -198,10 +202,20 @@ export default function PreviewPanel({
     if (viewportRef.current) ro.observe(viewportRef.current)
     const id = setInterval(syncBounds, 250)
     window.addEventListener('resize', syncBounds)
+    // Coming back from another app: the dock re-lays out, and the rect measured
+    // while riven was in the background was not trustworthy.
+    const refresh = (): void => {
+      lastSent.current = ''
+      requestAnimationFrame(syncBounds)
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       ro.disconnect()
       clearInterval(id)
       window.removeEventListener('resize', syncBounds)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [syncBounds, tabs.length, activeId, isStart])
 
@@ -289,9 +303,10 @@ export default function PreviewPanel({
       : []
 
   // A WebContentsView is a native layer that ALWAYS paints above renderer DOM, so
-  // the suggestions dropdown was drawn underneath the page. Hide the page while the
-  // dropdown is open (you're typing an address, not reading the page) and restore it
-  // as soon as it closes.
+  // the dropdown would be drawn underneath the page, because a native view always
+  // paints above renderer DOM. It lives in its own window instead (main opens a
+  // non-focusable one, so it cannot take the keyboard the way a WebContentsView
+  // overlay did), and the page underneath is left exactly where it is.
   const suggestVisible = suggestOpen && suggestions.length > 0
   const suggestKey = suggestions.map((x) => x.url).join('|')
   useEffect(() => {
@@ -301,6 +316,10 @@ export default function PreviewPanel({
       return
     }
     const r = el.getBoundingClientRect()
+    if (!placeable(r, { width: window.innerWidth, height: window.innerHeight }, 0)) {
+      window.api.browser.suggest(null, [], 0)
+      return
+    }
     const rowH = 30
     window.api.browser.suggest(
       { x: r.left, y: r.bottom + 3, width: r.width, height: Math.min(suggestions.length, 8) * rowH + 8 },
@@ -310,7 +329,7 @@ export default function PreviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestVisible, suggestKey, suggestIndex])
 
-  // Clicking a row in the overlay navigates here.
+  // Clicking a row in that window navigates here.
   useEffect(() => {
     return window.api.browser.onSuggestPick((i) => {
       const s = suggestions[i]
@@ -319,11 +338,19 @@ export default function PreviewPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suggestKey])
 
-  // Never leave the overlay behind when the panel unmounts/hides.
+  // Never leave the suggestion window behind when this panel goes away.
   useEffect(() => () => window.api.browser.suggest(null, [], 0), [])
 
   return (
-    <div className="browser-panel">
+    <div
+      className="browser-panel"
+      // Clicking riven's own chrome (tabs, toolbar, the address bar) takes the
+      // keyboard back from the page: a WebContentsView keeps focus once it has
+      // it, so the address bar showed a caret and swallowed every keystroke —
+      // the URL could never be changed after the first load. The page keeps
+      // focus for clicks inside itself, which never reach this handler.
+      onMouseDownCapture={() => window.api.browser.focusApp()}
+    >
       <div className="browser-tabs">
         {tabs.map((tb) => (
           <div
@@ -376,6 +403,7 @@ export default function PreviewPanel({
             value={addr}
             placeholder={t('browser.addrPlaceholder')}
             onFocus={() => {
+              window.api.browser.focusApp()
               setEditing(true)
               setSuggestOpen(true)
             }}
@@ -389,7 +417,7 @@ export default function PreviewPanel({
               setSuggestIndex(0)
             }}
             onKeyDown={(e) => {
-              // Arrow keys move the highlight in the native suggestion overlay;
+              // Arrow keys move the highlight in the suggestion list;
               // Enter takes the highlighted row (or the typed text when none).
               if (suggestVisible && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
                 e.preventDefault()
