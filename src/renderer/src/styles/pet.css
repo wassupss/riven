@@ -157,21 +157,34 @@
   }
 }
 
-/* ---- in its own window: fill it, and let the OS do the dragging ---- */
+/* ---- in its own window: fill it, and let the OS do the dragging ----
+   -webkit-app-region does NOT inherit. Setting it on the root alone left every
+   visible pixel (the case covers the root entirely) computing to `none`, so the
+   window had no handle at all and would not move. Every descendant is made a
+   handle explicitly, and the things you operate opt back out. */
 .pet-detached {
   position: static;
   width: 100%;
-  -webkit-app-region: drag;
   cursor: default;
 }
-/* Only the things you actually operate opt out of dragging. The glass itself
-   stays a handle: excluding the whole screen left just the thin rim of the case
-   to grab, which is what made moving the window feel like a fight. */
+.pet-detached,
+.pet-detached * {
+  -webkit-app-region: drag;
+}
+/* What you press, type in or scroll must stay clickable. */
 .pet-detached button,
+.pet-detached button *,
+.pet-detached input,
+.pet-detached .pet-rows,
+.pet-detached .pet-rows *,
 .pet-detached .pet-graph,
+.pet-detached .pet-graph *,
 .pet-detached .pet-album,
+.pet-detached .pet-album *,
 .pet-detached .pet-awards,
-.pet-detached .pet-rows {
+.pet-detached .pet-awards *,
+.pet-detached .pet-talk,
+.pet-detached .pet-bare {
   -webkit-app-region: no-drag;
 }
 

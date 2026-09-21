@@ -626,6 +626,29 @@ async function main() {
       const back = read()
       return { before, folded, back }
     })()`)
+    // The floating window is moved by the OS through -webkit-app-region, which
+    // does NOT inherit: setting it on the root alone leaves every visible pixel
+    // computing to `none` and the window cannot be picked up at all. That is a
+    // different mechanism from the in-app drag, which is why the two used to
+    // regress one at a time — so both are checked, every run.
+    const grabbable = await petCdp.eval(`(async () => {
+      // Back to the pet screen: the creature only exists there.
+      for (let i = 0; i < 4; i++) {
+        if (document.querySelector('.pet-yard')) break
+        document.querySelector('[data-key="c"]').click()
+        await new Promise((r) => setTimeout(r, 160))
+      }
+      const g = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).webkitAppRegion : null }
+      return { device: g('.pet-device'), case: g('.pet-case'), deck: g('.pet-deck'),
+               screen: g('.pet-screen'), creature: g('.pet-lcd'), key: g('[data-key="a"]') }
+    })()`)
+    check(
+      'its own window can be picked up anywhere but its buttons',
+      ['device', 'case', 'deck', 'screen', 'creature'].every((k) => grabbable[k] === 'drag') &&
+        grabbable.key === 'no-drag',
+      JSON.stringify(grabbable)
+    )
+
     check(
       'its window fits the device exactly, whatever is showing',
       !fit.error &&
