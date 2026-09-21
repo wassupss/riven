@@ -15,7 +15,9 @@ import Palette from './components/Palette'
 import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
+import PetHost from './components/PetHost'
 import { useAskUser } from './state/askUser'
+import { usePet } from './state/pet'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
@@ -119,7 +121,9 @@ export default function App(): JSX.Element {
         markPaneSeen,
         roster: useRoster,
         rosterFor,
-        askUser: useAskUser
+        askUser: useAskUser,
+        pet: usePet,
+        settings: useSettings
       }
     }
     registerSnippets()
@@ -384,6 +388,11 @@ export default function App(): JSX.Element {
       <AgentPicker />
       <AskUserModal />
       <AgentWatch />
+      {/* The floating virtual-pet device — always on top of the workbench, never
+          a dock tab (a pet behind a tab is a pet you forget to feed). */}
+      <ErrorBoundary label={t('pet.title')}>
+        <PetHost />
+      </ErrorBoundary>
     </div>
   )
 }

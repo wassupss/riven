@@ -12,7 +12,8 @@ import {
   PanelLeft,
   ExternalLink,
   StickyNote,
-  Send
+  Send,
+  Egg
 } from 'lucide-react'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
@@ -50,6 +51,7 @@ export default function QuickPanel(): JSX.Element | null {
   const toggleExplorer = useUI((s) => s.toggleExplorer)
   const toggleSidebar = useUI((s) => s.toggleSidebar)
   const profiles = useSettings((s) => s.settings.terminalProfiles)
+  const petShow = useSettings((s) => s.settings.petShow)
   const [clis, setClis] = useState<Array<{ name: string; cmd: string }>>([])
   const [agents, setAgents] = useState<Array<{ name: string; description: string }>>([])
   const [idx, setIdx] = useState(0)
@@ -195,6 +197,15 @@ export default function QuickPanel(): JSX.Element | null {
         run: () => toggleExplorer()
       },
       {
+        id: 'pet',
+        // The pet floats over the workbench rather than living in a tab, so this
+        // is how you get it back after hiding it.
+        label: petShow ? t('pet.hideCmd') : t('pet.show'),
+        section: sView,
+        icon: <Egg size={15} />,
+        run: () => useSettings.getState().set({ petShow: !petShow })
+      },
+      {
         id: 'popout',
         label: t('toolbar.popout'),
         // ⌘⇧O — matches the `panel.popout` binding. It read ⌘⇧P, which is the
@@ -207,7 +218,7 @@ export default function QuickPanel(): JSX.Element | null {
       }
     )
     return arr
-  }, [profiles, clis, agents, t, toggleExplorer, toggleSidebar])
+  }, [profiles, clis, agents, t, toggleExplorer, toggleSidebar, petShow])
 
   const items = useMemo(() => {
     // In split mode only panels can be placed beside the active one.

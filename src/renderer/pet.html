@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' ws: http: https:"
+    />
+    <title>리븐펫</title>
+    <!--
+      리븐펫's own window: frameless and transparent, so the pet can live outside
+      riven's window (see src/main/pet.ts). Only the device is mounted here,
+      not the app — this is a second, deliberately tiny renderer.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/pet.tsx"></script>
+  </body>
+</html>

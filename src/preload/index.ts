@@ -916,6 +916,28 @@ const api = {
     ipcRenderer.on('ui:zoom', listener)
     return () => ipcRenderer.removeListener('ui:zoom', listener)
   },
+  // 리븐펫's own always-on-top window (see src/main/pet.ts). The renderer
+  // asks for it; main owns whether it exists.
+  pet: {
+    open: (): Promise<void> => ipcRenderer.invoke('pet:open'),
+    close: (): Promise<void> => ipcRenderer.invoke('pet:close'),
+    hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+    isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
+    // The device measures itself; main resizes the window to match.
+    resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    // Fired for EVERY window: the floating pet was closed / put away, so the app
+    // can put its own state back in step.
+    onClosed: (cb: () => void): (() => void) => {
+      const l = (): void => cb()
+      ipcRenderer.on('pet:closed', l)
+      return () => ipcRenderer.removeListener('pet:closed', l)
+    },
+    onHidden: (cb: () => void): (() => void) => {
+      const l = (): void => cb()
+      ipcRenderer.on('pet:hidden', l)
+      return () => ipcRenderer.removeListener('pet:hidden', l)
+    }
+  },
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),

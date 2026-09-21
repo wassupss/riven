@@ -40,7 +40,11 @@ export default defineConfig({
         // pointing at a path that does not exist.
         input: {
           index: resolve('src/renderer/index.html'),
-          popout: resolve('src/renderer/popout.html')
+          popout: resolve('src/renderer/popout.html'),
+          // 토크몬's own window (frameless + transparent, always on top) is a
+          // THIRD renderer entry: main loads it by path, so it has to be emitted
+          // beside index.html or the packaged app opens a dead window.
+          pet: resolve('src/renderer/pet.html')
         }
       }
     },

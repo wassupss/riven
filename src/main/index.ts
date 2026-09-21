@@ -19,6 +19,7 @@ import { registerDiagnosticsHandlers } from './diagnostics'
 import { registerDebuggerHandlers } from './debugger'
 import { registerSessionsHandlers } from './sessions'
 import { registerConfigHandlers } from './config'
+import { registerPetHandlers, closePetWindow } from './pet'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
@@ -103,6 +104,9 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  // The pet is riven's, not its own app: when the workbench goes, so does it
+  // (otherwise a lone floating pet would keep the process alive on win/linux).
+  mainWindow.on('closed', () => closePetWindow())
 
   // Dev affordance: RIVEN_DEMO=<frameDir> records a scripted UI tour to frames.
   if (process.env.RIVEN_DEMO) {
@@ -264,6 +268,7 @@ app.whenReady().then(() => {
   registerDebuggerHandlers()
   registerSessionsHandlers()
   registerConfigHandlers()
+  registerPetHandlers()
   registerSearchHandlers()
   registerCliHandlers()
   registerPortsHandlers()

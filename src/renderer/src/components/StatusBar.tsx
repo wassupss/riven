@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useSession, workspaceName, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
+import { useSettings } from '../state/settings'
 import { useAgentEdits, timelineFor, unseenFor } from '../state/agentEdits'
 import { useUpdate } from '../state/update'
 import { togglePanel } from '../dock/registry'
 import { useT } from '../i18n'
 import UsageWidget from './UsageWidget'
-import { Folder, FolderOpen, GitBranch, FileDiff, ArrowDownToLine } from 'lucide-react'
+import { Folder, FolderOpen, GitBranch, FileDiff, ArrowDownToLine, Egg } from 'lucide-react'
 
 interface Info {
   repoName: string
@@ -24,6 +25,10 @@ export default function StatusBar(): JSX.Element {
   const changeCount = useAgentEdits((s) => timelineFor(s.timeline, folder).length)
   const unseen = useAgentEdits((s) => unseenFor(s.timeline, s.seenAt, folder))
   const updateReady = useUpdate((s) => s.status.state === 'downloaded')
+  // 리븐펫 floats over the app rather than living in a tab, so this is the one
+  // affordance that is always on screen to get it back after hiding it.
+  const petShow = useSettings((s) => s.settings.petShow)
+  const setSettings = useSettings((s) => s.set)
   const [info, setInfo] = useState<Info | null>(null)
 
   useEffect(() => {
@@ -79,6 +84,13 @@ export default function StatusBar(): JSX.Element {
           {unseen > 0 && <span className="changes-pill-dot" />}
         </span>
       )}
+      <span
+        className={`status-item click pet-toggle${petShow ? ' on' : ''}`}
+        title={petShow ? t('pet.hideCmd') : t('pet.show')}
+        onClick={() => setSettings({ petShow: !petShow })}
+      >
+        <Egg size={13} />
+      </span>
       {updateReady && (
         <span
           className="status-item click update-pill"
