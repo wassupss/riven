@@ -254,6 +254,9 @@ const api = {
       images?: Array<{ mediaType: string; data: string; name?: string }>
     ): void => ipcRenderer.send('chat:send', key, text, images),
     interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
+    // Whether a pane still has an agent behind it (see chat:alive).
+    alive: (key: string): Promise<{ alive: boolean; running: boolean }> =>
+      ipcRenderer.invoke('chat:alive', key),
     // Replace the CLI behind a pane (or every pane) with a fresh process that
     // resumes the same conversation — how a CLI update reaches open panes.
     restart: (key?: string): Promise<{ restarted: number; busy: number }> =>

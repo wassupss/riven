@@ -2033,22 +2033,38 @@ export default function ChatPanel({
     setBusy(false)
     setAgentStatus(chatKey, 'idle')
   }
-  // A turn that stops saying anything at all: the child died, or the message
-  // never reached one. Without this the pane sits on "writing" and every later
-  // message piles up behind it as "queued".
-  const SILENT_TURN_MS = 60_000
+  // A turn with nobody behind it: the child died, or the message never reached
+  // one — the pane would sit on "writing" forever with everything queued behind
+  // it. Silence alone is NOT that: a turn can spend many minutes inside one tool
+  // (a test run, a long read) without saying a word, and an early version of
+  // this ended those turns while the agent was still working. So the pane only
+  // gives up once MAIN says there is no agent running for it.
+  const SILENT_TURN_MS = 45_000
   useEffect(() => {
     if (!busy) return
+    let stop = false
     const id = setInterval(() => {
-      if (!busyRef.current) return
+      if (stop || !busyRef.current) return
       if (Date.now() - lastEventRef.current < SILENT_TURN_MS) return
-      clearInterval(id)
-      setError(t('chat.noResponse'))
-      endTurnLocally()
-      // Anything the user queued behind the dead turn is sent now.
-      drainQueue()
+      void window.api.chat.alive(chatKey).then((state) => {
+        if (stop || !busyRef.current) return
+        // Still there and still working — just quiet. Leave it alone.
+        if (state.alive && state.running) {
+          lastEventRef.current = Date.now()
+          return
+        }
+        if (state.alive && Date.now() - lastEventRef.current < SILENT_TURN_MS * 4) return
+        stop = true
+        setError(t('chat.noResponse'))
+        endTurnLocally()
+        // Anything the user queued behind the dead turn is sent now.
+        drainQueue()
+      })
     }, 5000)
-    return () => clearInterval(id)
+    return () => {
+      stop = true
+      clearInterval(id)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy])
 
