@@ -21,6 +21,7 @@
     "dist:all": "npm run build && electron-builder --mac --win --publish never",
     "release": "npm run build && electron-builder --mac --win --publish always",
     "smoke:hooks": "node scripts/e2e-hooks-smoke.mjs",
+    "smoke:pet": "node scripts/e2e-pet-smoke.mjs",
     "check:notify": "node scripts/notify-adhoc-check.mjs",
     "perf:cpu": "node scripts/perf-cpu.mjs"
   },
