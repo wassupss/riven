@@ -779,6 +779,68 @@ async function main() {
     await new Promise((r2) => setTimeout(r2, 300))
     return { perMove: +(ms / 40).toFixed(2), reused }
   })()`)
+  // A drag that never heard the release used to stay armed, and after that the
+  // pet fled from the pointer. It has to end on a release ANYWHERE, on a move
+  // with no button held, and on the window losing focus.
+  const released = await cdp.eval(`(async () => {
+    const el = () => document.querySelector('.pet-device')
+    const at = () => { const r = el().getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top)] }
+    const mk = (type, x, y, buttons = 1) =>
+      new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1,
+                               isPrimary: true, button: 0, buttons, clientX: x, clientY: y })
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    const flees = async (release) => {
+      const s = at()
+      el().dispatchEvent(mk('pointerdown', s[0] + 40, s[1] + 40))
+      window.dispatchEvent(mk('pointermove', s[0] + 90, s[1] + 90))
+      await wait(60)
+      await release()
+      const before = at()
+      window.dispatchEvent(mk('pointermove', before[0] + 40, before[1] + 40, 0))
+      await wait(120)
+      const after = at()
+      return before[0] !== after[0] || before[1] !== after[1]
+    }
+    const elsewhere = await flees(async () => { document.body.dispatchEvent(mk('pointerup', 900, 900, 0)) })
+    const noButton = await flees(async () => { window.dispatchEvent(mk('pointermove', 500, 500, 0)) })
+    const blurred = await flees(async () => { window.dispatchEvent(new Event('blur')) })
+    return { elsewhere, noButton, blurred }
+  })()`)
+  check(
+    'a drag ends even when the release goes missing',
+    !released.elsewhere && !released.noButton && !released.blurred,
+    JSON.stringify(released)
+  )
+
+  // The point you grabbed stays under the pointer, re-renders and all.
+  const stuck = await cdp.eval(`(async () => {
+    const el = () => document.querySelector('.pet-device')
+    const mk = (type, x, y, buttons = 1) =>
+      new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1,
+                               isPrimary: true, button: 0, buttons, clientX: x, clientY: y })
+    const r0 = el().getBoundingClientRect()
+    const grab = { x: r0.left + 60, y: r0.top + 50 }
+    el().dispatchEvent(mk('pointerdown', grab.x, grab.y))
+    let worst = 0
+    for (let i = 1; i <= 24; i++) {
+      const cx = grab.x + i * 7
+      const cy = grab.y + i * 5
+      window.dispatchEvent(mk('pointermove', cx, cy))
+      if (i % 8 === 0) {
+        // Re-render mid-drag, as a tick or a roster change would.
+        const s = __riven.pet
+        s.setState({ pet: { ...s.getState().pet, mood: (s.getState().pet.mood + 1) % 100 } })
+        await new Promise((r) => setTimeout(r, 40))
+        const r = el().getBoundingClientRect()
+        worst = Math.max(worst, Math.abs(cx - r.left - 60), Math.abs(cy - r.top - 50))
+      }
+    }
+    window.dispatchEvent(mk('pointerup', 0, 0, 0))
+    await new Promise((r) => setTimeout(r, 200))
+    return worst
+  })()`)
+  check('the point you grabbed stays under the pointer', stuck <= 1, `worst drift: ${stuck}px`)
+
   check(
     'dragging moves the node without rebuilding the sprite',
     smooth.reused && smooth.perMove < 2,

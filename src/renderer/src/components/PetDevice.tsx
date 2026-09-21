@@ -475,6 +475,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   useEffect(() => {
     if (detached) return
     const reclamp = (): void => {
+      // Never while it is in hand: clamping a stale stored position mid-drag
+      // would yank it out from under the pointer.
+      if (drag.current) return
       const p = useSettings.getState().settings.petPos
       if (!p) return
       const c = clamp(p.x, p.y)
@@ -502,40 +505,67 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     el.style.bottom = 'auto'
   }, [])
 
+  // Dragging listens on the WINDOW, not on the device.
+  //
+  // With the listeners on the element, a release the element never saw — the
+  // pointer left it, capture was refused, the window lost focus — left the drag
+  // armed. After that the pet was still stuck to the pointer, so moving the
+  // mouse anywhere near it made it flee. A drag now ends on the first of:
+  // pointerup anywhere, pointercancel, the window blurring, or a move that
+  // arrives with no button held.
+  const stopDrag = useCallback(() => {
+    window.removeEventListener('pointermove', onWinMove)
+    window.removeEventListener('pointerup', onWinUp)
+    window.removeEventListener('pointercancel', onWinUp)
+    window.removeEventListener('blur', onWinUp)
+    ref.current?.classList.remove('pet-dragging')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const onWinMove = useCallback(
+    (e: PointerEvent) => {
+      const d = drag.current
+      if (!d) return stopDrag()
+      // The button came up somewhere we never heard about.
+      if (e.buttons === 0) return onWinUp()
+      d.moved = true
+      const p = clamp(e.clientX - d.dx, e.clientY - d.dy)
+      d.x = p.x
+      d.y = p.y
+      place(p.x, p.y)
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [clamp, place, stopDrag]
+  )
+
+  const onWinUp = useCallback(() => {
+    const d = drag.current
+    drag.current = null
+    stopDrag()
+    // One settings write per drag, at the end.
+    if (d?.moved) setSettings({ petPos: { x: d.x, y: d.y } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setSettings, stopDrag])
+
   const onPointerDown = (e: React.PointerEvent): void => {
-    // Buttons act; everything else is a drag handle. (Detached, the OS drags the
-    // window for us — see -webkit-app-region in the stylesheet.)
-    if (detached || e.button !== 0 || (e.target as HTMLElement).closest('button')) return
+    // Buttons and the text field act; everything else is a drag handle. (Detached,
+    // the OS drags the window for us — see -webkit-app-region in the stylesheet.)
+    if (detached || e.button !== 0) return
+    if ((e.target as HTMLElement).closest('button, input, form')) return
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
     drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, x: r.left, y: r.top, moved: false }
     el.classList.add('pet-dragging')
     place(r.left, r.top)
-    el.setPointerCapture(e.pointerId)
+    window.addEventListener('pointermove', onWinMove)
+    window.addEventListener('pointerup', onWinUp)
+    window.addEventListener('pointercancel', onWinUp)
+    window.addEventListener('blur', onWinUp)
   }
-  const onPointerMove = (e: React.PointerEvent): void => {
-    const d = drag.current
-    if (!d) return
-    d.moved = true
-    const p = clamp(e.clientX - d.dx, e.clientY - d.dy)
-    d.x = p.x
-    d.y = p.y
-    place(p.x, p.y)
-  }
-  const endDrag = (e: React.PointerEvent): void => {
-    const d = drag.current
-    if (!d) return
-    drag.current = null
-    ref.current?.classList.remove('pet-dragging')
-    try {
-      ref.current?.releasePointerCapture(e.pointerId)
-    } catch {
-      /* the capture is already gone */
-    }
-    // One settings write per drag, at the end.
-    if (d.moved) setSettings({ petPos: { x: d.x, y: d.y } })
-  }
+
+  // A drag must not outlive the component.
+  useEffect(() => stopDrag, [stopDrag])
 
   // ONE aggregate, never a feed: how many agent panes are working, and where.
   // With four workspaces × four panes this still says something; a per-event
@@ -1057,9 +1087,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           : { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
       }
       onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
     >
       {/* What it is saying, above the device and in readable type. Inside the
           glass it was eight pixels tall and nobody could read it. */}
