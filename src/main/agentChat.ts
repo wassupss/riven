@@ -742,6 +742,18 @@ export function registerAgentChatHandlers(): void {
       writeLine(revived, line)
     })
   })
+  // Is there still an agent behind this pane? The pane asks before deciding a
+  // silent turn is a dead one: a turn can go minutes without a word while a tool
+  // runs (a test suite, a long read), and that is not the same as nobody home.
+  ipcMain.handle('chat:alive', (_e, key: string) => {
+    const s = sessions.get(key)
+    if (s) return { alive: s.alive, running: s.turnBusy }
+    const c = codexChats.get(key)
+    if (c) return { alive: true, running: c.turnBusy }
+    // Parked (or revivable) counts as alive: the next message brings it back.
+    return { alive: parked.has(key) || lastStart.has(key), running: false }
+  })
+
   ipcMain.on('chat:interrupt', (_e, key: string) => {
     codexChats.get(key)?.interrupt()
     const s = sessions.get(key)
