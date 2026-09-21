@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
 import { DEFAULT_SETTINGS } from './settings'
+import { feedFrame } from './pet'
 import {
   archive,
   awardsOf,
@@ -638,9 +639,62 @@ describe('how it ships', () => {
   // floating device straight away. It is also NOT always-on-top, so main/pet.ts
   // has to open it BESIDE riven's window — inside those bounds it would be
   // covered the moment riven took focus, i.e. open but invisible.
-  it('is out on the desk by default', () => {
+  it('is out on the desk by default, and not in the way', () => {
     expect(DEFAULT_SETTINGS.petShow).toBe(true)
     expect(DEFAULT_SETTINGS.petDetached).toBe(true)
     expect(DEFAULT_SETTINGS.petChrome).toBe('full')
+    // Floating above everything is offered, not assumed.
+    expect(DEFAULT_SETTINGS.petOnTop).toBe(false)
+  })
+})
+
+describe('feedFrame', () => {
+  const DAY = 24 * 3600_000
+  const key = (ms: number): string => {
+    const d = new Date(ms)
+    const p = (n: number): string => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }
+
+  it('draws seven calendar days even when only one has a meal', () => {
+    const f = feedFrame([{ day: key(T0), kibble: 152 }], T0)
+    expect(f).toHaveLength(7)
+    expect(f.map((d) => d.kibble)).toEqual([0, 0, 0, 0, 0, 0, 152])
+    expect(f[6].today).toBe(true)
+    expect(f.filter((d) => d.today)).toHaveLength(1)
+  })
+
+  it('keeps the gaps between days that are far apart', () => {
+    // Fed today and six days ago: the two must NOT end up side by side, which is
+    // what plotting the history array directly used to do.
+    const f = feedFrame(
+      [
+        { day: key(T0 - 6 * DAY), kibble: 20 },
+        { day: key(T0), kibble: 40 }
+      ],
+      T0
+    )
+    expect(f[0].kibble).toBe(20)
+    expect(f[6].kibble).toBe(40)
+    expect(f.slice(1, 6).every((d) => d.kibble === 0)).toBe(true)
+  })
+
+  it('leaves out days older than the frame', () => {
+    const f = feedFrame([{ day: key(T0 - 30 * DAY), kibble: 999 }], T0)
+    expect(f.every((d) => d.kibble === 0)).toBe(true)
+  })
+
+  it('is oldest first, and ends on today', () => {
+    const f = feedFrame([], T0)
+    expect(f[0].day < f[6].day).toBe(true)
+    expect(f[6].day).toBe(key(T0))
+  })
+
+  it('draws an empty week as an empty week, not as nothing', () => {
+    expect(feedFrame([], T0, 3)).toEqual([
+      { day: key(T0 - 2 * DAY), kibble: 0, today: false },
+      { day: key(T0 - DAY), kibble: 0, today: false },
+      { day: key(T0), kibble: 0, today: true }
+    ])
   })
 })

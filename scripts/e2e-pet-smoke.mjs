@@ -78,31 +78,25 @@ async function findPetWindow() {
   return null
 }
 
-// Everything below works the device the way a person does: three buttons.
-const PRESS = (k) => `document.querySelector('[data-key="${k}"]').click()`
-// A and B mean different things inside a screen (page / act on a row), so every
-// sequence starts by backing out to the pet, exactly as you would with the real
-// device in your hand.
+// The device has two sets of controls and BOTH are checked: the three keys on the
+// case (A walks the menu, B runs it, C backs out — what the keyboard shortcuts
+// press) and the icon strip on the glass, where a segment is its own button.
+const PRESS = (id) => `document.querySelector('[data-ic="${id}"]').click()`
+const KEY = (k) => `document.querySelector('[data-key="${k}"]').click()`
+const BACK = `document.querySelector('.pet-back')?.click()`
 const HOME = `(async () => {
   for (let i = 0; i < 4; i++) {
     if (document.querySelector('.pet-yard')) break
-    ${PRESS('c')}
+    ${BACK}
     await new Promise((r) => setTimeout(r, 160))
   }
 })()`
-const WALK_TO = (id) => `(async () => {
-  await ${HOME}
-  for (let i = 0; i < 12; i++) {
-    if (document.querySelector('.pet-ic.picked')?.dataset.ic === '${id}') return true
-    ${PRESS('a')}
-    await new Promise((r) => setTimeout(r, 110))
-  }
-  return false
-})()`
+// One press, from the pet screen — which is where a person would be.
 const RUN = (id) => `(async () => {
-  const found = await ${WALK_TO(id)}
-  if (!found) return false
-  ${PRESS('b')}
+  await ${HOME}
+  const el = document.querySelector('[data-ic="${id}"]')
+  if (!el) return false
+  el.click()
   await new Promise((r) => setTimeout(r, 300))
   return true
 })()`
@@ -165,11 +159,42 @@ async function main() {
   const litCells = await cdp.eval(`(async () => {
     await ${RUN('meter')}
     const lit = document.querySelectorAll('.pet-cell.tone-food.on').length
-    ${PRESS('c')}
+    ${BACK}
     await new Promise((r) => setTimeout(r, 200))
     return lit
   })()`)
   check('the food gauge fills up, on the meter screen', litCells === 10, `${litCells}/10 cells lit`)
+
+  // The feed log is a CALENDAR week, not a list of the days that happen to have a
+  // meal in them: one day of feeding used to draw one bar filling the whole glass,
+  // and two days a week apart came out side by side.
+  const log = await cdp.eval(`(async () => {
+    const s = __riven.pet
+    const k = (off) => { const d = new Date(Date.now() - off * 86400000)
+      const p = (n) => String(n).padStart(2, '0')
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) }
+    s.setState({ pet: { ...s.getState().pet,
+      history: [{ day: k(6), kibble: 40 }, { day: k(4), kibble: 120 }, { day: k(0), kibble: 75 }] } })
+    await new Promise((r) => setTimeout(r, 250))
+    await ${RUN('feed')}
+    const bars = [...document.querySelectorAll('.pet-bar')].map((b) => ({
+      h: b.querySelector('i').style.height, none: b.className.includes('none'), today: b.className.includes('today') }))
+    const out = { bars, head: document.querySelector('.pet-graph-head').textContent,
+                  foot: document.querySelector('.pet-graph-foot').textContent }
+    ${BACK}
+    await new Promise((r) => setTimeout(r, 200))
+    return out
+  })()`)
+  check(
+    'the feed log draws the whole week, gaps and all',
+    log.bars.length === 7 &&
+      log.bars.filter((b) => b.none).length === 4 &&
+      log.bars[2].h === '100%' &&          // the 120-kibble day is the tallest
+      log.bars[0].h !== '100%' &&          // 40 kibble is NOT full height
+      log.bars[6].today &&
+      /120/.test(log.head) && /235/.test(log.head) && /75/.test(log.foot),
+    JSON.stringify(log)
+  )
 
   // Neglect: rewind the tick clock and let the device's tick charge for it. Thirty
   // hours, not twenty: night passes at SLEEP_RATE, so a span that happens to cover
@@ -260,15 +285,10 @@ async function main() {
   const chrome = async (level) =>
     cdp.eval(`(async () => {
       await ${RUN('settings')}
-      // Walk the row cursor onto "size", then press B until it reads the level.
-      for (let i = 0; i < 6; i++) {
-        if (document.querySelector('.pet-row.picked')?.dataset.row === 'size') break
-        ${PRESS('a')}
-        await new Promise((r) => setTimeout(r, 120))
-      }
+      // The size row steps through the three levels; press it until it lands.
       for (let i = 0; i < 4; i++) {
         if (__riven.settings.getState().settings.petChrome === '${level}') break
-        ${PRESS('b')}
+        document.querySelector('[data-row="size"]').click()
         await new Promise((r) => setTimeout(r, 250))
       }
       await new Promise((r) => setTimeout(r, 350))
@@ -283,8 +303,9 @@ async function main() {
     })()`)
   const screenOnly = await chrome('screen')
   check(
-    'folds down to the glass and its buttons, from its own setup screen',
-    screenOnly.saved === 'screen' && screenOnly.bezel && !screenOnly.case && screenOnly.keys === 3,
+    'folds down to the glass and its keys, from its own setup screen',
+    screenOnly.saved === 'screen' && screenOnly.bezel && !screenOnly.case &&
+      screenOnly.icons > 0 && screenOnly.keys === 3,
     JSON.stringify(screenOnly)
   )
   const bare = await cdp.eval(`(async () => {
@@ -307,41 +328,80 @@ async function main() {
   await cdp.eval(`__riven.settings.getState().set({ petChrome: 'full' })`)
   await sleep(350)
 
-  // The eight functions are segments of the screen, not buttons on the case, and
-  // nothing is hidden behind a hover.
+  // Every function is a segment of the screen, each one its own button, and
+  // nothing is hidden behind a hover. The three keys on the case are gone.
   const onGlass = await cdp.eval(`(() => ({
     icons: [...document.querySelectorAll('.pet-screen .pet-ic')].map((b) => b.dataset.ic),
-    clickable: [...document.querySelectorAll('.pet-ic')].filter((e) => e.tagName === 'BUTTON').length,
+    buttons: [...document.querySelectorAll('.pet-ic')].filter((e) => e.tagName === 'BUTTON').length,
     keys: document.querySelectorAll('.pet-key').length,
     hoverOnly: document.querySelectorAll('.pet-tools').length
   }))()`)
   check(
-    'its eight functions live on the glass and only three buttons work them',
-    onGlass.hoverOnly === 0 && onGlass.keys === 3 && onGlass.clickable === 0 &&
-      ['feed', 'play', 'clean', 'medicine', 'pet', 'meter', 'album', 'settings'].every((id) =>
-        onGlass.icons.includes(id)
+    'every function is its own button on the glass, and the three keys are there too',
+    onGlass.hoverOnly === 0 && onGlass.keys === 3 &&
+      onGlass.buttons === onGlass.icons.length &&
+      ['feed', 'play', 'clean', 'medicine', 'pet', 'meter', 'awards', 'album', 'talk', 'settings'].every(
+        (id) => onGlass.icons.includes(id)
       ),
     onGlass.icons.join(' · ')
   )
 
-  // A walks the highlight, B runs what it is on, C backs out.
-  const abc = await cdp.eval(`(async () => {
+  // One press runs it; the ✕ on the title closes it.
+  const once = await cdp.eval(`(async () => {
     await ${HOME}
-    const first = document.querySelector('.pet-ic.picked')?.dataset.ic ?? null
-    ${PRESS('a')}
+    ${PRESS('album')}
     await new Promise((r) => setTimeout(r, 250))
-    const moved = document.querySelector('.pet-ic.picked')?.dataset.ic ?? null
-    await ${RUN('album')}
     const opened = document.querySelector('.pet-screen-top span').textContent
-    ${PRESS('c')}
+    const marked = document.querySelector('.pet-ic.on')?.dataset.ic ?? null
+    ${BACK}
     await new Promise((r) => setTimeout(r, 250))
     const backHome = !!document.querySelector('.pet-yard')
-    return { first, moved, opened, backHome }
+    return { opened, marked, backHome }
   })()`)
   check(
-    'A moves the highlight, B runs it, C comes back',
-    abc.moved !== abc.first && /도감|ALBUM/.test(abc.opened) && abc.backHome,
+    'one press opens a screen, the ✕ closes it',
+    /도감|ALBUM/.test(once.opened) && once.marked === 'album' && once.backHome,
+    JSON.stringify(once)
+  )
+
+  // And the same device still works the old way, from its three keys.
+  const abc = await cdp.eval(`(async () => {
+    await ${HOME}
+    ${KEY('c')}                    // clear the highlight first
+    await new Promise((r) => setTimeout(r, 200))
+    const first = document.querySelector('.pet-ic.picked')?.dataset.ic ?? null
+    ${KEY('a')}
+    await new Promise((r) => setTimeout(r, 250))
+    const moved = document.querySelector('.pet-ic.picked')?.dataset.ic ?? null
+    // Walk to a segment that opens a screen, so B and C have something to show.
+    for (let i = 0; i < 12; i++) {
+      if (document.querySelector('.pet-ic.picked')?.dataset.ic === 'album') break
+      ${KEY('a')}
+      await new Promise((r) => setTimeout(r, 120))
+    }
+    ${KEY('b')}
+    await new Promise((r) => setTimeout(r, 300))
+    const opened = document.querySelector('.pet-screen-top span').textContent
+    ${KEY('c')}
+    await new Promise((r) => setTimeout(r, 250))
+    return { first, moved, opened, home: !!document.querySelector('.pet-yard') }
+  })()`)
+  check(
+    'the three keys still work it: A walks, B runs, C backs out',
+    abc.first === null && abc.moved !== null && /도감|ALBUM/.test(abc.opened) && abc.home,
     JSON.stringify(abc)
+  )
+
+  // The keys sit centred on the case — they used to hang off one side.
+  const centred = await cdp.eval(`(() => {
+    const pad = document.querySelector('.pet-case .pet-pad').getBoundingClientRect()
+    const box = document.querySelector('.pet-case').getBoundingClientRect()
+    return { pad: Math.round(pad.x + pad.width / 2), case: Math.round(box.x + box.width / 2) }
+  })()`)
+  check(
+    'the three keys are centred on the case',
+    Math.abs(centred.pad - centred.case) <= 1,
+    JSON.stringify(centred)
   )
 
   // Care: it makes a mess, you clean it; it falls ill, you medicate it.
@@ -379,15 +439,29 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200))
     await ${RUN('play')}
     const arrows = document.querySelectorAll('.pet-arrow').length
-    ${PRESS('a')}   // guess left
+    const sides = document.querySelectorAll('[data-guess]').length
+    // Pick a side by pressing that side.
+    document.querySelector('[data-guess="left"]').click()
     await new Promise((r) => setTimeout(r, 300))
     const p = s.getState().pet
-    return { arrows, plays: p.plays, mood: Math.round(p.mood), said: document.querySelector('.pet-screen-mood').textContent }
+    return { arrows, sides, plays: p.plays, mood: Math.round(p.mood),
+             said: document.querySelector('.pet-screen-mood').textContent,
+             // The reveal: the pet leans the way it went and that arrow flashes.
+             leaned: document.querySelector('.pet-actor')?.className ?? null,
+             flashed: document.querySelectorAll('.pet-arrow.went').length }
   })()`)
   check(
     'playing a round lifts the mood',
-    game.arrows === 2 && game.plays === 1 && game.mood > 50,
-    JSON.stringify(game)
+    game.arrows === 2 && game.sides === 2 && game.plays === 1 && game.mood > 50,
+    JSON.stringify({ plays: game.plays, mood: game.mood })
+  )
+  // Without this the game was press-either-arrow-and-read-the-verdict: nothing on
+  // screen ever said which way the pet actually went.
+  check(
+    'the pet shows which way it went, so the guess means something',
+    /went-(left|right)/.test(game.leaned ?? '') && game.flashed === 1 &&
+      /갔다|went/.test(game.said ?? ''),
+    JSON.stringify({ leaned: game.leaned, flashed: game.flashed, said: game.said })
   )
 
   // What it ate is recorded per model, and shows up as a taste.
@@ -419,12 +493,16 @@ async function main() {
   }))()`)
   check('evolving bursts on screen', evolved.burst && /됐다|Grew/.test(evolved.line), JSON.stringify(evolved))
 
-  // It says what it needs, in one short line.
+  // It says what it needs, in one short line. C first: a leftover answer (the
+  // medicine screen says "feeling better" for seven seconds) is also the balloon,
+  // and the check would read that instead.
+  await cdp.eval(`${KEY('c')}`)
+  await sleep(200)
   const bubble = async (patch) =>
     cdp.eval(`(async () => {
       // C shuts it up: an answer stays on screen for seconds, and this check is
       // about the ambient line underneath.
-      ${PRESS('c')}
+      ${BACK}
       const s = __riven.pet
       s.setState({ pet: { ...s.getState().pet, lastTickAt: Date.now(), ...${JSON.stringify(patch).replace(/"(\w+)":/g, '$1:')} } })
       await new Promise((r) => setTimeout(r, 2000))
@@ -462,19 +540,17 @@ async function main() {
     JSON.stringify(night)
   )
 
-  // Awards light up as they are earned — the meter's second page.
+  // Awards light up as they are earned — their own screen, its own icon.
   const awards = await cdp.eval(`(async () => {
     const s = __riven.pet
     s.setState({ pet: { ...s.getState().pet, xp: 900, totalTokens: 12000000, bornAt: Date.now() - 300 * 3600000,
                         neglectMs: 2 * 3600000, plays: 12, wins: 6, everSick: false, sick: false, lastTickAt: Date.now() } })
     await new Promise((r) => setTimeout(r, 300))
-    await ${RUN('meter')}
-    ${PRESS('a')}
-    await new Promise((r) => setTimeout(r, 300))
+    await ${RUN('awards')}
     const out = { title: document.querySelector('.pet-screen-top span').textContent,
                   total: document.querySelectorAll('.pet-award').length,
                   done: document.querySelectorAll('.pet-award.done').length }
-    ${PRESS('c')}
+    ${BACK}
     await new Promise((r) => setTimeout(r, 200))
     return out
   })()`)
@@ -488,74 +564,45 @@ async function main() {
   // driver helpers above are interpolated by Node, so a loop variable of ours is
   // not in scope inside them.
   const screens = await cdp.eval(`(async () => {
-    const press = (k) => document.querySelector('[data-key="' + k + '"]').click()
     const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     const home = async () => {
       for (let i = 0; i < 4; i++) {
         if (document.querySelector('.pet-yard')) break
-        press('c')
+        document.querySelector('.pet-back')?.click()
         await wait(160)
       }
     }
-    const open = async (id) => {
-      await home()
-      for (let i = 0; i < 12; i++) {
-        if (document.querySelector('.pet-ic.picked')?.dataset.ic === id) break
-        press('a')
-        await wait(110)
-      }
-      press('b')
-      await wait(300)
-    }
     const titles = []
-    for (const id of ['feed', 'meter', 'album', 'settings']) {
-      await open(id)
+    // One press each, straight from the pet screen.
+    for (const id of ['feed', 'meter', 'awards', 'album', 'settings']) {
+      await home()
+      document.querySelector('[data-ic="' + id + '"]').click()
+      await wait(300)
       titles.push(document.querySelector('.pet-screen-top span').textContent)
-      press('c')
-      await wait(200)
     }
+    await home()
     return titles
   })()`)
   check(
     'each icon on the glass opens its own screen',
-    screens.length === 4 && new Set(screens).size === 4,
+    screens.length === 5 && new Set(screens).size === 5,
     screens.join(' · ')
   )
 
-  // Inside the meter, A turns the page — status, then awards — and C comes out.
-  const meterPages = await cdp.eval(`(async () => {
-    await ${RUN('meter')}
-    const first = document.querySelector('.pet-screen-top span').textContent
-    ${PRESS('a')}
-    await new Promise((r) => setTimeout(r, 250))
-    const second = document.querySelector('.pet-screen-top span').textContent
-    const awards = document.querySelectorAll('.pet-award').length
-    ${PRESS('c')}
-    await new Promise((r) => setTimeout(r, 200))
-    return { first, second, awards, home: !!document.querySelector('.pet-yard') }
-  })()`)
-  check(
-    'the meter turns its pages with A and closes with C',
-    meterPages.first !== meterPages.second && meterPages.awards === 10 && meterPages.home,
-    JSON.stringify(meterPages)
-  )
-
-  // With nothing highlighted, B shows the clock — as on the original.
+  // The clock lives on the deck, where the three buttons used to be.
   const clock = await cdp.eval(`(async () => {
     await ${HOME}
-    ${PRESS('c')}
-    await new Promise((r) => setTimeout(r, 150))
-    const cleared = !document.querySelector('.pet-ic.picked')
-    ${PRESS('b')}
+    const onDeck = document.querySelector('.pet-deck [data-ic="clock"]')?.textContent ?? null
+    document.querySelector('[data-ic="clock"]').click()
     await new Promise((r) => setTimeout(r, 300))
     const shown = document.querySelector('.pet-clock b')?.textContent ?? null
-    ${PRESS('c')}
+    ${BACK}
     await new Promise((r) => setTimeout(r, 200))
-    return { cleared, shown, home: !!document.querySelector('.pet-yard') }
+    return { onDeck, shown, home: !!document.querySelector('.pet-yard') }
   })()`)
   check(
-    'C clears the highlight and B then shows the clock',
-    clock.cleared && /\d/.test(clock.shown ?? '') && clock.home,
+    'the clock is printed on the deck and opens its screen',
+    /\d/.test(clock.onDeck ?? '') && /\d/.test(clock.shown ?? '') && clock.home,
     JSON.stringify(clock)
   )
 
@@ -579,11 +626,11 @@ async function main() {
       // Its own window boots its own React app; wait for the device to exist
       // before pressing anything on it.
       for (let i = 0; i < 40; i++) {
-        if (document.querySelector('[data-key="c"]')) break
+        if (document.querySelector('[data-ic="settings"]')) break
         await new Promise((r) => setTimeout(r, 150))
       }
-      if (!document.querySelector('[data-key="c"]'))
-        return { error: 'the floating device never showed its buttons',
+      if (!document.querySelector('[data-ic="settings"]'))
+        return { error: 'the floating device never showed its menu',
                  cls: document.querySelector('.pet-device')?.className ?? 'no device' }
       // Resizing the window is a round trip (renderer → main → setBounds → new
       // viewport), so a size read the instant the class flips is reading the OLD
@@ -601,11 +648,10 @@ async function main() {
       const before = await read()
       // Fold it down and back from its own setup screen: the window must follow,
       // and must not creep.
-      const press = (k) => document.querySelector('[data-key="' + k + '"]')?.click()
       const wait = (ms) => new Promise((r) => setTimeout(r, ms))
       const is = (want) => document.querySelector('.pet-device').className.includes('pet-chrome-' + want)
-      // Stepping the size row walks full → screen → creature-only, and in that
-      // last one the buttons are gone by design — the pet itself is the way back.
+      // The size row steps full → screen → creature-only, and in that last one
+      // there is no UI at all by design — the pet itself is the way back.
       const size = async (want) => {
         for (let i = 0; i < 8; i++) {
           if (is(want)) return
@@ -614,18 +660,14 @@ async function main() {
             await wait(350)
             continue
           }
-          for (let j = 0; j < 4; j++) { if (document.querySelector('.pet-yard')) break; press('c'); await wait(160) }
-          for (let j = 0; j < 12; j++) {
-            if (document.querySelector('.pet-ic.picked')?.dataset.ic === 'settings') break
-            press('a'); await wait(110)
+          for (let j = 0; j < 4; j++) {
+            if (document.querySelector('.pet-yard')) break
+            document.querySelector('.pet-back')?.click()
+            await wait(160)
           }
-          press('b')
+          document.querySelector('[data-ic="settings"]').click()
           await wait(300)
-          for (let j = 0; j < 6; j++) {
-            if (document.querySelector('.pet-row.picked')?.dataset.row === 'size') break
-            press('a'); await wait(120)
-          }
-          press('b')
+          document.querySelector('[data-row="size"]').click()
           await wait(350)
         }
       }
@@ -644,12 +686,12 @@ async function main() {
       // Back to the pet screen: the creature only exists there.
       for (let i = 0; i < 4; i++) {
         if (document.querySelector('.pet-yard')) break
-        document.querySelector('[data-key="c"]').click()
+        document.querySelector('.pet-back')?.click()
         await new Promise((r) => setTimeout(r, 160))
       }
       const g = (sel) => { const e = document.querySelector(sel); return e ? getComputedStyle(e).webkitAppRegion : null }
       return { device: g('.pet-device'), case: g('.pet-case'), deck: g('.pet-deck'),
-               screen: g('.pet-screen'), creature: g('.pet-lcd'), key: g('[data-key="a"]') }
+               screen: g('.pet-screen'), creature: g('.pet-lcd'), key: g('[data-ic="feed"]') }
     })()`)
     check(
       'its own window can be picked up anywhere but its buttons',
@@ -658,19 +700,20 @@ async function main() {
       JSON.stringify(grabbable)
     )
 
-    // The three keys are bound to Mod+Alt+a/s/d. The keystroke lands in whichever
-    // riven window has focus, so the press is relayed through main to every
-    // window — pressing from the APP has to drive the device in its OWN window.
+    // The keys are bound to ⌘; / ⌘' / ⌘Escape — two-finger chords on neighbouring
+    // keys, after ⌘⌥A/S/D turned out to be a shortcut nobody presses. The stroke
+    // lands in whichever window has focus, so it is relayed through main: pressing
+    // from the APP has to drive the device in its OWN window.
     const relayed = await (async () => {
       await petCdp.eval(`(async () => {
         for (let i = 0; i < 4; i++) {
           if (document.querySelector('.pet-yard')) break
-          document.querySelector('[data-key="c"]').click()
+          document.querySelector('.pet-back')?.click()
           await new Promise((r) => setTimeout(r, 160))
         }
+        document.querySelector('[data-key="c"]').click()
       })()`)
-      // A walks the icon strip. Stop on an icon that OPENS something (meter) so
-      // B and C have a visible effect: the screen shows, then C comes home.
+      // Walk to a segment that OPENS something, so B and C have a visible effect.
       let landed = null
       for (let i = 0; i < 12; i++) {
         landed = await petCdp.eval(`document.querySelector('.pet-ic.picked')?.dataset.ic ?? null`)
@@ -690,6 +733,41 @@ async function main() {
       'the keyboard shortcuts reach the device in its own window',
       relayed.landed === 'meter' && relayed.opened && relayed.home,
       JSON.stringify(relayed)
+    )
+
+    // Always-on-top is a setting, pressed from the device's own setup screen. The
+    // pet window may not write settings.json (two snapshots, last writer wins), so
+    // it asks main: main lifts the window and the APP persists the choice.
+    const onTop = await (async () => {
+      const row = async () => {
+        await petCdp.eval(`(async () => {
+          for (let i = 0; i < 4; i++) {
+            if (document.querySelector('.pet-yard')) break
+            document.querySelector('.pet-back')?.click()
+            await new Promise((r) => setTimeout(r, 160))
+          }
+          document.querySelector('[data-ic="settings"]').click()
+          await new Promise((r) => setTimeout(r, 300))
+          document.querySelector('[data-row="ontop"]').click()
+          await new Promise((r) => setTimeout(r, 400))
+        })()`)
+      }
+      const before = await cdp.eval(`window.api.pet.isOnTop()`)
+      await row()
+      const lifted = await cdp.eval(`window.api.pet.isOnTop()`)
+      // The app is the one that remembers it.
+      const saved = await cdp.eval(`__riven.settings.getState().settings.petOnTop`)
+      const shown = await petCdp.eval(`document.querySelector('[data-row="ontop"] b').textContent`)
+      await row()
+      const down = await cdp.eval(`window.api.pet.isOnTop()`)
+      const savedOff = await cdp.eval(`__riven.settings.getState().settings.petOnTop`)
+      return { before, lifted, saved, shown, down, savedOff }
+    })()
+    check(
+      'its own setup screen floats the window above other apps, and that is remembered',
+      onTop.before === false && onTop.lifted === true && onTop.saved === true &&
+        /켬|on/.test(onTop.shown) && onTop.down === false && onTop.savedOff === false,
+      JSON.stringify(onTop)
     )
 
     // Nothing may paint behind the frameless window: a background on the page or
@@ -745,15 +823,10 @@ async function main() {
       limits: { session: { usedPct: 94, resetsAt: new Date(Date.now() + 3600000).toISOString() }, weekly: null } }] })
     await new Promise((r) => setTimeout(r, 500))
 
-    const press = (k) => document.querySelector('[data-key="' + k + '"]').click()
     const wait = (ms) => new Promise((r) => setTimeout(r, ms))
-    for (let i = 0; i < 4; i++) { if (document.querySelector('.pet-yard')) break; press('c'); await wait(160) }
-    for (let i = 0; i < 14; i++) {
-      if (document.querySelector('.pet-ic.picked')?.dataset.ic === 'talk') break
-      press('a')
-      await wait(110)
-    }
-    press('b')
+    const back = () => document.querySelector('.pet-back')?.click()
+    for (let i = 0; i < 4; i++) { if (document.querySelector('.pet-yard')) break; back(); await wait(160) }
+    document.querySelector('[data-ic="talk"]').click()
     await wait(300)
     const ask = async (q) => {
       const i = document.querySelector('.pet-ask input')
@@ -776,10 +849,11 @@ async function main() {
     const api = __riven.getActiveApi()
     const p = api.getPanel(term)
     if (p) api.removePanel(p)
-    press('c')
+    // The field stays open across answers (that is the point — ask, watch it
+    // answer, ask again), so it has its own ✕.
+    document.querySelector('.pet-ask-x').click()
     await wait(250)
     return { busy, limit, dunno, spokeOnPet, size, noLog, closed: !document.querySelector('.pet-ask input'),
-             picked: document.querySelector('.pet-ic.picked')?.dataset.ic ?? null,
              hadInput: !!document.querySelector('.pet-screen') }
   })()`)
   check(

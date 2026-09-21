@@ -47,6 +47,8 @@ export const PLAY_FULLNESS_COST = 3
 export const PLAY_COOLDOWN_MS = 20_000
 // How many days of feeding the device graphs, and how many past pets it keeps.
 export const HISTORY_DAYS = 14
+/** How many days the feed log draws at a time. */
+export const FEED_FRAME_DAYS = 7
 export const ALBUM_SIZE = 8
 
 // ---- night ----
@@ -588,6 +590,27 @@ export function feedStreak(history: DayFeed[]): number {
     prev = t
   }
   return best
+}
+
+/**
+ * The last `days` CALENDAR days, oldest first, whether the pet ate on them or
+ * not. The history only records days with a meal in them, so drawing it straight
+ * gave a chart that lied: one day of feeding was a single bar filling the whole
+ * screen, and a gap of a week rendered as two neighbours.
+ */
+export function feedFrame(
+  history: DayFeed[],
+  now: number,
+  days = FEED_FRAME_DAYS
+): Array<{ day: string; kibble: number; today: boolean }> {
+  const by = new Map(history.map((h) => [h.day, h.kibble]))
+  const today = dayKey(now)
+  const out: Array<{ day: string; kibble: number; today: boolean }> = []
+  for (let i = days - 1; i >= 0; i--) {
+    const day = dayKey(now - i * 86_400_000)
+    out.push({ day, kibble: by.get(day) ?? 0, today: day === today })
+  }
+  return out
 }
 
 export interface Award {

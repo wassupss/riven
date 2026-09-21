@@ -112,33 +112,52 @@
 }
 
 /* ---- the menu strip ----
-   Segments of the screen, in one row along its foot. Not buttons: A walks the
-   highlight along them, B runs the one that is lit. */
+   Segments of the screen, in one row along its foot. Each is the button for its
+   own function: point at one to see its name on the top line, press it to run
+   it. (They used to be printed, not pressed, and were worked by three keys on
+   the case; ten of those presses to clear one mess is how you get a pet nobody
+   touches.) */
 .pet-icons {
   flex: 0 0 auto;
   display: flex;
   gap: 1px;
   padding: 2px 1px 0;
   border-top: 1px solid rgb(255 255 255 / 0.06);
-  pointer-events: none;
 }
 .pet-ic {
   flex: 1 1 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 13px;
+  min-width: 0;
+  height: 14px;
+  padding: 0;
+  background: transparent;
   border: 1px solid transparent;
   border-radius: 2px;
   /* An unlit segment is still visible — faint, but there. */
-  color: color-mix(in srgb, var(--fg) 24%, transparent);
+  color: color-mix(in srgb, var(--fg) 30%, transparent);
+  cursor: pointer;
+}
+.pet-ic:hover {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.pet-ic:active {
+  transform: translateY(1px);
 }
 /* Asking for something (a mess to clear, medicine): the segment lights up. */
 .pet-ic.alert {
   color: var(--warning);
   animation: pet-twinkle 1s steps(1, end) infinite;
 }
-/* Where the highlight is. It blinks, so it is obvious even at this size. */
+/* The screen you are looking at. */
+.pet-ic.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+/* Where the A key's highlight is. It blinks, so it is obvious even at this size. */
 .pet-ic.picked {
   border-color: var(--accent);
   color: var(--accent);
@@ -155,6 +174,88 @@
     border-color: transparent;
     background: transparent;
   }
+}
+
+/* The way out of whatever screen is up, on its own title line. */
+.pet-back {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin: -1px -1px -1px 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 2px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.pet-back:hover {
+  background: var(--hover-strong);
+  color: var(--fg);
+}
+
+/* The reveal, after a guess: the pet leans the way it actually went and that
+   arrow flashes. Transform only — a window nobody is looking at paints no frames,
+   and anything else would be stuck at the first one. */
+.pet-actor {
+  display: contents;
+}
+.pet-actor.went-left .pet-lcd {
+  animation: pet-lean-left 0.45s steps(2, end) 3;
+}
+.pet-actor.went-right .pet-lcd {
+  animation: pet-lean-right 0.45s steps(2, end) 3;
+}
+@keyframes pet-lean-left {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-9%) rotate(-6deg);
+  }
+}
+@keyframes pet-lean-right {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(9%) rotate(6deg);
+  }
+}
+.pet-arrow.went {
+  color: var(--accent);
+  animation: pet-twinkle 0.35s steps(1, end) 5;
+}
+
+/* Guessing which side: the two sides are the two buttons. */
+.pet-guess {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 34%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.pet-guess.left {
+  left: 0;
+}
+.pet-guess.right {
+  right: 0;
+}
+.pet-guess:hover {
+  background: var(--accent-muted);
 }
 
 /* ---- in its own window: fill it, and let the OS do the dragging ----
@@ -181,7 +282,6 @@
 }
 .pet-detached .pet-stand i,
 .pet-detached .pet-balloon,
-.pet-detached .pet-key,
 .pet-detached .pet-tools {
   box-shadow: none;
 }
@@ -531,6 +631,8 @@
 /* The one text field on the device, sitting on the case under the glass. */
 .pet-ask {
   display: flex;
+  align-items: center;
+  gap: 2px;
   padding: 0 1px;
 }
 .pet-ask input {
@@ -709,14 +811,31 @@
 .pet-rows .warn {
   color: var(--warning);
 }
+/* ---- the feed log ----
+   Seven calendar days with the scale printed above them. Without the numbers (and
+   without the empty days) a single bar filled the glass and said nothing. */
 .pet-graph {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 3px;
-  padding: 4px 0 0;
+  padding: 3px 0 0;
+}
+.pet-graph-head {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 8px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+.pet-bars {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
 }
 .pet-bar {
   flex: 1 1 0;
@@ -731,12 +850,27 @@
 /* Squared off on purpose: the whole device is made of dots. */
 .pet-bar i {
   width: 100%;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
   border-radius: 0;
+}
+/* A day with no meal in it: a floor, so the gap is visible. */
+.pet-bar.none i {
+  background: rgb(255 255 255 / 0.12);
+}
+.pet-bar.today i {
+  background: var(--accent);
 }
 .pet-bar span {
   font-size: 7px;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  color: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.pet-bar.today span {
+  color: var(--accent);
+}
+.pet-graph-foot {
+  flex: 0 0 auto;
+  font-size: 8px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 .pet-album {
   flex: 1 1 auto;
@@ -999,13 +1133,37 @@
   background: var(--accent-2);
 }
 
-/* ---- the button pad ---- */
-/* Three buttons across the bottom — A selects, B confirms, C backs out. */
+/* The ask field's own way out: it stays open while the pet answers on the glass. */
+.pet-ask-x {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: color-mix(in srgb, var(--fg) 50%, transparent);
+  cursor: pointer;
+}
+.pet-ask-x:hover {
+  background: var(--hover-strong);
+  color: var(--fg);
+}
+
+/* ---- the three keys ----
+   Centred on the case, under the deck. They are the device's own controls and the
+   target of the keyboard shortcuts; the icon strip on the glass does the same
+   things in one press. */
 .pet-pad {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 11px;
+  gap: 14px;
+  padding: 5px 0 1px;
 }
 .pet-key {
   flex: 0 0 auto;
@@ -1014,7 +1172,6 @@
   justify-content: center;
   width: 19px;
   height: 19px;
-  font-size: 10px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
   border-radius: 50%;
@@ -1025,47 +1182,48 @@
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.18),
     0 2px 3px rgb(0 0 0 / 0.5);
-  color: var(--fg);
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
   cursor: pointer;
 }
-.pet-key:hover:not(:disabled) {
-  color: var(--fg);
+.pet-key:hover {
   border-color: var(--accent-border);
+  color: var(--accent);
 }
-.pet-key:active:not(:disabled) {
+.pet-key:active {
   transform: translateY(1px);
   box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.5);
 }
-.pet-key.on {
-  color: var(--accent);
-  border-color: var(--accent-border);
-}
-/* It needs something from you — a mess to clear, or medicine. */
-.pet-key.alert {
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 50%, transparent);
-  animation: pet-nudge 1.4s steps(1, end) infinite;
-}
-@keyframes pet-nudge {
-  0%,
-  60% {
-    transform: translateY(0);
-  }
-  61%,
-  100% {
-    transform: translateY(-1px);
-  }
-}
-.pet-key:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.pet-key-glyph {
+.pet-key-cap {
   font-family: var(--font-mono, monospace);
-  font-size: 12px;
+  font-size: 9px;
   font-weight: 700;
-  font-style: italic;
+  line-height: 1;
 }
+
+/* ---- the deck ----
+   What is left on the face of the case now that the three buttons are gone: the
+   name, the power lamp, and a clock you can press for the clock screen. */
+.pet-clock-btn {
+  margin-left: auto;
+  padding: 1px 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+  cursor: pointer;
+}
+.pet-clock-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.pet-clock-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ---- the details drawer ---- */
 .pet-stats {
   margin: 0;

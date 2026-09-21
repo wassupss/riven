@@ -2,6 +2,8 @@ import { keymap, IS_MAC } from './keys'
 import { focusEditor, focusPane, clearFocusedTerminal, saveActiveEditor } from './focus'
 import { useSession, pathOf } from '../state/session'
 import { useUI } from '../state/ui'
+import { useSettings } from '../state/settings'
+import { PET_KEY_DEFS } from './petKeys'
 import { contextBus } from '../bridge/contextBus'
 import {
   addTerminal,
@@ -24,15 +26,9 @@ const TERMINAL = '터미널'
 // Registers the default set of app actions (code-editor shortcuts live in
 // editorKeymaps.ts). Bindings are customizable at runtime.
 export function registerDefaultActions(): void {
-  // The pet's three buttons. The press is relayed through main so the shortcut
-  // works from anywhere in riven, whether the device is docked in this window or
-  // out on the desktop in its own.
-  const PET_KEYS: Array<{ key: 'a' | 'b' | 'c'; def: string; label: string }> = [
-    { key: 'a', def: 'Mod+Alt+a', label: '리븐펫 A · 아이콘 이동' },
-    { key: 'b', def: 'Mod+Alt+s', label: '리븐펫 B · 실행' },
-    { key: 'c', def: 'Mod+Alt+d', label: '리븐펫 C · 취소 / 뒤로' }
-  ]
-  for (const { key, def, label } of PET_KEYS)
+  // The pet's three keys. The chords live in petKeys.ts because the floating pet
+  // is a window of its own and has to match the same ones (rebinds included).
+  for (const { key, def, label } of PET_KEY_DEFS)
     keymap.register({
       id: `pet.key.${key}`,
       label,
@@ -41,6 +37,20 @@ export function registerDefaultActions(): void {
       def,
       run: () => void window.api.pet.press(key)
     })
+
+  // Putting it away and getting it back. No default: the status-bar egg does it
+  // with the mouse, and the settings list is where you pick keys if you want them.
+  keymap.register({
+    id: 'pet.toggle',
+    label: '리븐펫 보이기 / 숨기기',
+    category: RIVEN,
+    context: 'riven',
+    def: '',
+    run: () => {
+      const { settings, set } = useSettings.getState()
+      set({ petShow: !settings.petShow })
+    }
+  })
 
   // Workspace switching: Mod+1 .. Mod+9
   for (let i = 1; i <= 9; i++) {

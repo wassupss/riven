@@ -925,13 +925,24 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
-    // A key press on the pet's three buttons, sent from wherever the shortcut was
-    // pressed and delivered to whichever window is showing the device.
+    // A press of the pet's A / B / C, sent from wherever the shortcut fired and
+    // delivered to whichever window is showing the device.
     press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),
     onPress: (cb: (key: 'a' | 'b' | 'c') => void): (() => void) => {
       const l = (_e: unknown, key: 'a' | 'b' | 'c'): void => cb(key)
       ipcRenderer.on('pet:press', l)
       return () => ipcRenderer.removeListener('pet:press', l)
+    },
+    // Float the pet's window above other apps, or let it sit among them. The app
+    // applies what it has persisted (setOnTop); the pet window asks for a change
+    // (askOnTop) because it is not the window that may write settings.json.
+    setOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:setOnTop', on),
+    askOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:askOnTop', on),
+    isOnTop: (): Promise<boolean> => ipcRenderer.invoke('pet:isOnTop'),
+    onOnTop: (cb: (on: boolean) => void): (() => void) => {
+      const l = (_e: unknown, on: boolean): void => cb(on)
+      ipcRenderer.on('pet:onTop', l)
+      return () => ipcRenderer.removeListener('pet:onTop', l)
     },
     // Fired for EVERY window: the floating pet was closed / put away, so the app
     // can put its own state back in step.
