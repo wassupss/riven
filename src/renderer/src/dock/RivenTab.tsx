@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { IDockviewPanelHeaderProps } from 'dockview-react'
-import { confirmTerminalClose, setChatTitle, setTabColor, widForApi } from './registry'
+import { confirmPaneClose, confirmPanesClose, setChatTitle, setTabColor, widForApi } from './registry'
 import { useAgents, getAgentStatus } from '../state/agents'
 import { useRoster } from '../state/roster'
 import { activityOf } from '../state/rosterActivity'
@@ -77,7 +77,9 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   // Close every tab in this tab's group.
   const closeGroup = (): void => {
     const panels = api.group?.panels ? [...api.group.panels] : []
-    for (const p of panels) if (confirmTerminalClose(p.id)) p.api.close()
+    // One question for the whole group, not one per pane.
+    if (!confirmPanesClose(panels.map((p) => p.id))) return
+    for (const p of panels) p.api.close()
   }
 
   // Whole-tab tint (avatarRev re-reads after an edit). Any panel can be coloured
@@ -124,7 +126,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
         title="닫기"
         onClick={(e) => {
           e.stopPropagation()
-          if (confirmTerminalClose(api.id)) api.close()
+          if (confirmPaneClose(api.id)) api.close()
         }}
       >
         <X size={11} />
@@ -148,7 +150,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
                 className="context-item"
                 onClick={() => {
                   setMenu(null)
-                  if (confirmTerminalClose(api.id)) api.close()
+                  if (confirmPaneClose(api.id)) api.close()
                 }}
               >
                 {t('tab.closePanel')}

@@ -1,9 +1,9 @@
-import { app, shell, BrowserWindow, ipcMain, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeImage, dialog } from 'electron'
 import { join } from 'path'
 import * as os from 'os'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { execSync } from 'child_process'
-import { registerPtyHandlers, primeShellShim } from './pty'
+import { registerPtyHandlers, primeShellShim, runningTerminalAgentCount } from './pty'
 import { registerAgentEditHooks } from './agentHooks'
 import { registerGithubHandlers } from './githubPr'
 import { registerGithubDetailHandlers } from './githubPrDetail'
@@ -22,7 +22,7 @@ import { registerConfigHandlers } from './config'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
-import { registerAgentChatHandlers, killAllChatSessions } from './agentChat'
+import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from './agentChat'
 import { registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
@@ -292,6 +292,42 @@ app.whenReady().then(() => {
   registerApiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()
+  // Quitting with work in flight asks first. Registered BEFORE the hard-exit
+  // backstop below, because that one kills the process outright — by then there
+  // is nothing left to ask about. A turn the user had forgotten is exactly the
+  // one they would not want to lose to a ⌘Q.
+  let quitConfirmed = false
+  app.on('before-quit', (e) => {
+    if (quitConfirmed) return
+    const running = runningChatCount() + runningTerminalAgentCount()
+    if (running === 0) return
+    e.preventDefault()
+    const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.isFocusable())
+    // The app's own language, read from the settings the renderer persists.
+    let ko = true
+    try {
+      const raw = readFileSync(join(app.getPath('userData'), 'settings.json'), 'utf8')
+      ko = (JSON.parse(raw) as { language?: string }).language !== 'en'
+    } catch {
+      /* default to Korean, as the UI does */
+    }
+    const opts = {
+      type: 'warning' as const,
+      buttons: ko ? ['취소', '종료'] : ['Cancel', 'Quit'],
+      defaultId: 0,
+      cancelId: 0,
+      message: ko ? `에이전트 ${running}개가 작업 중입니다` : `${running} agent(s) are still working`,
+      detail: ko
+        ? '지금 종료하면 진행 중인 작업이 중단됩니다.'
+        : 'Quitting now stops that work.'
+    }
+    const choice = w ? dialog.showMessageBoxSync(w, opts) : dialog.showMessageBoxSync(opts)
+    if (choice === 1) {
+      quitConfirmed = true
+      app.quit()
+    }
+  })
+
   // Hard-exit backstop, registered LAST so every subsystem's before-quit
   // teardown (pty kills shells/agents, lsp kills language servers) runs first.
   // Electron's normal quit stalls for this app (a native handle never releases →

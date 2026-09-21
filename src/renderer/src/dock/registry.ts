@@ -4,17 +4,40 @@ import { isPaneBusy } from '../state/workspaceStatus'
 import { focusPane, focusEditor } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
-import { renameAgent } from '../state/agents'
+import { renameAgent, getAgentStatus } from '../state/agents'
+import { useRoster } from '../state/roster'
 import { splitPrimaryRight } from '../state/editorSplit'
 
-// Confirm before closing a terminal whose agent is actively running (busy).
-// Returns true when it's OK to proceed with the close.
-export function confirmTerminalClose(panelId: string): boolean {
-  if (!panelId.startsWith('term-')) return true
-  const paneId = Number(panelId.slice('term-'.length))
-  if (!Number.isFinite(paneId) || !isPaneBusy(paneId)) return true
-  return window.confirm(t('term.closeBusyConfirm'))
+// Is an agent mid-turn in this pane? Chat panes and terminals both count: the
+// roster carries the live flag for either, and the pane's own controller knows
+// about a turn that started in this window.
+export function paneIsRunning(panelId: string): boolean {
+  if (useRoster.getState().live[panelId]?.busy) return true
+  if (panelId.startsWith('chat-')) return getAgentStatus(panelId) === 'busy'
+  if (panelId.startsWith('term-')) {
+    const paneId = Number(panelId.slice('term-'.length))
+    return Number.isFinite(paneId) && isPaneBusy(paneId)
+  }
+  return false
 }
+
+// Confirm before closing a pane whose agent is still working — closing it stops
+// that work, and a turn you forgot about is exactly the one you don't want to
+// lose. Returns true when it's OK to proceed.
+export function confirmPaneClose(panelId: string): boolean {
+  if (!paneIsRunning(panelId)) return true
+  return window.confirm(t('pane.closeBusyConfirm'))
+}
+
+// The same question for a group / workspace: asked ONCE, naming how many.
+export function confirmPanesClose(panelIds: string[]): boolean {
+  const running = panelIds.filter(paneIsRunning).length
+  if (running === 0) return true
+  return window.confirm(t('pane.closeBusyMany', { n: running }))
+}
+
+/** @deprecated use confirmPaneClose */
+export const confirmTerminalClose = confirmPaneClose
 
 // Points at the active workspace's dockview instance so global toolbar buttons
 // and keybindings can add terminals / focus singleton panels.
