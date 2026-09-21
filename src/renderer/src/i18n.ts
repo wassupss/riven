@@ -777,6 +777,16 @@ export const DICT: Record<string, { ko: string; en: string }> = {
 
   // ---- 리븐펫 (the floating pet device) ----
   'pet.title': { ko: '리븐펫', en: 'RivenPet' },
+  'settings.petShow': { ko: '리븐펫 사용', en: 'Show RivenPet' },
+  'settings.petShowDesc': {
+    ko: '에이전트가 쓴 토큰을 먹고 자라는 펫. 끄면 화면 어디에도 나오지 않습니다.',
+    en: 'The pet that grows on the tokens your agents spend. Off keeps it off your screen entirely.'
+  },
+  'settings.petDetached': { ko: '별도 창으로 띄우기', en: 'Float in its own window' },
+  'settings.petDetachedDesc': {
+    ko: '끄면 리븐 창 안에서만 떠다닙니다.',
+    en: 'Off keeps it inside the riven window.'
+  },
   'pet.default.name': { ko: '이름 없음', en: 'Unnamed' },
   'pet.stage.egg': { ko: '알', en: 'Egg' },
   'pet.stage.hatchling': { ko: '부화체', en: 'Hatchling' },

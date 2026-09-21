@@ -585,11 +585,20 @@ async function main() {
       if (!document.querySelector('[data-key="c"]'))
         return { error: 'the floating device never showed its buttons',
                  cls: document.querySelector('.pet-device')?.className ?? 'no device' }
-      const read = () => {
+      // Resizing the window is a round trip (renderer → main → setBounds → new
+      // viewport), so a size read the instant the class flips is reading the OLD
+      // window. Wait for innerHeight to hold still first.
+      const read = async () => {
+        let last = -1
+        for (let i = 0; i < 20; i++) {
+          if (innerHeight === last) break
+          last = innerHeight
+          await new Promise((r) => setTimeout(r, 100))
+        }
         const r = document.querySelector('.pet-device').getBoundingClientRect()
         return { h: innerHeight, bottom: Math.round(r.bottom), clipped: r.bottom > innerHeight }
       }
-      const before = read()
+      const before = await read()
       // Fold it down and back from its own setup screen: the window must follow,
       // and must not creep.
       const press = (k) => document.querySelector('[data-key="' + k + '"]')?.click()
@@ -621,9 +630,9 @@ async function main() {
         }
       }
       await size('screen')
-      const folded = read()
+      const folded = await read()
       await size('full')
-      const back = read()
+      const back = await read()
       return { before, folded, back }
     })()`)
     // The floating window is moved by the OS through -webkit-app-region, which
