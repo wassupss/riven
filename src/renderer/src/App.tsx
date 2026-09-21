@@ -18,6 +18,7 @@ import AskUserModal from './components/AskUserModal'
 import PetHost from './components/PetHost'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
+import { useUsage } from './state/usage'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
@@ -123,7 +124,8 @@ export default function App(): JSX.Element {
         rosterFor,
         askUser: useAskUser,
         pet: usePet,
-        settings: useSettings
+        settings: useSettings,
+        usage: useUsage
       }
     }
     registerSnippets()

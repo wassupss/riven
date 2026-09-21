@@ -40,6 +40,26 @@ function onScreen(x: number, y: number, width: number, height: number): boolean 
   })
 }
 
+/**
+ * Where the pet appears the first time. Beside riven's own window, NOT in the
+ * far corner of the display: on a wide screen that corner can be a metre from
+ * what you are looking at, and popping the pet out looked like losing it.
+ */
+function firstSpot(): { x: number; y: number } {
+  const app = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w !== win)
+  const area = app
+    ? screen.getDisplayMatching(app.getBounds()).workArea
+    : screen.getPrimaryDisplay().workArea
+  const anchor = app ? app.getBounds() : area
+  // Just inside the app's bottom-right corner, then clamped onto the display.
+  const x = anchor.x + anchor.width - DEFAULT_SIZE.width - 28
+  const y = anchor.y + anchor.height - DEFAULT_SIZE.height - 28
+  return {
+    x: Math.min(Math.max(area.x + 8, x), area.x + area.width - DEFAULT_SIZE.width - 8),
+    y: Math.min(Math.max(area.y + 8, y), area.y + area.height - DEFAULT_SIZE.height - 8)
+  }
+}
+
 function broadcast(channel: string): void {
   for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel)
 }
@@ -51,9 +71,8 @@ async function open(): Promise<void> {
   }
   const saved = await readBounds()
   const fits = saved && onScreen(saved.x, saved.y, DEFAULT_SIZE.width, DEFAULT_SIZE.height)
-  const work = screen.getPrimaryDisplay().workArea
-  const x = fits ? saved!.x : work.x + work.width - DEFAULT_SIZE.width - 24
-  const y = fits ? saved!.y : work.y + work.height - DEFAULT_SIZE.height - 24
+  const spot = fits ? saved! : firstSpot()
+  const { x, y } = spot
 
   win = new BrowserWindow({
     ...DEFAULT_SIZE,
@@ -118,13 +137,18 @@ export function registerPetHandlers(): void {
     closePetWindow()
     broadcast('pet:hidden')
   })
-  // The device measures itself and asks for a window that fits — folding it down
-  // or opening its details changes how tall it is.
+  // The device measures itself and asks for a window that fits — folding it down,
+  // opening a screen, or speaking changes how tall it is.
+  //
+  // The window grows from its BOTTOM edge: the device sits at the bottom of the
+  // glass, so anchoring there keeps the pet still while a speech balloon opens
+  // above it. Growing downward made the pet slide down the screen mid-sentence.
   ipcMain.handle('pet:resize', (_e, height: number) => {
     if (!win || win.isDestroyed()) return
     const h = Math.max(120, Math.min(900, Math.round(height)))
-    const [w] = win.getSize()
-    win.setSize(w, h, false)
+    const b = win.getBounds()
+    if (b.height === h) return
+    win.setBounds({ x: b.x, y: b.y + (b.height - h), width: b.width, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
 }

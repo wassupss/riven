@@ -540,9 +540,9 @@ describe('feedStreak', () => {
 })
 
 describe('awards', () => {
-  const ids = (s: TamagotchiLike, now = T0): string[] =>
+  const ids = (s: PetLike, now = T0): string[] =>
     awardsOf(s, now).filter((a) => a.done).map((a) => a.id)
-  type TamagotchiLike = Parameters<typeof awardsOf>[0]
+  type PetLike = Parameters<typeof awardsOf>[0]
 
   it('starts with nothing to show for itself', () => {
     expect(ids(base())).toEqual([])

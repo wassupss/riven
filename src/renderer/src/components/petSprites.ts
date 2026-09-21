@@ -237,6 +237,16 @@ export const FACES: Record<Mood, string[]> = {
 export const POOP = ['..p..', '.ppp.', 'ppppp']
 export const ZZZ = ['ppp', '.pp', 'pp.', 'ppp']
 export const CROSS = ['.p.', 'ppp', '.p.']
+
+// Props for what the watched pane is doing: a book (reading), a pen (writing), a
+// prompt (running), a lens (searching), a globe (fetching).
+export const MIMES: Record<string, string[]> = {
+  read: ['pppp', 'p..p', 'p..p', 'pppp'],
+  write: ['...p', '..pp', '.pp.', 'pp..'],
+  run: ['pppp', 'p.pp', 'pp.p', 'pppp'],
+  search: ['.pp.', 'p..p', '.pp.', '...p'],
+  web: ['.pp.', 'pppp', 'pppp', '.pp.']
+}
 export const ARROW_LEFT = ['..p.', '.pp.', 'pppp', '.pp.', '..p.']
 export const ARROW_RIGHT = ['.p..', '.pp.', 'pppp', '.pp.', '.p..']
 

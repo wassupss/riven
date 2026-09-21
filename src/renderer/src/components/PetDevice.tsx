@@ -18,20 +18,27 @@ import {
   Pill,
   Settings,
   Smile,
+  MessageCircle,
   Trash2,
   Utensils,
   X
 } from 'lucide-react'
 import { useT, type TFn } from '../i18n'
-import { fmtTokens, useUsage } from '../state/usage'
+import { fmtTokens, tightestLimit, useUsage } from '../state/usage'
+import { useRoster, workspaceOfPane } from '../state/roster'
+import { useSession, workspaceName } from '../state/session'
+import { useAgentEdits } from '../state/agentEdits'
+import { answer as talkAnswer } from '../state/petTalk'
+import { getActiveApi } from '../dock/registry'
 import { useSettings, type PetChrome } from '../state/settings'
 import { promptInput } from './promptInput'
-import { ARROW_LEFT, ARROW_RIGHT, CROSS, POOP, ZZZ, pixelsOf, SPRITE_SIZE } from './petSprites'
+import { ARROW_LEFT, ARROW_RIGHT, CROSS, MIMES, POOP, ZZZ, pixelsOf, SPRITE_SIZE } from './petSprites'
 import {
   awardsOf,
   dietOf,
   flushPetSave,
   freshByFlavor,
+  freshTokens,
   growthOf,
   isNight,
   moodOf,
@@ -66,12 +73,38 @@ const CHEW_MS = 1600
 const FLASH_MS = 1800
 const MARGIN = 12
 
-type ScreenMode = 'char' | 'clock' | 'stats' | 'graph' | 'awards' | 'album' | 'settings'
+type ScreenMode = 'char' | 'clock' | 'stats' | 'graph' | 'awards' | 'album' | 'settings' | 'talk'
+
+/** A turn that finished somewhere, kept just long enough to be asked about. */
+interface Finished {
+  workspace: string
+  title: string
+  at: number
+  failed: boolean
+}
+const RECENT_KEEP = 8
+// One announcement at a time, and never the same turn twice.
+const NOTICE_MS = 4000
+// An answer is a sentence, not a mood — give it time to be read.
+const ANSWER_MS = 7000
 const GRAPH_DAYS = 7
 
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
 const PICK_MS = 1600
+// A mime is held this long and never queued: one turn fires dozens of tools.
+const MIME_MS = 1400
+
+// Which tools are worth acting out. Anything else is left to the busy count.
+function mimeOf(tool: string): string | null {
+  const n = tool.toLowerCase()
+  if (n.includes('read') || n.includes('notebook')) return 'read'
+  if (n.includes('edit') || n.includes('write')) return 'write'
+  if (n.includes('bash') || n.includes('terminal')) return 'run'
+  if (n.includes('grep') || n.includes('glob') || n.includes('search')) return 'search'
+  if (n.includes('web') || n.includes('fetch')) return 'web'
+  return null
+}
 
 // Korean marks the subject with 이 after a final consonant and 가 otherwise —
 // "아이가 됐다", "청소년이 됐다". Left alone for anything that isn't Hangul, so
@@ -218,6 +251,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const playRound = usePet((s) => s.playRound)
   const rename = usePet((s) => s.rename)
   const reset = usePet((s) => s.reset)
+  // What the workspaces are doing right now. The roster is app-wide on purpose:
+  // a turn running in a workspace that is not on screen is exactly the one worth
+  // telling you about.
+  const live = useRoster((s) => s.live)
+  const wsNames = useSession((s) => s.names)
+  const editedToday = useAgentEdits((s) => s.timeline)
+  const [recent, setRecent] = useState<Finished[]>([])
   const accounts = useUsage((s) => s.accounts)
   const fallbackToday = useUsage((s) => s.today)
   const acquire = useUsage((s) => s.acquire)
@@ -225,14 +265,21 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   const ref = useRef<HTMLDivElement>(null)
   const [awake, setAwake] = useState(true)
+  const awakeRef = useRef(true)
   const [chewing, setChewing] = useState(false)
+  // What the pet is miming right now (the tool the watched pane just ran).
+  const [mime, setMime] = useState<string | null>(null)
+  const mimeRef = useRef(false)
   const [mode, setMode] = useState<ScreenMode>('char')
   // Which LCD icon the highlight is on — null when none is, which is how a real
   // one idles. The settings screen has its own row cursor.
   const [sel, setSel] = useState<number | null>(null)
   const [row, setRow] = useState(0)
   const [guessing, setGuessing] = useState(false)
+  // The screen's top line: what the cursor is on. A label, not a voice.
   const [flash, setFlash] = useState<string | null>(null)
+  // What the pet is actually saying — answers, and news from the workspaces.
+  const [speech, setSpeech] = useState<string | null>(null)
   // Re-rendered on the tick, so the pet nods off and wakes up on the hour
   // without a timer of its own.
   const [nowTick, setNowTick] = useState(() => Date.now())
@@ -271,13 +318,21 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   }, [show, detached, acquire, release])
 
   useEffect(() => {
-    const compute = (): void => setAwake(document.visibilityState === 'visible' && document.hasFocus())
+    const compute = (): void => {
+      const next = document.visibilityState === 'visible' && document.hasFocus()
+      awakeRef.current = next
+      setAwake(next)
+    }
     compute()
     // The floating window is deliberately never focused (showInactive), so for it
     // "awake" is just "is this window visible" — otherwise the desk pet would sit
     // frozen forever while you work in another app, which is exactly when you
     // want to see it.
-    const computeDetached = (): void => setAwake(document.visibilityState === 'visible')
+    const computeDetached = (): void => {
+      const next = document.visibilityState === 'visible'
+      awakeRef.current = next
+      setAwake(next)
+    }
     const fn = detached ? computeDetached : compute
     fn()
     window.addEventListener('focus', fn)
@@ -342,14 +397,51 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     later(() => setChewing(false), CHEW_MS)
   }, [pet.lastFedAt, later])
 
-  // A finished turn means tokens have just been spent: ask usage now instead of
-  // waiting out the poll. (Only the app window receives chat events.)
+  // ---- reacting to the work ----
+  //
+  // Chat events arrive for EVERY pane in every workspace, dozens per turn. Two
+  // rules keep that from turning the pet into a strobe:
+  //
+  //  · a tool is mimed only when it comes from the pane you are actually looking
+  //    at — a mime needs one subject, and that is the one you can follow;
+  //  · a turn ENDING is announced wherever it happened, because that is the bit
+  //    you want while looking away. It is announced once, in words, naming the
+  //    workspace, and only for panes you are not already watching.
+  //
+  // Everything else is absorbed by the busy count above.
+  const busyRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (detached) return
     return window.api.chat.onEvent((e) => {
-      if (e.kind === 'turnDone') useUsage.getState().refresh()
+      const ws = workspaceOfPane(e.key)
+      const watching =
+        useSession.getState().activeWorkspace === ws && getActiveApi()?.activePanel?.id === e.key
+
+      if (e.kind === 'tool') {
+        if (!watching || !awakeRef.current || mimeRef.current) return
+        const mime = mimeOf(e.name)
+        if (!mime) return
+        setMime(mime)
+        mimeRef.current = true
+        later(() => {
+          setMime(null)
+          mimeRef.current = false
+        }, MIME_MS)
+        return
+      }
+
+      if (e.kind !== 'turnDone') return
+      // Tokens have just been spent: ask usage now rather than waiting the poll.
+      useUsage.getState().refresh()
+      const where = workspaceName(ws ?? '', useSession.getState().names)
+      if (!where) return
+      const entry: Finished = { workspace: where, title: e.key, at: Date.now(), failed: !!e.error }
+      setRecent((r) => [entry, ...r].slice(0, RECENT_KEEP))
+      // Saying "done" about the pane you are staring at is noise.
+      if (watching && !e.error) return
+      speak(t(e.error ? 'pet.notice.failed' : 'pet.notice.done', { where }), NOTICE_MS)
     })
-  }, [detached])
+  }, [detached, later, t])
 
   // ---- the floating window: keep it sized to the device ----
   useLayoutEffect(() => {
@@ -445,6 +537,27 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (d.moved) setSettings({ petPos: { x: d.x, y: d.y } })
   }
 
+  // ONE aggregate, never a feed: how many agent panes are working, and where.
+  // With four workspaces × four panes this still says something; a per-event
+  // animation would just be a seizure.
+  const busy = useMemo(
+    () =>
+      Object.entries(live)
+        .filter(([, l]) => l.busy)
+        .map(([key]) => ({
+          workspace: workspaceName(workspaceOfPane(key) ?? '', wsNames),
+          title: live[key]?.tabTitle ?? key
+        }))
+        .filter((b) => b.workspace),
+    [live, wsNames]
+  )
+  // The tightest plan window across the accounts — the one that will bite first.
+  const limit = useMemo(() => {
+    const all = accounts.map(tightestLimit).filter((l): l is NonNullable<typeof l> => !!l)
+    if (!all.length) return null
+    return all.reduce((worst, l) => (l.usedPct > worst.usedPct ? l : worst))
+  }, [accounts])
+
   const growth = useMemo(() => growthOf(pet, Date.now()), [pet])
   // Sleep is a property of the clock, not of the pet: the logic layer stays free
   // of "what time is it" and the device decides (see isNight).
@@ -464,19 +577,25 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // One short line, the most pressing thing first. Deliberately absent in 'bare'
   // (that mode is the creature and nothing else).
-  const bubble = sleeping
+  const bubble =
+    speech ??
+    (sleeping
     ? t('pet.say.sleep')
     : pet.sick
       ? t('pet.say.sick')
-      : chewing
-        ? t('pet.say.eat')
-        : pet.poops >= MAX_POOPS
-          ? t('pet.say.dirty')
-          : pet.fullness < HUNGRY_AT
-            ? t('pet.say.hungry')
-            : pet.mood < 45
-              ? t('pet.say.bored')
-              : null
+      : limit && limit.usedPct >= 90
+        ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
+        : busy.length >= 4
+          ? t('pet.say.swamped', { n: busy.length })
+          : chewing
+            ? t('pet.say.eat')
+            : pet.poops >= MAX_POOPS
+              ? t('pet.say.dirty')
+            : pet.fullness < HUNGRY_AT
+              ? t('pet.say.hungry')
+              : pet.mood < 45
+                ? t('pet.say.bored')
+                : null)
 
   // ---- the icon menu ----
   // The real thing prints its functions around the screen and you pick one with
@@ -499,10 +618,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setFlash(msg)
     later(() => setFlash((f) => (f === msg ? null : f)), ms)
   }
+  /** The pet speaks: it goes in the balloon, where it can be read. */
+  const speak = (msg: string, ms = ANSWER_MS): void => {
+    setSpeech(msg)
+    later(() => setSpeech((v) => (v === msg ? null : v)), ms)
+  }
   const doGuess = (guess: 'left' | 'right'): void => {
     const r = playRound(guess)
     setGuessing(false)
-    if (!r) return say(t('pet.play.declined'))
+    if (!r) return speak(t('pet.play.declined'))
     say(r.win ? t('pet.play.win') : t('pet.play.lose'))
   }
   // ---- the menu strip, and the three keys that drive it ----
@@ -532,8 +656,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       label: t('pet.play'),
       node: <Gamepad2 size={11} />,
       run: () => {
-        if (growth.stage === 'egg') return say(t('pet.say.egg'))
-        if (sleeping) return say(t('pet.say.sleep'))
+        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
+        if (sleeping) return speak(t('pet.say.sleep'))
         setMode('char')
         setGuessing(true)
       }
@@ -544,9 +668,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       node: <Trash2 size={11} />,
       alert: pet.poops > 0,
       run: () => {
-        if (pet.poops === 0) return say(t('pet.say.alreadyClean'))
+        if (pet.poops === 0) return speak(t('pet.say.alreadyClean'))
         cleanUp()
-        say(t('pet.cleaned'))
+        speak(t('pet.cleaned'))
       }
     },
     {
@@ -555,9 +679,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       node: <Pill size={11} />,
       alert: pet.sick,
       run: () => {
-        if (!pet.sick) return say(t('pet.say.notIll'))
+        if (!pet.sick) return speak(t('pet.say.notIll'))
         giveMedicine()
-        say(t('pet.cured'))
+        speak(t('pet.cured'))
       }
     },
     {
@@ -565,14 +689,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       label: t('pet.pet'),
       node: <Heart size={11} />,
       run: () => {
-        if (growth.stage === 'egg') return say(t('pet.say.egg'))
-        if (sleeping) return say(t('pet.say.sleep'))
+        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
+        if (sleeping) return speak(t('pet.say.sleep'))
         patHead()
-        say(t('pet.patted'))
+        speak(t('pet.patted'))
       }
     },
     { id: 'meter', label: t('pet.mode.stats'), node: <ListTree size={11} />, run: () => setMode('stats') },
     { id: 'album', label: t('pet.mode.album'), node: <BookOpen size={11} />, run: () => setMode('album') },
+    { id: 'talk', label: t('pet.talk.label'), node: <MessageCircle size={11} />, run: () => setMode('talk') },
     { id: 'settings', label: t('pet.settings'), node: <Settings size={11} />, run: () => setMode('settings') }
   ]
 
@@ -600,6 +725,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     icons[sel].run()
   }
   const pressC = (): void => {
+    // C is "never mind": it also shuts the pet up, so a long answer can be
+    // dismissed instead of waited out.
+    setSpeech(null)
     if (guessing) return setGuessing(false)
     if (mode !== 'char') {
       setMode('char')
@@ -638,6 +766,30 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         return
     }
   }
+  // Ask it something. Every answer is read off what riven already knows, so it
+  // costs nothing and cannot invent anything (see state/petTalk.ts).
+  const ask = (question: string): void => {
+    const q = question.trim()
+    if (!q) return
+    // It answers by SAYING it — the screen goes back to the pet and the balloon
+    // carries the reply. A transcript would just be a small chat window, and
+    // there is a real one of those two panes away.
+    const said = talkAnswer(q, {
+      pet,
+      now: Date.now(),
+      busy,
+      recent,
+      todayTokens: accounts.reduce((n, a) => n + freshTokens(a.today), 0),
+      limit,
+      editedFiles: new Set(editedToday.map((e) => e.path)).size,
+      dur: (ms) => dur(t, ms),
+      fmt: fmtTokens,
+      t
+    })
+    setMode('char')
+    speak(said.text)
+  }
+
   const clockTime = new Date(nowTick).toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit'
@@ -688,7 +840,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'char' && (
         <div className="pet-yard">
-          {bubble && !guessing && <div className="pet-bubble">{bubble}</div>}
           {guessing && <Glyph rows={ARROW_LEFT} className="pet-arrow left" />}
           <Creature
             stage={growth.stage}
@@ -699,6 +850,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             evolving={evolving}
           />
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
+          {/* What the pane you are watching is doing, acted out. */}
+          {mime && !sleeping && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
           {guessing && <Glyph rows={ARROW_RIGHT} className="pet-arrow right" />}
           {/* The floor: what it has left lying around, and whether it needs a doctor. */}
           <div className="pet-floor">
@@ -754,6 +907,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dt>{t('pet.stat.games')}</dt>
             <dd>{pet.plays ? t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays }) : t('pet.never')}</dd>
           </div>
+          {limit && (
+            <div>
+              <dt>{t('pet.stat.limit')}</dt>
+              <dd className={limit.usedPct >= 90 ? 'warn' : undefined}>
+                {t('pet.stat.limitValue', {
+                  left: Math.max(0, 100 - Math.round(limit.usedPct)),
+                  in: limit.resetsAt ? dur(t, new Date(limit.resetsAt).getTime() - nowTick) : '—'
+                })}
+              </dd>
+            </div>
+          )}
           <div>
             <dt>{t('pet.stat.diet')}</dt>
             <dd>
@@ -813,10 +977,21 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         </div>
       )}
 
+      {mode === 'talk' && (
+        <div className="pet-talk">
+          <p className="pet-empty">{t('pet.talk.prompt')}</p>
+        </div>
+      )}
+
       {mode === 'clock' && (
         <div className="pet-clock">
           <b>{clockTime}</b>
           <span>{t('pet.clock.age', { age: dur(t, Date.now() - pet.bornAt) })}</span>
+          {limit?.resetsAt && (
+            <span>
+              {t('pet.clock.reset', { in: dur(t, new Date(limit.resetsAt).getTime() - nowTick) })}
+            </span>
+          )}
         </div>
       )}
 
@@ -836,7 +1011,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       )}
 
       {/* The menu: one strip along the foot of the screen, walked with A. */}
-      {iconRow(0, 8)}
+      {iconRow(0, 9)}
     </div>
   )
 
@@ -886,6 +1061,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
+      {/* What it is saying, above the device and in readable type. Inside the
+          glass it was eight pixels tall and nobody could read it. */}
+      {bubble && !guessing && chrome !== 'bare' && (
+        <div className="pet-balloon" key={bubble}>
+          {bubble}
+        </div>
+      )}
       {chrome === 'bare' ? (
         <>
           {/* With every scrap of UI hidden there is nothing left to press, so
@@ -944,6 +1126,26 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         <div className="pet-unit">
           <div className="pet-case">
             <div className="pet-bezel">{screen}</div>
+            {(mode === 'talk' || icons[sel ?? -1]?.id === 'talk') && (
+              <form
+                className="pet-ask"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const el = e.currentTarget.elements.namedItem('q') as HTMLInputElement
+                  ask(el.value)
+                  el.value = ''
+                }}
+              >
+                <input
+                  name="q"
+                  autoFocus
+                  autoComplete="off"
+                  placeholder={t('pet.talk.placeholder')}
+                  // The device is a drag handle; the field must not be one.
+                  onPointerDown={(e) => e.stopPropagation()}
+                />
+              </form>
+            )}
             <div className="pet-deck">
               <span className="pet-logo">{t('pet.title')}</span>
               <span className="pet-led" aria-hidden="true" />
