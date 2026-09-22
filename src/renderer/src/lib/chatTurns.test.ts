@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { settleStaleTurns, type TurnLike } from './chatTurns'
+import { settleStaleTurns, type TurnLike, isStaleEvent } from './chatTurns'
 
 const user = (text: string): TurnLike => ({
   role: 'user',
@@ -45,5 +45,21 @@ describe('settleStaleTurns', () => {
   it('leaves a settled transcript alone', () => {
     const msgs = [user('q'), answer('done', true)]
     expect(settleStaleTurns(msgs, 5000)).toEqual(msgs)
+  })
+})
+
+describe('isStaleEvent', () => {
+  it('keeps events for the turn that is open', () => {
+    expect(isStaleEvent('t2', 't2')).toBe(false)
+  })
+
+  it('drops an event from a turn that has been left behind', () => {
+    expect(isStaleEvent('t1', 't2')).toBe(true)
+  })
+
+  it('never drops what it cannot place', () => {
+    expect(isStaleEvent(undefined, 't2')).toBe(false) // main did not tag it
+    expect(isStaleEvent('t1', null)).toBe(false) // no turn open here
+    expect(isStaleEvent(null, undefined)).toBe(false)
   })
 })

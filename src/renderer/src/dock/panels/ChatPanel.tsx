@@ -45,7 +45,7 @@ import { useT, t as staticT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
-import { settleStaleTurns } from '../../lib/chatTurns'
+import { settleStaleTurns, isStaleEvent } from '../../lib/chatTurns'
 import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
@@ -1691,6 +1691,12 @@ export default function ChatPanel({
     })
     const off = window.api.chat.onEvent((e) => {
       if (e.key !== chatKey) return
+      // A turn that has already been closed on this side (Esc/Stop, a steer, the
+      // no-response watchdog) can still have its result on the way. It belongs to
+      // that turn, not to the message the user has sent since — applying it here
+      // closed the new bubble a second after it opened, and the message looked
+      // answered by nothing.
+      if (isStaleEvent(e.turn, openTurnRef.current)) return
       lastEventRef.current = Date.now()
       switch (e.kind) {
         case 'init':
@@ -1798,6 +1804,7 @@ export default function ChatPanel({
           // busy). Otherwise the turn is truly done: settle status + notify.
           const drained = drainQueue()
           if (!drained) {
+            openTurnRef.current = null
             setBusy(false)
             // Rail status: draw the done checkmark, then settle back to idle.
             setAgentStatus(chatKey, e.error ? 'idle' : 'done')
@@ -1989,6 +1996,14 @@ export default function ChatPanel({
   // When this pane last heard ANYTHING from its agent, so a turn that goes
   // silent can be given up on instead of shimmering forever.
   const lastEventRef = useRef(0)
+  // The turn the open answer bubble is waiting for. Every send stamps one, and
+  // events for any other turn are ignored (see isStaleEvent).
+  const openTurnRef = useRef<string | null>(null)
+  const newTurnId = (): string => {
+    const id = crypto.randomUUID()
+    openTurnRef.current = id
+    return id
+  }
   // Messages typed while a turn was running, sent one-by-one as turns finish.
   const queuedRef = useRef<Array<{ text: string; images: ChatImage[] }>>([])
   // True when we interrupted the current turn to steer it with a new message —
@@ -2009,7 +2024,7 @@ export default function ChatPanel({
     })
     setBusy(true)
     setAgentStatus(chatKey, 'busy')
-    window.api.chat.send(chatKey, next.text, next.images)
+    window.api.chat.send(chatKey, next.text, next.images, newTurnId())
     return true
   }
   // Stop means stop: interrupt the current turn AND drop anything queued.
@@ -2032,6 +2047,7 @@ export default function ChatPanel({
     )
     setBusy(false)
     setAgentStatus(chatKey, 'idle')
+    openTurnRef.current = null
   }
   // A turn with nobody behind it: the child died, or the message never reached
   // one — the pane would sit on "writing" forever with everything queued behind
@@ -2046,8 +2062,11 @@ export default function ChatPanel({
     const id = setInterval(() => {
       if (stop || !busyRef.current) return
       if (Date.now() - lastEventRef.current < SILENT_TURN_MS) return
+      const watching = openTurnRef.current
       void window.api.chat.alive(chatKey).then((state) => {
         if (stop || !busyRef.current) return
+        // A turn that started while we were asking is not the one we doubted.
+        if (openTurnRef.current !== watching) return
         // Still there and still working — just quiet. Leave it alone.
         if (state.alive && state.running) {
           lastEventRef.current = Date.now()
@@ -2074,9 +2093,12 @@ export default function ChatPanel({
     setMsgs((all) => all.filter((m) => !m.queued))
     window.api.chat.interrupt(chatKey)
     // The CLI normally answers with a turnDone; if it doesn't (dead child, a
-    // message that never reached it), stop still means stop.
+    // message that never reached it), stop still means stop. Only for THIS turn,
+    // though: the user often types the next message straight after stopping, and
+    // this used to end that one too.
+    const stopping = openTurnRef.current
     setTimeout(() => {
-      if (busyRef.current) endTurnLocally()
+      if (busyRef.current && openTurnRef.current === stopping) endTurnLocally()
     }, 1500)
   }
   const sendMessage = useCallback(
@@ -2134,7 +2156,8 @@ export default function ChatPanel({
       window.api.chat.send(
         chatKey,
         clean,
-        images.map(({ mediaType, data, name }) => ({ mediaType, data, name }))
+        images.map(({ mediaType, data, name }) => ({ mediaType, data, name })),
+        newTurnId()
       )
     },
     [chatKey, setTitle, savePane]
