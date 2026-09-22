@@ -185,6 +185,11 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200))
     return out
   })()`)
+  // The totals are NOT hard-coded: this is a dev app watching real accounts, and
+  // a usage poll landing mid-check feeds the pet a kibble or two. What must hold
+  // is the shape — seven days, the gaps drawn, the scale printed and consistent.
+  const weekSum = Number(log.head.match(/(\d+)\D*$/)?.[1] ?? -1)
+  const todayN = Number(log.foot.match(/(\d+)/)?.[1] ?? -1)
   check(
     'the feed log draws the whole week, gaps and all',
     log.bars.length === 7 &&
@@ -192,8 +197,10 @@ async function main() {
       log.bars[2].h === '100%' &&          // the 120-kibble day is the tallest
       log.bars[0].h !== '100%' &&          // 40 kibble is NOT full height
       log.bars[6].today &&
-      /120/.test(log.head) && /235/.test(log.head) && /75/.test(log.foot),
-    JSON.stringify(log)
+      /120/.test(log.head) &&              // the peak is printed
+      weekSum >= 235 && todayN >= 75 &&    // 40 + 120 + today, today ≥ what we set
+      weekSum === 160 + todayN,            // and the total is the days added up
+    JSON.stringify({ ...log, weekSum, todayN })
   )
 
   // Neglect: rewind the tick clock and let the device's tick charge for it. Thirty
@@ -634,15 +641,20 @@ async function main() {
                  cls: document.querySelector('.pet-device')?.className ?? 'no device' }
       // Resizing the window is a round trip (renderer → main → setBounds → new
       // viewport), so a size read the instant the class flips is reading the OLD
-      // window. Wait for innerHeight to hold still first.
+      // window — and "innerHeight did not change over 100ms" is true DURING that
+      // round trip, which used to report a window that had simply not grown yet.
+      // Wait for the device to fit and the height to hold, then read; a window
+      // that never fits just burns the timeout and still fails the check.
       const read = async () => {
+        const box = () => document.querySelector('.pet-device').getBoundingClientRect()
         let last = -1
-        for (let i = 0; i < 20; i++) {
-          if (innerHeight === last) break
+        for (let i = 0; i < 40; i++) {
+          const fits = box().bottom <= innerHeight
+          if (fits && innerHeight === last) break
           last = innerHeight
           await new Promise((r) => setTimeout(r, 100))
         }
-        const r = document.querySelector('.pet-device').getBoundingClientRect()
+        const r = box()
         return { h: innerHeight, bottom: Math.round(r.bottom), clipped: r.bottom > innerHeight }
       }
       const before = await read()
@@ -700,7 +712,7 @@ async function main() {
       JSON.stringify(grabbable)
     )
 
-    // The keys are bound to ⌘; / ⌘' / ⌘Escape — two-finger chords on neighbouring
+    // The keys are bound to ⌘L / ⌘; / ⌘' — two-finger chords on neighbouring
     // keys, after ⌘⌥A/S/D turned out to be a shortcut nobody presses. The stroke
     // lands in whichever window has focus, so it is relayed through main: pressing
     // from the APP has to drive the device in its OWN window.

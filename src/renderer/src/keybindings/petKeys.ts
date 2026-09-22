@@ -7,14 +7,14 @@
 // would work in one window and not the other.
 
 export const PET_KEY_DEFS: Array<{ key: 'a' | 'b' | 'c'; def: string; label: string }> = [
-  // Two-finger chords on keys that sit next to each other. The first cut used
-  // ⌘⌥A / S / D, and a three-finger stretch to feed a pet is a shortcut nobody
-  // presses. ⌘; and ⌘' are unclaimed — by riven, by Monaco (⌘[ / ⌘] indent, ⌘/
-  // comments) and by the shell — and C is Escape, which already means "never
-  // mind" everywhere.
-  { key: 'a', def: 'Mod+;', label: '리븐펫 A · 아이콘 이동' },
-  { key: 'b', def: "Mod+'", label: '리븐펫 B · 실행' },
-  { key: 'c', def: 'Mod+Escape', label: '리븐펫 C · 취소 / 뒤로' }
+  // L, ; and ' — three keys next to each other on the home row, under one hand,
+  // in the same order as the three buttons on the case. Two fingers, not the
+  // three-finger stretch of the first cut (⌘⌥A / S / D), which is a shortcut
+  // nobody presses. None of them is claimed by riven or the shell; ⌘L is Monaco's
+  // select-line inside the code editor, and this shadows it there.
+  { key: 'a', def: 'Mod+l', label: '리븐펫 A · 아이콘 이동' },
+  { key: 'b', def: 'Mod+;', label: '리븐펫 B · 실행' },
+  { key: 'c', def: "Mod+'", label: '리븐펫 C · 취소 / 뒤로' }
 ]
 
 /** id → chord, with the user's overrides applied. */
