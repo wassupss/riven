@@ -1481,6 +1481,15 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   )
 }
 
+// "3분 전" — a timeline is read newest-last, so how long ago matters more than
+// the clock time.
+function ago(at: number, t: TFn): string {
+  const mins = Math.floor((Date.now() - at) / 60000)
+  if (mins < 1) return t('team.justNow')
+  if (mins < 60) return t('team.minsAgo', { n: mins })
+  return t('team.hoursAgo', { n: Math.floor(mins / 60) })
+}
+
 // Telling the group something, and watching what it does about it.
 //
 // Both halves were missing: there was no way to put a task to a team except by
@@ -1499,6 +1508,13 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
   // answers to the user with nobody collecting them — the org chart existed and
   // was ignored.
   const [picked, setPicked] = useState<string[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Korean input commits a syllable on the same Enter that sends. Send read
+  // React's state, which still lagged the DOM, and the IME then put the
+  // in-progress syllable back into the cleared box — every message left its last
+  // word behind. So: ignore Enter mid-composition, and take the text from the
+  // DOM, which is where the committed characters actually are.
+  const composing = useRef(false)
   // The selector must return what is IN the store, never a fresh value: zustand
   // compares with Object.is, so a `?? []` inside it hands back a new array on
   // every render and the component re-renders forever ("Maximum update depth
@@ -1519,10 +1535,11 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
   }
 
   const send = async (): Promise<void> => {
-    const msg = text.trim()
+    const msg = (inputRef.current?.value ?? text).trim()
     if (!msg || sending || !roster?.members.length) return
     setSending(true)
     setText('')
+    if (inputRef.current) inputRef.current.value = ''
     const targets = picked.length
       ? roster.members.filter((m) => picked.includes(m.chatKey))
       : roster.members.slice(0, 1) // the lead
@@ -1553,15 +1570,26 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
     <div className="agp-talk">
       <div className="agp-talk-log">
         {mine.length === 0 && <div className="agp-talk-empty">{t('team.logEmpty')}</div>}
-        {mine.map((e) => (
-          <div key={e.id} className={`agp-ev agp-ev-${e.kind}`}>
-            <span className="agp-ev-who">
-              {titleOf(e.from)}
-              {e.to ? ` → ${titleOf(e.to)}` : ''}
-            </span>
-            <span className="agp-ev-text">{e.text}</span>
-          </div>
-        ))}
+        {mine.map((e, i) => {
+          // A run of entries from the same speaker reads as one block: the name
+          // is printed once and the rest are indented under it. One line per
+          // event with the name repeated was a wall nobody could follow.
+          const prev = mine[i - 1]
+          const runOn = prev && prev.from === e.from && prev.kind === e.kind && e.at - prev.at < 60_000
+          return (
+            <div key={e.id} className={`agp-ev agp-ev-${e.kind}${runOn ? ' run-on' : ''}`}>
+              {!runOn && (
+                <div className="agp-ev-head">
+                  <span className="agp-ev-who">{titleOf(e.from)}</span>
+                  {e.to && <span className="agp-ev-to">→ {titleOf(e.to)}</span>}
+                  <span className="agp-ev-kind">{t(`team.ev.${e.kind}`)}</span>
+                  <time className="agp-ev-at">{ago(e.at, t)}</time>
+                </div>
+              )}
+              <div className="agp-ev-text">{e.text}</div>
+            </div>
+          )
+        })}
         <div ref={endRef} />
       </div>
       <div className="agp-talk-to">
@@ -1594,15 +1622,19 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
       </div>
       <div className="agp-talk-box">
         <input
+          ref={inputRef}
           className="agp-talk-input"
           value={text}
           placeholder={t('team.talkPlaceholder')}
           onChange={(e) => setText(e.target.value)}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
+            if (e.key !== 'Enter' || e.shiftKey) return
+            // Let the IME finish the syllable this Enter is committing.
+            if (composing.current || e.nativeEvent.isComposing) return
+            e.preventDefault()
+            void send()
           }}
         />
 
@@ -1625,6 +1657,8 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
 function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.Element {
   const t = useT()
   const [text, setText] = useState('')
+  const postRef = useRef<HTMLInputElement>(null)
+  const composing = useRef(false)
   const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === goal.group)
   const nameOf = (key: string): string =>
     key === 'user' ? t('team.you') : roster?.members.find((m) => m.chatKey === key)?.name ?? key.slice(0, 9)
@@ -1679,16 +1713,22 @@ function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.
       {goal.status === 'open' && (
         <div className="agp-talk-box">
           <input
+            ref={postRef}
             className="agp-talk-input"
             value={text}
             placeholder={t('goal.postPlaceholder')}
             onChange={(e) => setText(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
-                e.preventDefault()
-                useGoals.getState().post(goal.id, { round: goal.round, by: 'user', kind: 'note', text })
-                setText('')
-              }
+              if (e.key !== 'Enter' || e.shiftKey) return
+              if (composing.current || e.nativeEvent.isComposing) return
+              const value = (postRef.current?.value ?? text).trim()
+              if (!value) return
+              e.preventDefault()
+              useGoals.getState().post(goal.id, { round: goal.round, by: 'user', kind: 'note', text: value })
+              setText('')
+              if (postRef.current) postRef.current.value = ''
             }}
           />
         </div>

@@ -760,3 +760,58 @@
   border: 1px solid var(--edge);
   border-radius: var(--radius-full);
 }
+
+/* ---- narrow panes -----------------------------------------------------------
+   This panel lives in a dock slot the user can drag to any width, and at ~380px
+   the two-column card grid, the hint line and the fixed-width chart cards all
+   fought each other. Container queries, not viewport ones: what matters is how
+   wide THIS pane is, not the window. */
+.agent-group-panel {
+  container-type: inline-size;
+  container-name: agp;
+}
+
+@container agp (max-width: 460px) {
+  /* The explainer under the title is for a first visit; the pane is too narrow
+     to spend three lines on it. */
+  .agp-hint {
+    display: none;
+  }
+  .agp-head {
+    padding: 10px 10px 8px;
+  }
+  .agp-tabs {
+    padding: 0 10px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .agp-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .agp-body {
+    padding: 10px;
+  }
+  /* One member per row: at this width two columns left no room for the name. */
+  .agp-grid {
+    grid-template-columns: 1fr;
+  }
+  /* The chart keeps its card size (a squeezed card is unreadable) and scrolls
+     sideways instead, which is what the wrapper is for. */
+  .agp-chartwrap {
+    max-height: 38vh;
+  }
+  .agp-goal-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+@container agp (max-width: 320px) {
+  /* Below this the transcript is the only thing worth the room. */
+  .agp-chartwrap {
+    max-height: 30vh;
+  }
+  .agp-node {
+    width: 168px;
+  }
+}

@@ -8530,54 +8530,93 @@ body.browser-active .tab-dot.attn {
 }
 
 /* The group's own conversation: what has been asked and answered inside it,
-   and a box to put something to the whole team. */
+   and a box to put something to the whole team.
+
+   Read as a transcript, not a table — one line per event with the speaker
+   repeated every time was a wall. A run from the same speaker prints the name
+   once, the text wraps instead of being clipped, and each entry says how long
+   ago it was. */
 .agp-talk {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   min-height: 0;
-  padding: 8px 0 0;
+  flex: 1 1 auto;
+  padding: 10px 0 0;
   border-top: 1px solid var(--border);
 }
 .agp-talk-log {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 190px;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-height: 90px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 6px;
 }
 .agp-talk-empty {
   color: var(--fg-dim);
   font-size: var(--text-xs);
-  padding: 6px 2px;
+  padding: 8px 2px;
 }
 .agp-ev {
+  padding: 5px 0 6px 10px;
+  border-left: 2px solid var(--edge);
+}
+.agp-ev.run-on {
+  padding-top: 0;
+  border-left-color: var(--edge);
+}
+.agp-ev-ask {
+  border-left-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.agp-ev-error {
+  border-left-color: var(--danger);
+}
+.agp-ev-roster {
+  border-left-color: transparent;
+}
+.agp-ev-head {
   display: flex;
+  align-items: baseline;
   gap: 6px;
-  font-size: var(--text-xs);
-  line-height: 1.45;
+  margin-bottom: 2px;
 }
 .agp-ev-who {
-  flex: none;
-  max-width: 40%;
-  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.agp-ev-to,
+.agp-ev-kind {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.agp-ev-kind {
+  padding: 0 5px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}
+.agp-ev-at {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
 .agp-ev-text {
-  color: var(--fg);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--fg-dim);
   overflow-wrap: anywhere;
 }
-.agp-ev-reply .agp-ev-text {
-  color: var(--fg-dim);
-}
-.agp-ev-error .agp-ev-text {
-  color: var(--danger);
+.agp-ev-ask .agp-ev-text {
+  color: var(--fg);
 }
 .agp-ev-roster .agp-ev-text {
-  color: var(--fg-dim);
   font-style: italic;
 }
 .agp-talk-box {
@@ -8588,7 +8627,7 @@ body.browser-active .tab-dot.attn {
 .agp-talk-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg-2);
@@ -8598,23 +8637,6 @@ body.browser-active .tab-dot.attn {
 .agp-talk-input:focus {
   outline: none;
   border-color: var(--accent-border);
-}
-.agp-talk-all {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--fg-dim);
-  cursor: pointer;
-}
-.agp-talk-all.on {
-  border-color: var(--accent-border);
-  color: var(--accent);
 }
 
 /* The goal board. Nothing stops a goal on its own, so what it is spending is
