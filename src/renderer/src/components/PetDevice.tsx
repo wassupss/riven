@@ -524,9 +524,23 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     const send = (): void =>
       void window.api.pet.resize(Math.ceil(el.getBoundingClientRect().bottom) + 6)
     send()
+    // Measure again on the next frame as well: a chrome change is measured the
+    // instant it renders, and the sprite//font work that follows can still move
+    // the bottom edge — folding back up left the window at the folded height
+    // with the case cut off.
+    const frame = requestAnimationFrame(send)
     const ro = new ResizeObserver(send)
     ro.observe(el)
-    return () => ro.disconnect()
+    // And whenever the window itself changes size. The device's own box does not
+    // change when the WINDOW does, so the observer above never fires for it —
+    // which left any window that ended up too small staying too small. Asking
+    // for a height it already has is a no-op in main, so this cannot loop.
+    window.addEventListener('resize', send)
+    return () => {
+      cancelAnimationFrame(frame)
+      ro.disconnect()
+      window.removeEventListener('resize', send)
+    }
   }, [detached, chrome, mode, guessing])
 
   // ---- in-app dragging ----

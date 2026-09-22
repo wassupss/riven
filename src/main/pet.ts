@@ -179,11 +179,21 @@ export function registerPetHandlers(): void {
   //   setOnTop — the app applying what it has persisted.
   //   askOnTop — the pet window's own setup row: apply now, and tell the app to
   //              persist it, since the pet window must not.
-  ipcMain.handle('pet:setOnTop', (_e, on: boolean) => applyOnTop(!!on))
+  //
+  // BOTH announce the result. Only askOnTop used to, so when the app applied the
+  // setting the pet's own setup row kept showing the old answer — and the next
+  // press on it then toggled the wrong way.
+  const announce = (on: boolean): void => {
+    for (const w of BrowserWindow.getAllWindows())
+      if (!w.isDestroyed()) w.webContents.send('pet:onTop', on)
+  }
+  ipcMain.handle('pet:setOnTop', (_e, on: boolean) => {
+    applyOnTop(!!on)
+    announce(!!on)
+  })
   ipcMain.handle('pet:askOnTop', (_e, on: boolean) => {
     applyOnTop(!!on)
-    for (const w of BrowserWindow.getAllWindows())
-      if (!w.isDestroyed()) w.webContents.send('pet:onTop', !!on)
+    announce(!!on)
   })
   ipcMain.handle('pet:isOnTop', () => !!win && !win.isDestroyed() && win.isAlwaysOnTop())
 }

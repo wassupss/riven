@@ -850,6 +850,12 @@ async function main() {
     // pet window may not write settings.json (two snapshots, last writer wins), so
     // it asks main: main lifts the window and the APP persists the choice.
     const onTop = await (async () => {
+      // Start from a known state: this setting is persisted, so a previous run
+      // (or one that stopped half way) leaves it on and the toggle then reads
+      // backwards.
+      await cdp.eval(`__riven.settings.getState().set({ petOnTop: false })`)
+      await cdp.eval(`window.api.pet.setOnTop(false)`)
+      await sleep(400)
       const row = async () => {
         await petCdp.eval(`(async () => {
           for (let i = 0; i < 4; i++) {
@@ -1084,6 +1090,13 @@ async function main() {
   )
 
   // The point you grabbed stays under the pointer, re-renders and all.
+  //
+  // Park it up and to the left first: the pet is kept inside the window, so a
+  // drag that starts near an edge is SUPPOSED to stop following the pointer —
+  // and where it starts depends on wherever the last run left it (the position
+  // is persisted). Measuring the grip needs room to move.
+  await cdp.eval(`__riven.settings.getState().set({ petPos: { x: 80, y: 60 } })`)
+  await sleep(500)
   const stuck = await cdp.eval(`(async () => {
     const el = () => document.querySelector('.pet-device')
     const mk = (type, x, y, buttons = 1) =>
