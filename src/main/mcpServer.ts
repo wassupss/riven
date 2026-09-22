@@ -856,6 +856,29 @@ export function mcpSystemPrompt(): string {
 - 다른 에이전트와 협업: riven_agents로 열린 동료(채팅·터미널의 Claude Code, Codex 등 — cli 필드로 구분)를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 다른 모델에게 검토·반론을 맡기면 서로의 결과를 교차 확인할 수 있습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다.`
 }
 
+/**
+ * Fail every tool call still waiting on the renderer.
+ *
+ * A tool call lives as a promise in this map until the UI answers it. If the
+ * renderer goes away first — a reload, a crash, a dev-server update — that
+ * answer is never coming: the renderer's own copy of the request (the ask_user
+ * queue, the browser panel's handler) died with the page. The agent, meanwhile,
+ * waits the full MCP timeout: observed as a lead pane sitting on "생각 중" for
+ * half an hour, no tokens moving, because its ask_user popup had been wiped by a
+ * reload two minutes after it asked.
+ *
+ * So a fresh page means: tell every waiting agent, in words it can act on.
+ */
+export function failPendingToolCalls(reason: string): number {
+  const n = pending.size
+  if (!n) return 0
+  const waiting = [...pending.values()]
+  pending.clear()
+  inflightByRpc.clear()
+  for (const resolve of waiting) resolve(reason)
+  return n
+}
+
 export function stopMcpServer(): void {
   try {
     server?.close()
