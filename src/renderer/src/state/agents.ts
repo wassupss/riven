@@ -20,11 +20,43 @@ export interface AgentController {
   attach?: (text: string) => void
   // Resolves with the assistant reply text of the next turn that completes.
   waitNext: () => Promise<string>
+  // Send THIS message and resolve with the answer to it specifically (the pane
+  // ties the promise to the turn the message starts). Preferred over
+  // send + waitNext, which cannot tell one turn's answer from another's.
+  ask?: (message: string) => Promise<string>
   // The pane was opened with a first message it hasn't sent yet.
   hasPendingOpening?: () => boolean
 }
 
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+// One question at a time per pane.
+//
+// askChatTurn waits for the pane to be idle and then sends — and two callers
+// could pass that check in the same breath (riven_ask_agents with the same
+// target twice, or a lead and a member both asking the same agent). The second
+// send then landed mid-turn, which INTERRUPTS it, and both callers were handed
+// the same text. Asks are queued per pane instead, so each one gets the pane to
+// itself and its own answer.
+const paneQueue = new Map<string, Promise<unknown>>()
+function queued<T>(chatKey: string, run: () => Promise<T>): Promise<T> {
+  const prev = paneQueue.get(chatKey) ?? Promise.resolve()
+  const next = prev.then(run, run)
+  // Keep the chain going but never let a rejection poison the queue, and drop
+  // the entry once it is the last one (a pane that is never asked again must
+  // not hold its result forever).
+  paneQueue.set(
+    chatKey,
+    next.then(
+      () => undefined,
+      () => undefined
+    )
+  )
+  void next.finally(() => {
+    if (paneQueue.get(chatKey) === undefined) paneQueue.delete(chatKey)
+  })
+  return next
+}
 
 // Put a message to a chat pane and return the answer to THAT message.
 //
@@ -34,7 +66,16 @@ const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 // message, and the pane then answered the real question again. Across two
 // agents that looked like the same exchange repeating. So: let the running turn
 // and the opening message finish first, then send and wait for the next reply.
-export async function askChatTurn(
+export function askChatTurn(
+  target: AgentController,
+  message: string,
+  timeoutMs: number,
+  timeoutText: string
+): Promise<string> {
+  return queued(target.chatKey, () => askChatTurnNow(target, message, timeoutMs, timeoutText))
+}
+
+async function askChatTurnNow(
   target: AgentController,
   message: string,
   timeoutMs: number,
@@ -57,8 +98,13 @@ export async function askChatTurn(
     await pause(120)
     if (!target.isBusy() && !target.hasPendingOpening?.()) break
   }
-  const reply = target.waitNext()
-  target.send(message)
+  // `ask` ties the answer to this message's own turn; waitNext is the fallback
+  // for a pane that predates it (and for terminals, which have no turn ids).
+  const reply = target.ask ? target.ask(message) : (() => {
+    const p = target.waitNext()
+    target.send(message)
+    return p
+  })()
   return Promise.race([reply, pause(left()).then(() => timeoutText)])
 }
 

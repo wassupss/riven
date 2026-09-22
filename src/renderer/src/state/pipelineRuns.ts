@@ -1,9 +1,13 @@
 import { create } from 'zustand'
+import { useSession } from './session'
 
-// A running (or finished) pipeline instance. Unlike agent groups these are NOT
-// persisted — a run is an ephemeral execution that the user watches progress on.
-// It shows up as its own tab in the Agent Group panel, like a group, with each
-// stage's live status.
+// A running (or finished) pipeline instance. It shows up as its own tab in the
+// Agent Group panel, like a group, with each stage's live status.
+//
+// Saved with its workspace so the tabs are still there after a restart. The loop
+// that drives a run lives in this renderer, so it does NOT survive: anything
+// still going when the app closed is marked interrupted when it loads, rather
+// than restored as "running" and waited on forever.
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'error'
 
@@ -108,3 +112,48 @@ export const usePipelineRuns = create<State>((set, get) => ({
 export function runsForWorkspace(ws: string): PipelineRun[] {
   return usePipelineRuns.getState().runs.filter((r) => r.workspace === ws)
 }
+
+/** A run whose driver died with the process: finished, and honest about it. */
+export function interruptStale(runs: PipelineRun[]): PipelineRun[] {
+  return runs.map((r) =>
+    r.done
+      ? r
+      : {
+          ...r,
+          done: true,
+          canceled: true,
+          current: -1,
+          stages: r.stages.map((st) =>
+            st.status === 'running' || st.status === 'pending' ? { ...st, status: 'error' as StageStatus } : st
+          )
+        }
+  )
+}
+
+function persist(ws: string): void {
+  adopt()
+  const st = useSession.getState()
+  if (!st.ready) return // never write an empty list over runs still being loaded
+  st.patch(ws, { runs: usePipelineRuns.getState().runs.filter((r) => r.workspace === ws) })
+}
+
+let adopted = false
+function adopt(): void {
+  if (adopted) return
+  const st = useSession.getState()
+  if (!st.ready) return
+  adopted = true
+  const restored: PipelineRun[] = []
+  for (const s of Object.values(st.sessions)) restored.push(...interruptStale((s.runs ?? []) as PipelineRun[]))
+  if (restored.length) usePipelineRuns.setState({ runs: restored })
+}
+useSession.subscribe(adopt)
+adopt()
+
+// Save after any change, per workspace. Cheap (a run is a handful of strings)
+// and keeps the tabs and their outcome across restarts.
+usePipelineRuns.subscribe((s, prev) => {
+  if (s.runs === prev.runs) return
+  const touched = new Set([...s.runs, ...prev.runs].map((r) => r.workspace))
+  for (const ws of touched) persist(ws)
+})

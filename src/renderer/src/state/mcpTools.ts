@@ -13,7 +13,15 @@ import {
   type SplitDir
 } from '../dock/registry'
 import { rosterFor, type RosterEntry } from './roster'
+import { useAgentGroups } from './agentGroups'
+import { useGroupLog } from './groupLog'
+import { useGoals, findGoal, boardText, type PostKind } from './goals'
 import { classifyTerminalCommand } from '../lib/terminalCommand'
+import { addEdge, dropEdge, wouldCycle, type AskEdges } from '../lib/askGraph'
+
+// Delegations that are currently WAITING for an answer, as caller → target
+// edges. Only waiting ones: a fire-and-forget ask blocks nobody.
+const waitingOn: AskEdges = new Map()
 
 // Executes a riven MCP tool call forwarded from the main process and returns a
 // result string. UI actions run against the active workspace's dock. Mirrors the
@@ -48,6 +56,12 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
   { name: 'riven_group_add_agent', ko: '그룹에 에이전트 추가', en: 'Add agent to group' },
   { name: 'riven_group_remove_agent', ko: '그룹에서 제거', en: 'Remove agent' },
   { name: 'riven_group_delete', ko: '그룹 삭제', en: 'Delete group' },
+  { name: 'riven_group_broadcast', ko: '그룹 전체에 전달', en: 'Broadcast to group' },
+  { name: 'riven_goal_start', ko: '목표 시작', en: 'Start a goal' },
+  { name: 'riven_goal_state', ko: '목표판 읽기', en: 'Read the goal board' },
+  { name: 'riven_goal_post', ko: '목표판에 올리기', en: 'Post to the goal board' },
+  { name: 'riven_goal_round', ko: '목표 라운드 실행', en: 'Run a goal round' },
+  { name: 'riven_goal_finish', ko: '목표 종료', en: 'Close the goal' },
   { name: 'riven_start_pipeline', ko: '파이프라인 실행', en: 'Start pipeline' },
   { name: 'riven_note_list', ko: '메모 목록', en: 'List notes' },
   { name: 'riven_note_read', ko: '메모 읽기', en: 'Read note' },
@@ -505,7 +519,14 @@ function agentList(ws: string, self: string | null): Array<{
   busy: boolean
   status: RosterEntry['status']
   replies: boolean
+  group?: string
 }> {
+  // Which group each pane belongs to, so an agent can see the team it is in
+  // rather than a flat list of everything open (and so it can name a group to
+  // the group tools).
+  const groups = useAgentGroups.getState().byWorkspace[ws] ?? []
+  const groupOf = new Map<string, string>()
+  for (const g of groups) for (const m of g.members) groupOf.set(m.chatKey, g.group)
   return rosterFor(ws)
     .filter((e) => e.id !== self)
     .map((e) => ({
@@ -515,7 +536,8 @@ function agentList(ws: string, self: string | null): Array<{
       cli: e.kind === 'chat' ? (loadPaneState(ws, e.id).cli === 'codex' ? 'codex' : 'claude') : e.agent ?? null,
       busy: e.busy,
       status: e.status,
-      replies: e.kind === 'chat' ? true : !!e.replies
+      replies: e.kind === 'chat' ? true : !!e.replies,
+      ...(groupOf.has(e.id) ? { group: groupOf.get(e.id) } : {})
     }))
 }
 
@@ -530,6 +552,24 @@ function resolveRosterAgent(ref: string, ws: string, self: string | null): Roste
     list.find((e) => e.title.toLowerCase().includes(needle.toLowerCase())) ??
     null
   )
+}
+
+// Which group a pane belongs to, for the timeline (null outside any group).
+function groupOfPane(ws: string, pane: string | null): string | null {
+  if (!pane) return null
+  for (const g of useAgentGroups.getState().byWorkspace[ws] ?? [])
+    if (g.members.some((m) => m.chatKey === pane)) return g.group
+  return null
+}
+
+function note(
+  ws: string,
+  kind: 'ask' | 'reply' | 'error' | 'roster',
+  from: string,
+  text: string,
+  to?: string
+): void {
+  useGroupLog.getState().add({ ws, group: groupOfPane(ws, from) ?? groupOfPane(ws, to ?? null), kind, from, to, text })
 }
 
 async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx): Promise<string> {
@@ -572,7 +612,19 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
   if (!target)
     return `error: "${entry.title}" exists but its panel isn't mounted, so it cannot receive a message. Switch to that workspace and try again.`
-  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)')
+  // Waiting on someone who is (directly or through others) waiting on you locks
+  // both of you until the five-minute timeout, with nothing on screen saying so.
+  const from = c.chatPane ?? c.self
+  if (wait && from && wouldCycle(waitingOn, from, target.chatKey)) {
+    note(c.ws, 'error', from, `순환 대기로 거절: ${target.getTitle()}`, target.chatKey)
+    return `error: "${target.getTitle()}" is already waiting on you (directly or through another agent), so waiting for its answer would deadlock both of you. Answer the question you were asked first, or send this with wait=false.`
+  }
+  if (wait && from) addEdge(waitingOn, from, target.chatKey)
+  note(c.ws, 'ask', from ?? 'agent', message, target.chatKey)
+  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)').finally(() => {
+    if (wait && from) dropEdge(waitingOn, from, target.chatKey)
+  })
+  void answer.then((reply) => note(c.ws as string, 'reply', target.chatKey, reply, from ?? undefined))
   if (!wait) {
     void answer
     return `delegated to "${target.getTitle()}" (async)`
@@ -608,6 +660,166 @@ async function askAgents(args: Args, c: Ctx): Promise<string> {
   )
   return results.join('\n\n')
 }
+// One message to the whole team.
+//
+// Every member had to be listed by hand (riven_ask_agents with one entry each),
+// which means the lead has to know who is in the group — the thing it could not
+// see. With the roster wired up the group itself is the address: each member is
+// asked in parallel (one at a time per pane, so nobody's turn is interrupted),
+// and the answers come back together.
+async function groupBroadcast(args: Args, c: Ctx): Promise<string> {
+  const group = s(args.group)
+  const message = s(args.message)
+  if (!c.ws) return unattributed(c)
+  if (!message) return 'error: message is required'
+  const roster = useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!roster) return `error: no group "${group}" in this workspace (see riven_agents)`
+  const wait = args.wait !== false
+  // Never to itself: a member broadcasting to its own group would be asking
+  // itself a question and waiting for the answer.
+  const targets = roster.members.filter((m) => m.chatKey !== (c.chatPane ?? c.self))
+  if (!targets.length) return `error: group "${group}" has nobody else in it`
+  useGroupLog.getState().add({
+    ws: c.ws,
+    group,
+    kind: 'ask',
+    from: c.chatPane ?? 'agent',
+    text: `[전체] ${message}`
+  })
+  const answers = await Promise.all(targets.map((m) => askOneAgent(m.chatKey, message, wait, c)))
+  return answers.join('\n\n')
+}
+
+// ---------------------------------------------------------------------------
+// The goal board (see docs/agent-collab.md)
+// ---------------------------------------------------------------------------
+
+// Members are named on the board by their group name, not their pane key.
+function memberNamer(ws: string, group: string): (key: string) => string {
+  const roster = useAgentGroups.getState().byWorkspace[ws]?.find((g) => g.group === group)
+  return (key) => (key === 'user' ? '사용자' : roster?.members.find((m) => m.chatKey === key)?.name ?? key.slice(0, 9))
+}
+
+function goalStart(args: Args, c: Ctx): string {
+  const group = s(args.group)
+  const goal = s(args.goal)
+  const doneWhen = s(args.done_when)
+  const artifact = s(args.artifact)
+  if (!c.ws) return unattributed(c)
+  if (!goal) return 'error: goal is required'
+  if (!doneWhen) return 'error: done_when is required — the team has to know what "finished" looks like'
+  const roster = useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!roster) return `error: no group "${group}" in this workspace (see riven_agents)`
+  const id = useGoals.getState().start({
+    ws: c.ws,
+    group,
+    goal,
+    doneWhen,
+    ...(artifact ? { artifact } : {})
+  })
+  note(c.ws, 'roster', c.chatPane ?? 'agent', `목표 시작: ${goal}`)
+  return `goal ${id} started for group "${group}". Give the team a round with riven_goal_round(goal_id, ask, kind), read the board with riven_goal_state(goal_id), and close it with riven_goal_finish(goal_id, summary) when "${doneWhen}" holds.`
+}
+
+function goalState(args: Args, c: Ctx): string {
+  const goal = findGoal(s(args.goal_id))
+  if (!goal) return `error: no goal ${s(args.goal_id)}`
+  if (!c.ws) return unattributed(c)
+  const roster = useAgentGroups.getState().byWorkspace[goal.ws]?.find((g) => g.group === goal.group)
+  const members = (roster?.members ?? []).map((m) => `${m.name} (${m.chatKey})`).join(', ')
+  return `${boardText(goal, memberNamer(goal.ws, goal.group))}\n\n멤버: ${members || '(없음)'}\n쓴 턴: ${goal.turns}`
+}
+
+function goalPost(args: Args, c: Ctx): string {
+  const goal = findGoal(s(args.goal_id))
+  if (!goal) return `error: no goal ${s(args.goal_id)}`
+  const text = s(args.text)
+  if (!text) return 'error: text is required'
+  const kind = (s(args.kind) || 'note') as PostKind
+  useGoals.getState().post(goal.id, { round: goal.round, by: c.chatPane ?? 'agent', kind, text })
+  return `posted to goal ${goal.id} (round ${goal.round}, ${kind})`
+}
+
+function goalFinish(args: Args, c: Ctx): string {
+  const goal = findGoal(s(args.goal_id))
+  if (!goal) return `error: no goal ${s(args.goal_id)}`
+  const summary = s(args.summary)
+  if (!summary) return 'error: summary is required — the conclusion is the point of the goal'
+  // The user stopping a goal is the end of it; an agent must not quietly reopen
+  // that as "converged" afterwards.
+  if (goal.status !== 'open') return `error: goal ${goal.id} is already ${goal.status}`
+  useGoals.getState().post(goal.id, { round: goal.round, by: c.chatPane ?? 'agent', kind: 'summary', text: summary })
+  useGoals.getState().finish(goal.id, summary)
+  note(goal.ws, 'roster', c.chatPane ?? 'agent', `목표 종료(${goal.round}라운드 · ${goal.turns}턴): ${summary}`)
+  // Only a goal that asked for a file gets one: a doc per goal would litter the
+  // repository with drafts nobody asked to keep.
+  if (goal.artifact) {
+    const body = `# ${goal.goal}\n\n${summary}\n\n---\n\n${boardText(goal, memberNamer(goal.ws, goal.group))}\n`
+    void docWrite({ path: goal.artifact, body, overwrite: true }, { ...c, ws: goal.ws })
+    return `goal ${goal.id} closed and written to ${goal.artifact}`
+  }
+  return `goal ${goal.id} closed after ${goal.round} rounds (${goal.turns} turns)`
+}
+
+// One round: the same question to every member, each answer posted to the board.
+//
+// This is the whole loop in one tool call — easy for a lead to drive, and easy
+// for the user to read as "round 3 cost 3 turns". Nothing caps how many rounds
+// a goal may have (by decision): the panel shows what it is spending and the
+// stop button ends it.
+async function goalRound(args: Args, c: Ctx): Promise<string> {
+  const goal = findGoal(s(args.goal_id))
+  if (!goal) return `error: no goal ${s(args.goal_id)}`
+  if (goal.status !== 'open') return `error: goal ${goal.id} is ${goal.status}`
+  if (!c.ws) return unattributed(c)
+  const ask = s(args.ask)
+  if (!ask) return 'error: ask is required'
+  const kind = (s(args.kind) || 'note') as PostKind
+  const roster = useAgentGroups.getState().byWorkspace[goal.ws]?.find((g) => g.group === goal.group)
+  if (!roster?.members.length) return `error: group "${goal.group}" has no members`
+  // The asker does not answer its own round; with exclude_author the round is
+  // about reading OTHER people's posts (a critique round), so anyone who has not
+  // posted yet has nothing to react to.
+  const excludeAuthor = args.exclude_author === true
+  const targets = roster.members.filter((m) => {
+    if (m.chatKey === (c.chatPane ?? c.self)) return false
+    if (excludeAuthor && !goal.posts.some((p) => p.by === m.chatKey)) return false
+    return true
+  })
+  if (!targets.length) return 'error: nobody to ask in this round'
+
+  const round = useGoals.getState().openRound(goal.id)
+  const namer = memberNamer(goal.ws, goal.group)
+  useGroupLog.getState().add({
+    ws: goal.ws,
+    group: goal.group,
+    kind: 'ask',
+    from: c.chatPane ?? 'agent',
+    text: `라운드 ${round} (${kind}) · ${targets.length}명 × 1턴: ${ask}`
+  })
+
+  // Every member gets the board as context, so nobody has to be told what the
+  // others said — that relaying is what used to cost a second telling and lose
+  // whatever it summarised.
+  const board = boardText(findGoal(goal.id) ?? goal, namer)
+  const answers = await Promise.all(
+    targets.map(async (m) => {
+      const reply = await askOneAgent(
+        m.chatKey,
+        `[목표판 ${goal.id} · 라운드 ${round} · ${kind}]\n${board}\n\n---\n${ask}`,
+        true,
+        c
+      )
+      useGoals.getState().addTurns(goal.id, 1)
+      const text = reply.replace(/^\[[^\]]*\]\s*/, '')
+      useGoals.getState().post(goal.id, { round, by: m.chatKey, kind, text })
+      return `${namer(m.chatKey)}: ${text}`
+    })
+  )
+  const after = findGoal(goal.id)
+  return `round ${round} (${kind}) — ${targets.length} answers, ${after?.turns ?? 0} turns spent on this goal so far.\n\n${answers.join('\n\n')}`
+}
+
 function groupAddAgent(args: Args, c: Ctx): string {
   const name = s(args.name)
   const persona = s(args.persona)
@@ -643,7 +855,30 @@ function groupAddAgent(args: Args, c: Ctx): string {
     c.ws,
     cli
   )
-  return `added agent "${name || persona || 'chat'}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
+  // Record it in the roster the PANEL draws from. Without this an agent-built
+  // team existed only as loose panes: the org chart never showed it, and the
+  // group tools had no members to act on.
+  const group = s(args.group) || 'group'
+  const member = {
+    name: name || persona || 'chat',
+    persona: persona || null,
+    model: model || 'default',
+    parent: null as number | null,
+    chatKey: id
+  }
+  const groups = useAgentGroups.getState()
+  const existing = groups.byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!existing) {
+    groups.createGroup(c.ws, group, [member])
+  } else {
+    // "Reports to" is an index into the member list, so resolve the name here.
+    const at = parent ? existing.members.findIndex((m) => m.name === parent) : -1
+    groups.addMember(c.ws, group, { ...member, parent: at >= 0 ? at : 0 })
+  }
+  note(c.ws, 'roster', c.chatPane ?? 'agent', `그룹 "${group}"에 "${member.name}" 추가`, id)
+  return `added agent "${member.name}" to group "${group}" (${cli}${
+    model && model !== 'default' ? ` · ${model}` : ''
+  }) id=${id}`
 }
 async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -658,9 +893,19 @@ async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
 }
 async function groupRemoveAgent(args: Args, c: Ctx): Promise<string> {
   const name = s(args.name)
+  const group = s(args.group)
   if (!c.ws) return unattributed(c)
-  const target = resolveAgent(name, undefined, c.ws)
-  if (!target) return `error: no agent matching "${name}" in this workspace`
+  // Within the group when one is named: two groups can both have a "reviewer",
+  // and a workspace-wide search closed whichever pane matched first.
+  const roster = group ? useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group) : null
+  if (group && !roster) return `error: no group "${group}" in this workspace`
+  const target = roster
+    ? (() => {
+        const m = roster.members.find((x) => x.name === name || x.chatKey === name)
+        return m ? resolveAgent(m.chatKey, undefined, c.ws) : null
+      })()
+    : resolveAgent(name, undefined, c.ws)
+  if (!target) return `error: no agent matching "${name}"${group ? ` in group "${group}"` : ' in this workspace'}`
   if (!(await confirmAsk(`"${target.getTitle()}" 에이전트를 닫을까요?`, c)))
     return 'the user declined'
   // Resolve the dock from the ctx captured at call time. Reading it here from a
@@ -670,20 +915,30 @@ async function groupRemoveAgent(args: Args, c: Ctx): Promise<string> {
   if (!api) return notMounted(c)
   const panel = api.getPanel(target.chatKey)
   if (panel) api.removePanel(panel)
-  return `removed "${target.getTitle()}"`
+  if (roster) useAgentGroups.getState().removeMember(c.ws, roster.group, target.chatKey)
+  return `removed "${target.getTitle()}"${roster ? ` from group "${roster.group}"` : ''}`
 }
 async function groupDelete(args: Args, c: Ctx): Promise<string> {
   const group = s(args.group)
   if (!c.ws) return unattributed(c)
-  if (!(await confirmAsk(`그룹 "${group}"의 모든 에이전트 패널을 닫을까요?`, c)))
+  // ONLY this group's panes. This used to close every chat pane in the
+  // workspace — deleting one team took every other agent, and the user's own
+  // conversations, down with it.
+  const roster = useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!roster) return `error: no group "${group}" in this workspace (see riven_agents)`
+  if (!(await confirmAsk(`그룹 "${group}"의 에이전트 ${roster.members.length}개를 닫을까요?`, c)))
     return 'the user declined'
   const api = callerApi(c)
   if (!api) return notMounted(c)
   let n = 0
-  for (const p of api.panels.filter((p) => p.id.startsWith('chat-'))) {
-    api.removePanel(p)
-    n++
+  for (const m of roster.members) {
+    const panel = api.getPanel(m.chatKey)
+    if (panel) {
+      api.removePanel(panel)
+      n++
+    }
   }
+  useAgentGroups.getState().deleteGroup(c.ws, group)
   return `deleted group "${group}" (${n} agents closed)`
 }
 async function startPipeline(args: Args, c: Ctx): Promise<string> {
@@ -840,6 +1095,18 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
       return groupRemoveAgent(args, c)
     case 'riven_group_delete':
       return groupDelete(args, c)
+    case 'riven_group_broadcast':
+      return groupBroadcast(args, c)
+    case 'riven_goal_start':
+      return goalStart(args, c)
+    case 'riven_goal_state':
+      return goalState(args, c)
+    case 'riven_goal_post':
+      return goalPost(args, c)
+    case 'riven_goal_round':
+      return goalRound(args, c)
+    case 'riven_goal_finish':
+      return goalFinish(args, c)
     case 'riven_start_pipeline':
       return startPipeline(args, c)
     case 'riven_screenshot': {

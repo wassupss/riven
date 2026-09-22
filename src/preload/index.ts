@@ -359,8 +359,9 @@ const api = {
     sync: (
       activeId: string | null,
       rect: { x: number; y: number; width: number; height: number } | null,
-      css?: { w: number; h: number }
-    ): void => ipcRenderer.send('browser:sync', { activeId, rect, css }),
+      css?: { w: number; h: number },
+      own?: string[]
+    ): void => ipcRenderer.send('browser:sync', { activeId, rect, css, own }),
     hideAll: (hidden: boolean): void => ipcRenderer.send('browser:hideAll', hidden),
     execJs: (id: string, code: string): Promise<unknown> =>
       ipcRenderer.invoke('browser:execJs', { id, code }),

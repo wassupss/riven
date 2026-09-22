@@ -46,6 +46,7 @@ import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 import { settleStaleTurns, isStaleEvent } from '../../lib/chatTurns'
+import { modelsFor } from '../../lib/models'
 import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
@@ -139,6 +140,9 @@ interface Msg {
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
   images?: Array<{ name: string; preview?: string }>
+  // Which turn this answer belongs to, so a delegation waiting on that turn can
+  // be handed its text even after a newer turn has taken over the pane.
+  turn?: string
 }
 
 // Fill in `items` for messages that predate the ordered model (restored logs /
@@ -182,8 +186,7 @@ const TOOL_VERB: Record<string, string> = {
   WebSearch: 'chat.tools.web',
   TodoWrite: 'chat.tools.todo'
 }
-// Codex's models (from its app-server model/list). "default" is the account's.
-const CODEX_MODELS = ['default', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+
 // Map a raw CLI model id (e.g. "claude-opus-5[1m]") to the chip's short alias.
 const modelAlias = (m: string | null): string => {
   if (!m) return 'default'
@@ -552,7 +555,14 @@ const AssistantText = memo(function AssistantText({
 // and what it has spent so far. The clock is its own — a turn's cost and elapsed
 // time are the two things you want while waiting, and the transcript's shared
 // "now" only ticks once a minute.
-function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
+// A turn that has said NOTHING for this long is worth pointing out. Not ending
+// it — a turn can legitimately spend minutes inside one tool — but "생각 중" for
+// half an hour is indistinguishable from a CLI that is stuck waiting on the API,
+// which is exactly what it looked like when it happened (child alive, in a turn,
+// one open connection to the API, no output, no stderr, 36 minutes).
+const QUIET_MS = 90_000
+
+function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: number } }): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
   useEffect(() => {
@@ -560,6 +570,10 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
     return () => clearInterval(id)
   }, [])
   const elapsed = Math.max(0, Date.now() - msg.startedAt)
+  // Read through the ref on each tick: making this reactive would re-render the
+  // transcript on every streamed token, which is the one thing this pane must
+  // not do.
+  const quiet = Math.max(0, Date.now() - (lastEvent?.current || msg.startedAt))
   const spent = msg.tokensIn > 0 || msg.tokensOut > 0
   return (
     <span className="chat-foot-running">
@@ -570,6 +584,11 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
         {fmtDur(elapsed)}
         {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
       </span>
+      {quiet > QUIET_MS && (
+        <span className="chat-foot-quiet" title={t('chat.quietHint')}>
+          {t('chat.quiet', { d: fmtDur(quiet) })}
+        </span>
+      )}
     </span>
   )
 }
@@ -578,10 +597,13 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
   msg,
-  now
+  now,
+  lastEvent
 }: {
   msg: Msg
   now: number
+  /** When this pane last heard anything at all (see RunningFoot's quiet note). */
+  lastEvent?: { current: number }
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
@@ -659,7 +681,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <RunningFoot msg={msg} />
+          <RunningFoot msg={msg} lastEvent={lastEvent} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
@@ -1696,7 +1718,13 @@ export default function ChatPanel({
       // that turn, not to the message the user has sent since — applying it here
       // closed the new bubble a second after it opened, and the message looked
       // answered by nothing.
-      if (isStaleEvent(e.turn, openTurnRef.current)) return
+      if (isStaleEvent(e.turn, openTurnRef.current)) {
+        // …but whoever is WAITING on that turn still deserves its answer. Dropping
+        // the event wholesale left a delegation hanging until its own timeout —
+        // the group panel sat on "보내는 중" with the agent already idle.
+        if (e.kind === 'turnDone' && e.turn) settleTurnWaiters(e.turn)
+        return
+      }
       lastEventRef.current = Date.now()
       switch (e.kind) {
         case 'init':
@@ -1772,9 +1800,11 @@ export default function ChatPanel({
           if (e.error && !steering && !stopped) setError(e.error)
           patchLast((m) => {
             replyRef.current = m.text // for the desktop notification preview
-            // Resolve any delegation waiters (riven_ask_agent) with this reply.
+            // Resolve delegation waiters (riven_ask_agent) with this reply. The
+            // ones tied to THIS turn first — they asked the question it answers.
+            const reply = m.text
+            if (e.turn) settleTurnWaiters(e.turn, reply)
             if (waitersRef.current.length) {
-              const reply = m.text
               const ws = waitersRef.current
               waitersRef.current = []
               setTimeout(() => ws.forEach((r) => r(reply)), 0)
@@ -1999,6 +2029,23 @@ export default function ChatPanel({
   // The turn the open answer bubble is waiting for. Every send stamps one, and
   // events for any other turn are ignored (see isStaleEvent).
   const openTurnRef = useRef<string | null>(null)
+  // Delegation waiters bound to the turn their question started, so an answer
+  // goes back to whoever asked THAT question — not to everyone waiting.
+  const turnWaitersRef = useRef(new Map<string, Array<(reply: string) => void>>())
+  // The transcript as it stands right now, for the paths that need to read it
+  // outside React's render (settling a waiter for a turn that is no longer the
+  // open one).
+  const msgsRef = useRef<Msg[]>([])
+  msgsRef.current = msgs
+  // Hand a turn's answer to whoever asked for it. `text` when we have it (the
+  // live path); otherwise read it off the bubble that turn wrote.
+  const settleTurnWaiters = (turn: string, text?: string): void => {
+    const list = turnWaitersRef.current.get(turn)
+    if (!list?.length) return
+    turnWaitersRef.current.delete(turn)
+    const answer = text ?? msgsRef.current.find((m) => m.turn === turn)?.text ?? ''
+    setTimeout(() => list.forEach((r) => r(answer)), 0)
+  }
   const newTurnId = (): string => {
     const id = crypto.randomUUID()
     openTurnRef.current = id
@@ -2101,12 +2148,14 @@ export default function ChatPanel({
       if (busyRef.current && openTurnRef.current === stopping) endTurnLocally()
     }, 1500)
   }
+  // Returns the id of the turn this message starts (null when nothing was sent),
+  // so a delegation can wait for the answer to THIS message.
   const sendMessage = useCallback(
-    (text: string, images: ChatImage[] = []): void => {
+    (text: string, images: ChatImage[] = []): string | null => {
       const clean = text.trim()
       // An image with nothing typed is a real message ("what's wrong here?" is
       // often just the screenshot).
-      if (!clean && images.length === 0) return
+      if (!clean && images.length === 0) return null
       setError(null)
       // /clear resets the CLI's context AND the visible transcript, matching
       // Claude's own behaviour (no lingering history bubbles).
@@ -2115,7 +2164,7 @@ export default function ChatPanel({
         setMsgs([])
         restoredRef.current = false
         savePane({ log: [] })
-        return
+        return null
       }
       // Title the tab from the first message (CLI-style short title), like native.
       if (!titleSet.current) {
@@ -2150,15 +2199,20 @@ export default function ChatPanel({
           tokensOut: 0,
           images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
         },
-        { role: 'assistant', text: '', tools: [], items: [], done: false, interrupted: false, startedAt: Date.now(), durationMs: 0, tokensIn: 0, tokensOut: 0 }
+        blankAssistant()
       ])
       setBusy(true)
+      const turn = newTurnId()
+      setMsgs((all) =>
+        all.map((m, i) => (i === all.length - 1 && m.role === 'assistant' ? { ...m, turn } : m))
+      )
       window.api.chat.send(
         chatKey,
         clean,
         images.map(({ mediaType, data, name }) => ({ mediaType, data, name })),
-        newTurnId()
+        turn
       )
+      return turn
     },
     [chatKey, setTitle, savePane]
   )
@@ -2207,6 +2261,15 @@ export default function ChatPanel({
         }
       },
       waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve)),
+      // Send and wait for THIS message's own answer.
+      ask: (text) =>
+        new Promise<string>((resolve) => {
+          const turn = sendMessage(text)
+          if (!turn) return resolve('')
+          const list = turnWaitersRef.current.get(turn) ?? []
+          list.push(resolve)
+          turnWaitersRef.current.set(turn, list)
+        }),
       hasPendingOpening: () => hasInitialText(chatKey)
     })
   }, [chatKey, workspace, sendMessage])
@@ -2282,7 +2345,7 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = cli === 'codex' ? CODEX_MODELS : ['default', 'fable', 'sonnet', 'opus', 'haiku']
+  const MODELS = modelsFor(cli)
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],
@@ -2688,7 +2751,7 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} />
+          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]

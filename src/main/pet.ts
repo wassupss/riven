@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { note } from './focusTrace'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { atomicWriteJson } from './atomicWrite'
@@ -75,9 +76,11 @@ function broadcast(channel: string): void {
 
 async function open(): Promise<void> {
   if (win && !win.isDestroyed()) {
+    note('pet.open → showInactive (existing window)')
     win.showInactive()
     return
   }
+  note('pet.open → creating window')
   const saved = await readBounds()
   const fits = saved && onScreen(saved.x, saved.y, DEFAULT_SIZE.width, DEFAULT_SIZE.height)
   const spot = fits ? saved! : firstSpot()
@@ -115,7 +118,10 @@ async function open(): Promise<void> {
     void atomicWriteJson(boundsPath(), { x: bx, y: by })
   }
   win.on('moved', save)
-  win.on('ready-to-show', () => win?.showInactive()) // never steals focus
+  win.on('ready-to-show', () => {
+    note('pet ready-to-show → showInactive')
+    win?.showInactive()
+  }) // never steals focus
   win.on('closed', () => {
     win = null
     broadcast('pet:closed')
@@ -139,7 +145,10 @@ export function isPetWindowOpen(): boolean {
 
 function applyOnTop(on: boolean): void {
   // 'floating' sits above ordinary windows without fighting menus and panels.
-  if (win && !win.isDestroyed()) win.setAlwaysOnTop(on, 'floating')
+  if (win && !win.isDestroyed()) {
+    note(`pet setAlwaysOnTop(${on})`)
+    win.setAlwaysOnTop(on, 'floating')
+  }
 }
 
 export function registerPetHandlers(): void {

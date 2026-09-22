@@ -227,7 +227,8 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     description:
       "Delegate work to ANOTHER agent in this workspace. `agent` is a title or id from riven_agents. " +
       "A chat pane receives it as a message and, by default, its reply is WAITED for and returned " +
-      "(pass wait=false to return at once); if it is mid-turn the message waits for that turn to " +
+      "(pass wait=false to return at once); questions to the same pane are served one at a time and " +
+      "each answer is the answer to ITS question; if it is mid-turn the message waits for that turn to " +
       "finish, so the reply is always the answer to THIS message. A TERMINAL agent is typed into instead; when riven_agents " +
       "shows replies=true (Claude Code, Codex) its answer is waited for and returned the same way, " +
       "otherwise delivery is async. A busy agent is refused — ask again once it is idle.",
@@ -257,9 +258,12 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에 에이전트 추가',
     en: 'Add agent to group',
     description:
-      'Open a new agent chat pane, optionally primed with a persona and nickname. `agent` picks who ' +
+      'Open a new agent chat pane AND record it in `group` (created if new), so the group panel and ' +
+      'the other group tools see the same team; riven_agents then reports each pane\'s group. ' +
+      'Optionally primed with a persona and nickname. `agent` picks who ' +
       'runs it: claude (default) or codex — a team can mix them. `model` is that agent\'s model ' +
-      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5).',
+      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5). `parent` is the ' +
+      'member it reports to.',
     inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str, agent: str }, [
       'group',
       'name'
@@ -271,7 +275,9 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에서 에이전트 제거',
     en: 'Remove agent from group',
     description:
-      'Close an agent pane and drop it from the roster. Asks the user to confirm first (destructive).',
+      "Close one of the group's agent panes and drop it from that group's roster (the group is " +
+      'searched first, so two groups may both have a "reviewer"). Asks the user to confirm first ' +
+      '(destructive).',
     inputSchema: obj({ group: str, name: str }, ['group', 'name']),
     implemented: true
   },
@@ -280,8 +286,81 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹 삭제',
     en: 'Delete group',
     description:
-      'Close every agent pane in the group. Asks the user to confirm first (destructive).',
+      "Close the panes of THIS group's members and remove the group. Other agents and the user's own " +
+      'conversations are left alone. Asks the user to confirm first (destructive).',
     inputSchema: obj({ group: str }, ['group']),
+    implemented: true
+  },
+  {
+    name: 'riven_group_broadcast',
+    ko: '그룹 전체에 전달',
+    en: 'Broadcast to group',
+    description:
+      'Send ONE message to every other member of a group and get all their answers back together ' +
+      '(wait=false to just deliver it). Each member is asked in its own turn, so nobody is ' +
+      "interrupted. Use it to put a question, a decision or a spec to the whole team at once — the " +
+      'group is the address, so you do not have to know who is in it.',
+    inputSchema: obj({ group: str, message: str, wait: bool }, ['group', 'message']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_start',
+    ko: '목표 시작',
+    en: 'Start a goal',
+    description:
+      'Open a GOAL BOARD for a group: one shared thing the team works a problem out on, instead of ' +
+      'one-off questions that leave nothing behind. `done_when` says in plain words what finished ' +
+      'looks like — the team is told it, and you decide when it holds. `artifact` (optional) is a ' +
+      'file the conclusion is written to when you close it. Returns the goal id.',
+    inputSchema: obj({ group: str, goal: str, done_when: str, artifact: str }, [
+      'group',
+      'goal',
+      'done_when'
+    ]),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_state',
+    ko: '목표판 읽기',
+    en: 'Read the goal board',
+    description:
+      'The whole board: the goal, what finished looks like, every post so far (who, which round, ' +
+      'what kind) and the members. This is how a member catches up — nobody has to be told what the ' +
+      'others said.',
+    inputSchema: obj({ goal_id: str }, ['goal_id']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_post',
+    ko: '목표판에 올리기',
+    en: 'Post to the goal board',
+    description:
+      'Add your own entry to the board outside a round. kind: proposal | critique | revision | vote | note.',
+    inputSchema: obj({ goal_id: str, kind: str, text: str }, ['goal_id', 'text']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_round',
+    ko: '목표 라운드 실행',
+    en: 'Run a goal round',
+    description:
+      'Put ONE question to every member with the board as their context, and post each answer to the ' +
+      'board. kind labels what you are asking for: proposal (each writes its own, uninfluenced) | ' +
+      'critique (each attacks what is already posted — set exclude_author=true so nobody is asked to ' +
+      'review a board they have not contributed to) | revision | vote. A round costs one turn per ' +
+      'member; the panel shows what the goal has spent.',
+    inputSchema: obj({ goal_id: str, ask: str, kind: str, exclude_author: bool }, ['goal_id', 'ask']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_finish',
+    ko: '목표 종료',
+    en: 'Close the goal',
+    description:
+      'Declare it settled: `summary` is the conclusion, and it goes on the board (and into the ' +
+      "goal's `artifact` file, if it was given one). Close it when done_when holds — nothing else " +
+      'ends a goal except the user stopping it.',
+    inputSchema: obj({ goal_id: str, summary: str }, ['goal_id', 'summary']),
     implemented: true
   },
   {
@@ -775,6 +854,29 @@ export function mcpSystemPrompt(): string {
 - riven 브라우저를 직접 운전할 수 있습니다: riven_browser_open(url, new_tab?), riven_browser_state(), riven_browser_read(selector?, html?), riven_browser_click/fill/wait/scroll, riven_browser_go(action), riven_screenshot(url?). 페이지는 쿠키·세션을 유지합니다.
 - 긴 결과(요약·계획·조사)는 대화에 쏟지 말고 riven_note_write(title, body, note?)로 메모에 남기세요(note 주면 갈아끼움). 이어쓰기 riven_note_append, 읽기 riven_note_read, 목록 riven_note_list. 문서로 저장소에 남길 땐 riven_doc_write(path, body)(.claude/docs 기준), 메모를 파일로는 riven_note_save_file.
 - 다른 에이전트와 협업: riven_agents로 열린 동료(채팅·터미널의 Claude Code, Codex 등 — cli 필드로 구분)를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 다른 모델에게 검토·반론을 맡기면 서로의 결과를 교차 확인할 수 있습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다.`
+}
+
+/**
+ * Fail every tool call still waiting on the renderer.
+ *
+ * A tool call lives as a promise in this map until the UI answers it. If the
+ * renderer goes away first — a reload, a crash, a dev-server update — that
+ * answer is never coming: the renderer's own copy of the request (the ask_user
+ * queue, the browser panel's handler) died with the page. The agent, meanwhile,
+ * waits the full MCP timeout: observed as a lead pane sitting on "생각 중" for
+ * half an hour, no tokens moving, because its ask_user popup had been wiped by a
+ * reload two minutes after it asked.
+ *
+ * So a fresh page means: tell every waiting agent, in words it can act on.
+ */
+export function failPendingToolCalls(reason: string): number {
+  const n = pending.size
+  if (!n) return 0
+  const waiting = [...pending.values()]
+  pending.clear()
+  inflightByRpc.clear()
+  for (const resolve of waiting) resolve(reason)
+  return n
 }
 
 export function stopMcpServer(): void {

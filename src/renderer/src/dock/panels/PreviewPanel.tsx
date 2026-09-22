@@ -102,6 +102,11 @@ export default function PreviewPanel({
   const goTab = useBrowser((s) => s.go)
 
   const tabs = ws?.tabs ?? []
+  const ownIds = tabs.map((tb) => tb.id).join(',')
+  // Kept in a ref as well, so the unmount hide below knows which views were ours
+  // without re-running (and without hiding another workspace's page).
+  const ownRef = useRef(ownIds)
+  ownRef.current = ownIds
   const activeId = ws?.activeId ?? null
   const active = tabs.find((tb) => tb.id === activeId) ?? null
   const isStart = !active || !active.view // blank new-tab page
@@ -166,11 +171,18 @@ export default function PreviewPanel({
     // panel becomes an inactive tab (e.g. a terminal opened beside it), so we must
     // explicitly hide it then instead of relying on the viewport rect alone.
     const panelVisible = api ? api.isVisible : true
+    // Is this panel actually on screen? A workspace that is not the current one
+    // is display:none, so its panels keep polling while measuring 0×0 — and the
+    // old code READ THAT AS "don't touch anything" and returned, leaving the
+    // native page view painted over the workspace you had just switched to.
+    const onScreen = !!el.offsetParent
     // A box that isn't inside the window is a stale measurement, not a panel —
     // obeying it is what threw the page view into a corner (see placeable).
     const sane = placeable(r, { width: window.innerWidth, height: window.innerHeight })
-    if (panelVisible && !sane && document.visibilityState !== 'hidden') return
-    const visible = panelVisible && sane && document.visibilityState !== 'hidden'
+    // Only a panel that IS on screen gets the benefit of the doubt on a bad
+    // measurement (a transient 0×0 during layout must not make the page blink).
+    if (onScreen && panelVisible && !sane && document.visibilityState !== 'hidden') return
+    const visible = onScreen && panelVisible && sane && document.visibilityState !== 'hidden'
     const id = activeTabId(workspace)
     const tab = activeTab(workspace)
     // Hide all views on the blank start page (no view for this tab).
@@ -181,8 +193,17 @@ export default function PreviewPanel({
     const key = JSON.stringify(payload)
     if (key === lastSent.current) return
     lastSent.current = key
-    window.api.browser.sync(payload.activeId, payload.rect, { w: window.innerWidth, h: window.innerHeight })
-  }, [workspace, api])
+    window.api.browser.sync(
+      payload.activeId,
+      payload.rect,
+      { w: window.innerWidth, h: window.innerHeight },
+      // Ours to hide, and nobody else's.
+      ownIds.split(',').filter(Boolean)
+    )
+    // A stable string, not the array: `tabs` is rebuilt on every render, and
+    // depending on it would rebuild this callback (and its 250ms interval) just
+    // as often.
+  }, [workspace, api, ownIds])
 
   // Re-sync the moment this panel is shown/hidden or made the active tab, so the
   // native view appears/disappears immediately (not on the next 250ms poll).
@@ -219,7 +240,10 @@ export default function PreviewPanel({
     }
   }, [syncBounds, tabs.length, activeId, isStart])
 
-  useEffect(() => () => window.api.browser.sync(null, null), [])
+  useEffect(
+    () => () => window.api.browser.sync(null, null, undefined, ownRef.current.split(',').filter(Boolean)),
+    []
+  )
 
   // While this browser panel is the one in front, the app's decorative motion
   // (rings, shimmers, pulses) pauses — see body.browser-active in styles.css.

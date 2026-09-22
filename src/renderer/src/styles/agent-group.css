@@ -412,14 +412,18 @@
 
 /* ---- org chart ---- */
 .agp-chartwrap {
-  flex: 1 1 auto;
+  /* Sized to the tree, not stretched: three members used to sit in the middle of
+     a half-screen of dots. It grows when the team does, and the timeline below
+     gets the rest. */
+  flex: 0 1 auto;
   min-height: 120px;
+  max-height: 46vh;
   overflow: auto;
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
   background:
     radial-gradient(var(--edge) 1px, transparent 1px) 0 0 / 16px 16px;
-  padding: 12px;
+  padding: 14px 12px 16px;
 }
 .agp-chart-empty {
   display: flex;
@@ -430,95 +434,132 @@
   color: var(--fg-dim);
   font-size: var(--text-sm);
 }
-.agp-orgchart {
-  display: inline-block;
-  min-width: 100%;
-  box-sizing: border-box;
-  text-align: center;
-  white-space: nowrap;
-}
-.agp-orgchart ul {
-  display: flex;
-  justify-content: center;
-  position: relative;
-  padding-top: 18px;
-  margin: 0;
-  list-style: none;
-}
-.agp-orgchart > ul {
-  padding-top: 0;
-}
-.agp-orgchart li {
-  position: relative;
-  padding: 18px 8px 0;
-  list-style: none;
-  /* Center the node AND its child subtree within the li, so a parent sits exactly
-     over its children's midpoint (text-align centering drifted before). */
+/* The chart flows left to right: an agent, then everyone reporting to it stacked
+   to its right off one rail. Cards are a fixed height so the joints can be drawn
+   at their exact centres (CARD_H / 2 = 31px) without measuring anything. */
+.agp-tree {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: max-content;
 }
-/* down + across connectors between a parent and its children */
-.agp-orgchart li::before,
-.agp-orgchart li::after {
+.agp-tree-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+.agp-tree-self {
+  position: relative;
+  flex: 0 0 auto;
+}
+/* the stub leaving the parent card, meeting the children's rail */
+.agp-tree-row:has(> .agp-tree-kids) > .agp-tree-self::after {
   content: '';
   position: absolute;
-  top: 0;
-  right: 50%;
-  width: 50%;
-  height: 18px;
-  border-top: 1px solid var(--edge-strong);
+  top: 39px;
+  left: 100%;
+  width: 14px;
+  height: 1.5px;
+  background: var(--edge-strong);
 }
-.agp-orgchart li::after {
-  right: auto;
-  left: 50%;
-  border-left: 1px solid var(--edge-strong);
+/* Work in flight: the line it travels moves. A busy pane already says "this one
+   is working"; this says who it is working FOR, which is the thing a flow
+   diagram is supposed to show. */
+.agp-tree-row.flow > .agp-tree-self::after,
+.agp-tree-kid.flow::before {
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0 5px,
+    transparent 5px 11px
+  );
+  background-color: transparent;
+  background-size: 11px 100%;
+  animation: agp-flow-x 0.55s linear infinite;
 }
-.agp-orgchart li:only-child::before,
-.agp-orgchart li:only-child::after {
-  display: none;
+@keyframes agp-flow-x {
+  to {
+    background-position: 11px 0;
+  }
 }
-.agp-orgchart li:only-child {
-  padding-top: 18px;
+.agp-tree-kids.flow > .agp-tree-kid.flow::after {
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--accent) 0 5px,
+    transparent 5px 11px
+  );
+  background-color: transparent;
+  background-size: 100% 11px;
+  animation: agp-flow-y 0.55s linear infinite;
 }
-.agp-orgchart li:first-child::before,
-.agp-orgchart li:last-child::after {
-  border: 0 none;
+@keyframes agp-flow-y {
+  to {
+    background-position: 0 11px;
+  }
 }
-.agp-orgchart li:last-child::before {
-  border-right: 1px solid var(--edge-strong);
-  border-radius: 0 5px 0 0;
+.agp-tree-kids {
+  display: flex;
+  flex-direction: column;
+  /* No gap: the rail is drawn INSIDE each child, so a gap between them is a gap
+     in the rail — the line visibly broke between every pair of members. The
+     spacing lives in the child's own padding instead, which the rail covers. */
+  gap: 0;
+  margin-left: 14px;
 }
-.agp-orgchart li:first-child::after {
-  border-radius: 5px 0 0 0;
+.agp-tree-kid {
+  position: relative;
+  padding-left: 20px;
+  padding-bottom: 10px;
 }
-/* vertical stub down from a parent into the children row */
-.agp-orgchart ul ul::before {
+.agp-tree-kid:last-child {
+  padding-bottom: 0;
+}
+/* the rail: full height for a middle child, and cut at the card's centre for the
+   first and the last, so it starts and ends exactly where the joints are */
+.agp-tree-kid::after {
   content: '';
   position: absolute;
+  left: 0;
   top: 0;
-  left: 50%;
-  width: 0;
-  height: 18px;
-  border-left: 1px solid var(--edge-strong);
+  bottom: 0;
+  width: 1.5px;
+  background: var(--edge-strong);
 }
-/* the root has no incoming connector */
-.agp-orgchart > ul > li {
-  padding-top: 0;
+.agp-tree-kid:first-child::after {
+  top: 39px;
 }
-.agp-orgchart > ul > li::before,
-.agp-orgchart > ul > li::after {
+.agp-tree-kid:last-child::after {
+  bottom: auto;
+  height: 39px;
+}
+.agp-tree-kid:only-child::after {
   display: none;
+}
+/* the joint into each child */
+.agp-tree-kid::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 39px;
+  width: 20px;
+  height: 1.5px;
+  background: var(--edge-strong);
 }
 
 .agp-node {
   display: inline-flex;
   flex-direction: column;
-  gap: 4px;
+  justify-content: center;
+  gap: 5px;
+  /* Every card the same height, so the rail's joints (CARD_H / 2 = 39px) always
+     land on a card's centre — see .agp-tree-kid. Tall enough for all three rows:
+     at 62px the role line was clipped between the name and the status. */
+  height: 78px;
+  box-sizing: border-box;
   /* Fixed width so the tree connectors line up cleanly (variable widths made the
      rows look misaligned). */
-  width: 176px;
-  padding: 8px 10px;
+  width: 196px;
+  padding: 9px 11px 8px;
   text-align: left;
   vertical-align: top;
   white-space: normal;
@@ -532,54 +573,82 @@
     background var(--dur-fast) ease,
     border-color var(--dur-fast) ease;
 }
-.agp-node-avatar {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-full);
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.12);
-}
-.agp-node-avatar.agp-main {
-  box-shadow:
-    inset 0 0 0 1px rgb(0 0 0 / 0.12),
-    0 0 0 2px var(--accent-border);
-}
 .agp-node:hover {
   border-color: var(--accent-border);
   background: var(--hover);
 }
+/* The lead reads as the lead at a glance: brighter edge, a shoulder of accent. */
 .agp-node.agp-main {
   border-color: var(--accent-border);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .agp-node.closed {
-  opacity: 0.5;
+  opacity: 0.55;
   border-style: dashed;
 }
-.agp-node-head {
+.agp-node.busy {
+  border-color: var(--accent-border);
+}
+.agp-node.attention {
+  border-color: var(--warning, var(--accent));
+}
+.agp-node.done {
+  border-color: color-mix(in srgb, var(--success) 60%, transparent);
+}
+/* An indeterminate bar along the card's bottom edge while the agent works. */
+.agp-node {
+  position: relative;
+  overflow: hidden;
+}
+.agp-node-run {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 35%,
+    var(--accent) 65%,
+    transparent 100%
+  );
+  background-size: 45% 100%;
+  background-repeat: no-repeat;
+  animation: agp-node-run 1.15s ease-in-out infinite;
+}
+@keyframes agp-node-run {
+  0% {
+    background-position: -45% 0;
+  }
+  100% {
+    background-position: 145% 0;
+  }
+}
+.agp-node-state.attention {
+  color: var(--warning, var(--accent));
+}
+.agp-node-state.done {
+  color: var(--success);
+}
+
+.agp-node-top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
-.agp-node-dot {
+/* The agent's colour — the same one its tab wears, so the chart and the dock
+   agree about who is who. */
+.agp-node-face {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: 9px;
+  height: 9px;
   border-radius: var(--radius-full);
   background: var(--fg-dim);
 }
-.agp-node-dot.open {
-  background: var(--success);
-}
-.agp-node-dot.busy {
-  background: var(--accent);
-}
 .agp-node-name {
   flex: 0 1 auto;
-  margin-right: auto; /* hug the name; push MAIN/status to the right */
+  margin-right: auto;
   max-width: 100%;
   font-size: var(--text-sm);
   font-weight: 600;
@@ -587,24 +656,69 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Agent colour as a name chip (replaces the avatar icon). */
-.agp-node-name.chip {
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
-}
 .agp-node-badge {
   flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-full);
   font-size: var(--text-2xs);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 600;
   color: var(--accent);
 }
 .agp-node-sub {
   font-size: var(--text-2xs);
+  line-height: 1.4;
   color: var(--fg-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* What it runs on, and what it is doing right now. */
+.agp-node-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+}
+.agp-node-chip {
+  padding: 0 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.agp-node-state {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.agp-node-state.busy {
+  color: var(--accent);
+}
+.agp-node-state.busy::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  animation: agp-pulse 1.4s ease-in-out infinite;
+  vertical-align: 1px;
+}
+.agp-node-state.closed {
+  font-style: italic;
+}
+@keyframes agp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }
 
 /* ---- pipeline run tab + progress view ---- */
@@ -724,4 +838,59 @@
   padding: 1px 6px;
   border: 1px solid var(--edge);
   border-radius: var(--radius-full);
+}
+
+/* ---- narrow panes -----------------------------------------------------------
+   This panel lives in a dock slot the user can drag to any width, and at ~380px
+   the two-column card grid, the hint line and the fixed-width chart cards all
+   fought each other. Container queries, not viewport ones: what matters is how
+   wide THIS pane is, not the window. */
+.agent-group-panel {
+  container-type: inline-size;
+  container-name: agp;
+}
+
+@container agp (max-width: 460px) {
+  /* The explainer under the title is for a first visit; the pane is too narrow
+     to spend three lines on it. */
+  .agp-hint {
+    display: none;
+  }
+  .agp-head {
+    padding: 10px 10px 8px;
+  }
+  .agp-tabs {
+    padding: 0 10px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .agp-tabs::-webkit-scrollbar {
+    display: none;
+  }
+  .agp-body {
+    padding: 10px;
+  }
+  /* One member per row: at this width two columns left no room for the name. */
+  .agp-grid {
+    grid-template-columns: 1fr;
+  }
+  /* The chart keeps its card size (a squeezed card is unreadable) and scrolls
+     sideways instead, which is what the wrapper is for. */
+  .agp-chartwrap {
+    max-height: 38vh;
+  }
+  .agp-goal-meta {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+
+@container agp (max-width: 320px) {
+  /* Below this the transcript is the only thing worth the room. */
+  .agp-chartwrap {
+    max-height: 30vh;
+  }
+  .agp-node {
+    width: 168px;
+  }
 }

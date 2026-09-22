@@ -24,7 +24,8 @@ import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
 import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from './agentChat'
-import { registerMcpServer, stopMcpServer } from './mcpServer'
+import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpServer'
+import { registerFocusTrace } from './focusTrace'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
 import { registerApiHandlers } from './apiclient'
@@ -152,6 +153,21 @@ function createWindow(): void {
     })
   }
 
+  // A tool call waits on the RENDERER. When the page goes away — a reload, a
+  // crash, a dev update — its half of the conversation is gone, so every agent
+  // waiting on one is told instead of hanging until the MCP timeout (a lead pane
+  // stuck on "생각 중" for half an hour after a reload ate its ask_user popup).
+  mainWindow.webContents.on('did-start-navigation', (e: { isSameDocument?: boolean } | undefined) => {
+    if (e?.isSameDocument) return
+    const n = failPendingToolCalls(
+      'riven: the app reloaded before this could be answered — ask again if you still need it.'
+    )
+    if (n) console.log(`[mcp] dropped ${n} tool call(s) waiting on the old page`)
+  })
+  mainWindow.webContents.on('render-process-gone', () => {
+    failPendingToolCalls('riven: the window crashed while this tool was running — ask again.')
+  })
+
   // Forward renderer console (prefixed) to the main stdout — dev only.
   // Electron 33+ replaced the (event, level, message, …) args with a single
   // Event<WebContentsConsoleMessageEventParams>; read from it, falling back to
@@ -275,6 +291,7 @@ app.whenReady().then(() => {
   registerAgentChatHandlers()
   // riven's own MCP tool server (relays agent tool calls into the UI). Routes to
   // the first live window's renderer.
+  registerFocusTrace()
   registerMcpServer(() => {
     const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
     return w ? w.webContents : null

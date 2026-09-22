@@ -1353,8 +1353,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       onPointerDown={onPointerDown}
     >
       {/* What it is saying, above the device and in readable type. Inside the
-          glass it was eight pixels tall and nobody could read it. */}
-      {bubble && !guessing && chrome !== 'bare' && (
+          glass it was eight pixels tall and nobody could read it. Shown in every
+          size — with the case hidden the balloon is the ONLY thing it can speak
+          with, so leaving it out there made the pet mute. */}
+      {bubble && !guessing && (
         <div className="pet-balloon" key={bubble}>
           {bubble}
         </div>

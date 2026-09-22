@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Plus,
   X,
@@ -13,7 +13,9 @@ import {
   Loader2,
   Circle,
   AlertCircle,
-  Square
+  Square,
+  User,
+  Target
 } from 'lucide-react'
 import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
 import {
@@ -24,6 +26,9 @@ import {
 import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
+import { useGroupLog, activeEdges } from '../../state/groupLog'
+import { useGoals, goalsFor, type Goal } from '../../state/goals'
+import { modelsFor, modelForCli, type Cli } from '../../lib/models'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
@@ -92,7 +97,7 @@ function AvatarPicker({
   )
 }
 
-const MODELS = ['default', 'opus', 'sonnet', 'haiku']
+
 const MIN = 2
 const MAX = 8
 // Members stack vertically to the right of the lead, at most this many per column;
@@ -105,6 +110,9 @@ const PIPE_TIMEOUT_MS = 300_000
 interface Draft {
   name: string
   persona: string
+  // Which agent runs this member. A team is allowed to mix them — that is the
+  // point of having more than one — so it is picked per member, not per group.
+  cli: Cli
   model: string
   parent: number | null // index of another draft this one reports to
   agent: string // custom agent (.claude/agents) or '' for a plain chat
@@ -112,6 +120,7 @@ interface Draft {
 
 interface Stage {
   name: string
+  cli: Cli
   model: string
   role: string
   agent: string // custom agent (.claude/agents) or ''
@@ -133,6 +142,15 @@ interface TreeItem {
   busy: boolean
   chatKey?: string
   avatar?: string | null
+  /** What it runs on, shown as its own chip rather than buried in `sub`. */
+  model?: string
+  cli?: Cli
+  /** Somebody is waiting on this one right now — the edge into it is live. */
+  flowIn?: boolean
+  /** Waiting on the USER (a permission prompt), which is not the same as busy. */
+  attention?: boolean
+  /** Answered, and nobody has looked yet. */
+  done?: boolean
 }
 
 interface TreeNode extends TreeItem {
@@ -169,39 +187,103 @@ function buildForest(items: TreeItem[]): TreeNode[] {
 
 // One org-chart node + its subtree. Closed members render faded with the reopen
 // hint; open members focus their pane on click.
-function OrgNode({
-  node,
-  closedLabel,
-  onPick
-}: {
+// One agent in the chart.
+//
+// The old card was a name, the word MAIN and a dot — which told you neither what
+// the member runs on nor what it is doing, so a team of three read as three
+// identical grey boxes. It now says, in order of what you actually look for:
+// who it is (colour + name + whether it leads), what its job is, what model is
+// behind it, and whether it is working right now.
+// One agent in the chart.
+//
+// The old card was a name, the word MAIN and a dot — which told you neither what
+// the member runs on nor what it is doing, so a team of three read as three
+// identical grey boxes. It now says, in order of what you actually look for:
+// who it is (colour + name + whether it leads), what its job is, what model is
+// behind it, and whether it is working right now.
+function OrgCard({ node, closedLabel, onPick }: {
   node: TreeNode
   closedLabel: string
   onPick: (n: TreeNode) => void
 }): JSX.Element {
-  const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}`
-  const dot = `agp-node-dot${node.busy ? ' busy' : node.open ? ' open' : ''}`
-  // The agent's colour tints the whole node (mixed into the card bg) + names it.
+  const t = useT()
+  const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}${
+    node.busy ? ' busy' : ''
+  }${node.attention ? ' attention' : ''}${node.done ? ' done' : ''}`
+  // The agent's colour identifies it here and on its tab — the same face in
+  // both. tintStyle only answers when the user has PICKED a colour, so the dot
+  // falls back to the accent rather than staying a grey pebble on every card.
   const tint = tintStyle(node.name, node.avatar, 'var(--bg-2)')
+  // What it is doing, in the order that matters: waiting on YOU beats working,
+  // and a finished answer nobody has read yet beats plain idle.
+  const state = !node.open
+    ? closedLabel
+    : node.attention
+      ? t('team.needsYou')
+      : node.busy
+        ? t('team.busy')
+        : node.done
+          ? t('team.answered')
+          : t('team.idle')
   return (
-    <li>
-      <button className={cls} style={tint ? { background: tint.background } : undefined} onClick={() => onPick(node)}>
-        <span className="agp-node-head">
-          <span className="agp-node-name" style={tint ? { color: tint.color } : undefined}>
-            {node.name || '?'}
-          </span>
-          {node.isMain && <span className="agp-node-badge">MAIN</span>}
-          <span className={dot} title={node.busy ? '실행 중' : node.open ? '열림' : '닫힘'} />
+    <button className={cls} onClick={() => onPick(node)} title={node.sub}>
+      <span className="agp-node-top">
+        <span
+          className="agp-node-face"
+          style={{ background: tint ? tint.color : 'var(--accent)' }}
+          aria-hidden
+        />
+        <span className="agp-node-name">{node.name || '?'}</span>
+        {node.isMain && <span className="agp-node-badge">{t('team.lead')}</span>}
+      </span>
+      <span className="agp-node-sub">{node.sub}</span>
+      <span className="agp-node-foot">
+        {node.model && node.model !== 'default' && <span className="agp-node-chip">{node.model}</span>}
+        {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
+        <span
+          className={`agp-node-state${node.busy ? ' busy' : ''}${node.attention ? ' attention' : ''}${
+            node.done ? ' done' : ''
+          }${node.open ? '' : ' closed'}`}
+        >
+          {state}
         </span>
-        <span className="agp-node-sub">{node.open ? node.sub : closedLabel}</span>
-      </button>
+      </span>
+      {/* An indeterminate bar along the bottom edge while it works: a node in a
+          flow should look like it is running, not merely be labelled as such. */}
+      {node.busy && <span className="agp-node-run" aria-hidden />}
+    </button>
+  )
+}
+
+// The tree, drawn left to right: an agent, and everyone who reports to it
+// stacked to its right off a single rail.
+//
+// It used to be a centred ul/li tree that grew sideways, so three members sat in
+// a row of thin connectors in the middle of a half-screen of dots — and it
+// looked nothing like the pipeline view, which is the other thing this panel
+// draws. Flowing rightwards puts the hierarchy in reading order, keeps members
+// in a vertical stack like the pipeline's stages, and the rail is drawn exactly
+// (every card is the same height, so the joints land on the card centres).
+function OrgBranch({ node, closedLabel, onPick }: {
+  node: TreeNode
+  closedLabel: string
+  onPick: (n: TreeNode) => void
+}): JSX.Element {
+  return (
+    <div className={`agp-tree-row${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
+      <div className="agp-tree-self">
+        <OrgCard node={node} closedLabel={closedLabel} onPick={onPick} />
+      </div>
       {node.children.length > 0 && (
-        <ul>
+        <div className={`agp-tree-kids${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
           {node.children.map((c) => (
-            <OrgNode key={c.idx} node={c} closedLabel={closedLabel} onPick={onPick} />
+            <div className={`agp-tree-kid${c.flowIn ? ' flow' : ''}`} key={c.idx}>
+              <OrgBranch node={c} closedLabel={closedLabel} onPick={onPick} />
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </li>
+    </div>
   )
 }
 
@@ -218,12 +300,10 @@ function OrgChart({
 }): JSX.Element {
   if (roots.length === 0) return <div className="agp-chart-empty">{emptyLabel}</div>
   return (
-    <div className="agp-orgchart">
-      <ul>
-        {roots.map((r) => (
-          <OrgNode key={r.idx} node={r} closedLabel={closedLabel} onPick={onPick} />
-        ))}
-      </ul>
+    <div className="agp-tree">
+      {roots.map((r) => (
+        <OrgBranch key={r.idx} node={r} closedLabel={closedLabel} onPick={onPick} />
+      ))}
     </div>
   )
 }
@@ -281,6 +361,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     remove: removeRun
   } = usePipelineRuns((s) => s)
   const pipelines = usePipelines((s) => s.byWorkspace[workspace]) ?? []
+  const goals = useGoals((s) => s.byWorkspace[workspace]) ?? []
   const {
     create: createPipeline,
     remove: removePipeline
@@ -289,25 +370,19 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // null = the "새 그룹" draft tab; otherwise the shown group's name.
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [mode, setMode] = useState<'group' | 'pipeline'>('group')
+  const shownGoal = activeTab?.startsWith('goal:')
+    ? goals.find((g) => g.id === activeTab.slice('goal:'.length))
+    : undefined
   const [previewing, setPreviewing] = useState(false)
   // Group-tab edit mode: edit member fields / rename the group after creation.
   const [editing, setEditing] = useState(false)
 
-  // Closing this panel stops any pipeline it's running (there'd be no UI left to
-  // control it). Panels stay mounted across workspace switches, so unmount here
-  // means a real close. Each canceled run's current stage is interrupted too.
-  useEffect(() => {
-    return () => {
-      const st = usePipelineRuns.getState()
-      for (const r of st.runs) {
-        if (r.workspace === workspace && !r.done) {
-          const cur = r.current >= 0 ? r.stages[r.current] : undefined
-          if (cur?.chatKey) window.api.chat.interrupt(cur.chatKey)
-          st.cancel(r.id)
-        }
-      }
-    }
-  }, [workspace])
+  // Closing this panel no longer stops the pipelines. It used to — the reasoning
+  // was "there's no UI left to control it" — but a pipeline an AGENT started is
+  // not this panel's to end: closing the tab (or having it evicted when the
+  // workspace is unmounted) killed work nobody asked to stop, mid-stage. The run
+  // keeps going, its stage panes are right there, and reopening this panel shows
+  // it again with a Cancel button.
 
   // Custom agents (.claude/agents) available for members/stages to run as.
   const [agentDefs, setAgentDefs] = useState<AgentDef[]>([])
@@ -353,19 +428,19 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // ---- normal-group draft ----
   const [groupName, setGroupName] = useState(() => t('team.nameDefault'))
   const [drafts, setDrafts] = useState<Draft[]>(() => [
-    { name: t('team.mainDefault'), persona: '', model: 'default', parent: null, agent: '' },
-    { name: t('team.memberDefault', { n: 1 }), persona: '', model: 'default', parent: 0, agent: '' },
-    { name: t('team.memberDefault', { n: 2 }), persona: '', model: 'default', parent: 0, agent: '' }
+    { name: t('team.mainDefault'), persona: '', cli: 'claude', model: 'default', parent: null, agent: '' },
+    { name: t('team.memberDefault', { n: 1 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' },
+    { name: t('team.memberDefault', { n: 2 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' }
   ])
 
   // ---- pipeline draft ----
   const [pipeName, setPipeName] = useState(() => t('pipe.nameDefault'))
   const [stages, setStages] = useState<Stage[]>(() => [
-    { name: t('pipe.def.plan'), model: 'default', role: t('pipe.def.planRole'), agent: '' },
-    { name: t('pipe.def.design'), model: 'default', role: t('pipe.def.designRole'), agent: '' },
-    { name: t('pipe.def.build'), model: 'default', role: t('pipe.def.buildRole'), agent: '' },
-    { name: t('pipe.def.qa'), model: 'default', role: t('pipe.def.qaRole'), agent: '' },
-    { name: t('pipe.def.ship'), model: 'default', role: t('pipe.def.shipRole'), agent: '' }
+    { name: t('pipe.def.plan'), cli: 'claude', model: 'default', role: t('pipe.def.planRole'), agent: '' },
+    { name: t('pipe.def.design'), cli: 'claude', model: 'default', role: t('pipe.def.designRole'), agent: '' },
+    { name: t('pipe.def.build'), cli: 'claude', model: 'default', role: t('pipe.def.buildRole'), agent: '' },
+    { name: t('pipe.def.qa'), cli: 'claude', model: 'default', role: t('pipe.def.qaRole'), agent: '' },
+    { name: t('pipe.def.ship'), cli: 'claude', model: 'default', role: t('pipe.def.shipRole'), agent: '' }
   ])
   const [task, setTask] = useState('')
   const [running, setRunning] = useState(false)
@@ -401,6 +476,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const roster = agentsForWorkspace(workspace)
   const isOpen = (chatKey: string): boolean => !!getActiveApi()?.getPanel(chatKey)
   const isBusy = (chatKey: string): boolean => roster.find((a) => a.id === chatKey)?.busy ?? false
+  const statusOf = (chatKey: string): string | undefined => roster.find((a) => a.id === chatKey)?.status
+  // The group's own timeline drives the live edges (see activeEdges): a member
+  // being busy says it is working, this says WHO it is working for.
+  const logEvents = useGroupLog((s) => s.byWorkspace[workspace])
 
   const subText = (persona: string, model: string, isMain: boolean): string => {
     const parts = [persona.trim(), model && model !== 'default' ? model : ''].filter(Boolean)
@@ -439,7 +518,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       ds.length < MAX
         ? [
             ...ds,
-            { name: t('team.memberDefault', { n: ds.length }), persona: '', model: 'default', parent: 0, agent: '' }
+            { name: t('team.memberDefault', { n: ds.length }), persona: '', cli: 'claude' as Cli, model: 'default', parent: 0, agent: '' }
           ]
         : ds
     )
@@ -458,9 +537,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const resetDraft = (): void => {
     setGroupName(t('team.nameDefault'))
     setDrafts([
-      { name: t('team.mainDefault'), persona: '', model: 'default', parent: null, agent: '' },
-      { name: t('team.memberDefault', { n: 1 }), persona: '', model: 'default', parent: 0, agent: '' },
-      { name: t('team.memberDefault', { n: 2 }), persona: '', model: 'default', parent: 0, agent: '' }
+      { name: t('team.mainDefault'), persona: '', cli: 'claude', model: 'default', parent: null, agent: '' },
+      { name: t('team.memberDefault', { n: 1 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' },
+      { name: t('team.memberDefault', { n: 2 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' }
     ])
     setPreviewing(false)
   }
@@ -503,13 +582,16 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         memberTitle(draftNames[i], g),
         true, // don't steal focus while the team is being spawned
         d.agent || undefined,
-        priming(draftNames[i], d.persona, g, parentName, t) || undefined
+        priming(draftNames[i], d.persona, g, parentName, t) || undefined,
+        undefined, // this workspace
+        d.cli
       )
       created.push(chatKey)
       if (i > 0 && (i - 1) % MAX_PER_COL === 0) columnTops.push(chatKey)
       return {
         name: draftNames[i],
         persona: d.persona.trim() || null,
+        cli: d.cli,
         model: d.model,
         parent: parentIdx,
         chatKey,
@@ -533,11 +615,11 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     // reset the pipeline draft to defaults
     setPipeName(t('pipe.nameDefault'))
     setStages([
-      { name: t('pipe.def.plan'), model: 'default', role: t('pipe.def.planRole'), agent: '' },
-      { name: t('pipe.def.design'), model: 'default', role: t('pipe.def.designRole'), agent: '' },
-      { name: t('pipe.def.build'), model: 'default', role: t('pipe.def.buildRole'), agent: '' },
-      { name: t('pipe.def.qa'), model: 'default', role: t('pipe.def.qaRole'), agent: '' },
-      { name: t('pipe.def.ship'), model: 'default', role: t('pipe.def.shipRole'), agent: '' }
+      { name: t('pipe.def.plan'), cli: 'claude', model: 'default', role: t('pipe.def.planRole'), agent: '' },
+      { name: t('pipe.def.design'), cli: 'claude', model: 'default', role: t('pipe.def.designRole'), agent: '' },
+      { name: t('pipe.def.build'), cli: 'claude', model: 'default', role: t('pipe.def.buildRole'), agent: '' },
+      { name: t('pipe.def.qa'), cli: 'claude', model: 'default', role: t('pipe.def.qaRole'), agent: '' },
+      { name: t('pipe.def.ship'), cli: 'claude', model: 'default', role: t('pipe.def.shipRole'), agent: '' }
     ])
     setTask('')
     setRunTask('')
@@ -573,7 +655,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
           ref,
           st.name.trim() || undefined,
           true,
-          st.agent || undefined
+          st.agent || undefined,
+          undefined,
+          undefined,
+          st.cli
         )
         ref = id // next stage opens beside this one
         setRunStage(runId, i, { chatKey: id })
@@ -608,7 +693,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const setStage = (i: number, patch: Partial<Stage>): void =>
     setStages((ss) => ss.map((s, j) => (j === i ? { ...s, ...patch } : s)))
   const addStage = (): void =>
-    setStages((ss) => [...ss, { name: '', model: 'default', role: '', agent: '' }])
+    setStages((ss) => [...ss, { name: '', cli: 'claude', model: 'default', role: '', agent: '' }])
   const removeStage = (i: number): void =>
     setStages((ss) => (ss.length > MIN ? ss.filter((_, j) => j !== i) : ss))
 
@@ -653,7 +738,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       memberTitle(m.name, g.group),
       true,
       m.agent || undefined,
-      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined
+      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined,
+      undefined,
+      m.cli
     )
     // Carry the member's avatar override to the new pane so its tab keeps the face.
     if (m.avatar) setChatAvatar(newKey, m.avatar)
@@ -746,18 +833,26 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       busy: false
     }))
   )
-  const groupTree = (g: AgentGroup): TreeNode[] =>
-    buildForest(
+  const groupTree = (g: AgentGroup): TreeNode[] => {
+    const live = activeEdges((logEvents ?? []).filter((e) => e.group === g.group))
+    const flowingInto = new Set([...live].map((k) => k.split('>')[1]))
+    return buildForest(
       g.members.map((m) => ({
         name: m.name,
-        sub: subText(m.persona ?? '', m.model, m.parent == null),
+        sub: (m.persona ?? '').trim(),
         parent: m.parent,
         open: isOpen(m.chatKey),
         busy: isBusy(m.chatKey),
         chatKey: m.chatKey,
-        avatar: m.avatar
+        avatar: m.avatar,
+        model: m.model,
+        cli: m.cli,
+        flowIn: flowingInto.has(m.chatKey),
+        attention: statusOf(m.chatKey) === 'waiting',
+        done: statusOf(m.chatKey) === 'done'
       }))
     )
+  }
 
   const showChart = !onDraft || (mode === 'group' && previewing)
 
@@ -792,6 +887,25 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
           >
             {g.group}
             <span className="agp-tab-count">{g.members.length}</span>
+          </button>
+        ))}
+        {goals.map((g) => (
+          <button
+            key={g.id}
+            className={`agp-tab agp-tab-goal${activeTab === `goal:${g.id}` ? ' on' : ''}${
+              g.status === 'open' ? ' running' : ''
+            }`}
+            onClick={() => {
+              setActiveTab(`goal:${g.id}`)
+              setEditing(false)
+            }}
+            title={g.goal}
+          >
+            <Target size={12} />
+            {g.goal.length > 18 ? g.goal.slice(0, 18) + '…' : g.goal}
+            <span className="agp-tab-count">
+              R{g.round} · {g.turns}턴
+            </span>
           </button>
         ))}
         {pipelines.map((p) => {
@@ -907,13 +1021,29 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                       onChange={(e) => setDraft(i, { persona: e.target.value })}
                     />
                     <div className="agp-card-row">
+                      <label className="agp-card-label">{t('team.agentCli')}</label>
+                      <select
+                        className="ui-select"
+                        value={d.cli}
+                        onChange={(e) => {
+                          const cli = e.target.value as Cli
+                          // A model belongs to one CLI, so switching drops a
+                          // choice the other one has never heard of.
+                          setDraft(i, { cli, model: modelForCli(d.model, cli) })
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </div>
+                    <div className="agp-card-row">
                       <label className="agp-card-label">{t('team.model')}</label>
                       <select
                         className="ui-select"
                         value={d.model}
                         onChange={(e) => setDraft(i, { model: e.target.value })}
                       >
-                        {MODELS.map((m) => (
+                        {modelsFor(d.cli).map((m) => (
                           <option key={m} value={m}>
                             {m}
                           </option>
@@ -1002,10 +1132,21 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                     </div>
                     <select
                       className="ui-select"
+                      value={st.cli}
+                      onChange={(e) => {
+                        const cli = e.target.value as Cli
+                        setStage(i, { cli, model: modelForCli(st.model, cli) })
+                      }}
+                    >
+                      <option value="claude">Claude</option>
+                      <option value="codex">Codex</option>
+                    </select>
+                    <select
+                      className="ui-select"
                       value={st.model}
                       onChange={(e) => setStage(i, { model: e.target.value })}
                     >
-                      {MODELS.map((m) => (
+                      {modelsFor(st.cli).map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -1114,6 +1255,23 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                       }
                     />
                     <div className="agp-card-row">
+                      <label className="agp-card-label">{t('team.agentCli')}</label>
+                      <select
+                        className="ui-select"
+                        value={m.cli ?? 'claude'}
+                        onChange={(e) => {
+                          const cli = e.target.value as Cli
+                          updateMember(workspace, shown.group, m.chatKey, {
+                            cli,
+                            model: modelForCli(m.model, cli)
+                          })
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </div>
+                    <div className="agp-card-row">
                       <label className="agp-card-label">{t('team.model')}</label>
                       <select
                         className="ui-select"
@@ -1122,7 +1280,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                           updateMember(workspace, shown.group, m.chatKey, { model: e.target.value })
                         }
                       >
-                        {MODELS.map((mm) => (
+                        {modelsFor(m.cli).map((mm) => (
                           <option key={mm} value={mm}>
                             {mm}
                           </option>
@@ -1180,6 +1338,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
               )}
             </div>
           )}
+          {!editing && <GroupTalk workspace={workspace} group={shown.group} />}
           <div className="agp-actions">
             {editing ? (
               <button className="ui-btn ui-btn-primary" onClick={() => setEditing(false)}>
@@ -1204,6 +1363,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
           </div>
         </div>
       )}
+
+      {/* ---- Goal board tab ---- */}
+      {shownGoal && <GoalBoard goal={shownGoal} workspace={workspace} />}
 
       {/* ---- Pipeline run tab ---- */}
       {shownRun && (
@@ -1348,6 +1510,274 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
               <Trash2 size={13} /> {t('pipe.delete')}
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// "3분 전" — a timeline is read newest-last, so how long ago matters more than
+// the clock time.
+function ago(at: number, t: TFn): string {
+  const mins = Math.floor((Date.now() - at) / 60000)
+  if (mins < 1) return t('team.justNow')
+  if (mins < 60) return t('team.minsAgo', { n: mins })
+  return t('team.hoursAgo', { n: Math.floor(mins / 60) })
+}
+
+// Telling the group something, and watching what it does about it.
+//
+// Both halves were missing: there was no way to put a task to a team except by
+// finding its lead's pane and typing there, and the exchanges that followed
+// happened inside the members' own panes where nobody could follow them. The
+// box below sends to the whole group (or just the lead), and the list under it
+// is every ask, answer and refusal in this group, newest last.
+function GroupTalk({ workspace, group }: { workspace: string; group: string }): JSX.Element {
+  const t = useT()
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  // Who the message goes to. Empty = the lead, which is the default on purpose:
+  // telling a TEAM something should go through whoever runs it, and the lead can
+  // then hand work out and put the answers together. Sending to everyone at once
+  // (the old default, and the old ONLY other choice) produced three unrelated
+  // answers to the user with nobody collecting them — the org chart existed and
+  // was ignored.
+  const [picked, setPicked] = useState<string[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Korean input commits a syllable on the same Enter that sends. Send read
+  // React's state, which still lagged the DOM, and the IME then put the
+  // in-progress syllable back into the cleared box — every message left its last
+  // word behind. So: ignore Enter mid-composition, and take the text from the
+  // DOM, which is where the committed characters actually are.
+  const composing = useRef(false)
+  // The selector must return what is IN the store, never a fresh value: zustand
+  // compares with Object.is, so a `?? []` inside it hands back a new array on
+  // every render and the component re-renders forever ("Maximum update depth
+  // exceeded"). Default outside the selector.
+  const events = useGroupLog((s) => s.byWorkspace[workspace])
+  const mine = (events ?? []).filter((e) => e.group === group)
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [mine.length])
+
+  const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === group)
+  const titleOf = (key?: string): string => {
+    if (!key) return ''
+    if (key === 'user') return t('team.you')
+    const m = roster?.members.find((x) => x.chatKey === key)
+    return m?.name ?? key.slice(0, 9)
+  }
+
+  const send = async (): Promise<void> => {
+    const msg = (inputRef.current?.value ?? text).trim()
+    // Not gated on `sending` any more: waiting for one member's answer must not
+    // stop you talking to the team. The box stays usable and the wait is shown
+    // as a pill you can dismiss.
+    if (!msg || !roster?.members.length) return
+    setSending(true)
+    setText('')
+    if (inputRef.current) inputRef.current.value = ''
+    const targets = picked.length
+      ? roster.members.filter((m) => picked.includes(m.chatKey))
+      : roster.members.slice(0, 1) // the lead
+    useGroupLog.getState().add({
+      ws: workspace,
+      group,
+      kind: 'ask',
+      from: 'user',
+      text: targets.length === 1 ? msg : `[${targets.map((m) => m.name).join(', ')}] ${msg}`
+    })
+    try {
+      // The user is not an agent, so this goes through the same delegation path
+      // the agents use — one pane at a time, each answer tied to its question.
+      await Promise.all(
+        targets.map(async (m) => {
+          const target = resolveAgent(m.chatKey, undefined, workspace)
+          if (!target) return
+          const reply = await askChatTurn(target, msg, 5 * 60_000, t('team.noReply'))
+          useGroupLog.getState().add({ ws: workspace, group, kind: 'reply', from: m.chatKey, text: reply })
+        })
+      )
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="agp-talk">
+      <div className="agp-talk-log">
+        {mine.length === 0 && <div className="agp-talk-empty">{t('team.logEmpty')}</div>}
+        {mine.map((e, i) => {
+          // A run of entries from the same speaker reads as one block: the name
+          // is printed once and the rest are indented under it. One line per
+          // event with the name repeated was a wall nobody could follow.
+          const prev = mine[i - 1]
+          const runOn = prev && prev.from === e.from && prev.kind === e.kind && e.at - prev.at < 60_000
+          return (
+            <div key={e.id} className={`agp-ev agp-ev-${e.kind}${runOn ? ' run-on' : ''}`}>
+              {!runOn && (
+                <div className="agp-ev-head">
+                  <span className="agp-ev-who">{titleOf(e.from)}</span>
+                  {e.to && <span className="agp-ev-to">→ {titleOf(e.to)}</span>}
+                  <span className="agp-ev-kind">{t(`team.ev.${e.kind}`)}</span>
+                  <time className="agp-ev-at">{ago(e.at, t)}</time>
+                </div>
+              )}
+              <div className="agp-ev-text">{e.text}</div>
+            </div>
+          )
+        })}
+        <div ref={endRef} />
+      </div>
+      {sending && (
+        <div className="agp-talk-waiting">
+          <Loader2 size={11} className="spin" />
+          {t('team.waiting')}
+          <button className="agp-talk-drop" onClick={() => setSending(false)}>
+            {t('team.stopWaiting')}
+          </button>
+        </div>
+      )}
+      <div className="agp-talk-to">
+        <span className="agp-talk-tolabel">{t('team.sendTo')}</span>
+        <button
+          className={`agp-chip${picked.length === 0 ? ' on' : ''}`}
+          onClick={() => setPicked([])}
+          title={t('team.toLeadHint')}
+        >
+          <User size={11} /> {roster?.members[0]?.name ?? t('team.lead')}
+        </button>
+        {(roster?.members ?? []).slice(1).map((m) => (
+          <button
+            key={m.chatKey}
+            className={`agp-chip${picked.includes(m.chatKey) ? ' on' : ''}`}
+            onClick={() =>
+              setPicked((p) => (p.includes(m.chatKey) ? p.filter((k) => k !== m.chatKey) : [...p, m.chatKey]))
+            }
+          >
+            {m.name}
+          </button>
+        ))}
+        <button
+          className={`agp-chip${picked.length > 0 && picked.length === (roster?.members.length ?? 0) ? ' on' : ''}`}
+          onClick={() => setPicked((roster?.members ?? []).map((m) => m.chatKey))}
+          title={t('team.toEveryoneHint')}
+        >
+          <Users size={11} /> {t('team.everyone')}
+        </button>
+      </div>
+      <div className="agp-talk-box">
+        <input
+          ref={inputRef}
+          className="agp-talk-input"
+          value={text}
+          placeholder={t('team.talkPlaceholder')}
+          onChange={(e) => setText(e.target.value)}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' || e.shiftKey) return
+            // Let the IME finish the syllable this Enter is committing.
+            if (composing.current || e.nativeEvent.isComposing) return
+            e.preventDefault()
+            void send()
+          }}
+        />
+
+        <button className="ui-btn ui-btn-primary" disabled={!text.trim()} onClick={() => void send()}>
+          {t('team.send')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// The goal board: what the team is converging on, what it has cost so far, and
+// the button that ends it.
+//
+// Nothing stops a goal on its own — that was the decision — so this view is the
+// safeguard: the spend is on screen at all times (rounds, turns, how long it has
+// been going), and Stop is always one click away. A person can also put a line
+// on the board between rounds, which is the cheapest way to correct a team that
+// has drifted.
+function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.Element {
+  const t = useT()
+  const [text, setText] = useState('')
+  const postRef = useRef<HTMLInputElement>(null)
+  const composing = useRef(false)
+  const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === goal.group)
+  const nameOf = (key: string): string =>
+    key === 'user' ? t('team.you') : roster?.members.find((m) => m.chatKey === key)?.name ?? key.slice(0, 9)
+  const mins = Math.max(1, Math.round(((goal.endedAt ?? Date.now()) - goal.startedAt) / 60000))
+
+  const stop = (): void => {
+    // End the turns this goal has in flight as well as the goal itself: a member
+    // mid-answer would otherwise keep going (and keep spending) after "stop".
+    for (const m of roster?.members ?? []) window.api.chat.interrupt(m.chatKey)
+    useGoals.getState().stop(goal.id)
+  }
+
+  return (
+    <div className="agp-body agp-goal">
+      <div className="agp-goal-head">
+        <div className="agp-goal-title">{goal.goal}</div>
+        <div className="agp-goal-done">{t('goal.doneWhen')}: {goal.doneWhen}</div>
+        <div className="agp-goal-meta">
+          <span className={`agp-goal-status s-${goal.status}`}>{t(`goal.status.${goal.status}`)}</span>
+          <span>{t('goal.spend', { rounds: goal.round, turns: goal.turns, mins })}</span>
+          {goal.artifact && <span className="agp-goal-artifact">{goal.artifact}</span>}
+          {goal.status === 'open' && (
+            <button className="ui-btn ui-btn-default agp-danger" onClick={stop}>
+              <Square size={12} /> {t('goal.stop')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="agp-goal-posts">
+        {goal.posts.length === 0 && <div className="agp-talk-empty">{t('goal.empty')}</div>}
+        {goal.posts.map((p) => (
+          <div key={p.id} className={`agp-post k-${p.kind}`}>
+            <div className="agp-post-head">
+              <span className="agp-post-by">{nameOf(p.by)}</span>
+              <span className="agp-post-kind">
+                R{p.round} · {t(`goal.kind.${p.kind}`)}
+              </span>
+            </div>
+            <div className="agp-post-text">{p.text}</div>
+          </div>
+        ))}
+      </div>
+
+      {goal.summary && (
+        <div className="agp-goal-summary">
+          <b>{t('goal.conclusion')}</b>
+          <div>{goal.summary}</div>
+        </div>
+      )}
+
+      {goal.status === 'open' && (
+        <div className="agp-talk-box">
+          <input
+            ref={postRef}
+            className="agp-talk-input"
+            value={text}
+            placeholder={t('goal.postPlaceholder')}
+            onChange={(e) => setText(e.target.value)}
+            onCompositionStart={() => (composing.current = true)}
+            onCompositionEnd={() => (composing.current = false)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.shiftKey) return
+              if (composing.current || e.nativeEvent.isComposing) return
+              const value = (postRef.current?.value ?? text).trim()
+              if (!value) return
+              e.preventDefault()
+              useGoals.getState().post(goal.id, { round: goal.round, by: 'user', kind: 'note', text: value })
+              setText('')
+              if (postRef.current) postRef.current.value = ''
+            }}
+          />
         </div>
       )}
     </div>

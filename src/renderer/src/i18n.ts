@@ -85,13 +85,19 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'agentGroup.groupName': { ko: '그룹', en: 'Group' },
   'agentGroup.reportsTo': { ko: '보고 대상', en: 'Reports to' },
   'agentGroup.primeSuffix': { ko: '이 역할로 이후 작업을 수행하세요.', en: 'Act in this role for the rest of the session.' },
+  // The lead is told to LOOK UP its team rather than given a fixed list: members
+  // are added and removed while it works, so a list baked into the system prompt
+  // goes stale the moment the group changes.
   'agentGroup.leadIdentity': {
-    ko: '너는 이 그룹의 리드(총괄)다. 이름은 "{name}". 팀원에게 riven_ask_agent 로 일을 위임하고 결과를 종합한다.',
-    en: 'You are the LEAD of this group (name: "{name}"). Delegate to teammates via riven_ask_agent and synthesise their results.'
+    ko: '너는 이 그룹의 리드(총괄)다. 이름은 "{name}". 팀원은 riven_agents 로 확인하고(각 항목의 group 필드가 그룹 이름), riven_ask_agent(id 또는 이름, 메시지)로 위임해 결과를 종합한다. 팀 전체에 한 번에 물을 땐 riven_group_broadcast(group, message).',
+    en: 'You are the LEAD of this group (name: "{name}"). Look your team up with riven_agents (each entry\'s `group` field names the group), delegate with riven_ask_agent(id or name, message) and synthesise their results. To put one question to the whole team use riven_group_broadcast(group, message).'
   },
+  // A member is told HOW to report back, and specifically not to block on the
+  // lead while the lead is blocked on it — that pair used to freeze both for the
+  // full five-minute timeout.
   'agentGroup.memberIdentity': {
-    ko: '너는 "{name}" 멤버이고 "{parent}" 에게 보고한다. 맡은 역할 범위의 일을 처리하고 결과를 보고한다.',
-    en: 'You are member "{name}" reporting to "{parent}". Handle work within your role and report back.'
+    ko: '너는 "{name}" 멤버이고 "{parent}" 에게 보고한다. 맡은 역할 범위의 일을 처리하고, 결과는 지금 받은 질문의 답으로 그대로 돌려준다(리드가 그 답을 기다리고 있다). 리드에게 되물어야 할 땐 riven_ask_agent(..., wait=false)를 쓴다 — 리드가 너를 기다리는 동안 너도 리드를 기다리면 둘 다 멈춘다.',
+    en: 'You are member "{name}" reporting to "{parent}". Handle work within your role and report back AS THE ANSWER to the question you were asked (the lead is waiting on it). If you must ask the lead something, use riven_ask_agent(..., wait=false): waiting on the lead while it waits on you stops both of you.'
   },
   'agentGroup.prevOutput': { ko: '이전 단계 산출물', en: 'Previous stage output' },
   'team.hint': {
@@ -714,6 +720,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.thinking': { ko: '생각 중', en: 'Thinking' },
   'chat.writing': { ko: '작성 중', en: 'Writing' },
   'chat.done': { ko: '완료', en: 'Done' },
+  'chat.quiet': { ko: '· 무응답 {d}', en: '· silent {d}' },
+  'chat.quietHint': {
+    ko: '에이전트가 이 시간 동안 아무것도 보내지 않았습니다. 도구를 오래 돌리는 중일 수도 있고, CLI가 API 응답을 기다리며 멈춰 있을 수도 있습니다 — 그럴 땐 중단하고 다시 보내세요.',
+    en: 'Nothing has arrived from the agent for this long. It may be inside a long tool call, or its CLI may be stuck waiting on the API — if so, stop it and send again.'
+  },
   'chat.stopped': { ko: '중단', en: 'Stopped' },
   'chat.resumed': { ko: '이전 세션에서 이어짐', en: 'Continued from a previous session' },
   'chat.restoring': { ko: '이전 대화 불러오는 중…', en: 'Loading previous conversation…' },
@@ -773,6 +784,52 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.subagent': { ko: '서브에이전트', en: 'Subagent' },
   'title.notes': { ko: '메모', en: 'Notes' },
   'title.api': { ko: 'API', en: 'API' },
+  'team.you': { ko: '나', en: 'You' },
+  'team.agentCli': { ko: 'CLI', en: 'CLI' },
+  'goal.doneWhen': { ko: '끝나는 조건', en: 'Finished when' },
+  'goal.spend': { ko: '{rounds}라운드 · {turns}턴 · {mins}분', en: '{rounds} rounds · {turns} turns · {mins} min' },
+  'goal.stop': { ko: '중단', en: 'Stop' },
+  'goal.empty': { ko: '아직 올라온 글이 없습니다. 리드가 라운드를 돌리면 여기에 쌓입니다.', en: 'Nothing posted yet. The lead\'s rounds land here.' },
+  'goal.conclusion': { ko: '결론', en: 'Conclusion' },
+  'goal.postPlaceholder': { ko: '목표판에 한 줄 남기기 (팀이 다음 라운드에서 읽습니다)', en: 'Leave a line on the board (the team reads it next round)' },
+  'goal.status.open': { ko: '진행 중', en: 'Open' },
+  'goal.status.converged': { ko: '수렴됨', en: 'Converged' },
+  'goal.status.stopped': { ko: '중단됨', en: 'Stopped' },
+  'goal.kind.proposal': { ko: '제안', en: 'proposal' },
+  'goal.kind.critique': { ko: '반론', en: 'critique' },
+  'goal.kind.revision': { ko: '수정안', en: 'revision' },
+  'goal.kind.vote': { ko: '투표', en: 'vote' },
+  'goal.kind.note': { ko: '메모', en: 'note' },
+  'goal.kind.summary': { ko: '결론', en: 'summary' },
+  'team.logEmpty': { ko: '아직 오간 말이 없습니다.', en: 'Nothing has been said yet.' },
+  'team.talkPlaceholder': { ko: '그룹에 지시…', en: 'Tell the group…' },
+  'team.sendTo': { ko: '받는 사람', en: 'To' },
+  'team.justNow': { ko: '방금', en: 'just now' },
+  'team.minsAgo': { ko: '{n}분 전', en: '{n} min ago' },
+  'team.hoursAgo': { ko: '{n}시간 전', en: '{n}h ago' },
+  'team.ev.ask': { ko: '요청', en: 'asked' },
+  'team.ev.reply': { ko: '응답', en: 'replied' },
+  'team.ev.error': { ko: '실패', en: 'failed' },
+  'team.ev.roster': { ko: '구성', en: 'roster' },
+  'team.lead': { ko: '리드', en: 'Lead' },
+  'team.busy': { ko: '작업 중', en: 'Working' },
+  'team.needsYou': { ko: '확인 필요', en: 'Needs you' },
+  'team.answered': { ko: '답변 옴', en: 'Answered' },
+  'team.idle': { ko: '대기', en: 'Idle' },
+  'team.everyone': { ko: '전원', en: 'Everyone' },
+  'team.toLeadHint': {
+    ko: '리드에게 보냅니다. 리드가 팀원에게 나눠 맡기고 결과를 모읍니다.',
+    en: 'Goes to the lead, who hands work out and puts the answers together.'
+  },
+  'team.toEveryoneHint': {
+    ko: '전원에게 따로 보냅니다. 각자 답하고, 아무도 종합하지 않습니다.',
+    en: 'Goes to each member separately. They answer on their own; nobody collects it.'
+  },
+  'team.send': { ko: '보내기', en: 'Send' },
+  'team.sending': { ko: '보내는 중…', en: 'Sending…' },
+  'team.waiting': { ko: '답을 기다리는 중', en: 'Waiting for an answer' },
+  'team.stopWaiting': { ko: '그만 기다리기', en: 'Stop waiting' },
+  'team.noReply': { ko: '(5분 안에 답이 없었습니다)', en: '(no reply within 5 min)' },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
 
   // ---- 리븐펫 (the floating pet device) ----
