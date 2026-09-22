@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Plus,
   X,
@@ -13,7 +13,8 @@ import {
   Loader2,
   Circle,
   AlertCircle,
-  Square
+  Square,
+  User
 } from 'lucide-react'
 import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
 import {
@@ -24,6 +25,7 @@ import {
 import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
+import { useGroupLog } from '../../state/groupLog'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
@@ -1171,6 +1173,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
               )}
             </div>
           )}
+          {!editing && <GroupTalk workspace={workspace} group={shown.group} />}
           <div className="agp-actions">
             {editing ? (
               <button className="ui-btn ui-btn-primary" onClick={() => setEditing(false)}>
@@ -1341,6 +1344,99 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Telling the group something, and watching what it does about it.
+//
+// Both halves were missing: there was no way to put a task to a team except by
+// finding its lead's pane and typing there, and the exchanges that followed
+// happened inside the members' own panes where nobody could follow them. The
+// box below sends to the whole group (or just the lead), and the list under it
+// is every ask, answer and refusal in this group, newest last.
+function GroupTalk({ workspace, group }: { workspace: string; group: string }): JSX.Element {
+  const t = useT()
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [everyone, setEveryone] = useState(true)
+  const events = useGroupLog((s) => s.byWorkspace[workspace] ?? [])
+  const mine = events.filter((e) => e.group === group)
+  const endRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' })
+  }, [mine.length])
+
+  const roster = useAgentGroups((s) => s.byWorkspace[workspace] ?? []).find((g) => g.group === group)
+  const titleOf = (key?: string): string => {
+    if (!key) return ''
+    if (key === 'user') return t('team.you')
+    const m = roster?.members.find((x) => x.chatKey === key)
+    return m?.name ?? key.slice(0, 9)
+  }
+
+  const send = async (): Promise<void> => {
+    const msg = text.trim()
+    if (!msg || sending || !roster?.members.length) return
+    setSending(true)
+    setText('')
+    useGroupLog.getState().add({ ws: workspace, group, kind: 'ask', from: 'user', text: msg })
+    try {
+      // The user is not an agent, so this goes through the same delegation path
+      // the agents use — one pane at a time, each answer tied to its question.
+      const targets = everyone ? roster.members : roster.members.slice(0, 1)
+      await Promise.all(
+        targets.map(async (m) => {
+          const target = resolveAgent(m.chatKey, undefined, workspace)
+          if (!target) return
+          const reply = await askChatTurn(target, msg, 5 * 60_000, t('team.noReply'))
+          useGroupLog.getState().add({ ws: workspace, group, kind: 'reply', from: m.chatKey, text: reply })
+        })
+      )
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="agp-talk">
+      <div className="agp-talk-log">
+        {mine.length === 0 && <div className="agp-talk-empty">{t('team.logEmpty')}</div>}
+        {mine.map((e) => (
+          <div key={e.id} className={`agp-ev agp-ev-${e.kind}`}>
+            <span className="agp-ev-who">
+              {titleOf(e.from)}
+              {e.to ? ` → ${titleOf(e.to)}` : ''}
+            </span>
+            <span className="agp-ev-text">{e.text}</span>
+          </div>
+        ))}
+        <div ref={endRef} />
+      </div>
+      <div className="agp-talk-box">
+        <input
+          className="agp-talk-input"
+          value={text}
+          placeholder={t('team.talkPlaceholder')}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              void send()
+            }
+          }}
+        />
+        <button
+          className={`agp-talk-all${everyone ? ' on' : ''}`}
+          title={t(everyone ? 'team.toEveryone' : 'team.toLead')}
+          onClick={() => setEveryone((v) => !v)}
+        >
+          {everyone ? <Users size={12} /> : <User size={12} />}
+        </button>
+        <button className="ui-btn ui-btn-primary" disabled={sending || !text.trim()} onClick={() => void send()}>
+          {sending ? t('team.sending') : t('team.send')}
+        </button>
+      </div>
     </div>
   )
 }

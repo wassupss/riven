@@ -14,6 +14,7 @@ import {
 } from '../dock/registry'
 import { rosterFor, type RosterEntry } from './roster'
 import { useAgentGroups } from './agentGroups'
+import { useGroupLog } from './groupLog'
 import { classifyTerminalCommand } from '../lib/terminalCommand'
 import { addEdge, dropEdge, wouldCycle, type AskEdges } from '../lib/askGraph'
 
@@ -54,6 +55,7 @@ export const MCP_TOOL_LABELS: Array<{ name: string; ko: string; en: string }> = 
   { name: 'riven_group_add_agent', ko: '그룹에 에이전트 추가', en: 'Add agent to group' },
   { name: 'riven_group_remove_agent', ko: '그룹에서 제거', en: 'Remove agent' },
   { name: 'riven_group_delete', ko: '그룹 삭제', en: 'Delete group' },
+  { name: 'riven_group_broadcast', ko: '그룹 전체에 전달', en: 'Broadcast to group' },
   { name: 'riven_start_pipeline', ko: '파이프라인 실행', en: 'Start pipeline' },
   { name: 'riven_note_list', ko: '메모 목록', en: 'List notes' },
   { name: 'riven_note_read', ko: '메모 읽기', en: 'Read note' },
@@ -546,6 +548,24 @@ function resolveRosterAgent(ref: string, ws: string, self: string | null): Roste
   )
 }
 
+// Which group a pane belongs to, for the timeline (null outside any group).
+function groupOfPane(ws: string, pane: string | null): string | null {
+  if (!pane) return null
+  for (const g of useAgentGroups.getState().byWorkspace[ws] ?? [])
+    if (g.members.some((m) => m.chatKey === pane)) return g.group
+  return null
+}
+
+function note(
+  ws: string,
+  kind: 'ask' | 'reply' | 'error' | 'roster',
+  from: string,
+  text: string,
+  to?: string
+): void {
+  useGroupLog.getState().add({ ws, group: groupOfPane(ws, from) ?? groupOfPane(ws, to ?? null), kind, from, to, text })
+}
+
 async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx): Promise<string> {
   if (!c.ws) return unattributed(c)
   const entry = resolveRosterAgent(ref, c.ws, c.self)
@@ -590,12 +610,15 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   // both of you until the five-minute timeout, with nothing on screen saying so.
   const from = c.chatPane ?? c.self
   if (wait && from && wouldCycle(waitingOn, from, target.chatKey)) {
+    note(c.ws, 'error', from, `순환 대기로 거절: ${target.getTitle()}`, target.chatKey)
     return `error: "${target.getTitle()}" is already waiting on you (directly or through another agent), so waiting for its answer would deadlock both of you. Answer the question you were asked first, or send this with wait=false.`
   }
   if (wait && from) addEdge(waitingOn, from, target.chatKey)
+  note(c.ws, 'ask', from ?? 'agent', message, target.chatKey)
   const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)').finally(() => {
     if (wait && from) dropEdge(waitingOn, from, target.chatKey)
   })
+  void answer.then((reply) => note(c.ws as string, 'reply', target.chatKey, reply, from ?? undefined))
   if (!wait) {
     void answer
     return `delegated to "${target.getTitle()}" (async)`
@@ -631,6 +654,36 @@ async function askAgents(args: Args, c: Ctx): Promise<string> {
   )
   return results.join('\n\n')
 }
+// One message to the whole team.
+//
+// Every member had to be listed by hand (riven_ask_agents with one entry each),
+// which means the lead has to know who is in the group — the thing it could not
+// see. With the roster wired up the group itself is the address: each member is
+// asked in parallel (one at a time per pane, so nobody's turn is interrupted),
+// and the answers come back together.
+async function groupBroadcast(args: Args, c: Ctx): Promise<string> {
+  const group = s(args.group)
+  const message = s(args.message)
+  if (!c.ws) return unattributed(c)
+  if (!message) return 'error: message is required'
+  const roster = useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!roster) return `error: no group "${group}" in this workspace (see riven_agents)`
+  const wait = args.wait !== false
+  // Never to itself: a member broadcasting to its own group would be asking
+  // itself a question and waiting for the answer.
+  const targets = roster.members.filter((m) => m.chatKey !== (c.chatPane ?? c.self))
+  if (!targets.length) return `error: group "${group}" has nobody else in it`
+  useGroupLog.getState().add({
+    ws: c.ws,
+    group,
+    kind: 'ask',
+    from: c.chatPane ?? 'agent',
+    text: `[전체] ${message}`
+  })
+  const answers = await Promise.all(targets.map((m) => askOneAgent(m.chatKey, message, wait, c)))
+  return answers.join('\n\n')
+}
+
 function groupAddAgent(args: Args, c: Ctx): string {
   const name = s(args.name)
   const persona = s(args.persona)
@@ -686,7 +739,10 @@ function groupAddAgent(args: Args, c: Ctx): string {
     const at = parent ? existing.members.findIndex((m) => m.name === parent) : -1
     groups.addMember(c.ws, group, { ...member, parent: at >= 0 ? at : 0 })
   }
-  return `added agent "${member.name}" to group "${group}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
+  note(c.ws, 'roster', c.chatPane ?? 'agent', `그룹 "${group}"에 "${member.name}" 추가`, id)
+  return `added agent "${member.name}" to group "${group}" (${cli}${
+    model && model !== 'default' ? ` · ${model}` : ''
+  }) id=${id}`
 }
 async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -903,6 +959,8 @@ async function dispatch(tool: string, args: Args, caller: Caller): Promise<strin
       return groupRemoveAgent(args, c)
     case 'riven_group_delete':
       return groupDelete(args, c)
+    case 'riven_group_broadcast':
+      return groupBroadcast(args, c)
     case 'riven_start_pipeline':
       return startPipeline(args, c)
     case 'riven_screenshot': {

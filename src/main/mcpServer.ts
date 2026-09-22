@@ -292,6 +292,18 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     implemented: true
   },
   {
+    name: 'riven_group_broadcast',
+    ko: '그룹 전체에 전달',
+    en: 'Broadcast to group',
+    description:
+      'Send ONE message to every other member of a group and get all their answers back together ' +
+      '(wait=false to just deliver it). Each member is asked in its own turn, so nobody is ' +
+      "interrupted. Use it to put a question, a decision or a spec to the whole team at once — the " +
+      'group is the address, so you do not have to know who is in it.',
+    inputSchema: obj({ group: str, message: str, wait: bool }, ['group', 'message']),
+    implemented: true
+  },
+  {
     name: 'riven_start_pipeline',
     ko: '직렬 파이프라인 실행',
     en: 'Start pipeline',

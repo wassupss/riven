@@ -85,13 +85,19 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'agentGroup.groupName': { ko: '그룹', en: 'Group' },
   'agentGroup.reportsTo': { ko: '보고 대상', en: 'Reports to' },
   'agentGroup.primeSuffix': { ko: '이 역할로 이후 작업을 수행하세요.', en: 'Act in this role for the rest of the session.' },
+  // The lead is told to LOOK UP its team rather than given a fixed list: members
+  // are added and removed while it works, so a list baked into the system prompt
+  // goes stale the moment the group changes.
   'agentGroup.leadIdentity': {
-    ko: '너는 이 그룹의 리드(총괄)다. 이름은 "{name}". 팀원에게 riven_ask_agent 로 일을 위임하고 결과를 종합한다.',
-    en: 'You are the LEAD of this group (name: "{name}"). Delegate to teammates via riven_ask_agent and synthesise their results.'
+    ko: '너는 이 그룹의 리드(총괄)다. 이름은 "{name}". 팀원은 riven_agents 로 확인하고(각 항목의 group 필드가 그룹 이름), riven_ask_agent(id 또는 이름, 메시지)로 위임해 결과를 종합한다. 팀 전체에 한 번에 물을 땐 riven_group_broadcast(group, message).',
+    en: 'You are the LEAD of this group (name: "{name}"). Look your team up with riven_agents (each entry\'s `group` field names the group), delegate with riven_ask_agent(id or name, message) and synthesise their results. To put one question to the whole team use riven_group_broadcast(group, message).'
   },
+  // A member is told HOW to report back, and specifically not to block on the
+  // lead while the lead is blocked on it — that pair used to freeze both for the
+  // full five-minute timeout.
   'agentGroup.memberIdentity': {
-    ko: '너는 "{name}" 멤버이고 "{parent}" 에게 보고한다. 맡은 역할 범위의 일을 처리하고 결과를 보고한다.',
-    en: 'You are member "{name}" reporting to "{parent}". Handle work within your role and report back.'
+    ko: '너는 "{name}" 멤버이고 "{parent}" 에게 보고한다. 맡은 역할 범위의 일을 처리하고, 결과는 지금 받은 질문의 답으로 그대로 돌려준다(리드가 그 답을 기다리고 있다). 리드에게 되물어야 할 땐 riven_ask_agent(..., wait=false)를 쓴다 — 리드가 너를 기다리는 동안 너도 리드를 기다리면 둘 다 멈춘다.',
+    en: 'You are member "{name}" reporting to "{parent}". Handle work within your role and report back AS THE ANSWER to the question you were asked (the lead is waiting on it). If you must ask the lead something, use riven_ask_agent(..., wait=false): waiting on the lead while it waits on you stops both of you.'
   },
   'agentGroup.prevOutput': { ko: '이전 단계 산출물', en: 'Previous stage output' },
   'team.hint': {
@@ -773,6 +779,14 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.subagent': { ko: '서브에이전트', en: 'Subagent' },
   'title.notes': { ko: '메모', en: 'Notes' },
   'title.api': { ko: 'API', en: 'API' },
+  'team.you': { ko: '나', en: 'You' },
+  'team.logEmpty': { ko: '아직 오간 말이 없습니다.', en: 'Nothing has been said yet.' },
+  'team.talkPlaceholder': { ko: '그룹에 지시…', en: 'Tell the group…' },
+  'team.toEveryone': { ko: '전원에게 (눌러서 리드에게만)', en: 'To everyone (click for lead only)' },
+  'team.toLead': { ko: '리드에게만 (눌러서 전원에게)', en: 'Lead only (click for everyone)' },
+  'team.send': { ko: '보내기', en: 'Send' },
+  'team.sending': { ko: '보내는 중…', en: 'Sending…' },
+  'team.noReply': { ko: '(5분 안에 답이 없었습니다)', en: '(no reply within 5 min)' },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
 
   // ---- 리븐펫 (the floating pet device) ----

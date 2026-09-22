@@ -5,6 +5,7 @@ import { focusPane, focusEditor } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
 import { renameAgent, getAgentStatus } from '../state/agents'
+import { useAgentGroups } from '../state/agentGroups'
 import { useRoster } from '../state/roster'
 import { splitPrimaryRight } from '../state/editorSplit'
 
@@ -285,6 +286,18 @@ export function setChatTitle(chatKey: string, title: string): void {
   // workspace used to silently do nothing to its tab.
   ;(getApiFor(wid) ?? activeApi)?.getPanel(chatKey)?.api.setTitle(title)
   renameAgent(chatKey, title)
+  // Keep the group roster in step. Members are addressed by NAME — by the org
+  // chart, by the lead's instructions and by riven_ask_agent — so a renamed tab
+  // used to leave all three pointing at a name nothing answered to.
+  if (wid) {
+    const groups = useAgentGroups.getState()
+    for (const g of groups.byWorkspace[wid] ?? []) {
+      if (g.members.some((m) => m.chatKey === chatKey)) {
+        groups.updateMember(wid, g.group, chatKey, { name: title })
+        break
+      }
+    }
+  }
 }
 
 // Set/clear a chat pane's avatar override ("glyph.color"). The tab reads this on
