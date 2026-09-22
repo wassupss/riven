@@ -465,12 +465,19 @@
 .agp-tree-kids {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* No gap: the rail is drawn INSIDE each child, so a gap between them is a gap
+     in the rail — the line visibly broke between every pair of members. The
+     spacing lives in the child's own padding instead, which the rail covers. */
+  gap: 0;
   margin-left: 14px;
 }
 .agp-tree-kid {
   position: relative;
   padding-left: 20px;
+  padding-bottom: 10px;
+}
+.agp-tree-kid:last-child {
+  padding-bottom: 0;
 }
 /* the rail: full height for a middle child, and cut at the card's centre for the
    first and the last, so it starts and ends exactly where the joints are */
