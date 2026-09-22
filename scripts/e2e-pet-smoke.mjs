@@ -162,12 +162,13 @@ async function main() {
   // the only variety came hours later, at adulthood.
   const strains = await cdp.eval(`(async () => {
     const s = __riven.pet
-    const SIX = ['cat', 'rabbit', 'bird', 'fish', 'turtle', 'bug']
+    const ALL = ['cat', 'rabbit', 'bird', 'fish', 'turtle', 'bug',
+                 'dog', 'hamster', 'penguin', 'frog', 'crab', 'dragon']
     // Each strain, on the egg it would hatch from: the coat has to mark the shell
     // (dots that are neither outline nor plain body) and the sprite has to say
     // which strain it is.
     const seen = []
-    for (const sp of SIX) {
+    for (const sp of ALL) {
       s.setState({ pet: { ...s.getState().pet, species: sp, xp: 0 } })
       await new Promise((r) => setTimeout(r, 200))
       const el = document.querySelector('.pet-lcd')
@@ -184,7 +185,7 @@ async function main() {
     }
     // The silhouette of each animal, with pattern and face stripped out.
     const shapes = []
-    for (const sp of SIX) {
+    for (const sp of ALL) {
       s.setState({ pet: { ...s.getState().pet, species: sp, xp: 900 } })
       await new Promise((r) => setTimeout(r, 200))
       shapes.push(
@@ -198,7 +199,7 @@ async function main() {
     s.setState({ pet: { ...s.getState().pet, species: 'turtle', xp: 900 } })
     await new Promise((r) => setTimeout(r, 250))
     const grown = document.querySelector('.pet-lcd').getAttribute('class')
-    // And a fresh egg draws one of the six rather than always the same. Starting
+    // And a fresh egg is a fresh draw rather than always the same. Starting
     // over archives the pet it replaces, so the save is put back afterwards —
     // otherwise this check would hand the later ones a full album.
     const keep = s.getState().pet
@@ -218,16 +219,16 @@ async function main() {
   })()`)
   check(
     'every strain marks its own egg',
-    strains.seen.length === 6 &&
+    strains.seen.length === 12 &&
       strains.seen.every((x) => x.marked && x.egg && x.coat > 0) &&
       new Set(strains.seen.map((x) => x.coat)).size > 1, // the patterns differ
     JSON.stringify(strains.seen)
   )
   check(
     'each strain is a different animal, not one body recoloured',
-    // The silhouettes themselves have to differ — the whole complaint about the
-    // first cut was six blobs in six colours.
-    new Set(strains.shapes).size === 6,
+    // The silhouettes themselves have to differ — the complaint about the first
+    // cut was six blobs in six colours.
+    new Set(strains.shapes).size === 12,
     strains.shapes.map((s) => s.length).join(' · ') + ' dots'
   )
   check(

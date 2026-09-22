@@ -473,7 +473,422 @@ const bug: Bodies = {
   }
 }
 
-export const BODIES: Record<Species, Bodies> = { cat, rabbit, bird, fish, turtle, bug }
+// Floppy ears down the sides of the head, and four legs.
+const dog: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '....oo....oo....',
+      '...obboooobbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....oooooooo....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '...oo......oo...',
+      '..obbo....obbo..',
+      '..obbbooooobbbo.',
+      '..obbbbbbbbbbbo.',
+      '..obbbbbbbbbbbo.',
+      '..obbbbbbbbbbbo.',
+      '...obbbbbbbbbo..',
+      '...obbbbbbbbbo..',
+      '...obbbbbbbbbo..',
+      '...ooooooooooo..',
+      '...o.oo..oo.o...',
+      '...o.oo..oo.o...',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 5, y: 5 },
+    rows: [
+      '................',
+      '..oo......oo....',
+      '.obbo....obbo...',
+      '.obbbooooobbbo..',
+      '.obbbbbbbbbbbo..',
+      '.obbbbbbbbbbbo..',
+      '.obbbbbbbbbbbo..',
+      '.obbbbbbbbbbbo..',
+      '.obbbbbbbbbbbo..',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo.o.',
+      '..obbbbbbbbboo..',
+      '..obbbbbbbbbo...',
+      '..ooooooooooo...',
+      '..o.oo...oo.o...',
+      '..o.oo...oo.o...'
+    ]
+  }
+}
+
+// Small, round ears, and cheeks wider than it is tall.
+const hamster: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '....oo....oo....',
+      '...obbo..obbo...',
+      '....oobbbboo....',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....oobbbboo....',
+      '......oooo......',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '...oo....oo.....',
+      '..obbo..obbo....',
+      '..obbboobbbo....',
+      '...oobbbbbboo...',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...oobbbbbboo...',
+      '.....oooooo.....',
+      '....o.o..o.o....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '...oo....oo.....',
+      '..obbo..obbo....',
+      '..obbboobbbo....',
+      '...oobbbbbboo...',
+      '..obbbbbbbbbbo..',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...oobbbbbboo...',
+      '.....oooooo.....',
+      '....o.o..o.o....',
+      '................'
+    ]
+  }
+}
+
+// Upright, with a pale front, two flippers and two feet.
+const penguin: Bodies = {
+  baby: {
+    face: { x: 5, y: 4 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '....oooooo......',
+      '...obbbbbbo.....',
+      '..aobbbbbbo.....',
+      '...obbbbbbo.....',
+      '...obbbbbbo.....',
+      '....oooooo......',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 5, y: 3 },
+    rows: [
+      '................',
+      '................',
+      '....oooooo......',
+      '...obbbbbbo.....',
+      '..aobbbbbbo.....',
+      '...obbbbbbo.....',
+      '..oobbbbbboo....',
+      '.obbbbbbbbbbo...',
+      '.obbbbbbbbbbo...',
+      '..obbbbbbbbo....',
+      '..obbbbbbbbo....',
+      '...oooooooo.....',
+      '..ooo....ooo....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 5, y: 2 },
+    rows: [
+      '................',
+      '....oooooo......',
+      '...obbbbbbo.....',
+      '..aobbbbbbo.....',
+      '...obbbbbbo.....',
+      '...obbbbbbbo....',
+      '..oobbbbbbbboo..',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...oooooooooo...',
+      '..ooo......ooo..',
+      '................'
+    ]
+  }
+}
+
+// Squat and wide, with eyes up top and legs splayed out at the bottom.
+const frog: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '....oo....oo....',
+      '...obboooobbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....oooooooo....',
+      '...oo......oo...',
+      '..obo......obo..',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '...oo......oo...',
+      '..obbo....obbo..',
+      '..obbboooobbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..oobbbbbbbboo..',
+      '...oooooooooo...',
+      '..oo........oo..',
+      '.obbo......obbo.',
+      '.oo..........oo.',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '...oo......oo...',
+      '..obbo....obbo..',
+      '..obbboooobbbo..',
+      '.oobbbbbbbbbboo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.oobbbbbbbbbboo.',
+      '..oooooooooooo..',
+      '.oo..........oo.',
+      'obbo........obbo',
+      'obbo........obbo',
+      '.oo..........oo.',
+      '................'
+    ]
+  }
+}
+
+// Wide and flat, two claws held up, legs down both sides.
+const crab: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '...oo......oo...',
+      '...obo....obo...',
+      '....oooooooo....',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....oooooooo....',
+      '...o.o....o.o...',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '..oo........oo..',
+      '.obbo......obbo.',
+      '.obbo......obbo.',
+      '..oboooooooobo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..oobbbbbbbboo..',
+      '...oooooooooo...',
+      '..o.o.o..o.o.o..',
+      '..o.o.o..o.o.o..',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '.oo..........oo.',
+      'obbo........obbo',
+      'obbo........obbo',
+      '.oboooooooooobo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.oobbbbbbbbbboo.',
+      '..oooooooooooo..',
+      '.o.o.o....o.o.o.',
+      '.o.o.o....o.o.o.',
+      '................',
+      '................',
+      '................'
+    ]
+  }
+}
+
+// Horns, a wing out one side, and a tail behind.
+const dragon: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '.....o....o.....',
+      '.....obooobo....',
+      '....obbbbbbbo...',
+      '....obbbbbbbo...',
+      '....obbbbbbbo...',
+      '....obbbbbbbo...',
+      '.....oooooooo...',
+      '..........o.....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 5, y: 5 },
+    rows: [
+      '................',
+      '...o......o.....',
+      '...obo..obo.....',
+      '....oobbboo.....',
+      '..obbbbbbbbo....',
+      '..obbbbbbbbo.oo.',
+      '..obbbbbbbbooboo',
+      '..obbbbbbbbbbbbo',
+      '..obbbbbbbbooboo',
+      '...obbbbbbo..oo.',
+      '...oooooooo.....',
+      '.........o......',
+      '........oo......',
+      '.......oo.......',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 5, y: 5 },
+    rows: [
+      '..o........o....',
+      '..obo....obo....',
+      '...oobbbbboo....',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo.oo',
+      '..obbbbbbbbboobo',
+      '..obbbbbbbbbbbbo',
+      '..obbbbbbbbboobo',
+      '..obbbbbbbbbo.oo',
+      '...obbbbbbbo....',
+      '..sobbbbbbbos...',
+      '...ooooooooo....',
+      '..........o.....',
+      '.........oo.....',
+      '........oo......'
+    ]
+  }
+}
+
+export const BODIES: Record<Species, Bodies> = {
+  cat,
+  rabbit,
+  bird,
+  fish,
+  turtle,
+  bug,
+  dog,
+  hamster,
+  penguin,
+  frog,
+  crab,
+  dragon
+}
 
 /** Every grid in the art, flat, for the shape checks in the tests. */
 export const SPRITES: Record<string, Sprite> = {
@@ -578,7 +993,19 @@ export const COAT_RULES: Record<
   turtle: (x, y) => ((x + y) % 4 === 0 ? 'a' : null),
   // Two-dot dabs on a four-dot grid, anchored to the body so the pattern does
   // not slide as it grows.
-  bug: (x, y, b) => ((x - b.x0) % 4 < 2 && (y - b.y0) % 4 < 2 ? 'h' : null)
+  bug: (x, y, b) => ((x - b.x0) % 4 < 2 && (y - b.y0) % 4 < 2 ? 'h' : null),
+  // Patches, the way a mongrel is marked.
+  dog: (x, y) => ((x * 5 + y * 3) % 9 === 0 ? 'h' : null),
+  // A pale chest and belly.
+  hamster: (x, y, b) => (y >= b.y1 - 3 && x > b.x0 + 1 && x < b.x1 - 1 ? 'h' : null),
+  // The white front, which is the whole of a penguin's marking.
+  penguin: (x, y, b) => (y >= b.y0 + 5 && x > b.x0 + 2 && x < b.x1 - 2 ? 'h' : null),
+  // Mottled damp skin.
+  frog: (x, y) => ((x * 3 + y * 5) % 7 === 0 ? 'h' : null),
+  // A hard shell, marked across it.
+  crab: (x, y) => ((x + y) % 5 === 0 ? 'h' : null),
+  // Scales down the back, in the accent: a dragon is allowed to be flashy.
+  dragon: (x, y) => ((x + y) % 3 === 0 ? 'a' : null)
 }
 
 // ---- the adult forms, as changes made to the grown body ----
@@ -703,17 +1130,38 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
       })
     )
     const f = sprite.face
+    // A dot of clearance around the face, so a marking never crowds an eye — but
+    // only where there is room for it. A just-hatched body is barely wider than
+    // its own face, and the margin left nowhere at all for its strain to show.
+    const margin = x1 - x0 >= 9 ? 1 : 0
     const clear = (x: number, y: number): boolean =>
-      !f || x < f.x - 1 || x > f.x + 4 || y < f.y - 1 || y > f.y + 4
+      !f ||
+      x < f.x - margin ||
+      x > f.x + 3 + margin ||
+      y < f.y - margin ||
+      y > f.y + 3 + margin
     if (x1 >= 0) {
       const box = { x0, x1, y0, y1 }
+      let marked = 0
       grid.forEach((row, y) =>
         row.forEach((ch, x) => {
           if (ch !== 'b' || !clear(x, y)) return
           const mark = rule(x, y, box)
-          if (mark) grid[y][x] = mark
+          if (!mark) return
+          grid[y][x] = mark
+          marked++
         })
       )
+      // A strain has to be visible at EVERY size. On the smallest bodies the face
+      // and its margin can cover the whole torso, leaving a belly or a sparse
+      // speckle with nowhere to land — so fall back to marking the flanks.
+      if (marked === 0)
+        grid.forEach((row, y) =>
+          row.forEach((ch, x) => {
+            if (ch !== 'b' || !clear(x, y)) return
+            if ((x === x0 || x === x1) && y % 2 === 0) grid[y][x] = 'h'
+          })
+        )
     }
   }
   if (sprite.face) {

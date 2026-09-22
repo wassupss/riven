@@ -700,11 +700,13 @@ describe('feedFrame', () => {
 })
 
 describe('species', () => {
-  it('draws evenly across the six strains', () => {
+  it('draws evenly across the strains', () => {
     // The draw is a pure function of one number, so the whole distribution is
     // checkable without a random source.
-    const drawn = Array.from({ length: 600 }, (_, i) => drawSpecies(i / 600))
-    for (const sp of SPECIES) expect(drawn.filter((d) => d === sp)).toHaveLength(100)
+    const n = 600
+    const drawn = Array.from({ length: n }, (_, i) => drawSpecies(i / n))
+    for (const sp of SPECIES)
+      expect(drawn.filter((d) => d === sp)).toHaveLength(n / SPECIES.length)
   })
 
   it('never falls off either end of the table', () => {
@@ -714,7 +716,7 @@ describe('species', () => {
     expect(SPECIES).toContain(drawSpecies(99))
   })
 
-  it('gives a new egg one of the six', () => {
+  it('gives a new egg one of them', () => {
     expect(SPECIES).toContain(initialState(T0).species)
   })
 
@@ -734,10 +736,10 @@ describe('species', () => {
     expect(SPECIES).toContain(first.species)
   })
 
-  it('refuses a strain that is not one of the six', () => {
-    const s = normalize({ ...base(), species: 'dragon' }, T0)
+  it('refuses a strain that is not one of them', () => {
+    const s = normalize({ ...base(), species: 'unicorn' }, T0)
     expect(SPECIES).toContain(s.species)
-    expect(s.species).not.toBe('dragon')
+    expect(s.species).not.toBe('unicorn')
   })
 
   it('spreads birthdays across every strain', () => {

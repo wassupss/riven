@@ -74,13 +74,39 @@ export const FLAVORS: Flavor[] = ['opus', 'sonnet', 'haiku', 'codex', 'other']
 // shell carries the coat pattern), so the pull is something you see at once.
 //
 // A strain is a different ANIMAL, not a recolour: it owns the silhouette at every
-// stage (see petSprites.ts), because six blobs in six colours are one pet with
-// six hats. Care still decides the adult FORM, which is now applied to whichever
-// animal you got — six animals × four forms is twenty-four grown-up pets.
-export type Species = 'cat' | 'rabbit' | 'bird' | 'fish' | 'turtle' | 'bug'
-export const SPECIES: Species[] = ['cat', 'rabbit', 'bird', 'fish', 'turtle', 'bug']
+// stage (see petSprites.ts), because twelve blobs in twelve colours are one pet
+// with twelve hats. Care still decides the adult FORM, which is applied to
+// whichever animal you got — twelve animals × four forms is forty-eight grown-up
+// pets, from twelve eggs you can tell apart.
+export type Species =
+  | 'cat'
+  | 'rabbit'
+  | 'bird'
+  | 'fish'
+  | 'turtle'
+  | 'bug'
+  | 'dog'
+  | 'hamster'
+  | 'penguin'
+  | 'frog'
+  | 'crab'
+  | 'dragon'
+export const SPECIES: Species[] = [
+  'cat',
+  'rabbit',
+  'bird',
+  'fish',
+  'turtle',
+  'bug',
+  'dog',
+  'hamster',
+  'penguin',
+  'frog',
+  'crab',
+  'dragon'
+]
 
-/** An even draw from the six strains. */
+/** An even draw from the strains. */
 export function drawSpecies(rand: number = Math.random()): Species {
   const i = Math.floor(Math.min(0.999999, Math.max(0, rand)) * SPECIES.length)
   return SPECIES[i] ?? SPECIES[0]
@@ -93,8 +119,8 @@ export function drawSpecies(rand: number = Math.random()): Species {
  */
 export function speciesFromBirth(bornAt: number): Species {
   // A proper 32-bit avalanche, not one multiply: a single imul leaves the low
-  // bits of a seconds-resolution clock correlated, and `% 6` of that only ever
-  // produced three of the six strains.
+  // bits of a seconds-resolution clock correlated, and the modulo of that only
+  // ever produced half of the strains.
   let h = Math.floor(bornAt / 1000) | 0
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)

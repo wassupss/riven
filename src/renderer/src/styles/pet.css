@@ -605,6 +605,25 @@
 .pet-lcd.pet-sp-bug {
   filter: hue-rotate(75deg) saturate(1.05);
 }
+.pet-lcd.pet-sp-dog {
+  /* Brown: the same turn as the cat's orange, taken down to a coat colour. */
+  filter: hue-rotate(110deg) saturate(0.55) brightness(0.92);
+}
+.pet-lcd.pet-sp-hamster {
+  filter: hue-rotate(175deg) saturate(0.55) brightness(1.08);
+}
+.pet-lcd.pet-sp-penguin {
+  /* Black and white, near enough: a penguin has no hue of its own. */
+  filter: saturate(0.15) brightness(0.95);
+}
+.pet-lcd.pet-sp-frog {
+  filter: hue-rotate(195deg) saturate(1.25);
+}
+.pet-lcd.pet-sp-crab {
+  filter: hue-rotate(90deg) saturate(1.25);
+}
+/* A dragon keeps riven's own violet — the one that was every pet's colour before
+   strains existed, now reserved for the showiest of them. */
 
 /* What it grew up eating tints it, on top of whatever form it took. A hue turn
    rather than a colour swap, so it composes with radiant/titan/wraith. */

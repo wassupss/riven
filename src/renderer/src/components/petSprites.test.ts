@@ -99,9 +99,11 @@ describe('pixelsOf', () => {
     }
   })
 
-  it('marks every strain, on the egg as well as the animal', () => {
+  it('marks every strain, at every size, egg included', () => {
+    // Including the hatchling, which is the hard one: its body is barely wider
+    // than its own face, so a pattern has almost nowhere to land.
     for (const species of SPECIES) {
-      for (const stage of ['egg', 'child', 'adult'] as const) {
+      for (const stage of STAGES) {
         const marks = pixelsOf(stage, 'base', 'ok', species).filter(
           (d) => d.ch === 'h' || d.ch === 'a'
         )
@@ -110,18 +112,23 @@ describe('pixelsOf', () => {
     }
   })
 
-  it('keeps a coat off the face', () => {
-    for (const species of SPECIES) {
-      const face = bodyOf(species, 'child').face!
-      const marks = pixelsOf('child', 'base', 'ok', species).filter(
-        (d) => d.ch === 'h' || d.ch === 'a'
-      )
-      for (const d of marks) {
-        const onFace =
-          d.x >= face.x - 1 && d.x <= face.x + 4 && d.y >= face.y - 1 && d.y <= face.y + 4
-        expect(onFace).toBe(false)
+  it('keeps a coat off the face, at every size', () => {
+    // The 4×4 the face is stamped into is off limits everywhere. (A dot of
+    // clearance around it is kept too, but only on bodies wide enough to spare
+    // it — see the margin in pixelsOf.)
+    for (const species of SPECIES)
+      for (const stage of STAGES) {
+        const face = bodyOf(species, stage).face
+        if (!face) continue
+        const marks = pixelsOf(stage, 'base', 'ok', species).filter(
+          (d) => d.ch === 'h' || d.ch === 'a'
+        )
+        for (const d of marks) {
+          const onFace =
+            d.x >= face.x && d.x <= face.x + 3 && d.y >= face.y && d.y <= face.y + 3
+          expect(onFace).toBe(false)
+        }
       }
-    }
   })
 
   it('never lights a dot outside the grid', () => {
