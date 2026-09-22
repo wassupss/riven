@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Notification, WebContents } from 'electron'
+import { note } from './focusTrace'
 
 // Desktop notifications, decided in ONE place.
 //
@@ -180,6 +181,7 @@ function show(sender: WebContents, req: NotifyRequest): void {
       if (req.paneId) target.webContents.send('notify:click', req.paneId)
     }
   })
+  note(`notification: ${String(req.title ?? '').slice(0, 30)}`)
   n.show()
 }
 

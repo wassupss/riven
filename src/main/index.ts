@@ -25,6 +25,7 @@ import { registerCliHandlers } from './cli'
 import { registerPortsHandlers } from './ports'
 import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from './agentChat'
 import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpServer'
+import { registerFocusTrace } from './focusTrace'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
 import { registerApiHandlers } from './apiclient'
@@ -290,6 +291,7 @@ app.whenReady().then(() => {
   registerAgentChatHandlers()
   // riven's own MCP tool server (relays agent tool calls into the UI). Routes to
   // the first live window's renderer.
+  registerFocusTrace()
   registerMcpServer(() => {
     const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
     return w ? w.webContents : null

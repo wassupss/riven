@@ -1,4 +1,5 @@
 import { ipcMain, WebContentsView, BrowserWindow, session, app, Menu, clipboard } from 'electron'
+import { note } from './focusTrace'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 
@@ -13,6 +14,8 @@ const L = (ko: string, en: string): string => (lang === 'ko' ? ko : en)
 // the MCP browser_* tools reach these WebContents directly in the main process.
 
 interface Tab {
+  // Last visibility we applied, so the focus trace only notes real changes.
+  visible?: boolean
   id: string
   view: WebContentsView
 }
@@ -305,6 +308,10 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         // Not ours to touch: another workspace's panel owns that view.
         if (mine && !mine.has(id) && id !== showId) continue
         const on = id === showId && a.rect != null
+        if (on !== t.visible) {
+          note(`browser view ${on ? 'show' : 'hide'} ${id.slice(0, 8)}`)
+          t.visible = on
+        }
         t.view.setVisible(on)
         if (on && a.rect)
           t.view.setBounds({
