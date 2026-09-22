@@ -808,6 +808,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'team.ev.roster': { ko: '구성', en: 'roster' },
   'team.lead': { ko: '리드', en: 'Lead' },
   'team.busy': { ko: '작업 중', en: 'Working' },
+  'team.needsYou': { ko: '확인 필요', en: 'Needs you' },
+  'team.answered': { ko: '답변 옴', en: 'Answered' },
   'team.idle': { ko: '대기', en: 'Idle' },
   'team.everyone': { ko: '전원', en: 'Everyone' },
   'team.toLeadHint': {

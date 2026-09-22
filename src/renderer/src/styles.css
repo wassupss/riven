@@ -8457,7 +8457,15 @@ body.browser-active .ws-agent-title.shimmer,
 body.win-blurred .chat-shimmer-text,
 body.browser-active .chat-shimmer-text,
 body.win-blurred .tab-dot.attn,
-body.browser-active .tab-dot.attn {
+body.browser-active .tab-dot.attn,
+body.win-blurred .agp-tree-row.flow > .agp-tree-self::after,
+body.browser-active .agp-tree-row.flow > .agp-tree-self::after,
+body.win-blurred .agp-tree-kid.flow::before,
+body.browser-active .agp-tree-kid.flow::before,
+body.win-blurred .agp-tree-kid.flow::after,
+body.browser-active .agp-tree-kid.flow::after,
+body.win-blurred .agp-node-run,
+body.browser-active .agp-node-run {
   animation-play-state: paused;
 }
 

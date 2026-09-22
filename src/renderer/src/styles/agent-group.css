@@ -460,7 +460,42 @@
   top: 39px;
   left: 100%;
   width: 14px;
-  border-top: 1.5px solid var(--edge-strong);
+  height: 1.5px;
+  background: var(--edge-strong);
+}
+/* Work in flight: the line it travels moves. A busy pane already says "this one
+   is working"; this says who it is working FOR, which is the thing a flow
+   diagram is supposed to show. */
+.agp-tree-row.flow > .agp-tree-self::after,
+.agp-tree-kid.flow::before {
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0 5px,
+    transparent 5px 11px
+  );
+  background-color: transparent;
+  background-size: 11px 100%;
+  animation: agp-flow-x 0.55s linear infinite;
+}
+@keyframes agp-flow-x {
+  to {
+    background-position: 11px 0;
+  }
+}
+.agp-tree-kids.flow > .agp-tree-kid.flow::after {
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--accent) 0 5px,
+    transparent 5px 11px
+  );
+  background-color: transparent;
+  background-size: 100% 11px;
+  animation: agp-flow-y 0.55s linear infinite;
+}
+@keyframes agp-flow-y {
+  to {
+    background-position: 0 11px;
+  }
 }
 .agp-tree-kids {
   display: flex;
@@ -487,7 +522,8 @@
   left: 0;
   top: 0;
   bottom: 0;
-  border-left: 1.5px solid var(--edge-strong);
+  width: 1.5px;
+  background: var(--edge-strong);
 }
 .agp-tree-kid:first-child::after {
   top: 39px;
@@ -506,7 +542,8 @@
   left: 0;
   top: 39px;
   width: 20px;
-  border-top: 1.5px solid var(--edge-strong);
+  height: 1.5px;
+  background: var(--edge-strong);
 }
 
 .agp-node {
@@ -551,6 +588,48 @@
 }
 .agp-node.busy {
   border-color: var(--accent-border);
+}
+.agp-node.attention {
+  border-color: var(--warning, var(--accent));
+}
+.agp-node.done {
+  border-color: color-mix(in srgb, var(--success) 60%, transparent);
+}
+/* An indeterminate bar along the card's bottom edge while the agent works. */
+.agp-node {
+  position: relative;
+  overflow: hidden;
+}
+.agp-node-run {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent) 35%,
+    var(--accent) 65%,
+    transparent 100%
+  );
+  background-size: 45% 100%;
+  background-repeat: no-repeat;
+  animation: agp-node-run 1.15s ease-in-out infinite;
+}
+@keyframes agp-node-run {
+  0% {
+    background-position: -45% 0;
+  }
+  100% {
+    background-position: 145% 0;
+  }
+}
+.agp-node-state.attention {
+  color: var(--warning, var(--accent));
+}
+.agp-node-state.done {
+  color: var(--success);
 }
 
 .agp-node-top {

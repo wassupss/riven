@@ -26,7 +26,7 @@ import {
 import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
-import { useGroupLog } from '../../state/groupLog'
+import { useGroupLog, activeEdges } from '../../state/groupLog'
 import { useGoals, goalsFor, type Goal } from '../../state/goals'
 import { modelsFor, modelForCli, type Cli } from '../../lib/models'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
@@ -145,6 +145,12 @@ interface TreeItem {
   /** What it runs on, shown as its own chip rather than buried in `sub`. */
   model?: string
   cli?: Cli
+  /** Somebody is waiting on this one right now — the edge into it is live. */
+  flowIn?: boolean
+  /** Waiting on the USER (a permission prompt), which is not the same as busy. */
+  attention?: boolean
+  /** Answered, and nobody has looked yet. */
+  done?: boolean
 }
 
 interface TreeNode extends TreeItem {
@@ -203,12 +209,22 @@ function OrgCard({ node, closedLabel, onPick }: {
   const t = useT()
   const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}${
     node.busy ? ' busy' : ''
-  }`
+  }${node.attention ? ' attention' : ''}${node.done ? ' done' : ''}`
   // The agent's colour identifies it here and on its tab — the same face in
   // both. tintStyle only answers when the user has PICKED a colour, so the dot
   // falls back to the accent rather than staying a grey pebble on every card.
   const tint = tintStyle(node.name, node.avatar, 'var(--bg-2)')
-  const state = node.busy ? t('team.busy') : node.open ? t('team.idle') : closedLabel
+  // What it is doing, in the order that matters: waiting on YOU beats working,
+  // and a finished answer nobody has read yet beats plain idle.
+  const state = !node.open
+    ? closedLabel
+    : node.attention
+      ? t('team.needsYou')
+      : node.busy
+        ? t('team.busy')
+        : node.done
+          ? t('team.answered')
+          : t('team.idle')
   return (
     <button className={cls} onClick={() => onPick(node)} title={node.sub}>
       <span className="agp-node-top">
@@ -224,8 +240,17 @@ function OrgCard({ node, closedLabel, onPick }: {
       <span className="agp-node-foot">
         {node.model && node.model !== 'default' && <span className="agp-node-chip">{node.model}</span>}
         {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
-        <span className={`agp-node-state${node.busy ? ' busy' : node.open ? '' : ' closed'}`}>{state}</span>
+        <span
+          className={`agp-node-state${node.busy ? ' busy' : ''}${node.attention ? ' attention' : ''}${
+            node.done ? ' done' : ''
+          }${node.open ? '' : ' closed'}`}
+        >
+          {state}
+        </span>
       </span>
+      {/* An indeterminate bar along the bottom edge while it works: a node in a
+          flow should look like it is running, not merely be labelled as such. */}
+      {node.busy && <span className="agp-node-run" aria-hidden />}
     </button>
   )
 }
@@ -245,14 +270,14 @@ function OrgBranch({ node, closedLabel, onPick }: {
   onPick: (n: TreeNode) => void
 }): JSX.Element {
   return (
-    <div className="agp-tree-row">
+    <div className={`agp-tree-row${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
       <div className="agp-tree-self">
         <OrgCard node={node} closedLabel={closedLabel} onPick={onPick} />
       </div>
       {node.children.length > 0 && (
-        <div className="agp-tree-kids">
+        <div className={`agp-tree-kids${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
           {node.children.map((c) => (
-            <div className="agp-tree-kid" key={c.idx}>
+            <div className={`agp-tree-kid${c.flowIn ? ' flow' : ''}`} key={c.idx}>
               <OrgBranch node={c} closedLabel={closedLabel} onPick={onPick} />
             </div>
           ))}
@@ -451,6 +476,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const roster = agentsForWorkspace(workspace)
   const isOpen = (chatKey: string): boolean => !!getActiveApi()?.getPanel(chatKey)
   const isBusy = (chatKey: string): boolean => roster.find((a) => a.id === chatKey)?.busy ?? false
+  const statusOf = (chatKey: string): string | undefined => roster.find((a) => a.id === chatKey)?.status
+  // The group's own timeline drives the live edges (see activeEdges): a member
+  // being busy says it is working, this says WHO it is working for.
+  const logEvents = useGroupLog((s) => s.byWorkspace[workspace])
 
   const subText = (persona: string, model: string, isMain: boolean): string => {
     const parts = [persona.trim(), model && model !== 'default' ? model : ''].filter(Boolean)
@@ -804,8 +833,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       busy: false
     }))
   )
-  const groupTree = (g: AgentGroup): TreeNode[] =>
-    buildForest(
+  const groupTree = (g: AgentGroup): TreeNode[] => {
+    const live = activeEdges((logEvents ?? []).filter((e) => e.group === g.group))
+    const flowingInto = new Set([...live].map((k) => k.split('>')[1]))
+    return buildForest(
       g.members.map((m) => ({
         name: m.name,
         sub: (m.persona ?? '').trim(),
@@ -815,9 +846,13 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         chatKey: m.chatKey,
         avatar: m.avatar,
         model: m.model,
-        cli: m.cli
+        cli: m.cli,
+        flowIn: flowingInto.has(m.chatKey),
+        attention: statusOf(m.chatKey) === 'waiting',
+        done: statusOf(m.chatKey) === 'done'
       }))
     )
+  }
 
   const showChart = !onDraft || (mode === 'group' && previewing)
 

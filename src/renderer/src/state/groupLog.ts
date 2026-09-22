@@ -73,3 +73,19 @@ export function eventsFor(ws: string, group?: string | null): GroupEvent[] {
   const all = useGroupLog.getState().byWorkspace[ws] ?? []
   return group ? all.filter((e) => e.group === group) : all
 }
+
+/**
+ * Which way work is flowing right now: every "X asked Y" that Y has not answered
+ * yet, as `from>to`. The chart draws these edges as moving, so a team at work
+ * reads as a flow rather than a still diagram — you can see which delegation is
+ * outstanding, not just that a pane is busy.
+ */
+export function activeEdges(events: GroupEvent[]): Set<string> {
+  const waiting = new Map<string, string>() // target → who is waiting on it
+  for (const e of events) {
+    if (e.kind === 'ask' && e.to) waiting.set(e.to, e.from)
+    // An answer (or a failure) from the target closes what was asked of it.
+    else if ((e.kind === 'reply' || e.kind === 'error') && waiting.has(e.from)) waiting.delete(e.from)
+  }
+  return new Set([...waiting].map(([to, from]) => `${from}>${to}`))
+}
