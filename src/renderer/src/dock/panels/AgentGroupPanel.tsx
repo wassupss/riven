@@ -188,11 +188,14 @@ function buildForest(items: TreeItem[]): TreeNode[] {
 // identical grey boxes. It now says, in order of what you actually look for:
 // who it is (colour + name + whether it leads), what its job is, what model is
 // behind it, and whether it is working right now.
-function OrgNode({
-  node,
-  closedLabel,
-  onPick
-}: {
+// One agent in the chart.
+//
+// The old card was a name, the word MAIN and a dot — which told you neither what
+// the member runs on nor what it is doing, so a team of three read as three
+// identical grey boxes. It now says, in order of what you actually look for:
+// who it is (colour + name + whether it leads), what its job is, what model is
+// behind it, and whether it is working right now.
+function OrgCard({ node, closedLabel, onPick }: {
   node: TreeNode
   closedLabel: string
   onPick: (n: TreeNode) => void
@@ -201,40 +204,61 @@ function OrgNode({
   const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}${
     node.busy ? ' busy' : ''
   }`
-  // The agent's colour identifies it here and on its tab — the same face in both.
+  // The agent's colour identifies it here and on its tab — the same face in
+  // both. tintStyle only answers when the user has PICKED a colour, so the dot
+  // falls back to the accent rather than staying a grey pebble on every card.
   const tint = tintStyle(node.name, node.avatar, 'var(--bg-2)')
   const state = node.busy ? t('team.busy') : node.open ? t('team.idle') : closedLabel
   return (
-    <li>
-      <button className={cls} onClick={() => onPick(node)} title={node.sub}>
-        <span className="agp-node-top">
-          <span
-            className="agp-node-face"
-            style={tint ? { background: tint.color } : undefined}
-            aria-hidden
-          />
-          <span className="agp-node-name">{node.name || '?'}</span>
-          {node.isMain && <span className="agp-node-badge">{t('team.lead')}</span>}
-        </span>
-        <span className="agp-node-sub">{node.sub}</span>
-        <span className="agp-node-foot">
-          {node.model && node.model !== 'default' && (
-            <span className="agp-node-chip">{node.model}</span>
-          )}
-          {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
-          <span className={`agp-node-state${node.busy ? ' busy' : node.open ? '' : ' closed'}`}>
-            {state}
-          </span>
-        </span>
-      </button>
+    <button className={cls} onClick={() => onPick(node)} title={node.sub}>
+      <span className="agp-node-top">
+        <span
+          className="agp-node-face"
+          style={{ background: tint ? tint.color : 'var(--accent)' }}
+          aria-hidden
+        />
+        <span className="agp-node-name">{node.name || '?'}</span>
+        {node.isMain && <span className="agp-node-badge">{t('team.lead')}</span>}
+      </span>
+      <span className="agp-node-sub">{node.sub}</span>
+      <span className="agp-node-foot">
+        {node.model && node.model !== 'default' && <span className="agp-node-chip">{node.model}</span>}
+        {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
+        <span className={`agp-node-state${node.busy ? ' busy' : node.open ? '' : ' closed'}`}>{state}</span>
+      </span>
+    </button>
+  )
+}
+
+// The tree, drawn left to right: an agent, and everyone who reports to it
+// stacked to its right off a single rail.
+//
+// It used to be a centred ul/li tree that grew sideways, so three members sat in
+// a row of thin connectors in the middle of a half-screen of dots — and it
+// looked nothing like the pipeline view, which is the other thing this panel
+// draws. Flowing rightwards puts the hierarchy in reading order, keeps members
+// in a vertical stack like the pipeline's stages, and the rail is drawn exactly
+// (every card is the same height, so the joints land on the card centres).
+function OrgBranch({ node, closedLabel, onPick }: {
+  node: TreeNode
+  closedLabel: string
+  onPick: (n: TreeNode) => void
+}): JSX.Element {
+  return (
+    <div className="agp-tree-row">
+      <div className="agp-tree-self">
+        <OrgCard node={node} closedLabel={closedLabel} onPick={onPick} />
+      </div>
       {node.children.length > 0 && (
-        <ul>
+        <div className="agp-tree-kids">
           {node.children.map((c) => (
-            <OrgNode key={c.idx} node={c} closedLabel={closedLabel} onPick={onPick} />
+            <div className="agp-tree-kid" key={c.idx}>
+              <OrgBranch node={c} closedLabel={closedLabel} onPick={onPick} />
+            </div>
           ))}
-        </ul>
+        </div>
       )}
-    </li>
+    </div>
   )
 }
 
@@ -251,12 +275,10 @@ function OrgChart({
 }): JSX.Element {
   if (roots.length === 0) return <div className="agp-chart-empty">{emptyLabel}</div>
   return (
-    <div className="agp-orgchart">
-      <ul>
-        {roots.map((r) => (
-          <OrgNode key={r.idx} node={r} closedLabel={closedLabel} onPick={onPick} />
-        ))}
-      </ul>
+    <div className="agp-tree">
+      {roots.map((r) => (
+        <OrgBranch key={r.idx} node={r} closedLabel={closedLabel} onPick={onPick} />
+      ))}
     </div>
   )
 }
@@ -786,7 +808,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     buildForest(
       g.members.map((m) => ({
         name: m.name,
-        sub: (m.persona ?? '').trim() || (m.parent == null ? t('team.main') : t('team.noPersona')),
+        sub: (m.persona ?? '').trim(),
         parent: m.parent,
         open: isOpen(m.chatKey),
         busy: isBusy(m.chatKey),

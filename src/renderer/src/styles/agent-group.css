@@ -434,92 +434,84 @@
   color: var(--fg-dim);
   font-size: var(--text-sm);
 }
-.agp-orgchart {
-  display: inline-block;
-  min-width: 100%;
-  box-sizing: border-box;
-  text-align: center;
-  white-space: nowrap;
-}
-.agp-orgchart ul {
-  display: flex;
-  justify-content: center;
-  position: relative;
-  padding-top: 18px;
-  margin: 0;
-  list-style: none;
-}
-.agp-orgchart > ul {
-  padding-top: 0;
-}
-.agp-orgchart li {
-  position: relative;
-  padding: 16px 7px 0;
-  list-style: none;
-  /* Center the node AND its child subtree within the li, so a parent sits exactly
-     over its children's midpoint (text-align centering drifted before). */
+/* The chart flows left to right: an agent, then everyone reporting to it stacked
+   to its right off one rail. Cards are a fixed height so the joints can be drawn
+   at their exact centres (CARD_H / 2 = 31px) without measuring anything. */
+.agp-tree {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: max-content;
 }
-/* down + across connectors between a parent and its children */
-.agp-orgchart li::before,
-.agp-orgchart li::after {
+.agp-tree-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+.agp-tree-self {
+  position: relative;
+  flex: 0 0 auto;
+}
+/* the stub leaving the parent card, meeting the children's rail */
+.agp-tree-row:has(> .agp-tree-kids) > .agp-tree-self::after {
   content: '';
   position: absolute;
-  top: 0;
-  right: 50%;
-  width: 50%;
-  height: 16px;
+  top: 39px;
+  left: 100%;
+  width: 14px;
   border-top: 1.5px solid var(--edge-strong);
 }
-.agp-orgchart li::after {
-  right: auto;
-  left: 50%;
-  border-left: 1.5px solid var(--edge-strong);
-  border-top-left-radius: 6px;
+.agp-tree-kids {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-left: 14px;
 }
-.agp-orgchart li:only-child::before,
-.agp-orgchart li:only-child::after {
-  display: none;
+.agp-tree-kid {
+  position: relative;
+  padding-left: 20px;
 }
-.agp-orgchart li:only-child {
-  padding-top: 16px;
-}
-.agp-orgchart li:first-child::before,
-.agp-orgchart li:last-child::after {
-  border: 0 none;
-}
-.agp-orgchart li:last-child::before {
-  border-right: 1.5px solid var(--edge-strong);
-  border-radius: 0 5px 0 0;
-}
-.agp-orgchart li:first-child::after {
-  border-radius: 5px 0 0 0;
-}
-/* vertical stub down from a parent into the children row */
-.agp-orgchart ul ul::before {
+/* the rail: full height for a middle child, and cut at the card's centre for the
+   first and the last, so it starts and ends exactly where the joints are */
+.agp-tree-kid::after {
   content: '';
   position: absolute;
+  left: 0;
   top: 0;
-  left: 50%;
-  width: 0;
-  height: 18px;
-  border-left: 1px solid var(--edge-strong);
+  bottom: 0;
+  border-left: 1.5px solid var(--edge-strong);
 }
-/* the root has no incoming connector */
-.agp-orgchart > ul > li {
-  padding-top: 0;
+.agp-tree-kid:first-child::after {
+  top: 39px;
 }
-.agp-orgchart > ul > li::before,
-.agp-orgchart > ul > li::after {
+.agp-tree-kid:last-child::after {
+  bottom: auto;
+  height: 39px;
+}
+.agp-tree-kid:only-child::after {
   display: none;
+}
+/* the joint into each child */
+.agp-tree-kid::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 39px;
+  width: 20px;
+  border-top: 1.5px solid var(--edge-strong);
 }
 
 .agp-node {
   display: inline-flex;
   flex-direction: column;
+  justify-content: center;
   gap: 5px;
+  /* Every card the same height, so the rail's joints (CARD_H / 2 = 39px) always
+     land on a card's centre — see .agp-tree-kid. Tall enough for all three rows:
+     at 62px the role line was clipped between the name and the status. */
+  height: 78px;
+  box-sizing: border-box;
   /* Fixed width so the tree connectors line up cleanly (variable widths made the
      rows look misaligned). */
   width: 196px;
