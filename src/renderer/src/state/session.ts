@@ -43,6 +43,26 @@ export interface Session {
   previewUrl: string
   dockLayout: unknown | null // dockview SerializedDockview
   panes?: Record<string, PaneState> // chatKey → pane state (the tree)
+  // Agent-group rosters for this workspace. Kept HERE, beside the panes they
+  // name, rather than in localStorage: the two used to be separate stores, so a
+  // profile switch or a cleared site data left groups pointing at panes that no
+  // longer existed (and vice versa). Shape mirrors state/agentGroups.
+  // Pipeline runs started in this workspace (see state/pipelineRuns). Persisted
+  // so the panel's tabs survive a restart; a run that was still going when the
+  // app closed is marked interrupted on load, because its loop died with it.
+  runs?: unknown[]
+  groups?: Array<{
+    group: string
+    members: Array<{
+      name: string
+      persona: string | null
+      model: string
+      parent: number | null
+      chatKey: string
+      avatar?: string | null
+      agent?: string | null
+    }>
+  }>
 }
 
 // Every pane id the session tree remembers, across all workspaces: the pane-state
@@ -242,7 +262,9 @@ export const useSession = create<SessionState>((set) => ({
           // Preserve per-pane state (model / mode / session id / transcript / title /
           // avatar). Dropping it here wiped the tree on every launch: the first
           // layout-change save afterwards then persisted panes-less sessions to disk.
-          panes: s.panes ?? {}
+          panes: s.panes ?? {},
+          groups: s.groups ?? [],
+          runs: s.runs ?? []
         }
       }
       return {

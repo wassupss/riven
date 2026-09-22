@@ -293,21 +293,12 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // Group-tab edit mode: edit member fields / rename the group after creation.
   const [editing, setEditing] = useState(false)
 
-  // Closing this panel stops any pipeline it's running (there'd be no UI left to
-  // control it). Panels stay mounted across workspace switches, so unmount here
-  // means a real close. Each canceled run's current stage is interrupted too.
-  useEffect(() => {
-    return () => {
-      const st = usePipelineRuns.getState()
-      for (const r of st.runs) {
-        if (r.workspace === workspace && !r.done) {
-          const cur = r.current >= 0 ? r.stages[r.current] : undefined
-          if (cur?.chatKey) window.api.chat.interrupt(cur.chatKey)
-          st.cancel(r.id)
-        }
-      }
-    }
-  }, [workspace])
+  // Closing this panel no longer stops the pipelines. It used to — the reasoning
+  // was "there's no UI left to control it" — but a pipeline an AGENT started is
+  // not this panel's to end: closing the tab (or having it evicted when the
+  // workspace is unmounted) killed work nobody asked to stop, mid-stage. The run
+  // keeps going, its stage panes are right there, and reopening this panel shows
+  // it again with a Cancel button.
 
   // Custom agents (.claude/agents) available for members/stages to run as.
   const [agentDefs, setAgentDefs] = useState<AgentDef[]>([])

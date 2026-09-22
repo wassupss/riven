@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { useSession } from './session'
 
 // Agent groups (riven's orchestration surface). A group is a named set of agent
 // panes with a reporting hierarchy; the main agent is the first member and every
@@ -30,9 +31,13 @@ export interface AgentGroup {
 
 type Store = Record<string, AgentGroup[]>
 
+// Where the roster USED to live. Kept only to migrate an existing install: it
+// is per renderer origin, while the panes it names live in sessions.json, so the
+// two could (and did) drift apart — a group pointing at panes that were never
+// restored, with no way to tell which half was stale.
 const LS_KEY = 'agentGroups:v1'
 
-function load(): Store {
+function loadLegacy(): Store {
   try {
     const raw = localStorage.getItem(LS_KEY)
     if (raw) return JSON.parse(raw) as Store
@@ -42,13 +47,56 @@ function load(): Store {
   return {}
 }
 
-function persist(store: Store): void {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(store))
-  } catch {
-    /* storage may be full/disabled - the in-memory copy still works */
+// The roster is saved with the workspace it belongs to, beside its panes.
+//
+// Never before the tree has been adopted: this store starts empty, so a write
+// that beat the load would persist "no groups" over the real ones. Observed
+// doing exactly that — a group created in one run was gone after a restart, and
+// the file on disk had been rewritten without it.
+function persist(store: Store, ws?: string): void {
+  adopt()
+  const st = useSession.getState()
+  if (!st.ready) return
+  if (ws) st.patch(ws, { groups: store[ws] ?? [] })
+  else for (const [w, groups] of Object.entries(store)) st.patch(w, { groups })
+}
+
+/**
+ * The roster to start from: what the workspace tree holds, falling back to the
+ * old localStorage copy for a workspace the tree has nothing for (the one-time
+ * migration). Pure so the merge is testable.
+ */
+export function mergeRosters(
+  fromTree: Record<string, AgentGroup[]>,
+  legacy: Record<string, AgentGroup[]>
+): Store {
+  const out: Store = {}
+  for (const [ws, groups] of Object.entries(fromTree)) out[ws] = groups.length ? groups : legacy[ws] ?? []
+  for (const [ws, groups] of Object.entries(legacy)) if (!out[ws]?.length) out[ws] = groups
+  return out
+}
+
+// Sessions load asynchronously, so adopt the tree's rosters the moment it is
+// ready (and write back anything that came from the old store).
+let adopted = false
+function adopt(): void {
+  if (adopted) return
+  const st = useSession.getState()
+  if (!st.ready) return
+  adopted = true
+  const fromTree: Record<string, AgentGroup[]> = {}
+  for (const [ws, s] of Object.entries(st.sessions)) fromTree[ws] = (s.groups ?? []) as AgentGroup[]
+  const merged = mergeRosters(fromTree, loadLegacy())
+  useAgentGroups.setState({ byWorkspace: merged })
+  for (const [ws, groups] of Object.entries(merged)) {
+    if (groups.length && !(fromTree[ws] ?? []).length) st.patch(ws, { groups })
   }
 }
+// Both paths, because neither is enough on its own: the subscription only fires
+// on LATER changes (this module may be imported long after the load), and an
+// eager call does nothing if the sessions have not arrived yet.
+useSession.subscribe(adopt)
+adopt()
 
 interface AgentGroupsState {
   byWorkspace: Store
@@ -74,13 +122,13 @@ interface AgentGroupsState {
 }
 
 export const useAgentGroups = create<AgentGroupsState>((set) => ({
-  byWorkspace: load(),
+  byWorkspace: {},
 
   createGroup: (ws, group, members) =>
     set((s) => {
       const list = (s.byWorkspace[ws] ?? []).filter((g) => g.group !== group)
       const next = { ...s.byWorkspace, [ws]: [...list, { group, members }] }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -90,7 +138,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
         g.group === group ? { ...g, members: [...g.members, member] } : g
       )
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -118,7 +166,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
         })
         .filter((g) => g.members.length > 0)
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -135,7 +183,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
           : g
       )
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -150,7 +198,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
           : g
       )
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -163,7 +211,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
       if (cur.some((g) => g.group === trimmed)) return s
       const list = cur.map((g) => (g.group === oldName ? { ...g, group: trimmed } : g))
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     }),
 
@@ -171,7 +219,7 @@ export const useAgentGroups = create<AgentGroupsState>((set) => ({
     set((s) => {
       const list = (s.byWorkspace[ws] ?? []).filter((g) => g.group !== group)
       const next = { ...s.byWorkspace, [ws]: list }
-      persist(next)
+      persist(next, ws)
       return { byWorkspace: next }
     })
 }))
