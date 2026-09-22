@@ -741,6 +741,11 @@
   gap: 1px;
 }
 .pet-row {
+  /* A <button>, so without this the browser's own control colours come through:
+     a near-white buttonface with black text, which on the dark glass hid the
+     labels entirely (worst in Void, where nothing else is that bright). */
+  background: transparent;
+  color: inherit;
   display: flex;
   align-items: center;
   justify-content: space-between;
