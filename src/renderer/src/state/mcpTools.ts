@@ -745,6 +745,9 @@ function goalFinish(args: Args, c: Ctx): string {
   if (!goal) return `error: no goal ${s(args.goal_id)}`
   const summary = s(args.summary)
   if (!summary) return 'error: summary is required — the conclusion is the point of the goal'
+  // The user stopping a goal is the end of it; an agent must not quietly reopen
+  // that as "converged" afterwards.
+  if (goal.status !== 'open') return `error: goal ${goal.id} is already ${goal.status}`
   useGoals.getState().post(goal.id, { round: goal.round, by: c.chatPane ?? 'agent', kind: 'summary', text: summary })
   useGoals.getState().finish(goal.id, summary)
   note(goal.ws, 'roster', c.chatPane ?? 'agent', `목표 종료(${goal.round}라운드 · ${goal.turns}턴): ${summary}`)
