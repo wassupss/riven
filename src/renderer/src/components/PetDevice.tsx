@@ -52,6 +52,7 @@ import {
   MAX_POOPS,
   type Form,
   type Mood,
+  type Species,
   type Stage
 } from '../state/pet'
 
@@ -163,6 +164,7 @@ function Glyph({ rows, className }: { rows: string[]; className?: string }): JSX
 function Creature({
   stage,
   form,
+  species,
   mood,
   chewing,
   flavor,
@@ -170,15 +172,16 @@ function Creature({
 }: {
   stage: Stage
   form: Form
+  species: Species
   mood: Mood
   chewing: boolean
   flavor?: string
   evolving?: boolean
 }): JSX.Element {
-  const dots = useMemo(() => pixelsOf(stage, form, mood), [stage, form, mood])
+  const dots = useMemo(() => pixelsOf(stage, form, mood, species), [stage, form, mood, species])
   return (
     <svg
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
       viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
@@ -1068,6 +1071,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <Creature
               stage={growth.stage}
               form={growth.form}
+              species={pet.species}
               mood={mood}
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
@@ -1109,6 +1113,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           <div>
             <dt>{t('pet.stat.name')}</dt>
             <dd>{name ?? t('pet.settings.noName')}</dd>
+          </div>
+          <div>
+            <dt>{t('pet.stat.species')}</dt>
+            <dd>{t(`pet.species.${pet.species}`)}</dd>
           </div>
           <div>
             <dt>{t('pet.stat.stage')}</dt>
@@ -1259,6 +1267,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <div key={a.endedAt} className="pet-album-row">
               <b>{a.name || t('pet.default.name')}</b>
               <span>
+                {t(`pet.species.${a.species}`)} ·{' '}
                 {a.form === 'base' ? t(`pet.stage.${a.stage}`) : t(`pet.form.${a.form}`)} · {a.xp}
                 {t('pet.album.kibble')} · {dur(t, a.ageMs)}
               </span>
@@ -1365,6 +1374,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <Creature
               stage={growth.stage}
               form={growth.form}
+              species={pet.species}
               mood={mood}
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}

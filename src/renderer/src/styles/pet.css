@@ -576,6 +576,36 @@
   animation: pet-hop 0.25s steps(1, end) infinite;
 }
 
+/* ---- species colour ----
+   The strain's hue, turned on the WHOLE sprite (the <svg>) while the diet tint
+   below turns the body group inside it — two nested elements, so the two
+   compose instead of one winning. A hue turn rather than fixed colours, so a
+   strain still belongs to whatever theme riven is wearing.
+   'spot' is left alone: it is the colour the pet has always been. */
+/* The accent riven ships is violet (~270°), so these are turns FROM there to the
+   colour each animal wants: +120 lands on orange, +140 on gold, +210 on green,
+   −70 on blue. Turned on the whole sprite (the <svg>) while the diet tint below
+   turns the body group inside it, so the two compose instead of one winning. */
+.pet-lcd.pet-sp-cat {
+  filter: hue-rotate(120deg) saturate(1.05);
+}
+.pet-lcd.pet-sp-rabbit {
+  /* A pale rabbit: almost no colour of its own. */
+  filter: hue-rotate(60deg) saturate(0.3) brightness(1.1);
+}
+.pet-lcd.pet-sp-bird {
+  filter: hue-rotate(145deg) saturate(1.1);
+}
+.pet-lcd.pet-sp-fish {
+  filter: hue-rotate(-70deg);
+}
+.pet-lcd.pet-sp-turtle {
+  filter: hue-rotate(210deg) saturate(0.9);
+}
+.pet-lcd.pet-sp-bug {
+  filter: hue-rotate(75deg) saturate(1.05);
+}
+
 /* What it grew up eating tints it, on top of whatever form it took. A hue turn
    rather than a colour swap, so it composes with radiant/titan/wraith. */
 .pet-diet-sonnet .pet-sprite {

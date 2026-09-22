@@ -66,6 +66,42 @@ export const SLEEP_RATE = 0.35
 export type Flavor = 'opus' | 'sonnet' | 'haiku' | 'codex' | 'other'
 export const FLAVORS: Flavor[] = ['opus', 'sonnet', 'haiku', 'codex', 'other']
 
+// ---- species ----
+// The strain a pet is BORN as: drawn when the egg appears and never changes.
+// This is the axis that was missing — growth branched only on how a pet was
+// raised, so every install hatched the same creature in the same colour and the
+// only variety came hours later, at adulthood. A species shows from the egg (its
+// shell carries the coat pattern), so the pull is something you see at once.
+//
+// A strain is a different ANIMAL, not a recolour: it owns the silhouette at every
+// stage (see petSprites.ts), because six blobs in six colours are one pet with
+// six hats. Care still decides the adult FORM, which is now applied to whichever
+// animal you got — six animals × four forms is twenty-four grown-up pets.
+export type Species = 'cat' | 'rabbit' | 'bird' | 'fish' | 'turtle' | 'bug'
+export const SPECIES: Species[] = ['cat', 'rabbit', 'bird', 'fish', 'turtle', 'bug']
+
+/** An even draw from the six strains. */
+export function drawSpecies(rand: number = Math.random()): Species {
+  const i = Math.floor(Math.min(0.999999, Math.max(0, rand)) * SPECIES.length)
+  return SPECIES[i] ?? SPECIES[0]
+}
+
+/**
+ * The strain a save from before species existed should have. Derived from the
+ * pet's own birth instant so it is stable: a live pet must not change what it is
+ * every time the app reloads, and re-drawing at random would do exactly that.
+ */
+export function speciesFromBirth(bornAt: number): Species {
+  // A proper 32-bit avalanche, not one multiply: a single imul leaves the low
+  // bits of a seconds-resolution clock correlated, and `% 6` of that only ever
+  // produced three of the six strains.
+  let h = Math.floor(bornAt / 1000) | 0
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b)
+  h = (h ^ (h >>> 16)) >>> 0
+  return SPECIES[h % SPECIES.length]
+}
+
 export type Stage = 'egg' | 'hatchling' | 'child' | 'teen' | 'adult'
 // Non-adult stages all render 'base'; an adult's shape depends on its upbringing.
 export type Form = 'base' | 'radiant' | 'sturdy' | 'titan' | 'wraith'
@@ -88,6 +124,8 @@ export const TITAN_KIBBLE_PER_HOUR = 10
 export interface PetSave {
   version: 1
   bornAt: number
+  /** The strain it hatched as. Drawn once, at birth. */
+  species: Species
   // When decay() was last applied. Time between this and "now" is what the next
   // decay() charges for, so a closed app still gets hungry.
   lastTickAt: number
@@ -147,6 +185,7 @@ export interface DayFeed {
 
 export interface AlbumEntry {
   name: string
+  species: Species
   stage: Stage
   form: Form
   xp: number
@@ -164,6 +203,7 @@ export function initialState(now: number): PetSave {
   return {
     version: 1,
     bornAt: now,
+    species: drawSpecies(),
     lastTickAt: now,
     carryTokens: 0,
     xp: 0,
@@ -210,6 +250,11 @@ export function normalize(raw: unknown, now: number): PetSave {
   return {
     version: 1,
     bornAt,
+    // Saved pets keep their strain; ones from before species existed get the one
+    // their own birthday implies, so nobody's pet changes into something else.
+    species: SPECIES.includes(o.species as Species)
+      ? (o.species as Species)
+      : speciesFromBirth(bornAt),
     lastTickAt: Math.min(now, Math.max(bornAt, num(o.lastTickAt, bornAt))),
     carryTokens: Math.max(0, Math.min(KIBBLE_TOKENS - 1, Math.floor(num(o.carryTokens, 0)))),
     xp: Math.max(0, Math.floor(num(o.xp, 0))),
@@ -622,6 +667,11 @@ export interface Award {
  * What this pet has managed. Derived, never stored: an award can't drift out of
  * step with the pet it describes, and adding one lights up retroactively.
  */
+/** How many different strains this keeper has had, the current pet included. */
+export function strainsSeen(s: PetSave): number {
+  return new Set<Species>([s.species, ...s.album.map((a) => a.species)]).size
+}
+
 export function awardsOf(s: PetSave, now: number): Award[] {
   const grown = stageIndexOf(s.xp) >= STAGES.length - 1
   return [
@@ -634,7 +684,10 @@ export function awardsOf(s: PetSave, now: number): Award[] {
     { id: 'streak', done: feedStreak(s.history) >= 7 },
     { id: 'playful', done: s.plays >= 10 },
     { id: 'lucky', done: s.wins >= 5 },
-    { id: 'keeper', done: s.album.length >= 3 }
+    { id: 'keeper', done: s.album.length >= 3 },
+    // Six strains are drawn at random, so meeting three of them is a record of
+    // starting over rather than of raising one pet well.
+    { id: 'strains', done: strainsSeen(s) >= 3 }
   ]
 }
 
@@ -647,6 +700,7 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
   const g = growthOf(s, now)
   const entry: AlbumEntry = {
     name: s.name,
+    species: s.species,
     stage: g.stage,
     form: g.form,
     xp: s.xp,

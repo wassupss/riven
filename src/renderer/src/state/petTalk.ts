@@ -161,6 +161,7 @@ export function answer(question: string, f: TalkFacts): { topic: TalkTopic; text
       return {
         topic,
         text: t('pet.talk.self', {
+          species: t(`pet.species.${f.pet.species}`),
           stage: t(`pet.stage.${g.stage}`),
           age: f.dur(f.now - f.pet.bornAt),
           mood: t(`pet.mood.${f.pet.sick ? 'sick' : f.pet.fullness < HUNGRY_AT ? 'hungry' : 'ok'}`)

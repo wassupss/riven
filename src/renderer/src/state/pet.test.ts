@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
 import { DEFAULT_SETTINGS } from './settings'
-import { feedFrame } from './pet'
+import { feedFrame, drawSpecies, speciesFromBirth, strainsSeen, SPECIES } from './pet'
 import {
   archive,
   awardsOf,
@@ -558,7 +558,7 @@ describe('awards', () => {
       neglectMs: 2 * HOUR,
       plays: 12,
       wins: 6,
-      album: [1, 2, 3].map(() => ({ name: '', stage: 'adult' as const, form: 'sturdy' as const, xp: 1, tokens: 1, ageMs: 1, neglectMs: 0, endedAt: T0 })),
+      album: [1, 2, 3].map(() => ({ name: '', species: 'cat' as const, stage: 'adult' as const, form: 'sturdy' as const, xp: 1, tokens: 1, ageMs: 1, neglectMs: 0, endedAt: T0 })),
       history: Array.from({ length: 7 }, (_, i) => ({ day: dayKey(T0 + i * 24 * HOUR), kibble: 3 }))
     })
     expect(ids(grown).sort()).toEqual(
@@ -696,5 +696,77 @@ describe('feedFrame', () => {
       { day: key(T0 - DAY), kibble: 0, today: false },
       { day: key(T0), kibble: 0, today: true }
     ])
+  })
+})
+
+describe('species', () => {
+  it('draws evenly across the six strains', () => {
+    // The draw is a pure function of one number, so the whole distribution is
+    // checkable without a random source.
+    const drawn = Array.from({ length: 600 }, (_, i) => drawSpecies(i / 600))
+    for (const sp of SPECIES) expect(drawn.filter((d) => d === sp)).toHaveLength(100)
+  })
+
+  it('never falls off either end of the table', () => {
+    expect(drawSpecies(0)).toBe(SPECIES[0])
+    expect(drawSpecies(1)).toBe(SPECIES[SPECIES.length - 1])
+    expect(SPECIES).toContain(drawSpecies(-5))
+    expect(SPECIES).toContain(drawSpecies(99))
+  })
+
+  it('gives a new egg one of the six', () => {
+    expect(SPECIES).toContain(initialState(T0).species)
+  })
+
+  it('keeps the strain a save already has', () => {
+    const s = normalize({ ...base(), species: 'turtle' }, T0 + HOUR)
+    expect(s.species).toBe('turtle')
+  })
+
+  it('gives a pet from before strains existed a stable one', () => {
+    // Same pet, two loads: it must not turn into something else on reload, which
+    // a fresh random draw in normalize would have done.
+    const old = { ...base(), species: undefined }
+    const first = normalize(old, T0 + HOUR)
+    const second = normalize(old, T0 + 5 * HOUR)
+    expect(first.species).toBe(second.species)
+    expect(first.species).toBe(speciesFromBirth(first.bornAt))
+    expect(SPECIES).toContain(first.species)
+  })
+
+  it('refuses a strain that is not one of the six', () => {
+    const s = normalize({ ...base(), species: 'dragon' }, T0)
+    expect(SPECIES).toContain(s.species)
+    expect(s.species).not.toBe('dragon')
+  })
+
+  it('spreads birthdays across every strain', () => {
+    const seen = new Set(
+      Array.from({ length: 400 }, (_, i) => speciesFromBirth(T0 + i * 60_000))
+    )
+    expect(seen.size).toBe(SPECIES.length)
+  })
+
+  it('survives being fed, starved and played with', () => {
+    let s = base({ species: 'fish' })
+    s = feed(s, 100 * KIBBLE_TOKENS, T0)
+    s = decay(s, T0 + 30 * HOUR)
+    s = play(s, 'left', 'left', T0 + 31 * HOUR).state
+    s = pet(s, T0 + 32 * HOUR)
+    expect(s.species).toBe('fish')
+  })
+
+  it('remembers what each past pet was', () => {
+    const album = archive(base({ species: 'bird', xp: 40 }), T0 + HOUR)
+    expect(album[album.length - 1].species).toBe('bird')
+  })
+
+  it('counts the strains a keeper has met, current pet included', () => {
+    const entry = (species: (typeof SPECIES)[number]): PetSave['album'][number] => ({
+      name: '', species, stage: 'adult', form: 'sturdy', xp: 1, tokens: 1, ageMs: 1, neglectMs: 0, endedAt: T0
+    })
+    expect(strainsSeen(base({ species: 'cat', album: [] }))).toBe(1)
+    expect(strainsSeen(base({ species: 'cat', album: [entry('cat'), entry('cat')] }))).toBe(1)
+    expect(strainsSeen(base({ species: 'cat', album: [entry('rabbit'), entry('turtle')] }))).toBe(3)
   })
 })

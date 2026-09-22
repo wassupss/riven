@@ -156,6 +156,90 @@ async function main() {
 
   const stage = await cdp.eval(`document.querySelector('.pet-lcd').getAttribute('class')`)
   check('grew past the egg', /pet-s-child/.test(stage), stage)
+
+  // Strains: a different ANIMAL each, drawn at birth and printed on the egg.
+  // Before this every install hatched the same creature in the same colour, and
+  // the only variety came hours later, at adulthood.
+  const strains = await cdp.eval(`(async () => {
+    const s = __riven.pet
+    const SIX = ['cat', 'rabbit', 'bird', 'fish', 'turtle', 'bug']
+    // Each strain, on the egg it would hatch from: the coat has to mark the shell
+    // (dots that are neither outline nor plain body) and the sprite has to say
+    // which strain it is.
+    const seen = []
+    for (const sp of SIX) {
+      s.setState({ pet: { ...s.getState().pet, species: sp, xp: 0 } })
+      await new Promise((r) => setTimeout(r, 200))
+      const el = document.querySelector('.pet-lcd')
+      // An <svg>'s .className is an SVGAnimatedString, not a string.
+      const cls = el.getAttribute('class')
+      seen.push({
+        sp,
+        marked: cls.includes('pet-sp-' + sp),
+        egg: cls.includes('pet-s-egg'),
+        // 'h' (highlight) and 'a' (accent) dots are the coat; an unpatterned egg
+        // has none at all.
+        coat: el.querySelectorAll('.pet-px-h, .pet-px-a').length
+      })
+    }
+    // The silhouette of each animal, with pattern and face stripped out.
+    const shapes = []
+    for (const sp of SIX) {
+      s.setState({ pet: { ...s.getState().pet, species: sp, xp: 900 } })
+      await new Promise((r) => setTimeout(r, 200))
+      shapes.push(
+        [...document.querySelectorAll('.pet-lcd rect')]
+          .filter((r) => !/pet-px-[ehma]$/.test(r.getAttribute('class')))
+          .map((r) => r.getAttribute('x') + ',' + r.getAttribute('y'))
+          .join(' ')
+      )
+    }
+    // Grown up, the strain is still there — it is what the pet IS, not a stage.
+    s.setState({ pet: { ...s.getState().pet, species: 'turtle', xp: 900 } })
+    await new Promise((r) => setTimeout(r, 250))
+    const grown = document.querySelector('.pet-lcd').getAttribute('class')
+    // And a fresh egg draws one of the six rather than always the same. Starting
+    // over archives the pet it replaces, so the save is put back afterwards —
+    // otherwise this check would hand the later ones a full album.
+    const keep = s.getState().pet
+    const albumBefore = keep.album.length
+    const drawn = new Set()
+    for (let i = 0; i < 40; i++) {
+      s.getState().reset()
+      drawn.add(s.getState().pet.species)
+    }
+    s.setState({ pet: keep })
+    await new Promise((r) => setTimeout(r, 150))
+    // Put back, not emptied: pet.json persists between runs and may already hold
+    // an album from one of them. (Exactly-equal is not assertable — both windows
+    // keep their own store and write the same file — so the check below allows
+    // the one entry a racing save can add, and no more.)
+    return { seen, shapes, grown, drawn: [...drawn], albumBefore, albumAfter: s.getState().pet.album.length }
+  })()`)
+  check(
+    'every strain marks its own egg',
+    strains.seen.length === 6 &&
+      strains.seen.every((x) => x.marked && x.egg && x.coat > 0) &&
+      new Set(strains.seen.map((x) => x.coat)).size > 1, // the patterns differ
+    JSON.stringify(strains.seen)
+  )
+  check(
+    'each strain is a different animal, not one body recoloured',
+    // The silhouettes themselves have to differ — the whole complaint about the
+    // first cut was six blobs in six colours.
+    new Set(strains.shapes).size === 6,
+    strains.shapes.map((s) => s.length).join(' · ') + ' dots'
+  )
+  check(
+    'a strain sticks through growing up, and a new egg is a fresh draw',
+    /pet-sp-turtle/.test(strains.grown) && !/pet-s-egg/.test(strains.grown) &&
+      strains.drawn.length >= 3 && strains.albumAfter - strains.albumBefore <= 1,
+    JSON.stringify({
+      grown: strains.grown,
+      drawn: strains.drawn,
+      album: `${strains.albumBefore} → ${strains.albumAfter}`
+    })
+  )
   const litCells = await cdp.eval(`(async () => {
     await ${RUN('meter')}
     const lit = document.querySelectorAll('.pet-cell.tone-food.on').length
@@ -550,8 +634,19 @@ async function main() {
   // Awards light up as they are earned — their own screen, its own icon.
   const awards = await cdp.eval(`(async () => {
     const s = __riven.pet
+    // album: [] on purpose — pet.json survives between runs, and an album left by
+    // an earlier one would light 'keeper' and 'strains' and make the count drift.
     s.setState({ pet: { ...s.getState().pet, xp: 900, totalTokens: 12000000, bornAt: Date.now() - 300 * 3600000,
-                        neglectMs: 2 * 3600000, plays: 12, wins: 6, everSick: false, sick: false, lastTickAt: Date.now() } })
+                        neglectMs: 2 * 3600000, plays: 12, wins: 6, everSick: false, sick: false,
+                        album: [],
+                        // A full week of meals, so the streak award is not left
+                        // to whatever the feed-log check happened to leave behind.
+                        history: Array.from({ length: 7 }, (_, i) => {
+                          const d = new Date(Date.now() - (6 - i) * 86400000)
+                          const p = (n) => String(n).padStart(2, '0')
+                          return { day: d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()), kibble: 30 }
+                        }),
+                        lastTickAt: Date.now() } })
     await new Promise((r) => setTimeout(r, 300))
     await ${RUN('awards')}
     const out = { title: document.querySelector('.pet-screen-top span').textContent,
@@ -563,7 +658,10 @@ async function main() {
   })()`)
   check(
     'awards light up as they are earned',
-    awards.total === 10 && awards.done >= 8 && awards.done < 10,
+    // Eleven of them, and this pet has earned every one but the two that are
+    // about keeping several: an empty album means no 'keeper', and one strain
+    // means no 'strains'.
+    awards.total === 11 && awards.done === 9,
     JSON.stringify(awards)
   )
 
