@@ -552,7 +552,14 @@ const AssistantText = memo(function AssistantText({
 // and what it has spent so far. The clock is its own — a turn's cost and elapsed
 // time are the two things you want while waiting, and the transcript's shared
 // "now" only ticks once a minute.
-function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
+// A turn that has said NOTHING for this long is worth pointing out. Not ending
+// it — a turn can legitimately spend minutes inside one tool — but "생각 중" for
+// half an hour is indistinguishable from a CLI that is stuck waiting on the API,
+// which is exactly what it looked like when it happened (child alive, in a turn,
+// one open connection to the API, no output, no stderr, 36 minutes).
+const QUIET_MS = 90_000
+
+function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: number } }): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
   useEffect(() => {
@@ -560,6 +567,10 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
     return () => clearInterval(id)
   }, [])
   const elapsed = Math.max(0, Date.now() - msg.startedAt)
+  // Read through the ref on each tick: making this reactive would re-render the
+  // transcript on every streamed token, which is the one thing this pane must
+  // not do.
+  const quiet = Math.max(0, Date.now() - (lastEvent?.current || msg.startedAt))
   const spent = msg.tokensIn > 0 || msg.tokensOut > 0
   return (
     <span className="chat-foot-running">
@@ -570,6 +581,11 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
         {fmtDur(elapsed)}
         {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
       </span>
+      {quiet > QUIET_MS && (
+        <span className="chat-foot-quiet" title={t('chat.quietHint')}>
+          {t('chat.quiet', { d: fmtDur(quiet) })}
+        </span>
+      )}
     </span>
   )
 }
@@ -578,10 +594,13 @@ function RunningFoot({ msg }: { msg: Msg }): JSX.Element {
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
   msg,
-  now
+  now,
+  lastEvent
 }: {
   msg: Msg
   now: number
+  /** When this pane last heard anything at all (see RunningFoot's quiet note). */
+  lastEvent?: { current: number }
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
@@ -659,7 +678,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <RunningFoot msg={msg} />
+          <RunningFoot msg={msg} lastEvent={lastEvent} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
@@ -2710,7 +2729,7 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} />
+          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]

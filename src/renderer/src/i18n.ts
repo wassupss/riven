@@ -720,6 +720,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.thinking': { ko: '생각 중', en: 'Thinking' },
   'chat.writing': { ko: '작성 중', en: 'Writing' },
   'chat.done': { ko: '완료', en: 'Done' },
+  'chat.quiet': { ko: '· 무응답 {d}', en: '· silent {d}' },
+  'chat.quietHint': {
+    ko: '에이전트가 이 시간 동안 아무것도 보내지 않았습니다. 도구를 오래 돌리는 중일 수도 있고, CLI가 API 응답을 기다리며 멈춰 있을 수도 있습니다 — 그럴 땐 중단하고 다시 보내세요.',
+    en: 'Nothing has arrived from the agent for this long. It may be inside a long tool call, or its CLI may be stuck waiting on the API — if so, stop it and send again.'
+  },
   'chat.stopped': { ko: '중단', en: 'Stopped' },
   'chat.resumed': { ko: '이전 세션에서 이어짐', en: 'Continued from a previous session' },
   'chat.restoring': { ko: '이전 대화 불러오는 중…', en: 'Loading previous conversation…' },

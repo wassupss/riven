@@ -8777,3 +8777,11 @@ body.browser-active .agp-node-run {
   background: var(--accent-muted);
   color: var(--accent);
 }
+
+/* "무응답 3분" — a turn that has sent nothing for a long while. Quiet enough not
+   to alarm during a long tool call, present enough to explain a stuck CLI. */
+.chat-foot-quiet {
+  color: var(--warning, var(--fg-dim));
+  font-variant-numeric: tabular-nums;
+  cursor: help;
+}
