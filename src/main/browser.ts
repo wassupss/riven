@@ -277,6 +277,11 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         activeId: string | null
         rect: { x: number; y: number; width: number; height: number } | null
         css?: { w: number; h: number }
+        // The tabs of the workspace this panel belongs to. A panel may only
+        // hide its OWN views: two workspaces can each have a browser panel, and
+        // the hidden one telling us "show nothing" used to blank the visible
+        // one's page — whichever message happened to arrive last won.
+        own?: string[]
       }
     ) => {
       const w = senderWindow(e) ?? win()
@@ -295,7 +300,10 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
       // The frame is 1 CSS px of riven's UI, which is more than one device-
       // independent pixel whenever the UI is zoomed.
       const inset = Math.max(1, Math.ceil(VIEW_INSET * sx))
+      const mine = a.own && a.own.length ? new Set(a.own) : null
       for (const [id, t] of tabs) {
+        // Not ours to touch: another workspace's panel owns that view.
+        if (mine && !mine.has(id) && id !== showId) continue
         const on = id === showId && a.rect != null
         t.view.setVisible(on)
         if (on && a.rect)
