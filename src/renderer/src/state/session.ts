@@ -47,6 +47,9 @@ export interface Session {
   // name, rather than in localStorage: the two used to be separate stores, so a
   // profile switch or a cleared site data left groups pointing at panes that no
   // longer existed (and vice versa). Shape mirrors state/agentGroups.
+  // Goal boards this workspace's groups are working on (see state/goals). A
+  // goal is work, not activity, so unlike the group timeline it is kept.
+  goals?: unknown[]
   // Pipeline runs started in this workspace (see state/pipelineRuns). Persisted
   // so the panel's tabs survive a restart; a run that was still going when the
   // app closed is marked interrupted on load, because its loop died with it.
@@ -264,7 +267,8 @@ export const useSession = create<SessionState>((set) => ({
           // layout-change save afterwards then persisted panes-less sessions to disk.
           panes: s.panes ?? {},
           groups: s.groups ?? [],
-          runs: s.runs ?? []
+          runs: s.runs ?? [],
+          goals: s.goals ?? []
         }
       }
       return {

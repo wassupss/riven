@@ -304,6 +304,66 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     implemented: true
   },
   {
+    name: 'riven_goal_start',
+    ko: '목표 시작',
+    en: 'Start a goal',
+    description:
+      'Open a GOAL BOARD for a group: one shared thing the team works a problem out on, instead of ' +
+      'one-off questions that leave nothing behind. `done_when` says in plain words what finished ' +
+      'looks like — the team is told it, and you decide when it holds. `artifact` (optional) is a ' +
+      'file the conclusion is written to when you close it. Returns the goal id.',
+    inputSchema: obj({ group: str, goal: str, done_when: str, artifact: str }, [
+      'group',
+      'goal',
+      'done_when'
+    ]),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_state',
+    ko: '목표판 읽기',
+    en: 'Read the goal board',
+    description:
+      'The whole board: the goal, what finished looks like, every post so far (who, which round, ' +
+      'what kind) and the members. This is how a member catches up — nobody has to be told what the ' +
+      'others said.',
+    inputSchema: obj({ goal_id: str }, ['goal_id']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_post',
+    ko: '목표판에 올리기',
+    en: 'Post to the goal board',
+    description:
+      'Add your own entry to the board outside a round. kind: proposal | critique | revision | vote | note.',
+    inputSchema: obj({ goal_id: str, kind: str, text: str }, ['goal_id', 'text']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_round',
+    ko: '목표 라운드 실행',
+    en: 'Run a goal round',
+    description:
+      'Put ONE question to every member with the board as their context, and post each answer to the ' +
+      'board. kind labels what you are asking for: proposal (each writes its own, uninfluenced) | ' +
+      'critique (each attacks what is already posted — set exclude_author=true so nobody is asked to ' +
+      'review a board they have not contributed to) | revision | vote. A round costs one turn per ' +
+      'member; the panel shows what the goal has spent.',
+    inputSchema: obj({ goal_id: str, ask: str, kind: str, exclude_author: bool }, ['goal_id', 'ask']),
+    implemented: true
+  },
+  {
+    name: 'riven_goal_finish',
+    ko: '목표 종료',
+    en: 'Close the goal',
+    description:
+      'Declare it settled: `summary` is the conclusion, and it goes on the board (and into the ' +
+      "goal's `artifact` file, if it was given one). Close it when done_when holds — nothing else " +
+      'ends a goal except the user stopping it.',
+    inputSchema: obj({ goal_id: str, summary: str }, ['goal_id', 'summary']),
+    implemented: true
+  },
+  {
     name: 'riven_start_pipeline',
     ko: '직렬 파이프라인 실행',
     en: 'Start pipeline',

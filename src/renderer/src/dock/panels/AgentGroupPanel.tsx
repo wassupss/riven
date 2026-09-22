@@ -14,7 +14,8 @@ import {
   Circle,
   AlertCircle,
   Square,
-  User
+  User,
+  Target
 } from 'lucide-react'
 import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
 import {
@@ -26,6 +27,7 @@ import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } fro
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { useGroupLog } from '../../state/groupLog'
+import { useGoals, goalsFor, type Goal } from '../../state/goals'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
@@ -283,6 +285,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     remove: removeRun
   } = usePipelineRuns((s) => s)
   const pipelines = usePipelines((s) => s.byWorkspace[workspace]) ?? []
+  const goals = useGoals((s) => s.byWorkspace[workspace]) ?? []
   const {
     create: createPipeline,
     remove: removePipeline
@@ -291,6 +294,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // null = the "새 그룹" draft tab; otherwise the shown group's name.
   const [activeTab, setActiveTab] = useState<string | null>(null)
   const [mode, setMode] = useState<'group' | 'pipeline'>('group')
+  const shownGoal = activeTab?.startsWith('goal:')
+    ? goals.find((g) => g.id === activeTab.slice('goal:'.length))
+    : undefined
   const [previewing, setPreviewing] = useState(false)
   // Group-tab edit mode: edit member fields / rename the group after creation.
   const [editing, setEditing] = useState(false)
@@ -787,6 +793,25 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
             <span className="agp-tab-count">{g.members.length}</span>
           </button>
         ))}
+        {goals.map((g) => (
+          <button
+            key={g.id}
+            className={`agp-tab agp-tab-goal${activeTab === `goal:${g.id}` ? ' on' : ''}${
+              g.status === 'open' ? ' running' : ''
+            }`}
+            onClick={() => {
+              setActiveTab(`goal:${g.id}`)
+              setEditing(false)
+            }}
+            title={g.goal}
+          >
+            <Target size={12} />
+            {g.goal.length > 18 ? g.goal.slice(0, 18) + '…' : g.goal}
+            <span className="agp-tab-count">
+              R{g.round} · {g.turns}턴
+            </span>
+          </button>
+        ))}
         {pipelines.map((p) => {
           const active = runs.some((r) => r.pipelineId === p.id && !r.done)
           return (
@@ -1199,6 +1224,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         </div>
       )}
 
+      {/* ---- Goal board tab ---- */}
+      {shownGoal && <GoalBoard goal={shownGoal} workspace={workspace} />}
+
       {/* ---- Pipeline run tab ---- */}
       {shownRun && (
         <div className="agp-body">
@@ -1437,6 +1465,89 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
           {sending ? t('team.sending') : t('team.send')}
         </button>
       </div>
+    </div>
+  )
+}
+
+// The goal board: what the team is converging on, what it has cost so far, and
+// the button that ends it.
+//
+// Nothing stops a goal on its own — that was the decision — so this view is the
+// safeguard: the spend is on screen at all times (rounds, turns, how long it has
+// been going), and Stop is always one click away. A person can also put a line
+// on the board between rounds, which is the cheapest way to correct a team that
+// has drifted.
+function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.Element {
+  const t = useT()
+  const [text, setText] = useState('')
+  const roster = useAgentGroups((s) => s.byWorkspace[workspace] ?? []).find((g) => g.group === goal.group)
+  const nameOf = (key: string): string =>
+    key === 'user' ? t('team.you') : roster?.members.find((m) => m.chatKey === key)?.name ?? key.slice(0, 9)
+  const mins = Math.max(1, Math.round(((goal.endedAt ?? Date.now()) - goal.startedAt) / 60000))
+
+  const stop = (): void => {
+    // End the turns this goal has in flight as well as the goal itself: a member
+    // mid-answer would otherwise keep going (and keep spending) after "stop".
+    for (const m of roster?.members ?? []) window.api.chat.interrupt(m.chatKey)
+    useGoals.getState().stop(goal.id)
+  }
+
+  return (
+    <div className="agp-body agp-goal">
+      <div className="agp-goal-head">
+        <div className="agp-goal-title">{goal.goal}</div>
+        <div className="agp-goal-done">{t('goal.doneWhen')}: {goal.doneWhen}</div>
+        <div className="agp-goal-meta">
+          <span className={`agp-goal-status s-${goal.status}`}>{t(`goal.status.${goal.status}`)}</span>
+          <span>{t('goal.spend', { rounds: goal.round, turns: goal.turns, mins })}</span>
+          {goal.artifact && <span className="agp-goal-artifact">{goal.artifact}</span>}
+          {goal.status === 'open' && (
+            <button className="ui-btn ui-btn-default agp-danger" onClick={stop}>
+              <Square size={12} /> {t('goal.stop')}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="agp-goal-posts">
+        {goal.posts.length === 0 && <div className="agp-talk-empty">{t('goal.empty')}</div>}
+        {goal.posts.map((p) => (
+          <div key={p.id} className={`agp-post k-${p.kind}`}>
+            <div className="agp-post-head">
+              <span className="agp-post-by">{nameOf(p.by)}</span>
+              <span className="agp-post-kind">
+                R{p.round} · {t(`goal.kind.${p.kind}`)}
+              </span>
+            </div>
+            <div className="agp-post-text">{p.text}</div>
+          </div>
+        ))}
+      </div>
+
+      {goal.summary && (
+        <div className="agp-goal-summary">
+          <b>{t('goal.conclusion')}</b>
+          <div>{goal.summary}</div>
+        </div>
+      )}
+
+      {goal.status === 'open' && (
+        <div className="agp-talk-box">
+          <input
+            className="agp-talk-input"
+            value={text}
+            placeholder={t('goal.postPlaceholder')}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && text.trim()) {
+                e.preventDefault()
+                useGoals.getState().post(goal.id, { round: goal.round, by: 'user', kind: 'note', text })
+                setText('')
+              }
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

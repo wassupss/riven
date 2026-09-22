@@ -8616,3 +8616,99 @@ body.browser-active .tab-dot.attn {
   border-color: var(--accent-border);
   color: var(--accent);
 }
+
+/* The goal board. Nothing stops a goal on its own, so what it is spending is
+   never more than a glance away — and neither is the button that ends it. */
+.agp-goal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.agp-goal-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agp-goal-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+.agp-goal-done {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.agp-goal-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.agp-goal-status {
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+}
+.agp-goal-status.s-open {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.agp-goal-status.s-converged {
+  border-color: var(--ok-border, var(--border));
+  color: var(--ok, var(--fg));
+}
+.agp-goal-artifact {
+  font-family: var(--font-mono);
+}
+.agp-goal-posts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+  padding-right: 4px;
+}
+.agp-post {
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  background: var(--bg-2);
+}
+.agp-post.k-critique {
+  border-left-color: var(--warning, var(--accent));
+}
+.agp-post.k-summary {
+  border-left-color: var(--accent);
+}
+.agp-post-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  margin-bottom: 3px;
+}
+.agp-post-by {
+  font-weight: 600;
+  color: var(--fg);
+}
+.agp-post-text {
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agp-goal-summary {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.agp-tab-goal.running .agp-tab-count {
+  color: var(--accent);
+}
