@@ -46,6 +46,7 @@ import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 import { settleStaleTurns, isStaleEvent } from '../../lib/chatTurns'
+import { modelsFor } from '../../lib/models'
 import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
@@ -182,8 +183,7 @@ const TOOL_VERB: Record<string, string> = {
   WebSearch: 'chat.tools.web',
   TodoWrite: 'chat.tools.todo'
 }
-// Codex's models (from its app-server model/list). "default" is the account's.
-const CODEX_MODELS = ['default', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+
 // Map a raw CLI model id (e.g. "claude-opus-5[1m]") to the chip's short alias.
 const modelAlias = (m: string | null): string => {
   if (!m) return 'default'
@@ -2304,7 +2304,7 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = cli === 'codex' ? CODEX_MODELS : ['default', 'fable', 'sonnet', 'opus', 'haiku']
+  const MODELS = modelsFor(cli)
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],

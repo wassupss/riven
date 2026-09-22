@@ -780,6 +780,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'title.notes': { ko: '메모', en: 'Notes' },
   'title.api': { ko: 'API', en: 'API' },
   'team.you': { ko: '나', en: 'You' },
+  'team.agentCli': { ko: 'CLI', en: 'CLI' },
   'goal.doneWhen': { ko: '끝나는 조건', en: 'Finished when' },
   'goal.spend': { ko: '{rounds}라운드 · {turns}턴 · {mins}분', en: '{rounds} rounds · {turns} turns · {mins} min' },
   'goal.stop': { ko: '중단', en: 'Stop' },

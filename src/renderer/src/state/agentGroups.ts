@@ -12,6 +12,9 @@ import { useSession } from './session'
 export interface GroupMember {
   name: string
   persona: string | null
+  // Which agent runs this member (claude | codex). Absent = claude, which is
+  // all a member could be before Codex panes existed.
+  cli?: 'claude' | 'codex'
   // Model id ('default' | 'opus' | 'sonnet' | 'haiku'); 'default' = account default.
   model: string
   // Index of the member this one reports to, or null for the main agent.
@@ -113,7 +116,7 @@ interface AgentGroupsState {
     ws: string,
     group: string,
     chatKey: string,
-    patch: Partial<Pick<GroupMember, 'name' | 'persona' | 'model' | 'parent' | 'avatar' | 'agent'>>
+    patch: Partial<Pick<GroupMember, 'name' | 'persona' | 'model' | 'parent' | 'avatar' | 'agent' | 'cli'>>
   ) => void
   // Rename a group (its tab key).
   renameGroup: (ws: string, oldName: string, newName: string) => void

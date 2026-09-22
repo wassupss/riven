@@ -59,6 +59,7 @@ export interface Session {
     members: Array<{
       name: string
       persona: string | null
+      cli?: 'claude' | 'codex'
       model: string
       parent: number | null
       chatKey: string

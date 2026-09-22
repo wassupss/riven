@@ -7,6 +7,9 @@ import { create } from 'zustand'
 
 export interface PipelineStageDef {
   name: string
+  // Which agent runs this stage (claude | codex). Absent = claude, so pipelines
+  // saved before stages could pick are unchanged.
+  cli?: 'claude' | 'codex'
   model: string
   role: string
   agent: string

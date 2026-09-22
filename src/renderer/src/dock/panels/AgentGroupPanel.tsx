@@ -28,6 +28,7 @@ import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { useGroupLog } from '../../state/groupLog'
 import { useGoals, goalsFor, type Goal } from '../../state/goals'
+import { modelsFor, modelForCli, type Cli } from '../../lib/models'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
@@ -96,7 +97,7 @@ function AvatarPicker({
   )
 }
 
-const MODELS = ['default', 'opus', 'sonnet', 'haiku']
+
 const MIN = 2
 const MAX = 8
 // Members stack vertically to the right of the lead, at most this many per column;
@@ -109,6 +110,9 @@ const PIPE_TIMEOUT_MS = 300_000
 interface Draft {
   name: string
   persona: string
+  // Which agent runs this member. A team is allowed to mix them — that is the
+  // point of having more than one — so it is picked per member, not per group.
+  cli: Cli
   model: string
   parent: number | null // index of another draft this one reports to
   agent: string // custom agent (.claude/agents) or '' for a plain chat
@@ -116,6 +120,7 @@ interface Draft {
 
 interface Stage {
   name: string
+  cli: Cli
   model: string
   role: string
   agent: string // custom agent (.claude/agents) or ''
@@ -352,19 +357,19 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // ---- normal-group draft ----
   const [groupName, setGroupName] = useState(() => t('team.nameDefault'))
   const [drafts, setDrafts] = useState<Draft[]>(() => [
-    { name: t('team.mainDefault'), persona: '', model: 'default', parent: null, agent: '' },
-    { name: t('team.memberDefault', { n: 1 }), persona: '', model: 'default', parent: 0, agent: '' },
-    { name: t('team.memberDefault', { n: 2 }), persona: '', model: 'default', parent: 0, agent: '' }
+    { name: t('team.mainDefault'), persona: '', cli: 'claude', model: 'default', parent: null, agent: '' },
+    { name: t('team.memberDefault', { n: 1 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' },
+    { name: t('team.memberDefault', { n: 2 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' }
   ])
 
   // ---- pipeline draft ----
   const [pipeName, setPipeName] = useState(() => t('pipe.nameDefault'))
   const [stages, setStages] = useState<Stage[]>(() => [
-    { name: t('pipe.def.plan'), model: 'default', role: t('pipe.def.planRole'), agent: '' },
-    { name: t('pipe.def.design'), model: 'default', role: t('pipe.def.designRole'), agent: '' },
-    { name: t('pipe.def.build'), model: 'default', role: t('pipe.def.buildRole'), agent: '' },
-    { name: t('pipe.def.qa'), model: 'default', role: t('pipe.def.qaRole'), agent: '' },
-    { name: t('pipe.def.ship'), model: 'default', role: t('pipe.def.shipRole'), agent: '' }
+    { name: t('pipe.def.plan'), cli: 'claude', model: 'default', role: t('pipe.def.planRole'), agent: '' },
+    { name: t('pipe.def.design'), cli: 'claude', model: 'default', role: t('pipe.def.designRole'), agent: '' },
+    { name: t('pipe.def.build'), cli: 'claude', model: 'default', role: t('pipe.def.buildRole'), agent: '' },
+    { name: t('pipe.def.qa'), cli: 'claude', model: 'default', role: t('pipe.def.qaRole'), agent: '' },
+    { name: t('pipe.def.ship'), cli: 'claude', model: 'default', role: t('pipe.def.shipRole'), agent: '' }
   ])
   const [task, setTask] = useState('')
   const [running, setRunning] = useState(false)
@@ -438,7 +443,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       ds.length < MAX
         ? [
             ...ds,
-            { name: t('team.memberDefault', { n: ds.length }), persona: '', model: 'default', parent: 0, agent: '' }
+            { name: t('team.memberDefault', { n: ds.length }), persona: '', cli: 'claude' as Cli, model: 'default', parent: 0, agent: '' }
           ]
         : ds
     )
@@ -457,9 +462,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const resetDraft = (): void => {
     setGroupName(t('team.nameDefault'))
     setDrafts([
-      { name: t('team.mainDefault'), persona: '', model: 'default', parent: null, agent: '' },
-      { name: t('team.memberDefault', { n: 1 }), persona: '', model: 'default', parent: 0, agent: '' },
-      { name: t('team.memberDefault', { n: 2 }), persona: '', model: 'default', parent: 0, agent: '' }
+      { name: t('team.mainDefault'), persona: '', cli: 'claude', model: 'default', parent: null, agent: '' },
+      { name: t('team.memberDefault', { n: 1 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' },
+      { name: t('team.memberDefault', { n: 2 }), persona: '', cli: 'claude', model: 'default', parent: 0, agent: '' }
     ])
     setPreviewing(false)
   }
@@ -502,13 +507,16 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         memberTitle(draftNames[i], g),
         true, // don't steal focus while the team is being spawned
         d.agent || undefined,
-        priming(draftNames[i], d.persona, g, parentName, t) || undefined
+        priming(draftNames[i], d.persona, g, parentName, t) || undefined,
+        undefined, // this workspace
+        d.cli
       )
       created.push(chatKey)
       if (i > 0 && (i - 1) % MAX_PER_COL === 0) columnTops.push(chatKey)
       return {
         name: draftNames[i],
         persona: d.persona.trim() || null,
+        cli: d.cli,
         model: d.model,
         parent: parentIdx,
         chatKey,
@@ -532,11 +540,11 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     // reset the pipeline draft to defaults
     setPipeName(t('pipe.nameDefault'))
     setStages([
-      { name: t('pipe.def.plan'), model: 'default', role: t('pipe.def.planRole'), agent: '' },
-      { name: t('pipe.def.design'), model: 'default', role: t('pipe.def.designRole'), agent: '' },
-      { name: t('pipe.def.build'), model: 'default', role: t('pipe.def.buildRole'), agent: '' },
-      { name: t('pipe.def.qa'), model: 'default', role: t('pipe.def.qaRole'), agent: '' },
-      { name: t('pipe.def.ship'), model: 'default', role: t('pipe.def.shipRole'), agent: '' }
+      { name: t('pipe.def.plan'), cli: 'claude', model: 'default', role: t('pipe.def.planRole'), agent: '' },
+      { name: t('pipe.def.design'), cli: 'claude', model: 'default', role: t('pipe.def.designRole'), agent: '' },
+      { name: t('pipe.def.build'), cli: 'claude', model: 'default', role: t('pipe.def.buildRole'), agent: '' },
+      { name: t('pipe.def.qa'), cli: 'claude', model: 'default', role: t('pipe.def.qaRole'), agent: '' },
+      { name: t('pipe.def.ship'), cli: 'claude', model: 'default', role: t('pipe.def.shipRole'), agent: '' }
     ])
     setTask('')
     setRunTask('')
@@ -572,7 +580,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
           ref,
           st.name.trim() || undefined,
           true,
-          st.agent || undefined
+          st.agent || undefined,
+          undefined,
+          undefined,
+          st.cli
         )
         ref = id // next stage opens beside this one
         setRunStage(runId, i, { chatKey: id })
@@ -607,7 +618,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   const setStage = (i: number, patch: Partial<Stage>): void =>
     setStages((ss) => ss.map((s, j) => (j === i ? { ...s, ...patch } : s)))
   const addStage = (): void =>
-    setStages((ss) => [...ss, { name: '', model: 'default', role: '', agent: '' }])
+    setStages((ss) => [...ss, { name: '', cli: 'claude', model: 'default', role: '', agent: '' }])
   const removeStage = (i: number): void =>
     setStages((ss) => (ss.length > MIN ? ss.filter((_, j) => j !== i) : ss))
 
@@ -652,7 +663,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       memberTitle(m.name, g.group),
       true,
       m.agent || undefined,
-      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined
+      priming(m.name, m.persona ?? '', g.group, parentName, t) || undefined,
+      undefined,
+      m.cli
     )
     // Carry the member's avatar override to the new pane so its tab keeps the face.
     if (m.avatar) setChatAvatar(newKey, m.avatar)
@@ -925,13 +938,29 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                       onChange={(e) => setDraft(i, { persona: e.target.value })}
                     />
                     <div className="agp-card-row">
+                      <label className="agp-card-label">{t('team.agentCli')}</label>
+                      <select
+                        className="ui-select"
+                        value={d.cli}
+                        onChange={(e) => {
+                          const cli = e.target.value as Cli
+                          // A model belongs to one CLI, so switching drops a
+                          // choice the other one has never heard of.
+                          setDraft(i, { cli, model: modelForCli(d.model, cli) })
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </div>
+                    <div className="agp-card-row">
                       <label className="agp-card-label">{t('team.model')}</label>
                       <select
                         className="ui-select"
                         value={d.model}
                         onChange={(e) => setDraft(i, { model: e.target.value })}
                       >
-                        {MODELS.map((m) => (
+                        {modelsFor(d.cli).map((m) => (
                           <option key={m} value={m}>
                             {m}
                           </option>
@@ -1020,10 +1049,21 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                     </div>
                     <select
                       className="ui-select"
+                      value={st.cli}
+                      onChange={(e) => {
+                        const cli = e.target.value as Cli
+                        setStage(i, { cli, model: modelForCli(st.model, cli) })
+                      }}
+                    >
+                      <option value="claude">Claude</option>
+                      <option value="codex">Codex</option>
+                    </select>
+                    <select
+                      className="ui-select"
                       value={st.model}
                       onChange={(e) => setStage(i, { model: e.target.value })}
                     >
-                      {MODELS.map((m) => (
+                      {modelsFor(st.cli).map((m) => (
                         <option key={m} value={m}>
                           {m}
                         </option>
@@ -1132,6 +1172,23 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                       }
                     />
                     <div className="agp-card-row">
+                      <label className="agp-card-label">{t('team.agentCli')}</label>
+                      <select
+                        className="ui-select"
+                        value={m.cli ?? 'claude'}
+                        onChange={(e) => {
+                          const cli = e.target.value as Cli
+                          updateMember(workspace, shown.group, m.chatKey, {
+                            cli,
+                            model: modelForCli(m.model, cli)
+                          })
+                        }}
+                      >
+                        <option value="claude">Claude</option>
+                        <option value="codex">Codex</option>
+                      </select>
+                    </div>
+                    <div className="agp-card-row">
                       <label className="agp-card-label">{t('team.model')}</label>
                       <select
                         className="ui-select"
@@ -1140,7 +1197,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                           updateMember(workspace, shown.group, m.chatKey, { model: e.target.value })
                         }
                       >
-                        {MODELS.map((mm) => (
+                        {modelsFor(m.cli).map((mm) => (
                           <option key={mm} value={mm}>
                             {mm}
                           </option>
