@@ -1445,14 +1445,18 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [everyone, setEveryone] = useState(true)
-  const events = useGroupLog((s) => s.byWorkspace[workspace] ?? [])
-  const mine = events.filter((e) => e.group === group)
+  // The selector must return what is IN the store, never a fresh value: zustand
+  // compares with Object.is, so a `?? []` inside it hands back a new array on
+  // every render and the component re-renders forever ("Maximum update depth
+  // exceeded"). Default outside the selector.
+  const events = useGroupLog((s) => s.byWorkspace[workspace])
+  const mine = (events ?? []).filter((e) => e.group === group)
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [mine.length])
 
-  const roster = useAgentGroups((s) => s.byWorkspace[workspace] ?? []).find((g) => g.group === group)
+  const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === group)
   const titleOf = (key?: string): string => {
     if (!key) return ''
     if (key === 'user') return t('team.you')
@@ -1537,7 +1541,7 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
 function GoalBoard({ goal, workspace }: { goal: Goal; workspace: string }): JSX.Element {
   const t = useT()
   const [text, setText] = useState('')
-  const roster = useAgentGroups((s) => s.byWorkspace[workspace] ?? []).find((g) => g.group === goal.group)
+  const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === goal.group)
   const nameOf = (key: string): string =>
     key === 'user' ? t('team.you') : roster?.members.find((m) => m.chatKey === key)?.name ?? key.slice(0, 9)
   const mins = Math.max(1, Math.round(((goal.endedAt ?? Date.now()) - goal.startedAt) / 60000))
