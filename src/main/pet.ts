@@ -96,9 +96,8 @@ async function open(): Promise<void> {
     minimizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    // Deliberately NOT always-on-top: a pet that covers your work is a pet you
-    // close. It sits on the desktop like any other window and comes forward when
-    // you click it.
+    // Opens as an ordinary window; the renderer lifts it straight away if the
+    // user asked for that (settings.petOnTop → 'pet:setOnTop').
     alwaysOnTop: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -138,6 +137,11 @@ export function isPetWindowOpen(): boolean {
   return !!win && !win.isDestroyed()
 }
 
+function applyOnTop(on: boolean): void {
+  // 'floating' sits above ordinary windows without fighting menus and panels.
+  if (win && !win.isDestroyed()) win.setAlwaysOnTop(on, 'floating')
+}
+
 export function registerPetHandlers(): void {
   ipcMain.handle('pet:open', () => open())
   ipcMain.handle('pet:close', () => closePetWindow())
@@ -161,10 +165,35 @@ export function registerPetHandlers(): void {
     win.setBounds({ x: b.x, y: b.y + (b.height - h), width: b.width, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
-  // The three buttons, pressed from a keyboard shortcut. Relayed to every window
-  // because the device lives in one of two of them and only that one listens.
+  // A / B / C from a keyboard shortcut. Relayed to every window because the
+  // device lives in one of two of them and only that one listens.
   ipcMain.handle('pet:press', (_e, key: string) => {
     for (const w of BrowserWindow.getAllWindows())
       if (!w.isDestroyed()) w.webContents.send('pet:press', key)
   })
+
+  // Floating above other apps is the user's call (settings.petOnTop).
+  //
+  // Two channels because only ONE window may write settings.json (they each keep
+  // their own snapshot and a second writer clobbers the first):
+  //   setOnTop — the app applying what it has persisted.
+  //   askOnTop — the pet window's own setup row: apply now, and tell the app to
+  //              persist it, since the pet window must not.
+  //
+  // BOTH announce the result. Only askOnTop used to, so when the app applied the
+  // setting the pet's own setup row kept showing the old answer — and the next
+  // press on it then toggled the wrong way.
+  const announce = (on: boolean): void => {
+    for (const w of BrowserWindow.getAllWindows())
+      if (!w.isDestroyed()) w.webContents.send('pet:onTop', on)
+  }
+  ipcMain.handle('pet:setOnTop', (_e, on: boolean) => {
+    applyOnTop(!!on)
+    announce(!!on)
+  })
+  ipcMain.handle('pet:askOnTop', (_e, on: boolean) => {
+    applyOnTop(!!on)
+    announce(!!on)
+  })
+  ipcMain.handle('pet:isOnTop', () => !!win && !win.isDestroyed() && win.isAlwaysOnTop())
 }

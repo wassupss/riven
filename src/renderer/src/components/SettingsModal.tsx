@@ -367,6 +367,15 @@ export default function SettingsModal(): JSX.Element | null {
                     onChange={(v) => upd('petDetached', v)}
                   />
                 )}
+                {/* Only its own window can be lifted above other apps. */}
+                {settings.petShow && settings.petDetached && (
+                  <ToggleRow
+                    title={t('settings.petOnTop')}
+                    desc={t('settings.petOnTopDesc')}
+                    checked={settings.petOnTop}
+                    onChange={(v) => upd('petOnTop', v)}
+                  />
+                )}
 
                 <div className="section-label">{t('settings.browserSection')}</div>
                 <Row title={t('settings.searchEngine')} desc={t('settings.searchEngineDesc')}>
