@@ -8785,3 +8785,28 @@ body.browser-active .agp-node-run {
   font-variant-numeric: tabular-nums;
   cursor: help;
 }
+
+/* Waiting for a member's answer. The box stays usable while this is up: a reply
+   can take minutes, and a dead-looking input with a disabled button is how the
+   panel used to read as broken. */
+.agp-talk-waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.agp-talk-drop {
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.agp-talk-drop:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+}

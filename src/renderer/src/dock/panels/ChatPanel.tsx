@@ -140,6 +140,9 @@ interface Msg {
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
   images?: Array<{ name: string; preview?: string }>
+  // Which turn this answer belongs to, so a delegation waiting on that turn can
+  // be handed its text even after a newer turn has taken over the pane.
+  turn?: string
 }
 
 // Fill in `items` for messages that predate the ordered model (restored logs /
@@ -1715,7 +1718,13 @@ export default function ChatPanel({
       // that turn, not to the message the user has sent since — applying it here
       // closed the new bubble a second after it opened, and the message looked
       // answered by nothing.
-      if (isStaleEvent(e.turn, openTurnRef.current)) return
+      if (isStaleEvent(e.turn, openTurnRef.current)) {
+        // …but whoever is WAITING on that turn still deserves its answer. Dropping
+        // the event wholesale left a delegation hanging until its own timeout —
+        // the group panel sat on "보내는 중" with the agent already idle.
+        if (e.kind === 'turnDone' && e.turn) settleTurnWaiters(e.turn)
+        return
+      }
       lastEventRef.current = Date.now()
       switch (e.kind) {
         case 'init':
@@ -1794,11 +1803,7 @@ export default function ChatPanel({
             // Resolve delegation waiters (riven_ask_agent) with this reply. The
             // ones tied to THIS turn first — they asked the question it answers.
             const reply = m.text
-            const mine = e.turn ? turnWaitersRef.current.get(e.turn) : undefined
-            if (mine?.length) {
-              turnWaitersRef.current.delete(e.turn as string)
-              setTimeout(() => mine.forEach((r) => r(reply)), 0)
-            }
+            if (e.turn) settleTurnWaiters(e.turn, reply)
             if (waitersRef.current.length) {
               const ws = waitersRef.current
               waitersRef.current = []
@@ -2027,6 +2032,20 @@ export default function ChatPanel({
   // Delegation waiters bound to the turn their question started, so an answer
   // goes back to whoever asked THAT question — not to everyone waiting.
   const turnWaitersRef = useRef(new Map<string, Array<(reply: string) => void>>())
+  // The transcript as it stands right now, for the paths that need to read it
+  // outside React's render (settling a waiter for a turn that is no longer the
+  // open one).
+  const msgsRef = useRef<Msg[]>([])
+  msgsRef.current = msgs
+  // Hand a turn's answer to whoever asked for it. `text` when we have it (the
+  // live path); otherwise read it off the bubble that turn wrote.
+  const settleTurnWaiters = (turn: string, text?: string): void => {
+    const list = turnWaitersRef.current.get(turn)
+    if (!list?.length) return
+    turnWaitersRef.current.delete(turn)
+    const answer = text ?? msgsRef.current.find((m) => m.turn === turn)?.text ?? ''
+    setTimeout(() => list.forEach((r) => r(answer)), 0)
+  }
   const newTurnId = (): string => {
     const id = crypto.randomUUID()
     openTurnRef.current = id
@@ -2180,10 +2199,13 @@ export default function ChatPanel({
           tokensOut: 0,
           images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
         },
-        { role: 'assistant', text: '', tools: [], items: [], done: false, interrupted: false, startedAt: Date.now(), durationMs: 0, tokensIn: 0, tokensOut: 0 }
+        blankAssistant()
       ])
       setBusy(true)
       const turn = newTurnId()
+      setMsgs((all) =>
+        all.map((m, i) => (i === all.length - 1 && m.role === 'assistant' ? { ...m, turn } : m))
+      )
       window.api.chat.send(
         chatKey,
         clean,

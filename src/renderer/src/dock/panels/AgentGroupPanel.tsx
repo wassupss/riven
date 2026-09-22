@@ -1571,7 +1571,10 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
 
   const send = async (): Promise<void> => {
     const msg = (inputRef.current?.value ?? text).trim()
-    if (!msg || sending || !roster?.members.length) return
+    // Not gated on `sending` any more: waiting for one member's answer must not
+    // stop you talking to the team. The box stays usable and the wait is shown
+    // as a pill you can dismiss.
+    if (!msg || !roster?.members.length) return
     setSending(true)
     setText('')
     if (inputRef.current) inputRef.current.value = ''
@@ -1627,6 +1630,15 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
         })}
         <div ref={endRef} />
       </div>
+      {sending && (
+        <div className="agp-talk-waiting">
+          <Loader2 size={11} className="spin" />
+          {t('team.waiting')}
+          <button className="agp-talk-drop" onClick={() => setSending(false)}>
+            {t('team.stopWaiting')}
+          </button>
+        </div>
+      )}
       <div className="agp-talk-to">
         <span className="agp-talk-tolabel">{t('team.sendTo')}</span>
         <button
@@ -1673,8 +1685,8 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
           }}
         />
 
-        <button className="ui-btn ui-btn-primary" disabled={sending || !text.trim()} onClick={() => void send()}>
-          {sending ? t('team.sending') : t('team.send')}
+        <button className="ui-btn ui-btn-primary" disabled={!text.trim()} onClick={() => void send()}>
+          {t('team.send')}
         </button>
       </div>
     </div>
