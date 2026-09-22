@@ -53,3 +53,25 @@ export function settleStaleTurns<T extends TurnLike>(msgs: T[], now = Date.now()
   }
   return out
 }
+
+// Which turn an event belongs to.
+//
+// The CLI's stream says "a turn finished" without saying WHICH turn, and riven
+// used to apply that to whatever answer bubble was open. Normally the same
+// thing — but not when a turn was ended on this side first (Esc/Stop, a steer,
+// the no-response watchdog) and the user has already sent the next message: the
+// old turn's late result then closed the NEW bubble a second after it opened,
+// so the message looked answered when nothing had answered it.
+//
+// Every send now carries an id, main hands each result back to the turn that
+// asked for it (results come back in order, one per message), and an event for
+// a turn that is no longer the open one is dropped.
+export function isStaleEvent(
+  eventTurn: string | null | undefined,
+  openTurn: string | null | undefined
+): boolean {
+  // Untagged either side — a restored pane, a revived child, an older main —
+  // behaves exactly as before rather than dropping events it cannot place.
+  if (!eventTurn || !openTurn) return false
+  return eventTurn !== openTurn
+}

@@ -106,6 +106,13 @@ interface Session {
   lastActive: number
   turnBusy: boolean // a turn is in flight — never park mid-answer
   parking: boolean // killed by the idle reaper, so its exit isn't a real exit
+  // Ids of the messages sent to this child that have not been answered yet,
+  // oldest first. The CLI's stream never says WHICH turn a `result` ends, but it
+  // answers messages in order — so the front of this queue is the turn being
+  // answered, and its result is the one that ends it. Without this a late result
+  // (an interrupted turn, a turn this side gave up on) closed whichever bubble
+  // happened to be open, which was usually the NEXT one.
+  turns: string[]
 }
 
 const sessions = new Map<string, Session>()
@@ -128,7 +135,9 @@ const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
 
 // A single fan-out channel (payload carries `key`) so the renderer attaches one
 // listener regardless of how many chat panes are open — same pattern as pty:*.
-export type ChatEvent =
+// Every event may name the turn it belongs to (see Session.turns). Optional so
+// an event nobody can place — an exit, a revived child — still gets through.
+export type ChatEvent = { turn?: string | null } & (
   | {
       key: string
       kind: 'init'
@@ -154,9 +163,13 @@ export type ChatEvent =
   | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
   | { key: string; kind: 'turnDone'; costUSD: number | null; sessionId: string | null; error: string | null }
   | { key: string; kind: 'exit'; code: number }
+)
 
 function emit(s: Session, ev: ChatEvent): void {
-  if (!s.sender.isDestroyed()) s.sender.send('chat:event', ev)
+  // Everything that happens while a turn is being answered belongs to that turn
+  // (the front of the queue); a `result` names its own turn, see below.
+  const tagged = 'turn' in ev ? ev : { ...ev, turn: s.turns[0] ?? null }
+  if (!s.sender.isDestroyed()) s.sender.send('chat:event', tagged)
 }
 
 // Never throw on a write to a dead pipe (the child may have exited mid-turn).
@@ -397,12 +410,16 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
       emit(s, { key: s.key, kind: 'text', delta: ev.result })
     }
     const isError = ev.is_error === true || (ev.subtype && ev.subtype !== 'success')
+    // This result ends the OLDEST unanswered message, which is not necessarily
+    // the turn the pane is showing now.
+    const turn = s.turns.shift() ?? null
     emit(s, {
       key: s.key,
       kind: 'turnDone',
       costUSD: typeof ev.total_cost_usd === 'number' ? ev.total_cost_usd : null,
       sessionId: s.sessionId,
-      error: isError ? String(ev.subtype ?? 'error') : null
+      error: isError ? String(ev.subtype ?? 'error') : null,
+      turn
     })
     return
   }
@@ -569,7 +586,8 @@ async function startSession(
     opts,
     lastActive: Date.now(),
     turnBusy: false,
-    parking: false
+    parking: false,
+    turns: []
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })
@@ -698,10 +716,10 @@ export function registerAgentChatHandlers(): void {
   ipcMain.handle('chat:start', (event, key: string, opts: StartOpts) =>
     startSession(key, opts, event.sender)
   )
-  ipcMain.on('chat:send', (event, key: string, text: string, images?: ChatImageInput[]) => {
+  ipcMain.on('chat:send', (event, key: string, text: string, images?: ChatImageInput[], turn?: string) => {
     const codex = codexChats.get(key)
     if (codex) {
-      void codex.send(text, images)
+      void codex.send(text, images, turn)
       return
     }
     const line = {
@@ -713,6 +731,7 @@ export function registerAgentChatHandlers(): void {
     if (s) {
       s.turnBusy = true
       s.lastActive = Date.now()
+      if (turn) s.turns.push(turn)
       writeLine(s, line)
       return
     }
@@ -728,7 +747,8 @@ export function registerAgentChatHandlers(): void {
           kind: 'turnDone',
           costUSD: null,
           sessionId: null,
-          error: 'no agent for this pane'
+          error: 'no agent for this pane',
+          turn: turn ?? null
         })
       }
       return
@@ -739,6 +759,7 @@ export function registerAgentChatHandlers(): void {
       if (!revived) return
       revived.turnBusy = true
       revived.lastActive = Date.now()
+      if (turn) revived.turns.push(turn)
       writeLine(revived, line)
     })
   })

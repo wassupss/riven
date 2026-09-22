@@ -66,7 +66,7 @@ export interface PtySnapshot {
 
 // Native agent-chat events all share one channel; the payload's `key` scopes it
 // to a pane. Renderer chat panels filter by their own key.
-export type ChatEvent =
+export type ChatEvent = { turn?: string | null } & (
   | {
       key: string
       kind: 'init'
@@ -98,6 +98,7 @@ export type ChatEvent =
       error: string | null
     }
   | { key: string; kind: 'exit'; code: number }
+)
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
 
 const api = {
@@ -248,11 +249,14 @@ const api = {
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them
     // in that turn, with no Read call on a pasted path.
+    // `turn` identifies this message so its answer can be told apart from a
+    // previous turn's late one (see lib/chatTurns.isStaleEvent).
     send: (
       key: string,
       text: string,
-      images?: Array<{ mediaType: string; data: string; name?: string }>
-    ): void => ipcRenderer.send('chat:send', key, text, images),
+      images?: Array<{ mediaType: string; data: string; name?: string }>,
+      turn?: string
+    ): void => ipcRenderer.send('chat:send', key, text, images, turn),
     interrupt: (key: string): void => ipcRenderer.send('chat:interrupt', key),
     // Whether a pane still has an agent behind it (see chat:alive).
     alive: (key: string): Promise<{ alive: boolean; running: boolean }> =>

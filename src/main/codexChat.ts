@@ -172,6 +172,10 @@ export class CodexChat {
   private readonly pending = new Map<number, Pending>()
   private threadId: string | null = null
   private turnId: string | null = null
+  // Riven's own ids for the messages still waiting on an answer, oldest first —
+  // so a turn that completes late is handed back to the turn that asked for it
+  // and cannot close the bubble of the message sent after it.
+  private turns: string[] = []
   private ready: Promise<boolean> | null = null
   private model: string | undefined
   private alive = false
@@ -193,7 +197,8 @@ export class CodexChat {
   }
 
   private emit(ev: ChatEvent): void {
-    if (!this.sender.isDestroyed()) this.emitEvent(ev)
+    const tagged = 'turn' in ev ? ev : { ...ev, turn: this.turns[0] ?? null }
+    if (!this.sender.isDestroyed()) this.emitEvent(tagged)
   }
 
   async start(): Promise<{ ok: boolean; error?: string }> {
@@ -433,11 +438,15 @@ export class CodexChat {
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null }
         this.turnBusy = false
         this.turnId = null
+        // Ends the oldest message still waiting, which may not be the one the
+        // pane is showing now.
+        const mine = this.turns.shift() ?? null
         this.emit({
           key: this.key,
           kind: 'turnDone',
           costUSD: null,
           sessionId: this.threadId,
+          turn: mine,
           error:
             turn.status === 'failed'
               ? turn.error?.message ?? 'failed'
@@ -490,18 +499,20 @@ export class CodexChat {
 
   // ---- pane actions ----
 
-  async send(text: string, images?: ChatImageInput[]): Promise<void> {
+  async send(text: string, images?: ChatImageInput[], turn?: string): Promise<void> {
     this.lastActive = Date.now()
     this.turnBusy = true
+    if (turn) this.turns.push(turn)
     const ok = await (this.ready ?? Promise.resolve(false))
     if (!ok || !this.threadId) {
       this.turnBusy = false
-      this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: null, error: 'codex thread not open' })
+      this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: null, error: 'codex thread not open', turn: this.turns.pop() ?? null })
       return
     }
     const input = codexUserInput(text, images)
     if (!input.length) {
       this.turnBusy = false
+      if (turn) this.turns = this.turns.filter((t) => t !== turn)
       return
     }
     try {
@@ -519,7 +530,7 @@ export class CodexChat {
       }
     } catch (e) {
       this.turnBusy = false
-      this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: this.threadId, error: (e as Error).message })
+      this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: this.threadId, error: (e as Error).message, turn: this.turns.pop() ?? null })
     }
   }
 
