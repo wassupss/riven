@@ -1772,9 +1772,15 @@ export default function ChatPanel({
           if (e.error && !steering && !stopped) setError(e.error)
           patchLast((m) => {
             replyRef.current = m.text // for the desktop notification preview
-            // Resolve any delegation waiters (riven_ask_agent) with this reply.
+            // Resolve delegation waiters (riven_ask_agent) with this reply. The
+            // ones tied to THIS turn first — they asked the question it answers.
+            const reply = m.text
+            const mine = e.turn ? turnWaitersRef.current.get(e.turn) : undefined
+            if (mine?.length) {
+              turnWaitersRef.current.delete(e.turn as string)
+              setTimeout(() => mine.forEach((r) => r(reply)), 0)
+            }
             if (waitersRef.current.length) {
-              const reply = m.text
               const ws = waitersRef.current
               waitersRef.current = []
               setTimeout(() => ws.forEach((r) => r(reply)), 0)
@@ -1999,6 +2005,9 @@ export default function ChatPanel({
   // The turn the open answer bubble is waiting for. Every send stamps one, and
   // events for any other turn are ignored (see isStaleEvent).
   const openTurnRef = useRef<string | null>(null)
+  // Delegation waiters bound to the turn their question started, so an answer
+  // goes back to whoever asked THAT question — not to everyone waiting.
+  const turnWaitersRef = useRef(new Map<string, Array<(reply: string) => void>>())
   const newTurnId = (): string => {
     const id = crypto.randomUUID()
     openTurnRef.current = id
@@ -2101,12 +2110,14 @@ export default function ChatPanel({
       if (busyRef.current && openTurnRef.current === stopping) endTurnLocally()
     }, 1500)
   }
+  // Returns the id of the turn this message starts (null when nothing was sent),
+  // so a delegation can wait for the answer to THIS message.
   const sendMessage = useCallback(
-    (text: string, images: ChatImage[] = []): void => {
+    (text: string, images: ChatImage[] = []): string | null => {
       const clean = text.trim()
       // An image with nothing typed is a real message ("what's wrong here?" is
       // often just the screenshot).
-      if (!clean && images.length === 0) return
+      if (!clean && images.length === 0) return null
       setError(null)
       // /clear resets the CLI's context AND the visible transcript, matching
       // Claude's own behaviour (no lingering history bubbles).
@@ -2115,7 +2126,7 @@ export default function ChatPanel({
         setMsgs([])
         restoredRef.current = false
         savePane({ log: [] })
-        return
+        return null
       }
       // Title the tab from the first message (CLI-style short title), like native.
       if (!titleSet.current) {
@@ -2153,12 +2164,14 @@ export default function ChatPanel({
         { role: 'assistant', text: '', tools: [], items: [], done: false, interrupted: false, startedAt: Date.now(), durationMs: 0, tokensIn: 0, tokensOut: 0 }
       ])
       setBusy(true)
+      const turn = newTurnId()
       window.api.chat.send(
         chatKey,
         clean,
         images.map(({ mediaType, data, name }) => ({ mediaType, data, name })),
-        newTurnId()
+        turn
       )
+      return turn
     },
     [chatKey, setTitle, savePane]
   )
@@ -2207,6 +2220,15 @@ export default function ChatPanel({
         }
       },
       waitNext: () => new Promise<string>((resolve) => waitersRef.current.push(resolve)),
+      // Send and wait for THIS message's own answer.
+      ask: (text) =>
+        new Promise<string>((resolve) => {
+          const turn = sendMessage(text)
+          if (!turn) return resolve('')
+          const list = turnWaitersRef.current.get(turn) ?? []
+          list.push(resolve)
+          turnWaitersRef.current.set(turn, list)
+        }),
       hasPendingOpening: () => hasInitialText(chatKey)
     })
   }, [chatKey, workspace, sendMessage])

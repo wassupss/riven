@@ -13,7 +13,13 @@ import {
   type SplitDir
 } from '../dock/registry'
 import { rosterFor, type RosterEntry } from './roster'
+import { useAgentGroups } from './agentGroups'
 import { classifyTerminalCommand } from '../lib/terminalCommand'
+import { addEdge, dropEdge, wouldCycle, type AskEdges } from '../lib/askGraph'
+
+// Delegations that are currently WAITING for an answer, as caller → target
+// edges. Only waiting ones: a fire-and-forget ask blocks nobody.
+const waitingOn: AskEdges = new Map()
 
 // Executes a riven MCP tool call forwarded from the main process and returns a
 // result string. UI actions run against the active workspace's dock. Mirrors the
@@ -505,7 +511,14 @@ function agentList(ws: string, self: string | null): Array<{
   busy: boolean
   status: RosterEntry['status']
   replies: boolean
+  group?: string
 }> {
+  // Which group each pane belongs to, so an agent can see the team it is in
+  // rather than a flat list of everything open (and so it can name a group to
+  // the group tools).
+  const groups = useAgentGroups.getState().byWorkspace[ws] ?? []
+  const groupOf = new Map<string, string>()
+  for (const g of groups) for (const m of g.members) groupOf.set(m.chatKey, g.group)
   return rosterFor(ws)
     .filter((e) => e.id !== self)
     .map((e) => ({
@@ -515,7 +528,8 @@ function agentList(ws: string, self: string | null): Array<{
       cli: e.kind === 'chat' ? (loadPaneState(ws, e.id).cli === 'codex' ? 'codex' : 'claude') : e.agent ?? null,
       busy: e.busy,
       status: e.status,
-      replies: e.kind === 'chat' ? true : !!e.replies
+      replies: e.kind === 'chat' ? true : !!e.replies,
+      ...(groupOf.has(e.id) ? { group: groupOf.get(e.id) } : {})
     }))
 }
 
@@ -572,7 +586,16 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
   if (!target)
     return `error: "${entry.title}" exists but its panel isn't mounted, so it cannot receive a message. Switch to that workspace and try again.`
-  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)')
+  // Waiting on someone who is (directly or through others) waiting on you locks
+  // both of you until the five-minute timeout, with nothing on screen saying so.
+  const from = c.chatPane ?? c.self
+  if (wait && from && wouldCycle(waitingOn, from, target.chatKey)) {
+    return `error: "${target.getTitle()}" is already waiting on you (directly or through another agent), so waiting for its answer would deadlock both of you. Answer the question you were asked first, or send this with wait=false.`
+  }
+  if (wait && from) addEdge(waitingOn, from, target.chatKey)
+  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)').finally(() => {
+    if (wait && from) dropEdge(waitingOn, from, target.chatKey)
+  })
   if (!wait) {
     void answer
     return `delegated to "${target.getTitle()}" (async)`
@@ -643,7 +666,27 @@ function groupAddAgent(args: Args, c: Ctx): string {
     c.ws,
     cli
   )
-  return `added agent "${name || persona || 'chat'}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
+  // Record it in the roster the PANEL draws from. Without this an agent-built
+  // team existed only as loose panes: the org chart never showed it, and the
+  // group tools had no members to act on.
+  const group = s(args.group) || 'group'
+  const member = {
+    name: name || persona || 'chat',
+    persona: persona || null,
+    model: model || 'default',
+    parent: null as number | null,
+    chatKey: id
+  }
+  const groups = useAgentGroups.getState()
+  const existing = groups.byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!existing) {
+    groups.createGroup(c.ws, group, [member])
+  } else {
+    // "Reports to" is an index into the member list, so resolve the name here.
+    const at = parent ? existing.members.findIndex((m) => m.name === parent) : -1
+    groups.addMember(c.ws, group, { ...member, parent: at >= 0 ? at : 0 })
+  }
+  return `added agent "${member.name}" to group "${group}" (${cli}${model && model !== 'default' ? ` · ${model}` : ''}) id=${id}`
 }
 async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -658,9 +701,19 @@ async function confirmAsk(question: string, c: Ctx): Promise<boolean> {
 }
 async function groupRemoveAgent(args: Args, c: Ctx): Promise<string> {
   const name = s(args.name)
+  const group = s(args.group)
   if (!c.ws) return unattributed(c)
-  const target = resolveAgent(name, undefined, c.ws)
-  if (!target) return `error: no agent matching "${name}" in this workspace`
+  // Within the group when one is named: two groups can both have a "reviewer",
+  // and a workspace-wide search closed whichever pane matched first.
+  const roster = group ? useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group) : null
+  if (group && !roster) return `error: no group "${group}" in this workspace`
+  const target = roster
+    ? (() => {
+        const m = roster.members.find((x) => x.name === name || x.chatKey === name)
+        return m ? resolveAgent(m.chatKey, undefined, c.ws) : null
+      })()
+    : resolveAgent(name, undefined, c.ws)
+  if (!target) return `error: no agent matching "${name}"${group ? ` in group "${group}"` : ' in this workspace'}`
   if (!(await confirmAsk(`"${target.getTitle()}" 에이전트를 닫을까요?`, c)))
     return 'the user declined'
   // Resolve the dock from the ctx captured at call time. Reading it here from a
@@ -670,20 +723,30 @@ async function groupRemoveAgent(args: Args, c: Ctx): Promise<string> {
   if (!api) return notMounted(c)
   const panel = api.getPanel(target.chatKey)
   if (panel) api.removePanel(panel)
-  return `removed "${target.getTitle()}"`
+  if (roster) useAgentGroups.getState().removeMember(c.ws, roster.group, target.chatKey)
+  return `removed "${target.getTitle()}"${roster ? ` from group "${roster.group}"` : ''}`
 }
 async function groupDelete(args: Args, c: Ctx): Promise<string> {
   const group = s(args.group)
   if (!c.ws) return unattributed(c)
-  if (!(await confirmAsk(`그룹 "${group}"의 모든 에이전트 패널을 닫을까요?`, c)))
+  // ONLY this group's panes. This used to close every chat pane in the
+  // workspace — deleting one team took every other agent, and the user's own
+  // conversations, down with it.
+  const roster = useAgentGroups.getState().byWorkspace[c.ws]?.find((g) => g.group === group)
+  if (!roster) return `error: no group "${group}" in this workspace (see riven_agents)`
+  if (!(await confirmAsk(`그룹 "${group}"의 에이전트 ${roster.members.length}개를 닫을까요?`, c)))
     return 'the user declined'
   const api = callerApi(c)
   if (!api) return notMounted(c)
   let n = 0
-  for (const p of api.panels.filter((p) => p.id.startsWith('chat-'))) {
-    api.removePanel(p)
-    n++
+  for (const m of roster.members) {
+    const panel = api.getPanel(m.chatKey)
+    if (panel) {
+      api.removePanel(panel)
+      n++
+    }
   }
+  useAgentGroups.getState().deleteGroup(c.ws, group)
   return `deleted group "${group}" (${n} agents closed)`
 }
 async function startPipeline(args: Args, c: Ctx): Promise<string> {

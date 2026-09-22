@@ -63,9 +63,11 @@ export const useUsage = create<UsageState>((set, get) => ({
     // Every Claude account is read with ITS OWN config dir, so one account's
     // tokens never land in another's total. With no profiles there is a single
     // default login and no dir to pass.
-    const claudeAccounts = st.claudeProfiles.length
-      ? st.claudeProfiles.map((p) => ({ id: p.id, label: p.label, dir: p.dir ?? undefined }))
-      : [{ id: 'claude', label: '', dir: undefined }]
+    const claudeAccounts = dedupeByDir(
+      st.claudeProfiles.length
+        ? st.claudeProfiles.map((p) => ({ id: p.id, label: p.label, dir: p.dir ?? undefined }))
+        : [{ id: 'claude', label: '', dir: undefined }]
+    )
 
     void Promise.all(
       claudeAccounts.map(async (a) => {
@@ -193,4 +195,20 @@ export function remainingColor(pct: number): string {
 // Usage-based color: high usage = danger. (mirror of remainingColor)
 export function usedColor(usedPct: number): string {
   return remainingColor(100 - usedPct)
+}
+
+// Two profiles pointing at the SAME config dir are one account's logs read
+// twice: the usage readout doubles, and anything counting from it (the pet)
+// eats every token twice. A profile with no dir of its own means the default
+// login, so they collapse together too.
+export function dedupeByDir<T extends { dir?: string }>(accounts: T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const a of accounts) {
+    const key = (a.dir ?? '').replace(/\/+$/, '').trim() || '<default>'
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(a)
+  }
+  return out
 }

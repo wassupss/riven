@@ -227,7 +227,8 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     description:
       "Delegate work to ANOTHER agent in this workspace. `agent` is a title or id from riven_agents. " +
       "A chat pane receives it as a message and, by default, its reply is WAITED for and returned " +
-      "(pass wait=false to return at once); if it is mid-turn the message waits for that turn to " +
+      "(pass wait=false to return at once); questions to the same pane are served one at a time and " +
+      "each answer is the answer to ITS question; if it is mid-turn the message waits for that turn to " +
       "finish, so the reply is always the answer to THIS message. A TERMINAL agent is typed into instead; when riven_agents " +
       "shows replies=true (Claude Code, Codex) its answer is waited for and returned the same way, " +
       "otherwise delivery is async. A busy agent is refused — ask again once it is idle.",
@@ -257,9 +258,12 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에 에이전트 추가',
     en: 'Add agent to group',
     description:
-      'Open a new agent chat pane, optionally primed with a persona and nickname. `agent` picks who ' +
+      'Open a new agent chat pane AND record it in `group` (created if new), so the group panel and ' +
+      'the other group tools see the same team; riven_agents then reports each pane\'s group. ' +
+      'Optionally primed with a persona and nickname. `agent` picks who ' +
       'runs it: claude (default) or codex — a team can mix them. `model` is that agent\'s model ' +
-      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5).',
+      '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5). `parent` is the ' +
+      'member it reports to.',
     inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str, agent: str }, [
       'group',
       'name'
@@ -271,7 +275,9 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹에서 에이전트 제거',
     en: 'Remove agent from group',
     description:
-      'Close an agent pane and drop it from the roster. Asks the user to confirm first (destructive).',
+      "Close one of the group's agent panes and drop it from that group's roster (the group is " +
+      'searched first, so two groups may both have a "reviewer"). Asks the user to confirm first ' +
+      '(destructive).',
     inputSchema: obj({ group: str, name: str }, ['group', 'name']),
     implemented: true
   },
@@ -280,7 +286,8 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
     ko: '그룹 삭제',
     en: 'Delete group',
     description:
-      'Close every agent pane in the group. Asks the user to confirm first (destructive).',
+      "Close the panes of THIS group's members and remove the group. Other agents and the user's own " +
+      'conversations are left alone. Asks the user to confirm first (destructive).',
     inputSchema: obj({ group: str }, ['group']),
     implemented: true
   },
