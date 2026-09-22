@@ -142,6 +142,9 @@ interface TreeItem {
   busy: boolean
   chatKey?: string
   avatar?: string | null
+  /** What it runs on, shown as its own chip rather than buried in `sub`. */
+  model?: string
+  cli?: Cli
 }
 
 interface TreeNode extends TreeItem {
@@ -178,6 +181,13 @@ function buildForest(items: TreeItem[]): TreeNode[] {
 
 // One org-chart node + its subtree. Closed members render faded with the reopen
 // hint; open members focus their pane on click.
+// One agent in the chart.
+//
+// The old card was a name, the word MAIN and a dot — which told you neither what
+// the member runs on nor what it is doing, so a team of three read as three
+// identical grey boxes. It now says, in order of what you actually look for:
+// who it is (colour + name + whether it leads), what its job is, what model is
+// behind it, and whether it is working right now.
 function OrgNode({
   node,
   closedLabel,
@@ -187,21 +197,35 @@ function OrgNode({
   closedLabel: string
   onPick: (n: TreeNode) => void
 }): JSX.Element {
-  const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}`
-  const dot = `agp-node-dot${node.busy ? ' busy' : node.open ? ' open' : ''}`
-  // The agent's colour tints the whole node (mixed into the card bg) + names it.
+  const t = useT()
+  const cls = `agp-node${node.isMain ? ' agp-main' : ''}${node.open ? '' : ' closed'}${
+    node.busy ? ' busy' : ''
+  }`
+  // The agent's colour identifies it here and on its tab — the same face in both.
   const tint = tintStyle(node.name, node.avatar, 'var(--bg-2)')
+  const state = node.busy ? t('team.busy') : node.open ? t('team.idle') : closedLabel
   return (
     <li>
-      <button className={cls} style={tint ? { background: tint.background } : undefined} onClick={() => onPick(node)}>
-        <span className="agp-node-head">
-          <span className="agp-node-name" style={tint ? { color: tint.color } : undefined}>
-            {node.name || '?'}
-          </span>
-          {node.isMain && <span className="agp-node-badge">MAIN</span>}
-          <span className={dot} title={node.busy ? '실행 중' : node.open ? '열림' : '닫힘'} />
+      <button className={cls} onClick={() => onPick(node)} title={node.sub}>
+        <span className="agp-node-top">
+          <span
+            className="agp-node-face"
+            style={tint ? { background: tint.color } : undefined}
+            aria-hidden
+          />
+          <span className="agp-node-name">{node.name || '?'}</span>
+          {node.isMain && <span className="agp-node-badge">{t('team.lead')}</span>}
         </span>
-        <span className="agp-node-sub">{node.open ? node.sub : closedLabel}</span>
+        <span className="agp-node-sub">{node.sub}</span>
+        <span className="agp-node-foot">
+          {node.model && node.model !== 'default' && (
+            <span className="agp-node-chip">{node.model}</span>
+          )}
+          {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
+          <span className={`agp-node-state${node.busy ? ' busy' : node.open ? '' : ' closed'}`}>
+            {state}
+          </span>
+        </span>
       </button>
       {node.children.length > 0 && (
         <ul>
@@ -762,12 +786,14 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     buildForest(
       g.members.map((m) => ({
         name: m.name,
-        sub: subText(m.persona ?? '', m.model, m.parent == null),
+        sub: (m.persona ?? '').trim() || (m.parent == null ? t('team.main') : t('team.noPersona')),
         parent: m.parent,
         open: isOpen(m.chatKey),
         busy: isBusy(m.chatKey),
         chatKey: m.chatKey,
-        avatar: m.avatar
+        avatar: m.avatar,
+        model: m.model,
+        cli: m.cli
       }))
     )
 
@@ -1444,7 +1470,13 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
   const t = useT()
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
-  const [everyone, setEveryone] = useState(true)
+  // Who the message goes to. Empty = the lead, which is the default on purpose:
+  // telling a TEAM something should go through whoever runs it, and the lead can
+  // then hand work out and put the answers together. Sending to everyone at once
+  // (the old default, and the old ONLY other choice) produced three unrelated
+  // answers to the user with nobody collecting them — the org chart existed and
+  // was ignored.
+  const [picked, setPicked] = useState<string[]>([])
   // The selector must return what is IN the store, never a fresh value: zustand
   // compares with Object.is, so a `?? []` inside it hands back a new array on
   // every render and the component re-renders forever ("Maximum update depth
@@ -1469,11 +1501,19 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
     if (!msg || sending || !roster?.members.length) return
     setSending(true)
     setText('')
-    useGroupLog.getState().add({ ws: workspace, group, kind: 'ask', from: 'user', text: msg })
+    const targets = picked.length
+      ? roster.members.filter((m) => picked.includes(m.chatKey))
+      : roster.members.slice(0, 1) // the lead
+    useGroupLog.getState().add({
+      ws: workspace,
+      group,
+      kind: 'ask',
+      from: 'user',
+      text: targets.length === 1 ? msg : `[${targets.map((m) => m.name).join(', ')}] ${msg}`
+    })
     try {
       // The user is not an agent, so this goes through the same delegation path
       // the agents use — one pane at a time, each answer tied to its question.
-      const targets = everyone ? roster.members : roster.members.slice(0, 1)
       await Promise.all(
         targets.map(async (m) => {
           const target = resolveAgent(m.chatKey, undefined, workspace)
@@ -1502,6 +1542,34 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
         ))}
         <div ref={endRef} />
       </div>
+      <div className="agp-talk-to">
+        <span className="agp-talk-tolabel">{t('team.sendTo')}</span>
+        <button
+          className={`agp-chip${picked.length === 0 ? ' on' : ''}`}
+          onClick={() => setPicked([])}
+          title={t('team.toLeadHint')}
+        >
+          <User size={11} /> {roster?.members[0]?.name ?? t('team.lead')}
+        </button>
+        {(roster?.members ?? []).slice(1).map((m) => (
+          <button
+            key={m.chatKey}
+            className={`agp-chip${picked.includes(m.chatKey) ? ' on' : ''}`}
+            onClick={() =>
+              setPicked((p) => (p.includes(m.chatKey) ? p.filter((k) => k !== m.chatKey) : [...p, m.chatKey]))
+            }
+          >
+            {m.name}
+          </button>
+        ))}
+        <button
+          className={`agp-chip${picked.length > 0 && picked.length === (roster?.members.length ?? 0) ? ' on' : ''}`}
+          onClick={() => setPicked((roster?.members ?? []).map((m) => m.chatKey))}
+          title={t('team.toEveryoneHint')}
+        >
+          <Users size={11} /> {t('team.everyone')}
+        </button>
+      </div>
       <div className="agp-talk-box">
         <input
           className="agp-talk-input"
@@ -1515,13 +1583,7 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
             }
           }}
         />
-        <button
-          className={`agp-talk-all${everyone ? ' on' : ''}`}
-          title={t(everyone ? 'team.toEveryone' : 'team.toLead')}
-          onClick={() => setEveryone((v) => !v)}
-        >
-          {everyone ? <Users size={12} /> : <User size={12} />}
-        </button>
+
         <button className="ui-btn ui-btn-primary" disabled={sending || !text.trim()} onClick={() => void send()}>
           {sending ? t('team.sending') : t('team.send')}
         </button>

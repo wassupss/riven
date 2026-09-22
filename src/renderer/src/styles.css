@@ -8712,3 +8712,38 @@ body.browser-active .tab-dot.attn {
 .agp-tab-goal.running .agp-tab-count {
   color: var(--accent);
 }
+
+/* Who the message goes to. The lead is the default — telling a team something
+   should go through whoever runs it — and any member can be picked instead. */
+.agp-talk-to {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.agp-talk-tolabel {
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  margin-right: 2px;
+}
+.agp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+.agp-chip:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+}
+.agp-chip.on {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--accent);
+}

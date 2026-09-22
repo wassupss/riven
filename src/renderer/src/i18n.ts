@@ -798,8 +798,19 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'goal.kind.summary': { ko: '결론', en: 'summary' },
   'team.logEmpty': { ko: '아직 오간 말이 없습니다.', en: 'Nothing has been said yet.' },
   'team.talkPlaceholder': { ko: '그룹에 지시…', en: 'Tell the group…' },
-  'team.toEveryone': { ko: '전원에게 (눌러서 리드에게만)', en: 'To everyone (click for lead only)' },
-  'team.toLead': { ko: '리드에게만 (눌러서 전원에게)', en: 'Lead only (click for everyone)' },
+  'team.sendTo': { ko: '받는 사람', en: 'To' },
+  'team.lead': { ko: '리드', en: 'Lead' },
+  'team.busy': { ko: '작업 중', en: 'Working' },
+  'team.idle': { ko: '대기', en: 'Idle' },
+  'team.everyone': { ko: '전원', en: 'Everyone' },
+  'team.toLeadHint': {
+    ko: '리드에게 보냅니다. 리드가 팀원에게 나눠 맡기고 결과를 모읍니다.',
+    en: 'Goes to the lead, who hands work out and puts the answers together.'
+  },
+  'team.toEveryoneHint': {
+    ko: '전원에게 따로 보냅니다. 각자 답하고, 아무도 종합하지 않습니다.',
+    en: 'Goes to each member separately. They answer on their own; nobody collects it.'
+  },
   'team.send': { ko: '보내기', en: 'Send' },
   'team.sending': { ko: '보내는 중…', en: 'Sending…' },
   'team.noReply': { ko: '(5분 안에 답이 없었습니다)', en: '(no reply within 5 min)' },
