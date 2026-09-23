@@ -466,6 +466,10 @@ const ToolGroup = memo(function ToolGroup({
   }
   const latest = tools[tools.length - 1]
   const state = running ? ' running' : interrupted ? ' interrupted' : ' done'
+  // How long the tool still in flight has been running. It belongs on the HEAD,
+  // not only on the line inside: the group is collapsed by default, so a badge
+  // hidden in the body would answer "is this stuck?" for nobody.
+  const slow = tools.find((tl) => !tl.done && tl.elapsed)
   return (
     <div className={`chat-toolgroup${state}`}>
       <button className="chat-toolgroup-head" onClick={() => setOpen((o) => !o)}>
@@ -502,6 +506,7 @@ const ToolGroup = memo(function ToolGroup({
             )}
           </span>
         )}
+        {slow?.elapsed ? <span className="chat-tool-elapsed">{fmtDur(slow.elapsed * 1000)}</span> : null}
         <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && (
