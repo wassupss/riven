@@ -10,6 +10,7 @@ import { hookEnv } from './agentHooks'
 import { userContent, type ChatImageInput } from './chatContent'
 import { CodexChat } from './codexChat'
 import { readCodexTranscript } from './codexSessions'
+import { claimResult, noteBackgroundReport } from './turnClaim'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -113,11 +114,7 @@ interface Session {
   // (an interrupted turn, a turn this side gave up on) closed whichever bubble
   // happened to be open, which was usually the NEXT one.
   turns: string[]
-  // A background task finishing while the CLI is idle makes the CLI run a turn
-  // NOBODY asked for (it reports the task's outcome) — and that turn produces a
-  // `result` like any other. Counted here so it consumes itself instead of
-  // shifting `turns`: without it, a message sent in that gap was marked answered
-  // by the background report's result, seconds after it was sent.
+  // Results owed to turns the CLI started by itself — see turnClaim.ts.
   autoTurns: number
   autoTurnAt: number
 }
@@ -136,9 +133,6 @@ const lastStart = new Map<string, { opts: StartOpts; sender: WebContents }>()
 // respawns it with --resume. Cost is one resume instead of a permanent process.
 // (RIVEN_CHAT_IDLE_PARK_MS shortens it so the park/revive path can be exercised
 // without waiting half an hour.)
-// How long a background-task report may take to produce its result before riven
-// stops expecting it. Measured at ~2s; a minute is slack, not a guess.
-const AUTO_TURN_WINDOW_MS = 60_000
 const IDLE_PARK_MS = Number(process.env.RIVEN_CHAT_IDLE_PARK_MS) || 30 * 60_000
 const REAP_EVERY_MS = Math.min(60_000, Math.max(2_000, Math.floor(IDLE_PARK_MS / 2)))
 const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
@@ -502,10 +496,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   }
   if (type === 'system' && ev.subtype === 'task_notification') {
     // Idle CLI + a finished task = the CLI is about to run a turn of its own.
-    if (!s.turns.length) {
-      s.autoTurns++
-      s.autoTurnAt = Date.now()
-    }
+    noteBackgroundReport(s)
     emit(s, {
       key: s.key,
       kind: 'taskDone',
@@ -534,10 +525,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     // to report a background task, in which case no message is waiting on it.
     // The claim expires: if that self-started turn never materialises, a stale
     // token would swallow a real answer and leave the pane thinking forever.
-    const claimed = s.autoTurns > 0 && Date.now() - s.autoTurnAt < AUTO_TURN_WINDOW_MS
-    if (s.autoTurns > 0 && !claimed) s.autoTurns = 0
-    if (claimed) s.autoTurns--
-    const turn = claimed ? null : (s.turns.shift() ?? null)
+    const turn = claimResult(s)
     emit(s, {
       key: s.key,
       kind: 'turnDone',
