@@ -1383,6 +1383,14 @@ export default function ChatPanel({
   // simply empty: indistinguishable from a broken one, which is exactly how it
   // read after a restart with several panes coming back at once.
   const [booting, setBooting] = useState(true)
+  // …but never indefinitely, and never over a transcript. A restored pane whose
+  // agent simply has nothing to say yet is IDLE, not loading: if its CLI never
+  // announces itself (it may be parked until the first message), a spinner left
+  // up forever is a worse lie than the blank pane it replaced.
+  useEffect(() => {
+    const id = setTimeout(() => setBooting(false), 10_000)
+    return () => clearTimeout(id)
+  }, [])
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
   // session later (see below) must be observed from the store or the restore
   // effect would never fire.
@@ -2828,7 +2836,7 @@ export default function ChatPanel({
             {t('chat.loadEarlier', { n: msgs.length - limit })}
           </button>
         )}
-        {booting && (
+        {booting && msgs.length === 0 && (
           <div className="chat-resumed chat-booting">
             <Loader2 size={12} className="spin" />
             {pane0.session ? t('chat.restoring') : t('chat.starting')}
