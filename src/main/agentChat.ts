@@ -731,7 +731,13 @@ export function registerAgentChatHandlers(): void {
     if (s) {
       s.turnBusy = true
       s.lastActive = Date.now()
-      if (turn) s.turns.push(turn)
+      // ALWAYS push, even when the renderer did not name the turn (a bare
+      // /clear does not). One user line produces exactly one result, so a line
+      // with no id still has to occupy a slot — without it the queue runs one
+      // short and the NEXT turn's result is handed to the wrong id, which the
+      // pane then reads as "your new message is already done" while the agent
+      // is still working on it.
+      s.turns.push(turn ?? `main_${randomUUID()}`)
       writeLine(s, line)
       return
     }
@@ -759,7 +765,7 @@ export function registerAgentChatHandlers(): void {
       if (!revived) return
       revived.turnBusy = true
       revived.lastActive = Date.now()
-      if (turn) revived.turns.push(turn)
+      revived.turns.push(turn ?? `main_${randomUUID()}`)
       writeLine(revived, line)
     })
   })

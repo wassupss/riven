@@ -75,3 +75,23 @@ export function isStaleEvent(
   if (!eventTurn || !openTurn) return false
   return eventTurn !== openTurn
 }
+
+/**
+ * May this event END the turn the pane has open?
+ *
+ * Only the turn itself may. An event that names a DIFFERENT turn belongs to one
+ * that has already moved on; an event that names NO turn cannot be placed at
+ * all — and main tags every one it can, so an untagged end is a sign the two
+ * sides have drifted, not permission to close whatever is open. Both were seen
+ * closing a message the agent was still working on, seconds after it was sent.
+ *
+ * A pane with no turn open (a restored transcript, a legacy session) keeps the
+ * old behaviour: there is nothing to protect.
+ */
+export function endsOpenTurn(
+  eventTurn: string | null | undefined,
+  openTurn: string | null | undefined
+): boolean {
+  if (!openTurn) return true
+  return !!eventTurn && eventTurn === openTurn
+}

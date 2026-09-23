@@ -502,7 +502,15 @@ export class CodexChat {
   async send(text: string, images?: ChatImageInput[], turn?: string): Promise<void> {
     this.lastActive = Date.now()
     this.turnBusy = true
-    if (turn) this.turns.push(turn)
+    // Codex only ever completes the turns it STARTS: a message sent mid-turn
+    // steers the running one instead of queueing another, so pushing an id for
+    // it left the queue one longer than the completions that drain it — and
+    // from then on every answer was filed under the previous message's id. The
+    // steer takes over the running turn's slot; a fresh send gets its own.
+    if (turn) {
+      if (this.turnId && this.turns.length) this.turns[0] = turn
+      else this.turns.push(turn)
+    }
     const ok = await (this.ready ?? Promise.resolve(false))
     if (!ok || !this.threadId) {
       this.turnBusy = false

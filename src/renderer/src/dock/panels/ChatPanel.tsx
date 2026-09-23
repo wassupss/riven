@@ -45,7 +45,7 @@ import { useT, t as staticT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
-import { settleStaleTurns, isStaleEvent } from '../../lib/chatTurns'
+import { settleStaleTurns, isStaleEvent, endsOpenTurn } from '../../lib/chatTurns'
 import { modelsFor } from '../../lib/models'
 import { viewImage } from '../../components/ImageLightbox'
 
@@ -1731,10 +1731,18 @@ export default function ChatPanel({
       // that turn, not to the message the user has sent since — applying it here
       // closed the new bubble a second after it opened, and the message looked
       // answered by nothing.
+      // A turn ENDING is the one event that must match exactly. Anything else
+      // is at worst cosmetic, but a turnDone applied to the wrong bubble closes
+      // a message the agent is still working on — it showed "완료" a second
+      // after being sent while the work carried on underneath. So once this pane
+      // has a turn open, only THAT turn may end it; an event that names another
+      // turn, or names none at all, is not about this one.
+      if (e.kind === 'turnDone' && !endsOpenTurn(e.turn, openTurnRef.current)) {
+        // Whoever is waiting on the turn it DOES name still deserves its answer.
+        if (e.turn) settleTurnWaiters(e.turn)
+        return
+      }
       if (isStaleEvent(e.turn, openTurnRef.current)) {
-        // …but whoever is WAITING on that turn still deserves its answer. Dropping
-        // the event wholesale left a delegation hanging until its own timeout —
-        // the group panel sat on "보내는 중" with the agent already idle.
         if (e.kind === 'turnDone' && e.turn) settleTurnWaiters(e.turn)
         return
       }

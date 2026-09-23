@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { settleStaleTurns, type TurnLike, isStaleEvent } from './chatTurns'
+import { settleStaleTurns, type TurnLike, isStaleEvent, endsOpenTurn } from './chatTurns'
 
 const user = (text: string): TurnLike => ({
   role: 'user',
@@ -61,5 +61,25 @@ describe('isStaleEvent', () => {
     expect(isStaleEvent(undefined, 't2')).toBe(false) // main did not tag it
     expect(isStaleEvent('t1', null)).toBe(false) // no turn open here
     expect(isStaleEvent(null, undefined)).toBe(false)
+  })
+})
+
+describe('endsOpenTurn', () => {
+  it('lets a turn end itself', () => {
+    expect(endsOpenTurn('t2', 't2')).toBe(true)
+  })
+
+  it('refuses a turn that has already moved on', () => {
+    expect(endsOpenTurn('t1', 't2')).toBe(false)
+  })
+
+  it('refuses an end nobody can place — main tags every one it can', () => {
+    expect(endsOpenTurn(undefined, 't2')).toBe(false)
+    expect(endsOpenTurn(null, 't2')).toBe(false)
+  })
+
+  it('leaves a pane with no open turn alone', () => {
+    expect(endsOpenTurn(undefined, null)).toBe(true)
+    expect(endsOpenTurn('t1', undefined)).toBe(true)
   })
 })
