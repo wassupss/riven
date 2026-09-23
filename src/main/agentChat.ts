@@ -163,6 +163,12 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
   | { key: string; kind: 'turnDone'; costUSD: number | null; sessionId: string | null; error: string | null }
   | { key: string; kind: 'exit'; code: number }
+  // The CLI talking about itself, not about the answer. We parsed none of this
+  // before, so a request stuck in retry backoff or an account that had hit its
+  // limit looked exactly like a model thinking hard.
+  | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
+  | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
 )
 
 function emit(s: Session, ev: ChatEvent): void {
@@ -300,6 +306,41 @@ function toolCode(name: string, input: Record<string, unknown>): string | null {
 
 function handleEvent(s: Session, ev: Record<string, unknown>): void {
   const type = ev.type as string
+  // ---- the CLI's own status, which used to go straight in the bin ----
+  if (type === 'system' && ev.subtype === 'api_retry') {
+    emit(s, {
+      key: s.key,
+      kind: 'retry',
+      attempt: Number(ev.attempt ?? 0),
+      max: Number(ev.max_retries ?? 0),
+      delayMs: Number(ev.retry_delay_ms ?? 0),
+      status: typeof ev.error_status === 'number' ? ev.error_status : null
+    })
+    return
+  }
+  if (type === 'rate_limit_event') {
+    const info = (ev.rate_limit_info ?? {}) as Record<string, unknown>
+    emit(s, {
+      key: s.key,
+      kind: 'limit',
+      status: String(info.status ?? 'allowed'),
+      resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
+      limitKind: typeof info.rateLimitType === 'string' ? info.rateLimitType : undefined,
+      utilization: typeof info.utilization === 'number' ? info.utilization : undefined
+    })
+    return
+  }
+  if (type === 'system' && ev.subtype === 'compact_boundary') {
+    const meta = (ev.compact_metadata ?? {}) as Record<string, unknown>
+    emit(s, {
+      key: s.key,
+      kind: 'compact',
+      trigger: meta.trigger === 'manual' ? 'manual' : 'auto',
+      pre: Number(meta.pre_tokens ?? 0),
+      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined
+    })
+    return
+  }
   if (type === 'system' && ev.subtype === 'init') {
     s.sawInit = true
     s.sessionId = (ev.session_id as string) ?? s.sessionId

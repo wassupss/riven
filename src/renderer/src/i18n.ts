@@ -723,6 +723,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'term.restoring': { ko: '세션 불러오는 중…', en: 'Restoring session…' },
   'chat.starting': { ko: '에이전트 준비 중…', en: 'Starting the agent…' },
   'chat.quiet': { ko: '· 무응답 {d}', en: '· silent {d}' },
+  'chat.retrying': { ko: '재시도 {n}/{max} · {s}초 후', en: 'retry {n}/{max} · in {s}s' },
+  'chat.limitHit': { ko: '사용 한도에 걸렸습니다', en: 'Usage limit reached' },
+  'chat.limitNear': { ko: '사용 한도에 근접했습니다', en: 'Close to the usage limit' },
+  'chat.limitResets': { ko: '{n}분 후 풀림', en: 'resets in {n} min' },
+  'chat.compactAuto': { ko: '컨텍스트 자동 압축', en: 'Context compacted automatically' },
+  'chat.compactManual': { ko: '컨텍스트 압축', en: 'Context compacted' },
   'chat.quietHint': {
     ko: '에이전트가 이 시간 동안 아무것도 보내지 않았습니다. 도구를 오래 돌리는 중일 수도 있고, CLI가 API 응답을 기다리며 멈춰 있을 수도 있습니다 — 그럴 땐 중단하고 다시 보내세요.',
     en: 'Nothing has arrived from the agent for this long. It may be inside a long tool call, or its CLI may be stuck waiting on the API — if so, stop it and send again.'

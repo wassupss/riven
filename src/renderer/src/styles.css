@@ -8902,3 +8902,10 @@ body.browser-active .pane-skel > * {
 .pane-skel > *:nth-child(4) {
   animation-delay: 0.54s;
 }
+/* What the CLI is doing to ITSELF mid-turn — retrying, or held at a usage
+   limit. It sits where the elapsed time is, because that is where you look
+   when you are wondering why nothing is happening. */
+.chat-foot-note {
+  color: var(--warning, var(--accent));
+  font-variant-numeric: tabular-nums;
+}

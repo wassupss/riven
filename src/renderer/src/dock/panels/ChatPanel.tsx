@@ -47,6 +47,7 @@ import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 import { settleStaleTurns, isStaleEvent, endsOpenTurn } from '../../lib/chatTurns'
 import { modelsFor } from '../../lib/models'
+import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
@@ -562,7 +563,16 @@ const AssistantText = memo(function AssistantText({
 // one open connection to the API, no output, no stderr, 36 minutes).
 const QUIET_MS = 90_000
 
-function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: number } }): JSX.Element {
+function RunningFoot({
+  msg,
+  lastEvent,
+  note
+}: {
+  msg: Msg
+  lastEvent?: { current: number }
+  /** What the CLI is doing to itself right now (retrying, rate limited). */
+  note?: string | null
+}): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
   useEffect(() => {
@@ -584,7 +594,8 @@ function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: numb
         {fmtDur(elapsed)}
         {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
       </span>
-      {quiet > QUIET_MS && (
+      {note && <span className="chat-foot-note">{note}</span>}
+      {!note && quiet > QUIET_MS && (
         <span className="chat-foot-quiet" title={t('chat.quietHint')}>
           {t('chat.quiet', { d: fmtDur(quiet) })}
         </span>
@@ -598,10 +609,12 @@ function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: numb
 const ChatMessage = memo(function ChatMessage({
   msg,
   now,
-  lastEvent
+  lastEvent,
+  note
 }: {
   msg: Msg
   now: number
+  note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
 }): JSX.Element {
@@ -681,7 +694,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <RunningFoot msg={msg} lastEvent={lastEvent} />
+          <RunningFoot msg={msg} lastEvent={lastEvent} note={note} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
@@ -1383,6 +1396,11 @@ export default function ChatPanel({
   // simply empty: indistinguishable from a broken one, which is exactly how it
   // read after a restart with several panes coming back at once.
   const [booting, setBooting] = useState(true)
+  // What the CLI last said about ITSELF (a retry it is sitting in, a limit it
+  // hit). Cleared as soon as real output resumes, so it never lingers.
+  const [selfNote, setSelfNote] = useState<string | null>(null)
+  const selfNoteRef = useRef<string | null>(null)
+  selfNoteRef.current = selfNote
   // …but never indefinitely, and never over a transcript. A restored pane whose
   // agent simply has nothing to say yet is IDLE, not loading: if its CLI never
   // announces itself (it may be parked until the first message), a spinner left
@@ -1749,6 +1767,27 @@ export default function ChatPanel({
       lastEventRef.current = Date.now()
       setBooting(false)
       switch (e.kind) {
+        // The CLI is retrying the request: say so, with the attempt and the wait,
+        // instead of leaving the pane looking like a very long thought.
+        case 'retry':
+          setSelfNote(retryLabel({ attempt: e.attempt, max: e.max, delayMs: e.delayMs, status: e.status }, t))
+          break
+        case 'limit':
+          // A warning is worth showing; "allowed" is just noise.
+          setSelfNote(
+            e.status === 'allowed'
+              ? null
+              : limitLabel({ status: e.status, resetsAt: e.resetsAt, kind: e.limitKind }, t)
+          )
+          break
+        case 'compact':
+          // Not a status — a thing that HAPPENED to the conversation, so it goes
+          // in the transcript where the shortening is visible.
+          patchLast((m) => ({
+            ...m,
+            items: [...m.items, { type: 'text' as const, text: `\n_${compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t)}_\n` }]
+          }))
+          break
         case 'init':
           setModel(e.model)
           setPickedModel(modelAlias(e.model))
@@ -1756,6 +1795,7 @@ export default function ChatPanel({
           if (e.sessionId) savePane({ session: e.sessionId })
           break
         case 'text': {
+          if (selfNoteRef.current) setSelfNote(null)
           ensureInFlight()
           const now = performance.now()
           if (lastArrivalRef.current) {
@@ -2773,7 +2813,7 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} />
+          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} note={selfNote} />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]
