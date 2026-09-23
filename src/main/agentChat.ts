@@ -113,6 +113,13 @@ interface Session {
   // (an interrupted turn, a turn this side gave up on) closed whichever bubble
   // happened to be open, which was usually the NEXT one.
   turns: string[]
+  // A background task finishing while the CLI is idle makes the CLI run a turn
+  // NOBODY asked for (it reports the task's outcome) — and that turn produces a
+  // `result` like any other. Counted here so it consumes itself instead of
+  // shifting `turns`: without it, a message sent in that gap was marked answered
+  // by the background report's result, seconds after it was sent.
+  autoTurns: number
+  autoTurnAt: number
 }
 
 const sessions = new Map<string, Session>()
@@ -129,6 +136,9 @@ const lastStart = new Map<string, { opts: StartOpts; sender: WebContents }>()
 // respawns it with --resume. Cost is one resume instead of a permanent process.
 // (RIVEN_CHAT_IDLE_PARK_MS shortens it so the park/revive path can be exercised
 // without waiting half an hour.)
+// How long a background-task report may take to produce its result before riven
+// stops expecting it. Measured at ~2s; a minute is slack, not a guess.
+const AUTO_TURN_WINDOW_MS = 60_000
 const IDLE_PARK_MS = Number(process.env.RIVEN_CHAT_IDLE_PARK_MS) || 30 * 60_000
 const REAP_EVERY_MS = Math.min(60_000, Math.max(2_000, Math.floor(IDLE_PARK_MS / 2)))
 const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
@@ -173,6 +183,8 @@ export type ChatEvent = { turn?: string | null } & (
   // it a pane inside a twenty-minute test run looks like a pane that has died.
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
+  | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
 
 function emit(s: Session, ev: ChatEvent): void {
@@ -472,6 +484,38 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     }
     return
   }
+  // The live list of background tasks, authoritative and complete: the CLI sends
+  // it whenever one starts or ends. A backgrounded command used to vanish from
+  // the pane the moment the turn ended — still running, with nothing on screen
+  // to say so, and nothing when it finished either.
+  if (type === 'system' && ev.subtype === 'background_tasks_changed') {
+    const raw = Array.isArray(ev.tasks) ? (ev.tasks as Record<string, unknown>[]) : []
+    emit(s, {
+      key: s.key,
+      kind: 'bgTasks',
+      tasks: raw.map((x) => ({ id: String(x.task_id ?? ''), label: String(x.description ?? '') })),
+      // Pane-level state, not part of any turn: tagging it with the turn in
+      // flight would get it dropped as stale once that turn is replaced.
+      turn: null
+    })
+    return
+  }
+  if (type === 'system' && ev.subtype === 'task_notification') {
+    // Idle CLI + a finished task = the CLI is about to run a turn of its own.
+    if (!s.turns.length) {
+      s.autoTurns++
+      s.autoTurnAt = Date.now()
+    }
+    emit(s, {
+      key: s.key,
+      kind: 'taskDone',
+      taskId: String(ev.task_id ?? ''),
+      status: String(ev.status ?? 'completed'),
+      label: String(ev.summary ?? ''),
+      turn: null
+    })
+    return
+  }
   if (type === 'result') {
     s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
     s.sessionId = (ev.session_id as string) ?? s.sessionId
@@ -486,8 +530,14 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     }
     const isError = ev.is_error === true || (ev.subtype && ev.subtype !== 'success')
     // This result ends the OLDEST unanswered message, which is not necessarily
-    // the turn the pane is showing now.
-    const turn = s.turns.shift() ?? null
+    // the turn the pane is showing now — unless the CLI started this turn ITSELF
+    // to report a background task, in which case no message is waiting on it.
+    // The claim expires: if that self-started turn never materialises, a stale
+    // token would swallow a real answer and leave the pane thinking forever.
+    const claimed = s.autoTurns > 0 && Date.now() - s.autoTurnAt < AUTO_TURN_WINDOW_MS
+    if (s.autoTurns > 0 && !claimed) s.autoTurns = 0
+    if (claimed) s.autoTurns--
+    const turn = claimed ? null : (s.turns.shift() ?? null)
     emit(s, {
       key: s.key,
       kind: 'turnDone',
@@ -665,7 +715,9 @@ async function startSession(
     lastActive: Date.now(),
     turnBusy: false,
     parking: false,
-    turns: []
+    turns: [],
+    autoTurns: 0,
+    autoTurnAt: 0
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })

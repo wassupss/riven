@@ -1408,6 +1408,10 @@ export default function ChatPanel({
   // What the CLI last said about ITSELF (a retry it is sitting in, a limit it
   // hit). Cleared as soon as real output resumes, so it never lingers.
   const [selfNote, setSelfNote] = useState<string | null>(null)
+  // Commands the agent put in the background; the CLI resends the whole list
+  // whenever it changes, so this is a replace, never a merge.
+  const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
+  const bgLabels = useRef(new Map<string, string>())
   const selfNoteRef = useRef<string | null>(null)
   selfNoteRef.current = selfNote
   // …but never indefinitely, and never over a transcript. A restored pane whose
@@ -1809,6 +1813,33 @@ export default function ChatPanel({
           // explains the pause; one that failed explains why nothing happened.
           if (e.error) setError(t('chat.hookFailed', { name: e.name, why: e.error }))
           else setSelfNote(e.running ? t('chat.hookRunning', { name: e.name }) : null)
+          break
+        case 'bgTasks':
+          // Remember what each task was: the list is emptied BEFORE the
+          // notification arrives, so by then only this has its name.
+          for (const task of e.tasks) if (task.label) bgLabels.current.set(task.id, task.label)
+          setBgTasks(e.tasks)
+          break
+        case 'taskDone':
+          // It finished outside any turn, so it goes in the transcript as its own
+          // line: the pane may have been idle for minutes when this lands.
+          patchLast((m) => ({
+            ...m,
+            items: [
+              ...m.items,
+              {
+                type: 'text' as const,
+                text: `\n_${
+                  e.status === 'completed'
+                    ? // Its name, not the CLI's sentence about it — the sentence
+                      // repeats "background command … completed" around it.
+                      t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
+                    : // A failure says WHY only in the CLI's own summary.
+                      t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' })
+                }_\n`
+              }
+            ]
+          }))
           break
         case 'compact':
           // Not a status — a thing that HAPPENED to the conversation, so it goes
@@ -2973,6 +3004,20 @@ export default function ChatPanel({
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Backgrounded commands outlive the turn that started them. Without this
+          the pane went quiet with work still running, and the only sign it had
+          ever happened was the agent mentioning it, minutes later. */}
+      {bgTasks.length > 0 && (
+        <div className="chat-agents-live">
+          {bgTasks.map((task) => (
+            <div key={task.id} className="cal-item" title={t('chat.bgTask', { what: task.label })}>
+              <TerminalSquare size={11} />
+              <span className="cal-label">{task.label || t('chat.bgTaskPlain')}</span>
+            </div>
+          ))}
         </div>
       )}
 
