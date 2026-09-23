@@ -571,6 +571,9 @@ const AssistantText = memo(function AssistantText({
 // which is exactly what it looked like when it happened (child alive, in a turn,
 // one open connection to the API, no output, no stderr, 36 minutes).
 const QUIET_MS = 90_000
+// How long a hook may run before the pane bothers to mention it. Most return in
+// milliseconds; only a slow one explains a pause worth explaining.
+const HOOK_NOTE_MS = 1_500
 
 function RunningFoot({
   msg,
@@ -1412,6 +1415,7 @@ export default function ChatPanel({
   // whenever it changes, so this is a replace, never a merge.
   const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
   const bgLabels = useRef(new Map<string, string>())
+  const hookTimer = useRef(0)
   const selfNoteRef = useRef<string | null>(null)
   selfNoteRef.current = selfNote
   // …but never indefinitely, and never over a transcript. A restored pane whose
@@ -1811,8 +1815,27 @@ export default function ChatPanel({
         case 'hook':
           // A hook that ran and behaved says nothing. One that is STILL running
           // explains the pause; one that failed explains why nothing happened.
-          if (e.error) setError(t('chat.hookFailed', { name: e.name, why: e.error }))
-          else setSelfNote(e.running ? t('chat.hookRunning', { name: e.name }) : null)
+          if (e.error) {
+            setError(t('chat.hookFailed', { name: e.name, why: e.error }))
+            break
+          }
+          // Hooks fire several times a turn and usually return in milliseconds,
+          // so announcing every one turned the foot into a flicker. Only a hook
+          // still running after a beat is worth explaining.
+          window.clearTimeout(hookTimer.current)
+          if (e.running) {
+            hookTimer.current = window.setTimeout(
+              () => setSelfNote(t('chat.hookRunning', { name: e.name })),
+              HOOK_NOTE_MS
+            )
+          } else {
+            // Only retract OUR note: a retry or limit notice outranks it.
+            setSelfNote((n) => (n?.includes(e.name) ? null : n))
+          }
+          break
+        case 'thinking':
+          // Nothing to draw — reaching here already refreshed the activity clock
+          // above, which is the whole point: a thinking turn is not a stalled one.
           break
         case 'bgTasks':
           // Remember what each task was: the list is emptied BEFORE the
@@ -2009,6 +2032,7 @@ export default function ChatPanel({
       off()
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
       if (flushTimerRef.current != null) clearTimeout(flushTimerRef.current)
+      window.clearTimeout(hookTimer.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatKey, workspace, patchLast])

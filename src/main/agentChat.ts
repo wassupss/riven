@@ -177,6 +177,7 @@ export type ChatEvent = { turn?: string | null } & (
   // it a pane inside a twenty-minute test run looks like a pane that has died.
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'thinking'; tokens: number }
   | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
@@ -476,6 +477,13 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
         if (id) emit(s, { key: s.key, kind: 'toolResult', toolId: id, isError: block.is_error === true })
       }
     }
+    return
+  }
+  // A long thought emits nothing else — no text, no tool, no partial. The pane
+  // read that silence as a stall and warned about no response while the model
+  // was working. This is the only heartbeat a thinking turn has.
+  if (type === 'system' && ev.subtype === 'thinking_tokens') {
+    emit(s, { key: s.key, kind: 'thinking', tokens: Number(ev.estimated_tokens ?? 0) })
     return
   }
   // The live list of background tasks, authoritative and complete: the CLI sends

@@ -103,6 +103,7 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'thinking'; tokens: number }
   | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
