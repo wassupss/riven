@@ -812,6 +812,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'team.ev.error': { ko: '실패', en: 'failed' },
   'team.ev.roster': { ko: '구성', en: 'roster' },
   'team.lead': { ko: '리드', en: 'Lead' },
+  'team.adopt': { ko: '열린 에이전트 넣기', en: 'Adopt an open agent' },
+  'team.adoptTitle': { ko: '그룹에 넣을 에이전트 번호', en: 'Number of the agent to adopt' },
+  'team.noneToAdopt': {
+    ko: '그룹에 넣을 수 있는 열린 에이전트가 없습니다. 채팅 패널이나 CLI가 도는 터미널을 먼저 여세요.',
+    en: 'No open agent to adopt. Open a chat pane, or a terminal running a CLI, first.'
+  },
   'team.busy': { ko: '작업 중', en: 'Working' },
   'team.needsYou': { ko: '확인 필요', en: 'Needs you' },
   'team.answered': { ko: '답변 옴', en: 'Answered' },

@@ -263,11 +263,13 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean }> = [
       'Optionally primed with a persona and nickname. `agent` picks who ' +
       'runs it: claude (default) or codex — a team can mix them. `model` is that agent\'s model ' +
       '(claude: opus/sonnet/haiku/fable; codex: gpt-5.6-terra/gpt-5.6-luna/gpt-5.5). `parent` is the ' +
-      'member it reports to.',
-    inputSchema: obj({ group: str, name: str, persona: str, model: str, parent: str, agent: str }, [
-      'group',
-      'name'
-    ]),
+      'member it reports to. To put an agent that is ALREADY open into the group instead of ' +
+      'spawning one — including a CLI running in a riven terminal — pass `pane` (an id from ' +
+      'riven_agents); nothing is spawned and it keeps its conversation.',
+    inputSchema: obj(
+      { group: str, name: str, persona: str, model: str, parent: str, agent: str, pane: str },
+      ['group']
+    ),
     implemented: true
   },
   {

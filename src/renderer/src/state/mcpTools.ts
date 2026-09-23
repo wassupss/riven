@@ -822,6 +822,31 @@ async function goalRound(args: Args, c: Ctx): Promise<string> {
 
 function groupAddAgent(args: Args, c: Ctx): string {
   const name = s(args.name)
+  // `pane` adopts an agent that is already open — including a CLI running in a
+  // riven terminal, which could always be delegated to but could not be part of
+  // a team. Nothing is spawned; the pane keeps its conversation.
+  const adopt = s(args.pane)
+  if (adopt) {
+    if (!c.ws) return unattributed(c)
+    const entry = resolveRosterAgent(adopt, c.ws, c.self)
+    if (!entry) return `error: no open agent matching "${adopt}" in this workspace (see riven_agents)`
+    const group = s(args.group) || 'group'
+    const groups = useAgentGroups.getState()
+    const existing = groups.byWorkspace[c.ws]?.find((g) => g.group === group)
+    if (existing?.members.some((m) => m.chatKey === entry.id))
+      return `error: "${entry.title}" is already in "${group}"`
+    const member = {
+      name: name || entry.title.split(' · ')[0].slice(0, 24),
+      persona: s(args.persona) || null,
+      model: 'default',
+      parent: null as number | null,
+      chatKey: entry.id
+    }
+    if (!existing) groups.createGroup(c.ws, group, [member])
+    else groups.addMember(c.ws, group, { ...member, parent: 0 })
+    note(c.ws, 'roster', c.chatPane ?? 'agent', `그룹 "${group}"에 기존 에이전트 "${member.name}" 추가`, entry.id)
+    return `adopted "${entry.title}" (${entry.kind}) into group "${group}" as "${member.name}"`
+  }
   const persona = s(args.persona)
   const model = s(args.model)
   const parent = s(args.parent)

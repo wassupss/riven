@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Square,
   User,
-  Target
+  Target,
+  TerminalSquare
 } from 'lucide-react'
 import { askChatTurn, useAgents, agentsForWorkspace, resolveAgent } from '../../state/agents'
 import {
@@ -27,6 +28,8 @@ import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } fro
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { useGroupLog, activeEdges } from '../../state/groupLog'
+import { askAnyAgent, rosterEntry } from '../../state/askAgent'
+import { rosterFor } from '../../state/roster'
 import { useGoals, goalsFor, type Goal } from '../../state/goals'
 import { modelsFor, modelForCli, type Cli } from '../../lib/models'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
@@ -145,6 +148,9 @@ interface TreeItem {
   /** What it runs on, shown as its own chip rather than buried in `sub`. */
   model?: string
   cli?: Cli
+  /** A CLI in a riven terminal rather than a native chat pane. */
+  terminal?: boolean
+  terminalCli?: string | null
   /** Somebody is waiting on this one right now — the edge into it is live. */
   flowIn?: boolean
   /** Waiting on the USER (a permission prompt), which is not the same as busy. */
@@ -240,6 +246,11 @@ function OrgCard({ node, closedLabel, onPick }: {
       <span className="agp-node-foot">
         {node.model && node.model !== 'default' && <span className="agp-node-chip">{node.model}</span>}
         {node.cli === 'codex' && <span className="agp-node-chip">codex</span>}
+        {node.terminal && (
+          <span className="agp-node-chip agp-node-term">
+            <TerminalSquare size={9} /> {node.terminalCli ?? 'cli'}
+          </span>
+        )}
         <span
           className={`agp-node-state${node.busy ? ' busy' : ''}${node.attention ? ' attention' : ''}${
             node.done ? ' done' : ''
@@ -472,11 +483,16 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       : shownPipeline.stages.map((s) => ({ ...s, status: 'pending' as const }))
     : []
 
-  // live pane state for the org chart
+  // live pane state for the org chart. The ROSTER, not the chat controllers: a
+  // member can be a CLI running in a terminal, and those have no controller —
+  // reading only the controllers showed every terminal member as closed.
   const roster = agentsForWorkspace(workspace)
+  const paneRoster = rosterFor(workspace)
   const isOpen = (chatKey: string): boolean => !!getActiveApi()?.getPanel(chatKey)
-  const isBusy = (chatKey: string): boolean => roster.find((a) => a.id === chatKey)?.busy ?? false
-  const statusOf = (chatKey: string): string | undefined => roster.find((a) => a.id === chatKey)?.status
+  const isBusy = (chatKey: string): boolean =>
+    roster.find((a) => a.id === chatKey)?.busy ?? paneRoster.find((e) => e.id === chatKey)?.busy ?? false
+  const statusOf = (chatKey: string): string | undefined =>
+    roster.find((a) => a.id === chatKey)?.status ?? paneRoster.find((e) => e.id === chatKey)?.status
   // The group's own timeline drives the live edges (see activeEdges): a member
   // being busy says it is working, this says WHO it is working for.
   const logEvents = useGroupLog((s) => s.byWorkspace[workspace])
@@ -747,6 +763,35 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
     setMemberChatKey(workspace, g.group, m.chatKey, newKey)
   }
 
+  // Put an agent that is ALREADY open into the group — including a CLI running
+  // in a riven terminal, which could be delegated to but never belonged to a
+  // team. Nothing is spawned: the pane keeps its conversation and just gains a
+  // place in the org chart.
+  const doAdoptIntoGroup = async (g: AgentGroup): Promise<void> => {
+    const taken = new Set(groups.flatMap((x) => x.members.map((m) => m.chatKey)))
+    const free = rosterFor(workspace).filter((e) => !taken.has(e.id) && (e.kind === 'chat' || e.agent))
+    if (!free.length) {
+      window.alert(t('team.noneToAdopt'))
+      return
+    }
+    // A numbered list the user answers with one number: one prompt beats a new
+    // dialog for something this small.
+    const menu = free
+      .map((e, i) => `${i + 1}. ${e.title}${e.kind === 'terminal' ? ` (${e.agent ?? 'cli'})` : ''}`)
+      .join('\n')
+    const pick = await promptInput({ title: `${t('team.adoptTitle')}\n${menu}`, initial: '1' })
+    const idx = Number((pick ?? '').trim()) - 1
+    const entry = free[idx]
+    if (!entry) return
+    addMember(workspace, g.group, {
+      name: entry.title.split(' · ')[0].slice(0, 24),
+      persona: null,
+      model: 'default',
+      parent: 0,
+      chatKey: entry.id
+    })
+  }
+
   const doAddToGroup = async (g: AgentGroup): Promise<void> => {
     const n = g.members.length
     const typed = await promptInput({
@@ -847,6 +892,8 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         avatar: m.avatar,
         model: m.model,
         cli: m.cli,
+        terminal: m.chatKey.startsWith('term-'),
+        terminalCli: paneRoster.find((e) => e.id === m.chatKey)?.agent ?? null,
         flowIn: flowingInto.has(m.chatKey),
         attention: statusOf(m.chatKey) === 'waiting',
         done: statusOf(m.chatKey) === 'done'
@@ -1352,6 +1399,9 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                 <button className="ui-btn ui-btn-default" onClick={() => doAddToGroup(shown)}>
                   <UserPlus size={13} /> {t('team.addToGroup')}
                 </button>
+                <button className="ui-btn ui-btn-default" onClick={() => void doAdoptIntoGroup(shown)}>
+                  <TerminalSquare size={13} /> {t('team.adopt')}
+                </button>
                 <button
                   className="ui-btn ui-btn-default agp-danger"
                   onClick={() => doDeleteGroup(shown)}
@@ -1593,9 +1643,11 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
       // the agents use — one pane at a time, each answer tied to its question.
       await Promise.all(
         targets.map(async (m) => {
-          const target = resolveAgent(m.chatKey, undefined, workspace)
-          if (!target) return
-          const reply = await askChatTurn(target, msg, 5 * 60_000, t('team.noReply'))
+          // Members can be chat panes OR CLIs running in riven terminals; both
+          // are asked the same way from here (see state/askAgent).
+          const entry = rosterEntry(workspace, m.chatKey)
+          if (!entry) return
+          const reply = await askAnyAgent(entry, msg, workspace, { timeoutText: t('team.noReply') })
           useGroupLog.getState().add({ ws: workspace, group, kind: 'reply', from: m.chatKey, text: reply })
         })
       )
