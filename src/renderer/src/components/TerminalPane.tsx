@@ -4,8 +4,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
-import { ChevronUp, ChevronDown, X } from 'lucide-react'
+import { ChevronUp, ChevronDown, X, Loader2 } from 'lucide-react'
 import { registerPaneFocuser, registerPaneClearer, setFocusRegion } from '../keybindings/focus'
+import { useT } from '../i18n'
 import { useSettings, getSettings } from '../state/settings'
 
 // The terminal palette derives from the active app theme (CSS vars) so the
@@ -91,6 +92,10 @@ export default function TerminalPane({
   const searchRef = useRef<SearchAddon | null>(null)
   const refocusRef = useRef<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  // Until main hands back this session's model, the pane is an empty rectangle.
+  // Say that it is loading rather than looking broken.
+  const [restoring, setRestoring] = useState(true)
+  const t = useT()
   const [query, setQuery] = useState('')
 
   useEffect(() => {
@@ -493,6 +498,9 @@ export default function TerminalPane({
           }
         }
         ptyId = id
+        // A brand-new terminal has nothing to restore: it is ready as soon as
+        // main has spawned it.
+        if (!existed) setRestoring(false)
         // A fresh PTY has produced nothing yet, so this xterm IS in sync with the
         // model. A reattach waits for main's snapshot.
         synced = !existed
@@ -508,7 +516,12 @@ export default function TerminalPane({
             enqueue(chunk.data)
           })
         )
-        disposers.push(window.api.pty.onSnapshot(id, applySnapshot))
+        disposers.push(
+          window.api.pty.onSnapshot(id, (snap) => {
+            setRestoring(false)
+            applySnapshot(snap)
+          })
+        )
         disposers.push(
           window.api.pty.onExit(id, () => term.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n'))
         )
@@ -683,6 +696,16 @@ export default function TerminalPane({
   return (
     <div className="terminal-pane-outer">
       <div className="terminal-pane" ref={containerRef} />
+      {/* Restoring a terminal takes a moment — main has to hand back the model of
+          a session that may hold thousands of lines — and until it does the pane
+          is a blank black rectangle, which reads as a broken pane rather than a
+          loading one. */}
+      {restoring && (
+        <div className="term-restoring">
+          <Loader2 size={13} className="spin" />
+          {t('term.restoring')}
+        </div>
+      )}
       {searchOpen && (
         <div className="term-search">
           <input

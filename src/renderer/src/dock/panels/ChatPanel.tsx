@@ -1378,6 +1378,11 @@ export default function ChatPanel({
     return settleStaleTurns(arr, Date.now(), running)
   })
   const [restoring, setRestoring] = useState(false)
+  // From mount until the CLI says hello (its `init`). Spawning it — and resuming
+  // the session it was in — takes a few seconds, and until then the pane is
+  // simply empty: indistinguishable from a broken one, which is exactly how it
+  // read after a restart with several panes coming back at once.
+  const [booting, setBooting] = useState(true)
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
   // session later (see below) must be observed from the store or the restore
   // effect would never fire.
@@ -1726,6 +1731,7 @@ export default function ChatPanel({
         return
       }
       lastEventRef.current = Date.now()
+      setBooting(false)
       switch (e.kind) {
         case 'init':
           setModel(e.model)
@@ -2821,6 +2827,12 @@ export default function ChatPanel({
           >
             {t('chat.loadEarlier', { n: msgs.length - limit })}
           </button>
+        )}
+        {booting && (
+          <div className="chat-resumed chat-booting">
+            <Loader2 size={12} className="spin" />
+            {pane0.session ? t('chat.restoring') : t('chat.starting')}
+          </div>
         )}
         {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}
         {!restoring && restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
