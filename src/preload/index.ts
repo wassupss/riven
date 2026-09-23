@@ -930,6 +930,9 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    // Borrow the keyboard (renaming); the pet's window is non-focusable so that
+    // it can never steal focus on its own.
+    focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and
     // delivered to whichever window is showing the device.
     press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),
