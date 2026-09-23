@@ -2837,9 +2837,19 @@ export default function ChatPanel({
           </button>
         )}
         {booting && msgs.length === 0 && (
-          <div className="chat-resumed chat-booting">
-            <Loader2 size={12} className="spin" />
-            {pane0.session ? t('chat.restoring') : t('chat.starting')}
+          // The pane's own loading state: the shape of a conversation, dimmed,
+          // so the wait reads as "this is coming" rather than as an empty pane
+          // that might be broken.
+          <div className="pane-loading" role="status">
+            <div className="pane-skel">
+              <span className="pane-skel-bubble me" />
+              <span className="pane-skel-bubble" />
+              <span className="pane-skel-bubble short" />
+            </div>
+            <div className="pane-loading-label">
+              <Loader2 size={12} className="spin" />
+              {pane0.session ? t('chat.restoring') : t('chat.starting')}
+            </div>
           </div>
         )}
         {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}

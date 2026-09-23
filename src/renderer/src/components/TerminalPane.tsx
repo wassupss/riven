@@ -701,9 +701,17 @@ export default function TerminalPane({
           is a blank black rectangle, which reads as a broken pane rather than a
           loading one. */}
       {restoring && (
-        <div className="term-restoring">
-          <Loader2 size={13} className="spin" />
-          {t('term.restoring')}
+        <div className="pane-loading over" role="status">
+          <div className="pane-skel term">
+            <span className="pane-skel-line" />
+            <span className="pane-skel-line short" />
+            <span className="pane-skel-line" />
+            <span className="pane-skel-line tiny" />
+          </div>
+          <div className="pane-loading-label">
+            <Loader2 size={12} className="spin" />
+            {t('term.restoring')}
+          </div>
         </div>
       )}
       {searchOpen && (
