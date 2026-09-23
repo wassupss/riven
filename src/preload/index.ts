@@ -245,6 +245,8 @@ const api = {
       opts: {
         cwd: string
         resume?: string
+        /** Resume into a COPY, leaving the original session as it was. */
+        fork?: boolean
         model?: string
         permissionMode?: string
         mcpDisabled?: string[]
@@ -307,6 +309,12 @@ const api = {
       configDir?: string
     ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
       ipcRenderer.invoke('chat:sessions', cwd, configDir),
+    // Naming a past session writes into the CLI's own transcript, so the name
+    // is the same one `claude --resume` shows.
+    sessionRename: (cwd: string, id: string, title: string, configDir?: string): Promise<boolean> =>
+      ipcRenderer.invoke('chat:sessionRename', cwd, id, title, configDir),
+    sessionDelete: (cwd: string, id: string, configDir?: string): Promise<boolean> =>
+      ipcRenderer.invoke('chat:sessionDelete', cwd, id, configDir),
     agents: (
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>

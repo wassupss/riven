@@ -765,6 +765,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.resumeTitle': { ko: '이전 세션 불러오기', en: 'Resume a session' },
   'chat.modelTitle': { ko: '모델 선택', en: 'Select model' },
   'chat.resumeEmpty': { ko: '이 프로젝트에 저장된 세션이 없습니다.', en: 'No saved sessions for this project.' },
+  'chat.sessionFork': { ko: '복제해서 이어하기', en: 'Resume a copy' },
+  'chat.sessionRename': { ko: '이름 바꾸기', en: 'Rename' },
+  'chat.sessionDelete': { ko: '세션 삭제', en: 'Delete session' },
+  'chat.sessionDeleteConfirm': {
+    ko: '"{title}" 세션을 삭제할까요?\n대화 기록이 지워지고 되돌릴 수 없습니다.',
+    en: 'Delete the session "{title}"?\nIts transcript is removed and cannot be recovered.'
+  },
   'chat.mcpTitle': { ko: 'MCP 서버', en: 'MCP servers' },
   'chat.mcpEmpty': { ko: '연결된 MCP 서버가 없습니다.', en: 'No MCP servers connected.' },
   'chat.mcpConnected': { ko: '연결됨', en: 'Connected' },

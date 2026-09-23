@@ -3808,6 +3808,63 @@ select {
 .picker-item:hover {
   background: var(--hover-strong);
 }
+/* A session row: the row itself resumes, the actions sit at its end and only
+   appear when the row is under the pointer or selected — a delete button that
+   is always visible next to a list of conversations invites the wrong click. */
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+.picker-row:hover,
+.picker-row.active {
+  background: var(--hover-strong);
+}
+.picker-row .picker-item:hover {
+  background: none;
+}
+.picker-acts {
+  display: flex;
+  gap: 2px;
+  padding-right: 6px;
+  opacity: 0;
+}
+.picker-row:hover .picker-acts,
+.picker-row.active .picker-acts,
+.picker-acts:focus-within {
+  opacity: 1;
+}
+.picker-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.picker-act:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.picker-act.danger:hover {
+  color: var(--danger, #e5534b);
+}
+.picker-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
 .picker-title {
   font-size: var(--text-sm);
   overflow: hidden;

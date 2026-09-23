@@ -11,6 +11,7 @@ import { userContent, type ChatImageInput } from './chatContent'
 import { CodexChat } from './codexChat'
 import { readCodexTranscript } from './codexSessions'
 import { claimResult, noteBackgroundReport } from './turnClaim'
+import { scanTitles, titleOf } from './sessionTitle'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -40,6 +41,9 @@ import {
 export interface StartOpts {
   cwd: string
   resume?: string
+  // Resume a copy: the CLI clones the conversation under a NEW id and leaves the
+  // original untouched, so a session can be taken in two directions.
+  fork?: boolean
   model?: string
   permissionMode?: string
   // riven's OWN tools the user switched off (ask_user, open_file, …).
@@ -668,8 +672,11 @@ async function startSession(
   // history (verified: three freshly created panes all reported the newest
   // session id in ~/.claude, whose file the CLI never even touched). Pinning a
   // fresh uuid makes "no resume id" mean what it says.
-  if (opts.resume) args.push('--resume', opts.resume)
-  else args.push('--session-id', randomUUID())
+  if (opts.resume) {
+    args.push('--resume', opts.resume)
+    // The new id comes back in the init event, which the pane already saves.
+    if (opts.fork) args.push('--fork-session')
+  } else args.push('--session-id', randomUUID())
 
   // The same hooks a terminal CLI gets. Lifecycle hooks are redundant here (a
   // chat pane reads its own stream) and land on a pane main has no PTY session
@@ -996,6 +1003,16 @@ export function registerAgentChatHandlers(): void {
   // List resumable past sessions for a cwd (native /resume), newest first.
   ipcMain.handle('chat:sessions', async (_e, cwd: string, configDir?: string) =>
     listSessions(cwd, configDir)
+  )
+
+  ipcMain.handle(
+    'chat:sessionRename',
+    async (_e, cwd: string, id: string, title: string, configDir?: string) =>
+      renameSession(cwd, id, title, configDir)
+  )
+
+  ipcMain.handle('chat:sessionDelete', async (_e, cwd: string, id: string, configDir?: string) =>
+    deleteSession(cwd, id, configDir)
   )
 
   // Custom agents defined in .claude/agents/<name>.md (project + ~), usable as
@@ -1346,30 +1363,64 @@ async function listSessions(cwd: string, configDir?: string): Promise<SessionSum
     try {
       const stat = await fsp.stat(full)
       const raw = await fsp.readFile(full, 'utf8')
-      const lines = raw.split('\n').filter(Boolean)
-      let title = ''
-      let messages = 0
-      for (const l of lines) {
-        let j: Record<string, unknown>
-        try {
-          j = JSON.parse(l)
-        } catch {
-          continue
-        }
-        if (j.type === 'ai-title' && typeof j.title === 'string' && j.title) title = j.title
-        if (j.type === 'user' || j.type === 'assistant') messages++
-        if (!title && j.type === 'user') {
-          const c = (j.message as Record<string, unknown>)?.content
-          if (typeof c === 'string' && !c.startsWith('<')) title = c.slice(0, 60)
-        }
-      }
-      if (messages === 0) continue
-      out.push({ id: f.replace(/\.jsonl$/, ''), title: title || '(제목 없음)', mtime: stat.mtimeMs, messages })
+      const scan = scanTitles(raw.split('\n'))
+      if (scan.messages === 0) continue
+      out.push({
+        id: f.replace(/\.jsonl$/, ''),
+        title: titleOf(scan, 60) || '(제목 없음)',
+        mtime: stat.mtimeMs,
+        messages: scan.messages
+      })
     } catch {
       /* skip unreadable */
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, 50)
+}
+
+// A session id is a filename here, and it arrives from the renderer — so it is
+// checked, not trusted. Anything but a plain uuid could walk out of the project
+// directory, and delete is not an undoable operation.
+const isSessionId = (id: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+
+/**
+ * Name a past session.
+ *
+ * The CLI stores a rename as one more line in the transcript (`custom-title`),
+ * which is how its own /rename works — so a name set here shows up in the CLI
+ * too, and vice versa.
+ */
+export async function renameSession(
+  cwd: string,
+  id: string,
+  title: string,
+  configDir?: string
+): Promise<boolean> {
+  const name = title.trim()
+  if (!isSessionId(id) || !name) return false
+  const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
+  try {
+    await fsp.appendFile(
+      full,
+      JSON.stringify({ type: 'custom-title', customTitle: name, sessionId: id }) + '\n',
+      'utf8'
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Forget a past session: the transcript file IS the session. */
+export async function deleteSession(cwd: string, id: string, configDir?: string): Promise<boolean> {
+  if (!isSessionId(id)) return false
+  try {
+    await fsp.unlink(path.join(projectDir(cwd, configDir), `${id}.jsonl`))
+    return true
+  } catch {
+    return false
+  }
 }
 
 // Reconstruct a session transcript for display (user text + assistant text/tools).
@@ -1389,24 +1440,7 @@ export async function readSessionTitle(
   } catch {
     return null
   }
-  let firstUser = ''
-  for (const line of raw.split('\n')) {
-    if (!line) continue
-    let j: Record<string, unknown>
-    try {
-      j = JSON.parse(line)
-    } catch {
-      continue
-    }
-    // The CLI writes an ai-title entry once it has summarised the conversation;
-    // prefer it, and fall back to the opening message the way the picker does.
-    if (j.type === 'ai-title' && typeof j.title === 'string' && j.title.trim()) return j.title.trim()
-    if (!firstUser && j.type === 'user') {
-      const c = (j.message as Record<string, unknown>)?.content
-      if (typeof c === 'string' && !c.startsWith('<')) firstUser = c.split('\n')[0].trim()
-    }
-  }
-  return firstUser ? (firstUser.length > 48 ? firstUser.slice(0, 48) + '…' : firstUser) : null
+  return titleOf(scanTitles(raw.split('\n')), 48) || null
 }
 
 async function readSessionTranscript(

@@ -17,6 +17,8 @@ import {
   Copy,
   Bot,
   History,
+  GitBranch,
+  Trash2,
   Server,
   RotateCw,
   Clock,
@@ -1111,17 +1113,41 @@ function ResumeCard({
   // The pane's CLAUDE_CONFIG_DIR — past sessions live under the profile the
   // pane runs as, not under ~/.claude.
   configDir?: string
-  onResume: (id: string) => void
+  onResume: (id: string, fork?: boolean) => void
   onDismiss: () => void
 }): JSX.Element {
   const t = useT()
   const [sessions, setSessions] = useState<
     Array<{ id: string; title: string; mtime: number; messages: number }> | null
   >(null)
+  // Which row is being renamed, and to what. Inline, because naming a
+  // conversation while looking at the list is the only time anyone does it.
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const reload = (): void => {
+    void window.api.chat.sessions(cwd, configDir).then(setSessions)
+  }
   useEffect(() => {
     window.api.chat.sessions(cwd, configDir).then(setSessions)
   }, [cwd, configDir])
+  const commitRename = async (id: string): Promise<void> => {
+    const name = draft.trim()
+    setEditing(null)
+    if (!name) return
+    // Optimistic: the row says its new name before the file is touched, and the
+    // reload behind it is what makes it true.
+    setSessions((prev) => prev?.map((s) => (s.id === id ? { ...s, title: name } : s)) ?? prev)
+    await window.api.chat.sessionRename(cwd, id, name, configDir)
+    reload()
+  }
+  const removeSession = async (id: string, title: string): Promise<void> => {
+    // The transcript file IS the session: there is nothing to undo this with.
+    if (!window.confirm(t('chat.sessionDeleteConfirm', { title }))) return
+    setSessions((prev) => prev?.filter((s) => s.id !== id) ?? prev)
+    await window.api.chat.sessionDelete(cwd, id, configDir)
+    reload()
+  }
   const list = sessions ?? []
   const { index, setIndex, ref, onKeyDown } = useCardNav(
     list.length,
@@ -1148,18 +1174,67 @@ function ResumeCard({
       ) : (
         <div className="chat-card-scroll">
           {list.map((s, i) => (
-            <button
-              key={s.id}
-              ref={(el) => (itemRefs.current[i] = el)}
-              className={`picker-item${index === i ? ' active' : ''}`}
-              onMouseMove={() => index !== i && setIndex(i)}
-              onClick={() => onResume(s.id)}
-            >
-              <span className="picker-title">{s.title}</span>
-              <span className="picker-meta">
-                {fmtRelative(s.mtime, now, t)} · {s.messages}
-              </span>
-            </button>
+            <div key={s.id} className={`picker-row${index === i ? ' active' : ''}`}>
+              {editing === s.id ? (
+                <input
+                  className="picker-rename"
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => void commitRename(s.id)}
+                  onKeyDown={(e) => {
+                    // Own these keys: the card's list navigation is listening too.
+                    e.stopPropagation()
+                    if (e.key === 'Enter') void commitRename(s.id)
+                    if (e.key === 'Escape') setEditing(null)
+                  }}
+                />
+              ) : (
+                <button
+                  ref={(el) => (itemRefs.current[i] = el)}
+                  className="picker-item"
+                  onMouseMove={() => index !== i && setIndex(i)}
+                  onClick={() => onResume(s.id)}
+                >
+                  <span className="picker-title">{s.title}</span>
+                  <span className="picker-meta">
+                    {fmtRelative(s.mtime, now, t)} · {s.messages}
+                  </span>
+                </button>
+              )}
+              {editing !== s.id && (
+                <span className="picker-acts">
+                  {/* Fork: take this conversation somewhere else without
+                      spending the original. */}
+                  <button
+                    className="picker-act"
+                    title={t('chat.sessionFork')}
+                    onClick={() => onResume(s.id, true)}
+                  >
+                    <GitBranch size={12} />
+                  </button>
+                  <button
+                    className="picker-act"
+                    title={t('chat.sessionRename')}
+                    onClick={() => {
+                      // The row shows a truncated title; seeding the box with it
+                      // would save the ellipsis as part of the name.
+                      setDraft(s.title.replace(/…$/, ''))
+                      setEditing(s.id)
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    className="picker-act danger"
+                    title={t('chat.sessionDelete')}
+                    onClick={() => void removeSession(s.id, s.title)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -2762,7 +2837,7 @@ export default function ChatPanel({
 
   // Load a past session INTO this pane: resume its CLI context and show its
   // reconstructed transcript (native /resume).
-  const resumeSession = async (id: string): Promise<void> => {
+  const resumeSession = async (id: string, fork = false): Promise<void> => {
     const cwd = pathOf(workspace)
     window.api.chat.stop(chatKey)
     setRestoring(true)
@@ -2786,6 +2861,9 @@ export default function ChatPanel({
       cli,
           cwd,
           resume: id,
+          // The forked copy gets a new id from the CLI, which arrives in `init`
+          // and replaces what savePane wrote above.
+          fork,
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
@@ -2883,7 +2961,7 @@ export default function ChatPanel({
             cwd={pathOf(workspace)}
             configDir={claudeConfigDirFor(workspace)}
             now={now}
-            onResume={(id) => void handlers.current.resumeSession(id)}
+            onResume={(id, fork) => void handlers.current.resumeSession(id, fork)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : msg.card === 'model' ? (
