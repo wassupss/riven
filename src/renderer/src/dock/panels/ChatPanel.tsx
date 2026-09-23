@@ -107,6 +107,9 @@ interface ToolLine {
   parent?: string | null // subagent (Task) tool_use id this call belongs to
   done?: boolean // its tool_result arrived (subagent/tool finished)
   error?: boolean
+  // Seconds the CLI last reported this call as still running. Shown on a long
+  // tool so a quiet minute reads as "the test suite is running", not as a stall.
+  elapsed?: number
   // The turn ended (stop / failure) while THIS tool was still awaiting its result.
   // Tools that already returned keep their own "done" — stopping a turn must not
   // retroactively re-label work that actually completed.
@@ -366,6 +369,7 @@ function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
         </span>
         <span className="chat-tool-name">{tl.name}</span>
         {tl.detail && <span className="chat-tool-detail">{tl.detail}</span>}
+        {!tl.done && tl.elapsed ? <span className="chat-tool-elapsed">{fmtDur(tl.elapsed * 1000)}</span> : null}
       </div>
       {tl.code && <ChatCode code={tl.code} diff={isEditName(tl.name)} path={tl.path} />}
     </div>
@@ -1779,6 +1783,27 @@ export default function ChatPanel({
               ? null
               : limitLabel({ status: e.status, resetsAt: e.resetsAt, kind: e.limitKind }, t)
           )
+          break
+        case 'toolProgress':
+          // Proof of life: it also refreshes the activity clock above, so the
+          // "무응답" warning no longer fires during a long tool call.
+          if (e.elapsed > 5) {
+            patchLast((m) => ({
+              ...m,
+              tools: m.tools.map((tl) => (tl.toolId === e.toolId ? { ...tl, elapsed: e.elapsed } : tl)),
+              items: m.items.map((it) =>
+                it.type === 'tool' && it.tool.toolId === e.toolId
+                  ? { type: 'tool', tool: { ...it.tool, elapsed: e.elapsed } }
+                  : it
+              )
+            }))
+          }
+          break
+        case 'hook':
+          // A hook that ran and behaved says nothing. One that is STILL running
+          // explains the pause; one that failed explains why nothing happened.
+          if (e.error) setError(t('chat.hookFailed', { name: e.name, why: e.error }))
+          else setSelfNote(e.running ? t('chat.hookRunning', { name: e.name }) : null)
           break
         case 'compact':
           // Not a status — a thing that HAPPENED to the conversation, so it goes

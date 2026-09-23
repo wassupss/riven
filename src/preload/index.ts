@@ -101,6 +101,8 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
   | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
+  | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
 

@@ -724,6 +724,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.starting': { ko: '에이전트 준비 중…', en: 'Starting the agent…' },
   'chat.quiet': { ko: '· 무응답 {d}', en: '· silent {d}' },
   'chat.retrying': { ko: '재시도 {n}/{max} · {s}초 후', en: 'retry {n}/{max} · in {s}s' },
+  'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
+  'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
   'chat.limitHit': { ko: '사용 한도에 걸렸습니다', en: 'Usage limit reached' },
   'chat.limitNear': { ko: '사용 한도에 근접했습니다', en: 'Close to the usage limit' },
   'chat.limitResets': { ko: '{n}분 후 풀림', en: 'resets in {n} min' },

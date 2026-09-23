@@ -169,6 +169,10 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
   | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  // A tool saying it is still going. Proof of life during a long call — without
+  // it a pane inside a twenty-minute test run looks like a pane that has died.
+  | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
+  | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
 )
 
 function emit(s: Session, ev: ChatEvent): void {
@@ -320,13 +324,43 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   }
   if (type === 'rate_limit_event') {
     const info = (ev.rate_limit_info ?? {}) as Record<string, unknown>
+    const kind = typeof info.rateLimitType === 'string' ? info.rateLimitType : undefined
+    // Utilization is not beside the status — it lives in the per-window table,
+    // keyed by the window this event is about ('five_hour', 'seven_day', …).
+    const windows = (info.unifiedWindows ?? {}) as Record<string, { utilization?: unknown }>
+    const used = kind ? windows[kind]?.utilization : undefined
     emit(s, {
       key: s.key,
       kind: 'limit',
       status: String(info.status ?? 'allowed'),
       resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
-      limitKind: typeof info.rateLimitType === 'string' ? info.rateLimitType : undefined,
-      utilization: typeof info.utilization === 'number' ? info.utilization : undefined
+      limitKind: kind,
+      utilization: typeof used === 'number' ? used : undefined
+    })
+    return
+  }
+  if (type === 'tool_progress') {
+    // The heartbeat carries its own id ('<toolId>-heartbeat-0'); the tool it is
+    // about is the parent. Matching on the former would never find the line.
+    emit(s, {
+      key: s.key,
+      kind: 'toolProgress',
+      toolId: String(ev.parent_tool_use_id ?? ev.tool_use_id ?? ''),
+      elapsed: Number(ev.elapsed_time_seconds ?? 0)
+    })
+    return
+  }
+  if (type === 'system' && (ev.subtype === 'hook_started' || ev.subtype === 'hook_response')) {
+    const running = ev.subtype === 'hook_started'
+    const failed = !running && (ev.outcome === 'error' || (typeof ev.exit_code === 'number' && ev.exit_code !== 0))
+    emit(s, {
+      key: s.key,
+      kind: 'hook',
+      name: String(ev.hook_name ?? 'hook'),
+      event: String(ev.hook_event ?? ''),
+      running,
+      // Only a FAILURE carries text: a hook that did its job quietly is noise.
+      error: failed ? String(ev.stderr || ev.output || '').split('\n')[0].slice(0, 200) || 'failed' : null
     })
     return
   }
@@ -540,6 +574,9 @@ async function startSession(
     'stream-json',
     '--verbose',
     '--include-partial-messages',
+    // Hook lifecycle on the stream. A user's own hook that blocks a tool or
+    // fails silently is otherwise indistinguishable from the agent stalling.
+    '--include-hook-events',
     '--permission-mode',
     opts.permissionMode || 'acceptEdits'
   ]

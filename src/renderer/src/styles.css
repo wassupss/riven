@@ -8909,3 +8909,12 @@ body.browser-active .pane-skel > * {
   color: var(--warning, var(--accent));
   font-variant-numeric: tabular-nums;
 }
+
+/* How long a tool has been going, once it is long enough to wonder about. */
+.chat-tool-elapsed {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
