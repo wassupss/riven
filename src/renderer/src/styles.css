@@ -3808,6 +3808,63 @@ select {
 .picker-item:hover {
   background: var(--hover-strong);
 }
+/* A session row: the row itself resumes, the actions sit at its end and only
+   appear when the row is under the pointer or selected — a delete button that
+   is always visible next to a list of conversations invites the wrong click. */
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+.picker-row:hover,
+.picker-row.active {
+  background: var(--hover-strong);
+}
+.picker-row .picker-item:hover {
+  background: none;
+}
+.picker-acts {
+  display: flex;
+  gap: 2px;
+  padding-right: 6px;
+  opacity: 0;
+}
+.picker-row:hover .picker-acts,
+.picker-row.active .picker-acts,
+.picker-acts:focus-within {
+  opacity: 1;
+}
+.picker-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: none;
+  color: var(--fg-dim);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.picker-act:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.picker-act.danger:hover {
+  color: var(--danger, #e5534b);
+}
+.picker-rename {
+  flex: 1;
+  min-width: 0;
+  margin: 4px 6px;
+  padding: 6px 8px;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
 .picker-title {
   font-size: var(--text-sm);
   overflow: hidden;
@@ -8465,7 +8522,9 @@ body.browser-active .agp-tree-kid.flow::before,
 body.win-blurred .agp-tree-kid.flow::after,
 body.browser-active .agp-tree-kid.flow::after,
 body.win-blurred .agp-node-run,
-body.browser-active .agp-node-run {
+body.browser-active .agp-node-run,
+body.win-blurred .pane-skel > *,
+body.browser-active .pane-skel > * {
   animation-play-state: paused;
 }
 
@@ -8809,4 +8868,110 @@ body.browser-active .agp-node-run {
 .agp-talk-drop:hover {
   color: var(--fg);
   border-color: var(--accent-border);
+}
+
+/* A pane that has nothing to show yet.
+   
+   The gap between a pane appearing and its session being ready is seconds long
+   — a CLI spawning and resuming, or main handing back a terminal's model — and
+   an empty pane during it reads as a broken one. So the pane wears the SHAPE of
+   what is coming, dimmed and breathing, with one line saying what it is doing.
+   Nothing here is interactive; it never takes a click from the pane beneath. */
+.pane-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 16px;
+  pointer-events: none;
+  user-select: none;
+}
+/* Over a pane that draws itself (a terminal): dim what is behind rather than
+   sitting beside it. */
+.pane-loading.over {
+  position: absolute;
+  inset: 0;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+}
+.pane-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0.55;
+}
+.pane-skel-bubble,
+.pane-skel-line {
+  display: block;
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--bg-3) 0%,
+    color-mix(in srgb, var(--fg) 8%, var(--bg-3)) 50%,
+    var(--bg-3) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel 1.4s ease-in-out infinite;
+}
+/* A conversation's shape: one of yours, then the answer. */
+.pane-skel-bubble {
+  height: 34px;
+  width: 72%;
+}
+.pane-skel-bubble.me {
+  align-self: flex-end;
+  width: 42%;
+  height: 26px;
+}
+.pane-skel-bubble.short {
+  width: 48%;
+  height: 22px;
+}
+/* A terminal's shape: lines of output. */
+.pane-skel.term {
+  gap: 7px;
+  padding: 0 4px;
+}
+.pane-skel-line {
+  height: 10px;
+  width: 62%;
+  border-radius: var(--radius-sm);
+}
+.pane-skel-line.short {
+  width: 38%;
+}
+.pane-skel-line.tiny {
+  width: 22%;
+}
+.pane-loading-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+/* Staggered, so the bars do not pulse as one block. */
+.pane-skel > *:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.pane-skel > *:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.pane-skel > *:nth-child(4) {
+  animation-delay: 0.54s;
+}
+/* What the CLI is doing to ITSELF mid-turn — retrying, or held at a usage
+   limit. It sits where the elapsed time is, because that is where you look
+   when you are wondering why nothing is happening. */
+.chat-foot-note {
+  color: var(--warning, var(--accent));
+  font-variant-numeric: tabular-nums;
+}
+
+/* How long a tool has been going, once it is long enough to wonder about. */
+.chat-tool-elapsed {
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }

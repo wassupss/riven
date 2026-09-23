@@ -10,6 +10,8 @@ import { hookEnv } from './agentHooks'
 import { userContent, type ChatImageInput } from './chatContent'
 import { CodexChat } from './codexChat'
 import { readCodexTranscript } from './codexSessions'
+import { claimResult, noteBackgroundReport } from './turnClaim'
+import { scanTitles, titleOf } from './sessionTitle'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -39,6 +41,9 @@ import {
 export interface StartOpts {
   cwd: string
   resume?: string
+  // Resume a copy: the CLI clones the conversation under a NEW id and leaves the
+  // original untouched, so a session can be taken in two directions.
+  fork?: boolean
   model?: string
   permissionMode?: string
   // riven's OWN tools the user switched off (ask_user, open_file, …).
@@ -113,6 +118,9 @@ interface Session {
   // (an interrupted turn, a turn this side gave up on) closed whichever bubble
   // happened to be open, which was usually the NEXT one.
   turns: string[]
+  // Results owed to turns the CLI started by itself — see turnClaim.ts.
+  autoTurns: number
+  autoTurnAt: number
 }
 
 const sessions = new Map<string, Session>()
@@ -163,6 +171,19 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
   | { key: string; kind: 'turnDone'; costUSD: number | null; sessionId: string | null; error: string | null }
   | { key: string; kind: 'exit'; code: number }
+  // The CLI talking about itself, not about the answer. We parsed none of this
+  // before, so a request stuck in retry backoff or an account that had hit its
+  // limit looked exactly like a model thinking hard.
+  | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
+  | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  // A tool saying it is still going. Proof of life during a long call — without
+  // it a pane inside a twenty-minute test run looks like a pane that has died.
+  | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
+  | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'thinking'; tokens: number }
+  | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
+  | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
 
 function emit(s: Session, ev: ChatEvent): void {
@@ -300,6 +321,71 @@ function toolCode(name: string, input: Record<string, unknown>): string | null {
 
 function handleEvent(s: Session, ev: Record<string, unknown>): void {
   const type = ev.type as string
+  // ---- the CLI's own status, which used to go straight in the bin ----
+  if (type === 'system' && ev.subtype === 'api_retry') {
+    emit(s, {
+      key: s.key,
+      kind: 'retry',
+      attempt: Number(ev.attempt ?? 0),
+      max: Number(ev.max_retries ?? 0),
+      delayMs: Number(ev.retry_delay_ms ?? 0),
+      status: typeof ev.error_status === 'number' ? ev.error_status : null
+    })
+    return
+  }
+  if (type === 'rate_limit_event') {
+    const info = (ev.rate_limit_info ?? {}) as Record<string, unknown>
+    const kind = typeof info.rateLimitType === 'string' ? info.rateLimitType : undefined
+    // Utilization is not beside the status — it lives in the per-window table,
+    // keyed by the window this event is about ('five_hour', 'seven_day', …).
+    const windows = (info.unifiedWindows ?? {}) as Record<string, { utilization?: unknown }>
+    const used = kind ? windows[kind]?.utilization : undefined
+    emit(s, {
+      key: s.key,
+      kind: 'limit',
+      status: String(info.status ?? 'allowed'),
+      resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined,
+      limitKind: kind,
+      utilization: typeof used === 'number' ? used : undefined
+    })
+    return
+  }
+  if (type === 'tool_progress') {
+    // The heartbeat carries its own id ('<toolId>-heartbeat-0'); the tool it is
+    // about is the parent. Matching on the former would never find the line.
+    emit(s, {
+      key: s.key,
+      kind: 'toolProgress',
+      toolId: String(ev.parent_tool_use_id ?? ev.tool_use_id ?? ''),
+      elapsed: Number(ev.elapsed_time_seconds ?? 0)
+    })
+    return
+  }
+  if (type === 'system' && (ev.subtype === 'hook_started' || ev.subtype === 'hook_response')) {
+    const running = ev.subtype === 'hook_started'
+    const failed = !running && (ev.outcome === 'error' || (typeof ev.exit_code === 'number' && ev.exit_code !== 0))
+    emit(s, {
+      key: s.key,
+      kind: 'hook',
+      name: String(ev.hook_name ?? 'hook'),
+      event: String(ev.hook_event ?? ''),
+      running,
+      // Only a FAILURE carries text: a hook that did its job quietly is noise.
+      error: failed ? String(ev.stderr || ev.output || '').split('\n')[0].slice(0, 200) || 'failed' : null
+    })
+    return
+  }
+  if (type === 'system' && ev.subtype === 'compact_boundary') {
+    const meta = (ev.compact_metadata ?? {}) as Record<string, unknown>
+    emit(s, {
+      key: s.key,
+      kind: 'compact',
+      trigger: meta.trigger === 'manual' ? 'manual' : 'auto',
+      pre: Number(meta.pre_tokens ?? 0),
+      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined
+    })
+    return
+  }
   if (type === 'system' && ev.subtype === 'init') {
     s.sawInit = true
     s.sessionId = (ev.session_id as string) ?? s.sessionId
@@ -397,6 +483,42 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     }
     return
   }
+  // A long thought emits nothing else — no text, no tool, no partial. The pane
+  // read that silence as a stall and warned about no response while the model
+  // was working. This is the only heartbeat a thinking turn has.
+  if (type === 'system' && ev.subtype === 'thinking_tokens') {
+    emit(s, { key: s.key, kind: 'thinking', tokens: Number(ev.estimated_tokens ?? 0) })
+    return
+  }
+  // The live list of background tasks, authoritative and complete: the CLI sends
+  // it whenever one starts or ends. A backgrounded command used to vanish from
+  // the pane the moment the turn ended — still running, with nothing on screen
+  // to say so, and nothing when it finished either.
+  if (type === 'system' && ev.subtype === 'background_tasks_changed') {
+    const raw = Array.isArray(ev.tasks) ? (ev.tasks as Record<string, unknown>[]) : []
+    emit(s, {
+      key: s.key,
+      kind: 'bgTasks',
+      tasks: raw.map((x) => ({ id: String(x.task_id ?? ''), label: String(x.description ?? '') })),
+      // Pane-level state, not part of any turn: tagging it with the turn in
+      // flight would get it dropped as stale once that turn is replaced.
+      turn: null
+    })
+    return
+  }
+  if (type === 'system' && ev.subtype === 'task_notification') {
+    // Idle CLI + a finished task = the CLI is about to run a turn of its own.
+    noteBackgroundReport(s)
+    emit(s, {
+      key: s.key,
+      kind: 'taskDone',
+      taskId: String(ev.task_id ?? ''),
+      status: String(ev.status ?? 'completed'),
+      label: String(ev.summary ?? ''),
+      turn: null
+    })
+    return
+  }
   if (type === 'result') {
     s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
     s.sessionId = (ev.session_id as string) ?? s.sessionId
@@ -411,8 +533,11 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     }
     const isError = ev.is_error === true || (ev.subtype && ev.subtype !== 'success')
     // This result ends the OLDEST unanswered message, which is not necessarily
-    // the turn the pane is showing now.
-    const turn = s.turns.shift() ?? null
+    // the turn the pane is showing now — unless the CLI started this turn ITSELF
+    // to report a background task, in which case no message is waiting on it.
+    // The claim expires: if that self-started turn never materialises, a stale
+    // token would swallow a real answer and leave the pane thinking forever.
+    const turn = claimResult(s)
     emit(s, {
       key: s.key,
       kind: 'turnDone',
@@ -499,6 +624,9 @@ async function startSession(
     'stream-json',
     '--verbose',
     '--include-partial-messages',
+    // Hook lifecycle on the stream. A user's own hook that blocks a tool or
+    // fails silently is otherwise indistinguishable from the agent stalling.
+    '--include-hook-events',
     '--permission-mode',
     opts.permissionMode || 'acceptEdits'
   ]
@@ -544,8 +672,11 @@ async function startSession(
   // history (verified: three freshly created panes all reported the newest
   // session id in ~/.claude, whose file the CLI never even touched). Pinning a
   // fresh uuid makes "no resume id" mean what it says.
-  if (opts.resume) args.push('--resume', opts.resume)
-  else args.push('--session-id', randomUUID())
+  if (opts.resume) {
+    args.push('--resume', opts.resume)
+    // The new id comes back in the init event, which the pane already saves.
+    if (opts.fork) args.push('--fork-session')
+  } else args.push('--session-id', randomUUID())
 
   // The same hooks a terminal CLI gets. Lifecycle hooks are redundant here (a
   // chat pane reads its own stream) and land on a pane main has no PTY session
@@ -587,7 +718,9 @@ async function startSession(
     lastActive: Date.now(),
     turnBusy: false,
     parking: false,
-    turns: []
+    turns: [],
+    autoTurns: 0,
+    autoTurnAt: 0
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })
@@ -731,7 +864,13 @@ export function registerAgentChatHandlers(): void {
     if (s) {
       s.turnBusy = true
       s.lastActive = Date.now()
-      if (turn) s.turns.push(turn)
+      // ALWAYS push, even when the renderer did not name the turn (a bare
+      // /clear does not). One user line produces exactly one result, so a line
+      // with no id still has to occupy a slot — without it the queue runs one
+      // short and the NEXT turn's result is handed to the wrong id, which the
+      // pane then reads as "your new message is already done" while the agent
+      // is still working on it.
+      s.turns.push(turn ?? `main_${randomUUID()}`)
       writeLine(s, line)
       return
     }
@@ -759,7 +898,7 @@ export function registerAgentChatHandlers(): void {
       if (!revived) return
       revived.turnBusy = true
       revived.lastActive = Date.now()
-      if (turn) revived.turns.push(turn)
+      revived.turns.push(turn ?? `main_${randomUUID()}`)
       writeLine(revived, line)
     })
   })
@@ -864,6 +1003,16 @@ export function registerAgentChatHandlers(): void {
   // List resumable past sessions for a cwd (native /resume), newest first.
   ipcMain.handle('chat:sessions', async (_e, cwd: string, configDir?: string) =>
     listSessions(cwd, configDir)
+  )
+
+  ipcMain.handle(
+    'chat:sessionRename',
+    async (_e, cwd: string, id: string, title: string, configDir?: string) =>
+      renameSession(cwd, id, title, configDir)
+  )
+
+  ipcMain.handle('chat:sessionDelete', async (_e, cwd: string, id: string, configDir?: string) =>
+    deleteSession(cwd, id, configDir)
   )
 
   // Custom agents defined in .claude/agents/<name>.md (project + ~), usable as
@@ -1214,30 +1363,64 @@ async function listSessions(cwd: string, configDir?: string): Promise<SessionSum
     try {
       const stat = await fsp.stat(full)
       const raw = await fsp.readFile(full, 'utf8')
-      const lines = raw.split('\n').filter(Boolean)
-      let title = ''
-      let messages = 0
-      for (const l of lines) {
-        let j: Record<string, unknown>
-        try {
-          j = JSON.parse(l)
-        } catch {
-          continue
-        }
-        if (j.type === 'ai-title' && typeof j.title === 'string' && j.title) title = j.title
-        if (j.type === 'user' || j.type === 'assistant') messages++
-        if (!title && j.type === 'user') {
-          const c = (j.message as Record<string, unknown>)?.content
-          if (typeof c === 'string' && !c.startsWith('<')) title = c.slice(0, 60)
-        }
-      }
-      if (messages === 0) continue
-      out.push({ id: f.replace(/\.jsonl$/, ''), title: title || '(제목 없음)', mtime: stat.mtimeMs, messages })
+      const scan = scanTitles(raw.split('\n'))
+      if (scan.messages === 0) continue
+      out.push({
+        id: f.replace(/\.jsonl$/, ''),
+        title: titleOf(scan, 60) || '(제목 없음)',
+        mtime: stat.mtimeMs,
+        messages: scan.messages
+      })
     } catch {
       /* skip unreadable */
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, 50)
+}
+
+// A session id is a filename here, and it arrives from the renderer — so it is
+// checked, not trusted. Anything but a plain uuid could walk out of the project
+// directory, and delete is not an undoable operation.
+const isSessionId = (id: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+
+/**
+ * Name a past session.
+ *
+ * The CLI stores a rename as one more line in the transcript (`custom-title`),
+ * which is how its own /rename works — so a name set here shows up in the CLI
+ * too, and vice versa.
+ */
+export async function renameSession(
+  cwd: string,
+  id: string,
+  title: string,
+  configDir?: string
+): Promise<boolean> {
+  const name = title.trim()
+  if (!isSessionId(id) || !name) return false
+  const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
+  try {
+    await fsp.appendFile(
+      full,
+      JSON.stringify({ type: 'custom-title', customTitle: name, sessionId: id }) + '\n',
+      'utf8'
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Forget a past session: the transcript file IS the session. */
+export async function deleteSession(cwd: string, id: string, configDir?: string): Promise<boolean> {
+  if (!isSessionId(id)) return false
+  try {
+    await fsp.unlink(path.join(projectDir(cwd, configDir), `${id}.jsonl`))
+    return true
+  } catch {
+    return false
+  }
 }
 
 // Reconstruct a session transcript for display (user text + assistant text/tools).
@@ -1257,24 +1440,7 @@ export async function readSessionTitle(
   } catch {
     return null
   }
-  let firstUser = ''
-  for (const line of raw.split('\n')) {
-    if (!line) continue
-    let j: Record<string, unknown>
-    try {
-      j = JSON.parse(line)
-    } catch {
-      continue
-    }
-    // The CLI writes an ai-title entry once it has summarised the conversation;
-    // prefer it, and fall back to the opening message the way the picker does.
-    if (j.type === 'ai-title' && typeof j.title === 'string' && j.title.trim()) return j.title.trim()
-    if (!firstUser && j.type === 'user') {
-      const c = (j.message as Record<string, unknown>)?.content
-      if (typeof c === 'string' && !c.startsWith('<')) firstUser = c.split('\n')[0].trim()
-    }
-  }
-  return firstUser ? (firstUser.length > 48 ? firstUser.slice(0, 48) + '…' : firstUser) : null
+  return titleOf(scanTitles(raw.split('\n')), 48) || null
 }
 
 async function readSessionTranscript(

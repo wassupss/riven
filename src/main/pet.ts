@@ -76,8 +76,12 @@ function broadcast(channel: string): void {
 
 async function open(): Promise<void> {
   if (win && !win.isDestroyed()) {
-    note('pet.open → showInactive (existing window)')
-    win.showInactive()
+    // Only when it is actually hidden: ordering an already-visible window to the
+    // front is another way to drag the whole app forward.
+    if (!win.isVisible()) {
+      note('pet.open → showInactive (existing window)')
+      win.showInactive()
+    }
     return
   }
   note('pet.open → creating window')
@@ -102,6 +106,14 @@ async function open(): Promise<void> {
     // Opens as an ordinary window; the renderer lifts it straight away if the
     // user asked for that (settings.petOnTop → 'pet:setOnTop').
     alwaysOnTop: false,
+    // A desk pet must never take the keyboard. As an ordinary focusable window
+    // it could: macOS orders a window forward when it is shown or resized, and
+    // the pet resizes every time it speaks (the balloon changes its height) —
+    // which pulled riven in front of whatever the user was doing and dropped the
+    // caret out of the chat box mid-sentence. Non-focusable windows still take
+    // mouse events, so every button and the drag still work; the one thing that
+    // needs the keyboard (renaming) asks for focus and gives it straight back.
+    focusable: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -205,4 +217,12 @@ export function registerPetHandlers(): void {
     announce(!!on)
   })
   ipcMain.handle('pet:isOnTop', () => !!win && !win.isDestroyed() && win.isAlwaysOnTop())
+  // Renaming the pet needs a keyboard, which a non-focusable window cannot have.
+  // It asks for focus for exactly that moment and hands it back after.
+  ipcMain.handle('pet:focusable', (_e, on: boolean) => {
+    if (!win || win.isDestroyed()) return
+    note(`pet setFocusable(${!!on})`)
+    win.setFocusable(!!on)
+    if (on) win.focus()
+  })
 }

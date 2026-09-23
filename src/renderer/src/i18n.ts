@@ -720,7 +720,21 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.thinking': { ko: '생각 중', en: 'Thinking' },
   'chat.writing': { ko: '작성 중', en: 'Writing' },
   'chat.done': { ko: '완료', en: 'Done' },
+  'term.restoring': { ko: '세션 불러오는 중…', en: 'Restoring session…' },
+  'chat.starting': { ko: '에이전트 준비 중…', en: 'Starting the agent…' },
   'chat.quiet': { ko: '· 무응답 {d}', en: '· silent {d}' },
+  'chat.retrying': { ko: '재시도 {n}/{max} · {s}초 후', en: 'retry {n}/{max} · in {s}s' },
+  'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
+  'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
+  'chat.bgTask': { ko: '백그라운드 실행 중: {what}', en: 'running in background: {what}' },
+  'chat.bgTaskPlain': { ko: '백그라운드 작업', en: 'background task' },
+  'chat.bgTaskDone': { ko: '백그라운드 작업 완료 · {what}', en: 'background task done · {what}' },
+  'chat.bgTaskFailed': { ko: '백그라운드 작업 실패 · {what}', en: 'background task failed · {what}' },
+  'chat.limitHit': { ko: '사용 한도에 걸렸습니다', en: 'Usage limit reached' },
+  'chat.limitNear': { ko: '사용 한도에 근접했습니다', en: 'Close to the usage limit' },
+  'chat.limitResets': { ko: '{n}분 후 풀림', en: 'resets in {n} min' },
+  'chat.compactAuto': { ko: '컨텍스트 자동 압축', en: 'Context compacted automatically' },
+  'chat.compactManual': { ko: '컨텍스트 압축', en: 'Context compacted' },
   'chat.quietHint': {
     ko: '에이전트가 이 시간 동안 아무것도 보내지 않았습니다. 도구를 오래 돌리는 중일 수도 있고, CLI가 API 응답을 기다리며 멈춰 있을 수도 있습니다 — 그럴 땐 중단하고 다시 보내세요.',
     en: 'Nothing has arrived from the agent for this long. It may be inside a long tool call, or its CLI may be stuck waiting on the API — if so, stop it and send again.'
@@ -751,6 +765,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.resumeTitle': { ko: '이전 세션 불러오기', en: 'Resume a session' },
   'chat.modelTitle': { ko: '모델 선택', en: 'Select model' },
   'chat.resumeEmpty': { ko: '이 프로젝트에 저장된 세션이 없습니다.', en: 'No saved sessions for this project.' },
+  'chat.sessionFork': { ko: '복제해서 이어하기', en: 'Resume a copy' },
+  'chat.sessionRename': { ko: '이름 바꾸기', en: 'Rename' },
+  'chat.sessionDelete': { ko: '세션 삭제', en: 'Delete session' },
+  'chat.sessionDeleteConfirm': {
+    ko: '"{title}" 세션을 삭제할까요?\n대화 기록이 지워지고 되돌릴 수 없습니다.',
+    en: 'Delete the session "{title}"?\nIts transcript is removed and cannot be recovered.'
+  },
   'chat.mcpTitle': { ko: 'MCP 서버', en: 'MCP servers' },
   'chat.mcpEmpty': { ko: '연결된 MCP 서버가 없습니다.', en: 'No MCP servers connected.' },
   'chat.mcpConnected': { ko: '연결됨', en: 'Connected' },
@@ -812,6 +833,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'team.ev.error': { ko: '실패', en: 'failed' },
   'team.ev.roster': { ko: '구성', en: 'roster' },
   'team.lead': { ko: '리드', en: 'Lead' },
+  'team.adopt': { ko: '열린 에이전트 넣기', en: 'Adopt an open agent' },
+  'team.adoptTitle': { ko: '그룹에 넣을 에이전트 번호', en: 'Number of the agent to adopt' },
+  'team.noneToAdopt': {
+    ko: '그룹에 넣을 수 있는 열린 에이전트가 없습니다. 채팅 패널이나 CLI가 도는 터미널을 먼저 여세요.',
+    en: 'No open agent to adopt. Open a chat pane, or a terminal running a CLI, first.'
+  },
   'team.busy': { ko: '작업 중', en: 'Working' },
   'team.needsYou': { ko: '확인 필요', en: 'Needs you' },
   'team.answered': { ko: '답변 옴', en: 'Answered' },

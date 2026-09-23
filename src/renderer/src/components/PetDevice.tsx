@@ -715,8 +715,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
                 : null)
 
   const doRename = async (): Promise<void> => {
-    const v = await promptInput({ title: t('pet.renameTitle'), initial: pet.name })
-    if (v !== null) rename(v.trim())
+    // In its own window the pet cannot focus itself (by design — see pet.ts), so
+    // it borrows the keyboard for the prompt and gives it straight back.
+    if (detached) await window.api.pet.focusable(true)
+    try {
+      const v = await promptInput({ title: t('pet.renameTitle'), initial: pet.name })
+      if (v !== null) rename(v.trim())
+    } finally {
+      if (detached) void window.api.pet.focusable(false)
+    }
   }
   const say = (msg: string, ms = FLASH_MS): void => {
     setFlash(msg)

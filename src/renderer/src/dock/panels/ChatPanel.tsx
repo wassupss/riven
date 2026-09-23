@@ -17,6 +17,8 @@ import {
   Copy,
   Bot,
   History,
+  GitBranch,
+  Trash2,
   Server,
   RotateCw,
   Clock,
@@ -45,8 +47,9 @@ import { useT, t as staticT, type TFn } from '../../i18n'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
-import { settleStaleTurns, isStaleEvent } from '../../lib/chatTurns'
+import { settleStaleTurns, isStaleEvent, endsOpenTurn } from '../../lib/chatTurns'
 import { modelsFor } from '../../lib/models'
+import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
 
 // An image waiting in the composer to go with the next message.
@@ -106,6 +109,9 @@ interface ToolLine {
   parent?: string | null // subagent (Task) tool_use id this call belongs to
   done?: boolean // its tool_result arrived (subagent/tool finished)
   error?: boolean
+  // Seconds the CLI last reported this call as still running. Shown on a long
+  // tool so a quiet minute reads as "the test suite is running", not as a stall.
+  elapsed?: number
   // The turn ended (stop / failure) while THIS tool was still awaiting its result.
   // Tools that already returned keep their own "done" — stopping a turn must not
   // retroactively re-label work that actually completed.
@@ -365,6 +371,7 @@ function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
         </span>
         <span className="chat-tool-name">{tl.name}</span>
         {tl.detail && <span className="chat-tool-detail">{tl.detail}</span>}
+        {!tl.done && tl.elapsed ? <span className="chat-tool-elapsed">{fmtDur(tl.elapsed * 1000)}</span> : null}
       </div>
       {tl.code && <ChatCode code={tl.code} diff={isEditName(tl.name)} path={tl.path} />}
     </div>
@@ -461,6 +468,10 @@ const ToolGroup = memo(function ToolGroup({
   }
   const latest = tools[tools.length - 1]
   const state = running ? ' running' : interrupted ? ' interrupted' : ' done'
+  // How long the tool still in flight has been running. It belongs on the HEAD,
+  // not only on the line inside: the group is collapsed by default, so a badge
+  // hidden in the body would answer "is this stuck?" for nobody.
+  const slow = tools.find((tl) => !tl.done && tl.elapsed)
   return (
     <div className={`chat-toolgroup${state}`}>
       <button className="chat-toolgroup-head" onClick={() => setOpen((o) => !o)}>
@@ -497,6 +508,7 @@ const ToolGroup = memo(function ToolGroup({
             )}
           </span>
         )}
+        {slow?.elapsed ? <span className="chat-tool-elapsed">{fmtDur(slow.elapsed * 1000)}</span> : null}
         <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && (
@@ -561,8 +573,20 @@ const AssistantText = memo(function AssistantText({
 // which is exactly what it looked like when it happened (child alive, in a turn,
 // one open connection to the API, no output, no stderr, 36 minutes).
 const QUIET_MS = 90_000
+// How long a hook may run before the pane bothers to mention it. Most return in
+// milliseconds; only a slow one explains a pause worth explaining.
+const HOOK_NOTE_MS = 1_500
 
-function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: number } }): JSX.Element {
+function RunningFoot({
+  msg,
+  lastEvent,
+  note
+}: {
+  msg: Msg
+  lastEvent?: { current: number }
+  /** What the CLI is doing to itself right now (retrying, rate limited). */
+  note?: string | null
+}): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
   useEffect(() => {
@@ -584,7 +608,8 @@ function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: numb
         {fmtDur(elapsed)}
         {spent && ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
       </span>
-      {quiet > QUIET_MS && (
+      {note && <span className="chat-foot-note">{note}</span>}
+      {!note && quiet > QUIET_MS && (
         <span className="chat-foot-quiet" title={t('chat.quietHint')}>
           {t('chat.quiet', { d: fmtDur(quiet) })}
         </span>
@@ -598,10 +623,12 @@ function RunningFoot({ msg, lastEvent }: { msg: Msg; lastEvent?: { current: numb
 const ChatMessage = memo(function ChatMessage({
   msg,
   now,
-  lastEvent
+  lastEvent,
+  note
 }: {
   msg: Msg
   now: number
+  note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
 }): JSX.Element {
@@ -681,7 +708,7 @@ const ChatMessage = memo(function ChatMessage({
       )}
       <div className="chat-turn-foot">
         {!msg.done ? (
-          <RunningFoot msg={msg} lastEvent={lastEvent} />
+          <RunningFoot msg={msg} lastEvent={lastEvent} note={note} />
         ) : (
           <span className="chat-foot-done">
             {msg.interrupted ? (
@@ -1086,17 +1113,41 @@ function ResumeCard({
   // The pane's CLAUDE_CONFIG_DIR — past sessions live under the profile the
   // pane runs as, not under ~/.claude.
   configDir?: string
-  onResume: (id: string) => void
+  onResume: (id: string, fork?: boolean) => void
   onDismiss: () => void
 }): JSX.Element {
   const t = useT()
   const [sessions, setSessions] = useState<
     Array<{ id: string; title: string; mtime: number; messages: number }> | null
   >(null)
+  // Which row is being renamed, and to what. Inline, because naming a
+  // conversation while looking at the list is the only time anyone does it.
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const reload = (): void => {
+    void window.api.chat.sessions(cwd, configDir).then(setSessions)
+  }
   useEffect(() => {
     window.api.chat.sessions(cwd, configDir).then(setSessions)
   }, [cwd, configDir])
+  const commitRename = async (id: string): Promise<void> => {
+    const name = draft.trim()
+    setEditing(null)
+    if (!name) return
+    // Optimistic: the row says its new name before the file is touched, and the
+    // reload behind it is what makes it true.
+    setSessions((prev) => prev?.map((s) => (s.id === id ? { ...s, title: name } : s)) ?? prev)
+    await window.api.chat.sessionRename(cwd, id, name, configDir)
+    reload()
+  }
+  const removeSession = async (id: string, title: string): Promise<void> => {
+    // The transcript file IS the session: there is nothing to undo this with.
+    if (!window.confirm(t('chat.sessionDeleteConfirm', { title }))) return
+    setSessions((prev) => prev?.filter((s) => s.id !== id) ?? prev)
+    await window.api.chat.sessionDelete(cwd, id, configDir)
+    reload()
+  }
   const list = sessions ?? []
   const { index, setIndex, ref, onKeyDown } = useCardNav(
     list.length,
@@ -1123,18 +1174,67 @@ function ResumeCard({
       ) : (
         <div className="chat-card-scroll">
           {list.map((s, i) => (
-            <button
-              key={s.id}
-              ref={(el) => (itemRefs.current[i] = el)}
-              className={`picker-item${index === i ? ' active' : ''}`}
-              onMouseMove={() => index !== i && setIndex(i)}
-              onClick={() => onResume(s.id)}
-            >
-              <span className="picker-title">{s.title}</span>
-              <span className="picker-meta">
-                {fmtRelative(s.mtime, now, t)} · {s.messages}
-              </span>
-            </button>
+            <div key={s.id} className={`picker-row${index === i ? ' active' : ''}`}>
+              {editing === s.id ? (
+                <input
+                  className="picker-rename"
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => void commitRename(s.id)}
+                  onKeyDown={(e) => {
+                    // Own these keys: the card's list navigation is listening too.
+                    e.stopPropagation()
+                    if (e.key === 'Enter') void commitRename(s.id)
+                    if (e.key === 'Escape') setEditing(null)
+                  }}
+                />
+              ) : (
+                <button
+                  ref={(el) => (itemRefs.current[i] = el)}
+                  className="picker-item"
+                  onMouseMove={() => index !== i && setIndex(i)}
+                  onClick={() => onResume(s.id)}
+                >
+                  <span className="picker-title">{s.title}</span>
+                  <span className="picker-meta">
+                    {fmtRelative(s.mtime, now, t)} · {s.messages}
+                  </span>
+                </button>
+              )}
+              {editing !== s.id && (
+                <span className="picker-acts">
+                  {/* Fork: take this conversation somewhere else without
+                      spending the original. */}
+                  <button
+                    className="picker-act"
+                    title={t('chat.sessionFork')}
+                    onClick={() => onResume(s.id, true)}
+                  >
+                    <GitBranch size={12} />
+                  </button>
+                  <button
+                    className="picker-act"
+                    title={t('chat.sessionRename')}
+                    onClick={() => {
+                      // The row shows a truncated title; seeding the box with it
+                      // would save the ellipsis as part of the name.
+                      setDraft(s.title.replace(/…$/, ''))
+                      setEditing(s.id)
+                    }}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    className="picker-act danger"
+                    title={t('chat.sessionDelete')}
+                    onClick={() => void removeSession(s.id, s.title)}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </span>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -1378,6 +1478,29 @@ export default function ChatPanel({
     return settleStaleTurns(arr, Date.now(), running)
   })
   const [restoring, setRestoring] = useState(false)
+  // From mount until the CLI says hello (its `init`). Spawning it — and resuming
+  // the session it was in — takes a few seconds, and until then the pane is
+  // simply empty: indistinguishable from a broken one, which is exactly how it
+  // read after a restart with several panes coming back at once.
+  const [booting, setBooting] = useState(true)
+  // What the CLI last said about ITSELF (a retry it is sitting in, a limit it
+  // hit). Cleared as soon as real output resumes, so it never lingers.
+  const [selfNote, setSelfNote] = useState<string | null>(null)
+  // Commands the agent put in the background; the CLI resends the whole list
+  // whenever it changes, so this is a replace, never a merge.
+  const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
+  const bgLabels = useRef(new Map<string, string>())
+  const hookTimer = useRef(0)
+  const selfNoteRef = useRef<string | null>(null)
+  selfNoteRef.current = selfNote
+  // …but never indefinitely, and never over a transcript. A restored pane whose
+  // agent simply has nothing to say yet is IDLE, not loading: if its CLI never
+  // announces itself (it may be parked until the first message), a spinner left
+  // up forever is a worse lie than the blank pane it replaced.
+  useEffect(() => {
+    const id = setTimeout(() => setBooting(false), 10_000)
+    return () => clearTimeout(id)
+  }, [])
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
   // session later (see below) must be observed from the store or the restore
   // effect would never fire.
@@ -1718,15 +1841,112 @@ export default function ChatPanel({
       // that turn, not to the message the user has sent since — applying it here
       // closed the new bubble a second after it opened, and the message looked
       // answered by nothing.
+      // A turn ENDING is the one event that must match exactly. Anything else
+      // is at worst cosmetic, but a turnDone applied to the wrong bubble closes
+      // a message the agent is still working on — it showed "완료" a second
+      // after being sent while the work carried on underneath. So once this pane
+      // has a turn open, only THAT turn may end it; an event that names another
+      // turn, or names none at all, is not about this one.
+      if (e.kind === 'turnDone' && !endsOpenTurn(e.turn, openTurnRef.current)) {
+        // Whoever is waiting on the turn it DOES name still deserves its answer.
+        if (e.turn) settleTurnWaiters(e.turn)
+        return
+      }
       if (isStaleEvent(e.turn, openTurnRef.current)) {
-        // …but whoever is WAITING on that turn still deserves its answer. Dropping
-        // the event wholesale left a delegation hanging until its own timeout —
-        // the group panel sat on "보내는 중" with the agent already idle.
         if (e.kind === 'turnDone' && e.turn) settleTurnWaiters(e.turn)
         return
       }
       lastEventRef.current = Date.now()
+      setBooting(false)
       switch (e.kind) {
+        // The CLI is retrying the request: say so, with the attempt and the wait,
+        // instead of leaving the pane looking like a very long thought.
+        case 'retry':
+          setSelfNote(retryLabel({ attempt: e.attempt, max: e.max, delayMs: e.delayMs, status: e.status }, t))
+          break
+        case 'limit':
+          // A warning is worth showing; "allowed" is just noise.
+          setSelfNote(
+            e.status === 'allowed'
+              ? null
+              : limitLabel({ status: e.status, resetsAt: e.resetsAt, kind: e.limitKind }, t)
+          )
+          break
+        case 'toolProgress':
+          // Proof of life: it also refreshes the activity clock above, so the
+          // "무응답" warning no longer fires during a long tool call.
+          if (e.elapsed > 5) {
+            patchLast((m) => ({
+              ...m,
+              tools: m.tools.map((tl) => (tl.toolId === e.toolId ? { ...tl, elapsed: e.elapsed } : tl)),
+              items: m.items.map((it) =>
+                it.type === 'tool' && it.tool.toolId === e.toolId
+                  ? { type: 'tool', tool: { ...it.tool, elapsed: e.elapsed } }
+                  : it
+              )
+            }))
+          }
+          break
+        case 'hook':
+          // A hook that ran and behaved says nothing. One that is STILL running
+          // explains the pause; one that failed explains why nothing happened.
+          if (e.error) {
+            setError(t('chat.hookFailed', { name: e.name, why: e.error }))
+            break
+          }
+          // Hooks fire several times a turn and usually return in milliseconds,
+          // so announcing every one turned the foot into a flicker. Only a hook
+          // still running after a beat is worth explaining.
+          window.clearTimeout(hookTimer.current)
+          if (e.running) {
+            hookTimer.current = window.setTimeout(
+              () => setSelfNote(t('chat.hookRunning', { name: e.name })),
+              HOOK_NOTE_MS
+            )
+          } else {
+            // Only retract OUR note: a retry or limit notice outranks it.
+            setSelfNote((n) => (n?.includes(e.name) ? null : n))
+          }
+          break
+        case 'thinking':
+          // Nothing to draw — reaching here already refreshed the activity clock
+          // above, which is the whole point: a thinking turn is not a stalled one.
+          break
+        case 'bgTasks':
+          // Remember what each task was: the list is emptied BEFORE the
+          // notification arrives, so by then only this has its name.
+          for (const task of e.tasks) if (task.label) bgLabels.current.set(task.id, task.label)
+          setBgTasks(e.tasks)
+          break
+        case 'taskDone':
+          // It finished outside any turn, so it goes in the transcript as its own
+          // line: the pane may have been idle for minutes when this lands.
+          patchLast((m) => ({
+            ...m,
+            items: [
+              ...m.items,
+              {
+                type: 'text' as const,
+                text: `\n_${
+                  e.status === 'completed'
+                    ? // Its name, not the CLI's sentence about it — the sentence
+                      // repeats "background command … completed" around it.
+                      t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
+                    : // A failure says WHY only in the CLI's own summary.
+                      t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' })
+                }_\n`
+              }
+            ]
+          }))
+          break
+        case 'compact':
+          // Not a status — a thing that HAPPENED to the conversation, so it goes
+          // in the transcript where the shortening is visible.
+          patchLast((m) => ({
+            ...m,
+            items: [...m.items, { type: 'text' as const, text: `\n_${compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t)}_\n` }]
+          }))
+          break
         case 'init':
           setModel(e.model)
           setPickedModel(modelAlias(e.model))
@@ -1734,6 +1954,7 @@ export default function ChatPanel({
           if (e.sessionId) savePane({ session: e.sessionId })
           break
         case 'text': {
+          if (selfNoteRef.current) setSelfNote(null)
           ensureInFlight()
           const now = performance.now()
           if (lastArrivalRef.current) {
@@ -1886,6 +2107,7 @@ export default function ChatPanel({
       off()
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
       if (flushTimerRef.current != null) clearTimeout(flushTimerRef.current)
+      window.clearTimeout(hookTimer.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatKey, workspace, patchLast])
@@ -2615,7 +2837,7 @@ export default function ChatPanel({
 
   // Load a past session INTO this pane: resume its CLI context and show its
   // reconstructed transcript (native /resume).
-  const resumeSession = async (id: string): Promise<void> => {
+  const resumeSession = async (id: string, fork = false): Promise<void> => {
     const cwd = pathOf(workspace)
     window.api.chat.stop(chatKey)
     setRestoring(true)
@@ -2639,6 +2861,9 @@ export default function ChatPanel({
       cli,
           cwd,
           resume: id,
+          // The forked copy gets a new id from the CLI, which arrives in `init`
+          // and replaces what savePane wrote above.
+          fork,
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
@@ -2736,7 +2961,7 @@ export default function ChatPanel({
             cwd={pathOf(workspace)}
             configDir={claudeConfigDirFor(workspace)}
             now={now}
-            onResume={(id) => void handlers.current.resumeSession(id)}
+            onResume={(id, fork) => void handlers.current.resumeSession(id, fork)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : msg.card === 'model' ? (
@@ -2751,7 +2976,7 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} />
+          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} note={selfNote} />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]
@@ -2822,6 +3047,22 @@ export default function ChatPanel({
             {t('chat.loadEarlier', { n: msgs.length - limit })}
           </button>
         )}
+        {booting && msgs.length === 0 && (
+          // The pane's own loading state: the shape of a conversation, dimmed,
+          // so the wait reads as "this is coming" rather than as an empty pane
+          // that might be broken.
+          <div className="pane-loading" role="status">
+            <div className="pane-skel">
+              <span className="pane-skel-bubble me" />
+              <span className="pane-skel-bubble" />
+              <span className="pane-skel-bubble short" />
+            </div>
+            <div className="pane-loading-label">
+              <Loader2 size={12} className="spin" />
+              {pane0.session ? t('chat.restoring') : t('chat.starting')}
+            </div>
+          </div>
+        )}
         {restoring && <div className="chat-resumed">{t('chat.restoring')}</div>}
         {!restoring && restoredRef.current && <div className="chat-resumed">{t('chat.resumed')}</div>}
         {messageList}
@@ -2865,6 +3106,20 @@ export default function ChatPanel({
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* Backgrounded commands outlive the turn that started them. Without this
+          the pane went quiet with work still running, and the only sign it had
+          ever happened was the agent mentioning it, minutes later. */}
+      {bgTasks.length > 0 && (
+        <div className="chat-agents-live">
+          {bgTasks.map((task) => (
+            <div key={task.id} className="cal-item" title={t('chat.bgTask', { what: task.label })}>
+              <TerminalSquare size={11} />
+              <span className="cal-label">{task.label || t('chat.bgTaskPlain')}</span>
+            </div>
+          ))}
         </div>
       )}
 

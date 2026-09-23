@@ -98,6 +98,14 @@ export type ChatEvent = { turn?: string | null } & (
       error: string | null
     }
   | { key: string; kind: 'exit'; code: number }
+  | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
+  | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
+  | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'thinking'; tokens: number }
+  | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
+  | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
 
@@ -237,6 +245,8 @@ const api = {
       opts: {
         cwd: string
         resume?: string
+        /** Resume into a COPY, leaving the original session as it was. */
+        fork?: boolean
         model?: string
         permissionMode?: string
         mcpDisabled?: string[]
@@ -299,6 +309,12 @@ const api = {
       configDir?: string
     ): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
       ipcRenderer.invoke('chat:sessions', cwd, configDir),
+    // Naming a past session writes into the CLI's own transcript, so the name
+    // is the same one `claude --resume` shows.
+    sessionRename: (cwd: string, id: string, title: string, configDir?: string): Promise<boolean> =>
+      ipcRenderer.invoke('chat:sessionRename', cwd, id, title, configDir),
+    sessionDelete: (cwd: string, id: string, configDir?: string): Promise<boolean> =>
+      ipcRenderer.invoke('chat:sessionDelete', cwd, id, configDir),
     agents: (
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
@@ -930,6 +946,9 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    // Borrow the keyboard (renaming); the pet's window is non-focusable so that
+    // it can never steal focus on its own.
+    focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and
     // delivered to whichever window is showing the device.
     press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),

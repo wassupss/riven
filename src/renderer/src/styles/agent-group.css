@@ -894,3 +894,10 @@
     width: 168px;
   }
 }
+
+/* A member that is a CLI in a riven terminal rather than a native chat pane. */
+.agp-node-term {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
