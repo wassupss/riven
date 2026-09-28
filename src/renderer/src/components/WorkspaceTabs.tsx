@@ -43,12 +43,14 @@ export default function WorkspaceTabs(): JSX.Element {
 
   return (
     <div className="ws-rail">
+      {/* Work the machine does while you are elsewhere, on a line of its own
+          above the workspaces. It was an icon wedged into the header row twice
+          before — beside the window title, then beside "워크스페이스" — and a
+          row that already holds a label and an action has no room for a third
+          thing on a small window. */}
+      <ScheduleMenu />
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
-        {/* Work the machine does while you are elsewhere. Here rather than in
-            the window's own header, which is a single line shared with the
-            workspace name and wrapped to two the moment the window was small. */}
-        <ScheduleMenu />
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>

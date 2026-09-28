@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock, Plus } from 'lucide-react'
+import { Clock, Plus, ChevronDown } from 'lucide-react'
 import { useT } from '../i18n'
 import { togglePanel } from '../dock/registry'
 import { useJobs, nextRunOf, type Job } from '../state/jobs'
@@ -23,7 +23,7 @@ function nextUp(jobs: Job[], now: number): Array<{ job: Job; at: number | null }
 
 export default function ScheduleMenu(): JSX.Element {
   const t = useT()
-  const [open, setOpen] = useState<{ x: number; y: number } | null>(null)
+  const [open, setOpen] = useState<{ x: number; y: number; w: number } | null>(null)
   const byWorkspace = useJobs((s) => s.byWorkspace)
   const all = Object.values(byWorkspace).flat()
   const armed = all.filter((j) => j.enabled)
@@ -32,24 +32,24 @@ export default function ScheduleMenu(): JSX.Element {
   return (
     <>
       <button
-        className={`ws-rail-add sched-btn${armed.length ? ' armed' : ''}`}
-        title={t('ws.scheduler')}
+        className={`ws-sched-row${armed.length ? ' armed' : ''}`}
         onClick={(e) => {
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          // Anchored to the button's RIGHT edge: the rail sits at the window's
-          // left, so a menu hung from the left edge of a 22px button had
-          // nowhere to grow.
-          setOpen(open ? null : { x: Math.max(8, r.right - 240), y: r.bottom + 4 })
+          // Hung under the row and as wide as it: the rail is at the window's
+          // left edge, so a menu measured from anywhere else grows off screen.
+          setOpen(open ? null : { x: r.left, y: r.bottom + 2, w: r.width })
         }}
       >
-        <Clock size={14} />
-        {armed.length > 0 && <span className="ws-rail-badge">{armed.length}</span>}
+        <Clock size={13} />
+        <span className="ws-sched-label">{t('ws.schedulerAdd')}</span>
+        {armed.length > 0 && <span className="ws-sched-count">{armed.length}</span>}
+        <ChevronDown size={12} className="ws-sched-chev" />
       </button>
       {open &&
         createPortal(
           <>
             <div className="sched-menu-scrim" onClick={() => setOpen(null)} />
-            <div className="sched-menu" style={{ left: open.x, top: open.y }}>
+            <div className="sched-menu" style={{ left: open.x, top: open.y, minWidth: open.w }}>
               <div className="sched-menu-head">{t('ws.scheduler')}</div>
               {armed.length === 0 && <div className="sched-menu-empty">{t('sched.menuEmpty')}</div>}
               {nextUp(armed, now)

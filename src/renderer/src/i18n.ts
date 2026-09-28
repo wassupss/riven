@@ -904,6 +904,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.ranMissed': { ko: '놓침', en: 'missed' },
   'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
   'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'ws.schedulerAdd': { ko: '스케줄러 등록', en: 'Schedule work' },
   'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
   'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
   'sched.needPrompt': { ko: '실행할 지시를 먼저 적어주세요.', en: 'Write what it should ask first.' },
