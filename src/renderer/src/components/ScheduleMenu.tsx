@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock, Plus, ChevronDown } from 'lucide-react'
+import { Clock, Plus } from 'lucide-react'
 import { useT } from '../i18n'
 import { togglePanel } from '../dock/registry'
 import { useJobs, nextRunOf, type Job } from '../state/jobs'
@@ -28,6 +28,7 @@ export default function ScheduleMenu(): JSX.Element {
   const all = Object.values(byWorkspace).flat()
   const armed = all.filter((j) => j.enabled)
   const now = Date.now()
+  const next = nextUp(armed, now)[0] ?? null
 
   return (
     <>
@@ -41,9 +42,15 @@ export default function ScheduleMenu(): JSX.Element {
         }}
       >
         <Clock size={13} />
-        <span className="ws-sched-label">{t('ws.schedulerAdd')}</span>
-        {armed.length > 0 && <span className="ws-sched-count">{armed.length}</span>}
-        <ChevronDown size={12} className="ws-sched-chev" />
+        {/* Empty, it asks for the thing it does. Armed, it says the next one —
+            a line that only ever reads "스케줄러 등록" is a line spent on a
+            label, and the rail has few to spare. */}
+        <span className="ws-sched-label">
+          {next ? `${next.job.name} · ${untilLabel(next.at, now)}` : t('ws.schedulerAdd')}
+        </span>
+        {/* Only once there is more than one: with a single job the row already
+            names it, and "1" beside it says nothing. */}
+        {armed.length > 1 && <span className="ws-sched-count">{armed.length}</span>}
       </button>
       {open &&
         createPortal(

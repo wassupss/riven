@@ -43,18 +43,17 @@ export default function WorkspaceTabs(): JSX.Element {
 
   return (
     <div className="ws-rail">
-      {/* Work the machine does while you are elsewhere, on a line of its own
-          above the workspaces. It was an icon wedged into the header row twice
-          before — beside the window title, then beside "워크스페이스" — and a
-          row that already holds a label and an action has no room for a third
-          thing on a small window. */}
-      <ScheduleMenu />
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>
       </div>
+      {/* At the top of the workspace area, in the cards' own rhythm — not a
+          third chrome row above the section header. Stacked headers made the
+          sidebar read as three bars before any content, and this one carried a
+          divider that separated nothing. */}
+      <ScheduleMenu />
       <div className="ws-list">
         {openWorkspaces.map((ws, i) => (
           <WorkspaceCard

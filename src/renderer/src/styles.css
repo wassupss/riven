@@ -830,24 +830,32 @@ select {
   font-size: var(--text-2xs);
   color: var(--fg-dim);
 }
-/* One line, full width, above the workspaces. */
+/* The first line of the workspace area, in the same inset and radius as the
+   cards under it, so it reads as part of that list rather than as another bar
+   of chrome stacked on the section header. */
 .ws-sched-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
-  padding: 7px 10px;
+  width: calc(100% - 16px);
+  margin: 0 8px 6px;
+  padding: 6px 9px;
   font-size: var(--text-xs);
   color: var(--fg-dim);
   background: none;
-  border: none;
-  border-bottom: 1px solid var(--edge);
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
 }
 .ws-sched-row:hover {
-  background: var(--hover);
   color: var(--fg);
+  background: var(--hover);
+  border-color: var(--edge-strong);
+}
+/* Armed: it stops being a call to action and starts being a status. */
+.ws-sched-row.armed {
+  border-style: solid;
 }
 .ws-sched-row.armed {
   color: var(--fg);
@@ -859,16 +867,14 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Quiet: --accent is nearly white in this theme, so a filled pill here was the
+   brightest thing in the sidebar — louder than the workspace it sits above. */
 .ws-sched-count {
   flex: 0 0 auto;
-  min-width: 16px;
-  padding: 0 5px;
   font-size: var(--text-2xs);
-  line-height: 15px;
-  text-align: center;
-  color: var(--bg);
-  background: var(--accent);
-  border-radius: var(--radius-full);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  opacity: 0.8;
 }
 .ws-sched-chev {
   flex: 0 0 auto;
