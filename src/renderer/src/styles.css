@@ -3970,9 +3970,14 @@ select {
 .tg-chevron.open {
   transform: rotate(180deg);
 }
-/* A long running command must not push the expander out of the row. */
+/* A long running command must not push the expander out of the row — and the
+   label takes the slack, so the duration and the expander stay together at the
+   end. Both of those carry `margin-left: auto`, and two auto margins SPLIT the
+   free space between them: the elapsed time ended up floating in the middle of
+   the row with a gap on either side. */
 .chat-toolgroup-head > .chat-shimmer-text,
 .chat-toolgroup-head > .tg-title {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
