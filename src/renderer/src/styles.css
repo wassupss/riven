@@ -830,21 +830,25 @@ select {
   font-size: var(--text-2xs);
   color: var(--fg-dim);
 }
-/* The first line of the sidebar's content: above the workspaces, in the same
-   left inset and height as the section header under it, so the two read as one
-   stack rather than a banner sitting on a header. */
+/* A navigation row, not a button: icon, label, and whatever it has to report on
+   the right. No border and no fill — a bordered box above a plain section header
+   reads as an advert for itself, which is what three attempts at this looked
+   like. The divider under it separates app-level destinations from the
+   workspaces, the way the rest of the rail is grouped. */
 .ws-sched-row {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  height: 30px;
-  padding: 0 10px 0 12px;
+  height: 32px;
+  padding: 0 10px 0 11px;
+  margin-bottom: 4px;
   font-size: var(--text-xs);
   color: var(--fg-dim);
   background: none;
   border: none;
+  border-bottom: 1px solid var(--edge);
   cursor: pointer;
   text-align: left;
 }
@@ -852,12 +856,19 @@ select {
   color: var(--fg);
   background: var(--hover);
 }
-/* Armed, the clock is the one lit thing: something is actually pending. */
 .ws-sched-row.armed {
   color: var(--fg);
 }
 .ws-sched-row.armed > svg {
   color: var(--accent);
+}
+/* When the next one goes — quiet, like the "now" on an Orca row. */
+.ws-sched-next {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 .ws-sched-row.armed {
   color: var(--fg);
