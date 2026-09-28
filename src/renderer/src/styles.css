@@ -1063,6 +1063,26 @@ select {
   border-bottom: 1px solid var(--edge);
 }
 
+/* Permission state, said plainly beside the thing that needs it. */
+.perm-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding: 2px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}
+.perm-state.granted {
+  color: var(--ok, #3fb950);
+  border-color: color-mix(in srgb, var(--ok, #3fb950) 40%, transparent);
+}
+.perm-state.denied {
+  color: var(--danger, #e5534b);
+  border-color: color-mix(in srgb, var(--danger, #e5534b) 40%, transparent);
+}
+
 /* ---- scheduled work panel ---- */
 .sched-panel {
   display: flex;

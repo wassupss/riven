@@ -27,6 +27,7 @@ import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from
 import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerFocusTrace } from './focusTrace'
 import { registerKeepAwake } from './keepAwake'
+import { registerPermissionHandlers } from './permissions'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
 import { registerApiHandlers } from './apiclient'
@@ -294,6 +295,7 @@ app.whenReady().then(() => {
   // the first live window's renderer.
   registerFocusTrace()
   registerKeepAwake()
+  registerPermissionHandlers()
   registerMcpServer(() => {
     const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
     return w ? w.webContents : null

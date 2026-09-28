@@ -1605,7 +1605,14 @@ export default function ChatPanel({
   // the session it was in — takes a few seconds, and until then the pane is
   // simply empty: indistinguishable from a broken one, which is exactly how it
   // read after a restart with several panes coming back at once.
-  const [booting, setBooting] = useState(true)
+  //
+  // Only when something is actually on its way: a session being resumed, or an
+  // opening message about to be sent. A brand-new empty pane has nothing to
+  // wait for — its CLI will sit idle until someone types — and telling it to
+  // stand by was a lie that outlasted every remount, because the pane never
+  // receives the event that would clear it. Three teammates freshly spawned
+  // all claimed to be "에이전트 준비 중" at once, indefinitely.
+  const [booting, setBooting] = useState(() => !!pane0.session || hasInitialText(chatKey))
   // What the CLI last said about ITSELF (a retry it is sitting in, a limit it
   // hit). Cleared as soon as real output resumes, so it never lingers.
   const [selfNote, setSelfNote] = useState<string | null>(null)
@@ -1624,8 +1631,10 @@ export default function ChatPanel({
   // announces itself (it may be parked until the first message), a spinner left
   // up forever is a worse lie than the blank pane it replaced.
   useEffect(() => {
+    if (!booting) return
     const id = setTimeout(() => setBooting(false), 10_000)
     return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
   // session later (see below) must be observed from the store or the restore

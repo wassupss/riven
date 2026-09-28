@@ -449,6 +449,47 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.tab.editor': { ko: '에디터', en: 'Editor' },
   'settings.tab.terminal': { ko: '터미널', en: 'Terminal' },
   'settings.tab.perm': { ko: '권한', en: 'Permissions' },
+  'settings.perm.osSection': { ko: '시스템 권한', en: 'System permissions' },
+  'perm.loading': { ko: '확인 중…', en: 'Checking…' },
+  'perm.notMac': {
+    ko: '이 운영체제는 앱별 권한을 따로 관리하지 않습니다.',
+    en: 'This OS does not gate these per app.'
+  },
+  'perm.granted': { ko: '허용됨', en: 'Granted' },
+  'perm.denied': { ko: '거부됨', en: 'Denied' },
+  'perm.notAsked': { ko: '아직 요청 안 함', en: 'Not asked yet' },
+  'perm.unknown': { ko: '확인 불가', en: 'Unknown' },
+  'perm.unknownHint': {
+    ko: 'macOS가 이 권한의 상태를 앱에 알려주지 않습니다.',
+    en: 'macOS does not tell an app the state of this one.'
+  },
+  'perm.ask': { ko: '요청', en: 'Ask' },
+  'perm.open': { ko: '시스템 설정', en: 'System Settings' },
+  'perm.refresh': { ko: '다시 확인', en: 'Re-check' },
+  'perm.refreshHint': {
+    ko: '시스템 설정에서 바꾼 뒤 돌아오면 자동으로 다시 확인합니다.',
+    en: 'Re-checked automatically when you come back from System Settings.'
+  },
+  'perm.notifications': { ko: '알림', en: 'Notifications' },
+  'perm.notificationsDesc': {
+    ko: '에이전트가 작업을 끝내거나 입력을 기다릴 때 알립니다.',
+    en: 'Tells you when an agent finishes or needs you.'
+  },
+  'perm.screen': { ko: '화면 기록', en: 'Screen recording' },
+  'perm.screenDesc': {
+    ko: '에이전트의 스크린샷 도구(riven_screenshot)에 필요합니다. 없으면 검은 화면이 찍힙니다.',
+    en: "Needed by the agent's screenshot tool; without it the capture is black."
+  },
+  'perm.microphone': { ko: '마이크', en: 'Microphone' },
+  'perm.microphoneDesc': {
+    ko: '브라우저 패널에서 마이크를 쓰는 사이트에 필요합니다.',
+    en: 'For sites in the browser panel that use the microphone.'
+  },
+  'perm.camera': { ko: '카메라', en: 'Camera' },
+  'perm.cameraDesc': {
+    ko: '브라우저 패널에서 카메라를 쓰는 사이트에 필요합니다.',
+    en: 'For sites in the browser panel that use the camera.'
+  },
   'settings.perm.modeSection': { ko: '기본 권한 모드', en: 'Default permission mode' },
   'settings.perm.toolsSection': { ko: '미리 허용할 도구', en: 'Pre-approved tools' },
   'settings.perm.toolsDesc': {

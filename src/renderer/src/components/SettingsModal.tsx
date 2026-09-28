@@ -10,6 +10,7 @@ import { Button, NumberInput, Segmented, Select, Switch, TextArea, TextInput } f
 import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
 import AboutTab from './AboutTab'
+import OsPermissions from './OsPermissions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
 import {
@@ -543,16 +544,21 @@ export default function SettingsModal(): JSX.Element | null {
 
             {tab === 'perm' && (
               <>
+                {/* The OS first: a tool that is pre-approved in riven still does
+                    nothing if macOS has not granted the app the right to do it,
+                    and that failure is silent everywhere else. */}
+                <div className="section-label">{t('settings.perm.osSection')}</div>
+                <OsPermissions />
+
                 <div className="section-label">{t('settings.perm.modeSection')}</div>
-                <Row title={t('settings.permMode')} desc={t('settings.permModeDesc')}>
+                <Row title={t('settings.ai.defaultMode')} desc={t('settings.defaultPermModeDesc')}>
                   <Select
                     value={settings.defaultPermissionMode}
                     onChange={(e) => upd('defaultPermissionMode', e.target.value)}
                   >
-                    <option value="default">default</option>
-                    <option value="acceptEdits">acceptEdits</option>
-                    <option value="bypassPermissions">bypassPermissions</option>
-                    <option value="plan">plan</option>
+                    <option value="plan">{t('chat.mode.plan')}</option>
+                    <option value="acceptEdits">{t('chat.mode.acceptEdits')}</option>
+                    <option value="default">{t('chat.mode.ask')}</option>
                   </Select>
                 </Row>
 
@@ -624,17 +630,6 @@ export default function SettingsModal(): JSX.Element | null {
                     <option value="haiku">haiku</option>
                   </Select>
                 </Row>
-                <Row title={t('settings.ai.defaultMode')} desc={t('settings.defaultPermModeDesc')}>
-                  <Select
-                    value={settings.defaultPermissionMode}
-                    onChange={(e) => upd('defaultPermissionMode', e.target.value)}
-                  >
-                    <option value="plan">{t('chat.mode.plan')}</option>
-                    <option value="acceptEdits">{t('chat.mode.acceptEdits')}</option>
-                    <option value="default">{t('chat.mode.ask')}</option>
-                  </Select>
-                </Row>
-
                 <ToggleRow
                   title={t('settings.autoTitle')}
                   desc={t('settings.autoTitleDesc')}
