@@ -122,11 +122,20 @@ function wireEvents(tab: Tab): void {
     if (params.linkURL) {
       tpl.push(
         { label: L('링크 새 탭에서 열기', 'Open link in new tab'), click: () => send('browser:event', { tabId: tab.id, kind: 'newtab', url: params.linkURL }) },
-        { label: L('링크 주소 복사', 'Copy link address'), click: () => clipboard.writeText(params.linkURL) }
+        {
+          label: L('링크 주소 복사', 'Copy link address'),
+          // Electron 44 made the clipboard async. Nobody waits for this, so say
+          // so — an unhandled rejection from a failed copy would otherwise take
+          // the console with it.
+          click: () => void clipboard.writeText(params.linkURL).catch(() => {})
+        }
       )
     }
     if (params.mediaType === 'image' && params.srcURL) {
-      tpl.push({ label: L('이미지 주소 복사', 'Copy image address'), click: () => clipboard.writeText(params.srcURL) })
+      tpl.push({
+        label: L('이미지 주소 복사', 'Copy image address'),
+        click: () => void clipboard.writeText(params.srcURL).catch(() => {})
+      })
     }
     if (params.selectionText) {
       tpl.push(
