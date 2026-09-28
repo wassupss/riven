@@ -1,4 +1,24 @@
-import { User, UserRound, Users, Brain, Bot, PersonStanding, type LucideIcon } from 'lucide-react'
+import {
+  User,
+  UserRound,
+  Users,
+  Brain,
+  Bot,
+  PersonStanding,
+  Folder,
+  Code2,
+  Boxes,
+  Rocket,
+  Layers,
+  TerminalSquare,
+  Database,
+  Globe,
+  Palette,
+  Cpu,
+  Wrench,
+  Sparkles,
+  type LucideIcon
+} from 'lucide-react'
 
 // Deterministic agent avatar (mirrors native AgentAvatar): a person glyph + a hue
 // picked from an FNV-1a hash of the agent's name, so the same key yields the same
@@ -8,7 +28,24 @@ import { User, UserRound, Users, Brain, Bot, PersonStanding, type LucideIcon } f
 const HUES = [0.02, 0.08, 0.12, 0.28, 0.38, 0.46, 0.53, 0.6, 0.68, 0.75, 0.83, 0.92]
 const ICONS: LucideIcon[] = [User, UserRound, Users, Brain, Bot, PersonStanding]
 
+// A workspace is a project, not a person — the glyphs above are all faces.
+const WS_ICONS: LucideIcon[] = [
+  Folder,
+  Code2,
+  Boxes,
+  Rocket,
+  Layers,
+  TerminalSquare,
+  Database,
+  Globe,
+  Palette,
+  Cpu,
+  Wrench,
+  Sparkles
+]
+
 export const AVATAR_GLYPH_COUNT = ICONS.length
+export const WS_GLYPH_COUNT = WS_ICONS.length
 export const AVATAR_COLOR_COUNT = HUES.length
 
 function mod(n: number, m: number): number {
@@ -34,6 +71,11 @@ export function hueText(i: number): string {
 
 export function glyphIcon(i: number): LucideIcon {
   return ICONS[mod(i, ICONS.length)]
+}
+
+/** The project glyph for a workspace tile. */
+export function wsGlyphIcon(i: number): LucideIcon {
+  return WS_ICONS[mod(i, WS_ICONS.length)]
 }
 
 export function encodeAvatar(glyph: number, color: number): string {
@@ -84,30 +126,4 @@ export function tintStyle(
     background: `color-mix(in srgb, ${hueColor(d.color)} 26%, ${base})`,
     color: hueText(d.color)
   }
-}
-
-/**
- * One or two characters standing in for a name, when there is no picture.
- *
- * A workspace that is not a GitHub checkout has no avatar to show, and leaving
- * it as a bare dot beside cards that DO have one breaks the row's rhythm —
- * the list stops reading as one list. A monogram fills the same tile.
- *
- * Latin names give their initials ("riven-electron" → RE); a script with no
- * case and no word breaks gives its first character ("테스트" → 테), because two
- * Hangul syllables in a 16px tile are unreadable.
- */
-export function monogram(name: string): string {
-  const cleaned = (name || '').trim()
-  if (!cleaned) return '?'
-  const words = cleaned.split(/[\s._/\\-]+/).filter(Boolean)
-  const latin = /^[A-Za-z0-9]/
-  if (words.length >= 2 && latin.test(words[0]) && latin.test(words[1])) {
-    return (words[0][0] + words[1][0]).toUpperCase()
-  }
-  const first = words[0] ?? cleaned
-  // Intl-aware: a surrogate pair (an emoji folder name) must not be cut in half.
-  const chars = [...first]
-  if (latin.test(first)) return chars.slice(0, 2).join('').toUpperCase()
-  return chars[0]
 }

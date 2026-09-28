@@ -11,9 +11,12 @@ import {
   tintStyle,
   decodeAvatar,
   hueColor,
+  hueText,
   encodeAvatar,
-  monogram,
-  AVATAR_COLOR_COUNT
+  avatarSpec,
+  wsGlyphIcon,
+  AVATAR_COLOR_COUNT,
+  WS_GLYPH_COUNT
 } from '../lib/avatar'
 import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
 import { groupPanes, stripGroup } from '../lib/paneGroups'
@@ -283,6 +286,10 @@ function WorkspaceCard({
   // falls back to the colour dot rather than leaving a hole in the row.
   const [avatarFailed, setAvatarFailed] = useState(false)
   const avatar = avatarUrl(git?.repo ?? null, 48)
+  // Colour and glyph both come from the same encoded override, so the pair the
+  // user picks is what the card wears; without one they are hashed from the path.
+  const spec = avatarSpec(ws, wsColor)
+  const WsGlyph = wsGlyphIcon(spec.glyph)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -395,8 +402,18 @@ function WorkspaceCard({
           {avatar && !avatarFailed ? (
             <img src={avatar} alt="" onError={() => setAvatarFailed(true)} />
           ) : (
-            <span className="ws-card-mono" style={{ background: colorFor(ws, wsColor) }}>
-              {monogram(name)}
+            <span
+              className="ws-card-glyph"
+              style={{
+                // The tile and its glyph are the same hue: a saturated square
+                // with black ink on it shouted louder than the repository
+                // photos beside it. Muted surface, bright glyph — the same
+                // pairing tintStyle uses everywhere else in the app.
+                background: `color-mix(in srgb, ${hueColor(spec.color)} 24%, transparent)`,
+                color: hueText(spec.color)
+              }}
+            >
+              <WsGlyph size={11} />
             </span>
           )}
         </span>
@@ -537,11 +554,32 @@ function WorkspaceCard({
                     style={{ background: hueColor(c) }}
                     aria-label={`color ${c}`}
                     onClick={() => {
-                      setWorkspaceColor(ws, encodeAvatar(0, c))
+                      // Keep whichever glyph is on the card: picking a colour
+                      // used to silently reset it to the first one.
+                      setWorkspaceColor(ws, encodeAvatar(spec.glyph, c))
                       setMenu(null)
                     }}
                   />
                 ))}
+              </div>
+              <div className="context-label">{t('ws.icon')}</div>
+              <div className="ws-glyphs">
+                {Array.from({ length: WS_GLYPH_COUNT }, (_, g) => {
+                  const G = wsGlyphIcon(g)
+                  return (
+                    <button
+                      key={g}
+                      className={`ws-glyph${spec.glyph === g ? ' on' : ''}`}
+                      aria-label={`icon ${g}`}
+                      onClick={() => {
+                        setWorkspaceColor(ws, encodeAvatar(g, spec.color))
+                        setMenu(null)
+                      }}
+                    >
+                      <G size={13} />
+                    </button>
+                  )
+                })}
               </div>
               <button
                 className="ctx-item"
