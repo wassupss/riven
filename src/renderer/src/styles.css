@@ -9231,38 +9231,52 @@ select {
     rotate: 360deg;
   }
 }
-/* Decorative motion stops when it is not earning its frames. Everything keeps
-   its colour, dot and ring — only the movement pauses.
-     win-blurred     nobody is looking at the window
-     browser-active  the browser panel is in front: its page is drawn by the
-                     same GPU process as this UI, and every ring, shimmer and
-                     pulse animating here was frames taken from its scrolling.
-   Measured on the installed app: the browser tab's own process sat near 0%
-   while the app UI renderer ran 16-34% and the shared GPU process 12-37%. */
-body.win-blurred .chat-ring::before,
+/* Motion stops when nobody can see it — which is not the same as "the window is
+   not focused".
+     win-hidden      minimised, or on another Space/desktop: nothing renders
+     browser-active  the browser panel is in front, drawing over this UI with
+                     the same GPU process; every ring and shimmer animating
+                     here was frames taken from its scrolling. Measured on the
+                     installed app: the browser tab's own process sat near 0%
+                     while the app UI renderer ran 16-34% and the shared GPU
+                     process 12-37%.
+   An UNFOCUSED window gets none of this. Side by side with an editor is exactly
+   how people watch an agent work, and freezing every shimmer there made a
+   working app look hung — which is the opposite of what these animations are
+   for. Only the purely decorative one stops (see below). */
+body.win-hidden .chat-ring::before,
 body.browser-active .chat-ring::before,
-body.win-blurred .riven-tab-label.shimmer,
+body.win-hidden .riven-tab-label.shimmer,
 body.browser-active .riven-tab-label.shimmer,
-body.win-blurred .ws-agent-title.shimmer,
+body.win-hidden .ws-agent-title.shimmer,
 body.browser-active .ws-agent-title.shimmer,
-body.win-blurred .chat-shimmer-text,
+body.win-hidden .chat-shimmer-text,
 body.browser-active .chat-shimmer-text,
-body.win-blurred .tab-dot.attn,
+body.win-hidden .tab-dot.attn,
 body.browser-active .tab-dot.attn,
-body.win-blurred .agp-tree-row.flow > .agp-tree-self::after,
+body.win-hidden .agp-tree-row.flow > .agp-tree-self::after,
 body.browser-active .agp-tree-row.flow > .agp-tree-self::after,
-body.win-blurred .agp-tree-kid.flow::before,
+body.win-hidden .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
-body.win-blurred .agp-tree-kids.flow > .agp-tree-rail,
+body.win-hidden .agp-tree-kids.flow > .agp-tree-rail,
 body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
-body.win-blurred .chat-bgtask-dot,
+body.win-hidden .chat-bgtask-dot,
 body.browser-active .chat-bgtask-dot,
-body.win-blurred .chat-compacting-fill,
+body.win-hidden .chat-compacting-fill,
 body.browser-active .chat-compacting-fill,
-body.win-blurred .agp-node-run,
+body.win-hidden .agp-node-run,
 body.browser-active .agp-node-run,
-body.win-blurred .pane-skel > *,
+body.win-hidden .pane-skel > *,
 body.browser-active .pane-skel > * {
+  animation-play-state: paused;
+}
+
+/* Unfocused but visible: the completion ring is the one piece of motion that
+   says nothing a still frame doesn't — the ring is already there, spinning it
+   adds no information — so it is the only thing that stops. Everything that
+   reports live work keeps moving, because that is what somebody watching from
+   the next window is watching FOR. */
+body.win-unfocused .chat-ring::before {
   animation-play-state: paused;
 }
 

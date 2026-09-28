@@ -187,10 +187,19 @@ export default function App(): JSX.Element {
       if (!e.metaKey && !e.ctrlKey) useUI.getState().setMetaHeld(false)
     }
     const onBlurMeta = (): void => useUI.getState().setMetaHeld(false)
-    // Freeze decorative animations while the window is unfocused: they stay
-    // visible (so a completion isn't lost) but stop costing frames.
-    const markBlur = (): void => document.body.classList.add('win-blurred')
-    const markFocus = (): void => document.body.classList.remove('win-blurred')
+    // Two different questions, and they used to be conflated.
+    //
+    // HIDDEN (minimised, another Space) means nobody can see the window, so
+    // motion there is pure waste. UNFOCUSED means the window is beside
+    // something else — which is how people watch an agent work — and freezing
+    // every shimmer made a working app look hung.
+    const markVisibility = (): void => {
+      document.body.classList.toggle('win-hidden', document.visibilityState === 'hidden')
+    }
+    const markBlur = (): void => document.body.classList.add('win-unfocused')
+    const markFocus = (): void => document.body.classList.remove('win-unfocused')
+    document.addEventListener('visibilitychange', markVisibility)
+    markVisibility()
     window.addEventListener('blur', markBlur)
     window.addEventListener('focus', markFocus)
     window.addEventListener('keydown', onMetaDown, true)
@@ -272,6 +281,7 @@ export default function App(): JSX.Element {
       window.removeEventListener('blur', onBlurMeta)
       window.removeEventListener('blur', markBlur)
       window.removeEventListener('focus', markFocus)
+      document.removeEventListener('visibilitychange', markVisibility)
     }
   }, [])
 
