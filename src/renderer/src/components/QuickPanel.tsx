@@ -50,7 +50,6 @@ export default function QuickPanel(): JSX.Element | null {
   const open = useUI((s) => s.quickPanel)
   const splitDir = useUI((s) => s.quickSplitDir)
   const setOpen = useUI((s) => s.setQuickPanel)
-  const toggleExplorer = useUI((s) => s.toggleExplorer)
   const toggleSidebar = useUI((s) => s.toggleSidebar)
   const profiles = useSettings((s) => s.settings.terminalProfiles)
   const petShow = useSettings((s) => s.settings.petShow)
@@ -205,7 +204,7 @@ export default function QuickPanel(): JSX.Element | null {
         hint: '⌘⇧B',
         section: sView,
         icon: <PanelLeft size={15} />,
-        run: () => toggleExplorer()
+        run: () => togglePanel('explorer')
       },
       {
         id: 'pet',
@@ -229,7 +228,7 @@ export default function QuickPanel(): JSX.Element | null {
       }
     )
     return arr
-  }, [profiles, clis, agents, t, toggleExplorer, toggleSidebar, petShow])
+  }, [profiles, clis, agents, t, toggleSidebar, petShow])
 
   const items = useMemo(() => {
     // In split mode only panels can be placed beside the active one.

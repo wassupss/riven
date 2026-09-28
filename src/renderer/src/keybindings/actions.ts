@@ -155,7 +155,7 @@ export function registerDefaultActions(): void {
     category: RIVEN,
     context: 'riven',
     def: 'Mod+Shift+b',
-    run: () => useUI.getState().toggleExplorer()
+    run: () => togglePanel('explorer')
   })
   keymap.register({
     id: 'panel.search',

@@ -10,8 +10,6 @@ interface UIState {
   setSettingsOpen: (v: boolean) => void
   settingsTab: SettingsTab
   openSettings: (tab?: SettingsTab) => void
-  showExplorer: boolean
-  toggleExplorer: () => void
   // The entire left sidebar (workspaces + explorer + usage). ⌘B toggles this.
   showSidebar: boolean
   toggleSidebar: () => void
@@ -38,8 +36,6 @@ export const useUI = create<UIState>((set) => ({
   setSettingsOpen: (v) => set({ settingsOpen: v }),
   settingsTab: 'general',
   openSettings: (tab = 'general') => set({ settingsOpen: true, settingsTab: tab }),
-  showExplorer: true,
-  toggleExplorer: () => set((s) => ({ showExplorer: !s.showExplorer })),
   showSidebar: true,
   toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
   metaHeld: false,

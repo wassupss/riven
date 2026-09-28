@@ -1761,12 +1761,6 @@ select {
 .tb-btn {
   -webkit-app-region: no-drag;
 }
-.sidebar-explorer {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
 .dock-col {
   height: 100%;
   min-height: 0;

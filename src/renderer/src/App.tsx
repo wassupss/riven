@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import Workbench from './dock/Workbench'
-import ExplorerPanel from './dock/panels/ExplorerPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { Folder, Settings as SettingsIcon } from 'lucide-react'
 import ImageLightbox from './components/ImageLightbox'
@@ -63,7 +62,6 @@ export default function App(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const wsNames = useSession((s) => s.names)
-  const showExplorer = useUI((s) => s.showExplorer)
   const showSidebar = useUI((s) => s.showSidebar)
   const openSettings = useUI((s) => s.openSettings)
   const wsName = activeWorkspace
@@ -306,16 +304,6 @@ export default function App(): JSX.Element {
               <Panel id="ws" order={1} defaultSize={34} minSize={12} className="sidebar-region">
                 <WorkspaceTabs />
               </Panel>
-              {showExplorer && activeWorkspace && (
-                <>
-                  <PanelResizeHandle className="resize-handle-h" />
-                  <Panel id="explorer" order={2} minSize={12} className="sidebar-region">
-                    <div className="sidebar-explorer">
-                      <ExplorerPanel workspace={activeWorkspace} />
-                    </div>
-                  </Panel>
-                </>
-              )}
               {usagePinned && (
                 <>
                   <PanelResizeHandle className="resize-handle-h" />

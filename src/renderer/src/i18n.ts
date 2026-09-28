@@ -49,7 +49,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'empty.tagline': { ko: '텅 빈 작업대예요 — 여기서부터 갈라 만들어 봐요.', en: "A blank workbench — let's carve something out." },
   'empty.addTerminal': { ko: '터미널 추가하기', en: 'Add a terminal' },
   'empty.addEditor': { ko: '코드 편집기 열기', en: 'Open the editor' },
-  'toolbar.toggleExplorer': { ko: '탐색기 표시/숨김', en: 'Toggle Explorer' },
+  'toolbar.toggleExplorer': { ko: '탐색기 열기', en: 'Open Explorer' },
   'toolbar.toggleSidebar': { ko: '사이드바 표시/숨김', en: 'Toggle sidebar' },
   'toolbar.popout': { ko: '현재 패널 새 창으로', en: 'Pop out current panel' },
 
@@ -878,6 +878,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
   'title.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'title.explorer': { ko: '탐색기', en: 'Explorer' },
   'sched.title': { ko: '예약 작업', en: 'Scheduled work' },
   'sched.empty': {
     ko: '예약된 작업이 없습니다. +로 하나 만들어 보세요.',
