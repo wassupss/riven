@@ -25,7 +25,6 @@ import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
-import { startScheduler } from './state/scheduledMessages'
 import { startJobRunner } from './state/jobRunner'
 import { useUI } from './state/ui'
 import {
@@ -159,8 +158,7 @@ export default function App(): JSX.Element {
     window.addEventListener('keydown', keymap.handle, { capture: true })
     // riven's own MCP tools (agent → main → here): open files/panels, ask_user, …
     const offMcp = registerMcpToolHandler()
-    // Fire due scheduled messages (명령 예약).
-    startScheduler()
+    // Fire scheduled work when it comes due (예약 작업).
     startJobRunner()
     // Track every workspace's agent panes app-wide. This must NOT live in the
     // panels: the mounted set is LRU-bounded, and a pane going off screen would

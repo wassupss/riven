@@ -49,6 +49,64 @@ export interface Job {
 /** Enough to explain what happened without becoming a log file. */
 export const RUNS_KEPT = 20
 
+/**
+ * What the old per-pane "메시지 예약" stored, in localStorage, before scheduled
+ * work became a thing of its own. Kept ONLY to carry those entries over: two
+ * schedulers ticking side by side is how they drift apart, and one of them had
+ * no record of whether anything ever ran.
+ */
+interface LegacySchedule {
+  id: string
+  workspace: string
+  chatKey: string
+  targetTitle: string
+  text: string
+  fireAt: number
+  repeat: 'none' | 'hourly' | 'daily'
+  createdAt?: number
+}
+
+const LEGACY_KEY = 'scheduled:v1'
+
+/** The same intent, expressed as a rule instead of a timestamp. Pure, so the
+ * conversion is testable without touching storage. */
+export function fromLegacy(items: LegacySchedule[]): Job[] {
+  return items.map((it) => {
+    const when = new Date(it.fireAt)
+    const trigger: Trigger =
+      it.repeat === 'hourly'
+        ? { kind: 'hourly', minute: when.getMinutes() }
+        : it.repeat === 'daily'
+          ? { kind: 'daily', hour: when.getHours(), minute: when.getMinutes() }
+          : { kind: 'once', at: it.fireAt }
+    return {
+      id: it.id,
+      workspace: it.workspace,
+      name: it.text.split('\n')[0].slice(0, 30),
+      prompt: it.text,
+      trigger,
+      target: { kind: 'pane', chatKey: it.chatKey, title: it.targetTitle },
+      enabled: true,
+      graceMinutes: 60,
+      createdAt: it.createdAt ?? it.fireAt,
+      runs: []
+    }
+  })
+}
+
+function takeLegacy(): Job[] {
+  try {
+    const raw = localStorage.getItem(LEGACY_KEY)
+    if (!raw) return []
+    const jobs = fromLegacy(JSON.parse(raw) as LegacySchedule[])
+    // Removed as soon as it is read: carried twice is worse than lost once.
+    localStorage.removeItem(LEGACY_KEY)
+    return jobs
+  } catch {
+    return []
+  }
+}
+
 type Store = Record<string, Job[]>
 
 function persist(store: Store, ws: string): void {
@@ -67,12 +125,21 @@ function adopt(): void {
   const st = useSession.getState()
   if (!st.ready) return
   adopted = true
+  const carried = new Set<string>()
   const fromTree: Store = {}
   for (const [ws, s] of Object.entries(st.sessions)) {
     const jobs = (s.jobs ?? []) as Job[]
     if (jobs.length) fromTree[ws] = jobs
   }
+  for (const job of takeLegacy()) {
+    const have = fromTree[job.workspace] ?? []
+    if (!have.some((j) => j.id === job.id)) fromTree[job.workspace] = [...have, job]
+    carried.add(job.workspace)
+  }
   if (Object.keys(fromTree).length) useJobs.setState({ byWorkspace: fromTree })
+  // Write the carried-over ones down, or they live only in memory and are gone
+  // at the next restart — which is exactly the failure this merge removes.
+  for (const ws of carried) st.patch(ws, { jobs: fromTree[ws] ?? [] })
 }
 useSession.subscribe(adopt)
 adopt()

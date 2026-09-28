@@ -6,7 +6,7 @@ vi.mock('./session', () => ({
   useSession: { getState: () => ({ ready: false, patch: vi.fn(), sessions: {} }), subscribe: vi.fn() }
 }))
 
-const { dueJobs, missedJobs, useJobs, RUNS_KEPT } = await import('./jobs')
+const { dueJobs, missedJobs, useJobs, fromLegacy, RUNS_KEPT } = await import('./jobs')
 type Job = import('./jobs').Job
 
 // A schedule people rely on has to be honest about three things: that a run
@@ -99,5 +99,44 @@ describe('recordRun', () => {
     const { runs } = useJobs.getState().byWorkspace[WS][0]
     expect(runs).toHaveLength(RUNS_KEPT)
     expect(runs[runs.length - 1].at).toBe((RUNS_KEPT + 4) * HOUR)
+  })
+})
+
+describe('fromLegacy', () => {
+  // The old per-pane "메시지 예약" stored a TIMESTAMP and a repeat word. Carried
+  // over as rules, because a timestamp is what rots while the app is closed.
+  const legacy = {
+    id: 'sch_1',
+    workspace: WS,
+    chatKey: 'chat-7',
+    targetTitle: '코더',
+    text: '빌드 돌려줘\n두 번째 줄',
+    fireAt: at('2026-03-02T09:30'),
+    repeat: 'none' as const
+  }
+
+  it('keeps the message, the pane it was for, and its id', () => {
+    const [job] = fromLegacy([legacy])
+    expect(job.id).toBe('sch_1') // same id: carried twice would be worse
+    expect(job.prompt).toBe('빌드 돌려줘\n두 번째 줄')
+    expect(job.name).toBe('빌드 돌려줘') // first line, for the list
+    expect(job.target).toEqual({ kind: 'pane', chatKey: 'chat-7', title: '코더' })
+    expect(job.enabled).toBe(true)
+  })
+
+  it('turns a one-off into a one-shot at the same moment', () => {
+    expect(fromLegacy([legacy])[0].trigger).toEqual({ kind: 'once', at: at('2026-03-02T09:30') })
+  })
+
+  it('turns "hourly" into the minute it was set for', () => {
+    expect(fromLegacy([{ ...legacy, repeat: 'hourly' }])[0].trigger).toEqual({ kind: 'hourly', minute: 30 })
+  })
+
+  it('turns "daily" into that clock time', () => {
+    expect(fromLegacy([{ ...legacy, repeat: 'daily' }])[0].trigger).toEqual({
+      kind: 'daily',
+      hour: 9,
+      minute: 30
+    })
   })
 })
