@@ -649,9 +649,14 @@ function BgTaskChip({
   const t = useT()
   const now = useTicker(true)
   return (
-    <div className="chat-bgtask" title={t('chat.bgTask', { what: task.label })}>
+    // The STATE is said in words, not implied by a dot. As a name and an icon
+    // alone this read as a label — a badge on the conversation rather than
+    // something that is happening — and the turn above it says 완료, so there
+    // was nothing on screen to say work was still going.
+    <div className="chat-bgtask" title={t('chat.bgTaskHint', { what: task.label })}>
       <span className="chat-bgtask-dot" />
       <TerminalSquare size={11} />
+      <span className="chat-bgtask-state">{t('chat.bgTaskRunning')}</span>
       <span className="chat-bgtask-label">{task.label || t('chat.bgTaskPlain')}</span>
       {since && <span className="chat-bgtask-time">{fmtDur(now - since)}</span>}
     </div>

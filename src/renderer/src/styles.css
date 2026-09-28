@@ -9396,6 +9396,9 @@ body.browser-active .pane-skel > * {
     opacity: 0.25;
   }
 }
+.chat-bgtask-state {
+  color: var(--accent);
+}
 .chat-bgtask-label {
   overflow: hidden;
   text-overflow: ellipsis;

@@ -733,6 +733,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
   'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
   'chat.bgTask': { ko: '백그라운드 실행 중: {what}', en: 'running in background: {what}' },
+  'chat.bgTaskRunning': { ko: '실행 중', en: 'running' },
+  'chat.bgTaskHint': {
+    ko: '{what} — 이 대화가 끝나도 계속 돌아갑니다. 끝나면 여기에 알려드립니다.',
+    en: '{what} — keeps running after this turn ends; you will be told here when it finishes.'
+  },
   'chat.bgTaskPlain': { ko: '백그라운드 작업', en: 'background task' },
   'chat.bgTaskDone': { ko: '백그라운드 작업 완료 · {what}', en: 'background task done · {what}' },
   'chat.bgTaskFailed': { ko: '백그라운드 작업 실패 · {what}', en: 'background task failed · {what}' },
