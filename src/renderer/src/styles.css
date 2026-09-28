@@ -1470,6 +1470,18 @@ select {
   overflow: hidden;
   background: var(--bg-2);
 }
+.ws-card-mono {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  /* Dark ink on the workspace's own colour: the same hue the dot used, so a
+     card keeps the identity its owner picked for it. */
+  color: rgb(0 0 0 / 72%);
+}
 .ws-card-avatar img {
   width: 100%;
   height: 100%;

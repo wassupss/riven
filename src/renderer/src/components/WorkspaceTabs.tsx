@@ -7,7 +7,14 @@ import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
 import { getActiveApi, togglePanel } from '../dock/registry'
-import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
+import {
+  tintStyle,
+  decodeAvatar,
+  hueColor,
+  encodeAvatar,
+  monogram,
+  AVATAR_COLOR_COUNT
+} from '../lib/avatar'
 import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
 import { groupPanes, stripGroup } from '../lib/paneGroups'
 import { useAgentGroups, type AgentGroup } from '../state/agentGroups'
@@ -376,17 +383,23 @@ function WorkspaceCard({
             their folder name — riven, riven-electron, riven-tamagotchi all read
             the same at a glance. The owner's avatar is the one thing that says
             which project a card belongs to without reading anything. */}
-        {avatar && !avatarFailed ? (
-          <span className={`ws-card-avatar ${cardActivity}`}>
+        {/* Always a tile, never sometimes a tile and sometimes a dot: half the
+            cards showing a picture and half showing a 8px dot stopped the column
+            reading as one list. A workspace with no repository to show gets its
+            initials on its own colour, and the activity the dot used to carry
+            lives in the corner pip either way. */}
+        <span
+          className={`ws-card-avatar ${cardActivity}`}
+          title={t(ACTIVITY_LABEL_KEY[activity])}
+        >
+          {avatar && !avatarFailed ? (
             <img src={avatar} alt="" onError={() => setAvatarFailed(true)} />
-          </span>
-        ) : (
-          <StatusDot
-            activity={cardActivity}
-            color={colorFor(ws, wsColor)}
-            title={t(ACTIVITY_LABEL_KEY[activity])}
-          />
-        )}
+          ) : (
+            <span className="ws-card-mono" style={{ background: colorFor(ws, wsColor) }}>
+              {monogram(name)}
+            </span>
+          )}
+        </span>
         {editing ? (
           <input
             className="ws-card-rename"

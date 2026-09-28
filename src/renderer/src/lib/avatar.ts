@@ -85,3 +85,29 @@ export function tintStyle(
     color: hueText(d.color)
   }
 }
+
+/**
+ * One or two characters standing in for a name, when there is no picture.
+ *
+ * A workspace that is not a GitHub checkout has no avatar to show, and leaving
+ * it as a bare dot beside cards that DO have one breaks the row's rhythm —
+ * the list stops reading as one list. A monogram fills the same tile.
+ *
+ * Latin names give their initials ("riven-electron" → RE); a script with no
+ * case and no word breaks gives its first character ("테스트" → 테), because two
+ * Hangul syllables in a 16px tile are unreadable.
+ */
+export function monogram(name: string): string {
+  const cleaned = (name || '').trim()
+  if (!cleaned) return '?'
+  const words = cleaned.split(/[\s._/\\-]+/).filter(Boolean)
+  const latin = /^[A-Za-z0-9]/
+  if (words.length >= 2 && latin.test(words[0]) && latin.test(words[1])) {
+    return (words[0][0] + words[1][0]).toUpperCase()
+  }
+  const first = words[0] ?? cleaned
+  // Intl-aware: a surrogate pair (an emoji folder name) must not be cut in half.
+  const chars = [...first]
+  if (latin.test(first)) return chars.slice(0, 2).join('').toUpperCase()
+  return chars[0]
+}
