@@ -3157,6 +3157,38 @@ select {
   border: 1px dashed var(--accent-border);
   background: transparent;
 }
+/* A queued message waits for the running turn by default; cutting that turn
+   short is a button, not a side effect of typing. The actions stay faint until
+   the row is hovered — they sit next to every message you type ahead. */
+.chat-queued-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.chat-queued-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.chat-turn.user.queued:hover .chat-queued-act,
+.chat-queued-act:focus-visible {
+  opacity: 1;
+}
+.chat-queued-act:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+  background: var(--hover);
+}
 .chat-queued-tag {
   flex: 0 0 auto;
   font-size: var(--text-2xs);

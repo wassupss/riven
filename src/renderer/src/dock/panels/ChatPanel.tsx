@@ -154,9 +154,11 @@ interface Msg {
   // Special inline cards rendered in the transcript (native /mcp, /resume, /model).
   card?: 'mcp' | 'resume' | 'model'
   cardId?: string
-  // A user message typed while a turn was still running — shown dimmed until it's
-  // dequeued and sent (native lets you queue/steer mid-turn).
+  // A user message typed while a turn was still running — shown dimmed until the
+  // turn finishes and it is sent. `queuedId` ties the bubble to its entry in the
+  // queue, so "send now" and "discard" act on the message you clicked.
   queued?: boolean
+  queuedId?: string
   // Images sent with this message. `preview` is an in-memory data URL for the
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
@@ -722,13 +724,19 @@ const ChatMessage = memo(function ChatMessage({
   msg,
   now,
   lastEvent,
-  note
+  note,
+  onSendNow,
+  onDropQueued
 }: {
   msg: Msg
   now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
+  /** Cut the running turn short and send this queued message instead. */
+  onSendNow?: (queuedId: string) => void
+  /** Throw a queued message away without sending it. */
+  onDropQueued?: (queuedId: string) => void
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
@@ -757,7 +765,29 @@ const ChatMessage = memo(function ChatMessage({
           )}
           {msg.text}
         </div>
-        {msg.queued && <span className="chat-queued-tag">{t('chat.queued')}</span>}
+        {msg.queued && (
+          <span className="chat-queued-bar">
+            <span className="chat-queued-tag">{t('chat.queued')}</span>
+            {msg.queuedId && onSendNow && (
+              <button
+                className="chat-queued-act"
+                title={t('chat.sendNowHint')}
+                onClick={() => onSendNow(msg.queuedId as string)}
+              >
+                {t('chat.sendNow')}
+              </button>
+            )}
+            {msg.queuedId && onDropQueued && (
+              <button
+                className="chat-queued-act"
+                title={t('chat.dropQueued')}
+                onClick={() => onDropQueued(msg.queuedId as string)}
+              >
+                <XIcon size={11} />
+              </button>
+            )}
+          </span>
+        )}
       </div>
     )
   }
@@ -2414,7 +2444,7 @@ export default function ChatPanel({
     return id
   }
   // Messages typed while a turn was running, sent one-by-one as turns finish.
-  const queuedRef = useRef<Array<{ text: string; images: ChatImage[] }>>([])
+  const queuedRef = useRef<Array<{ id: string; text: string; images: ChatImage[] }>>([])
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
@@ -2423,11 +2453,12 @@ export default function ChatPanel({
   const stoppedRef = useRef(false)
   // Start the next queued message (if any) as a fresh turn: un-dim its bubble and
   // add the assistant placeholder. Returns true if a turn was started.
+  const drainQueueRef = useRef<() => boolean>(() => false)
   const drainQueue = (): boolean => {
     const next = queuedRef.current.shift()
     if (next == null) return false
     setMsgs((all) => {
-      const i = all.findIndex((m) => m.queued && m.role === 'user')
+      const i = all.findIndex((m) => m.queuedId === next.id)
       const copy = i >= 0 ? all.map((m, j) => (j === i ? { ...m, queued: false } : m)) : all
       return [...copy, blankAssistant()]
     })
@@ -2436,6 +2467,32 @@ export default function ChatPanel({
     window.api.chat.send(chatKey, next.text, next.images, newTurnId())
     return true
   }
+  drainQueueRef.current = drainQueue
+  // "Send this one now": the message jumps the queue and the running turn is cut
+  // short for it. The turn's own end (turnDone) is what actually sends it, which
+  // is why this only has to reorder and interrupt.
+  const sendQueuedNow = useCallback(
+    (queuedId: string) => {
+      const at = queuedRef.current.findIndex((q) => q.id === queuedId)
+      if (at < 0) return
+      const [entry] = queuedRef.current.splice(at, 1)
+      queuedRef.current.unshift(entry)
+      if (!busyRef.current) {
+        drainQueueRef.current()
+        return
+      }
+      // Reads as a re-ask rather than a user cancel, so no "stopped" note.
+      steerRef.current = true
+      window.api.chat.interrupt(chatKey)
+    },
+    [chatKey]
+  )
+  // Thrown away before it was ever sent.
+  const dropQueued = useCallback((queuedId: string) => {
+    queuedRef.current = queuedRef.current.filter((q) => q.id !== queuedId)
+    setMsgs((all) => all.filter((m) => m.queuedId !== queuedId))
+  }, [])
+
   // Stop means stop: interrupt the current turn AND drop anything queued.
   // End the running turn HERE as well as asking the CLI to stop. A child that
   // has died, or one that never got the message, answers nothing — and the pane
@@ -2643,13 +2700,14 @@ export default function ChatPanel({
   // Read the textarea's live DOM value, not React state: during Korean IME
   // composition the committed char lands in the DOM before React's onChange, so
   // the DOM is the authoritative source when we send on composition end.
-  const submit = (): void => {
+  /** Returns the id of the message it QUEUED, or null if it went straight out. */
+  const submit = (): string | null => {
     const text = (inputRef.current?.value ?? input).trim()
     const images = attachments
-    if (!text && images.length === 0) return
+    if (!text && images.length === 0) return null
     // A bare native command opens riven UI. Anything else — including skills and
     // commands with args — is sent to the CLI so it runs inline in the answer.
-    if (images.length === 0 && runNativeCommand(text)) return
+    if (images.length === 0 && runNativeCommand(text)) return null
     setAttachments([])
     setInput('')
     if (inputRef.current) {
@@ -2657,12 +2715,19 @@ export default function ChatPanel({
       inputRef.current.style.height = 'auto'
     }
     // "@teammate message" delegates to that agent instead of answering here.
-    if (delegateMentions(text)) return
-    // Mid-turn: STEER. Interrupt the running turn and re-ask with this message —
-    // the CLI session context is retained, so the model reconsiders with the prior
-    // content combined (native behaviour). The queued message fires from turnDone.
+    if (delegateMentions(text)) return null
+    // Mid-turn: QUEUE, and leave the running turn alone.
+    //
+    // It used to interrupt immediately and re-ask with the new message merged in
+    // (native's steer). That is right for "no, do it the other way" and wrong
+    // for everything else: a turn halfway through a migration, a build, a
+    // sequence that only makes sense finished, was thrown away because somebody
+    // typed the next instruction early. Interrupting is now a button on the
+    // queued message — see sendQueuedNow — so cutting a turn short is something
+    // you choose, not something typing does to you.
     if (busy) {
-      queuedRef.current.push({ text, images })
+      const queuedId = crypto.randomUUID()
+      queuedRef.current.push({ id: queuedId, text, images })
       setMsgs((all) => [
         ...all,
         {
@@ -2677,14 +2742,14 @@ export default function ChatPanel({
           tokensIn: 0,
           tokensOut: 0,
           queued: true,
+          queuedId,
           images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
         }
       ])
-      steerRef.current = true
-      window.api.chat.interrupt(chatKey)
-      return
+      return queuedId
     }
     sendMessage(text, images)
+    return null
   }
   // IME state: while composing, Enter must commit the syllable first, then send
   // once — otherwise the committing keystroke leaves its last char behind (the
@@ -3120,7 +3185,15 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} note={selfNote} />
+          <ChatMessage
+            key={windowOffset + wi}
+            msg={msg}
+            now={now}
+            lastEvent={lastEventRef}
+            note={selfNote}
+            onSendNow={sendQueuedNow}
+            onDropQueued={dropQueued}
+          />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]
@@ -3430,7 +3503,12 @@ export default function ChatPanel({
               return
             }
             e.preventDefault()
-            submit()
+            // ⌘↵ means "don't wait for it": queue the message and cut the
+            // running turn short for it, which is what a plain ↵ used to do to
+            // every turn whether you meant it or not.
+            const interrupt = e.metaKey || e.ctrlKey
+            const queuedId = submit()
+            if (queuedId && interrupt) sendQueuedNow(queuedId)
           }}
           rows={1}
         />

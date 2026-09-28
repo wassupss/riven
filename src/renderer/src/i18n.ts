@@ -703,6 +703,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.send': { ko: '보내기', en: 'Send' },
   'chat.stop': { ko: '중단', en: 'Stop' },
   'chat.queued': { ko: '대기 중', en: 'Queued' },
+  'chat.sendNow': { ko: '지금 보내기', en: 'Send now' },
+  'chat.sendNowHint': {
+    ko: '진행 중인 작업을 멈추고 이 메시지를 바로 보냅니다 (⌘↵)',
+    en: 'Cut the running turn short and send this now (⌘↵)'
+  },
+  'chat.dropQueued': { ko: '대기 취소', en: 'Discard' },
   'chat.schedule.title': { ko: '메시지 예약', en: 'Schedule message' },
   'chat.schedule.needText': { ko: '예약할 메시지를 먼저 입력하세요.', en: 'Type a message to schedule first.' },
   'chat.schedule.set': { ko: '예약', en: 'Set' },
