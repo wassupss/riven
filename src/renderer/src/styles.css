@@ -749,6 +749,248 @@ select {
   background: var(--hover-strong);
   color: var(--fg);
 }
+/* How many jobs are armed, on the button that opens them. */
+.ws-rail-add {
+  position: relative;
+}
+.ws-rail-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 12px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius-full);
+}
+
+/* ---- scheduled work panel ---- */
+.sched-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+.sched-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--edge);
+}
+.sched-title {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.sched-new {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sched-new:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.sched-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 11px;
+  border-bottom: 1px solid var(--edge);
+}
+.sched-input,
+.sched-sel,
+.sched-num {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  outline: none;
+}
+.sched-input:focus,
+.sched-sel:focus,
+.sched-num:focus {
+  border-color: var(--accent-border);
+}
+.sched-prompt-input {
+  resize: vertical;
+  font-family: inherit;
+}
+.sched-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sched-num {
+  width: 58px;
+}
+.sched-preview {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.sched-save {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sched-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sched-list {
+  flex: 1;
+  overflow: auto;
+  padding: 6px;
+}
+.sched-empty {
+  padding: 18px 12px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  text-align: center;
+}
+.sched-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+}
+.sched-item:hover {
+  background: var(--hover);
+}
+.sched-item.off {
+  opacity: 0.55;
+}
+.sched-toggle {
+  padding: 3px 0 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.sched-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--edge-strong);
+}
+.sched-dot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sched-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sched-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sched-name {
+  font-size: var(--text-sm);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-when {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}
+.sched-prompt {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sched-runs {
+  display: inline-flex;
+  gap: 3px;
+}
+/* One dot per recent run: the answer to "did it actually go out?" at a glance. */
+.sched-run {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+.sched-run.ok {
+  background: var(--accent);
+}
+.sched-run.failed {
+  background: var(--danger, #e5534b);
+}
+.sched-run.missed {
+  background: var(--warn, #d9a441);
+}
+.sched-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--warn, #d9a441);
+}
+.sched-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+.sched-item:hover .sched-act {
+  opacity: 1;
+}
+.sched-act:hover {
+  color: var(--fg);
+  background: var(--hover-strong);
+}
+.sched-act.danger:hover {
+  color: var(--danger, #e5534b);
+}
 .ws-list {
   flex: 1 1 auto;
   min-height: 0;

@@ -872,6 +872,33 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: '(no sign of life for 5 min — stopped waiting)'
   },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
+  'title.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'sched.title': { ko: '예약 작업', en: 'Scheduled work' },
+  'sched.empty': {
+    ko: '예약된 작업이 없습니다. +로 하나 만들어 보세요.',
+    en: 'Nothing scheduled yet — add one with +.'
+  },
+  'sched.namePlaceholder': { ko: '이름 (비우면 프롬프트 첫 줄)', en: 'Name (defaults to the first line)' },
+  'sched.promptPlaceholder': { ko: '실행할 지시를 적으세요', en: 'What should it ask the agent to do?' },
+  'sched.preset.daily': { ko: '매일', en: 'Daily' },
+  'sched.preset.weekdays': { ko: '평일', en: 'Weekdays' },
+  'sched.preset.weekly': { ko: '매주', en: 'Weekly' },
+  'sched.preset.hourly': { ko: '매시', en: 'Hourly' },
+  'sched.preset.every': { ko: 'N분마다', en: 'Every N minutes' },
+  'sched.preset.once': { ko: '한 번', en: 'Once' },
+  'sched.newPane': { ko: '새 채팅 패널', en: 'A new chat pane' },
+  'sched.save': { ko: '저장', en: 'Save' },
+  'sched.next': { ko: '다음 실행 {when}', en: 'next run {when}' },
+  'sched.paused': { ko: '멈춤', en: 'paused' },
+  'sched.pause': { ko: '일시 중지', en: 'Pause' },
+  'sched.resume': { ko: '재개', en: 'Resume' },
+  'sched.runNow': { ko: '지금 실행', en: 'Run now' },
+  'sched.delete': { ko: '삭제', en: 'Delete' },
+  'sched.ranOk': { ko: '실행됨', en: 'ran' },
+  'sched.ranFailed': { ko: '실패', en: 'failed' },
+  'sched.ranMissed': { ko: '놓침', en: 'missed' },
+  'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
+  'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
 
   // ---- 리븐펫 (the floating pet device) ----
   'pet.title': { ko: '리븐펫', en: 'RivenPet' },

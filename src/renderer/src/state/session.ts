@@ -54,6 +54,10 @@ export interface Session {
   // so the panel's tabs survive a restart; a run that was still going when the
   // app closed is marked interrupted on load, because its loop died with it.
   runs?: unknown[]
+  // Scheduled agent jobs for this workspace (see state/jobs). Beside the panes
+  // they target, for the same reason the groups are: a job pointing at a pane
+  // from a session tree it was never stored with is a job that cannot run.
+  jobs?: unknown[]
   groups?: Array<{
     group: string
     members: Array<{

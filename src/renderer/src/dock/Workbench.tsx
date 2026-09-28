@@ -5,6 +5,7 @@ import 'dockview-core/dist/styles/dockview.css'
 import EditorPanel from './panels/EditorPanel'
 import PreviewPanel from './panels/PreviewPanel'
 import AgentGroupPanel from './panels/AgentGroupPanel'
+import SchedulerPanel from './panels/SchedulerPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
 import ChangesPanel from './panels/ChangesPanel'
@@ -161,6 +162,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       notes: () => boxed('notes', <NotesPanel workspace={workspace} />),
       api: () => boxed('api', <ApiClientPanel />),
       agentgroup: () => boxed('agentgroup', <AgentGroupPanel workspace={workspace} />),
+      scheduler: () => boxed('scheduler', <SchedulerPanel workspace={workspace} />),
       chat: (
         props: IDockviewPanelProps<{
           chatKey: string

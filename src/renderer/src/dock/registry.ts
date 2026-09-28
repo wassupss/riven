@@ -371,6 +371,7 @@ export type NamedPanel =
   | 'notes'
   | 'api'
   | 'agentgroup'
+  | 'scheduler'
 export function openNamedPanel(id: NamedPanel, dir?: SplitDir, refId?: string): void {
   const api = activeApi
   if (!api) return
@@ -665,7 +666,8 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   changes: { titleKey: 'title.changes', direction: 'right' },
   notes: { titleKey: 'title.notes', direction: 'right' },
   api: { titleKey: 'title.api', direction: 'right' },
-  agentgroup: { titleKey: 'title.agentgroup', direction: 'right' }
+  agentgroup: { titleKey: 'title.agentgroup', direction: 'right' },
+  scheduler: { titleKey: 'title.scheduler', direction: 'right' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).

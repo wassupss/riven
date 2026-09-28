@@ -25,6 +25,7 @@ import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from 
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
+import { startJobRunner } from './state/jobRunner'
 import { useUI } from './state/ui'
 import {
   useSession,
@@ -159,6 +160,7 @@ export default function App(): JSX.Element {
     const offMcp = registerMcpToolHandler()
     // Fire due scheduled messages (명령 예약).
     startScheduler()
+    startJobRunner()
     // Track every workspace's agent panes app-wide. This must NOT live in the
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
     // otherwise take its status (and its very existence) with it.

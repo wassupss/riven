@@ -5,11 +5,12 @@ import { type PaneActivity } from '../state/workspaceStatus'
 import { useAgents } from '../state/agents'
 import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
+import { useJobs } from '../state/jobs'
 import { useSettings } from '../state/settings'
-import { getActiveApi } from '../dock/registry'
+import { getActiveApi, togglePanel } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
 import { useT } from '../i18n'
-import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, GitBranch, ChevronRight, ChevronDown, Clock } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -19,6 +20,10 @@ export default function WorkspaceTabs(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
   const reorderWorkspace = useSession((s) => s.reorderWorkspace)
+  // Jobs armed across every workspace — the rail is above all of them.
+  const armed = useJobs((s) =>
+    Object.values(s.byWorkspace).reduce((n, jobs) => n + jobs.filter((j) => j.enabled).length, 0)
+  )
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
 
@@ -44,6 +49,18 @@ export default function WorkspaceTabs(): JSX.Element {
     <div className="ws-rail">
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
+        {/* Scheduled work belongs above the workspaces, not inside one: a
+            schedule is something the machine does on your behalf while you are
+            elsewhere, and it is the first thing worth checking on return. The
+            badge counts what is armed right now. */}
+        <button
+          className="ws-rail-add"
+          title={t('ws.scheduler')}
+          onClick={() => togglePanel('scheduler')}
+        >
+          <Clock size={14} />
+          {armed > 0 && <span className="ws-rail-badge">{armed}</span>}
+        </button>
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>
