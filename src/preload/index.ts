@@ -257,6 +257,8 @@ const api = {
         configDir?: string
         // Which agent backs the pane. Absent = Claude Code.
         cli?: 'claude' | 'codex'
+        /** Built-in tools to leave out of --allowedTools (the CLI then asks). */
+        toolsDenied?: string[]
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them
@@ -366,6 +368,23 @@ const api = {
   },
   // Real Chromium browser: each tab is a main-process WebContentsView. The panel
   // draws chrome and reports the viewport rect; ops/results go over IPC.
+  // What macOS has granted riven, and the two ways to change it.
+  permissions: {
+    report: (): Promise<{
+      notifications: string
+      screen: string
+      microphone: string
+      camera: string
+      supported: boolean
+    }> => ipcRenderer.invoke('perm:report'),
+    ask: (kind: 'microphone' | 'camera'): Promise<boolean> => ipcRenderer.invoke('perm:ask', kind),
+    open: (kind: string): Promise<void> => ipcRenderer.invoke('perm:open', kind)
+  },
+  power: {
+    // How many panes are mid-turn, and whether the user wants the machine kept
+    // awake for them. Sent on every change; main refcounts it.
+    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled)
+  },
   browser: {
     create: (id: string, url: string, partition?: string): Promise<void> =>
       ipcRenderer.invoke('browser:create', { id, url, partition }),

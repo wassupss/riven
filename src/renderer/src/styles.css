@@ -830,21 +830,25 @@ select {
   font-size: var(--text-2xs);
   color: var(--fg-dim);
 }
-/* The first line of the sidebar's content: above the workspaces, in the same
-   left inset and height as the section header under it, so the two read as one
-   stack rather than a banner sitting on a header. */
+/* A navigation row, not a button: icon, label, and whatever it has to report on
+   the right. No border and no fill — a bordered box above a plain section header
+   reads as an advert for itself, which is what three attempts at this looked
+   like. The divider under it separates app-level destinations from the
+   workspaces, the way the rest of the rail is grouped. */
 .ws-sched-row {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  height: 30px;
-  padding: 0 10px 0 12px;
+  height: 32px;
+  padding: 0 10px 0 11px;
+  margin-bottom: 4px;
   font-size: var(--text-xs);
   color: var(--fg-dim);
   background: none;
   border: none;
+  border-bottom: 1px solid var(--edge);
   cursor: pointer;
   text-align: left;
 }
@@ -852,12 +856,19 @@ select {
   color: var(--fg);
   background: var(--hover);
 }
-/* Armed, the clock is the one lit thing: something is actually pending. */
 .ws-sched-row.armed {
   color: var(--fg);
 }
 .ws-sched-row.armed > svg {
   color: var(--accent);
+}
+/* When the next one goes — quiet, like the "now" on an Orca row. */
+.ws-sched-next {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
 }
 .ws-sched-row.armed {
   color: var(--fg);
@@ -1050,6 +1061,26 @@ select {
 }
 .sched-formwrap {
   border-bottom: 1px solid var(--edge);
+}
+
+/* Permission state, said plainly beside the thing that needs it. */
+.perm-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding: 2px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}
+.perm-state.granted {
+  color: var(--ok, #3fb950);
+  border-color: color-mix(in srgb, var(--ok, #3fb950) 40%, transparent);
+}
+.perm-state.denied {
+  color: var(--danger, #e5534b);
+  border-color: color-mix(in srgb, var(--danger, #e5534b) 40%, transparent);
 }
 
 /* ---- scheduled work panel ---- */
@@ -1470,11 +1501,54 @@ select {
   overflow: hidden;
   background: var(--bg-2);
 }
+/* The workspace's own colour, with a project glyph on it. Both halves are the
+   user's to change (right-click → 색상 / 아이콘); without a choice they are
+   hashed from the path, so two checkouts never look identical. */
+.ws-card-glyph {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+/* The glyph picker in the workspace's context menu. */
+.ws-glyphs {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  padding: 4px 8px 8px;
+}
+.ws-glyph {
+  display: grid;
+  place-items: center;
+  height: 24px;
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ws-glyph:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.ws-glyph.on {
+  color: var(--fg);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
 .ws-card-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+/* A photograph brings its own edges; a glyph tile needs one, or the two sit at
+   different depths in the same column. */
+.ws-card-avatar {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 6%);
+}
+.ws-card-glyph svg {
+  stroke-width: 2.25;
 }
 .ws-card-avatar.busy::after,
 .ws-card-avatar.done::after,
@@ -3935,9 +4009,14 @@ select {
 .tg-chevron.open {
   transform: rotate(180deg);
 }
-/* A long running command must not push the expander out of the row. */
+/* A long running command must not push the expander out of the row — and the
+   label takes the slack, so the duration and the expander stay together at the
+   end. Both of those carry `margin-left: auto`, and two auto margins SPLIT the
+   free space between them: the elapsed time ended up floating in the middle of
+   the row with a gap on either side. */
 .chat-toolgroup-head > .chat-shimmer-text,
 .chat-toolgroup-head > .tg-title {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9152,38 +9231,52 @@ select {
     rotate: 360deg;
   }
 }
-/* Decorative motion stops when it is not earning its frames. Everything keeps
-   its colour, dot and ring — only the movement pauses.
-     win-blurred     nobody is looking at the window
-     browser-active  the browser panel is in front: its page is drawn by the
-                     same GPU process as this UI, and every ring, shimmer and
-                     pulse animating here was frames taken from its scrolling.
-   Measured on the installed app: the browser tab's own process sat near 0%
-   while the app UI renderer ran 16-34% and the shared GPU process 12-37%. */
-body.win-blurred .chat-ring::before,
+/* Motion stops when nobody can see it — which is not the same as "the window is
+   not focused".
+     win-hidden      minimised, or on another Space/desktop: nothing renders
+     browser-active  the browser panel is in front, drawing over this UI with
+                     the same GPU process; every ring and shimmer animating
+                     here was frames taken from its scrolling. Measured on the
+                     installed app: the browser tab's own process sat near 0%
+                     while the app UI renderer ran 16-34% and the shared GPU
+                     process 12-37%.
+   An UNFOCUSED window gets none of this. Side by side with an editor is exactly
+   how people watch an agent work, and freezing every shimmer there made a
+   working app look hung — which is the opposite of what these animations are
+   for. Only the purely decorative one stops (see below). */
+body.win-hidden .chat-ring::before,
 body.browser-active .chat-ring::before,
-body.win-blurred .riven-tab-label.shimmer,
+body.win-hidden .riven-tab-label.shimmer,
 body.browser-active .riven-tab-label.shimmer,
-body.win-blurred .ws-agent-title.shimmer,
+body.win-hidden .ws-agent-title.shimmer,
 body.browser-active .ws-agent-title.shimmer,
-body.win-blurred .chat-shimmer-text,
+body.win-hidden .chat-shimmer-text,
 body.browser-active .chat-shimmer-text,
-body.win-blurred .tab-dot.attn,
+body.win-hidden .tab-dot.attn,
 body.browser-active .tab-dot.attn,
-body.win-blurred .agp-tree-row.flow > .agp-tree-self::after,
+body.win-hidden .agp-tree-row.flow > .agp-tree-self::after,
 body.browser-active .agp-tree-row.flow > .agp-tree-self::after,
-body.win-blurred .agp-tree-kid.flow::before,
+body.win-hidden .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
-body.win-blurred .agp-tree-kids.flow > .agp-tree-rail,
+body.win-hidden .agp-tree-kids.flow > .agp-tree-rail,
 body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
-body.win-blurred .chat-bgtask-dot,
+body.win-hidden .chat-bgtask-dot,
 body.browser-active .chat-bgtask-dot,
-body.win-blurred .chat-compacting-fill,
+body.win-hidden .chat-compacting-fill,
 body.browser-active .chat-compacting-fill,
-body.win-blurred .agp-node-run,
+body.win-hidden .agp-node-run,
 body.browser-active .agp-node-run,
-body.win-blurred .pane-skel > *,
+body.win-hidden .pane-skel > *,
 body.browser-active .pane-skel > * {
+  animation-play-state: paused;
+}
+
+/* Unfocused but visible: the completion ring is the one piece of motion that
+   says nothing a still frame doesn't — the ring is already there, spinning it
+   adds no information — so it is the only thing that stops. Everything that
+   reports live work keeps moving, because that is what somebody watching from
+   the next window is watching FOR. */
+body.win-unfocused .chat-ring::before {
   animation-play-state: paused;
 }
 
@@ -9650,6 +9743,81 @@ body.browser-active .pane-skel > * {
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
+/* Messages typed while a turn runs: a list above the composer, in send order.
+   They were dimmed bubbles in the transcript before — right-aligned, exactly
+   like the things the user HAS said, which is the one thing they are not. */
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 10px 6px;
+  padding: 6px 4px 5px;
+  background: var(--hover);
+  border: 1px dashed var(--edge-strong);
+  border-radius: var(--radius-sm);
+}
+.chat-queue-head {
+  padding: 0 6px 3px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.chat-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+.chat-queue-row:hover {
+  background: var(--hover-strong);
+}
+.chat-queue-no {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.chat-queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-queue-act {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.chat-queue-act.icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  padding: 0;
+  height: 20px;
+  border-radius: var(--radius-sm);
+}
+.chat-queue-row:hover .chat-queue-act,
+.chat-queue-act:focus-visible {
+  opacity: 1;
+}
+.chat-queue-act:hover {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: var(--accent-border);
+}
+
 /* Commands left running in the background. Their own row, not the subagent
    strip they were borrowing: a subagent belongs to the turn that spawned it and
    disappears with it, while these outlive it. */

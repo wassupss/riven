@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { activityOf, terminalRosterTitle, type Live, type PaneKind, type RosterEntry } from './rosterActivity'
 import { useSession } from './session'
+import { getSettings } from './settings'
 import { getAgentStatus } from './agents'
 
 // Every agent pane in every OPEN workspace — whether or not that workspace is
@@ -155,6 +156,22 @@ export function rosterFor(workspace: string): RosterEntry[] {
 export function startRoster(): () => void {
   const { patch, drop, bump } = useRoster.getState()
 
+  // Tell main how many panes are mid-turn, so it can hold sleep off while any
+  // are (see main/keepAwake). Reported from here rather than tracked there:
+  // this store is the one place that knows, for chats AND terminals alike,
+  // whether anything is still working.
+  const reportBusy = (): void => {
+    const { live } = useRoster.getState()
+    const busy = Object.values(live).filter((p) => p.busy).length
+    try {
+      window.api.power.busy(busy, getSettings().keepAwake)
+    } catch {
+      /* an older preload has no power bridge */
+    }
+  }
+  const offBusyReport = useRoster.subscribe(reportBusy)
+  reportBusy()
+
   const offAgent = window.api.pty.onAgent(({ key, agent, name }) =>
     patch(key, { agent, name: name ?? null })
   )
@@ -191,5 +208,6 @@ export function startRoster(): () => void {
     offTitle()
     offChat()
     offSession()
+    offBusyReport()
   }
 }

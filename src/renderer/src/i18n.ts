@@ -446,6 +446,68 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   // ---- SettingsModal ----
   'settings.title': { ko: '설정', en: 'Settings' },
   'settings.tab.general': { ko: '일반', en: 'General' },
+  'settings.tab.editor': { ko: '에디터', en: 'Editor' },
+  'settings.tab.terminal': { ko: '터미널', en: 'Terminal' },
+  'settings.tab.perm': { ko: '권한', en: 'Permissions' },
+  'settings.perm.osSection': { ko: '시스템 권한', en: 'System permissions' },
+  'perm.loading': { ko: '확인 중…', en: 'Checking…' },
+  'perm.notMac': {
+    ko: '이 운영체제는 앱별 권한을 따로 관리하지 않습니다.',
+    en: 'This OS does not gate these per app.'
+  },
+  'perm.granted': { ko: '허용됨', en: 'Granted' },
+  'perm.denied': { ko: '거부됨', en: 'Denied' },
+  'perm.notAsked': { ko: '아직 요청 안 함', en: 'Not asked yet' },
+  'perm.unknown': { ko: '확인 불가', en: 'Unknown' },
+  'perm.unknownHint': {
+    ko: 'macOS가 이 권한의 상태를 앱에 알려주지 않습니다.',
+    en: 'macOS does not tell an app the state of this one.'
+  },
+  'perm.ask': { ko: '요청', en: 'Ask' },
+  'perm.open': { ko: '시스템 설정', en: 'System Settings' },
+  'perm.refresh': { ko: '다시 확인', en: 'Re-check' },
+  'perm.refreshHint': {
+    ko: '시스템 설정에서 바꾼 뒤 돌아오면 자동으로 다시 확인합니다.',
+    en: 'Re-checked automatically when you come back from System Settings.'
+  },
+  'perm.notifications': { ko: '알림', en: 'Notifications' },
+  'perm.notificationsDesc': {
+    ko: '에이전트가 작업을 끝내거나 입력을 기다릴 때 알립니다.',
+    en: 'Tells you when an agent finishes or needs you.'
+  },
+  'perm.screen': { ko: '화면 기록', en: 'Screen recording' },
+  'perm.screenDesc': {
+    ko: '에이전트의 스크린샷 도구(riven_screenshot)에 필요합니다. 없으면 검은 화면이 찍힙니다.',
+    en: "Needed by the agent's screenshot tool; without it the capture is black."
+  },
+  'perm.microphone': { ko: '마이크', en: 'Microphone' },
+  'perm.microphoneDesc': {
+    ko: '브라우저 패널에서 마이크를 쓰는 사이트에 필요합니다.',
+    en: 'For sites in the browser panel that use the microphone.'
+  },
+  'perm.camera': { ko: '카메라', en: 'Camera' },
+  'perm.cameraDesc': {
+    ko: '브라우저 패널에서 카메라를 쓰는 사이트에 필요합니다.',
+    en: 'For sites in the browser panel that use the camera.'
+  },
+  'settings.perm.modeSection': { ko: '기본 권한 모드', en: 'Default permission mode' },
+  'settings.perm.toolsSection': { ko: '미리 허용할 도구', en: 'Pre-approved tools' },
+  'settings.perm.toolsDesc': {
+    ko: '끈 도구는 금지되는 게 아니라, 쓰기 전에 물어봅니다.',
+    en: 'A tool switched off is not forbidden — the agent has to ask before using it.'
+  },
+  'settings.perm.confirmSection': { ko: '확인 창', en: 'Confirmations' },
+  'settings.perm.confirmClose': { ko: '작업 중인 패널을 닫을 때 확인', en: 'Ask before closing a busy pane' },
+  'settings.perm.confirmCloseDesc': {
+    ko: '끄면 바로 닫습니다. 작업은 어차피 중단됩니다.',
+    en: 'Off closes it straight away; the work stops either way.'
+  },
+  'settings.perm.confirmDelete': { ko: '세션을 지울 때 확인', en: 'Ask before deleting a session' },
+  'settings.perm.confirmDeleteDesc': {
+    ko: '대화 기록은 복구할 수 없습니다.',
+    en: 'A transcript cannot be recovered.'
+  },
+  'settings.tab.notify': { ko: '알림', en: 'Notifications' },
   'settings.tab.keys': { ko: '단축키', en: 'Shortcuts' },
   'settings.tab.account': { ko: '계정', en: 'Account' },
   'settings.tab.about': { ko: '정보', en: 'About' },
@@ -522,6 +584,40 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.searchEngine': { ko: '기본 검색엔진', en: 'Default search engine' },
   'settings.searchEngineDesc': { ko: '주소창 검색 URL 템플릿 ({q}=검색어)', en: 'Address-bar search URL template ({q}=query)' },
   'settings.notifySection': { ko: '알림', en: 'Notifications' },
+  'settings.powerSection': { ko: '전원', en: 'Power' },
+  'settings.keepAwake': { ko: '에이전트가 일하는 동안 잠자기 방지', en: 'Keep awake while agents work' },
+  'settings.keepAwakeDesc': {
+    ko: '턴이 진행 중일 때만 시스템 잠자기를 막습니다. 화면은 꺼져도 됩니다.',
+    en: 'Holds off system sleep only while a turn is running; the display may still sleep.'
+  },
+  'settings.notifyDone': { ko: '작업 완료', en: 'Turn finished' },
+  'settings.notifyNeedsInput': { ko: '입력 필요 / 벨', en: 'Needs input / bell' },
+  'settings.notifyFailure': { ko: '실패', en: 'Failure' },
+  'settings.autoTitle': { ko: '대화 제목 자동 생성', en: 'Name chats automatically' },
+  'settings.autoTitleDesc': {
+    ko: '첫 메시지로 탭 이름을 짓습니다. 끄면 첫 줄을 그대로 쓰고 모델 호출도 하지 않습니다.',
+    en: 'Names the tab from the first message. Off keeps that first line as-is and makes no model call.'
+  },
+  'settings.termCursorStyle': { ko: '커서 모양', en: 'Cursor style' },
+  'settings.cursorBlock': { ko: '블록', en: 'Block' },
+  'settings.cursorBar': { ko: '막대', en: 'Bar' },
+  'settings.cursorUnderline': { ko: '밑줄', en: 'Underline' },
+  'settings.termCursorBlink': { ko: '커서 깜빡임', en: 'Blink the cursor' },
+  'settings.termScrollback': { ko: '스크롤백', en: 'Scrollback' },
+  'settings.termScrollbackDesc': {
+    ko: '터미널이 기억하는 줄 수. 늘릴수록 메모리를 더 씁니다.',
+    en: 'Lines a terminal remembers. More lines, more memory.'
+  },
+  'settings.termCopyOnSelect': { ko: '선택하면 복사', en: 'Copy on select' },
+  'settings.termCopyOnSelectDesc': {
+    ko: '드래그한 텍스트가 바로 클립보드에 들어갑니다.',
+    en: 'Dragged text goes straight to the clipboard.'
+  },
+  'settings.termRightClickPaste': { ko: '오른쪽 클릭으로 붙여넣기', en: 'Right-click pastes' },
+  'settings.termRightClickPasteDesc': {
+    ko: '메뉴 대신 클립보드 내용을 바로 붙여넣습니다.',
+    en: 'Pastes the clipboard instead of opening a menu.'
+  },
   'settings.notifyDesc': { ko: '백그라운드에서 턴이 끝나면 알림', en: 'Notify when a background turn finishes' },
   'settings.crashDesc': { ko: '익명 크래시 리포트 전송', en: 'Send anonymous crash reports' },
   'settings.agentChatUIDesc': { ko: 'AI 에이전트를 터미널 CLI 대신 네이티브 챗으로 실행', en: 'Run agents in the native chat instead of a terminal CLI' },
@@ -703,6 +799,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.send': { ko: '보내기', en: 'Send' },
   'chat.stop': { ko: '중단', en: 'Stop' },
   'chat.queued': { ko: '대기 중', en: 'Queued' },
+  'chat.queueHead': {
+    ko: '대기 중 {n}건 — 지금 작업이 끝나면 순서대로 전송됩니다',
+    en: '{n} waiting — sent in order when this turn finishes'
+  },
+  'chat.queueImageOnly': { ko: '이미지 {n}장', en: '{n} image(s)' },
   'chat.sendNow': { ko: '지금 보내기', en: 'Send now' },
   'chat.sendNowHint': {
     ko: '진행 중인 작업을 멈추고 이 메시지를 바로 보냅니다 (⌘↵)',
@@ -906,6 +1007,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
   'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
   'ws.openGroup': { ko: '{group} 그룹 열기', en: 'Open the {group} group' },
+  'ws.icon': { ko: '아이콘', en: 'Icon' },
   'ws.schedulerAdd': { ko: '스케줄러 등록', en: 'Schedule work' },
   'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
   'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },

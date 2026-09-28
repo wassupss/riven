@@ -7,7 +7,17 @@ import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
 import { getActiveApi, togglePanel } from '../dock/registry'
-import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
+import {
+  tintStyle,
+  decodeAvatar,
+  hueColor,
+  hueText,
+  encodeAvatar,
+  avatarSpec,
+  wsGlyphIcon,
+  AVATAR_COLOR_COUNT,
+  WS_GLYPH_COUNT
+} from '../lib/avatar'
 import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
 import { groupPanes, stripGroup } from '../lib/paneGroups'
 import { useAgentGroups, type AgentGroup } from '../state/agentGroups'
@@ -276,6 +286,10 @@ function WorkspaceCard({
   // falls back to the colour dot rather than leaving a hole in the row.
   const [avatarFailed, setAvatarFailed] = useState(false)
   const avatar = avatarUrl(git?.repo ?? null, 48)
+  // Colour and glyph both come from the same encoded override, so the pair the
+  // user picks is what the card wears; without one they are hashed from the path.
+  const spec = avatarSpec(ws, wsColor)
+  const WsGlyph = wsGlyphIcon(spec.glyph)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -376,17 +390,36 @@ function WorkspaceCard({
             their folder name — riven, riven-electron, riven-tamagotchi all read
             the same at a glance. The owner's avatar is the one thing that says
             which project a card belongs to without reading anything. */}
-        {avatar && !avatarFailed ? (
-          <span className={`ws-card-avatar ${cardActivity}`}>
+        {/* Always a tile, never sometimes a tile and sometimes a dot: half the
+            cards showing a picture and half showing a 8px dot stopped the column
+            reading as one list. A workspace with no repository to show gets its
+            initials on its own colour, and the activity the dot used to carry
+            lives in the corner pip either way. */}
+        <span
+          className={`ws-card-avatar ${cardActivity}`}
+          title={t(ACTIVITY_LABEL_KEY[activity])}
+        >
+          {avatar && !avatarFailed ? (
             <img src={avatar} alt="" onError={() => setAvatarFailed(true)} />
-          </span>
-        ) : (
-          <StatusDot
-            activity={cardActivity}
-            color={colorFor(ws, wsColor)}
-            title={t(ACTIVITY_LABEL_KEY[activity])}
-          />
-        )}
+          ) : (
+            <span
+              className="ws-card-glyph"
+              style={{
+                // The tile and its glyph are the same hue: a saturated square
+                // with black ink on it shouted louder than the repository
+                // photos beside it. Muted surface, bright glyph — the same
+                // pairing tintStyle uses everywhere else in the app.
+                background: `color-mix(in srgb, ${hueColor(spec.color)} 24%, transparent)`,
+                color: hueText(spec.color)
+              }}
+            >
+              {/* 12 in a 16px tile: a repository photograph fills its tile edge
+                  to edge, so an 11px glyph floating in the same square read as
+                  the smaller of the two even though the boxes match. */}
+              <WsGlyph size={12} />
+            </span>
+          )}
+        </span>
         {editing ? (
           <input
             className="ws-card-rename"
@@ -524,11 +557,32 @@ function WorkspaceCard({
                     style={{ background: hueColor(c) }}
                     aria-label={`color ${c}`}
                     onClick={() => {
-                      setWorkspaceColor(ws, encodeAvatar(0, c))
+                      // Keep whichever glyph is on the card: picking a colour
+                      // used to silently reset it to the first one.
+                      setWorkspaceColor(ws, encodeAvatar(spec.glyph, c))
                       setMenu(null)
                     }}
                   />
                 ))}
+              </div>
+              <div className="context-label">{t('ws.icon')}</div>
+              <div className="ws-glyphs">
+                {Array.from({ length: WS_GLYPH_COUNT }, (_, g) => {
+                  const G = wsGlyphIcon(g)
+                  return (
+                    <button
+                      key={g}
+                      className={`ws-glyph${spec.glyph === g ? ' on' : ''}`}
+                      aria-label={`icon ${g}`}
+                      onClick={() => {
+                        setWorkspaceColor(ws, encodeAvatar(g, spec.color))
+                        setMenu(null)
+                      }}
+                    >
+                      <G size={13} />
+                    </button>
+                  )
+                })}
               </div>
               <button
                 className="ctx-item"

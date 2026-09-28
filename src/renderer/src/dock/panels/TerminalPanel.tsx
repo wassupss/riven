@@ -4,7 +4,7 @@ import TerminalPane from '../../components/TerminalPane'
 import { contextBus } from '../../bridge/contextBus'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
 import { pathOf, loadPaneState, setPaneState } from '../../state/session'
-import { claudeConfigDirFor } from '../../state/settings'
+import { claudeConfigDirFor, getSettings } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
 import { markPaneSeen } from '../../state/roster'
 import { t as staticT } from '../../i18n'
@@ -216,6 +216,9 @@ export default function TerminalPanel({
       const looking = api?.isActive && document.hasFocus()
       if (!api?.isActive) setAttention((a) => a ?? 'needs_input')
       if (looking || Date.now() - lastBell < BELL_COALESCE_MS) return
+      // A bell is the CLI asking for something — the same class of event as
+      // "needs input", and it obeys the same switch.
+      if (!getSettings().notifyOnNeedsInput) return
       lastBell = Date.now()
       notify(staticT('term.bell'))
     })
@@ -226,6 +229,8 @@ export default function TerminalPanel({
       // completion still shows on the tab and on the workspace card until the
       // user actually turns to it.
       if (api?.isActive && document.hasFocus()) return
+      const cfg = getSettings()
+      if (!(reason === 'needs_input' ? cfg.notifyOnNeedsInput : cfg.notifyOnDone)) return
       notify(
         reason === 'needs_input' ? staticT('term.needsInput') : summary?.trim() || staticT('term.done')
       )

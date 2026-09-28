@@ -49,15 +49,12 @@ export default function ScheduleMenu(): JSX.Element {
           else setOpen({ x: r.left, y: r.bottom + 2, w: r.width })
         }}
       >
-        <Clock size={13} />
-        {/* Empty, it asks for the thing it does. Armed, it says the next one —
-            a line that only ever reads "스케줄러 등록" is a line spent on a
-            label, and the rail has few to spare. */}
-        <span className="ws-sched-label">
-          {next ? `${next.job.name} · ${untilLabel(next.at, now)}` : t('ws.schedulerAdd')}
-        </span>
-        {/* Only once there is more than one: with a single job the row already
-            names it, and "1" beside it says nothing. */}
+        <Clock size={14} />
+        {/* A destination, named like one. What is pending goes on the right, the
+            way a nav row carries a count — the label itself staying put is what
+            makes a list of these read as a list. */}
+        <span className="ws-sched-label">{t('ws.scheduler')}</span>
+        {next && <span className="ws-sched-next">{untilLabel(next.at, now)}</span>}
         {armed.length > 1 && <span className="ws-sched-count">{armed.length}</span>}
       </button>
       {open &&

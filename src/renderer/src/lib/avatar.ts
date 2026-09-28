@@ -1,4 +1,24 @@
-import { User, UserRound, Users, Brain, Bot, PersonStanding, type LucideIcon } from 'lucide-react'
+import {
+  User,
+  UserRound,
+  Users,
+  Brain,
+  Bot,
+  PersonStanding,
+  Folder,
+  Code2,
+  Boxes,
+  Rocket,
+  Layers,
+  TerminalSquare,
+  Database,
+  Globe,
+  Palette,
+  Cpu,
+  Wrench,
+  Sparkles,
+  type LucideIcon
+} from 'lucide-react'
 
 // Deterministic agent avatar (mirrors native AgentAvatar): a person glyph + a hue
 // picked from an FNV-1a hash of the agent's name, so the same key yields the same
@@ -8,7 +28,24 @@ import { User, UserRound, Users, Brain, Bot, PersonStanding, type LucideIcon } f
 const HUES = [0.02, 0.08, 0.12, 0.28, 0.38, 0.46, 0.53, 0.6, 0.68, 0.75, 0.83, 0.92]
 const ICONS: LucideIcon[] = [User, UserRound, Users, Brain, Bot, PersonStanding]
 
+// A workspace is a project, not a person — the glyphs above are all faces.
+const WS_ICONS: LucideIcon[] = [
+  Folder,
+  Code2,
+  Boxes,
+  Rocket,
+  Layers,
+  TerminalSquare,
+  Database,
+  Globe,
+  Palette,
+  Cpu,
+  Wrench,
+  Sparkles
+]
+
 export const AVATAR_GLYPH_COUNT = ICONS.length
+export const WS_GLYPH_COUNT = WS_ICONS.length
 export const AVATAR_COLOR_COUNT = HUES.length
 
 function mod(n: number, m: number): number {
@@ -34,6 +71,11 @@ export function hueText(i: number): string {
 
 export function glyphIcon(i: number): LucideIcon {
   return ICONS[mod(i, ICONS.length)]
+}
+
+/** The project glyph for a workspace tile. */
+export function wsGlyphIcon(i: number): LucideIcon {
+  return WS_ICONS[mod(i, WS_ICONS.length)]
 }
 
 export function encodeAvatar(glyph: number, color: number): string {

@@ -140,6 +140,13 @@ type MsgItem =
   | { type: 'text'; text: string }
   | { type: 'tool'; tool: ToolLine }
   | { type: 'notice'; notice: MsgNotice }
+/** Something typed while a turn was running: sent when its turn comes. */
+interface QueuedMsg {
+  id: string
+  text: string
+  images: ChatImage[]
+}
+
 interface Msg {
   role: 'user' | 'assistant'
   text: string // full concatenated text (copy button / title)
@@ -155,11 +162,6 @@ interface Msg {
   // Special inline cards rendered in the transcript (native /mcp, /resume, /model).
   card?: 'mcp' | 'resume' | 'model'
   cardId?: string
-  // A user message typed while a turn was still running — shown dimmed until the
-  // turn finishes and it is sent. `queuedId` ties the bubble to its entry in the
-  // queue, so "send now" and "discard" act on the message you clicked.
-  queued?: boolean
-  queuedId?: string
   // Images sent with this message. `preview` is an in-memory data URL for the
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
@@ -730,24 +732,18 @@ const ChatMessage = memo(function ChatMessage({
   msg,
   now,
   lastEvent,
-  note,
-  onSendNow,
-  onDropQueued
+  note
 }: {
   msg: Msg
   now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
-  /** Cut the running turn short and send this queued message instead. */
-  onSendNow?: (queuedId: string) => void
-  /** Throw a queued message away without sending it. */
-  onDropQueued?: (queuedId: string) => void
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
     return (
-      <div className={`chat-turn user${msg.queued ? ' queued' : ''}`}>
+      <div className="chat-turn user">
         <div className="chat-user-bubble">
           {msg.images && msg.images.length > 0 && (
             <div className="chat-user-images">
@@ -771,29 +767,6 @@ const ChatMessage = memo(function ChatMessage({
           )}
           {msg.text}
         </div>
-        {msg.queued && (
-          <span className="chat-queued-bar">
-            <span className="chat-queued-tag">{t('chat.queued')}</span>
-            {msg.queuedId && onSendNow && (
-              <button
-                className="chat-queued-act"
-                title={t('chat.sendNowHint')}
-                onClick={() => onSendNow(msg.queuedId as string)}
-              >
-                {t('chat.sendNow')}
-              </button>
-            )}
-            {msg.queuedId && onDropQueued && (
-              <button
-                className="chat-queued-act"
-                title={t('chat.dropQueued')}
-                onClick={() => onDropQueued(msg.queuedId as string)}
-              >
-                <XIcon size={11} />
-              </button>
-            )}
-          </span>
-        )}
       </div>
     )
   }
@@ -1288,7 +1261,9 @@ function ResumeCard({
   }
   const removeSession = async (id: string, title: string): Promise<void> => {
     // The transcript file IS the session: there is nothing to undo this with.
-    if (!window.confirm(t('chat.sessionDeleteConfirm', { title }))) return
+    // Still skippable, for someone clearing out dozens of them.
+    if (getSettings().confirmDeleteSession && !window.confirm(t('chat.sessionDeleteConfirm', { title })))
+      return
     setSessions((prev) => prev?.filter((s) => s.id !== id) ?? prev)
     await window.api.chat.sessionDelete(cwd, id, configDir)
     reload()
@@ -1630,7 +1605,14 @@ export default function ChatPanel({
   // the session it was in — takes a few seconds, and until then the pane is
   // simply empty: indistinguishable from a broken one, which is exactly how it
   // read after a restart with several panes coming back at once.
-  const [booting, setBooting] = useState(true)
+  //
+  // Only when something is actually on its way: a session being resumed, or an
+  // opening message about to be sent. A brand-new empty pane has nothing to
+  // wait for — its CLI will sit idle until someone types — and telling it to
+  // stand by was a lie that outlasted every remount, because the pane never
+  // receives the event that would clear it. Three teammates freshly spawned
+  // all claimed to be "에이전트 준비 중" at once, indefinitely.
+  const [booting, setBooting] = useState(() => !!pane0.session || hasInitialText(chatKey))
   // What the CLI last said about ITSELF (a retry it is sitting in, a limit it
   // hit). Cleared as soon as real output resumes, so it never lingers.
   const [selfNote, setSelfNote] = useState<string | null>(null)
@@ -1649,8 +1631,10 @@ export default function ChatPanel({
   // announces itself (it may be parked until the first message), a spinner left
   // up forever is a worse lie than the blank pane it replaced.
   useEffect(() => {
+    if (!booting) return
     const id = setTimeout(() => setBooting(false), 10_000)
     return () => clearTimeout(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   // The pane's CURRENT session id. pane0 is a mount-time snapshot, so adopting a
   // session later (see below) must be observed from the store or the restore
@@ -2003,6 +1987,7 @@ export default function ChatPanel({
       model: savedModel !== 'default' ? savedModel : undefined,
       permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
       mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
       globalPrompt: withPersona(st.globalPrompt),
       agent: savedAgent,
       configDir: claudeConfigDirFor(workspace)
@@ -2259,7 +2244,11 @@ export default function ChatPanel({
                 document.hasFocus() &&
                 useSession.getState().activeWorkspace === workspace &&
                 getActiveApi()?.activePanel?.id === chatKey
-              if (getSettings().notifications && !looking) {
+              const cfg = getSettings()
+              // A turn that ENDED IN ERROR is a different kind of news from one
+              // that finished, and people want to be told about them separately.
+              const wanted = e.error ? cfg.notifyOnFailure : cfg.notifyOnDone
+              if (cfg.notifications && wanted && !looking) {
                 // Show what the agent actually said (cmux-style), not just "done" —
                 // a bare "완료" tells you nothing about which agent finished what.
                 const reply = (replyRef.current || '')
@@ -2465,7 +2454,17 @@ export default function ChatPanel({
     return id
   }
   // Messages typed while a turn was running, sent one-by-one as turns finish.
-  const queuedRef = useRef<Array<{ id: string; text: string; images: ChatImage[] }>>([])
+  //
+  // Rendered from STATE, above the composer — they used to be dimmed bubbles in
+  // the transcript, right-aligned like everything the user has actually said,
+  // which is the one thing they are not yet. The transcript is what happened;
+  // this is what is about to.
+  const [queued, setQueuedState] = useState<QueuedMsg[]>([])
+  const queuedRef = useRef<QueuedMsg[]>([])
+  const setQueue = (next: QueuedMsg[]): void => {
+    queuedRef.current = next
+    setQueuedState(next)
+  }
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
@@ -2476,16 +2475,36 @@ export default function ChatPanel({
   // add the assistant placeholder. Returns true if a turn was started.
   const drainQueueRef = useRef<() => boolean>(() => false)
   const drainQueue = (): boolean => {
-    const next = queuedRef.current.shift()
+    const [next, ...rest] = queuedRef.current
     if (next == null) return false
-    setMsgs((all) => {
-      const i = all.findIndex((m) => m.queuedId === next.id)
-      const copy = i >= 0 ? all.map((m, j) => (j === i ? { ...m, queued: false } : m)) : all
-      return [...copy, blankAssistant()]
-    })
+    setQueue(rest)
+    setMsgs((all) => [
+      ...all,
+      {
+        role: 'user',
+        text: next.text,
+        tools: [],
+        items: [],
+        done: true,
+        interrupted: false,
+        startedAt: 0,
+        durationMs: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        images: next.images.length
+          ? next.images.map((im) => ({ name: im.name, preview: im.preview }))
+          : undefined
+      },
+      blankAssistant()
+    ])
     setBusy(true)
     setAgentStatus(chatKey, 'busy')
-    window.api.chat.send(chatKey, next.text, next.images, newTurnId())
+    window.api.chat.send(
+      chatKey,
+      next.text,
+      next.images.map(({ mediaType, data, name }) => ({ mediaType, data, name })),
+      newTurnId()
+    )
     return true
   }
   drainQueueRef.current = drainQueue
@@ -2496,8 +2515,8 @@ export default function ChatPanel({
     (queuedId: string) => {
       const at = queuedRef.current.findIndex((q) => q.id === queuedId)
       if (at < 0) return
-      const [entry] = queuedRef.current.splice(at, 1)
-      queuedRef.current.unshift(entry)
+      const rest = queuedRef.current.filter((q) => q.id !== queuedId)
+      setQueue([queuedRef.current[at], ...rest])
       if (!busyRef.current) {
         drainQueueRef.current()
         return
@@ -2510,8 +2529,7 @@ export default function ChatPanel({
   )
   // Thrown away before it was ever sent.
   const dropQueued = useCallback((queuedId: string) => {
-    queuedRef.current = queuedRef.current.filter((q) => q.id !== queuedId)
-    setMsgs((all) => all.filter((m) => m.queuedId !== queuedId))
+    setQueue(queuedRef.current.filter((q) => q.id !== queuedId))
   }, [])
 
   // Stop means stop: interrupt the current turn AND drop anything queued.
@@ -2575,9 +2593,8 @@ export default function ChatPanel({
   }, [busy])
 
   const stopTurn = (): void => {
-    queuedRef.current = []
+    setQueue([])
     stoppedRef.current = true
-    setMsgs((all) => all.filter((m) => !m.queued))
     window.api.chat.interrupt(chatKey)
     // The CLI normally answers with a turnDone; if it doesn't (dead child, a
     // message that never reached it), stop still means stop. Only for THIS turn,
@@ -2615,6 +2632,8 @@ export default function ChatPanel({
         setTitle?.(titleRef.current)
         useAgents.getState().bump() // refresh the workspace rail (it reads getTitle)
         // Then upgrade to an AI-generated summary title (native refreshAITitle).
+        // Naming the tab costs a model call; not everyone wants one per chat.
+        if (getSettings().autoTitle)
         void window.api.chat.title(clean).then((ai) => {
           if (ai) {
             titleRef.current = composeTitle(ai)
@@ -2748,25 +2767,7 @@ export default function ChatPanel({
     // you choose, not something typing does to you.
     if (busy) {
       const queuedId = crypto.randomUUID()
-      queuedRef.current.push({ id: queuedId, text, images })
-      setMsgs((all) => [
-        ...all,
-        {
-          role: 'user',
-          text,
-          tools: [],
-          items: [],
-          done: true,
-          interrupted: false,
-          startedAt: 0,
-          durationMs: 0,
-          tokensIn: 0,
-          tokensOut: 0,
-          queued: true,
-          queuedId,
-          images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
-        }
-      ])
+      setQueue([...queuedRef.current, { id: queuedId, text, images }])
       return queuedId
     }
     sendMessage(text, images)
@@ -2818,6 +2819,7 @@ export default function ChatPanel({
         cwd: pathOf(workspace),
         model: m,
         mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
         globalPrompt: withPersona(st.globalPrompt),
         configDir: claudeConfigDirFor(workspace)
       })
@@ -3119,6 +3121,7 @@ export default function ChatPanel({
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
           globalPrompt: withPersona(st.globalPrompt),
           configDir: claudeConfigDirFor(workspace)
         }),
@@ -3234,8 +3237,6 @@ export default function ChatPanel({
             now={now}
             lastEvent={lastEventRef}
             note={selfNote}
-            onSendNow={sendQueuedNow}
-            onDropQueued={dropQueued}
           />
         )
       ),
@@ -3366,6 +3367,39 @@ export default function ChatPanel({
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* What you have typed but not sent yet. Above the composer, where the
+          other "about to happen" strips are — and in the order it will go out,
+          which a column of bubbles in the transcript could not show. */}
+      {queued.length > 0 && (
+        <div className="chat-queue">
+          <div className="chat-queue-head">
+            {t('chat.queueHead', { n: queued.length })}
+          </div>
+          {queued.map((q, i) => (
+            <div className="chat-queue-row" key={q.id}>
+              <span className="chat-queue-no">{i + 1}</span>
+              <span className="chat-queue-text" title={q.text}>
+                {q.text || t('chat.queueImageOnly', { n: q.images.length })}
+              </span>
+              <button
+                className="chat-queue-act"
+                title={t('chat.sendNowHint')}
+                onClick={() => sendQueuedNow(q.id)}
+              >
+                {t('chat.sendNow')}
+              </button>
+              <button
+                className="chat-queue-act icon"
+                title={t('chat.dropQueued')}
+                onClick={() => dropQueued(q.id)}
+              >
+                <XIcon size={11} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
