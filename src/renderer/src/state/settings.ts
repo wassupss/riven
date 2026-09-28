@@ -75,6 +75,26 @@ export interface Settings {
   usageShowUsed: boolean
   // Offer message suggestions in the agent chat.
   chatSuggest: boolean
+  // Ask macOS not to sleep while an agent is mid-turn. A laptop that sleeps
+  // halfway through a build leaves the pane waiting on a CLI that stopped
+  // getting CPU — the most confusing way for a long run to fail.
+  keepAwake: boolean
+  // Name a chat from its first message using a cheap model call. Off means the
+  // tab keeps that first line verbatim and no extra call is made.
+  autoTitle: boolean
+  // What a desktop notification is worth interrupting for. Notifications as a
+  // whole stay behind `notifications`; these decide which events qualify.
+  notifyOnDone: boolean
+  notifyOnNeedsInput: boolean
+  notifyOnFailure: boolean
+  // Terminal behaviour, all of it things xterm exposes directly.
+  terminalCursorStyle: 'block' | 'bar' | 'underline'
+  terminalCursorBlink: boolean
+  terminalScrollback: number
+  /** Selecting text puts it on the clipboard, the way a terminal usually does. */
+  terminalCopyOnSelect: boolean
+  /** Right-click pastes instead of opening a menu. */
+  terminalRightClickPaste: boolean
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -111,6 +131,16 @@ export const DEFAULT_SETTINGS: Settings = {
   uiScale: 1,
   usageShowUsed: true,
   chatSuggest: false,
+  keepAwake: true,
+  autoTitle: true,
+  notifyOnDone: true,
+  notifyOnNeedsInput: true,
+  notifyOnFailure: true,
+  terminalCursorStyle: 'block',
+  terminalCursorBlink: true,
+  terminalScrollback: 5000,
+  terminalCopyOnSelect: false,
+  terminalRightClickPaste: false,
   // JetBrains Mono for Latin (matches Ghostty/cmux — the native terminal look),
   // with D2Coding picking up Korean glyphs JetBrains Mono lacks. System name first
   // (instant if installed), then the bundled web copy, so it resolves even with no

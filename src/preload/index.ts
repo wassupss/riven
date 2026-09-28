@@ -366,6 +366,11 @@ const api = {
   },
   // Real Chromium browser: each tab is a main-process WebContentsView. The panel
   // draws chrome and reports the viewport rect; ops/results go over IPC.
+  power: {
+    // How many panes are mid-turn, and whether the user wants the machine kept
+    // awake for them. Sent on every change; main refcounts it.
+    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled)
+  },
   browser: {
     create: (id: string, url: string, partition?: string): Promise<void> =>
       ipcRenderer.invoke('browser:create', { id, url, partition }),

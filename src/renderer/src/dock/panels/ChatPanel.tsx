@@ -2232,7 +2232,11 @@ export default function ChatPanel({
                 document.hasFocus() &&
                 useSession.getState().activeWorkspace === workspace &&
                 getActiveApi()?.activePanel?.id === chatKey
-              if (getSettings().notifications && !looking) {
+              const cfg = getSettings()
+              // A turn that ENDED IN ERROR is a different kind of news from one
+              // that finished, and people want to be told about them separately.
+              const wanted = e.error ? cfg.notifyOnFailure : cfg.notifyOnDone
+              if (cfg.notifications && wanted && !looking) {
                 // Show what the agent actually said (cmux-style), not just "done" —
                 // a bare "완료" tells you nothing about which agent finished what.
                 const reply = (replyRef.current || '')
@@ -2616,6 +2620,8 @@ export default function ChatPanel({
         setTitle?.(titleRef.current)
         useAgents.getState().bump() // refresh the workspace rail (it reads getTitle)
         // Then upgrade to an AI-generated summary title (native refreshAITitle).
+        // Naming the tab costs a model call; not everyone wants one per chat.
+        if (getSettings().autoTitle)
         void window.api.chat.title(clean).then((ai) => {
           if (ai) {
             titleRef.current = composeTitle(ai)

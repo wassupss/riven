@@ -320,6 +320,43 @@ export default function SettingsModal(): JSX.Element | null {
                     onChange={(e) => upd('terminalFontSize', Number(e.target.value))}
                   />
                 </Row>
+                <Row title={t('settings.termCursorStyle')}>
+                  <select
+                    className="ui-select"
+                    value={settings.terminalCursorStyle}
+                    onChange={(e) => upd('terminalCursorStyle', e.target.value as 'block')}
+                  >
+                    <option value="block">{t('settings.cursorBlock')}</option>
+                    <option value="bar">{t('settings.cursorBar')}</option>
+                    <option value="underline">{t('settings.cursorUnderline')}</option>
+                  </select>
+                </Row>
+                <ToggleRow
+                  title={t('settings.termCursorBlink')}
+                  checked={settings.terminalCursorBlink}
+                  onChange={(v) => upd('terminalCursorBlink', v)}
+                />
+                <Row title={t('settings.termScrollback')} desc={t('settings.termScrollbackDesc')}>
+                  <NumberInput
+                    min={200}
+                    max={100000}
+                    step={500}
+                    value={settings.terminalScrollback}
+                    onChange={(e) => upd('terminalScrollback', Number(e.target.value))}
+                  />
+                </Row>
+                <ToggleRow
+                  title={t('settings.termCopyOnSelect')}
+                  desc={t('settings.termCopyOnSelectDesc')}
+                  checked={settings.terminalCopyOnSelect}
+                  onChange={(v) => upd('terminalCopyOnSelect', v)}
+                />
+                <ToggleRow
+                  title={t('settings.termRightClickPaste')}
+                  desc={t('settings.termRightClickPasteDesc')}
+                  checked={settings.terminalRightClickPaste}
+                  onChange={(v) => upd('terminalRightClickPaste', v)}
+                />
                 <Row title={t('settings.termColors')}>
                   <label className="ui-colorwell" title={t('settings.termBg')}>
                     <input
@@ -386,12 +423,41 @@ export default function SettingsModal(): JSX.Element | null {
                   />
                 </Row>
 
+                <div className="section-label">{t('settings.powerSection')}</div>
+                <ToggleRow
+                  title={t('settings.keepAwake')}
+                  desc={t('settings.keepAwakeDesc')}
+                  checked={settings.keepAwake}
+                  onChange={(v) => upd('keepAwake', v)}
+                />
+
                 <div className="section-label">{t('settings.notifySection')}</div>
                 <ToggleRow
                   title={t('settings.notifications')}
                   desc={t('settings.notifyDesc')}
                   checked={settings.notifications}
                   onChange={(v) => upd('notifications', v)}
+                />
+                {/* Which events are worth interrupting for. Nested under the
+                    master switch, and disabled with it, so the relationship is
+                    visible rather than something to discover. */}
+                <ToggleRow
+                  title={t('settings.notifyDone')}
+                  checked={settings.notifyOnDone}
+                  disabled={!settings.notifications}
+                  onChange={(v) => upd('notifyOnDone', v)}
+                />
+                <ToggleRow
+                  title={t('settings.notifyNeedsInput')}
+                  checked={settings.notifyOnNeedsInput}
+                  disabled={!settings.notifications}
+                  onChange={(v) => upd('notifyOnNeedsInput', v)}
+                />
+                <ToggleRow
+                  title={t('settings.notifyFailure')}
+                  checked={settings.notifyOnFailure}
+                  disabled={!settings.notifications}
+                  onChange={(v) => upd('notifyOnFailure', v)}
                 />
                 <ToggleRow
                   title={t('settings.crashReporting')}
@@ -462,6 +528,13 @@ export default function SettingsModal(): JSX.Element | null {
                     <option value="default">{t('chat.mode.ask')}</option>
                   </Select>
                 </Row>
+
+                <ToggleRow
+                  title={t('settings.autoTitle')}
+                  desc={t('settings.autoTitleDesc')}
+                  checked={settings.autoTitle}
+                  onChange={(v) => upd('autoTitle', v)}
+                />
 
                 <div className="section-label">{t('settings.promptSection')}</div>
                 <div className="set-note">{t('settings.ai.globalPromptNote')}</div>

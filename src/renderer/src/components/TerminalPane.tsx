@@ -132,11 +132,11 @@ export default function TerminalPane({
         // No extra letter spacing (Ghostty adds none); a touch of line height.
         letterSpacing: 0,
         lineHeight: 1.25,
-        cursorBlink: true,
-        cursorStyle: 'block',
+        cursorBlink: cfg.terminalCursorBlink,
+        cursorStyle: cfg.terminalCursorStyle,
         cursorInactiveStyle: 'outline',
         allowProposedApi: true,
-        scrollback: 5000,
+        scrollback: Math.max(200, cfg.terminalScrollback),
         // minimumContrastRatio > 1 makes xterm recompute a contrast-adjusted color
         // for every cell on every render (documented CPU/memory cost) — it was the
         // cause of the lag on a busy prompt redraw. Ghostty does no runtime contrast
@@ -206,6 +206,31 @@ export default function TerminalPane({
       let ptyId: string | null = null
       let torn = false
       const disposers: Array<() => void> = []
+
+      // Terminal habits people bring from other terminals, both off by default
+      // because both surprise anyone who does NOT have the habit: a selection
+      // that silently replaces the clipboard, and a right-click that pastes
+      // instead of offering a menu.
+      if (cfg.terminalCopyOnSelect) {
+        const sub = term.onSelectionChange(() => {
+          const text = term.getSelection()
+          if (text) void navigator.clipboard.writeText(text).catch(() => {})
+        })
+        disposers.push(() => sub.dispose())
+      }
+      if (cfg.terminalRightClickPaste) {
+        const paste = (e: MouseEvent): void => {
+          e.preventDefault()
+          void navigator.clipboard
+            .readText()
+            .then((text) => {
+              if (text && ptyId) window.api.pty.write(ptyId, text)
+            })
+            .catch(() => {})
+        }
+        container.addEventListener('contextmenu', paste)
+        disposers.push(() => container.removeEventListener('contextmenu', paste))
+      }
 
       let webgl: WebglAddon | null = null
       let webglTried = false
@@ -535,6 +560,12 @@ export default function TerminalPane({
           const s = getSettings()
           term.options.fontFamily = s.terminalFontFamily
           term.options.fontSize = s.terminalFontSize
+          // Everything xterm can change in place, changed in place: a setting
+          // that only applies to terminals opened afterwards reads as one that
+          // does not work.
+          term.options.cursorStyle = s.terminalCursorStyle
+          term.options.cursorBlink = s.terminalCursorBlink
+          term.options.scrollback = Math.max(200, s.terminalScrollback)
           container.style.setProperty('--term-font', s.terminalFontFamily)
           container.style.setProperty('--term-font-size', `${s.terminalFontSize}px`)
           requestAnimationFrame(() => {

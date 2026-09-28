@@ -522,6 +522,40 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.searchEngine': { ko: '기본 검색엔진', en: 'Default search engine' },
   'settings.searchEngineDesc': { ko: '주소창 검색 URL 템플릿 ({q}=검색어)', en: 'Address-bar search URL template ({q}=query)' },
   'settings.notifySection': { ko: '알림', en: 'Notifications' },
+  'settings.powerSection': { ko: '전원', en: 'Power' },
+  'settings.keepAwake': { ko: '에이전트가 일하는 동안 잠자기 방지', en: 'Keep awake while agents work' },
+  'settings.keepAwakeDesc': {
+    ko: '턴이 진행 중일 때만 시스템 잠자기를 막습니다. 화면은 꺼져도 됩니다.',
+    en: 'Holds off system sleep only while a turn is running; the display may still sleep.'
+  },
+  'settings.notifyDone': { ko: '작업 완료', en: 'Turn finished' },
+  'settings.notifyNeedsInput': { ko: '입력 필요 / 벨', en: 'Needs input / bell' },
+  'settings.notifyFailure': { ko: '실패', en: 'Failure' },
+  'settings.autoTitle': { ko: '대화 제목 자동 생성', en: 'Name chats automatically' },
+  'settings.autoTitleDesc': {
+    ko: '첫 메시지로 탭 이름을 짓습니다. 끄면 첫 줄을 그대로 쓰고 모델 호출도 하지 않습니다.',
+    en: 'Names the tab from the first message. Off keeps that first line as-is and makes no model call.'
+  },
+  'settings.termCursorStyle': { ko: '커서 모양', en: 'Cursor style' },
+  'settings.cursorBlock': { ko: '블록', en: 'Block' },
+  'settings.cursorBar': { ko: '막대', en: 'Bar' },
+  'settings.cursorUnderline': { ko: '밑줄', en: 'Underline' },
+  'settings.termCursorBlink': { ko: '커서 깜빡임', en: 'Blink the cursor' },
+  'settings.termScrollback': { ko: '스크롤백', en: 'Scrollback' },
+  'settings.termScrollbackDesc': {
+    ko: '터미널이 기억하는 줄 수. 늘릴수록 메모리를 더 씁니다.',
+    en: 'Lines a terminal remembers. More lines, more memory.'
+  },
+  'settings.termCopyOnSelect': { ko: '선택하면 복사', en: 'Copy on select' },
+  'settings.termCopyOnSelectDesc': {
+    ko: '드래그한 텍스트가 바로 클립보드에 들어갑니다.',
+    en: 'Dragged text goes straight to the clipboard.'
+  },
+  'settings.termRightClickPaste': { ko: '오른쪽 클릭으로 붙여넣기', en: 'Right-click pastes' },
+  'settings.termRightClickPasteDesc': {
+    ko: '메뉴 대신 클립보드 내용을 바로 붙여넣습니다.',
+    en: 'Pastes the clipboard instead of opening a menu.'
+  },
   'settings.notifyDesc': { ko: '백그라운드에서 턴이 끝나면 알림', en: 'Notify when a background turn finishes' },
   'settings.crashDesc': { ko: '익명 크래시 리포트 전송', en: 'Send anonymous crash reports' },
   'settings.agentChatUIDesc': { ko: 'AI 에이전트를 터미널 CLI 대신 네이티브 챗으로 실행', en: 'Run agents in the native chat instead of a terminal CLI' },
