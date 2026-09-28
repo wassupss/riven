@@ -13,6 +13,7 @@ import {
   ExternalLink,
   StickyNote,
   Send,
+  Columns3,
   Egg
 } from 'lucide-react'
 import { useUI } from '../state/ui'
@@ -25,6 +26,7 @@ import {
   launchAgent,
   openAgentChat,
   openNamedPanel,
+  tidyLayout,
   type NamedPanel
 } from '../dock/registry'
 import { keymap } from '../keybindings/keys'
@@ -133,6 +135,15 @@ export default function QuickPanel(): JSX.Element | null {
         run: () => togglePanel('api')
       }
     ]
+    arr.push({
+      id: 'tidy',
+      label: t('qp.tidyLayout'),
+      section: sPanel,
+      icon: <Columns3 size={15} />,
+      run: () => {
+        tidyLayout()
+      }
+    })
     // Agent group panel: compose/manage a team of agents inside a dockable panel.
     arr.push({
       id: 'agentgroup',

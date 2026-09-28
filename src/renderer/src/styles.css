@@ -766,6 +766,77 @@ select {
   border-radius: var(--radius-full);
 }
 
+/* The top-bar schedule menu. Anchored under its button, dismissed by the scrim
+   so a click anywhere else closes it. */
+.sched-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+.sched-menu {
+  position: fixed;
+  z-index: 81;
+  min-width: 240px;
+  max-width: 340px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+.sched-menu-head {
+  padding: 6px 9px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sched-menu-empty {
+  padding: 8px 9px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.sched-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.sched-menu-item:hover {
+  background: var(--hover-strong);
+}
+.sched-menu-item.action {
+  color: var(--fg-dim);
+  border-top: 1px solid var(--edge);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  margin-top: 2px;
+}
+.sched-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-menu-when,
+.sched-menu-next {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sidebar-head-btn.armed {
+  color: var(--fg);
+}
+.sidebar-head {
+  gap: 4px;
+}
+
 /* ---- scheduled work panel ---- */
 .sched-panel {
   display: flex;
@@ -990,6 +1061,29 @@ select {
 }
 .sched-act.danger:hover {
   color: var(--danger, #e5534b);
+}
+/* Under ~300px the two-column rows stop being rows. Container queries, so this
+   follows the PANEL's width — the dock splits horizontally, so a viewport media
+   query says nothing about how much room this panel actually has. */
+.sched-panel {
+  container-type: inline-size;
+}
+@container (max-width: 300px) {
+  .sched-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sched-num,
+  .sched-save {
+    width: 100%;
+    margin-left: 0;
+  }
+  .sched-item {
+    flex-wrap: wrap;
+  }
+  .sched-when {
+    display: none; /* the rule is repeated in the meta line below */
+  }
 }
 .ws-list {
   flex: 1 1 auto;

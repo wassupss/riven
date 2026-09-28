@@ -1709,11 +1709,23 @@ export default function ChatPanel({
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   // Images to send with the next message, shown as thumbnails above the input.
+  //
+  // Mirrored in a ref because sending has to EMPTY them synchronously. The
+  // textarea is cleared through the DOM, which is instant; state is not. So when
+  // submit ran twice in one tick — an IME Enter and its composition-end twin —
+  // the second call read an already-empty input but the still-full attachment
+  // state, and sent the images a second time on their own. On screen that was
+  // the message, and then the same screenshot again with no text under it.
   const [attachments, setAttachments] = useState<ChatImage[]>([])
+  const attachmentsRef = useRef<ChatImage[]>([])
+  const putAttachments = (next: ChatImage[]): void => {
+    attachmentsRef.current = next
+    setAttachments(next)
+  }
   const addImages = (files: File[]): void => {
     void Promise.all(files.map(readImage)).then((imgs) => {
       const ok = imgs.filter((x): x is ChatImage => !!x)
-      if (ok.length) setAttachments((cur) => [...cur, ...ok])
+      if (ok.length) putAttachments([...attachmentsRef.current, ...ok])
       inputRef.current?.focus()
     })
   }
@@ -2703,12 +2715,12 @@ export default function ChatPanel({
   /** Returns the id of the message it QUEUED, or null if it went straight out. */
   const submit = (): string | null => {
     const text = (inputRef.current?.value ?? input).trim()
-    const images = attachments
+    const images = attachmentsRef.current
     if (!text && images.length === 0) return null
     // A bare native command opens riven UI. Anything else — including skills and
     // commands with args — is sent to the CLI so it runs inline in the answer.
     if (images.length === 0 && runNativeCommand(text)) return null
-    setAttachments([])
+    putAttachments([])
     setInput('')
     if (inputRef.current) {
       inputRef.current.value = ''
@@ -3356,7 +3368,7 @@ export default function ChatPanel({
                   className="chat-attachment-x"
                   aria-label={t('chat.removeAttachment')}
                   title={t('chat.removeAttachment')}
-                  onClick={() => setAttachments((cur) => cur.filter((x) => x.id !== a.id))}
+                  onClick={() => putAttachments(attachmentsRef.current.filter((x) => x.id !== a.id))}
                 >
                   <XIcon size={10} />
                 </button>

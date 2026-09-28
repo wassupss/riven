@@ -899,6 +899,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.ranMissed': { ko: '놓침', en: 'missed' },
   'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
   'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
+  'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
+  'sched.manage': { ko: '예약 관리', en: 'Manage schedules' },
+  'sched.createFirst': { ko: '예약 만들기', en: 'Create a schedule' },
 
   // ---- 리븐펫 (the floating pet device) ----
   'pet.title': { ko: '리븐펫', en: 'RivenPet' },

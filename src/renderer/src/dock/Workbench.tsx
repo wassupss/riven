@@ -17,6 +17,7 @@ import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
 import RivenTab from './RivenTab'
 import ErrorBoundary from '../components/ErrorBoundary'
+import { MIN_PANEL_WIDTH } from './registry'
 import { useSession, flushSessionSaveSync, clearPaneState, workspaceName } from '../state/session'
 import {
   setActiveApi,
@@ -206,6 +207,25 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       const api = event.api
       apiRef.current = api
       registerApiWorkspace(api, workspace) // so tab headers can resolve their workspace
+      // Keep every column readable — but only while they still FIT.
+      //
+      // A flat floor looked right and was worse: a layout that already had more
+      // columns than the floor allows pushed most of them off the right edge,
+      // where dockview does not scroll and nothing could reach them. So the
+      // floor applies when the dock can honour it, and is released when it
+      // cannot; new panels open as tabs rather than columns once there is no
+      // room (see registry.placement), which is what stops a dock getting into
+      // that state in the first place.
+      const applyFloors = (): void => {
+        const fits = api.groups.length * MIN_PANEL_WIDTH <= (api.width || 0)
+        for (const group of api.groups) {
+          group.api.setConstraints({ minimumWidth: fits ? MIN_PANEL_WIDTH : 0 })
+        }
+      }
+      api.onDidAddGroup(applyFloors)
+      api.onDidRemoveGroup(applyFloors)
+      api.onDidLayoutChange(applyFloors)
+      applyFloors()
       ignoreZeroShellLayout(api)
       // onReady fires once per dockview INSTANCE. Refs survive a StrictMode
       // remount (and a renderer reload remounts too), so a stale `restoredRef`
