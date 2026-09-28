@@ -121,6 +121,10 @@ interface Session {
   // Results owed to turns the CLI started by itself — see turnClaim.ts.
   autoTurns: number
   autoTurnAt: number
+  // Ids of tasks the CLI actually put in the BACKGROUND. Every tool call is a
+  // "task" to the CLI and every one of them ends with a task_notification, so
+  // this is what tells the two apart.
+  bgTaskIds: Set<string>
 }
 
 const sessions = new Map<string, Session>()
@@ -524,6 +528,10 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   // to say so, and nothing when it finished either.
   if (type === 'system' && ev.subtype === 'background_tasks_changed') {
     const raw = Array.isArray(ev.tasks) ? (ev.tasks as Record<string, unknown>[]) : []
+    // Remembered, never pruned here: the list is emptied BEFORE the finishing
+    // notification arrives, and that notification is the only thing that still
+    // needs to know this task was a background one.
+    for (const task of raw) if (task.task_id) s.bgTaskIds.add(String(task.task_id))
     emit(s, {
       key: s.key,
       kind: 'bgTasks',
@@ -535,12 +543,20 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     return
   }
   if (type === 'system' && ev.subtype === 'task_notification') {
-    // Idle CLI + a finished task = the CLI is about to run a turn of its own.
+    // EVERY tool call ends with one of these, foreground ones included. Only a
+    // backgrounded command is news: the rest are already on screen as the tool
+    // line that ran them, so announcing them again — minutes later, detached
+    // from that line — filled the transcript with "백그라운드 작업 완료" for
+    // nine ordinary Bash calls in a row.
+    const taskId = String(ev.task_id ?? '')
+    if (!s.bgTaskIds.delete(taskId)) return
+    // Idle CLI + a finished background task = the CLI is about to run a turn of
+    // its own to report it.
     noteBackgroundReport(s)
     emit(s, {
       key: s.key,
       kind: 'taskDone',
-      taskId: String(ev.task_id ?? ''),
+      taskId,
       status: String(ev.status ?? 'completed'),
       label: String(ev.summary ?? ''),
       turn: null
@@ -748,7 +764,8 @@ async function startSession(
     parking: false,
     turns: [],
     autoTurns: 0,
-    autoTurnAt: 0
+    autoTurnAt: 0,
+    bgTaskIds: new Set()
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })
