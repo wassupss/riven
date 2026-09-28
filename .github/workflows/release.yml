@@ -24,6 +24,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The lock file is written by npm 11 on the developer's machine; Node 22
+      # ships npm 10, which reads a nested resolution in it as a MISSING package
+      # and refuses to `npm ci`. Same tool at both ends, or the lock is only
+      # valid where it was made.
+      - name: Match the npm the lock was written with
+        run: npm install -g npm@11
+
       # postinstall runs electron-rebuild for node-pty against the Electron ABI.
       - name: Install dependencies
         run: npm ci
@@ -89,6 +96,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      # The lock file is written by npm 11 on the developer's machine; Node 22
+      # ships npm 10, which reads a nested resolution in it as a MISSING package
+      # and refuses to `npm ci`. Same tool at both ends, or the lock is only
+      # valid where it was made.
+      - name: Match the npm the lock was written with
+        run: npm install -g npm@11
 
       # postinstall runs electron-rebuild for node-pty against the Electron ABI.
       - name: Install dependencies
