@@ -100,9 +100,11 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'exit'; code: number }
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
-  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number; durationMs?: number }
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'status'; status: string | null; compactResult?: 'success' | 'failed'; compactError?: string }
+  | { key: string; kind: 'denied'; tool: string; reason?: string }
   | { key: string; kind: 'thinking'; tokens: number }
   | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }

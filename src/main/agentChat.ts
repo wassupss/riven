@@ -176,11 +176,13 @@ export type ChatEvent = { turn?: string | null } & (
   // limit looked exactly like a model thinking hard.
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
-  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number; durationMs?: number }
   // A tool saying it is still going. Proof of life during a long call — without
   // it a pane inside a twenty-minute test run looks like a pane that has died.
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'status'; status: string | null; compactResult?: 'success' | 'failed'; compactError?: string }
+  | { key: string; kind: 'denied'; tool: string; reason?: string }
   | { key: string; kind: 'thinking'; tokens: number }
   | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
@@ -382,7 +384,33 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
       kind: 'compact',
       trigger: meta.trigger === 'manual' ? 'manual' : 'auto',
       pre: Number(meta.pre_tokens ?? 0),
-      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined
+      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined,
+      durationMs: typeof meta.duration_ms === 'number' ? meta.duration_ms : undefined
+    })
+    return
+  }
+  // What the CLI is doing between messages. 'compacting' is the one that
+  // matters: summarising a long conversation takes tens of seconds during which
+  // nothing else is emitted, so the pane looked hung at exactly the moment it
+  // could have said what it was doing.
+  if (type === 'system' && ev.subtype === 'status') {
+    emit(s, {
+      key: s.key,
+      kind: 'status',
+      status: typeof ev.status === 'string' ? ev.status : null,
+      compactResult: ev.compact_result === 'failed' ? 'failed' : ev.compact_result === 'success' ? 'success' : undefined,
+      compactError: typeof ev.compact_error === 'string' ? ev.compact_error : undefined
+    })
+    return
+  }
+  // A tool the CLI refused to run. Nothing said so before: the agent simply
+  // carried on without it, and the pane gave no hint why the work went sideways.
+  if (type === 'system' && ev.subtype === 'permission_denied') {
+    emit(s, {
+      key: s.key,
+      kind: 'denied',
+      tool: String(ev.tool_name ?? ''),
+      reason: typeof ev.reason === 'string' ? ev.reason : undefined
     })
     return
   }

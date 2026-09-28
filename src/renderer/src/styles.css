@@ -8521,6 +8521,8 @@ body.win-blurred .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
 body.win-blurred .agp-tree-kids.flow > .agp-tree-rail,
 body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
+body.win-blurred .chat-compacting-fill,
+body.browser-active .chat-compacting-fill,
 body.win-blurred .agp-node-run,
 body.browser-active .agp-node-run,
 body.win-blurred .pane-skel > *,
@@ -8968,6 +8970,73 @@ body.browser-active .pane-skel > * {
 }
 
 /* How long a tool has been going, once it is long enough to wonder about. */
+/* Something that happened TO the conversation. Quiet, but structurally not a
+   thing the model said — which is exactly what italic text in the stream looked
+   like before. */
+.chat-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 5px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.chat-notice.warn {
+  color: var(--warn, #d9a441);
+  background: color-mix(in srgb, var(--warn, #d9a441) 12%, transparent);
+}
+.chat-notice-detail {
+  margin-left: auto;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+/* Compaction in progress. Indeterminate: the CLI says it started, never how far
+   along it is, so a percentage would be a lie. */
+.chat-compacting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 10px 6px;
+  padding: 6px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.chat-compacting-label {
+  white-space: nowrap;
+}
+.chat-compacting-bar {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  background: var(--edge);
+  border-radius: 2px;
+}
+.chat-compacting-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: chat-compacting-slide 1.4s ease-in-out infinite;
+}
+@keyframes chat-compacting-slide {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+.chat-compacting-time {
+  font-variant-numeric: tabular-nums;
+}
 .chat-tool-elapsed {
   margin-left: auto;
   padding-left: 8px;

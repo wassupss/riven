@@ -18,6 +18,8 @@ import {
   Bot,
   History,
   GitBranch,
+  Scissors,
+  TriangleAlert,
   Trash2,
   Server,
   RotateCw,
@@ -123,7 +125,18 @@ interface ToolLine {
 // Ordered content of an assistant turn: text and tool calls in the exact sequence
 // they streamed, so a tool/subagent card renders in its real position (not hoisted
 // above the text). `text` chunks are contiguous runs between tool calls.
-type MsgItem = { type: 'text'; text: string } | { type: 'tool'; tool: ToolLine }
+// Something that happened TO the conversation rather than in it: the context
+// was compacted, a tool was refused. These used to be italic text smuggled into
+// the stream, which meant they read as something the model had said.
+export interface MsgNotice {
+  tone: 'info' | 'warn'
+  text: string
+  detail?: string
+}
+type MsgItem =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; tool: ToolLine }
+  | { type: 'notice'; notice: MsgNotice }
 interface Msg {
   role: 'user' | 'assistant'
   text: string // full concatenated text (copy button / title)
@@ -577,6 +590,25 @@ const QUIET_MS = 90_000
 // milliseconds; only a slow one explains a pause worth explaining.
 const HOOK_NOTE_MS = 1_500
 
+function CompactingBar({ since }: { since: number }): JSX.Element {
+  const t = useT()
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className="chat-compacting">
+      <Scissors size={12} />
+      <span className="chat-compacting-label">{t('chat.compacting')}</span>
+      <span className="chat-compacting-bar">
+        <span className="chat-compacting-fill" />
+      </span>
+      <span className="chat-compacting-time">{fmtDur(Date.now() - since)}</span>
+    </div>
+  )
+}
+
 function RunningFoot({
   msg,
   lastEvent,
@@ -671,11 +703,16 @@ const ChatMessage = memo(function ChatMessage({
     | { k: 'text'; text: string; key: number }
     | { k: 'tools'; tools: ToolLine[] }
     | { k: 'agent'; tool: ToolLine; kids: ToolLine[] }
+    | { k: 'notice'; notice: MsgNotice; key: number }
   const groups: RG[] = []
   const agentById = new Map<string, RG & { k: 'agent' }>()
   ensureItems(msg).forEach((it, i) => {
     if (it.type === 'text') {
       groups.push({ k: 'text', text: it.text, key: i })
+      return
+    }
+    if (it.type === 'notice') {
+      groups.push({ k: 'notice', notice: it.notice, key: i })
       return
     }
     const tl = it.tool
@@ -698,6 +735,12 @@ const ChatMessage = memo(function ChatMessage({
       {groups.map((g, i) =>
         g.k === 'text' ? (
           <AssistantText key={`t${g.key}`} text={g.text} streaming={!msg.done} />
+        ) : g.k === 'notice' ? (
+          <div key={`n${g.key}`} className={`chat-notice ${g.notice.tone}`}>
+            {g.notice.tone === 'warn' ? <TriangleAlert size={12} /> : <Scissors size={12} />}
+            <span className="chat-notice-text">{g.notice.text}</span>
+            {g.notice.detail && <span className="chat-notice-detail">{g.notice.detail}</span>}
+          </div>
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
@@ -1490,6 +1533,8 @@ export default function ChatPanel({
   // whenever it changes, so this is a replace, never a merge.
   const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
   const bgLabels = useRef(new Map<string, string>())
+  // When the CLI started summarising the conversation, or null when it is not.
+  const [compacting, setCompacting] = useState<number | null>(null)
   const hookTimer = useRef(0)
   const selfNoteRef = useRef<string | null>(null)
   selfNoteRef.current = selfNote
@@ -1710,6 +1755,16 @@ export default function ChatPanel({
       return all
     })
   }, [])
+
+  // Put something that happened TO the conversation into the transcript, at the
+  // point it happened. Goes on the running turn when there is one; on the last
+  // answer otherwise, since compaction can land between turns.
+  const pushNotice = useCallback(
+    (notice: MsgNotice) => {
+      patchLast((m) => ({ ...m, items: [...m.items, { type: 'notice' as const, notice }] }))
+    },
+    [patchLast]
+  )
 
   useEffect(() => {
     // Append a slice of text to the trailing text item (a run since the last tool),
@@ -1942,10 +1997,23 @@ export default function ChatPanel({
         case 'compact':
           // Not a status — a thing that HAPPENED to the conversation, so it goes
           // in the transcript where the shortening is visible.
-          patchLast((m) => ({
-            ...m,
-            items: [...m.items, { type: 'text' as const, text: `\n_${compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t)}_\n` }]
-          }))
+          setCompacting(null)
+          pushNotice({
+            tone: 'info',
+            text: compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t),
+            detail: e.durationMs ? fmtDur(e.durationMs) : undefined
+          })
+          break
+        case 'status':
+          // Compacting is silent and slow — tens of seconds with nothing else on
+          // the wire. Saying so is the difference between "working" and "hung".
+          if (e.status === 'compacting') setCompacting(Date.now())
+          else setCompacting(null)
+          if (e.compactResult === 'failed')
+            pushNotice({ tone: 'warn', text: t('chat.compactFailed'), detail: e.compactError })
+          break
+        case 'denied':
+          pushNotice({ tone: 'warn', text: t('chat.denied', { tool: e.tool }), detail: e.reason })
           break
         case 'init':
           setModel(e.model)
@@ -2092,6 +2160,9 @@ export default function ChatPanel({
         }
         case 'exit':
           setBusy(false)
+          // A CLI that died mid-compaction never reports the end of it; the bar
+          // would otherwise keep counting against a process that is gone.
+          setCompacting(null)
           // Nothing is running any more, so no bubble may stay open.
           setMsgs((all) => settleStaleTurns(all, Date.now(), false))
           // In -p mode the CLI exits right after each turn, so this fired moments
@@ -3112,6 +3183,13 @@ export default function ChatPanel({
           })}
         </div>
       )}
+
+      {/* Compaction is the longest silence a pane ever has: the CLI is rewriting
+          the whole conversation into a summary and says nothing else while it
+          does. Indeterminate on purpose — the CLI reports that it started, not
+          how far along it is — so the bar shows motion and the clock shows the
+          cost. */}
+      {compacting !== null && <CompactingBar since={compacting} />}
 
       {/* Backgrounded commands outlive the turn that started them. Without this
           the pane went quiet with work still running, and the only sign it had
