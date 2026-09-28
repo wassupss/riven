@@ -273,7 +273,11 @@ export const useSession = create<SessionState>((set) => ({
           panes: s.panes ?? {},
           groups: s.groups ?? [],
           runs: s.runs ?? [],
-          goals: s.goals ?? []
+          goals: s.goals ?? [],
+          // Same reason as panes: a key missing here is not just unread, it is
+          // erased — state/jobs adopts what hydrate hands over and writes that
+          // back, so a dropped schedule is gone from disk at the first save.
+          jobs: s.jobs ?? []
         }
       }
       return {
