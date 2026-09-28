@@ -6,6 +6,7 @@ export type SettingsTab =
   | 'editor'
   | 'terminal'
   | 'ai'
+  | 'perm'
   | 'notify'
   | 'pet'
   | 'keys'

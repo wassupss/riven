@@ -27,6 +27,9 @@ export function paneIsRunning(panelId: string): boolean {
 // lose. Returns true when it's OK to proceed.
 export function confirmPaneClose(panelId: string): boolean {
   if (!paneIsRunning(panelId)) return true
+  // Someone who closes busy panes deliberately, every day, should be able to
+  // stop being asked. The work still stops — this is about the dialog.
+  if (!getSettings().confirmCloseBusy) return true
   return window.confirm(t('pane.closeBusyConfirm'))
 }
 
@@ -34,6 +37,7 @@ export function confirmPaneClose(panelId: string): boolean {
 export function confirmPanesClose(panelIds: string[]): boolean {
   const running = panelIds.filter(paneIsRunning).length
   if (running === 0) return true
+  if (!getSettings().confirmCloseBusy) return true
   return window.confirm(t('pane.closeBusyMany', { n: running }))
 }
 

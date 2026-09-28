@@ -257,6 +257,8 @@ const api = {
         configDir?: string
         // Which agent backs the pane. Absent = Claude Code.
         cli?: 'claude' | 'codex'
+        /** Built-in tools to leave out of --allowedTools (the CLI then asks). */
+        toolsDenied?: string[]
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them

@@ -1522,6 +1522,14 @@ select {
   object-fit: cover;
   display: block;
 }
+/* A photograph brings its own edges; a glyph tile needs one, or the two sit at
+   different depths in the same column. */
+.ws-card-avatar {
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 6%);
+}
+.ws-card-glyph svg {
+  stroke-width: 2.25;
+}
 .ws-card-avatar.busy::after,
 .ws-card-avatar.done::after,
 .ws-card-avatar.attn::after {

@@ -413,7 +413,10 @@ function WorkspaceCard({
                 color: hueText(spec.color)
               }}
             >
-              <WsGlyph size={11} />
+              {/* 12 in a 16px tile: a repository photograph fills its tile edge
+                  to edge, so an 11px glyph floating in the same square read as
+                  the smaller of the two even though the boxes match. */}
+              <WsGlyph size={12} />
             </span>
           )}
         </span>

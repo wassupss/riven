@@ -61,6 +61,8 @@ export interface StartOpts {
   configDir?: string
   // Which agent backs the pane. Absent = Claude Code.
   cli?: 'claude' | 'codex'
+  /** Built-in tools to leave OUT of --allowedTools, so the CLI asks first. */
+  toolsDenied?: string[]
 }
 
 // Codex-backed panes (codexChat.ts), keyed like `sessions`.
@@ -597,6 +599,23 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
 const DEFAULT_ALLOWED =
   'Task,Read,Grep,Glob,LS,Edit,Write,MultiEdit,NotebookEdit,Bash,BashOutput,WebFetch,WebSearch,TodoWrite'
 
+/** The built-in tools a pane may pre-approve, in the order the settings list
+ *  them. Exported so the UI offers exactly what the CLI will accept. */
+export const BUILTIN_TOOLS = DEFAULT_ALLOWED.split(',')
+
+/**
+ * The allow-list minus what the user has held back.
+ *
+ * A name dropped here is NOT forbidden — it is simply no longer pre-approved,
+ * so the CLI asks before using it. That is the distinction people want from a
+ * permission screen: "let it read, ask me before it writes".
+ */
+function allowedBase(denied: string[] | undefined): string {
+  if (!denied?.length) return DEFAULT_ALLOWED
+  const off = new Set(denied)
+  return BUILTIN_TOOLS.filter((name) => !off.has(name)).join(',')
+}
+
 // Plugins — and therefore their skills AND their MCP servers — are resolved
 // under the CONFIG dir, so a profile riven created starts with none of them: the
 // same workspace silently loses figma/lsp/skills the moment it pins a profile.
@@ -684,7 +703,12 @@ async function startSession(
   const externalServers = await configuredMcpServers(opts.cwd, opts.configDir)
   args.push(
     '--allowedTools',
-    allowedToolsValue(DEFAULT_ALLOWED, MCP_TOOL_PREFIX, externalServers, opts.mcpServersDisabled ?? [])
+    allowedToolsValue(
+      allowedBase(opts.toolsDenied),
+      MCP_TOOL_PREFIX,
+      externalServers,
+      opts.mcpServersDisabled ?? []
+    )
   )
   if (externalServers.length) console.log(`[chat:${key}] mcp servers allowed: ${externalServers.join(', ')}`)
   // riven's own MCP tools (ask_user / open_file / panels / workspaces / …): the

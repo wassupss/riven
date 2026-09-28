@@ -11,6 +11,7 @@ import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
 import AboutTab from './AboutTab'
 import { useT } from '../i18n'
+import { BUILTIN_TOOLS } from '../lib/tools'
 import {
   SlidersHorizontal,
   Bot,
@@ -20,6 +21,7 @@ import {
   FileCode,
   TerminalSquare,
   Bell,
+  ShieldCheck,
   Egg,
   X,
   Trash2,
@@ -198,6 +200,7 @@ export default function SettingsModal(): JSX.Element | null {
     { id: 'editor', label: t('settings.tab.editor'), icon: <FileCode size={15} /> },
     { id: 'terminal', label: t('settings.tab.terminal'), icon: <TerminalSquare size={15} /> },
     { id: 'ai', label: 'AI', icon: <Bot size={15} /> },
+    { id: 'perm', label: t('settings.tab.perm'), icon: <ShieldCheck size={15} /> },
     { id: 'notify', label: t('settings.tab.notify'), icon: <Bell size={15} /> },
     { id: 'pet', label: t('pet.title'), icon: <Egg size={15} /> },
     { id: 'keys', label: t('settings.tab.keys'), icon: <Keyboard size={15} /> },
@@ -538,6 +541,58 @@ export default function SettingsModal(): JSX.Element | null {
               </>
             )}
 
+            {tab === 'perm' && (
+              <>
+                <div className="section-label">{t('settings.perm.modeSection')}</div>
+                <Row title={t('settings.permMode')} desc={t('settings.permModeDesc')}>
+                  <Select
+                    value={settings.defaultPermissionMode}
+                    onChange={(e) => upd('defaultPermissionMode', e.target.value)}
+                  >
+                    <option value="default">default</option>
+                    <option value="acceptEdits">acceptEdits</option>
+                    <option value="bypassPermissions">bypassPermissions</option>
+                    <option value="plan">plan</option>
+                  </Select>
+                </Row>
+
+                {/* Pre-approval, not prohibition: a tool switched off here is
+                    simply not in --allowedTools, so the CLI asks before using
+                    it. "Let it read, ask me before it writes" was not
+                    expressible at all before — the list was hardcoded. */}
+                <div className="section-label">{t('settings.perm.toolsSection')}</div>
+                <div className="set-note">{t('settings.perm.toolsDesc')}</div>
+                {BUILTIN_TOOLS.map((name) => (
+                  <ToggleRow
+                    key={name}
+                    title={name}
+                    checked={!settings.deniedTools.includes(name)}
+                    onChange={(v) =>
+                      upd(
+                        'deniedTools',
+                        v
+                          ? settings.deniedTools.filter((x) => x !== name)
+                          : [...settings.deniedTools, name]
+                      )
+                    }
+                  />
+                ))}
+
+                <div className="section-label">{t('settings.perm.confirmSection')}</div>
+                <ToggleRow
+                  title={t('settings.perm.confirmClose')}
+                  desc={t('settings.perm.confirmCloseDesc')}
+                  checked={settings.confirmCloseBusy}
+                  onChange={(v) => upd('confirmCloseBusy', v)}
+                />
+                <ToggleRow
+                  title={t('settings.perm.confirmDelete')}
+                  desc={t('settings.perm.confirmDeleteDesc')}
+                  checked={settings.confirmDeleteSession}
+                  onChange={(v) => upd('confirmDeleteSession', v)}
+                />
+              </>
+            )}
             {tab === 'ai' && (
               <>
                 <div className="section-label">{t('settings.ai.agentSection')}</div>

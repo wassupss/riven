@@ -28,9 +28,9 @@ test('every tab in the nav shows something', async () => {
   await open(page)
   const items = page.locator('.settings-nav-item')
   // One subject per tab, rather than one page that scrolls through all of them.
-  await expect(items).toHaveCount(9)
+  await expect(items).toHaveCount(10)
 
-  for (const label of ['일반', '에디터', '터미널', 'AI', '알림', '펫', '단축키', '계정', '정보']) {
+  for (const label of ['일반', '에디터', '터미널', 'AI', '권한', '알림', '펫', '단축키', '계정', '정보']) {
     await items.filter({ hasText: label }).first().click()
     await expect(page.locator('.settings-body')).not.toBeEmpty()
   }
@@ -80,4 +80,27 @@ test('a setting survives closing the window', async () => {
   await expect(
     page.locator('.set-row').filter({ hasText: '잠자기 방지' }).first().locator('button[role="switch"], .ui-switch').first()
   ).toHaveAttribute('aria-checked', 'false')
+})
+
+test('permissions decide what an agent may do without asking', async () => {
+  const { page } = riven
+  await open(page)
+  await page.locator('.settings-nav-item').filter({ hasText: '권한' }).first().click()
+  const body = page.locator('.settings-body')
+  // The tools are the CLI's own names, so what is switched here is what the
+  // agent is actually launched with.
+  for (const tool of ['Read', 'Edit', 'Bash', 'WebFetch']) {
+    await expect(body).toContainText(tool)
+  }
+  await expect(body).toContainText('미리 허용할 도구')
+  await expect(body).toContainText('확인 창')
+
+  // Withholding a tool leaves it out of the allow-list rather than banning it.
+  const bash = page.locator('.set-row').filter({ hasText: 'Bash' }).first()
+  const toggle = bash.locator('button[role="switch"], .ui-switch').first()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'false')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-checked', 'true')
 })

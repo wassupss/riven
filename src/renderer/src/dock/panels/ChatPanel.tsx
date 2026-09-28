@@ -1261,7 +1261,9 @@ function ResumeCard({
   }
   const removeSession = async (id: string, title: string): Promise<void> => {
     // The transcript file IS the session: there is nothing to undo this with.
-    if (!window.confirm(t('chat.sessionDeleteConfirm', { title }))) return
+    // Still skippable, for someone clearing out dozens of them.
+    if (getSettings().confirmDeleteSession && !window.confirm(t('chat.sessionDeleteConfirm', { title })))
+      return
     setSessions((prev) => prev?.filter((s) => s.id !== id) ?? prev)
     await window.api.chat.sessionDelete(cwd, id, configDir)
     reload()
@@ -1976,6 +1978,7 @@ export default function ChatPanel({
       model: savedModel !== 'default' ? savedModel : undefined,
       permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
       mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
       globalPrompt: withPersona(st.globalPrompt),
       agent: savedAgent,
       configDir: claudeConfigDirFor(workspace)
@@ -2807,6 +2810,7 @@ export default function ChatPanel({
         cwd: pathOf(workspace),
         model: m,
         mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
         globalPrompt: withPersona(st.globalPrompt),
         configDir: claudeConfigDirFor(workspace)
       })
@@ -3108,6 +3112,7 @@ export default function ChatPanel({
           model: savedModel !== 'default' ? savedModel : undefined,
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
           globalPrompt: withPersona(st.globalPrompt),
           configDir: claudeConfigDirFor(workspace)
         }),

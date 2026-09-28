@@ -448,6 +448,24 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.tab.general': { ko: '일반', en: 'General' },
   'settings.tab.editor': { ko: '에디터', en: 'Editor' },
   'settings.tab.terminal': { ko: '터미널', en: 'Terminal' },
+  'settings.tab.perm': { ko: '권한', en: 'Permissions' },
+  'settings.perm.modeSection': { ko: '기본 권한 모드', en: 'Default permission mode' },
+  'settings.perm.toolsSection': { ko: '미리 허용할 도구', en: 'Pre-approved tools' },
+  'settings.perm.toolsDesc': {
+    ko: '끈 도구는 금지되는 게 아니라, 쓰기 전에 물어봅니다.',
+    en: 'A tool switched off is not forbidden — the agent has to ask before using it.'
+  },
+  'settings.perm.confirmSection': { ko: '확인 창', en: 'Confirmations' },
+  'settings.perm.confirmClose': { ko: '작업 중인 패널을 닫을 때 확인', en: 'Ask before closing a busy pane' },
+  'settings.perm.confirmCloseDesc': {
+    ko: '끄면 바로 닫습니다. 작업은 어차피 중단됩니다.',
+    en: 'Off closes it straight away; the work stops either way.'
+  },
+  'settings.perm.confirmDelete': { ko: '세션을 지울 때 확인', en: 'Ask before deleting a session' },
+  'settings.perm.confirmDeleteDesc': {
+    ko: '대화 기록은 복구할 수 없습니다.',
+    en: 'A transcript cannot be recovered.'
+  },
   'settings.tab.notify': { ko: '알림', en: 'Notifications' },
   'settings.tab.keys': { ko: '단축키', en: 'Shortcuts' },
   'settings.tab.account': { ko: '계정', en: 'Account' },
