@@ -20,6 +20,7 @@ export default function WorkspaceTabs(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
   const reorderWorkspace = useSession((s) => s.reorderWorkspace)
+  const [railMenu, setRailMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
 
@@ -42,18 +43,27 @@ export default function WorkspaceTabs(): JSX.Element {
   }
 
   return (
-    <div className="ws-rail">
+    <div
+      className="ws-rail"
+      onContextMenu={(e) => {
+        // Only the rail's own empty space: a card handles its own menu and must
+        // keep its rename/colour items.
+        if ((e.target as HTMLElement).closest('.ws-card, .ws-sched-row')) return
+        e.preventDefault()
+        setRailMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: e.clientY })
+      }}
+    >
+      {/* Above the workspaces, on its own line. It fits now because the row
+          that used to be here — "패널 추가" — moved to the right-click menu on
+          a workspace, which is what it acts on anyway. */}
+      <ScheduleMenu />
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>
       </div>
-      {/* At the top of the workspace area, in the cards' own rhythm — not a
-          third chrome row above the section header. Stacked headers made the
-          sidebar read as three bars before any content, and this one carried a
-          divider that separated nothing. */}
-      <ScheduleMenu />
+
       <div className="ws-list">
         {openWorkspaces.map((ws, i) => (
           <WorkspaceCard
@@ -70,6 +80,33 @@ export default function WorkspaceTabs(): JSX.Element {
         ))}
         {openWorkspaces.length === 0 && <div className="ws-empty">{t('ws.empty')}</div>}
       </div>
+      {railMenu &&
+        createPortal(
+          <div className="ctx-backdrop" onClick={() => setRailMenu(null)} onContextMenu={(e) => { e.preventDefault(); setRailMenu(null) }}>
+            <div className="ctx-menu" style={{ left: railMenu.x, top: railMenu.y }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="ctx-item"
+                disabled={!useSession.getState().activeWorkspace}
+                onClick={() => {
+                  setRailMenu(null)
+                  useUI.getState().setQuickPanel(true)
+                }}
+              >
+                {t('toolbar.addPanel')}
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setRailMenu(null)
+                  void pick()
+                }}
+              >
+                {t('ws.openFolder')}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
@@ -393,6 +430,17 @@ function WorkspaceCard({
             }}
           >
             <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setMenu(null)
+                  setActiveWorkspace(ws)
+                  useUI.getState().setQuickPanel(true)
+                }}
+              >
+                {t('toolbar.addPanel')}
+              </button>
+              <div className="ctx-sep" />
               <button
                 className="ctx-item"
                 onClick={() => {
