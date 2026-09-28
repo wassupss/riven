@@ -703,6 +703,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.send': { ko: '보내기', en: 'Send' },
   'chat.stop': { ko: '중단', en: 'Stop' },
   'chat.queued': { ko: '대기 중', en: 'Queued' },
+  'chat.sendNow': { ko: '지금 보내기', en: 'Send now' },
+  'chat.sendNowHint': {
+    ko: '진행 중인 작업을 멈추고 이 메시지를 바로 보냅니다 (⌘↵)',
+    en: 'Cut the running turn short and send this now (⌘↵)'
+  },
+  'chat.dropQueued': { ko: '대기 취소', en: 'Discard' },
   'chat.schedule.title': { ko: '메시지 예약', en: 'Schedule message' },
   'chat.schedule.needText': { ko: '예약할 메시지를 먼저 입력하세요.', en: 'Type a message to schedule first.' },
   'chat.schedule.set': { ko: '예약', en: 'Set' },
@@ -730,6 +736,9 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.bgTaskPlain': { ko: '백그라운드 작업', en: 'background task' },
   'chat.bgTaskDone': { ko: '백그라운드 작업 완료 · {what}', en: 'background task done · {what}' },
   'chat.bgTaskFailed': { ko: '백그라운드 작업 실패 · {what}', en: 'background task failed · {what}' },
+  'chat.compacting': { ko: '대화 압축 중', en: 'compacting the conversation' },
+  'chat.compactFailed': { ko: '압축 실패', en: 'compaction failed' },
+  'chat.denied': { ko: '{tool} 실행이 거부됨', en: '{tool} was not allowed to run' },
   'chat.limitHit': { ko: '사용 한도에 걸렸습니다', en: 'Usage limit reached' },
   'chat.limitNear': { ko: '사용 한도에 근접했습니다', en: 'Close to the usage limit' },
   'chat.limitResets': { ko: '{n}분 후 풀림', en: 'resets in {n} min' },
@@ -856,8 +865,44 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'team.sending': { ko: '보내는 중…', en: 'Sending…' },
   'team.waiting': { ko: '답을 기다리는 중', en: 'Waiting for an answer' },
   'team.stopWaiting': { ko: '그만 기다리기', en: 'Stop waiting' },
-  'team.noReply': { ko: '(5분 안에 답이 없었습니다)', en: '(no reply within 5 min)' },
+  // Not "it took too long" — it stopped showing any sign of life. Work that
+  // keeps reporting is waited for however long it takes.
+  'team.noReply': {
+    ko: '(5분째 아무 반응이 없어 기다리기를 멈췄습니다)',
+    en: '(no sign of life for 5 min — stopped waiting)'
+  },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
+  'title.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'sched.title': { ko: '예약 작업', en: 'Scheduled work' },
+  'sched.empty': {
+    ko: '예약된 작업이 없습니다. +로 하나 만들어 보세요.',
+    en: 'Nothing scheduled yet — add one with +.'
+  },
+  'sched.namePlaceholder': { ko: '이름 (비우면 프롬프트 첫 줄)', en: 'Name (defaults to the first line)' },
+  'sched.promptPlaceholder': { ko: '실행할 지시를 적으세요', en: 'What should it ask the agent to do?' },
+  'sched.preset.daily': { ko: '매일', en: 'Daily' },
+  'sched.preset.weekdays': { ko: '평일', en: 'Weekdays' },
+  'sched.preset.weekly': { ko: '매주', en: 'Weekly' },
+  'sched.preset.hourly': { ko: '매시', en: 'Hourly' },
+  'sched.preset.every': { ko: 'N분마다', en: 'Every N minutes' },
+  'sched.preset.once': { ko: '한 번', en: 'Once' },
+  'sched.newPane': { ko: '새 채팅 패널', en: 'A new chat pane' },
+  'sched.save': { ko: '저장', en: 'Save' },
+  'sched.next': { ko: '다음 실행 {when}', en: 'next run {when}' },
+  'sched.paused': { ko: '멈춤', en: 'paused' },
+  'sched.pause': { ko: '일시 중지', en: 'Pause' },
+  'sched.resume': { ko: '재개', en: 'Resume' },
+  'sched.runNow': { ko: '지금 실행', en: 'Run now' },
+  'sched.delete': { ko: '삭제', en: 'Delete' },
+  'sched.ranOk': { ko: '실행됨', en: 'ran' },
+  'sched.ranFailed': { ko: '실패', en: 'failed' },
+  'sched.ranMissed': { ko: '놓침', en: 'missed' },
+  'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
+  'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
+  'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
+  'sched.manage': { ko: '예약 관리', en: 'Manage schedules' },
+  'sched.createFirst': { ko: '예약 만들기', en: 'Create a schedule' },
 
   // ---- 리븐펫 (the floating pet device) ----
   'pet.title': { ko: '리븐펫', en: 'RivenPet' },

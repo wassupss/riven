@@ -482,7 +482,11 @@
     background-position: 11px 0;
   }
 }
-.agp-tree-kids.flow > .agp-tree-kid.flow::after {
+/* The whole rail moves while ANY child is working, rather than only the stretch
+   beside that child: the rail is shared, and dashing half of it made the shared
+   line look severed. Which child is actually being fed is said by its own joint
+   below, which is where that belongs. */
+.agp-tree-kids.flow > .agp-tree-rail {
   background-image: repeating-linear-gradient(
     180deg,
     var(--accent) 0 5px,
@@ -498,11 +502,11 @@
   }
 }
 .agp-tree-kids {
+  position: relative; /* the rail measures its height against this box */
   display: flex;
   flex-direction: column;
-  /* No gap: the rail is drawn INSIDE each child, so a gap between them is a gap
-     in the rail — the line visibly broke between every pair of members. The
-     spacing lives in the child's own padding instead, which the rail covers. */
+  /* No gap: spacing lives in each child's padding, so nothing sits between the
+     children for the rail to have to cross. */
   gap: 0;
   margin-left: 14px;
 }
@@ -514,26 +518,20 @@
 .agp-tree-kid:last-child {
   padding-bottom: 0;
 }
-/* the rail: full height for a middle child, and cut at the card's centre for the
-   first and the last, so it starts and ends exactly where the joints are */
-.agp-tree-kid::after {
-  content: '';
+/* ONE rail from the first child's joint to the last one's. It used to be a
+   segment per child, which broke the line twice over: a working child drew its
+   stretch as moving dashes while an idle sibling drew a solid one, and every
+   segment restarted the dash pattern at its own top. A single element has one
+   pattern and one phase, so there is nothing to misalign. Its height is measured
+   (see OrgBranch) because a child with a subtree of its own is taller than a
+   card, and CSS cannot ask how much taller. */
+.agp-tree-rail {
   position: absolute;
   left: 0;
-  top: 0;
-  bottom: 0;
+  top: 39px;
   width: 1.5px;
   background: var(--edge-strong);
-}
-.agp-tree-kid:first-child::after {
-  top: 39px;
-}
-.agp-tree-kid:last-child::after {
-  bottom: auto;
-  height: 39px;
-}
-.agp-tree-kid:only-child::after {
-  display: none;
+  pointer-events: none;
 }
 /* the joint into each child */
 .agp-tree-kid::before {

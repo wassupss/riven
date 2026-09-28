@@ -18,6 +18,8 @@ import {
   Bot,
   History,
   GitBranch,
+  Scissors,
+  TriangleAlert,
   Trash2,
   Server,
   RotateCw,
@@ -123,7 +125,20 @@ interface ToolLine {
 // Ordered content of an assistant turn: text and tool calls in the exact sequence
 // they streamed, so a tool/subagent card renders in its real position (not hoisted
 // above the text). `text` chunks are contiguous runs between tool calls.
-type MsgItem = { type: 'text'; text: string } | { type: 'tool'; tool: ToolLine }
+// Something that happened TO the conversation rather than in it: the context
+// was compacted, a tool was refused. These used to be italic text smuggled into
+// the stream, which meant they read as something the model had said.
+export interface MsgNotice {
+  tone: 'info' | 'warn'
+  /** What kind of thing happened — picks the glyph. */
+  icon?: 'compact' | 'task' | 'denied'
+  text: string
+  detail?: string
+}
+type MsgItem =
+  | { type: 'text'; text: string }
+  | { type: 'tool'; tool: ToolLine }
+  | { type: 'notice'; notice: MsgNotice }
 interface Msg {
   role: 'user' | 'assistant'
   text: string // full concatenated text (copy button / title)
@@ -139,9 +154,11 @@ interface Msg {
   // Special inline cards rendered in the transcript (native /mcp, /resume, /model).
   card?: 'mcp' | 'resume' | 'model'
   cardId?: string
-  // A user message typed while a turn was still running — shown dimmed until it's
-  // dequeued and sent (native lets you queue/steer mid-turn).
+  // A user message typed while a turn was still running — shown dimmed until the
+  // turn finishes and it is sent. `queuedId` ties the bubble to its entry in the
+  // queue, so "send now" and "discard" act on the message you clicked.
   queued?: boolean
+  queuedId?: string
   // Images sent with this message. `preview` is an in-memory data URL for the
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
@@ -358,11 +375,41 @@ function ChatCode({
   )
 }
 
+// Below this a duration is noise: almost every call takes a second or two.
+const SLOW_TOOL_MS = 10_000
+
+/**
+ * How long a call has been running, in ms — 0 when it is not worth saying.
+ *
+ * Counted HERE rather than taken from the CLI. The CLI's heartbeat is what
+ * proves the call is alive (and it is why the pane stops warning about no
+ * response), but it arrives once at the 30 second mark: a badge fed from it
+ * showed "30초" and then froze there for as long as the call ran, which reads
+ * as a stopped clock rather than a running one. `elapsed` stays as the fallback
+ * for a restored transcript, where nothing knows when the call began.
+ */
+function runningFor(tl: ToolLine, now: number): number {
+  if (tl.done) return 0
+  const ms = tl.startedAt ? now - tl.startedAt : (tl.elapsed ?? 0) * 1000
+  return ms >= SLOW_TOOL_MS ? ms : 0
+}
+
+// A second-resolution clock, running only while something needs it.
+function useTicker(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [on])
+  return now
+}
+
 // Consecutive tool calls in a turn, collapsed into one accordion (like native
 // ToolGroup): a quiet header (running shimmer / "N commands +A -B"), expanding to
 // the tool lines + their code/diff.
 // One tool line: icon + name + detail, with an optional expandable code block.
-function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
+function ToolItem({ tl, now }: { tl: ToolLine; now: number }): JSX.Element {
   return (
     <div className={`tg-item${tl.interrupted ? ' interrupted' : ''}`}>
       <div className="chat-tool">
@@ -371,7 +418,9 @@ function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
         </span>
         <span className="chat-tool-name">{tl.name}</span>
         {tl.detail && <span className="chat-tool-detail">{tl.detail}</span>}
-        {!tl.done && tl.elapsed ? <span className="chat-tool-elapsed">{fmtDur(tl.elapsed * 1000)}</span> : null}
+        {runningFor(tl, now) > 0 ? (
+          <span className="chat-tool-elapsed">{fmtDur(runningFor(tl, now))}</span>
+        ) : null}
       </div>
       {tl.code && <ChatCode code={tl.code} diff={isEditName(tl.name)} path={tl.path} />}
     </div>
@@ -395,6 +444,7 @@ function SubagentCard({
   // Done when the Agent tool's tool_result arrived, or the whole turn ended.
   const done = task.done || !turnRunning
   const running = !done
+  const now = useTicker(running)
   // Stopped only if this delegation itself never returned; one that finished
   // before the user hit Stop stays a completed subagent.
   const stopped = !!task.error || !!task.interrupted
@@ -428,7 +478,7 @@ function SubagentCard({
       {open && kids.length > 0 && (
         <div className="chat-subagent-kids">
           {kids.map((c, j) => (
-            <ToolItem key={j} tl={c} />
+            <ToolItem key={j} tl={c} now={now} />
           ))}
         </div>
       )}
@@ -471,7 +521,8 @@ const ToolGroup = memo(function ToolGroup({
   // How long the tool still in flight has been running. It belongs on the HEAD,
   // not only on the line inside: the group is collapsed by default, so a badge
   // hidden in the body would answer "is this stuck?" for nobody.
-  const slow = tools.find((tl) => !tl.done && tl.elapsed)
+  const now = useTicker(running)
+  const slowMs = Math.max(0, ...tools.map((tl) => runningFor(tl, now)))
   return (
     <div className={`chat-toolgroup${state}`}>
       <button className="chat-toolgroup-head" onClick={() => setOpen((o) => !o)}>
@@ -508,13 +559,13 @@ const ToolGroup = memo(function ToolGroup({
             )}
           </span>
         )}
-        {slow?.elapsed ? <span className="chat-tool-elapsed">{fmtDur(slow.elapsed * 1000)}</span> : null}
+        {slowMs > 0 ? <span className="chat-tool-elapsed">{fmtDur(slowMs)}</span> : null}
         <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && (
         <div className="chat-toolgroup-body">
           {tools.map((tl, i) => (
-            <ToolItem key={i} tl={tl} />
+            <ToolItem key={i} tl={tl} now={now} />
           ))}
         </div>
       )}
@@ -577,6 +628,55 @@ const QUIET_MS = 90_000
 // milliseconds; only a slow one explains a pause worth explaining.
 const HOOK_NOTE_MS = 1_500
 
+function NoticeIcon({ notice }: { notice: MsgNotice }): JSX.Element {
+  if (notice.icon === 'task') return <TerminalSquare size={12} />
+  if (notice.icon === 'compact') return <Scissors size={12} />
+  if (notice.icon === 'denied' || notice.tone === 'warn') return <TriangleAlert size={12} />
+  return <Scissors size={12} />
+}
+
+// A command the agent left running in the background. It outlives the turn that
+// started it, so it gets its own row above the composer with its own clock —
+// the same question a long tool raises ("is this still going?") deserves the
+// same answer here.
+function BgTaskChip({
+  task,
+  since
+}: {
+  task: { id: string; label: string }
+  since?: number
+}): JSX.Element {
+  const t = useT()
+  const now = useTicker(true)
+  return (
+    <div className="chat-bgtask" title={t('chat.bgTask', { what: task.label })}>
+      <span className="chat-bgtask-dot" />
+      <TerminalSquare size={11} />
+      <span className="chat-bgtask-label">{task.label || t('chat.bgTaskPlain')}</span>
+      {since && <span className="chat-bgtask-time">{fmtDur(now - since)}</span>}
+    </div>
+  )
+}
+
+function CompactingBar({ since }: { since: number }): JSX.Element {
+  const t = useT()
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className="chat-compacting">
+      <Scissors size={12} />
+      <span className="chat-compacting-label">{t('chat.compacting')}</span>
+      <span className="chat-compacting-bar">
+        <span className="chat-compacting-fill" />
+      </span>
+      <span className="chat-compacting-time">{fmtDur(Date.now() - since)}</span>
+    </div>
+  )
+}
+
 function RunningFoot({
   msg,
   lastEvent,
@@ -624,13 +724,19 @@ const ChatMessage = memo(function ChatMessage({
   msg,
   now,
   lastEvent,
-  note
+  note,
+  onSendNow,
+  onDropQueued
 }: {
   msg: Msg
   now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
+  /** Cut the running turn short and send this queued message instead. */
+  onSendNow?: (queuedId: string) => void
+  /** Throw a queued message away without sending it. */
+  onDropQueued?: (queuedId: string) => void
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
@@ -659,7 +765,29 @@ const ChatMessage = memo(function ChatMessage({
           )}
           {msg.text}
         </div>
-        {msg.queued && <span className="chat-queued-tag">{t('chat.queued')}</span>}
+        {msg.queued && (
+          <span className="chat-queued-bar">
+            <span className="chat-queued-tag">{t('chat.queued')}</span>
+            {msg.queuedId && onSendNow && (
+              <button
+                className="chat-queued-act"
+                title={t('chat.sendNowHint')}
+                onClick={() => onSendNow(msg.queuedId as string)}
+              >
+                {t('chat.sendNow')}
+              </button>
+            )}
+            {msg.queuedId && onDropQueued && (
+              <button
+                className="chat-queued-act"
+                title={t('chat.dropQueued')}
+                onClick={() => onDropQueued(msg.queuedId as string)}
+              >
+                <XIcon size={11} />
+              </button>
+            )}
+          </span>
+        )}
       </div>
     )
   }
@@ -671,11 +799,16 @@ const ChatMessage = memo(function ChatMessage({
     | { k: 'text'; text: string; key: number }
     | { k: 'tools'; tools: ToolLine[] }
     | { k: 'agent'; tool: ToolLine; kids: ToolLine[] }
+    | { k: 'notice'; notice: MsgNotice; key: number }
   const groups: RG[] = []
   const agentById = new Map<string, RG & { k: 'agent' }>()
   ensureItems(msg).forEach((it, i) => {
     if (it.type === 'text') {
       groups.push({ k: 'text', text: it.text, key: i })
+      return
+    }
+    if (it.type === 'notice') {
+      groups.push({ k: 'notice', notice: it.notice, key: i })
       return
     }
     const tl = it.tool
@@ -698,6 +831,12 @@ const ChatMessage = memo(function ChatMessage({
       {groups.map((g, i) =>
         g.k === 'text' ? (
           <AssistantText key={`t${g.key}`} text={g.text} streaming={!msg.done} />
+        ) : g.k === 'notice' ? (
+          <div key={`n${g.key}`} className={`chat-notice ${g.notice.tone}`}>
+            <NoticeIcon notice={g.notice} />
+            <span className="chat-notice-text">{g.notice.text}</span>
+            {g.notice.detail && <span className="chat-notice-detail">{g.notice.detail}</span>}
+          </div>
         ) : g.k === 'agent' ? (
           <SubagentCard key={`a${i}`} task={g.tool} kids={g.kids} turnRunning={!msg.done} />
         ) : (
@@ -1490,6 +1629,9 @@ export default function ChatPanel({
   // whenever it changes, so this is a replace, never a merge.
   const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
   const bgLabels = useRef(new Map<string, string>())
+  const bgStarted = useRef(new Map<string, number>())
+  // When the CLI started summarising the conversation, or null when it is not.
+  const [compacting, setCompacting] = useState<number | null>(null)
   const hookTimer = useRef(0)
   const selfNoteRef = useRef<string | null>(null)
   selfNoteRef.current = selfNote
@@ -1567,11 +1709,23 @@ export default function ChatPanel({
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   // Images to send with the next message, shown as thumbnails above the input.
+  //
+  // Mirrored in a ref because sending has to EMPTY them synchronously. The
+  // textarea is cleared through the DOM, which is instant; state is not. So when
+  // submit ran twice in one tick — an IME Enter and its composition-end twin —
+  // the second call read an already-empty input but the still-full attachment
+  // state, and sent the images a second time on their own. On screen that was
+  // the message, and then the same screenshot again with no text under it.
   const [attachments, setAttachments] = useState<ChatImage[]>([])
+  const attachmentsRef = useRef<ChatImage[]>([])
+  const putAttachments = (next: ChatImage[]): void => {
+    attachmentsRef.current = next
+    setAttachments(next)
+  }
   const addImages = (files: File[]): void => {
     void Promise.all(files.map(readImage)).then((imgs) => {
       const ok = imgs.filter((x): x is ChatImage => !!x)
-      if (ok.length) setAttachments((cur) => [...cur, ...ok])
+      if (ok.length) putAttachments([...attachmentsRef.current, ...ok])
       inputRef.current?.focus()
     })
   }
@@ -1710,6 +1864,16 @@ export default function ChatPanel({
       return all
     })
   }, [])
+
+  // Put something that happened TO the conversation into the transcript, at the
+  // point it happened. Goes on the running turn when there is one; on the last
+  // answer otherwise, since compaction can land between turns.
+  const pushNotice = useCallback(
+    (notice: MsgNotice) => {
+      patchLast((m) => ({ ...m, items: [...m.items, { type: 'notice' as const, notice }] }))
+    },
+    [patchLast]
+  )
 
   useEffect(() => {
     // Append a slice of text to the trailing text item (a run since the last tool),
@@ -1915,37 +2079,52 @@ export default function ChatPanel({
         case 'bgTasks':
           // Remember what each task was: the list is emptied BEFORE the
           // notification arrives, so by then only this has its name.
-          for (const task of e.tasks) if (task.label) bgLabels.current.set(task.id, task.label)
+          for (const task of e.tasks) {
+            if (task.label) bgLabels.current.set(task.id, task.label)
+            if (!bgStarted.current.has(task.id)) bgStarted.current.set(task.id, Date.now())
+          }
           setBgTasks(e.tasks)
           break
-        case 'taskDone':
+        case 'taskDone': {
           // It finished outside any turn, so it goes in the transcript as its own
           // line: the pane may have been idle for minutes when this lands.
-          patchLast((m) => ({
-            ...m,
-            items: [
-              ...m.items,
-              {
-                type: 'text' as const,
-                text: `\n_${
-                  e.status === 'completed'
-                    ? // Its name, not the CLI's sentence about it — the sentence
-                      // repeats "background command … completed" around it.
-                      t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
-                    : // A failure says WHY only in the CLI's own summary.
-                      t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' })
-                }_\n`
-              }
-            ]
-          }))
+          const ok = e.status === 'completed'
+          const started = bgStarted.current.get(e.taskId)
+          pushNotice({
+            tone: ok ? 'info' : 'warn',
+            icon: 'task',
+            // Its name, not the CLI's sentence about it — that sentence wraps
+            // "background command … completed" around the name we already have.
+            // A FAILURE is the exception: only the CLI's summary says why.
+            text: ok
+              ? t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
+              : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
+            detail: started ? fmtDur(Date.now() - started) : undefined
+          })
+          bgStarted.current.delete(e.taskId)
           break
+        }
         case 'compact':
           // Not a status — a thing that HAPPENED to the conversation, so it goes
           // in the transcript where the shortening is visible.
-          patchLast((m) => ({
-            ...m,
-            items: [...m.items, { type: 'text' as const, text: `\n_${compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t)}_\n` }]
-          }))
+          setCompacting(null)
+          pushNotice({
+            tone: 'info',
+            icon: 'compact',
+            text: compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t),
+            detail: e.durationMs ? fmtDur(e.durationMs) : undefined
+          })
+          break
+        case 'status':
+          // Compacting is silent and slow — tens of seconds with nothing else on
+          // the wire. Saying so is the difference between "working" and "hung".
+          if (e.status === 'compacting') setCompacting(Date.now())
+          else setCompacting(null)
+          if (e.compactResult === 'failed')
+            pushNotice({ tone: 'warn', icon: 'compact', text: t('chat.compactFailed'), detail: e.compactError })
+          break
+        case 'denied':
+          pushNotice({ tone: 'warn', icon: 'denied', text: t('chat.denied', { tool: e.tool }), detail: e.reason })
           break
         case 'init':
           setModel(e.model)
@@ -2092,6 +2271,9 @@ export default function ChatPanel({
         }
         case 'exit':
           setBusy(false)
+          // A CLI that died mid-compaction never reports the end of it; the bar
+          // would otherwise keep counting against a process that is gone.
+          setCompacting(null)
           // Nothing is running any more, so no bubble may stay open.
           setMsgs((all) => settleStaleTurns(all, Date.now(), false))
           // In -p mode the CLI exits right after each turn, so this fired moments
@@ -2274,7 +2456,7 @@ export default function ChatPanel({
     return id
   }
   // Messages typed while a turn was running, sent one-by-one as turns finish.
-  const queuedRef = useRef<Array<{ text: string; images: ChatImage[] }>>([])
+  const queuedRef = useRef<Array<{ id: string; text: string; images: ChatImage[] }>>([])
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
@@ -2283,11 +2465,12 @@ export default function ChatPanel({
   const stoppedRef = useRef(false)
   // Start the next queued message (if any) as a fresh turn: un-dim its bubble and
   // add the assistant placeholder. Returns true if a turn was started.
+  const drainQueueRef = useRef<() => boolean>(() => false)
   const drainQueue = (): boolean => {
     const next = queuedRef.current.shift()
     if (next == null) return false
     setMsgs((all) => {
-      const i = all.findIndex((m) => m.queued && m.role === 'user')
+      const i = all.findIndex((m) => m.queuedId === next.id)
       const copy = i >= 0 ? all.map((m, j) => (j === i ? { ...m, queued: false } : m)) : all
       return [...copy, blankAssistant()]
     })
@@ -2296,6 +2479,32 @@ export default function ChatPanel({
     window.api.chat.send(chatKey, next.text, next.images, newTurnId())
     return true
   }
+  drainQueueRef.current = drainQueue
+  // "Send this one now": the message jumps the queue and the running turn is cut
+  // short for it. The turn's own end (turnDone) is what actually sends it, which
+  // is why this only has to reorder and interrupt.
+  const sendQueuedNow = useCallback(
+    (queuedId: string) => {
+      const at = queuedRef.current.findIndex((q) => q.id === queuedId)
+      if (at < 0) return
+      const [entry] = queuedRef.current.splice(at, 1)
+      queuedRef.current.unshift(entry)
+      if (!busyRef.current) {
+        drainQueueRef.current()
+        return
+      }
+      // Reads as a re-ask rather than a user cancel, so no "stopped" note.
+      steerRef.current = true
+      window.api.chat.interrupt(chatKey)
+    },
+    [chatKey]
+  )
+  // Thrown away before it was ever sent.
+  const dropQueued = useCallback((queuedId: string) => {
+    queuedRef.current = queuedRef.current.filter((q) => q.id !== queuedId)
+    setMsgs((all) => all.filter((m) => m.queuedId !== queuedId))
+  }, [])
+
   // Stop means stop: interrupt the current turn AND drop anything queued.
   // End the running turn HERE as well as asking the CLI to stop. A child that
   // has died, or one that never got the message, answers nothing — and the pane
@@ -2492,33 +2701,45 @@ export default function ChatPanel({
           list.push(resolve)
           turnWaitersRef.current.set(turn, list)
         }),
-      hasPendingOpening: () => hasInitialText(chatKey)
+      hasPendingOpening: () => hasInitialText(chatKey),
+      // The same clock the "무응답" warning reads: every event from the CLI
+      // pushes it forward, so a delegating agent can wait on silence instead of
+      // on a stopwatch.
+      lastActivityAt: () => lastEventRef.current
     })
   }, [chatKey, workspace, sendMessage])
 
   // Read the textarea's live DOM value, not React state: during Korean IME
   // composition the committed char lands in the DOM before React's onChange, so
   // the DOM is the authoritative source when we send on composition end.
-  const submit = (): void => {
+  /** Returns the id of the message it QUEUED, or null if it went straight out. */
+  const submit = (): string | null => {
     const text = (inputRef.current?.value ?? input).trim()
-    const images = attachments
-    if (!text && images.length === 0) return
+    const images = attachmentsRef.current
+    if (!text && images.length === 0) return null
     // A bare native command opens riven UI. Anything else — including skills and
     // commands with args — is sent to the CLI so it runs inline in the answer.
-    if (images.length === 0 && runNativeCommand(text)) return
-    setAttachments([])
+    if (images.length === 0 && runNativeCommand(text)) return null
+    putAttachments([])
     setInput('')
     if (inputRef.current) {
       inputRef.current.value = ''
       inputRef.current.style.height = 'auto'
     }
     // "@teammate message" delegates to that agent instead of answering here.
-    if (delegateMentions(text)) return
-    // Mid-turn: STEER. Interrupt the running turn and re-ask with this message —
-    // the CLI session context is retained, so the model reconsiders with the prior
-    // content combined (native behaviour). The queued message fires from turnDone.
+    if (delegateMentions(text)) return null
+    // Mid-turn: QUEUE, and leave the running turn alone.
+    //
+    // It used to interrupt immediately and re-ask with the new message merged in
+    // (native's steer). That is right for "no, do it the other way" and wrong
+    // for everything else: a turn halfway through a migration, a build, a
+    // sequence that only makes sense finished, was thrown away because somebody
+    // typed the next instruction early. Interrupting is now a button on the
+    // queued message — see sendQueuedNow — so cutting a turn short is something
+    // you choose, not something typing does to you.
     if (busy) {
-      queuedRef.current.push({ text, images })
+      const queuedId = crypto.randomUUID()
+      queuedRef.current.push({ id: queuedId, text, images })
       setMsgs((all) => [
         ...all,
         {
@@ -2533,14 +2754,14 @@ export default function ChatPanel({
           tokensIn: 0,
           tokensOut: 0,
           queued: true,
+          queuedId,
           images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
         }
       ])
-      steerRef.current = true
-      window.api.chat.interrupt(chatKey)
-      return
+      return queuedId
     }
     sendMessage(text, images)
+    return null
   }
   // IME state: while composing, Enter must commit the syllable first, then send
   // once — otherwise the committing keystroke leaves its last char behind (the
@@ -2976,7 +3197,15 @@ export default function ChatPanel({
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
         ) : (
-          <ChatMessage key={windowOffset + wi} msg={msg} now={now} lastEvent={lastEventRef} note={selfNote} />
+          <ChatMessage
+            key={windowOffset + wi}
+            msg={msg}
+            now={now}
+            lastEvent={lastEventRef}
+            note={selfNote}
+            onSendNow={sendQueuedNow}
+            onDropQueued={dropQueued}
+          />
         )
       ),
     [windowed, windowOffset, now, pickedModel, workspace]
@@ -3109,16 +3338,20 @@ export default function ChatPanel({
         </div>
       )}
 
+      {/* Compaction is the longest silence a pane ever has: the CLI is rewriting
+          the whole conversation into a summary and says nothing else while it
+          does. Indeterminate on purpose — the CLI reports that it started, not
+          how far along it is — so the bar shows motion and the clock shows the
+          cost. */}
+      {compacting !== null && <CompactingBar since={compacting} />}
+
       {/* Backgrounded commands outlive the turn that started them. Without this
           the pane went quiet with work still running, and the only sign it had
           ever happened was the agent mentioning it, minutes later. */}
       {bgTasks.length > 0 && (
-        <div className="chat-agents-live">
+        <div className="chat-bgtasks">
           {bgTasks.map((task) => (
-            <div key={task.id} className="cal-item" title={t('chat.bgTask', { what: task.label })}>
-              <TerminalSquare size={11} />
-              <span className="cal-label">{task.label || t('chat.bgTaskPlain')}</span>
-            </div>
+            <BgTaskChip key={task.id} task={task} since={bgStarted.current.get(task.id)} />
           ))}
         </div>
       )}
@@ -3135,7 +3368,7 @@ export default function ChatPanel({
                   className="chat-attachment-x"
                   aria-label={t('chat.removeAttachment')}
                   title={t('chat.removeAttachment')}
-                  onClick={() => setAttachments((cur) => cur.filter((x) => x.id !== a.id))}
+                  onClick={() => putAttachments(attachmentsRef.current.filter((x) => x.id !== a.id))}
                 >
                   <XIcon size={10} />
                 </button>
@@ -3282,7 +3515,12 @@ export default function ChatPanel({
               return
             }
             e.preventDefault()
-            submit()
+            // ⌘↵ means "don't wait for it": queue the message and cut the
+            // running turn short for it, which is what a plain ↵ used to do to
+            // every turn whether you meant it or not.
+            const interrupt = e.metaKey || e.ctrlKey
+            const queuedId = submit()
+            if (queuedId && interrupt) sendQueuedNow(queuedId)
           }}
           rows={1}
         />

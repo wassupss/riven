@@ -21,17 +21,30 @@ export function rosterEntry(ws: string, paneId: string): RosterEntry | null {
   return rosterFor(ws).find((e) => e.id === paneId) ?? null
 }
 
-function terminalReply(pane: string, timeoutMs: number, timeoutText: string): Promise<string> {
+export function terminalReply(pane: string, quietMs: number, timeoutText: string): Promise<string> {
   return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      off()
-      resolve(timeoutText)
-    }, timeoutMs)
-    const off = window.api.pty.onReply(({ key, text }) => {
-      if (key !== pane) return
+    // Give up on SILENCE, not on elapsed time: a CLI still printing is still
+    // working, and a long build used to be declared unanswered mid-run (see
+    // askChatTurnNow, which does the same for chat panes).
+    let lastSeen = Date.now()
+    let timer: ReturnType<typeof setTimeout>
+    const done = (text: string): void => {
       clearTimeout(timer)
-      off()
+      offData()
+      offReply()
       resolve(text)
+    }
+    const tick = (): void => {
+      const left = quietMs - (Date.now() - lastSeen)
+      if (left <= 0) return done(timeoutText)
+      timer = setTimeout(tick, Math.min(left, 5_000))
+    }
+    timer = setTimeout(tick, Math.min(quietMs, 5_000))
+    const offData = window.api.pty.onData(pane, () => {
+      lastSeen = Date.now()
+    })
+    const offReply = window.api.pty.onReply(({ key, text }) => {
+      if (key === pane) done(text)
     })
   })
 }

@@ -16,14 +16,17 @@ import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
 import PetHost from './components/PetHost'
+import ScheduleMenu from './components/ScheduleMenu'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
 import { useUsage } from './state/usage'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
+import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
+import { startJobRunner } from './state/jobRunner'
 import { useUI } from './state/ui'
 import {
   useSession,
@@ -121,6 +124,9 @@ export default function App(): JSX.Element {
         session: useSession,
         markPaneSeen,
         roster: useRoster,
+        // The org chart is laid out from this; a test needs to be able to stand
+        // one up without spawning a CLI per member.
+        groups: useAgentGroups,
         rosterFor,
         askUser: useAskUser,
         pet: usePet,
@@ -155,6 +161,7 @@ export default function App(): JSX.Element {
     const offMcp = registerMcpToolHandler()
     // Fire due scheduled messages (명령 예약).
     startScheduler()
+    startJobRunner()
     // Track every workspace's agent panes app-wide. This must NOT live in the
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
     // otherwise take its status (and its very existence) with it.
@@ -294,6 +301,12 @@ export default function App(): JSX.Element {
                 (right-aligned), matching native. */}
             <div className="sidebar-head">
               <div className="sidebar-head-spacer" />
+              {/* Work the machine does while you are elsewhere. Above the
+                  workspace list because it belongs to none of them in
+                  particular, and a menu rather than a panel toggle because the
+                  question it answers — what is armed, when does the next one
+                  go — deserves an answer in place. */}
+              <ScheduleMenu />
               <button
                 className="sidebar-head-btn"
                 disabled={!activeWorkspace}

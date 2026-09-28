@@ -121,6 +121,10 @@ interface Session {
   // Results owed to turns the CLI started by itself — see turnClaim.ts.
   autoTurns: number
   autoTurnAt: number
+  // Ids of tasks the CLI actually put in the BACKGROUND. Every tool call is a
+  // "task" to the CLI and every one of them ends with a task_notification, so
+  // this is what tells the two apart.
+  bgTaskIds: Set<string>
 }
 
 const sessions = new Map<string, Session>()
@@ -176,11 +180,13 @@ export type ChatEvent = { turn?: string | null } & (
   // limit looked exactly like a model thinking hard.
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
-  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number }
+  | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number; durationMs?: number }
   // A tool saying it is still going. Proof of life during a long call — without
   // it a pane inside a twenty-minute test run looks like a pane that has died.
   | { key: string; kind: 'toolProgress'; toolId: string; elapsed: number }
   | { key: string; kind: 'hook'; name: string; event: string; running: boolean; error?: string | null }
+  | { key: string; kind: 'status'; status: string | null; compactResult?: 'success' | 'failed'; compactError?: string }
+  | { key: string; kind: 'denied'; tool: string; reason?: string }
   | { key: string; kind: 'thinking'; tokens: number }
   | { key: string; kind: 'bgTasks'; tasks: { id: string; label: string }[] }
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
@@ -382,7 +388,33 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
       kind: 'compact',
       trigger: meta.trigger === 'manual' ? 'manual' : 'auto',
       pre: Number(meta.pre_tokens ?? 0),
-      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined
+      post: typeof meta.post_tokens === 'number' ? meta.post_tokens : undefined,
+      durationMs: typeof meta.duration_ms === 'number' ? meta.duration_ms : undefined
+    })
+    return
+  }
+  // What the CLI is doing between messages. 'compacting' is the one that
+  // matters: summarising a long conversation takes tens of seconds during which
+  // nothing else is emitted, so the pane looked hung at exactly the moment it
+  // could have said what it was doing.
+  if (type === 'system' && ev.subtype === 'status') {
+    emit(s, {
+      key: s.key,
+      kind: 'status',
+      status: typeof ev.status === 'string' ? ev.status : null,
+      compactResult: ev.compact_result === 'failed' ? 'failed' : ev.compact_result === 'success' ? 'success' : undefined,
+      compactError: typeof ev.compact_error === 'string' ? ev.compact_error : undefined
+    })
+    return
+  }
+  // A tool the CLI refused to run. Nothing said so before: the agent simply
+  // carried on without it, and the pane gave no hint why the work went sideways.
+  if (type === 'system' && ev.subtype === 'permission_denied') {
+    emit(s, {
+      key: s.key,
+      kind: 'denied',
+      tool: String(ev.tool_name ?? ''),
+      reason: typeof ev.reason === 'string' ? ev.reason : undefined
     })
     return
   }
@@ -496,6 +528,10 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   // to say so, and nothing when it finished either.
   if (type === 'system' && ev.subtype === 'background_tasks_changed') {
     const raw = Array.isArray(ev.tasks) ? (ev.tasks as Record<string, unknown>[]) : []
+    // Remembered, never pruned here: the list is emptied BEFORE the finishing
+    // notification arrives, and that notification is the only thing that still
+    // needs to know this task was a background one.
+    for (const task of raw) if (task.task_id) s.bgTaskIds.add(String(task.task_id))
     emit(s, {
       key: s.key,
       kind: 'bgTasks',
@@ -507,12 +543,20 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     return
   }
   if (type === 'system' && ev.subtype === 'task_notification') {
-    // Idle CLI + a finished task = the CLI is about to run a turn of its own.
+    // EVERY tool call ends with one of these, foreground ones included. Only a
+    // backgrounded command is news: the rest are already on screen as the tool
+    // line that ran them, so announcing them again — minutes later, detached
+    // from that line — filled the transcript with "백그라운드 작업 완료" for
+    // nine ordinary Bash calls in a row.
+    const taskId = String(ev.task_id ?? '')
+    if (!s.bgTaskIds.delete(taskId)) return
+    // Idle CLI + a finished background task = the CLI is about to run a turn of
+    // its own to report it.
     noteBackgroundReport(s)
     emit(s, {
       key: s.key,
       kind: 'taskDone',
-      taskId: String(ev.task_id ?? ''),
+      taskId,
       status: String(ev.status ?? 'completed'),
       label: String(ev.summary ?? ''),
       turn: null
@@ -720,7 +764,8 @@ async function startSession(
     parking: false,
     turns: [],
     autoTurns: 0,
-    autoTurnAt: 0
+    autoTurnAt: 0,
+    bgTaskIds: new Set()
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })

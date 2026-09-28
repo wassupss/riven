@@ -749,6 +749,342 @@ select {
   background: var(--hover-strong);
   color: var(--fg);
 }
+/* How many jobs are armed, on the button that opens them. */
+.ws-rail-add {
+  position: relative;
+}
+.ws-rail-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 12px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius-full);
+}
+
+/* The top-bar schedule menu. Anchored under its button, dismissed by the scrim
+   so a click anywhere else closes it. */
+.sched-menu-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+.sched-menu {
+  position: fixed;
+  z-index: 81;
+  min-width: 240px;
+  max-width: 340px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-md);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+.sched-menu-head {
+  padding: 6px 9px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sched-menu-empty {
+  padding: 8px 9px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.sched-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+.sched-menu-item:hover {
+  background: var(--hover-strong);
+}
+.sched-menu-item.action {
+  color: var(--fg-dim);
+  border-top: 1px solid var(--edge);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  margin-top: 2px;
+}
+.sched-menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-menu-when,
+.sched-menu-next {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sidebar-head-btn.armed {
+  color: var(--fg);
+}
+.sidebar-head {
+  gap: 4px;
+}
+
+/* ---- scheduled work panel ---- */
+.sched-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+.sched-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 11px;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--edge);
+}
+.sched-title {
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+.sched-new {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sched-new:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.sched-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 11px;
+  border-bottom: 1px solid var(--edge);
+}
+.sched-input,
+.sched-sel,
+.sched-num {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--bg-2);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 5px 7px;
+  outline: none;
+}
+.sched-input:focus,
+.sched-sel:focus,
+.sched-num:focus {
+  border-color: var(--accent-border);
+}
+.sched-prompt-input {
+  resize: vertical;
+  font-family: inherit;
+}
+.sched-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sched-num {
+  width: 58px;
+}
+.sched-preview {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.sched-save {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sched-save:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sched-list {
+  flex: 1;
+  overflow: auto;
+  padding: 6px;
+}
+.sched-empty {
+  padding: 18px 12px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  text-align: center;
+}
+.sched-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
+}
+.sched-item:hover {
+  background: var(--hover);
+}
+.sched-item.off {
+  opacity: 0.55;
+}
+.sched-toggle {
+  padding: 3px 0 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.sched-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--edge-strong);
+}
+.sched-dot.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sched-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sched-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.sched-name {
+  font-size: var(--text-sm);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-when {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+}
+.sched-prompt {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sched-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.sched-runs {
+  display: inline-flex;
+  gap: 3px;
+}
+/* One dot per recent run: the answer to "did it actually go out?" at a glance. */
+.sched-run {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+.sched-run.ok {
+  background: var(--accent);
+}
+.sched-run.failed {
+  background: var(--danger, #e5534b);
+}
+.sched-run.missed {
+  background: var(--warn, #d9a441);
+}
+.sched-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--warn, #d9a441);
+}
+.sched-act {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+}
+.sched-item:hover .sched-act {
+  opacity: 1;
+}
+.sched-act:hover {
+  color: var(--fg);
+  background: var(--hover-strong);
+}
+.sched-act.danger:hover {
+  color: var(--danger, #e5534b);
+}
+/* Under ~300px the two-column rows stop being rows. Container queries, so this
+   follows the PANEL's width — the dock splits horizontally, so a viewport media
+   query says nothing about how much room this panel actually has. */
+.sched-panel {
+  container-type: inline-size;
+}
+@container (max-width: 300px) {
+  .sched-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sched-num,
+  .sched-save {
+    width: 100%;
+    margin-left: 0;
+  }
+  .sched-item {
+    flex-wrap: wrap;
+  }
+  .sched-when {
+    display: none; /* the rule is repeated in the meta line below */
+  }
+}
 .ws-list {
   flex: 1 1 auto;
   min-height: 0;
@@ -3156,6 +3492,38 @@ select {
 .chat-turn.user.queued .chat-user-bubble {
   border: 1px dashed var(--accent-border);
   background: transparent;
+}
+/* A queued message waits for the running turn by default; cutting that turn
+   short is a button, not a side effect of typing. The actions stay faint until
+   the row is hovered — they sit next to every message you type ahead. */
+.chat-queued-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.chat-queued-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.chat-turn.user.queued:hover .chat-queued-act,
+.chat-queued-act:focus-visible {
+  opacity: 1;
+}
+.chat-queued-act:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+  background: var(--hover);
 }
 .chat-queued-tag {
   flex: 0 0 auto;
@@ -8519,8 +8887,12 @@ body.win-blurred .agp-tree-row.flow > .agp-tree-self::after,
 body.browser-active .agp-tree-row.flow > .agp-tree-self::after,
 body.win-blurred .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
-body.win-blurred .agp-tree-kid.flow::after,
-body.browser-active .agp-tree-kid.flow::after,
+body.win-blurred .agp-tree-kids.flow > .agp-tree-rail,
+body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
+body.win-blurred .chat-bgtask-dot,
+body.browser-active .chat-bgtask-dot,
+body.win-blurred .chat-compacting-fill,
+body.browser-active .chat-compacting-fill,
 body.win-blurred .agp-node-run,
 body.browser-active .agp-node-run,
 body.win-blurred .pane-skel > *,
@@ -8968,6 +9340,115 @@ body.browser-active .pane-skel > * {
 }
 
 /* How long a tool has been going, once it is long enough to wonder about. */
+/* Something that happened TO the conversation. Quiet, but structurally not a
+   thing the model said — which is exactly what italic text in the stream looked
+   like before. */
+.chat-notice {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 5px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.chat-notice.warn {
+  color: var(--warn, #d9a441);
+  background: color-mix(in srgb, var(--warn, #d9a441) 12%, transparent);
+}
+.chat-notice-detail {
+  margin-left: auto;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+/* Commands left running in the background. Their own row, not the subagent
+   strip they were borrowing: a subagent belongs to the turn that spawned it and
+   disappears with it, while these outlive it. */
+.chat-bgtasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 10px 6px;
+}
+.chat-bgtask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+}
+.chat-bgtask-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: chat-bgtask-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-bgtask-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+.chat-bgtask-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-bgtask-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+/* Compaction in progress. Indeterminate: the CLI says it started, never how far
+   along it is, so a percentage would be a lie. */
+.chat-compacting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 10px 6px;
+  padding: 6px 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.chat-compacting-label {
+  white-space: nowrap;
+}
+.chat-compacting-bar {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  overflow: hidden;
+  background: var(--edge);
+  border-radius: 2px;
+}
+.chat-compacting-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: chat-compacting-slide 1.4s ease-in-out infinite;
+}
+@keyframes chat-compacting-slide {
+  0% {
+    left: -35%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+.chat-compacting-time {
+  font-variant-numeric: tabular-nums;
+}
 .chat-tool-elapsed {
   margin-left: auto;
   padding-left: 8px;

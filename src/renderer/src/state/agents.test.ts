@@ -145,3 +145,49 @@ describe('askChatTurn', () => {
     expect(await askChatTurn(pane, 'q', 100, 'timeout')).toBe('timeout')
   })
 })
+
+// A member doing real work runs far longer than any fixed deadline, and the old
+// one (five minutes flat) expired mid-build: the lead was told there was no
+// reply, and the answer — when it came — had nobody holding it and was dropped.
+// The member then sat there finished, with its report undelivered. Waiting now
+// ends on SILENCE, which the CLI's activity events make meaningful.
+function workingPane(opts: { busyFor: number; beatEvery: number }): AgentController {
+  let lastBeat = Date.now()
+  let busy = true
+  let waiters: Array<(s: string) => void> = []
+  const beat = setInterval(() => {
+    lastBeat = Date.now()
+  }, opts.beatEvery)
+  setTimeout(() => {
+    busy = false
+    clearInterval(beat)
+    const done = waiters
+    waiters = []
+    for (const w of done) w('')
+  }, opts.busyFor)
+  return {
+    chatKey: 'slow',
+    workspace: 'w',
+    getTitle: () => 'slow',
+    isBusy: () => busy,
+    send: () => {},
+    waitNext: () => new Promise<string>((resolve) => waiters.push(resolve)),
+    ask: (text) => Promise.resolve(`done: ${text}`),
+    lastActivityAt: () => lastBeat
+  }
+}
+
+describe('askChatTurn waits on silence, not on elapsed time', () => {
+  it('keeps waiting while the agent is still working', async () => {
+    // Busy four times longer than the quiet budget, but never quiet for it.
+    const pane = workingPane({ busyFor: 400, beatEvery: 30 })
+    expect(await askChatTurn(pane, 'build it', 100, 'gave up')).toBe('done: build it')
+  })
+
+  it('gives up once the agent goes quiet', async () => {
+    const pane = workingPane({ busyFor: 5000, beatEvery: 30 })
+    // Stop the signs of life; the budget then runs out while it is still "busy".
+    const frozen: AgentController = { ...pane, lastActivityAt: () => Date.now() - 10_000 }
+    expect(await askChatTurn(frozen, 'build it', 100, 'gave up')).toBe('gave up')
+  })
+})

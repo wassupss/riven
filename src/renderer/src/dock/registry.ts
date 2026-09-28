@@ -191,6 +191,20 @@ export function bumpPaneSeq(ids: string[]): void {
 export type SplitDir = 'right' | 'below' | 'left' | 'above' | 'within'
 // Placement relative to a reference panel (an explicit id, else the active panel);
 // defaults to a right-split like native.
+/**
+ * Below this a panel is not small, it is broken: Korean wraps to one character
+ * per line and the composer collapses to a stub. Shared with Workbench, which
+ * enforces it as a floor on the groups themselves.
+ */
+export const MIN_PANEL_WIDTH = 260
+
+/** Could the dock take one more COLUMN without crushing the ones it has? */
+export function roomForAnotherColumn(api: DockviewApi): boolean {
+  const width = api.width || 0
+  if (!width) return true // pre-layout: don't second-guess it
+  return api.groups.length === 0 || (api.groups.length + 1) * MIN_PANEL_WIDTH <= width
+}
+
 function placement(
   api: DockviewApi,
   dir?: SplitDir,
@@ -198,7 +212,47 @@ function placement(
 ): { referencePanel: string; direction: SplitDir } | undefined {
   const ref = (refId && api.getPanel(refId)) || api.activePanel
   if (!ref) return undefined
+  // Out of room: open as a TAB in the reference's group instead of splitting.
+  // Splitting regardless is how a dock ends up with twenty 40px slivers, most
+  // of them pushed off the edge entirely once a minimum width is enforced.
+  if (!roomForAnotherColumn(api)) return { referencePanel: ref.id, direction: 'within' }
   return { referencePanel: ref.id, direction: dir ?? 'right' }
+}
+
+/**
+ * Fold the excess columns into tabs until what is left fits.
+ *
+ * A dock accumulates columns one "open beside this" at a time, and nothing ever
+ * takes them back — twenty panes on a laptop means twenty 50px slivers, each too
+ * narrow to read a sentence in. New panels now become tabs once the dock is
+ * full, but a layout that got into that state before is not something riven
+ * rewrites behind the user's back: this is the command that does it, on request.
+ *
+ * Panels keep their order and their contents; only their grouping changes, so
+ * the way back is to drag one out again.
+ */
+export function tidyLayout(): number {
+  const api = activeApi
+  if (!api) return 0
+  // How many columns this dock can show at a readable width.
+  const capacity = Math.max(1, Math.floor((api.width || 0) / MIN_PANEL_WIDTH))
+  const groups = [...api.groups]
+  if (groups.length <= capacity) return 0
+  // Keep the leftmost columns — they are the ones on screen, and the ones the
+  // user arranged deliberately — and fold everything past them into the last
+  // one that survives. Resolved up front, in ONE pass: folding group-by-group
+  // re-enters this decision after every move and ends up shuffling the same
+  // panel repeatedly (179 moves for 24 panels, measured).
+  const keep = groups[capacity - 1]
+  let moved = 0
+  for (const group of groups.slice(capacity)) {
+    for (const panel of [...group.panels]) {
+      // 'center' = into that group as a tab, which is the whole point.
+      panel.api.moveTo({ group: keep, position: 'center', skipSetActive: true })
+      moved++
+    }
+  }
+  return moved
 }
 
 // The chat pane whose turn is currently running — the "delegator". A spawned
@@ -371,6 +425,7 @@ export type NamedPanel =
   | 'notes'
   | 'api'
   | 'agentgroup'
+  | 'scheduler'
 export function openNamedPanel(id: NamedPanel, dir?: SplitDir, refId?: string): void {
   const api = activeApi
   if (!api) return
@@ -665,7 +720,8 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   changes: { titleKey: 'title.changes', direction: 'right' },
   notes: { titleKey: 'title.notes', direction: 'right' },
   api: { titleKey: 'title.api', direction: 'right' },
-  agentgroup: { titleKey: 'title.agentgroup', direction: 'right' }
+  agentgroup: { titleKey: 'title.agentgroup', direction: 'right' },
+  scheduler: { titleKey: 'title.scheduler', direction: 'right' }
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).
