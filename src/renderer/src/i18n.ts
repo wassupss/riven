@@ -906,6 +906,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
   'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
   'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
+  'sched.needPrompt': { ko: '실행할 지시를 먼저 적어주세요.', en: 'Write what it should ask first.' },
   'sched.manage': { ko: '예약 관리', en: 'Manage schedules' },
   'sched.createFirst': { ko: '예약 만들기', en: 'Create a schedule' },
 

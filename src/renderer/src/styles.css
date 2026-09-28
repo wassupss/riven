@@ -830,11 +830,13 @@ select {
   font-size: var(--text-2xs);
   color: var(--fg-dim);
 }
-.sidebar-head-btn.armed {
+.sched-btn.armed {
   color: var(--fg);
 }
-.sidebar-head {
-  gap: 4px;
+.sched-hint {
+  padding: 2px 2px 0;
+  font-size: var(--text-2xs);
+  color: var(--warn, #d9a441);
 }
 
 /* ---- scheduled work panel ---- */

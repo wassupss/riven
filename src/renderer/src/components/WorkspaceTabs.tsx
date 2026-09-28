@@ -9,6 +9,7 @@ import { useSettings } from '../state/settings'
 import { getActiveApi } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
 import { useT } from '../i18n'
+import ScheduleMenu from './ScheduleMenu'
 import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
@@ -44,6 +45,10 @@ export default function WorkspaceTabs(): JSX.Element {
     <div className="ws-rail">
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
+        {/* Work the machine does while you are elsewhere. Here rather than in
+            the window's own header, which is a single line shared with the
+            workspace name and wrapped to two the moment the window was small. */}
+        <ScheduleMenu />
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>

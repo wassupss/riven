@@ -16,7 +16,6 @@ import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
 import PetHost from './components/PetHost'
-import ScheduleMenu from './components/ScheduleMenu'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
 import { useUsage } from './state/usage'
@@ -299,12 +298,6 @@ export default function App(): JSX.Element {
                 (right-aligned), matching native. */}
             <div className="sidebar-head">
               <div className="sidebar-head-spacer" />
-              {/* Work the machine does while you are elsewhere. Above the
-                  workspace list because it belongs to none of them in
-                  particular, and a menu rather than a panel toggle because the
-                  question it answers — what is armed, when does the next one
-                  go — deserves an answer in place. */}
-              <ScheduleMenu />
               <button
                 className="sidebar-head-btn"
                 disabled={!activeWorkspace}

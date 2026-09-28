@@ -127,6 +127,7 @@ export default function SchedulerPanel({ workspace }: { workspace: string }): JS
   const [model, setModel] = useState('default')
   const [targetPane, setTargetPane] = useState('')
   const [now, setNow] = useState(() => Date.now())
+  const [hint, setHint] = useState<string | null>(null)
 
   // The countdown is the point of the list, so it has to move.
   useEffect(() => {
@@ -139,7 +140,11 @@ export default function SchedulerPanel({ workspace }: { workspace: string }): JS
 
   const create = (): void => {
     const text = prompt.trim()
-    if (!text) return
+    if (!text) {
+      setHint(t('sched.needPrompt'))
+      return
+    }
+    setHint(null)
     const target: JobTarget = targetPane
       ? { kind: 'pane', chatKey: targetPane, title: panes.find((p) => p.id === targetPane)?.title ?? targetPane }
       : { kind: 'new', cli, model }
@@ -168,18 +173,23 @@ export default function SchedulerPanel({ workspace }: { workspace: string }): JS
 
       {open && (
         <div className="sched-form">
-          <input
-            className="sched-input"
-            placeholder={t('sched.namePlaceholder')}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
+          {/* The instruction first: it is the only thing a schedule cannot do
+              without, and burying it under an optional name is how you end up
+              filling in the name, pressing 저장, and getting nothing back from
+              a disabled button that never said why. */}
           <textarea
             className="sched-input sched-prompt-input"
             placeholder={t('sched.promptPlaceholder')}
             value={prompt}
             rows={3}
+            autoFocus
             onChange={(e) => setPrompt(e.target.value)}
+          />
+          <input
+            className="sched-input"
+            placeholder={t('sched.namePlaceholder')}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
           />
           <div className="sched-row">
             <select className="sched-sel" value={preset} onChange={(e) => setPreset(e.target.value as Preset)}>
@@ -261,10 +271,11 @@ export default function SchedulerPanel({ workspace }: { workspace: string }): JS
                 </select>
               </>
             )}
-            <button className="sched-save" onClick={create} disabled={!prompt.trim()}>
+            <button className="sched-save" onClick={create}>
               <Check size={12} /> {t('sched.save')}
             </button>
           </div>
+          {hint && <div className="sched-hint">{hint}</div>}
         </div>
       )}
 

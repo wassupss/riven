@@ -32,15 +32,18 @@ export default function ScheduleMenu(): JSX.Element {
   return (
     <>
       <button
-        className={`sidebar-head-btn${armed.length ? ' armed' : ''}`}
+        className={`ws-rail-add sched-btn${armed.length ? ' armed' : ''}`}
         title={t('ws.scheduler')}
         onClick={(e) => {
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          setOpen(open ? null : { x: r.left, y: r.bottom + 4 })
+          // Anchored to the button's RIGHT edge: the rail sits at the window's
+          // left, so a menu hung from the left edge of a 22px button had
+          // nowhere to grow.
+          setOpen(open ? null : { x: Math.max(8, r.right - 240), y: r.bottom + 4 })
         }}
       >
-        <Clock size={12} />
-        {armed.length > 0 ? String(armed.length) : t('ws.scheduler')}
+        <Clock size={14} />
+        {armed.length > 0 && <span className="ws-rail-badge">{armed.length}</span>}
       </button>
       {open &&
         createPortal(
