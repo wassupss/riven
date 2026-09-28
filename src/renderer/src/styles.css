@@ -888,6 +888,170 @@ select {
   color: var(--warn, #d9a441);
 }
 
+/* ---- the schedule form (rail menu + panel) ---- */
+.sf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 9px 9px;
+}
+.sf-prompt,
+.sf-name,
+.sf-num,
+.sf-time,
+.sf-sel {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  outline: none;
+}
+.sf-prompt {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.45;
+}
+.sf-prompt:focus,
+.sf-name:focus,
+.sf-num:focus,
+.sf-time:focus,
+.sf-sel:focus {
+  border-color: var(--accent-border);
+}
+/* The six rules that exist, shown as six choices — a dropdown hid five of them
+   behind a click and told you nothing about what they were. */
+.sf-chips,
+.sf-when,
+.sf-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.sf-chip {
+  padding: 3px 9px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.sf-chip:hover {
+  color: var(--fg);
+  border-color: var(--edge-strong);
+}
+.sf-chip.on {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sf-days {
+  display: inline-flex;
+  gap: 2px;
+}
+.sf-day {
+  width: 22px;
+  height: 22px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sf-day.on {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sf-num {
+  width: 64px;
+}
+.sf-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+/* Wrap rather than squeeze: three pickers shrunk to fit a 300px menu is three
+   pickers you cannot read. */
+.sf-sel {
+  flex: 1 1 120px;
+  min-width: 110px;
+  max-width: 100%;
+}
+/* The rule said back, and when it first fires. */
+.sf-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: var(--text-2xs);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.sf-rule {
+  color: var(--fg);
+}
+.sf-next {
+  color: var(--fg-dim);
+  margin-left: auto;
+}
+.sf-hint {
+  font-size: var(--text-2xs);
+  color: var(--warn, #d9a441);
+}
+.sf-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.sf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sf-btn:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.sf-btn.primary {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sched-menu.wide {
+  max-width: 340px;
+}
+/* A menu taller than the window is a menu with a hidden save button. */
+.sched-menu {
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+}
+.sched-menu-foot {
+  border-top: 1px solid var(--edge);
+  margin-top: 2px;
+  padding-top: 2px;
+}
+.sched-menu-item[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+.sched-formwrap {
+  border-bottom: 1px solid var(--edge);
+}
+
 /* ---- scheduled work panel ---- */
 .sched-panel {
   display: flex;

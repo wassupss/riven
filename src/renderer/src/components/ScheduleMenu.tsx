@@ -1,19 +1,20 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Clock, Plus } from 'lucide-react'
+import { Clock, Plus, ListChecks } from 'lucide-react'
 import { useT } from '../i18n'
 import { togglePanel } from '../dock/registry'
+import { useSession } from '../state/session'
 import { useJobs, nextRunOf, type Job } from '../state/jobs'
 import { triggerLabel, untilLabel } from '../lib/schedule'
+import ScheduleForm from './ScheduleForm'
 
-// Scheduled work, from the top bar.
+// Scheduled work, from the rail.
 //
-// It sat in the workspace rail's header first, which was wrong on two counts: a
-// schedule is not a property of the workspace list (it spans all of them), and a
-// bare icon next to "워크스페이스" read as another way to add one. Up here it is
-// beside the other app-level action, and it opens a MENU — because the question
-// it answers ("what is armed, and when does the next one go?") is worth an
-// answer in place, without opening a panel to find out.
+// The row answers "is anything pending, and when" without being clicked. The
+// menu ADDS one without going anywhere: registering used to mean opening a dock
+// panel and filling a form in there — three steps and a change of context for
+// something that is two sentences long. The panel is where you manage what
+// exists, not where you create it.
 
 function nextUp(jobs: Job[], now: number): Array<{ job: Job; at: number | null }> {
   return jobs
@@ -24,11 +25,17 @@ function nextUp(jobs: Job[], now: number): Array<{ job: Job; at: number | null }
 export default function ScheduleMenu(): JSX.Element {
   const t = useT()
   const [open, setOpen] = useState<{ x: number; y: number; w: number } | null>(null)
+  const [adding, setAdding] = useState(false)
   const byWorkspace = useJobs((s) => s.byWorkspace)
+  const activeWorkspace = useSession((s) => s.activeWorkspace)
   const all = Object.values(byWorkspace).flat()
   const armed = all.filter((j) => j.enabled)
   const now = Date.now()
   const next = nextUp(armed, now)[0] ?? null
+  const close = (): void => {
+    setOpen(null)
+    setAdding(false)
+  }
 
   return (
     <>
@@ -38,7 +45,8 @@ export default function ScheduleMenu(): JSX.Element {
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
           // Hung under the row and as wide as it: the rail is at the window's
           // left edge, so a menu measured from anywhere else grows off screen.
-          setOpen(open ? null : { x: r.left, y: r.bottom + 2, w: r.width })
+          if (open) close()
+          else setOpen({ x: r.left, y: r.bottom + 2, w: r.width })
         }}
       >
         <Clock size={13} />
@@ -55,36 +63,62 @@ export default function ScheduleMenu(): JSX.Element {
       {open &&
         createPortal(
           <>
-            <div className="sched-menu-scrim" onClick={() => setOpen(null)} />
-            <div className="sched-menu" style={{ left: open.x, top: open.y, minWidth: open.w }}>
-              <div className="sched-menu-head">{t('ws.scheduler')}</div>
-              {armed.length === 0 && <div className="sched-menu-empty">{t('sched.menuEmpty')}</div>}
-              {nextUp(armed, now)
-                .slice(0, 6)
-                .map(({ job, at }) => (
-                  <button
-                    key={job.id}
-                    className="sched-menu-item"
-                    onClick={() => {
-                      setOpen(null)
-                      togglePanel('scheduler', job.workspace)
-                    }}
-                  >
-                    <span className="sched-menu-name">{job.name}</span>
-                    <span className="sched-menu-when">{triggerLabel(job.trigger)}</span>
-                    <span className="sched-menu-next">{untilLabel(at, now)}</span>
-                  </button>
-                ))}
-              <button
-                className="sched-menu-item action"
-                onClick={() => {
-                  setOpen(null)
-                  togglePanel('scheduler')
-                }}
-              >
-                <Plus size={12} />
-                {all.length ? t('sched.manage') : t('sched.createFirst')}
-              </button>
+            <div className="sched-menu-scrim" onClick={close} />
+            <div
+              className={`sched-menu${adding ? ' wide' : ''}`}
+              style={{ left: open.x, top: open.y, minWidth: Math.max(open.w, adding ? 300 : 240) }}
+            >
+              {adding && activeWorkspace ? (
+                <>
+                  <div className="sched-menu-head">
+                    {t('sched.newIn', { ws: activeWorkspace.split('/').pop() ?? '' })}
+                  </div>
+                  <ScheduleForm workspace={activeWorkspace} onDone={close} onCancel={() => setAdding(false)} />
+                </>
+              ) : (
+                <>
+                  <div className="sched-menu-head">{t('ws.scheduler')}</div>
+                  {armed.length === 0 && <div className="sched-menu-empty">{t('sched.menuEmpty')}</div>}
+                  {nextUp(armed, now)
+                    .slice(0, 6)
+                    .map(({ job, at }) => (
+                      <button
+                        key={job.id}
+                        className="sched-menu-item"
+                        onClick={() => {
+                          close()
+                          togglePanel('scheduler', job.workspace)
+                        }}
+                      >
+                        <span className="sched-menu-name">{job.name}</span>
+                        <span className="sched-menu-when">{triggerLabel(job.trigger)}</span>
+                        <span className="sched-menu-next">{untilLabel(at, now)}</span>
+                      </button>
+                    ))}
+                  <div className="sched-menu-foot">
+                    <button
+                      className="sched-menu-item action"
+                      disabled={!activeWorkspace}
+                      onClick={() => setAdding(true)}
+                    >
+                      <Plus size={12} />
+                      {t('sched.createHere')}
+                    </button>
+                    {all.length > 0 && (
+                      <button
+                        className="sched-menu-item action"
+                        onClick={() => {
+                          close()
+                          togglePanel('scheduler')
+                        }}
+                      >
+                        <ListChecks size={12} />
+                        {t('sched.manage')}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </>,
           document.body

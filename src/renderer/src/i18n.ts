@@ -910,6 +910,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
   'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
   'sched.needPrompt': { ko: '실행할 지시를 먼저 적어주세요.', en: 'Write what it should ask first.' },
+  'sched.createHere': { ko: '새 예약', en: 'New schedule' },
+  'sched.newIn': { ko: '{ws}에 새 예약', en: 'New schedule in {ws}' },
+  'sched.edit': { ko: '수정', en: 'Edit' },
+  'sched.saveEdit': { ko: '수정 저장', en: 'Save changes' },
+  'sched.cancel': { ko: '취소', en: 'Cancel' },
+  'sched.atMinute': { ko: '매시', en: 'at minute' },
+  'sched.minutes': { ko: '분 간격', en: 'minutes' },
   'sched.manage': { ko: '예약 관리', en: 'Manage schedules' },
   'sched.createFirst': { ko: '예약 만들기', en: 'Create a schedule' },
 
