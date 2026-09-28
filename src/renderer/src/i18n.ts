@@ -856,7 +856,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'team.sending': { ko: '보내는 중…', en: 'Sending…' },
   'team.waiting': { ko: '답을 기다리는 중', en: 'Waiting for an answer' },
   'team.stopWaiting': { ko: '그만 기다리기', en: 'Stop waiting' },
-  'team.noReply': { ko: '(5분 안에 답이 없었습니다)', en: '(no reply within 5 min)' },
+  // Not "it took too long" — it stopped showing any sign of life. Work that
+  // keeps reporting is waited for however long it takes.
+  'team.noReply': {
+    ko: '(5분째 아무 반응이 없어 기다리기를 멈췄습니다)',
+    en: '(no sign of life for 5 min — stopped waiting)'
+  },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
 
   // ---- 리븐펫 (the floating pet device) ----

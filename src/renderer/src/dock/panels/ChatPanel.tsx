@@ -2492,7 +2492,11 @@ export default function ChatPanel({
           list.push(resolve)
           turnWaitersRef.current.set(turn, list)
         }),
-      hasPendingOpening: () => hasInitialText(chatKey)
+      hasPendingOpening: () => hasInitialText(chatKey),
+      // The same clock the "무응답" warning reads: every event from the CLI
+      // pushes it forward, so a delegating agent can wait on silence instead of
+      // on a stopwatch.
+      lastActivityAt: () => lastEventRef.current
     })
   }, [chatKey, workspace, sendMessage])
 

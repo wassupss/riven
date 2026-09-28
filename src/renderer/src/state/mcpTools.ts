@@ -13,6 +13,7 @@ import {
   type SplitDir
 } from '../dock/registry'
 import { rosterFor, type RosterEntry } from './roster'
+import { terminalReply } from './askAgent'
 import { useAgentGroups } from './agentGroups'
 import { useGroupLog } from './groupLog'
 import { useGoals, findGoal, boardText, type PostKind } from './goals'
@@ -501,7 +502,11 @@ async function browserWait(args: Args, c: Ctx): Promise<string> {
 }
 
 // ---- agent delegation tools ----
-const ASK_TIMEOUT_MS = 300_000 // 5 min per delegated turn
+// How long a delegated agent may stay SILENT before the caller stops waiting.
+// Not a cap on the work: a member building for an hour reports activity the
+// whole time (see askChatTurnNow), and waiting costs the caller nothing.
+const QUIET_LIMIT_MS = 300_000
+const NO_REPLY = '(no sign of life for 5 min — stopped waiting)'
 // Delegation NEVER crosses a workspace. Title matching is fuzzy, so an unscoped
 // lookup let "ask the agent next to me" land on a same-named pane in a workspace
 // the caller cannot see — and the caller had no way to tell it had happened.
@@ -587,7 +592,7 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   if (entry.kind === 'terminal') {
     if (entry.busy)
       return `error: "${entry.title}" is mid-turn; its CLI would read this as an answer to what it is currently asking. Try again when riven_agents shows it idle.`
-    const replyP = wait && entry.replies ? terminalReply(entry.id, ASK_TIMEOUT_MS) : null
+    const replyP = wait && entry.replies ? terminalReply(entry.id, QUIET_LIMIT_MS, NO_REPLY) : null
     // Delivered the way a person types it: the text, a pause, then Enter as its
     // own write. `message + '\r'` in a single write left the message sitting
     // unsent in the CLI's input box — a TUI reading one burst that happens to end
@@ -621,7 +626,7 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   }
   if (wait && from) addEdge(waitingOn, from, target.chatKey)
   note(c.ws, 'ask', from ?? 'agent', message, target.chatKey)
-  const answer = askChatTurn(target, message, ASK_TIMEOUT_MS, '(no reply within 5 min)').finally(() => {
+  const answer = askChatTurn(target, message, QUIET_LIMIT_MS, NO_REPLY).finally(() => {
     if (wait && from) dropEdge(waitingOn, from, target.chatKey)
   })
   void answer.then((reply) => note(c.ws as string, 'reply', target.chatKey, reply, from ?? undefined))
@@ -631,22 +636,7 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   }
   return `[${target.getTitle()}] ${await answer}`
 }
-// The next answer a terminal's CLI ends a turn with. Registered BEFORE the
-// message is typed, so a quick turn can't finish in between.
-function terminalReply(pane: string, timeoutMs: number): Promise<string> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      off()
-      resolve('(no reply within 5 min)')
-    }, timeoutMs)
-    const off = window.api.pty.onReply(({ key, text }) => {
-      if (key !== pane) return
-      clearTimeout(timer)
-      off()
-      resolve(text)
-    })
-  })
-}
+
 
 async function askAgent(args: Args, c: Ctx): Promise<string> {
   return askOneAgent(s(args.agent), s(args.message), args.wait !== false, c)
@@ -1008,7 +998,7 @@ async function startPipeline(args: Args, c: Ctx): Promise<string> {
     }
     if (!target) return `error: could not open a pane for stage "${stageName}"`
     const prompt = `${instruction ? instruction + '\n\n' : ''}[이전 단계 산출물]\n${carry}`
-    carry = await askChatTurn(target, prompt, ASK_TIMEOUT_MS, '(stage timed out)')
+    carry = await askChatTurn(target, prompt, QUIET_LIMIT_MS, '(stage went quiet)')
     out.push(`## ${stageName}\n${carry}`)
   }
   return `pipeline "${name}" done:\n\n${out.join('\n\n')}`

@@ -26,6 +26,11 @@ export interface AgentController {
   ask?: (message: string) => Promise<string>
   // The pane was opened with a first message it hasn't sent yet.
   hasPendingOpening?: () => boolean
+  // When this pane last showed a sign of life (text, a tool call, a tool's
+  // heartbeat, thinking). Delegation waits on silence, not on elapsed time —
+  // see askChatTurnNow. A pane that does not report it falls back to a plain
+  // wall-clock deadline.
+  lastActivityAt?: () => number
 }
 
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -75,37 +80,81 @@ export function askChatTurn(
   return queued(target.chatKey, () => askChatTurnNow(target, message, timeoutMs, timeoutText))
 }
 
+/**
+ * Gives up only after the target has been SILENT for `quietMs`.
+ *
+ * It used to be a flat deadline: five minutes after asking, the caller was told
+ * there was no reply. Real delegated work runs longer than that, so a lead was
+ * routinely told its member had gone quiet while the member was mid-build — and
+ * the answer, when it finally came, had nobody holding it and was dropped. The
+ * member then sat there finished, with its report undelivered.
+ *
+ * The CLI now reports activity continuously (text, tool calls, a long tool's
+ * heartbeat, thinking), so silence is a real signal and elapsed time is not.
+ * Waiting costs nothing: the lead is parked inside a tool call, generating
+ * nothing.
+ */
+function quietGuard(
+  target: AgentController,
+  quietMs: number,
+  text: string,
+  since: number
+): { promise: Promise<string>; cancel: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const promise = new Promise<string>((resolve) => {
+    const tick = (): void => {
+      const last = Math.max(since, target.lastActivityAt?.() ?? 0)
+      const left = quietMs - (Date.now() - last)
+      if (left <= 0) return resolve(text)
+      // Re-check at most every 5s: the pane may have spoken since this timer
+      // was set, which pushes the deadline out.
+      timer = setTimeout(tick, Math.min(left, 5_000))
+    }
+    timer = setTimeout(tick, Math.min(quietMs, 5_000))
+  })
+  return { promise, cancel: () => clearTimeout(timer) }
+}
+
 async function askChatTurnNow(
   target: AgentController,
   message: string,
   timeoutMs: number,
   timeoutText: string
 ): Promise<string> {
-  const deadline = Date.now() + timeoutMs
-  const left = (): number => Math.max(0, deadline - Date.now())
-  for (;;) {
-    if (Date.now() >= deadline) return timeoutText
-    if (target.hasPendingOpening?.()) {
-      await pause(150)
-      continue
+  const guard = quietGuard(target, timeoutMs, timeoutText, Date.now())
+  try {
+    let gaveUp = false
+    for (;;) {
+      if (target.hasPendingOpening?.()) {
+        const raced = await Promise.race([pause(150).then(() => null), guard.promise])
+        if (raced !== null) return timeoutText
+        continue
+      }
+      if (target.isBusy()) {
+        const raced = await Promise.race([target.waitNext().then(() => null), guard.promise])
+        if (raced !== null) {
+          gaveUp = true
+          break
+        }
+        continue
+      }
+      // Busy is published a render after a send, so an opening message sent a
+      // moment ago can still read as idle. Look once more before going.
+      await pause(120)
+      if (!target.isBusy() && !target.hasPendingOpening?.()) break
     }
-    if (target.isBusy()) {
-      await Promise.race([target.waitNext(), pause(left())])
-      continue
-    }
-    // Busy is published a render after a send, so an opening message sent a
-    // moment ago can still read as idle. Look once more before going.
-    await pause(120)
-    if (!target.isBusy() && !target.hasPendingOpening?.()) break
+    if (gaveUp) return timeoutText
+    // `ask` ties the answer to this message's own turn; waitNext is the fallback
+    // for a pane that predates it (and for terminals, which have no turn ids).
+    const reply = target.ask ? target.ask(message) : (() => {
+      const p = target.waitNext()
+      target.send(message)
+      return p
+    })()
+    return Promise.race([reply, guard.promise])
+  } finally {
+    guard.cancel()
   }
-  // `ask` ties the answer to this message's own turn; waitNext is the fallback
-  // for a pane that predates it (and for terminals, which have no turn ids).
-  const reply = target.ask ? target.ask(message) : (() => {
-    const p = target.waitNext()
-    target.send(message)
-    return p
-  })()
-  return Promise.race([reply, pause(left()).then(() => timeoutText)])
 }
 
 interface AgentsState {
