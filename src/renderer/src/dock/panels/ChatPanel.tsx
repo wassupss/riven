@@ -371,11 +371,41 @@ function ChatCode({
   )
 }
 
+// Below this a duration is noise: almost every call takes a second or two.
+const SLOW_TOOL_MS = 10_000
+
+/**
+ * How long a call has been running, in ms — 0 when it is not worth saying.
+ *
+ * Counted HERE rather than taken from the CLI. The CLI's heartbeat is what
+ * proves the call is alive (and it is why the pane stops warning about no
+ * response), but it arrives once at the 30 second mark: a badge fed from it
+ * showed "30초" and then froze there for as long as the call ran, which reads
+ * as a stopped clock rather than a running one. `elapsed` stays as the fallback
+ * for a restored transcript, where nothing knows when the call began.
+ */
+function runningFor(tl: ToolLine, now: number): number {
+  if (tl.done) return 0
+  const ms = tl.startedAt ? now - tl.startedAt : (tl.elapsed ?? 0) * 1000
+  return ms >= SLOW_TOOL_MS ? ms : 0
+}
+
+// A second-resolution clock, running only while something needs it.
+function useTicker(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!on) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [on])
+  return now
+}
+
 // Consecutive tool calls in a turn, collapsed into one accordion (like native
 // ToolGroup): a quiet header (running shimmer / "N commands +A -B"), expanding to
 // the tool lines + their code/diff.
 // One tool line: icon + name + detail, with an optional expandable code block.
-function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
+function ToolItem({ tl, now }: { tl: ToolLine; now: number }): JSX.Element {
   return (
     <div className={`tg-item${tl.interrupted ? ' interrupted' : ''}`}>
       <div className="chat-tool">
@@ -384,7 +414,9 @@ function ToolItem({ tl }: { tl: ToolLine }): JSX.Element {
         </span>
         <span className="chat-tool-name">{tl.name}</span>
         {tl.detail && <span className="chat-tool-detail">{tl.detail}</span>}
-        {!tl.done && tl.elapsed ? <span className="chat-tool-elapsed">{fmtDur(tl.elapsed * 1000)}</span> : null}
+        {runningFor(tl, now) > 0 ? (
+          <span className="chat-tool-elapsed">{fmtDur(runningFor(tl, now))}</span>
+        ) : null}
       </div>
       {tl.code && <ChatCode code={tl.code} diff={isEditName(tl.name)} path={tl.path} />}
     </div>
@@ -408,6 +440,7 @@ function SubagentCard({
   // Done when the Agent tool's tool_result arrived, or the whole turn ended.
   const done = task.done || !turnRunning
   const running = !done
+  const now = useTicker(running)
   // Stopped only if this delegation itself never returned; one that finished
   // before the user hit Stop stays a completed subagent.
   const stopped = !!task.error || !!task.interrupted
@@ -441,7 +474,7 @@ function SubagentCard({
       {open && kids.length > 0 && (
         <div className="chat-subagent-kids">
           {kids.map((c, j) => (
-            <ToolItem key={j} tl={c} />
+            <ToolItem key={j} tl={c} now={now} />
           ))}
         </div>
       )}
@@ -484,7 +517,8 @@ const ToolGroup = memo(function ToolGroup({
   // How long the tool still in flight has been running. It belongs on the HEAD,
   // not only on the line inside: the group is collapsed by default, so a badge
   // hidden in the body would answer "is this stuck?" for nobody.
-  const slow = tools.find((tl) => !tl.done && tl.elapsed)
+  const now = useTicker(running)
+  const slowMs = Math.max(0, ...tools.map((tl) => runningFor(tl, now)))
   return (
     <div className={`chat-toolgroup${state}`}>
       <button className="chat-toolgroup-head" onClick={() => setOpen((o) => !o)}>
@@ -521,13 +555,13 @@ const ToolGroup = memo(function ToolGroup({
             )}
           </span>
         )}
-        {slow?.elapsed ? <span className="chat-tool-elapsed">{fmtDur(slow.elapsed * 1000)}</span> : null}
+        {slowMs > 0 ? <span className="chat-tool-elapsed">{fmtDur(slowMs)}</span> : null}
         <ChevronDown size={13} className={`tg-chevron${open ? ' open' : ''}`} aria-hidden />
       </button>
       {open && (
         <div className="chat-toolgroup-body">
           {tools.map((tl, i) => (
-            <ToolItem key={i} tl={tl} />
+            <ToolItem key={i} tl={tl} now={now} />
           ))}
         </div>
       )}
