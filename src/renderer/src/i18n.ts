@@ -49,7 +49,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'empty.tagline': { ko: '텅 빈 작업대예요 — 여기서부터 갈라 만들어 봐요.', en: "A blank workbench — let's carve something out." },
   'empty.addTerminal': { ko: '터미널 추가하기', en: 'Add a terminal' },
   'empty.addEditor': { ko: '코드 편집기 열기', en: 'Open the editor' },
-  'toolbar.toggleExplorer': { ko: '탐색기 표시/숨김', en: 'Toggle Explorer' },
+  'toolbar.toggleExplorer': { ko: '탐색기 열기', en: 'Open Explorer' },
   'toolbar.toggleSidebar': { ko: '사이드바 표시/숨김', en: 'Toggle sidebar' },
   'toolbar.popout': { ko: '현재 패널 새 창으로', en: 'Pop out current panel' },
 
@@ -733,6 +733,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
   'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
   'chat.bgTask': { ko: '백그라운드 실행 중: {what}', en: 'running in background: {what}' },
+  'chat.bgTaskRunning': { ko: '실행 중', en: 'running' },
+  'chat.bgTaskHint': {
+    ko: '{what} — 이 대화가 끝나도 계속 돌아갑니다. 끝나면 여기에 알려드립니다.',
+    en: '{what} — keeps running after this turn ends; you will be told here when it finishes.'
+  },
   'chat.bgTaskPlain': { ko: '백그라운드 작업', en: 'background task' },
   'chat.bgTaskDone': { ko: '백그라운드 작업 완료 · {what}', en: 'background task done · {what}' },
   'chat.bgTaskFailed': { ko: '백그라운드 작업 실패 · {what}', en: 'background task failed · {what}' },
@@ -873,6 +878,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'title.agentgroup': { ko: '에이전트 그룹', en: 'Agent group' },
   'title.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'title.explorer': { ko: '탐색기', en: 'Explorer' },
   'sched.title': { ko: '예약 작업', en: 'Scheduled work' },
   'sched.empty': {
     ko: '예약된 작업이 없습니다. +로 하나 만들어 보세요.',
@@ -899,8 +905,18 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.ranMissed': { ko: '놓침', en: 'missed' },
   'sched.wasMissed': { ko: 'riven이 꺼져 있는 동안 지나갔습니다', en: 'went past while riven was closed' },
   'ws.scheduler': { ko: '예약 작업', en: 'Scheduled work' },
+  'ws.openGroup': { ko: '{group} 그룹 열기', en: 'Open the {group} group' },
+  'ws.schedulerAdd': { ko: '스케줄러 등록', en: 'Schedule work' },
   'qp.tidyLayout': { ko: '패널 정리 (좁은 패널을 탭으로)', en: 'Tidy panels (fold narrow ones into tabs)' },
   'sched.menuEmpty': { ko: '동작 중인 예약이 없습니다', en: 'Nothing armed' },
+  'sched.needPrompt': { ko: '실행할 지시를 먼저 적어주세요.', en: 'Write what it should ask first.' },
+  'sched.createHere': { ko: '새 예약', en: 'New schedule' },
+  'sched.newIn': { ko: '{ws}에 새 예약', en: 'New schedule in {ws}' },
+  'sched.edit': { ko: '수정', en: 'Edit' },
+  'sched.saveEdit': { ko: '수정 저장', en: 'Save changes' },
+  'sched.cancel': { ko: '취소', en: 'Cancel' },
+  'sched.atMinute': { ko: '매시', en: 'at minute' },
+  'sched.minutes': { ko: '분 간격', en: 'minutes' },
   'sched.manage': { ko: '예약 관리', en: 'Manage schedules' },
   'sched.createFirst': { ko: '예약 만들기', en: 'Create a schedule' },
 

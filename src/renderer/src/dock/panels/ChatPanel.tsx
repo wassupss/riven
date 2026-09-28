@@ -41,7 +41,8 @@ import {
 import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
 import { useAskUser } from '../../state/askUser'
 import { useWorkspaceStatus } from '../../state/workspaceStatus'
-import { useScheduled, schedulesFor, type Repeat } from '../../state/scheduledMessages'
+import { useJobs, nextRunOf } from '../../state/jobs'
+import { type Trigger } from '../../lib/schedule'
 import { ensureEditor, addTerminal, setDelegator, hasInitialText, takeInitialText, getActiveApi } from '../registry'
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
@@ -649,9 +650,14 @@ function BgTaskChip({
   const t = useT()
   const now = useTicker(true)
   return (
-    <div className="chat-bgtask" title={t('chat.bgTask', { what: task.label })}>
+    // The STATE is said in words, not implied by a dot. As a name and an icon
+    // alone this read as a label — a badge on the conversation rather than
+    // something that is happening — and the turn above it says 완료, so there
+    // was nothing on screen to say work was still going.
+    <div className="chat-bgtask" title={t('chat.bgTaskHint', { what: task.label })}>
       <span className="chat-bgtask-dot" />
       <TerminalSquare size={11} />
+      <span className="chat-bgtask-state">{t('chat.bgTaskRunning')}</span>
       <span className="chat-bgtask-label">{task.label || t('chat.bgTaskPlain')}</span>
       {since && <span className="chat-bgtask-time">{fmtDur(now - since)}</span>}
     </div>
@@ -1428,6 +1434,9 @@ function ModelCard({
 
 // Popover to schedule the composed message: quick delays, an exact time, a repeat
 // option, and the list of this pane's pending schedules (with cancel).
+/** The popover's own vocabulary for how often — a Job trigger is built from it. */
+type Repeat = 'none' | 'hourly' | 'daily'
+
 function SchedulePopover({
   hasText,
   repeat,
@@ -1739,7 +1748,7 @@ export default function ChatPanel({
   // Scheduled messages (명령 예약): pick a time to auto-send the composed message.
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [schedRepeat, setSchedRepeat] = useState<Repeat>('none')
-  useScheduled((s) => s.items) // re-render when this pane's schedule list changes
+  useJobs((s) => s.byWorkspace) // re-render when this pane's schedule list changes
   // Ticks once a minute so the "N분 전" footer stays current without a per-frame
   // clock (native refreshes the relative time on a 1-min timer too).
   const [now, setNow] = useState(() => Date.now())
@@ -3038,23 +3047,45 @@ export default function ChatPanel({
     }
   }
 
-  // Schedule the current composer text to auto-send to this pane at fireAt.
+  // Schedule the composer's text to send itself to THIS pane later.
+  //
+  // One scheduler, not two: this used to write to its own localStorage store
+  // with its own ticker, which knew nothing about runs, missed slots or the
+  // panel that lists them — and a second copy of the same idea is a second copy
+  // to keep in step. It is a Job with a pane target now, so it shows up in 예약
+  // 작업 beside everything else and is honest about what happened.
   const doSchedule = (fireAt: number): void => {
     const text = (inputRef.current?.value ?? input).trim()
     if (!text || fireAt <= Date.now()) return
-    useScheduled.getState().add({
-      workspace,
-      chatKey,
-      targetTitle: titleRef.current || 'Claude',
-      text,
-      fireAt,
-      repeat: schedRepeat
+    const when = new Date(fireAt)
+    const trigger: Trigger =
+      schedRepeat === 'hourly'
+        ? { kind: 'hourly', minute: when.getMinutes() }
+        : schedRepeat === 'daily'
+          ? { kind: 'daily', hour: when.getHours(), minute: when.getMinutes() }
+          : { kind: 'once', at: fireAt }
+    useJobs.getState().add(workspace, {
+      name: text.split('\n')[0].slice(0, 30),
+      prompt: text,
+      trigger,
+      target: { kind: 'pane', chatKey, title: titleRef.current || 'Claude' },
+      enabled: true,
+      graceMinutes: 60
     })
     setScheduleOpen(false)
     setSchedRepeat('none')
     clearComposer()
   }
-  const pendingSchedules = schedulesFor(workspace, chatKey)
+  // What this pane has waiting, in the shape the popover already speaks.
+  const pendingSchedules = (useJobs.getState().byWorkspace[workspace] ?? [])
+    .filter((j) => j.enabled && j.target.kind === 'pane' && j.target.chatKey === chatKey)
+    .map((j) => ({
+      id: j.id,
+      text: j.prompt,
+      fireAt: nextRunOf(j) ?? 0,
+      repeat: (j.trigger.kind === 'hourly' ? 'hourly' : j.trigger.kind === 'daily' ? 'daily' : 'none') as Repeat
+    }))
+    .sort((a, b) => a.fireAt - b.fireAt)
 
   // Load a past session INTO this pane: resume its CLI context and show its
   // reconstructed transcript (native /resume).
@@ -3583,7 +3614,7 @@ export default function ChatPanel({
             setRepeat={setSchedRepeat}
             onSchedule={doSchedule}
             pending={pendingSchedules}
-            onCancel={(id) => useScheduled.getState().remove(id)}
+            onCancel={(id) => useJobs.getState().remove(workspace, id)}
             onClose={() => setScheduleOpen(false)}
           />
         )}

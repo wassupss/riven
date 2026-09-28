@@ -892,6 +892,8 @@ const api = {
       ahead: number
       behind: number
       hasUpstream: boolean
+      /** origin's URL, for the owner a card shows a picture of. */
+      remote: string | null
       files: Array<{
         path: string
         x: string

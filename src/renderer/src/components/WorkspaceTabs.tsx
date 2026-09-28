@@ -6,10 +6,14 @@ import { useAgents } from '../state/agents'
 import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
-import { getActiveApi } from '../dock/registry'
+import { getActiveApi, togglePanel } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
+import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
+import { groupPanes, stripGroup } from '../lib/paneGroups'
+import { useAgentGroups, type AgentGroup } from '../state/agentGroups'
 import { useT } from '../i18n'
-import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
+import ScheduleMenu from './ScheduleMenu'
+import { Plus, GitBranch, ChevronRight, ChevronDown, Users } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -19,6 +23,7 @@ export default function WorkspaceTabs(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const openWorkspace = useSession((s) => s.openWorkspace)
   const reorderWorkspace = useSession((s) => s.reorderWorkspace)
+  const [railMenu, setRailMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [overIndex, setOverIndex] = useState<number | null>(null)
 
@@ -41,13 +46,27 @@ export default function WorkspaceTabs(): JSX.Element {
   }
 
   return (
-    <div className="ws-rail">
+    <div
+      className="ws-rail"
+      onContextMenu={(e) => {
+        // Only the rail's own empty space: a card handles its own menu and must
+        // keep its rename/colour items.
+        if ((e.target as HTMLElement).closest('.ws-card, .ws-sched-row')) return
+        e.preventDefault()
+        setRailMenu({ x: Math.min(e.clientX, window.innerWidth - 200), y: e.clientY })
+      }}
+    >
+      {/* Above the workspaces, on its own line. It fits now because the row
+          that used to be here — "패널 추가" — moved to the right-click menu on
+          a workspace, which is what it acts on anyway. */}
+      <ScheduleMenu />
       <div className="ws-rail-head">
         <span className="ws-rail-title">{t('ws.title')}</span>
         <button className="ws-rail-add" title={t('ws.openFolder')} onClick={pick}>
           <Plus size={14} />
         </button>
       </div>
+
       <div className="ws-list">
         {openWorkspaces.map((ws, i) => (
           <WorkspaceCard
@@ -64,6 +83,33 @@ export default function WorkspaceTabs(): JSX.Element {
         ))}
         {openWorkspaces.length === 0 && <div className="ws-empty">{t('ws.empty')}</div>}
       </div>
+      {railMenu &&
+        createPortal(
+          <div className="ctx-backdrop" onClick={() => setRailMenu(null)} onContextMenu={(e) => { e.preventDefault(); setRailMenu(null) }}>
+            <div className="ctx-menu" style={{ left: railMenu.x, top: railMenu.y }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="ctx-item"
+                disabled={!useSession.getState().activeWorkspace}
+                onClick={() => {
+                  setRailMenu(null)
+                  useUI.getState().setQuickPanel(true)
+                }}
+              >
+                {t('toolbar.addPanel')}
+              </button>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setRailMenu(null)
+                  void pick()
+                }}
+              >
+                {t('ws.openFolder')}
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   )
 }
@@ -141,9 +187,13 @@ function railCollapsed(): Set<string> {
   }
 }
 
+const NO_GROUPS: AgentGroup[] = []
+
 interface GitState {
   branch: string | null
   dirty: number
+  /** Where this checkout came from, for the owner's picture and its name. */
+  repo: RepoRef | null
 }
 
 interface CardProps {
@@ -189,6 +239,9 @@ function WorkspaceCard({
   // Every agent pane this workspace HAS — including terminals running a CLI
   // agent, and including panes whose workspace is currently unmounted.
   const agents = rosterFor(ws)
+  // Panes created as a team are listed as one — see lib/paneGroups.
+  const wsGroups = useAgentGroups((st) => st.byWorkspace[ws]) ?? NO_GROUPS
+  const grouped = groupPanes(agents, wsGroups)
   // Roll the card's activity up from the SAME source as the roster below it. It
   // used to come from workspaceStatus, which only mounted panels write to, so an
   // unmounted workspace went dark while its agents were still working.
@@ -219,6 +272,10 @@ function WorkspaceCard({
     setCollapsed(set.has(ws))
   }
   const [git, setGit] = useState<GitState | null>(null)
+  // An avatar that will not load (private org, offline, a host without one)
+  // falls back to the colour dot rather than leaving a hole in the row.
+  const [avatarFailed, setAvatarFailed] = useState(false)
+  const avatar = avatarUrl(git?.repo ?? null, 48)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -249,7 +306,11 @@ function WorkspaceCard({
       .status(pathOf(ws))
       .then((st) => {
         if (!alive) return
-        setGit(st.isRepo ? { branch: st.branch, dirty: st.files.length } : null)
+        setGit(
+          st.isRepo
+            ? { branch: st.branch, dirty: st.files.length, repo: parseRemote(st.remote) }
+            : null
+        )
       })
       .catch(() => alive && setGit(null))
     return () => {
@@ -257,6 +318,35 @@ function WorkspaceCard({
     }
     // Refetch when this workspace becomes active (cheap, catches commits/switches).
   }, [ws, active])
+
+  // One agent row, wherever it is listed — inside a group or on its own.
+  const renderAgent = (a: (typeof agents)[number], inGroup?: string): JSX.Element => {
+    // The agent's colour tints the whole row + colours the name text.
+    const tint = tintStyle(a.title.split(' · ')[0] || a.title, loadPaneState(ws, a.id).avatar)
+    const label = inGroup ? stripGroup(a.title, inGroup) : a.title
+    return (
+      <span
+        key={a.id}
+        className="ws-agent"
+        title={a.title}
+        style={tint ? { background: tint.background } : undefined}
+        onClick={(e) => {
+          e.stopPropagation()
+          setActiveWorkspace(ws)
+          // After the dock for this workspace is active, focus the agent pane.
+          setTimeout(() => getActiveApi()?.getPanel(a.id)?.api.setActive(), 60)
+        }}
+      >
+        <StatusDot activity={a.status} />
+        <span
+          className={`ws-agent-title${a.status === 'busy' ? ' shimmer' : ''}`}
+          style={tint && a.status !== 'busy' ? { color: tint.color } : undefined}
+        >
+          {label}
+        </span>
+      </span>
+    )
+  }
 
   return (
     <div
@@ -282,11 +372,21 @@ function WorkspaceCard({
           acknowledged is visible from the rail, not just from inside the pane. */}
       {cardActivity === 'done' && <span className="chat-ring" aria-hidden />}
       <div className="ws-card-top">
-        <StatusDot
-          activity={cardActivity}
-          color={colorFor(ws, wsColor)}
-          title={t(ACTIVITY_LABEL_KEY[activity])}
-        />
+        {/* Six checkouts of the same project differ by their repository, not by
+            their folder name — riven, riven-electron, riven-tamagotchi all read
+            the same at a glance. The owner's avatar is the one thing that says
+            which project a card belongs to without reading anything. */}
+        {avatar && !avatarFailed ? (
+          <span className={`ws-card-avatar ${cardActivity}`}>
+            <img src={avatar} alt="" onError={() => setAvatarFailed(true)} />
+          </span>
+        ) : (
+          <StatusDot
+            activity={cardActivity}
+            color={colorFor(ws, wsColor)}
+            title={t(ACTIVITY_LABEL_KEY[activity])}
+          />
+        )}
         {editing ? (
           <input
             className="ws-card-rename"
@@ -330,7 +430,9 @@ function WorkspaceCard({
         {index < 9 && metaHeld && <span className="ws-card-kbd">⌘{index + 1}</span>}
       </div>
       <div className="ws-card-meta">
-        <span className="ws-card-path">{shortenPath(pathOf(ws))}</span>
+        <span className="ws-card-path" title={pathOf(ws)}>
+          {repoLabel(git?.repo ?? null) ?? shortenPath(pathOf(ws))}
+        </span>
       </div>
       {git && (
         <div className="ws-card-git">
@@ -340,32 +442,28 @@ function WorkspaceCard({
       )}
       {agents.length > 0 && !collapsed && (
         <div className="ws-card-agents">
-          {agents.map((a) => {
-            // The agent's colour tints the whole row + colours the name text.
-            const tint = tintStyle(a.title.split(' · ')[0] || a.title, loadPaneState(ws, a.id).avatar)
-            return (
-              <span
-                key={a.id}
-                className="ws-agent"
-                title={a.title}
-                style={tint ? { background: tint.background } : undefined}
+          {/* A team reads as a team. Flat, five members of one group sat among
+              whatever else was open and the only thing explaining them — the
+              group they were made as — lived inside the group panel. */}
+          {grouped.groups.map((g) => (
+            <div className="ws-agent-group" key={g.name}>
+              <button
+                className="ws-agent-grouphead"
+                title={t('ws.openGroup', { group: g.name })}
                 onClick={(e) => {
                   e.stopPropagation()
                   setActiveWorkspace(ws)
-                  // After the dock for this workspace is active, focus the agent pane.
-                  setTimeout(() => getActiveApi()?.getPanel(a.id)?.api.setActive(), 60)
+                  setTimeout(() => togglePanel('agentgroup', ws), 60)
                 }}
               >
-                <StatusDot activity={a.status} />
-                <span
-                  className={`ws-agent-title${a.status === 'busy' ? ' shimmer' : ''}`}
-                  style={tint && a.status !== 'busy' ? { color: tint.color } : undefined}
-                >
-                  {a.title}
-                </span>
-              </span>
-            )
-          })}
+                <Users size={10} />
+                <span className="ws-agent-groupname">{g.name}</span>
+                <span className="ws-agent-groupcount">{g.panes.length}</span>
+              </button>
+              <div className="ws-agent-groupbody">{g.panes.map((p) => renderAgent(p, g.name))}</div>
+            </div>
+          ))}
+          {grouped.loose.map((p) => renderAgent(p))}
         </div>
       )}
       {menu &&
@@ -387,6 +485,17 @@ function WorkspaceCard({
             }}
           >
             <div className="ctx-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+              <button
+                className="ctx-item"
+                onClick={() => {
+                  setMenu(null)
+                  setActiveWorkspace(ws)
+                  useUI.getState().setQuickPanel(true)
+                }}
+              >
+                {t('toolbar.addPanel')}
+              </button>
+              <div className="ctx-sep" />
               <button
                 className="ctx-item"
                 onClick={() => {

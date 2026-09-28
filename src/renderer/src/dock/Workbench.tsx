@@ -6,6 +6,7 @@ import EditorPanel from './panels/EditorPanel'
 import PreviewPanel from './panels/PreviewPanel'
 import AgentGroupPanel from './panels/AgentGroupPanel'
 import SchedulerPanel from './panels/SchedulerPanel'
+import ExplorerPanel from './panels/ExplorerPanel'
 import SearchPanel from './panels/SearchPanel'
 import GitPanel from './panels/GitPanel'
 import ChangesPanel from './panels/ChangesPanel'
@@ -164,6 +165,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       api: () => boxed('api', <ApiClientPanel />),
       agentgroup: () => boxed('agentgroup', <AgentGroupPanel workspace={workspace} />),
       scheduler: () => boxed('scheduler', <SchedulerPanel workspace={workspace} />),
+      explorer: () => boxed('explorer', <ExplorerPanel workspace={workspace} />),
       chat: (
         props: IDockviewPanelProps<{
           chatKey: string

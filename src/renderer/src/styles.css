@@ -830,11 +830,226 @@ select {
   font-size: var(--text-2xs);
   color: var(--fg-dim);
 }
-.sidebar-head-btn.armed {
+/* The first line of the sidebar's content: above the workspaces, in the same
+   left inset and height as the section header under it, so the two read as one
+   stack rather than a banner sitting on a header. */
+.ws-sched-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px 0 12px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.ws-sched-row:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+/* Armed, the clock is the one lit thing: something is actually pending. */
+.ws-sched-row.armed {
   color: var(--fg);
 }
-.sidebar-head {
+.ws-sched-row.armed > svg {
+  color: var(--accent);
+}
+.ws-sched-row.armed {
+  color: var(--fg);
+}
+.ws-sched-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Quiet: --accent is nearly white in this theme, so a filled pill here was the
+   brightest thing in the sidebar — louder than the workspace it sits above. */
+.ws-sched-count {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+.ws-sched-chev {
+  flex: 0 0 auto;
+  opacity: 0.6;
+}
+.sched-hint {
+  padding: 2px 2px 0;
+  font-size: var(--text-2xs);
+  color: var(--warn, #d9a441);
+}
+
+/* ---- the schedule form (rail menu + panel) ---- */
+.sf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 9px 9px;
+}
+.sf-prompt,
+.sf-name,
+.sf-num,
+.sf-time,
+.sf-sel {
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  outline: none;
+}
+.sf-prompt {
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.45;
+}
+.sf-prompt:focus,
+.sf-name:focus,
+.sf-num:focus,
+.sf-time:focus,
+.sf-sel:focus {
+  border-color: var(--accent-border);
+}
+/* The six rules that exist, shown as six choices — a dropdown hid five of them
+   behind a click and told you nothing about what they were. */
+.sf-chips,
+.sf-when,
+.sf-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
+}
+.sf-chip {
+  padding: 3px 9px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+.sf-chip:hover {
+  color: var(--fg);
+  border-color: var(--edge-strong);
+}
+.sf-chip.on {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sf-days {
+  display: inline-flex;
+  gap: 2px;
+}
+.sf-day {
+  width: 22px;
+  height: 22px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sf-day.on {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sf-num {
+  width: 64px;
+}
+.sf-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+/* Wrap rather than squeeze: three pickers shrunk to fit a 300px menu is three
+   pickers you cannot read. */
+.sf-sel {
+  flex: 1 1 120px;
+  min-width: 110px;
+  max-width: 100%;
+}
+/* The rule said back, and when it first fires. */
+.sf-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: var(--text-2xs);
+  background: var(--hover);
+  border-radius: var(--radius-sm);
+}
+.sf-rule {
+  color: var(--fg);
+}
+.sf-next {
+  color: var(--fg-dim);
+  margin-left: auto;
+}
+.sf-hint {
+  font-size: var(--text-2xs);
+  color: var(--warn, #d9a441);
+}
+.sf-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.sf-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 11px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.sf-btn:hover {
+  color: var(--fg);
+  background: var(--hover);
+}
+.sf-btn.primary {
+  color: var(--fg);
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+}
+.sched-menu.wide {
+  max-width: 340px;
+}
+/* A menu taller than the window is a menu with a hidden save button. */
+.sched-menu {
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+}
+.sched-menu-foot {
+  border-top: 1px solid var(--edge);
+  margin-top: 2px;
+  padding-top: 2px;
+}
+.sched-menu-item[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+.sched-formwrap {
+  border-bottom: 1px solid var(--edge);
 }
 
 /* ---- scheduled work panel ---- */
@@ -1244,6 +1459,44 @@ select {
   background: color-mix(in srgb, var(--warning) 22%, transparent);
   color: color-mix(in srgb, var(--warning) 85%, var(--tint-ink));
 }
+/* Sits where the status dot did, so the row's rhythm is unchanged; the ring
+   carries the activity the dot used to carry on its own. */
+.ws-card-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.ws-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ws-card-avatar.busy::after,
+.ws-card-avatar.done::after,
+.ws-card-avatar.attn::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg);
+}
+.ws-card-avatar.busy::after {
+  background: var(--accent);
+}
+.ws-card-avatar.attn::after {
+  background: var(--warn, #d9a441);
+}
+.ws-card-avatar.done::after {
+  background: var(--ok, #3fb950);
+}
 .ws-card-path {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1279,6 +1532,46 @@ select {
   flex-direction: column;
   gap: 2px;
   margin-top: 4px;
+}
+/* A team, drawn as one block: a quiet header and its members tucked under a
+   rail, so five rows read as five members of something rather than five
+   unrelated panes. */
+.ws-agent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ws-agent-grouphead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.ws-agent-grouphead:hover {
+  color: var(--fg);
+}
+.ws-agent-groupname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-agent-groupcount {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.ws-agent-groupbody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 5px;
+  padding-left: 7px;
+  border-left: 1px solid var(--edge);
 }
 .ws-agent {
   display: flex;
@@ -1671,12 +1964,6 @@ select {
 }
 .tb-btn {
   -webkit-app-region: no-drag;
-}
-.sidebar-explorer {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 .dock-col {
   height: 100%;
@@ -9395,6 +9682,9 @@ body.browser-active .pane-skel > * {
   50% {
     opacity: 0.25;
   }
+}
+.chat-bgtask-state {
+  color: var(--accent);
 }
 .chat-bgtask-label {
   overflow: hidden;

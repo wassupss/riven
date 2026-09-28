@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import Workbench from './dock/Workbench'
-import ExplorerPanel from './dock/panels/ExplorerPanel'
 import WorkspaceTabs from './components/WorkspaceTabs'
-import { PanelTop, Folder, Settings as SettingsIcon } from 'lucide-react'
+import { Folder, Settings as SettingsIcon } from 'lucide-react'
 import ImageLightbox from './components/ImageLightbox'
 import PortsWidget from './components/PortsWidget'
 import ScriptRunner from './components/ScriptRunner'
@@ -16,7 +15,6 @@ import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
 import PetHost from './components/PetHost'
-import ScheduleMenu from './components/ScheduleMenu'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
 import { useUsage } from './state/usage'
@@ -25,7 +23,6 @@ import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
-import { startScheduler } from './state/scheduledMessages'
 import { startJobRunner } from './state/jobRunner'
 import { useUI } from './state/ui'
 import {
@@ -65,9 +62,7 @@ export default function App(): JSX.Element {
   const openWorkspaces = useSession((s) => s.openWorkspaces)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
   const wsNames = useSession((s) => s.names)
-  const showExplorer = useUI((s) => s.showExplorer)
   const showSidebar = useUI((s) => s.showSidebar)
-  const setQuickPanel = useUI((s) => s.setQuickPanel)
   const openSettings = useUI((s) => s.openSettings)
   const wsName = activeWorkspace
     ? wsNames[activeWorkspace] ?? pathOf(activeWorkspace).split('/').pop() ?? ''
@@ -159,8 +154,7 @@ export default function App(): JSX.Element {
     window.addEventListener('keydown', keymap.handle, { capture: true })
     // riven's own MCP tools (agent → main → here): open files/panels, ask_user, …
     const offMcp = registerMcpToolHandler()
-    // Fire due scheduled messages (명령 예약).
-    startScheduler()
+    // Fire scheduled work when it comes due (예약 작업).
     startJobRunner()
     // Track every workspace's agent panes app-wide. This must NOT live in the
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
@@ -299,37 +293,17 @@ export default function App(): JSX.Element {
           <div className="sidebar-inner">
             {/* Sidebar top zone: traffic-light drag area + the "add panel" action
                 (right-aligned), matching native. */}
+            {/* Traffic-light drag strip, and nothing else. "패널 추가" used to
+                live here, which made the sidebar open with three rows of chrome
+                before any content — it is on the workspace's right-click menu
+                now, where the thing it adds a panel TO already is. */}
             <div className="sidebar-head">
               <div className="sidebar-head-spacer" />
-              {/* Work the machine does while you are elsewhere. Above the
-                  workspace list because it belongs to none of them in
-                  particular, and a menu rather than a panel toggle because the
-                  question it answers — what is armed, when does the next one
-                  go — deserves an answer in place. */}
-              <ScheduleMenu />
-              <button
-                className="sidebar-head-btn"
-                disabled={!activeWorkspace}
-                title={t('toolbar.openPanel')}
-                onClick={() => setQuickPanel(true)}
-              >
-                <PanelTop size={12} /> {t('toolbar.addPanel')}
-              </button>
             </div>
             <PanelGroup direction="vertical" className="sidebar-stack" autoSaveId="riven:sidebar-stack">
               <Panel id="ws" order={1} defaultSize={34} minSize={12} className="sidebar-region">
                 <WorkspaceTabs />
               </Panel>
-              {showExplorer && activeWorkspace && (
-                <>
-                  <PanelResizeHandle className="resize-handle-h" />
-                  <Panel id="explorer" order={2} minSize={12} className="sidebar-region">
-                    <div className="sidebar-explorer">
-                      <ExplorerPanel workspace={activeWorkspace} />
-                    </div>
-                  </Panel>
-                </>
-              )}
               {usagePinned && (
                 <>
                   <PanelResizeHandle className="resize-handle-h" />
