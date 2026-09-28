@@ -130,6 +130,8 @@ interface ToolLine {
 // the stream, which meant they read as something the model had said.
 export interface MsgNotice {
   tone: 'info' | 'warn'
+  /** What kind of thing happened — picks the glyph. */
+  icon?: 'compact' | 'task' | 'denied'
   text: string
   detail?: string
 }
@@ -624,6 +626,36 @@ const QUIET_MS = 90_000
 // milliseconds; only a slow one explains a pause worth explaining.
 const HOOK_NOTE_MS = 1_500
 
+function NoticeIcon({ notice }: { notice: MsgNotice }): JSX.Element {
+  if (notice.icon === 'task') return <TerminalSquare size={12} />
+  if (notice.icon === 'compact') return <Scissors size={12} />
+  if (notice.icon === 'denied' || notice.tone === 'warn') return <TriangleAlert size={12} />
+  return <Scissors size={12} />
+}
+
+// A command the agent left running in the background. It outlives the turn that
+// started it, so it gets its own row above the composer with its own clock —
+// the same question a long tool raises ("is this still going?") deserves the
+// same answer here.
+function BgTaskChip({
+  task,
+  since
+}: {
+  task: { id: string; label: string }
+  since?: number
+}): JSX.Element {
+  const t = useT()
+  const now = useTicker(true)
+  return (
+    <div className="chat-bgtask" title={t('chat.bgTask', { what: task.label })}>
+      <span className="chat-bgtask-dot" />
+      <TerminalSquare size={11} />
+      <span className="chat-bgtask-label">{task.label || t('chat.bgTaskPlain')}</span>
+      {since && <span className="chat-bgtask-time">{fmtDur(now - since)}</span>}
+    </div>
+  )
+}
+
 function CompactingBar({ since }: { since: number }): JSX.Element {
   const t = useT()
   const [, tick] = useState(0)
@@ -771,7 +803,7 @@ const ChatMessage = memo(function ChatMessage({
           <AssistantText key={`t${g.key}`} text={g.text} streaming={!msg.done} />
         ) : g.k === 'notice' ? (
           <div key={`n${g.key}`} className={`chat-notice ${g.notice.tone}`}>
-            {g.notice.tone === 'warn' ? <TriangleAlert size={12} /> : <Scissors size={12} />}
+            <NoticeIcon notice={g.notice} />
             <span className="chat-notice-text">{g.notice.text}</span>
             {g.notice.detail && <span className="chat-notice-detail">{g.notice.detail}</span>}
           </div>
@@ -1567,6 +1599,7 @@ export default function ChatPanel({
   // whenever it changes, so this is a replace, never a merge.
   const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
   const bgLabels = useRef(new Map<string, string>())
+  const bgStarted = useRef(new Map<string, number>())
   // When the CLI started summarising the conversation, or null when it is not.
   const [compacting, setCompacting] = useState<number | null>(null)
   const hookTimer = useRef(0)
@@ -2004,36 +2037,38 @@ export default function ChatPanel({
         case 'bgTasks':
           // Remember what each task was: the list is emptied BEFORE the
           // notification arrives, so by then only this has its name.
-          for (const task of e.tasks) if (task.label) bgLabels.current.set(task.id, task.label)
+          for (const task of e.tasks) {
+            if (task.label) bgLabels.current.set(task.id, task.label)
+            if (!bgStarted.current.has(task.id)) bgStarted.current.set(task.id, Date.now())
+          }
           setBgTasks(e.tasks)
           break
-        case 'taskDone':
+        case 'taskDone': {
           // It finished outside any turn, so it goes in the transcript as its own
           // line: the pane may have been idle for minutes when this lands.
-          patchLast((m) => ({
-            ...m,
-            items: [
-              ...m.items,
-              {
-                type: 'text' as const,
-                text: `\n_${
-                  e.status === 'completed'
-                    ? // Its name, not the CLI's sentence about it — the sentence
-                      // repeats "background command … completed" around it.
-                      t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
-                    : // A failure says WHY only in the CLI's own summary.
-                      t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' })
-                }_\n`
-              }
-            ]
-          }))
+          const ok = e.status === 'completed'
+          const started = bgStarted.current.get(e.taskId)
+          pushNotice({
+            tone: ok ? 'info' : 'warn',
+            icon: 'task',
+            // Its name, not the CLI's sentence about it — that sentence wraps
+            // "background command … completed" around the name we already have.
+            // A FAILURE is the exception: only the CLI's summary says why.
+            text: ok
+              ? t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
+              : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
+            detail: started ? fmtDur(Date.now() - started) : undefined
+          })
+          bgStarted.current.delete(e.taskId)
           break
+        }
         case 'compact':
           // Not a status — a thing that HAPPENED to the conversation, so it goes
           // in the transcript where the shortening is visible.
           setCompacting(null)
           pushNotice({
             tone: 'info',
+            icon: 'compact',
             text: compactLabel({ trigger: e.trigger, pre: e.pre, post: e.post }, t),
             detail: e.durationMs ? fmtDur(e.durationMs) : undefined
           })
@@ -2044,10 +2079,10 @@ export default function ChatPanel({
           if (e.status === 'compacting') setCompacting(Date.now())
           else setCompacting(null)
           if (e.compactResult === 'failed')
-            pushNotice({ tone: 'warn', text: t('chat.compactFailed'), detail: e.compactError })
+            pushNotice({ tone: 'warn', icon: 'compact', text: t('chat.compactFailed'), detail: e.compactError })
           break
         case 'denied':
-          pushNotice({ tone: 'warn', text: t('chat.denied', { tool: e.tool }), detail: e.reason })
+          pushNotice({ tone: 'warn', icon: 'denied', text: t('chat.denied', { tool: e.tool }), detail: e.reason })
           break
         case 'init':
           setModel(e.model)
@@ -3229,12 +3264,9 @@ export default function ChatPanel({
           the pane went quiet with work still running, and the only sign it had
           ever happened was the agent mentioning it, minutes later. */}
       {bgTasks.length > 0 && (
-        <div className="chat-agents-live">
+        <div className="chat-bgtasks">
           {bgTasks.map((task) => (
-            <div key={task.id} className="cal-item" title={t('chat.bgTask', { what: task.label })}>
-              <TerminalSquare size={11} />
-              <span className="cal-label">{task.label || t('chat.bgTaskPlain')}</span>
-            </div>
+            <BgTaskChip key={task.id} task={task} since={bgStarted.current.get(task.id)} />
           ))}
         </div>
       )}

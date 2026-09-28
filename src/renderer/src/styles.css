@@ -8521,6 +8521,8 @@ body.win-blurred .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
 body.win-blurred .agp-tree-kids.flow > .agp-tree-rail,
 body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
+body.win-blurred .chat-bgtask-dot,
+body.browser-active .chat-bgtask-dot,
 body.win-blurred .chat-compacting-fill,
 body.browser-active .chat-compacting-fill,
 body.win-blurred .agp-node-run,
@@ -8992,6 +8994,48 @@ body.browser-active .pane-skel > * {
   margin-left: auto;
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
+}
+/* Commands left running in the background. Their own row, not the subagent
+   strip they were borrowing: a subagent belongs to the turn that spawned it and
+   disappears with it, while these outlive it. */
+.chat-bgtasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 10px 6px;
+}
+.chat-bgtask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 9px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  background: var(--hover);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+}
+.chat-bgtask-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: chat-bgtask-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-bgtask-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+.chat-bgtask-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-bgtask-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
 }
 /* Compaction in progress. Indeterminate: the CLI says it started, never how far
    along it is, so a percentage would be a lie. */
