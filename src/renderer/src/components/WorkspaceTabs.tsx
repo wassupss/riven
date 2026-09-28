@@ -8,6 +8,7 @@ import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
 import { getActiveApi } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
+import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
 import { useT } from '../i18n'
 import ScheduleMenu from './ScheduleMenu'
 import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
@@ -187,6 +188,8 @@ function railCollapsed(): Set<string> {
 interface GitState {
   branch: string | null
   dirty: number
+  /** Where this checkout came from, for the owner's picture and its name. */
+  repo: RepoRef | null
 }
 
 interface CardProps {
@@ -262,6 +265,10 @@ function WorkspaceCard({
     setCollapsed(set.has(ws))
   }
   const [git, setGit] = useState<GitState | null>(null)
+  // An avatar that will not load (private org, offline, a host without one)
+  // falls back to the colour dot rather than leaving a hole in the row.
+  const [avatarFailed, setAvatarFailed] = useState(false)
+  const avatar = avatarUrl(git?.repo ?? null, 48)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -292,7 +299,11 @@ function WorkspaceCard({
       .status(pathOf(ws))
       .then((st) => {
         if (!alive) return
-        setGit(st.isRepo ? { branch: st.branch, dirty: st.files.length } : null)
+        setGit(
+          st.isRepo
+            ? { branch: st.branch, dirty: st.files.length, repo: parseRemote(st.remote) }
+            : null
+        )
       })
       .catch(() => alive && setGit(null))
     return () => {
@@ -325,11 +336,21 @@ function WorkspaceCard({
           acknowledged is visible from the rail, not just from inside the pane. */}
       {cardActivity === 'done' && <span className="chat-ring" aria-hidden />}
       <div className="ws-card-top">
-        <StatusDot
-          activity={cardActivity}
-          color={colorFor(ws, wsColor)}
-          title={t(ACTIVITY_LABEL_KEY[activity])}
-        />
+        {/* Six checkouts of the same project differ by their repository, not by
+            their folder name — riven, riven-electron, riven-tamagotchi all read
+            the same at a glance. The owner's avatar is the one thing that says
+            which project a card belongs to without reading anything. */}
+        {avatar && !avatarFailed ? (
+          <span className={`ws-card-avatar ${cardActivity}`}>
+            <img src={avatar} alt="" onError={() => setAvatarFailed(true)} />
+          </span>
+        ) : (
+          <StatusDot
+            activity={cardActivity}
+            color={colorFor(ws, wsColor)}
+            title={t(ACTIVITY_LABEL_KEY[activity])}
+          />
+        )}
         {editing ? (
           <input
             className="ws-card-rename"
@@ -373,7 +394,9 @@ function WorkspaceCard({
         {index < 9 && metaHeld && <span className="ws-card-kbd">⌘{index + 1}</span>}
       </div>
       <div className="ws-card-meta">
-        <span className="ws-card-path">{shortenPath(pathOf(ws))}</span>
+        <span className="ws-card-path" title={pathOf(ws)}>
+          {repoLabel(git?.repo ?? null) ?? shortenPath(pathOf(ws))}
+        </span>
       </div>
       {git && (
         <div className="ws-card-git">

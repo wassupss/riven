@@ -1295,6 +1295,44 @@ select {
   background: color-mix(in srgb, var(--warning) 22%, transparent);
   color: color-mix(in srgb, var(--warning) 85%, var(--tint-ink));
 }
+/* Sits where the status dot did, so the row's rhythm is unchanged; the ring
+   carries the activity the dot used to carry on its own. */
+.ws-card-avatar {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.ws-card-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ws-card-avatar.busy::after,
+.ws-card-avatar.done::after,
+.ws-card-avatar.attn::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg);
+}
+.ws-card-avatar.busy::after {
+  background: var(--accent);
+}
+.ws-card-avatar.attn::after {
+  background: var(--warn, #d9a441);
+}
+.ws-card-avatar.done::after {
+  background: var(--ok, #3fb950);
+}
 .ws-card-path {
   overflow: hidden;
   text-overflow: ellipsis;

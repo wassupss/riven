@@ -243,9 +243,18 @@ export function registerGitHandlers(): void {
       } catch {
         /* no upstream configured */
       }
-      return { branch: br, files, isRepo: true, ahead, behind, hasUpstream }
+      // Who the checkout belongs to. Read from config rather than the network:
+      // the card wants an identity, not an API call.
+      let remote: string | null = null
+      try {
+        const { stdout: url } = await pexec('git', ['-C', folder, 'config', '--get', 'remote.origin.url'])
+        remote = url.trim() || null
+      } catch {
+        /* no origin — a local-only repo is still a repo */
+      }
+      return { branch: br, files, isRepo: true, ahead, behind, hasUpstream, remote }
     } catch {
-      return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false }
+      return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false, remote: null }
     }
   })
 
