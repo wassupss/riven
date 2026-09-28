@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { addTerminal } from '../dock/registry'
-import { useUI } from '../state/ui'
+import { useUI, type SettingsTab } from '../state/ui'
 import { useSettings, getSettings, type Settings } from '../state/settings'
 import { THEMES, applyTheme } from '../state/themes'
 import { CURATED_FONTS, injectFont } from '../state/fonts'
@@ -11,7 +11,20 @@ import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
 import AboutTab from './AboutTab'
 import { useT } from '../i18n'
-import { SlidersHorizontal, Bot, Keyboard, User, Info, X, Trash2, Plus } from 'lucide-react'
+import {
+  SlidersHorizontal,
+  Bot,
+  Keyboard,
+  User,
+  Info,
+  FileCode,
+  TerminalSquare,
+  Bell,
+  Egg,
+  X,
+  Trash2,
+  Plus
+} from 'lucide-react'
 
 // A monospace-font picker (curated list + import) sharing the standard controls.
 function FontField({ value, onChange }: { value: string; onChange: (v: string) => void }): JSX.Element {
@@ -152,19 +165,41 @@ export default function SettingsModal(): JSX.Element | null {
   const open = useUI((s) => s.settingsOpen)
   const setOpen = useUI((s) => s.setSettingsOpen)
   const tab = useUI((s) => s.settingsTab)
-  const setTab = (id: 'general' | 'ai' | 'keys' | 'account' | 'about'): void =>
-    useUI.setState({ settingsTab: id })
+  const setTab = (id: SettingsTab): void => useUI.setState({ settingsTab: id })
   const settings = useSettings((s) => s.settings)
   const set = useSettings((s) => s.set)
   const reset = useSettings((s) => s.reset)
   const upd = <K extends keyof Settings>(k: K, v: Settings[K]): void =>
     set({ [k]: v } as Partial<Settings>)
 
+  // Escape closes it. Every other overlay in riven does (the palette, the quick
+  // panel, a context menu), and a settings window that ignores the key people
+  // reach for reads as stuck.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.stopPropagation()
+        setOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [open, setOpen])
+
   if (!open) return null
 
-  const NAV: Array<{ id: typeof tab; label: string; icon: JSX.Element }> = [
+  // One subject per tab. It was all one "general" page, which scrolled through
+  // appearance, editor, terminal, usage, pet, browser, power and notifications
+  // — a page that long reads as a pile, and the things in it read as fewer than
+  // they are, because nothing is where you would go looking for it.
+  const NAV: Array<{ id: SettingsTab; label: string; icon: JSX.Element }> = [
     { id: 'general', label: t('settings.tab.general'), icon: <SlidersHorizontal size={15} /> },
+    { id: 'editor', label: t('settings.tab.editor'), icon: <FileCode size={15} /> },
+    { id: 'terminal', label: t('settings.tab.terminal'), icon: <TerminalSquare size={15} /> },
     { id: 'ai', label: 'AI', icon: <Bot size={15} /> },
+    { id: 'notify', label: t('settings.tab.notify'), icon: <Bell size={15} /> },
+    { id: 'pet', label: t('pet.title'), icon: <Egg size={15} /> },
     { id: 'keys', label: t('settings.tab.keys'), icon: <Keyboard size={15} /> },
     { id: 'account', label: t('settings.tab.account'), icon: <User size={15} /> },
     { id: 'about', label: t('settings.tab.about'), icon: <Info size={15} /> }
@@ -260,6 +295,53 @@ export default function SettingsModal(): JSX.Element | null {
                   ))}
                 </div>
 
+                <div className="section-label">{t('settings.usageSection')}</div>
+                <ToggleRow
+                  title={t('settings.usageMode')}
+                  desc={t('settings.usageModeDesc')}
+                  checked={settings.usageShowUsed}
+                  onChange={(v) => upd('usageShowUsed', v)}
+                />
+
+                <div className="section-label">{t('settings.browserSection')}</div>
+                <Row title={t('settings.searchEngine')} desc={t('settings.searchEngineDesc')}>
+                  <TextInput
+                    className="set-grow"
+                    value={settings.browserSearch}
+                    onChange={(e) => upd('browserSearch', e.target.value)}
+                  />
+                </Row>
+
+                <div className="section-label">{t('settings.powerSection')}</div>
+                <ToggleRow
+                  title={t('settings.keepAwake')}
+                  desc={t('settings.keepAwakeDesc')}
+                  checked={settings.keepAwake}
+                  onChange={(v) => upd('keepAwake', v)}
+                />
+
+                <div className="section-label">{t('settings.advanced')}</div>
+                <Row title={t('settings.configFile')} desc={t('settings.configFileDesc')}>
+                  <Button onClick={() => window.api.config.reveal('settings.json')}>
+                    {t('settings.openFile')}
+                  </Button>
+                </Row>
+                <Row title={t('settings.resetAll')} desc={t('settings.resetAllDesc')}>
+                  <Button
+                    onClick={() => {
+                      if (window.confirm(t('settings.resetConfirm'))) {
+                        reset()
+                        applyTheme(getSettings().theme)
+                      }
+                    }}
+                  >
+                    {t('settings.resetAll')}
+                  </Button>
+                </Row>
+              </>
+            )}
+            {tab === 'editor' && (
+              <>
                 <div className="section-label">{t('settings.editor')}</div>
                 <Row title={t('settings.fontFamily')} desc={t('settings.fontFamilyDesc')}>
                   <FontField value={settings.editorFontFamily} onChange={(v) => upd('editorFontFamily', v)} />
@@ -305,6 +387,10 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(v) => upd('formatOnSave', v)}
                 />
 
+              </>
+            )}
+            {tab === 'terminal' && (
+              <>
                 <div className="section-label">{t('settings.terminal')}</div>
                 <Row title={t('settings.fontFamily')}>
                   <FontField
@@ -381,56 +467,10 @@ export default function SettingsModal(): JSX.Element | null {
                   </label>
                 </Row>
 
-                <div className="section-label">{t('settings.usageSection')}</div>
-                <ToggleRow
-                  title={t('settings.usageMode')}
-                  desc={t('settings.usageModeDesc')}
-                  checked={settings.usageShowUsed}
-                  onChange={(v) => upd('usageShowUsed', v)}
-                />
-
-                <div className="section-label">{t('pet.title')}</div>
-                <ToggleRow
-                  title={t('settings.petShow')}
-                  desc={t('settings.petShowDesc')}
-                  checked={settings.petShow}
-                  onChange={(v) => upd('petShow', v)}
-                />
-                {settings.petShow && (
-                  <ToggleRow
-                    title={t('settings.petDetached')}
-                    desc={t('settings.petDetachedDesc')}
-                    checked={settings.petDetached}
-                    onChange={(v) => upd('petDetached', v)}
-                  />
-                )}
-                {/* Only its own window can be lifted above other apps. */}
-                {settings.petShow && settings.petDetached && (
-                  <ToggleRow
-                    title={t('settings.petOnTop')}
-                    desc={t('settings.petOnTopDesc')}
-                    checked={settings.petOnTop}
-                    onChange={(v) => upd('petOnTop', v)}
-                  />
-                )}
-
-                <div className="section-label">{t('settings.browserSection')}</div>
-                <Row title={t('settings.searchEngine')} desc={t('settings.searchEngineDesc')}>
-                  <TextInput
-                    className="set-grow"
-                    value={settings.browserSearch}
-                    onChange={(e) => upd('browserSearch', e.target.value)}
-                  />
-                </Row>
-
-                <div className="section-label">{t('settings.powerSection')}</div>
-                <ToggleRow
-                  title={t('settings.keepAwake')}
-                  desc={t('settings.keepAwakeDesc')}
-                  checked={settings.keepAwake}
-                  onChange={(v) => upd('keepAwake', v)}
-                />
-
+              </>
+            )}
+            {tab === 'notify' && (
+              <>
                 <div className="section-label">{t('settings.notifySection')}</div>
                 <ToggleRow
                   title={t('settings.notifications')}
@@ -466,24 +506,35 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(v) => upd('crashReporting', v)}
                 />
 
-                <div className="section-label">{t('settings.advanced')}</div>
-                <Row title={t('settings.configFile')} desc={t('settings.configFileDesc')}>
-                  <Button onClick={() => window.api.config.reveal('settings.json')}>
-                    {t('settings.openFile')}
-                  </Button>
-                </Row>
-                <Row title={t('settings.resetAll')} desc={t('settings.resetAllDesc')}>
-                  <Button
-                    onClick={() => {
-                      if (window.confirm(t('settings.resetConfirm'))) {
-                        reset()
-                        applyTheme(getSettings().theme)
-                      }
-                    }}
-                  >
-                    {t('settings.resetAll')}
-                  </Button>
-                </Row>
+              </>
+            )}
+            {tab === 'pet' && (
+              <>
+                <div className="section-label">{t('pet.title')}</div>
+                <ToggleRow
+                  title={t('settings.petShow')}
+                  desc={t('settings.petShowDesc')}
+                  checked={settings.petShow}
+                  onChange={(v) => upd('petShow', v)}
+                />
+                {settings.petShow && (
+                  <ToggleRow
+                    title={t('settings.petDetached')}
+                    desc={t('settings.petDetachedDesc')}
+                    checked={settings.petDetached}
+                    onChange={(v) => upd('petDetached', v)}
+                  />
+                )}
+                {/* Only its own window can be lifted above other apps. */}
+                {settings.petShow && settings.petDetached && (
+                  <ToggleRow
+                    title={t('settings.petOnTop')}
+                    desc={t('settings.petOnTopDesc')}
+                    checked={settings.petOnTop}
+                    onChange={(v) => upd('petOnTop', v)}
+                  />
+                )}
+
               </>
             )}
 

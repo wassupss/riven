@@ -23,7 +23,9 @@
     "smoke:hooks": "node scripts/e2e-hooks-smoke.mjs",
     "smoke:pet": "node scripts/e2e-pet-smoke.mjs",
     "check:notify": "node scripts/notify-adhoc-check.mjs",
-    "perf:cpu": "node scripts/perf-cpu.mjs"
+    "perf:cpu": "node scripts/perf-cpu.mjs",
+    "e2e": "npm run build && playwright test",
+    "e2e:only": "playwright test"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
@@ -62,6 +64,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",

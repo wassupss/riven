@@ -18,3 +18,7 @@ landing/*.dmg
 *.local
 *.pem
 *.key
+
+# Playwright e2e output
+/test-results/
+/playwright-report/

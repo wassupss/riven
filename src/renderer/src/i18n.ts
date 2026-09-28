@@ -446,6 +446,9 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   // ---- SettingsModal ----
   'settings.title': { ko: '설정', en: 'Settings' },
   'settings.tab.general': { ko: '일반', en: 'General' },
+  'settings.tab.editor': { ko: '에디터', en: 'Editor' },
+  'settings.tab.terminal': { ko: '터미널', en: 'Terminal' },
+  'settings.tab.notify': { ko: '알림', en: 'Notifications' },
   'settings.tab.keys': { ko: '단축키', en: 'Shortcuts' },
   'settings.tab.account': { ko: '계정', en: 'Account' },
   'settings.tab.about': { ko: '정보', en: 'About' },
