@@ -1980,18 +1980,26 @@ export default function ChatPanel({
     const savedSession = pane0.session || undefined
     // Custom agent: prop on first mount, pane state after a reload/restore.
     const savedAgent = agent || pane0.agent || undefined
-    void window.api.chat.start(chatKey, {
-      cli,
-      cwd: pathOf(workspace),
-      resume: savedSession,
-      model: savedModel !== 'default' ? savedModel : undefined,
-      permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
-      mcpDisabled: st.mcpDisabledTools,
-      toolsDenied: st.deniedTools,
-      globalPrompt: withPersona(st.globalPrompt),
-      agent: savedAgent,
-      configDir: claudeConfigDirFor(workspace)
-    })
+    // Why the result is read instead of discarded: a start that fails — most
+    // often because the CLI isn't installed — left a pane that LOOKED ready, and
+    // the reason only surfaced on the first message, as "no agent for this pane",
+    // which names neither the CLI nor the problem. Say it when it happens.
+    void window.api.chat
+      .start(chatKey, {
+        cli,
+        cwd: pathOf(workspace),
+        resume: savedSession,
+        model: savedModel !== 'default' ? savedModel : undefined,
+        permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
+        mcpDisabled: st.mcpDisabledTools,
+        toolsDenied: st.deniedTools,
+        globalPrompt: withPersona(st.globalPrompt),
+        agent: savedAgent,
+        configDir: claudeConfigDirFor(workspace)
+      })
+      .then((res) => {
+        if (res && !res.ok) setError(res.error || t('chat.startFailed'))
+      })
     const off = window.api.chat.onEvent((e) => {
       if (e.key !== chatKey) return
       // A turn that has already been closed on this side (Esc/Stop, a steer, the

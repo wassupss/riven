@@ -730,6 +730,15 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   explorer: { titleKey: 'title.explorer', direction: 'left' }
 }
 
+// Bring a terminal's panel to the front of its group, so focusing it can land:
+// xterm cannot take the caret while its tab is behind another (⌘J after ⌘E did
+// nothing for exactly this reason).
+export function activateTerminalById(paneId: number): void {
+  const api = activeApi
+  if (!api) return
+  api.getPanel(`term-${paneId}`)?.api.setActive()
+}
+
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).
 export function closeTerminalById(paneId: number): void {
   const api = activeApi

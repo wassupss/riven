@@ -1007,6 +1007,9 @@ const api = {
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),
+    // Blocking write, for the last moment before the renderer goes away.
+    saveSync: (name: string, data: unknown): boolean =>
+      ipcRenderer.sendSync('config:save-sync', name, data) === true,
     reveal: (name: string): Promise<void> => ipcRenderer.invoke('config:reveal', name)
   },
   auth: {

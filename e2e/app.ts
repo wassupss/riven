@@ -21,6 +21,8 @@ export interface Launched {
   userDataDir: string
   /** A temporary folder opened as a workspace, so tests have one to act on. */
   workspace: string
+  /** Any folders asked for via extraWorkspaces, in the order they were opened. */
+  extras: string[]
 }
 
 export interface LaunchOptions {
@@ -34,6 +36,26 @@ export interface LaunchOptions {
   git?: boolean
   /** Agent groups to seed into the session tree for this workspace. */
   groups?: Array<{ group: string; members: Array<{ name: string; chatKey: string; parent: number | null }> }>
+  /** Extra workspace folders to open alongside the first, for rail tests. */
+  extraWorkspaces?: number
+  /**
+   * Scheduled jobs to seed for this workspace. The UI only creates jobs in the
+   * future, so a job that is already due — or one that came due while riven was
+   * closed — can only be set up from here.
+   */
+  jobs?: SeedJob[]
+}
+
+export interface SeedJob {
+  id: string
+  name: string
+  prompt: string
+  trigger: Record<string, unknown>
+  target?: Record<string, unknown>
+  enabled?: boolean
+  graceMinutes?: number
+  createdAt?: number
+  lastRunAt?: number
 }
 
 function seedFiles(root: string, files: Record<string, string>): void {
@@ -68,18 +90,46 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
   if (opts.files) seedFiles(workspace, opts.files)
   if (opts.git) seedGit(workspace)
 
+  // Extra folders are plain and empty: they exist to be switched between, closed
+  // and counted in the rail, which needs more than one workspace and nothing else.
+  const extras: string[] = []
+  for (let i = 0; i < (opts.extraWorkspaces ?? 0); i++) {
+    const dir = mkdtempSync(join(tmpdir(), 'riven-ws-extra-'))
+    seedFiles(dir, { 'README.md': `# extra ${i + 1}\n` })
+    extras.push(dir)
+  }
+
   if (!opts.userDataDir) {
     writeFileSync(
       join(userDataDir, 'sessions.json'),
       JSON.stringify({
-        openWorkspaces: [workspace],
+        openWorkspaces: [workspace, ...extras],
         activeWorkspace: workspace,
         sessions: {
+          ...Object.fromEntries(
+            extras.map((dir) => [
+              dir,
+              { openTabs: [], activePath: null, previewUrl: '', dockLayout: null }
+            ])
+          ),
           [workspace]: {
             openTabs: [],
             activePath: null,
             previewUrl: '',
             dockLayout: null,
+            ...(opts.jobs
+              ? {
+                  jobs: opts.jobs.map((j) => ({
+                    workspace,
+                    target: { kind: 'new', cli: 'claude' },
+                    enabled: true,
+                    graceMinutes: 60,
+                    createdAt: Date.now() - 86_400_000,
+                    runs: [],
+                    ...j
+                  }))
+                }
+              : {}),
             ...(opts.groups
               ? {
                   groups: opts.groups.map((g) => ({
@@ -110,7 +160,7 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
   })
   const page = await app.firstWindow()
   await page.waitForSelector('.ws-card', { timeout: 60_000 })
-  return { app, page, userDataDir, workspace }
+  return { app, page, userDataDir, workspace, extras }
 }
 
 /** ⌘O, the panel picker: the one way in that does not depend on a menu bar. */

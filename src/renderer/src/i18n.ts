@@ -833,6 +833,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.retrying': { ko: '재시도 {n}/{max} · {s}초 후', en: 'retry {n}/{max} · in {s}s' },
   'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
   'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
+  'chat.startFailed': { ko: '에이전트를 시작하지 못했어요.', en: 'Could not start the agent.' },
   'chat.bgTask': { ko: '백그라운드 실행 중: {what}', en: 'running in background: {what}' },
   'chat.bgTaskRunning': { ko: '실행 중', en: 'running' },
   'chat.bgTaskHint': {

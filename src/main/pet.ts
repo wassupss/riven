@@ -136,6 +136,15 @@ async function open(): Promise<void> {
   }) // never steals focus
   win.on('closed', () => {
     win = null
+    // 'pet:closed' means the USER got rid of the window, and the app answers it
+    // by remembering the pet no longer lives on the desk. When riven closes the
+    // window itself — hiding the pet — that inference is wrong: hiding and then
+    // showing again put the pet inside riven's window instead of back on the
+    // desk, and nothing but the settings panel could return it.
+    if (selfClose) {
+      selfClose = false
+      return
+    }
     broadcast('pet:closed')
   })
 
@@ -146,8 +155,14 @@ async function open(): Promise<void> {
   }
 }
 
+/** Set while riven closes the pet window itself — see the 'closed' handler. */
+let selfClose = false
+
 export function closePetWindow(): void {
-  if (win && !win.isDestroyed()) win.close()
+  if (win && !win.isDestroyed()) {
+    selfClose = true
+    win.close()
+  }
   win = null
 }
 

@@ -244,6 +244,26 @@ useSettings.subscribe((s) => {
   saveTimer = setTimeout(() => window.api.config.save('settings.json', s.settings), 300)
 })
 
+// Flush the debounce before the page tears down, the same way session state does
+// — otherwise a setting changed and then quit within 300ms is simply lost, and
+// comes back on the next launch as whatever it used to be.
+// Guarded because this module is imported by unit tests that run in plain node,
+// where there is no window to listen on.
+if (typeof window !== 'undefined')
+  window.addEventListener('beforeunload', () => {
+    const s = useSettings.getState()
+    if (!s.ready) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    try {
+      window.api.config.saveSync('settings.json', s.settings)
+    } catch {
+      /* best effort on exit */
+    }
+  })
+
 export async function loadSettings(): Promise<void> {
   const saved = (await window.api.config.load('settings.json')) as Partial<Settings> | null
   useSettings.getState().hydrate(saved ?? {})

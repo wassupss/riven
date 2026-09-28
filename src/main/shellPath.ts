@@ -26,8 +26,16 @@ export function getPathDirs(): Promise<string[]> {
   return pathDirsPromise
 }
 
+// Agent CLIs cost the user money every time one starts a turn, and an e2e run
+// mounts panes by the dozen. Under RIVEN_E2E these resolve to nothing, so every
+// path that would have spawned one reports "not found" — the failure it already
+// knows how to show — instead of billing a test run. Everything else (git, the
+// shell, language servers) resolves normally: the tests need those.
+const BILLED = new Set(['claude', 'codex'])
+
 // Resolve an executable name to an absolute path across the login-shell PATH.
 export async function resolveBin(cmd: string): Promise<string | null> {
+  if (process.env.RIVEN_E2E && BILLED.has(cmd)) return null
   const dirs = await getPathDirs()
   for (const d of dirs) {
     const p = path.join(d, cmd)
