@@ -6,12 +6,14 @@ import { useAgents } from '../state/agents'
 import { useRoster, rosterFor } from '../state/roster'
 import { useUI } from '../state/ui'
 import { useSettings } from '../state/settings'
-import { getActiveApi } from '../dock/registry'
+import { getActiveApi, togglePanel } from '../dock/registry'
 import { tintStyle, decodeAvatar, hueColor, encodeAvatar, AVATAR_COLOR_COUNT } from '../lib/avatar'
 import { avatarUrl, parseRemote, repoLabel, type RepoRef } from '../lib/repo'
+import { groupPanes, stripGroup } from '../lib/paneGroups'
+import { useAgentGroups, type AgentGroup } from '../state/agentGroups'
 import { useT } from '../i18n'
 import ScheduleMenu from './ScheduleMenu'
-import { Plus, GitBranch, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, GitBranch, ChevronRight, ChevronDown, Users } from 'lucide-react'
 
 // Vertical workspace rail — cmux-style cards. Workspaces are the primary
 // navigation unit (each is an agent/project context), so each card surfaces its
@@ -185,6 +187,8 @@ function railCollapsed(): Set<string> {
   }
 }
 
+const NO_GROUPS: AgentGroup[] = []
+
 interface GitState {
   branch: string | null
   dirty: number
@@ -235,6 +239,9 @@ function WorkspaceCard({
   // Every agent pane this workspace HAS — including terminals running a CLI
   // agent, and including panes whose workspace is currently unmounted.
   const agents = rosterFor(ws)
+  // Panes created as a team are listed as one — see lib/paneGroups.
+  const wsGroups = useAgentGroups((st) => st.byWorkspace[ws]) ?? NO_GROUPS
+  const grouped = groupPanes(agents, wsGroups)
   // Roll the card's activity up from the SAME source as the roster below it. It
   // used to come from workspaceStatus, which only mounted panels write to, so an
   // unmounted workspace went dark while its agents were still working.
@@ -311,6 +318,35 @@ function WorkspaceCard({
     }
     // Refetch when this workspace becomes active (cheap, catches commits/switches).
   }, [ws, active])
+
+  // One agent row, wherever it is listed — inside a group or on its own.
+  const renderAgent = (a: (typeof agents)[number], inGroup?: string): JSX.Element => {
+    // The agent's colour tints the whole row + colours the name text.
+    const tint = tintStyle(a.title.split(' · ')[0] || a.title, loadPaneState(ws, a.id).avatar)
+    const label = inGroup ? stripGroup(a.title, inGroup) : a.title
+    return (
+      <span
+        key={a.id}
+        className="ws-agent"
+        title={a.title}
+        style={tint ? { background: tint.background } : undefined}
+        onClick={(e) => {
+          e.stopPropagation()
+          setActiveWorkspace(ws)
+          // After the dock for this workspace is active, focus the agent pane.
+          setTimeout(() => getActiveApi()?.getPanel(a.id)?.api.setActive(), 60)
+        }}
+      >
+        <StatusDot activity={a.status} />
+        <span
+          className={`ws-agent-title${a.status === 'busy' ? ' shimmer' : ''}`}
+          style={tint && a.status !== 'busy' ? { color: tint.color } : undefined}
+        >
+          {label}
+        </span>
+      </span>
+    )
+  }
 
   return (
     <div
@@ -406,32 +442,28 @@ function WorkspaceCard({
       )}
       {agents.length > 0 && !collapsed && (
         <div className="ws-card-agents">
-          {agents.map((a) => {
-            // The agent's colour tints the whole row + colours the name text.
-            const tint = tintStyle(a.title.split(' · ')[0] || a.title, loadPaneState(ws, a.id).avatar)
-            return (
-              <span
-                key={a.id}
-                className="ws-agent"
-                title={a.title}
-                style={tint ? { background: tint.background } : undefined}
+          {/* A team reads as a team. Flat, five members of one group sat among
+              whatever else was open and the only thing explaining them — the
+              group they were made as — lived inside the group panel. */}
+          {grouped.groups.map((g) => (
+            <div className="ws-agent-group" key={g.name}>
+              <button
+                className="ws-agent-grouphead"
+                title={t('ws.openGroup', { group: g.name })}
                 onClick={(e) => {
                   e.stopPropagation()
                   setActiveWorkspace(ws)
-                  // After the dock for this workspace is active, focus the agent pane.
-                  setTimeout(() => getActiveApi()?.getPanel(a.id)?.api.setActive(), 60)
+                  setTimeout(() => togglePanel('agentgroup', ws), 60)
                 }}
               >
-                <StatusDot activity={a.status} />
-                <span
-                  className={`ws-agent-title${a.status === 'busy' ? ' shimmer' : ''}`}
-                  style={tint && a.status !== 'busy' ? { color: tint.color } : undefined}
-                >
-                  {a.title}
-                </span>
-              </span>
-            )
-          })}
+                <Users size={10} />
+                <span className="ws-agent-groupname">{g.name}</span>
+                <span className="ws-agent-groupcount">{g.panes.length}</span>
+              </button>
+              <div className="ws-agent-groupbody">{g.panes.map((p) => renderAgent(p, g.name))}</div>
+            </div>
+          ))}
+          {grouped.loose.map((p) => renderAgent(p))}
         </div>
       )}
       {menu &&

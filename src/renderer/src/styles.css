@@ -1369,6 +1369,46 @@ select {
   gap: 2px;
   margin-top: 4px;
 }
+/* A team, drawn as one block: a quiet header and its members tucked under a
+   rail, so five rows read as five members of something rather than five
+   unrelated panes. */
+.ws-agent-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ws-agent-grouphead {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.ws-agent-grouphead:hover {
+  color: var(--fg);
+}
+.ws-agent-groupname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-agent-groupcount {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.ws-agent-groupbody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 5px;
+  padding-left: 7px;
+  border-left: 1px solid var(--edge);
+}
 .ws-agent {
   display: flex;
   align-items: center;
