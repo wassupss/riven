@@ -9685,6 +9685,81 @@ body.browser-active .pane-skel > * {
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
+/* Messages typed while a turn runs: a list above the composer, in send order.
+   They were dimmed bubbles in the transcript before — right-aligned, exactly
+   like the things the user HAS said, which is the one thing they are not. */
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 10px 6px;
+  padding: 6px 4px 5px;
+  background: var(--hover);
+  border: 1px dashed var(--edge-strong);
+  border-radius: var(--radius-sm);
+}
+.chat-queue-head {
+  padding: 0 6px 3px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.chat-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+.chat-queue-row:hover {
+  background: var(--hover-strong);
+}
+.chat-queue-no {
+  flex: 0 0 auto;
+  width: 14px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.chat-queue-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-queue-act {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.chat-queue-act.icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  padding: 0;
+  height: 20px;
+  border-radius: var(--radius-sm);
+}
+.chat-queue-row:hover .chat-queue-act,
+.chat-queue-act:focus-visible {
+  opacity: 1;
+}
+.chat-queue-act:hover {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: var(--accent-border);
+}
+
 /* Commands left running in the background. Their own row, not the subagent
    strip they were borrowing: a subagent belongs to the turn that spawned it and
    disappears with it, while these outlive it. */

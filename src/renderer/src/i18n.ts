@@ -703,6 +703,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.send': { ko: '보내기', en: 'Send' },
   'chat.stop': { ko: '중단', en: 'Stop' },
   'chat.queued': { ko: '대기 중', en: 'Queued' },
+  'chat.queueHead': {
+    ko: '대기 중 {n}건 — 지금 작업이 끝나면 순서대로 전송됩니다',
+    en: '{n} waiting — sent in order when this turn finishes'
+  },
+  'chat.queueImageOnly': { ko: '이미지 {n}장', en: '{n} image(s)' },
   'chat.sendNow': { ko: '지금 보내기', en: 'Send now' },
   'chat.sendNowHint': {
     ko: '진행 중인 작업을 멈추고 이 메시지를 바로 보냅니다 (⌘↵)',

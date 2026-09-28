@@ -140,6 +140,13 @@ type MsgItem =
   | { type: 'text'; text: string }
   | { type: 'tool'; tool: ToolLine }
   | { type: 'notice'; notice: MsgNotice }
+/** Something typed while a turn was running: sent when its turn comes. */
+interface QueuedMsg {
+  id: string
+  text: string
+  images: ChatImage[]
+}
+
 interface Msg {
   role: 'user' | 'assistant'
   text: string // full concatenated text (copy button / title)
@@ -155,11 +162,6 @@ interface Msg {
   // Special inline cards rendered in the transcript (native /mcp, /resume, /model).
   card?: 'mcp' | 'resume' | 'model'
   cardId?: string
-  // A user message typed while a turn was still running — shown dimmed until the
-  // turn finishes and it is sent. `queuedId` ties the bubble to its entry in the
-  // queue, so "send now" and "discard" act on the message you clicked.
-  queued?: boolean
-  queuedId?: string
   // Images sent with this message. `preview` is an in-memory data URL for the
   // bubble; riven does not persist transcripts (the CLI does), so after a
   // restart the bubble shows the image's name instead.
@@ -730,24 +732,18 @@ const ChatMessage = memo(function ChatMessage({
   msg,
   now,
   lastEvent,
-  note,
-  onSendNow,
-  onDropQueued
+  note
 }: {
   msg: Msg
   now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
-  /** Cut the running turn short and send this queued message instead. */
-  onSendNow?: (queuedId: string) => void
-  /** Throw a queued message away without sending it. */
-  onDropQueued?: (queuedId: string) => void
 }): JSX.Element {
   const t = useT()
   if (msg.role === 'user') {
     return (
-      <div className={`chat-turn user${msg.queued ? ' queued' : ''}`}>
+      <div className="chat-turn user">
         <div className="chat-user-bubble">
           {msg.images && msg.images.length > 0 && (
             <div className="chat-user-images">
@@ -771,29 +767,6 @@ const ChatMessage = memo(function ChatMessage({
           )}
           {msg.text}
         </div>
-        {msg.queued && (
-          <span className="chat-queued-bar">
-            <span className="chat-queued-tag">{t('chat.queued')}</span>
-            {msg.queuedId && onSendNow && (
-              <button
-                className="chat-queued-act"
-                title={t('chat.sendNowHint')}
-                onClick={() => onSendNow(msg.queuedId as string)}
-              >
-                {t('chat.sendNow')}
-              </button>
-            )}
-            {msg.queuedId && onDropQueued && (
-              <button
-                className="chat-queued-act"
-                title={t('chat.dropQueued')}
-                onClick={() => onDropQueued(msg.queuedId as string)}
-              >
-                <XIcon size={11} />
-              </button>
-            )}
-          </span>
-        )}
       </div>
     )
   }
@@ -2465,7 +2438,17 @@ export default function ChatPanel({
     return id
   }
   // Messages typed while a turn was running, sent one-by-one as turns finish.
-  const queuedRef = useRef<Array<{ id: string; text: string; images: ChatImage[] }>>([])
+  //
+  // Rendered from STATE, above the composer — they used to be dimmed bubbles in
+  // the transcript, right-aligned like everything the user has actually said,
+  // which is the one thing they are not yet. The transcript is what happened;
+  // this is what is about to.
+  const [queued, setQueuedState] = useState<QueuedMsg[]>([])
+  const queuedRef = useRef<QueuedMsg[]>([])
+  const setQueue = (next: QueuedMsg[]): void => {
+    queuedRef.current = next
+    setQueuedState(next)
+  }
   // True when we interrupted the current turn to steer it with a new message —
   // suppresses the "stopped" note so it reads as a re-ask, not a user cancel.
   const steerRef = useRef(false)
@@ -2476,16 +2459,36 @@ export default function ChatPanel({
   // add the assistant placeholder. Returns true if a turn was started.
   const drainQueueRef = useRef<() => boolean>(() => false)
   const drainQueue = (): boolean => {
-    const next = queuedRef.current.shift()
+    const [next, ...rest] = queuedRef.current
     if (next == null) return false
-    setMsgs((all) => {
-      const i = all.findIndex((m) => m.queuedId === next.id)
-      const copy = i >= 0 ? all.map((m, j) => (j === i ? { ...m, queued: false } : m)) : all
-      return [...copy, blankAssistant()]
-    })
+    setQueue(rest)
+    setMsgs((all) => [
+      ...all,
+      {
+        role: 'user',
+        text: next.text,
+        tools: [],
+        items: [],
+        done: true,
+        interrupted: false,
+        startedAt: 0,
+        durationMs: 0,
+        tokensIn: 0,
+        tokensOut: 0,
+        images: next.images.length
+          ? next.images.map((im) => ({ name: im.name, preview: im.preview }))
+          : undefined
+      },
+      blankAssistant()
+    ])
     setBusy(true)
     setAgentStatus(chatKey, 'busy')
-    window.api.chat.send(chatKey, next.text, next.images, newTurnId())
+    window.api.chat.send(
+      chatKey,
+      next.text,
+      next.images.map(({ mediaType, data, name }) => ({ mediaType, data, name })),
+      newTurnId()
+    )
     return true
   }
   drainQueueRef.current = drainQueue
@@ -2496,8 +2499,8 @@ export default function ChatPanel({
     (queuedId: string) => {
       const at = queuedRef.current.findIndex((q) => q.id === queuedId)
       if (at < 0) return
-      const [entry] = queuedRef.current.splice(at, 1)
-      queuedRef.current.unshift(entry)
+      const rest = queuedRef.current.filter((q) => q.id !== queuedId)
+      setQueue([queuedRef.current[at], ...rest])
       if (!busyRef.current) {
         drainQueueRef.current()
         return
@@ -2510,8 +2513,7 @@ export default function ChatPanel({
   )
   // Thrown away before it was ever sent.
   const dropQueued = useCallback((queuedId: string) => {
-    queuedRef.current = queuedRef.current.filter((q) => q.id !== queuedId)
-    setMsgs((all) => all.filter((m) => m.queuedId !== queuedId))
+    setQueue(queuedRef.current.filter((q) => q.id !== queuedId))
   }, [])
 
   // Stop means stop: interrupt the current turn AND drop anything queued.
@@ -2575,9 +2577,8 @@ export default function ChatPanel({
   }, [busy])
 
   const stopTurn = (): void => {
-    queuedRef.current = []
+    setQueue([])
     stoppedRef.current = true
-    setMsgs((all) => all.filter((m) => !m.queued))
     window.api.chat.interrupt(chatKey)
     // The CLI normally answers with a turnDone; if it doesn't (dead child, a
     // message that never reached it), stop still means stop. Only for THIS turn,
@@ -2748,25 +2749,7 @@ export default function ChatPanel({
     // you choose, not something typing does to you.
     if (busy) {
       const queuedId = crypto.randomUUID()
-      queuedRef.current.push({ id: queuedId, text, images })
-      setMsgs((all) => [
-        ...all,
-        {
-          role: 'user',
-          text,
-          tools: [],
-          items: [],
-          done: true,
-          interrupted: false,
-          startedAt: 0,
-          durationMs: 0,
-          tokensIn: 0,
-          tokensOut: 0,
-          queued: true,
-          queuedId,
-          images: images.length ? images.map((im) => ({ name: im.name, preview: im.preview })) : undefined
-        }
-      ])
+      setQueue([...queuedRef.current, { id: queuedId, text, images }])
       return queuedId
     }
     sendMessage(text, images)
@@ -3234,8 +3217,6 @@ export default function ChatPanel({
             now={now}
             lastEvent={lastEventRef}
             note={selfNote}
-            onSendNow={sendQueuedNow}
-            onDropQueued={dropQueued}
           />
         )
       ),
@@ -3366,6 +3347,39 @@ export default function ChatPanel({
               </button>
             )
           })}
+        </div>
+      )}
+
+      {/* What you have typed but not sent yet. Above the composer, where the
+          other "about to happen" strips are — and in the order it will go out,
+          which a column of bubbles in the transcript could not show. */}
+      {queued.length > 0 && (
+        <div className="chat-queue">
+          <div className="chat-queue-head">
+            {t('chat.queueHead', { n: queued.length })}
+          </div>
+          {queued.map((q, i) => (
+            <div className="chat-queue-row" key={q.id}>
+              <span className="chat-queue-no">{i + 1}</span>
+              <span className="chat-queue-text" title={q.text}>
+                {q.text || t('chat.queueImageOnly', { n: q.images.length })}
+              </span>
+              <button
+                className="chat-queue-act"
+                title={t('chat.sendNowHint')}
+                onClick={() => sendQueuedNow(q.id)}
+              >
+                {t('chat.sendNow')}
+              </button>
+              <button
+                className="chat-queue-act icon"
+                title={t('chat.dropQueued')}
+                onClick={() => dropQueued(q.id)}
+              >
+                <XIcon size={11} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
