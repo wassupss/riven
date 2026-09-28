@@ -22,6 +22,7 @@ import { useUsage } from './state/usage'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
+import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
 import { startScheduler } from './state/scheduledMessages'
 import { useUI } from './state/ui'
@@ -121,6 +122,9 @@ export default function App(): JSX.Element {
         session: useSession,
         markPaneSeen,
         roster: useRoster,
+        // The org chart is laid out from this; a test needs to be able to stand
+        // one up without spawning a CLI per member.
+        groups: useAgentGroups,
         rosterFor,
         askUser: useAskUser,
         pet: usePet,

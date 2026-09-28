@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Plus,
   X,
@@ -280,13 +280,42 @@ function OrgBranch({ node, closedLabel, onPick }: {
   closedLabel: string
   onPick: (n: TreeNode) => void
 }): JSX.Element {
+  const kidsRef = useRef<HTMLDivElement | null>(null)
+  // The rail spans from the FIRST child's card centre to the LAST one's. It used
+  // to be drawn per child, one segment each — which meant a child working while
+  // its sibling idled drew half the rail as moving dashes and half as a solid
+  // line, and the dash pattern restarted at every joint. The line read as broken
+  // in two different ways. One element cannot break.
+  const [railHeight, setRailHeight] = useState(0)
+  const kidCount = node.children.length
+  useLayoutEffect(() => {
+    const box = kidsRef.current
+    if (!box) return
+    const kidsOf = (): HTMLElement[] =>
+      ([...box.children] as HTMLElement[]).filter((el) => el.classList.contains('agp-tree-kid'))
+    const measure = (): void => {
+      // The joint into a child sits CARD_MID below where that child starts,
+      // whatever its subtree does underneath — so the distance between the first
+      // and last joints is simply the last child's offset.
+      const kids = kidsOf()
+      setRailHeight(kids.length > 1 ? kids[kids.length - 1].offsetTop : 0)
+    }
+    measure()
+    // Cards change height when the panel narrows and their text wraps.
+    const ro = new ResizeObserver(measure)
+    ro.observe(box)
+    for (const kid of kidsOf()) ro.observe(kid)
+    return () => ro.disconnect()
+  }, [kidCount])
+  const flowing = node.children.some((c) => c.flowIn)
   return (
-    <div className={`agp-tree-row${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
+    <div className={`agp-tree-row${flowing ? ' flow' : ''}`}>
       <div className="agp-tree-self">
         <OrgCard node={node} closedLabel={closedLabel} onPick={onPick} />
       </div>
-      {node.children.length > 0 && (
-        <div className={`agp-tree-kids${node.children.some((c) => c.flowIn) ? ' flow' : ''}`}>
+      {kidCount > 0 && (
+        <div className={`agp-tree-kids${flowing ? ' flow' : ''}`} ref={kidsRef}>
+          {railHeight > 0 && <span className="agp-tree-rail" style={{ height: railHeight }} />}
           {node.children.map((c) => (
             <div className={`agp-tree-kid${c.flowIn ? ' flow' : ''}`} key={c.idx}>
               <OrgBranch node={c} closedLabel={closedLabel} onPick={onPick} />
