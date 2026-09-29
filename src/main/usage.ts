@@ -5,6 +5,7 @@ import { createHash } from 'crypto'
 import { promisify } from 'util'
 import * as os from 'os'
 import * as path from 'path'
+import { readLinesFrom } from './lineStream'
 
 const pexec = promisify(execFile)
 
@@ -295,6 +296,132 @@ async function codexUsage(): Promise<CodexUsage> {
   return out
 }
 
+
+// ---- today's usage, read once ------------------------------------------------
+//
+// The widget asks every minute. It used to re-read every transcript touched in
+// the last 36 hours, whole, each time — measured at 161MB and 0.6s per ask on a
+// real account. Transcripts are append-only, so each file's usage lines for
+// today are remembered along with how far the file was read, and the next ask
+// reads only what was added since.
+
+interface UsageEntry {
+  /** message id | request id — the dedupe key; '' when the line had no id. */
+  key: string
+  model: string
+  input: number
+  output: number
+  cacheWrite: number
+  cacheRead: number
+  cost: number
+}
+
+interface UsageFile {
+  size: number
+  mtimeMs: number
+  offset: number
+  entries: UsageEntry[]
+}
+
+const usageFiles = new Map<string, UsageFile>()
+let usageDay = ''
+
+export function usageEntryOf(line: string, today: string): UsageEntry | null {
+  if (!line.includes('"usage"')) return null
+  let obj: Record<string, unknown>
+  try {
+    obj = JSON.parse(line)
+  } catch {
+    return null
+  }
+  const ts = (obj.timestamp as string) ?? ''
+  if (localDayKey(ts) !== today) return null
+  const msg = obj.message as Record<string, unknown> | undefined
+  const usage = msg?.usage as (Record<string, number> & { cache_creation?: Record<string, number> }) | undefined
+  if (!usage) return null
+  const id = (msg?.id as string) ?? ''
+  const reqId = (obj.requestId as string) ?? ''
+  const model = (msg?.model as string) ?? 'claude'
+  const cc = usage.cache_creation
+  const cacheWrite =
+    (usage.cache_creation_input_tokens ?? 0) ||
+    (cc ? (cc.ephemeral_5m_input_tokens ?? 0) + (cc.ephemeral_1h_input_tokens ?? 0) : 0)
+  const input = usage.input_tokens ?? 0
+  const output = usage.output_tokens ?? 0
+  const cacheRead = usage.cache_read_input_tokens ?? 0
+  const r = rate(model)
+  const cost =
+    (obj.costUSD as number | undefined) ??
+    (input * r.in + output * r.out + cacheWrite * r.cw + cacheRead * r.cr) / 1e6
+  return { key: id ? `${id}|${reqId}` : '', model, input, output, cacheWrite, cacheRead, cost }
+}
+
+async function todaysEntries(file: string, size: number, mtimeMs: number, today: string): Promise<UsageEntry[]> {
+  const hit = usageFiles.get(file)
+  if (hit && hit.size === size && hit.mtimeMs === mtimeMs) return hit.entries
+  const resume = hit && size >= hit.size && size >= hit.offset
+  const entries = resume ? [...hit.entries] : []
+  const offset = await readLinesFrom(file, resume ? hit.offset : 0, (line) => {
+    const e = usageEntryOf(line, today)
+    if (e) entries.push(e)
+  })
+  usageFiles.set(file, { size, mtimeMs, offset, entries })
+  return entries
+}
+
+export async function usageToday(configDir?: string): Promise<UsageToday> {
+  const today = todayKey()
+  // A new day invalidates everything remembered about the last one.
+  if (usageDay !== today) {
+    usageFiles.clear()
+    usageDay = today
+  }
+  const files: string[] = []
+  for (const root of claudeRoots(configDir)) await walkJsonl(root, files)
+
+  const seen = new Set<string>()
+  const byModel = new Map<string, ModelUsage>()
+
+  // Only files touched in the last 36h can hold today's usage.
+  const cutoff = Date.now() - 36 * 3600 * 1000
+  for (const file of files) {
+    let stat
+    try {
+      stat = await fs.stat(file)
+    } catch {
+      continue
+    }
+    if (stat.mtimeMs < cutoff) continue
+    let entries: UsageEntry[]
+    try {
+      entries = await todaysEntries(file, stat.size, stat.mtimeMs, today)
+    } catch {
+      continue
+    }
+    // Deduplicated across files in file order, first occurrence wins — the
+    // same rule as when every file was re-read, so the totals are the same.
+    for (const e of entries) {
+      if (e.key && seen.has(e.key)) continue
+      if (e.key) seen.add(e.key)
+      let m = byModel.get(e.model)
+      if (!m) {
+        m = { model: e.model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0 }
+        byModel.set(e.model, m)
+      }
+      m.input += e.input
+      m.output += e.output
+      m.cacheWrite += e.cacheWrite
+      m.cacheRead += e.cacheRead
+      m.cost += e.cost
+    }
+  }
+
+  const perModel = [...byModel.values()].sort((a, b) => b.cost - a.cost)
+  const totalCost = perModel.reduce((s, m) => s + m.cost, 0)
+  const totalTokens = perModel.reduce((s, m) => s + m.input + m.output + m.cacheWrite + m.cacheRead, 0)
+  return { totalCost, totalTokens, perModel }
+}
+
 export function registerUsageHandlers(): void {
   ipcMain.handle('usage:codex', async (): Promise<CodexUsage> => codexUsage())
 
@@ -331,80 +458,5 @@ export function registerUsageHandlers(): void {
     }
   })
 
-  ipcMain.handle('usage:today', async (_e, configDir?: string): Promise<UsageToday> => {
-    const today = todayKey()
-    const files: string[] = []
-    for (const root of claudeRoots(configDir)) await walkJsonl(root, files)
-
-    const seen = new Set<string>()
-    const byModel = new Map<string, ModelUsage>()
-
-    // Only read files touched today (mtime) to keep it cheap.
-    const cutoff = Date.now() - 36 * 3600 * 1000
-    for (const file of files) {
-      let stat
-      try {
-        stat = await fs.stat(file)
-      } catch {
-        continue
-      }
-      if (stat.mtimeMs < cutoff) continue
-      let text: string
-      try {
-        text = await fs.readFile(file, 'utf8')
-      } catch {
-        continue
-      }
-      for (const line of text.split('\n')) {
-        if (!line.includes('"usage"')) continue
-        let obj: Record<string, unknown>
-        try {
-          obj = JSON.parse(line)
-        } catch {
-          continue
-        }
-        const ts = (obj.timestamp as string) ?? ''
-        if (localDayKey(ts) !== today) continue
-        const msg = obj.message as Record<string, unknown> | undefined
-        const usage = msg?.usage as Record<string, number> & {
-          cache_creation?: Record<string, number>
-        }
-        if (!usage) continue
-        const id = (msg?.id as string) ?? ''
-        const reqId = (obj.requestId as string) ?? ''
-        const key = `${id}|${reqId}`
-        if (id && seen.has(key)) continue
-        if (id) seen.add(key)
-
-        const model = (msg?.model as string) ?? 'claude'
-        const cc = usage.cache_creation
-        const cacheWrite =
-          (usage.cache_creation_input_tokens ?? 0) ||
-          (cc ? (cc.ephemeral_5m_input_tokens ?? 0) + (cc.ephemeral_1h_input_tokens ?? 0) : 0)
-        const input = usage.input_tokens ?? 0
-        const output = usage.output_tokens ?? 0
-        const cacheRead = usage.cache_read_input_tokens ?? 0
-        const r = rate(model)
-        const cost =
-          (obj.costUSD as number | undefined) ??
-          (input * r.in + output * r.out + cacheWrite * r.cw + cacheRead * r.cr) / 1e6
-
-        let m = byModel.get(model)
-        if (!m) {
-          m = { model, input: 0, output: 0, cacheWrite: 0, cacheRead: 0, cost: 0 }
-          byModel.set(model, m)
-        }
-        m.input += input
-        m.output += output
-        m.cacheWrite += cacheWrite
-        m.cacheRead += cacheRead
-        m.cost += cost
-      }
-    }
-
-    const perModel = [...byModel.values()].sort((a, b) => b.cost - a.cost)
-    const totalCost = perModel.reduce((s, m) => s + m.cost, 0)
-    const totalTokens = perModel.reduce((s, m) => s + m.input + m.output + m.cacheWrite + m.cacheRead, 0)
-    return { totalCost, totalTokens, perModel }
-  })
+  ipcMain.handle('usage:today', (_e, configDir?: string): Promise<UsageToday> => usageToday(configDir))
 }

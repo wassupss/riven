@@ -13,7 +13,8 @@ import { userContent, type ChatImageInput } from './chatContent'
 import { CodexChat } from './codexChat'
 import { readCodexTranscript } from './codexSessions'
 import { claimResult, noteBackgroundReport } from './turnClaim'
-import { scanTitles, titleOf } from './sessionTitle'
+import { titleOf } from './sessionTitle'
+import { scanSessionFile, forgetSessionFile } from './sessionScan'
 import {
   configuredMcpServers,
   allowedToolsValue,
@@ -1480,7 +1481,20 @@ export interface SessionSummary {
   messages: number
 }
 
-async function listSessions(cwd: string, configDir?: string): Promise<SessionSummary[]> {
+// After a restart every chat pane without a session asks at once; one scan
+// answers them all instead of one each.
+const listInflight = new Map<string, Promise<SessionSummary[]>>()
+
+function listSessions(cwd: string, configDir?: string): Promise<SessionSummary[]> {
+  const key = projectDir(cwd, configDir)
+  const running = listInflight.get(key)
+  if (running) return running
+  const p = listSessionsNow(cwd, configDir).finally(() => listInflight.delete(key))
+  listInflight.set(key, p)
+  return p
+}
+
+async function listSessionsNow(cwd: string, configDir?: string): Promise<SessionSummary[]> {
   const dir = projectDir(cwd, configDir)
   let files: string[]
   try {
@@ -1492,14 +1506,13 @@ async function listSessions(cwd: string, configDir?: string): Promise<SessionSum
   for (const f of files) {
     const full = path.join(dir, f)
     try {
-      const stat = await fsp.stat(full)
-      const raw = await fsp.readFile(full, 'utf8')
-      const scan = scanTitles(raw.split('\n'))
+      // Streamed and remembered, not read whole — see main/sessionScan.
+      const { scan, mtimeMs } = await scanSessionFile(full)
       if (scan.messages === 0) continue
       out.push({
         id: f.replace(/\.jsonl$/, ''),
         title: titleOf(scan, 60) || '(제목 없음)',
-        mtime: stat.mtimeMs,
+        mtime: mtimeMs,
         messages: scan.messages
       })
     } catch {
@@ -1547,7 +1560,9 @@ export async function renameSession(
 export async function deleteSession(cwd: string, id: string, configDir?: string): Promise<boolean> {
   if (!isSessionId(id)) return false
   try {
-    await fsp.unlink(path.join(projectDir(cwd, configDir), `${id}.jsonl`))
+    const file = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
+    await fsp.unlink(file)
+    forgetSessionFile(file)
     return true
   } catch {
     return false
@@ -1565,13 +1580,11 @@ export async function readSessionTitle(
   configDir?: string
 ): Promise<string | null> {
   const full = path.join(projectDir(cwd, configDir), `${id}.jsonl`)
-  let raw: string
   try {
-    raw = await fsp.readFile(full, 'utf8')
+    return titleOf((await scanSessionFile(full)).scan, 48) || null
   } catch {
     return null
   }
-  return titleOf(scanTitles(raw.split('\n')), 48) || null
 }
 
 async function readSessionTranscript(
