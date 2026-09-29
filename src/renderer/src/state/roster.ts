@@ -196,8 +196,18 @@ export function startRoster(): () => void {
   // opens/closes; that all lands in the session store. Closed panes leave the
   // layout, so that is also when their live signals become garbage — there is no
   // app-wide pty exit stream to hang this off (onExit is per-id).
+  //
+  // Only when that list actually changed, though. The session store changes on
+  // every pane-state save — a streaming chat saves its transcript as it goes —
+  // and bumping on each one re-rendered every chat pane and every workspace card
+  // in the window for a write none of them was about.
+  let lastSig = ''
   const offSession = useSession.subscribe(() => {
-    const alive = new Set(layoutPanes().map((p) => p.id))
+    const panes = layoutPanes()
+    const sig = panes.map((p) => `${p.workspace}\u0000${p.id}\u0000${p.kind}\u0000${p.title}`).join('\n')
+    if (sig === lastSig) return
+    lastSig = sig
+    const alive = new Set(panes.map((p) => p.id))
     for (const key of Object.keys(useRoster.getState().live)) if (!alive.has(key)) drop(key)
     bump()
   })

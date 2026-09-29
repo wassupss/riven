@@ -61,10 +61,29 @@ export function registerBridgeHandlers(): void {
       persistent: true,
       awaitWriteFinish: { stabilityThreshold: 120, pollInterval: 40 }
     })
+    // Batched, not one IPC message per event: an agent's bulk edit or a build
+    // fires thousands a second, and each message is a serialise + a hop + a
+    // dispatch in the renderer. Events inside one 50ms window go as one list,
+    // with repeats of the same (type, path) folded — the listeners only ever
+    // ask "did this change", never "how many times". Order is kept.
+    let batch: Array<{ type: string; path: string }> = []
+    let seen = new Set<string>()
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+    const flush = (): void => {
+      flushTimer = null
+      const out = batch
+      batch = []
+      seen = new Set()
+      if (out.length && !sender.isDestroyed()) sender.send('fs:changed', out)
+    }
     const emit = (type: string) => (p: string) => {
       // No per-event log here: during agent bulk edits this fires thousands of
       // times/sec and floods the main-process console.
-      if (!sender.isDestroyed()) sender.send('fs:changed', { type, path: p })
+      const key = `${type}\u0000${p}`
+      if (seen.has(key)) return
+      seen.add(key)
+      batch.push({ type, path: p })
+      if (!flushTimer) flushTimer = setTimeout(flush, 50)
     }
     watcher.on('change', emit('change'))
     watcher.on('add', emit('add'))

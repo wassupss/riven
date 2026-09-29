@@ -1,3 +1,5 @@
+import { useSession } from '../../state/session'
+import { isPageHidden } from '../../lib/windowVisibility'
 import '../../styles/browser-bookmarks.css'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
@@ -181,8 +183,8 @@ export default function PreviewPanel({
     const sane = placeable(r, { width: window.innerWidth, height: window.innerHeight })
     // Only a panel that IS on screen gets the benefit of the doubt on a bad
     // measurement (a transient 0×0 during layout must not make the page blink).
-    if (onScreen && panelVisible && !sane && document.visibilityState !== 'hidden') return
-    const visible = onScreen && panelVisible && sane && document.visibilityState !== 'hidden'
+    if (onScreen && panelVisible && !sane && !isPageHidden()) return
+    const visible = onScreen && panelVisible && sane && !isPageHidden()
     const id = activeTabId(workspace)
     const tab = activeTab(workspace)
     // Hide all views on the blank start page (no view for this tab).
@@ -221,7 +223,27 @@ export default function PreviewPanel({
     syncBounds()
     const ro = new ResizeObserver(syncBounds)
     if (viewportRef.current) ro.observe(viewportRef.current)
-    const id = setInterval(syncBounds, 250)
+    // The poll stays: ResizeObserver reports a SIZE change, not a move, and a
+    // neighbour being dragged moves this panel without resizing it — the page
+    // view would stay where it was. But it only needs to be quick while the
+    // panel is on screen. Off screen (another tab, another workspace, the
+    // window minimised) it slows right down: every browser panel in every
+    // retained workspace used to force a layout four times a second, forever.
+    // Coming back on screen does not wait for it — the visibility, focus and
+    // workspace-switch triggers below re-sync at once.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const tick = (): void => {
+      syncBounds()
+      const shown = !!viewportRef.current?.offsetParent && !isPageHidden()
+      timer = setTimeout(tick, shown ? 250 : 2000)
+    }
+    timer = setTimeout(tick, 250)
+    const offWs = useSession.subscribe((st, prev) => {
+      if (st.activeWorkspace !== prev.activeWorkspace) {
+        lastSent.current = ''
+        requestAnimationFrame(syncBounds)
+      }
+    })
     window.addEventListener('resize', syncBounds)
     // Coming back from another app: the dock re-lays out, and the rect measured
     // while riven was in the background was not trustworthy.
@@ -233,7 +255,8 @@ export default function PreviewPanel({
     document.addEventListener('visibilitychange', refresh)
     return () => {
       ro.disconnect()
-      clearInterval(id)
+      if (timer) clearTimeout(timer)
+      offWs()
       window.removeEventListener('resize', syncBounds)
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', refresh)

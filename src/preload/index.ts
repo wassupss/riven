@@ -595,7 +595,10 @@ const api = {
     watchStart: (folder: string): Promise<void> => ipcRenderer.invoke('watch:start', folder),
     watchStop: (): void => ipcRenderer.send('watch:stop'),
     onFsChanged: (cb: (e: { type: string; path: string }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { type: string; path: string }): void => cb(payload)
+      // Main sends a batch (see bridge.ts); listeners still get one event each.
+      const listener = (_e: unknown, batch: Array<{ type: string; path: string }>): void => {
+        for (const ev of batch) cb(ev)
+      }
       ipcRenderer.on('fs:changed', listener)
       return () => ipcRenderer.removeListener('fs:changed', listener)
     }

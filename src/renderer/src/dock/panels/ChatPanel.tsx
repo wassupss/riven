@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, useSyncExternalStore } from 'react'
 import {
   ArrowUp,
   ChevronDown,
@@ -191,6 +191,44 @@ const fmtRelative = (ts: number, now: number, t: TFn): string => {
   if (s < 3600) return t('chat.time.min', { n: Math.floor(s / 60) })
   if (s < 86400) return t('chat.time.hour', { n: Math.floor(s / 3600) })
   return t('chat.time.day', { n: Math.floor(s / 86400) })
+}
+
+// One minute-clock for every relative time in every pane — "2m ago" needs no
+// finer grain. Relative times read it through <RelTime>, a leaf, so a tick
+// re-renders a few words instead of whole transcripts: the turn list is
+// memoised, and it used to take `now` as a prop, so every tick re-rendered
+// (and re-parsed the markdown of) every turn of every open chat.
+const minuteClock = (() => {
+  let now = Date.now()
+  const subs = new Set<() => void>()
+  let timer: ReturnType<typeof setInterval> | null = null
+  return {
+    get: (): number => now,
+    subscribe: (fn: () => void): (() => void) => {
+      subs.add(fn)
+      if (!timer)
+        timer = setInterval(() => {
+          now = Date.now()
+          for (const f of subs) f()
+        }, 60_000)
+      return () => {
+        subs.delete(fn)
+        if (!subs.size && timer) {
+          clearInterval(timer)
+          timer = null
+        }
+      }
+    }
+  }
+})()
+
+function useMinuteClock(): number {
+  return useSyncExternalStore(minuteClock.subscribe, minuteClock.get)
+}
+
+function RelTime({ ts }: { ts: number }): JSX.Element {
+  const t = useT()
+  return <>{fmtRelative(ts, useMinuteClock(), t)}</>
 }
 const fmtDur = (ms: number): string => {
   const s = Math.round(ms / 1000)
@@ -724,12 +762,10 @@ function RunningFoot({
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
   msg,
-  now,
   lastEvent,
   note
 }: {
   msg: Msg
-  now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
@@ -831,7 +867,7 @@ const ChatMessage = memo(function ChatMessage({
             {(msg.interrupted ? t('chat.stopped') : t('chat.done')) + ' · ' + fmtDur(msg.durationMs)}
             {(msg.tokensIn > 0 || msg.tokensOut > 0) &&
               ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
-            {msg.completedAt ? ' · ' + fmtRelative(msg.completedAt, now, t) : ''}
+            {msg.completedAt ? <> · <RelTime ts={msg.completedAt} /></> : null}
             {msg.text && <CopyBtn code={msg.text} title={t('chat.copyMessage')} />}
           </span>
         )}
@@ -1215,13 +1251,11 @@ function McpCard({
 // Keyboard-navigable (↑/↓/Enter), Esc dismisses.
 function ResumeCard({
   cwd,
-  now,
   configDir,
   onResume,
   onDismiss
 }: {
   cwd: string
-  now: number
   // The pane's CLAUDE_CONFIG_DIR — past sessions live under the profile the
   // pane runs as, not under ~/.claude.
   configDir?: string
@@ -1312,7 +1346,7 @@ function ResumeCard({
                 >
                   <span className="picker-title">{s.title}</span>
                   <span className="picker-meta">
-                    {fmtRelative(s.mtime, now, t)} · {s.messages}
+                    <RelTime ts={s.mtime} /> · {s.messages}
                   </span>
                 </button>
               )}
@@ -1641,10 +1675,10 @@ export default function ChatPanel({
   // This pane's agent status drives the completion flash on the panel border.
   // (setAgentStatus bumps `version`, so this re-reads when the turn finishes.)
   useAgents((s) => s.version)
-  // Keep the @mention list live: a teammate opening, a CLI agent starting in a
-  // terminal, or a peer going busy all land in the roster.
-  useRoster((s) => s.rev)
-  useRoster((s) => s.live)
+  // (No subscription to the whole roster here. The @mention list is read fresh
+  // on every render — and typing "@" is itself a render — so it is always
+  // current; subscribing re-rendered this entire pane whenever ANY other pane
+  // in the window received a token.)
   const paneStatus = getAgentStatus(chatKey)
   // The roster remembers a completion across an unmount (the controller status
   // does not), so a pane that finished while its workspace was evicted still
@@ -3227,7 +3261,6 @@ export default function ChatPanel({
             key={msg.cardId ?? windowOffset + wi}
             cwd={pathOf(workspace)}
             configDir={claudeConfigDirFor(workspace)}
-            now={now}
             onResume={(id, fork) => void handlers.current.resumeSession(id, fork)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
@@ -3247,13 +3280,12 @@ export default function ChatPanel({
           <ChatMessage
             key={windowOffset + wi}
             msg={msg}
-            now={now}
             lastEvent={lastEventRef}
             note={selfNote}
           />
         )
       ),
-    [windowed, windowOffset, now, pickedModel, workspace, catalog]
+    [windowed, windowOffset, pickedModel, workspace, catalog]
   )
 
   return (
