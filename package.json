@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "typecheck": "tsc -b",
-    "test": "vitest run src",
+    "test": "vitest run",
     "smoke:terminal": "node scripts/e2e-terminal-smoke.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
@@ -24,6 +24,7 @@
     "smoke:pet": "node scripts/e2e-pet-smoke.mjs",
     "check:notify": "node scripts/notify-adhoc-check.mjs",
     "perf:cpu": "node scripts/perf-cpu.mjs",
+    "audit:tokens": "node scripts/token-audit.mjs",
     "e2e": "npm run build && playwright test",
     "e2e:only": "playwright test"
   },

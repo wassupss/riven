@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config'
 // wrong runner and fails in a way that says nothing about the code.
 export default defineConfig({
   test: {
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx']
+    // scripts/lib holds the pure halves of dev scripts (token-audit), tested here.
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/lib/**/*.test.mjs']
   }
 })
