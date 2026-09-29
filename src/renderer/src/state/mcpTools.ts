@@ -16,9 +16,10 @@ import { rosterFor, type RosterEntry } from './roster'
 import { terminalReply } from './askAgent'
 import { useAgentGroups } from './agentGroups'
 import { useGroupLog } from './groupLog'
-import { useGoals, findGoal, boardText, type PostKind } from './goals'
+import { useGoals, findGoal, boardText, boardUpdateFor, clipPost, BOARD_CAP, type PostKind } from './goals'
 import { classifyTerminalCommand } from '../lib/terminalCommand'
 import { addEdge, dropEdge, wouldCycle, type AskEdges } from '../lib/askGraph'
+import { REPLY_CAP, clipNotice, clipText } from '../lib/clip'
 
 // Delegations that are currently WAITING for an answer, as caller → target
 // edges. Only waiting ones: a fire-and-forget ask blocks nobody.
@@ -611,7 +612,7 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
       return `typed into "${entry.title}" (${entry.id}) — ${
         wait ? "this terminal's CLI doesn't report its turns, so no reply is waited for" : 'async'
       }`
-    return `[${entry.title}] ${await replyP}`
+    return `[${entry.title}] ${await deliverReply(await replyP, entry.title, c)}`
   }
 
   const target = resolveAgent(entry.id, c.self ?? undefined, c.ws)
@@ -634,9 +635,31 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
     void answer
     return `delegated to "${target.getTitle()}" (async)`
   }
-  return `[${target.getTitle()}] ${await answer}`
+  return `[${target.getTitle()}] ${await deliverReply(await answer, target.getTitle(), c)}`
 }
 
+
+/**
+ * A delegated answer as it goes back to the caller: whole when it is short,
+ * otherwise its head plus where to find the rest (a note, written here). The
+ * group log keeps the full answer either way — it is the caller's context that
+ * is being protected, not the record.
+ */
+async function deliverReply(reply: string, from: string, c: Ctx): Promise<string> {
+  const { head, clipped } = clipText(reply, REPLY_CAP)
+  if (!clipped) return reply
+  let note: string | null = null
+  if (c.ws) {
+    try {
+      const at = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+      note = await window.api.notes.write(pathOf(c.ws), null, `${from}의 답변 (${at})`, reply)
+      notesChanged()
+    } catch {
+      note = null
+    }
+  }
+  return `${head}\n\n${clipNotice(reply.length, head.length, note)}`
+}
 
 async function askAgent(args: Args, c: Ctx): Promise<string> {
   return askOneAgent(s(args.agent), s(args.message), args.wait !== false, c)
@@ -717,7 +740,7 @@ function goalState(args: Args, c: Ctx): string {
   if (!c.ws) return unattributed(c)
   const roster = useAgentGroups.getState().byWorkspace[goal.ws]?.find((g) => g.group === goal.group)
   const members = (roster?.members ?? []).map((m) => `${m.name} (${m.chatKey})`).join(', ')
-  return `${boardText(goal, memberNamer(goal.ws, goal.group))}\n\n멤버: ${members || '(없음)'}\n쓴 턴: ${goal.turns}`
+  return `${boardText(goal, memberNamer(goal.ws, goal.group), BOARD_CAP)}\n\n멤버: ${members || '(없음)'}\n쓴 턴: ${goal.turns}`
 }
 
 function goalPost(args: Args, c: Ctx): string {
@@ -790,10 +813,13 @@ async function goalRound(args: Args, c: Ctx): Promise<string> {
 
   // Every member gets the board as context, so nobody has to be told what the
   // others said — that relaying is what used to cost a second telling and lose
-  // whatever it summarised.
-  const board = boardText(findGoal(goal.id) ?? goal, namer)
+  // whatever it summarised. Only what it has not been sent yet, though: see
+  // boardUpdateFor.
+  const current = findGoal(goal.id) ?? goal
   const answers = await Promise.all(
     targets.map(async (m) => {
+      const { text: board, lastId } = boardUpdateFor(current, m.chatKey, namer)
+      useGoals.getState().markSent(goal.id, m.chatKey, lastId)
       const reply = await askOneAgent(
         m.chatKey,
         `[목표판 ${goal.id} · 라운드 ${round} · ${kind}]\n${board}\n\n---\n${ask}`,
@@ -803,7 +829,9 @@ async function goalRound(args: Args, c: Ctx): Promise<string> {
       useGoals.getState().addTurns(goal.id, 1)
       const text = reply.replace(/^\[[^\]]*\]\s*/, '')
       useGoals.getState().post(goal.id, { round, by: m.chatKey, kind, text })
-      return `${namer(m.chatKey)}: ${text}`
+      // What goes back to the lead is what went on the board (post-sized), not
+      // the whole answer — the board is where the rest of the round lives.
+      return `${namer(m.chatKey)}: ${clipPost(text)}`
     })
   )
   const after = findGoal(goal.id)

@@ -4,7 +4,7 @@ vi.mock('./session', () => ({
   useSession: { getState: () => ({ patch: vi.fn(), ready: true, sessions: {} }), subscribe: vi.fn() }
 }))
 
-const { clipPost, addPost, boardText, POSTS_KEPT, useGoals } = await import('./goals')
+const { clipPost, addPost, boardText, boardUpdateFor, POSTS_KEPT, useGoals } = await import('./goals')
 type Goal = Awaited<ReturnType<typeof import('./goals')['findGoal']>> & object
 type Post = Goal['posts'][number]
 
@@ -81,5 +81,67 @@ describe('the store', () => {
     const endedAt = g?.endedAt
     useGoals.getState().stop(id)
     expect(useGoals.getState().byWorkspace['/w'].find((x) => x.id === id)?.endedAt).toBe(endedAt)
+  })
+})
+
+describe('boardUpdateFor', () => {
+  const nameOf = (k: string): string => ({ 'chat-1': '가', 'chat-2': '나', 'chat-3': '다' })[k] ?? k
+
+  it('sends a member the whole board the first time', () => {
+    const g = goal({ posts: [post(1, 'chat-1'), post(2, 'chat-2')] })
+    const { text, lastId } = boardUpdateFor(g, 'chat-3', nameOf)
+    expect(text).toContain('안 1')
+    expect(text).toContain('안 2')
+    expect(lastId).toBe('p2')
+  })
+
+  it('after that, only what is new — and never its own posts back', () => {
+    const g = goal({
+      posts: [post(1, 'chat-1'), post(2, 'chat-2'), post(3, 'chat-3'), post(4, 'chat-1')],
+      sentUpTo: { 'chat-3': 'p2' }
+    })
+    const { text, lastId } = boardUpdateFor(g, 'chat-3', nameOf)
+    expect(text).not.toContain('안 1') // already had it
+    expect(text).not.toContain('안 3') // wrote it itself
+    expect(text).toContain('안 4')
+    expect(text).toContain('riven_goal_state') // where the rest is, if it forgot
+    expect(lastId).toBe('p4')
+  })
+
+  it('starts over when what it was sent has aged off the board', () => {
+    const g = goal({ posts: [post(9, 'chat-1')], sentUpTo: { 'chat-3': 'p1' } })
+    expect(boardUpdateFor(g, 'chat-3', nameOf).text).toContain('안 9')
+    expect(boardUpdateFor(g, 'chat-3', nameOf).text).not.toContain('지난번 이후')
+  })
+
+  it('grows with the round, not with the whole history', () => {
+    // Five members, ten rounds of 1,000-character posts. The old way sent each
+    // member the whole board every round.
+    let g = goal()
+    const members = ['m1', 'm2', 'm3', 'm4', 'm5']
+    let sentNow = 0
+    let sentBefore = 0
+    let n = 0
+    for (let r = 1; r <= 10; r++) {
+      for (const m of members) {
+        const u = boardUpdateFor(g, m, (k) => k)
+        sentNow += u.text.length
+        sentBefore += boardText(g, (k) => k).length
+        if (u.lastId) g = { ...g, sentUpTo: { ...g.sentUpTo, [m]: u.lastId } }
+      }
+      for (const m of members) g = addPost(g, { ...post(++n, m), text: 'x'.repeat(1000) })
+    }
+    expect(sentNow).toBeLessThan(sentBefore / 3)
+  })
+})
+
+describe('boardText with a budget', () => {
+  it('drops the oldest posts first and says how many, keeping the head', () => {
+    const g = goal({ posts: Array.from({ length: 30 }, (_, i) => ({ ...post(i), text: 'y'.repeat(900) })) })
+    const t = boardText(g, (k) => k, 5000)
+    expect(t.length).toBeLessThanOrEqual(5000)
+    expect(t).toContain('알림 방식을 정한다')
+    expect(t).toMatch(/앞선 글 \d+개 생략/)
+    expect(t).toContain('R1 · chat-1')
   })
 })
