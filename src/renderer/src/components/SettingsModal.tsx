@@ -632,6 +632,15 @@ export default function SettingsModal(): JSX.Element | null {
                     />
                   </Select>
                 </Row>
+                <Row title={t('settings.autocompact')} desc={t('settings.autocompactDesc')}>
+                  <Select value={settings.autocompact} onChange={(e) => upd('autocompact', e.target.value)}>
+                    <option value="150000">150K</option>
+                    <option value="200000">{t('settings.autocompactRecommended', { n: '200K' })}</option>
+                    <option value="300000">300K</option>
+                    <option value="500000">500K</option>
+                    <option value="auto">{t('settings.autocompactAuto')}</option>
+                  </Select>
+                </Row>
                 <ToggleRow
                   title={t('settings.autoTitle')}
                   desc={t('settings.autoTitleDesc')}

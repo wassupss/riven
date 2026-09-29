@@ -5,6 +5,8 @@ import { promises as fsp } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { resolveBin } from './shellPath'
+import { PROBE_INIT, PROBE_STATUS, parseSessionProbeLine } from './sessionProbe'
+import { autocompactArg } from './cliArgs'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
 import { userContent, type ChatImageInput } from './chatContent'
@@ -63,6 +65,8 @@ export interface StartOpts {
   cli?: 'claude' | 'codex'
   /** Built-in tools to leave OUT of --allowedTools, so the CLI asks first. */
   toolsDenied?: string[]
+  /** --autocompact: 'auto' or a token count between 100K and 1M. */
+  autocompact?: string
 }
 
 // Codex-backed panes (codexChat.ts), keyed like `sessions`.
@@ -733,6 +737,13 @@ async function startSession(
   if (promptParts.length) args.push('--append-system-prompt', promptParts.join('\n\n'))
   if (opts.model && opts.model !== 'default') args.push('--model', opts.model)
   if (opts.agent) args.push('--agent', opts.agent)
+  // Where the context gets compacted. Left to the CLI, a 1M-window account only
+  // compacts near 1M — and every API call re-reads the whole context, so a long
+  // chat was paying for 250K–1M tokens per call, dozens of calls per turn. The
+  // CLI rejects values outside 100K–1M and would not start, so anything else is
+  // dropped rather than passed through.
+  const ac = autocompactArg(opts.autocompact)
+  if (ac) args.push('--autocompact', ac)
   // A pane with a session id resumes it. A pane WITHOUT one wants a new
   // conversation — and must say so explicitly: given neither --resume nor
   // --session-id, the CLI continues the most recent conversation for the cwd, so
@@ -1144,10 +1155,39 @@ export function registerAgentChatHandlers(): void {
         }
       }
       try {
-        const proc = spawn(cmd, ['-p', prompt, '--model', 'haiku', '--output-format', 'text'], {
-          stdio: ['ignore', 'pipe', 'ignore'],
-          env: { ...process.env }
-        })
+        // Everything a title does not need, switched off. As a plain `-p` call
+        // this loaded Claude Code's whole system prompt, every built-in tool and
+        // every connector MCP server (Notion, Gmail, …) — ~20K input tokens to
+        // name a chat — let haiku think for ~300 tokens first, sometimes called
+        // tools, and left a session file behind in whatever the cwd was.
+        // Measured with these flags: 436 in, 18 out.
+        //
+        // Not --bare, though it looks like the obvious switch: it never reads
+        // OAuth or the keychain, so a subscription login would get no titles.
+        const proc = spawn(
+          cmd,
+          [
+            '-p',
+            prompt,
+            '--model',
+            'haiku',
+            '--output-format',
+            'text',
+            '--system-prompt',
+            'You write short titles. Reply with the title only.',
+            '--tools',
+            '',
+            '--strict-mcp-config',
+            '--disable-slash-commands',
+            '--setting-sources',
+            '',
+            '--no-session-persistence'
+          ],
+          {
+            stdio: ['ignore', 'pipe', 'ignore'],
+            env: { ...process.env, MAX_THINKING_TOKENS: '0' }
+          }
+        )
         proc.stdout?.on('data', (c: Buffer) => (out += c.toString()))
         proc.on('close', () => finish(out.trim().split('\n')[0].replace(/^["'`]|["'`]$/g, '').slice(0, 40)))
         proc.on('error', () => finish(''))
@@ -1282,20 +1322,49 @@ async function probeSessionInfo(
   const empty: SessionInfo = { slashCommands: [], mcpServers: [] }
   if (!cmd) return empty
   const mcpConfig = mcpConfigJson(implementedToolNames())
-  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
+  // --no-session-persistence: this is a question about the environment, not a
+  // conversation, and must not appear in the resume list.
+  const args = [
+    '-p',
+    '--input-format',
+    'stream-json',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--no-session-persistence'
+  ]
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
   const env = { ...process.env }
   if (configDir) {
     env.CLAUDE_CONFIG_DIR = configDir
     await ensureProfilePlugins(configDir)
   }
+  // Asked through the control channel, which starts no turn.
+  //
+  // This used to send the message "hi" to get an `init` event out of the CLI —
+  // and a message is a real API request: every probe was a full Opus turn with
+  // the whole system prompt and tool list (measured: ~25K input tokens), repeated
+  // on every launch and every MCP card refresh, each leaving a "hi" conversation
+  // in the resume list. `initialize` answers with the slash commands and
+  // `mcp_status` with the servers, for nothing.
   return await new Promise<SessionInfo>((resolve) => {
     let done = false
     let buf = ''
+    let slashCommands: string[] | null = null
+    let statusAsks = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
     const proc = spawn(cmd, args, { cwd, env, stdio: ['pipe', 'pipe', 'ignore'] })
+    const send = (id: string, subtype: string): void => {
+      try {
+        proc.stdin?.write(JSON.stringify({ type: 'control_request', request_id: id, request: { subtype } }) + '\n')
+      } catch {
+        /* the exit handler resolves */
+      }
+    }
     const finish = (v: SessionInfo): void => {
       if (done) return
       done = true
+      if (timer) clearTimeout(timer)
       try {
         proc.kill()
       } catch {
@@ -1310,36 +1379,29 @@ async function probeSessionInfo(
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl)
         buf = buf.slice(nl + 1)
-        if (!line.trim()) continue
-        let j: Record<string, unknown>
-        try {
-          j = JSON.parse(line)
-        } catch {
-          continue
-        }
-        if (j.type === 'system' && j.subtype === 'init') {
-          finish({
-            slashCommands: Array.isArray(j.slash_commands) ? (j.slash_commands as string[]) : [],
-            mcpServers: Array.isArray(j.mcp_servers)
-              ? (j.mcp_servers as Array<{ name: string; status: string }>)
-              : []
-          })
+        const got = parseSessionProbeLine(line)
+        if (!got) continue
+        if (got.kind === 'commands') {
+          slashCommands = got.names
+          send(`${PROBE_STATUS}${++statusAsks}`, 'mcp_status')
+        } else if (slashCommands) {
+          // Servers connect in the background; one still "pending" would be
+          // reported as such for as long as the cache lives. Ask again briefly.
+          const pending = got.servers.some((s) => s.status === 'pending')
+          if (pending && statusAsks < 10) {
+            setTimeout(() => send(`${PROBE_STATUS}${++statusAsks}`, 'mcp_status'), 700)
+          } else finish({ slashCommands, mcpServers: got.servers })
         }
       }
     })
     proc.on('error', () => finish(empty))
-    // stream-json emits init only after the first input; nudge it, then kill at init.
-    try {
-      proc.stdin?.write(JSON.stringify({ type: 'user', message: { role: 'user', content: 'hi' } }) + '\n')
-    } catch {
-      /* ignore */
-    }
-    // Measured at ~7s in a workspace with plugins enabled — the old 8s budget sat
-    // right on top of that, so a normal probe timed out, returned nothing, and
-    // (caching only a non-empty result) paid the full wait again on every call.
-    setTimeout(() => finish(empty), 25000)
+    proc.on('exit', () => finish(slashCommands ? { slashCommands, mcpServers: [] } : empty))
+    send(PROBE_INIT, 'initialize')
+    // Plugins and MCP servers can take several seconds to come up.
+    timer = setTimeout(() => finish(slashCommands ? { slashCommands, mcpServers: [] } : empty), 25000)
   })
 }
+
 
 // ---- custom agents (.claude/agents) -----------------------------------------
 export interface AgentDef {

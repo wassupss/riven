@@ -1989,6 +1989,7 @@ export default function ChatPanel({
         permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
         mcpDisabled: st.mcpDisabledTools,
         toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
         globalPrompt: withPersona(st.globalPrompt),
         agent: savedAgent,
         configDir: claudeConfigDirFor(workspace)
@@ -2829,6 +2830,7 @@ export default function ChatPanel({
         model: m,
         mcpDisabled: st.mcpDisabledTools,
       toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
         globalPrompt: withPersona(st.globalPrompt),
         configDir: claudeConfigDirFor(workspace)
       })
@@ -3131,6 +3133,7 @@ export default function ChatPanel({
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
       toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
           globalPrompt: withPersona(st.globalPrompt),
           configDir: claudeConfigDirFor(workspace)
         }),

@@ -642,6 +642,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.configFile': { ko: '설정 파일', en: 'Config file' },
   'settings.configFileDesc': { ko: 'settings.json 을 파인더에서 열기', en: 'Reveal settings.json in Finder' },
   'settings.resetAllDesc': { ko: '모든 설정을 기본값으로 되돌립니다', en: 'Restore every setting to its default' },
+  'settings.autocompact': { ko: '컨텍스트 압축 시점', en: 'Compact context at' },
+  'settings.autocompactDesc': {
+    ko: '대화가 이만큼 쌓이면 요약해 줄입니다. 요청마다 전체 컨텍스트를 다시 읽기 때문에, 낮을수록 긴 대화의 토큰이 크게 줄어듭니다. 에이전트가 다음에 시작될 때부터 적용됩니다.',
+    en: 'Summarise the conversation once it grows this large. Every request re-reads the whole context, so lower means far fewer tokens in long chats. Takes effect the next time an agent starts.'
+  },
+  'settings.autocompactRecommended': { ko: '{n} (권장)', en: '{n} (recommended)' },
+  'settings.autocompactAuto': { ko: '자동 (모델 한도 근처, 최대 1M)', en: 'Auto (near the model limit, up to 1M)' },
   'settings.defaultModelDesc': { ko: '새 대화가 시작할 기본 모델', en: 'Model new chats start with' },
   'settings.defaultPermModeDesc': { ko: '새 대화의 기본 권한 모드', en: 'Default permission mode for new chats' },
   'settings.promptSection': { ko: '전역 프롬프트', en: 'Global prompt' },

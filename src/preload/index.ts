@@ -259,6 +259,8 @@ const api = {
         cli?: 'claude' | 'codex'
         /** Built-in tools to leave out of --allowedTools (the CLI then asks). */
         toolsDenied?: string[]
+        /** 'auto' or a token count (100K–1M). */
+        autocompact?: string
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them

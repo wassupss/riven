@@ -65,6 +65,11 @@ export interface Settings {
   // Default model + permission mode new agent chats start on.
   defaultChatModel: string
   defaultPermissionMode: string
+  /**
+   * When a chat compacts its context: 'auto' (the CLI's own choice — near the
+   * model's full window, up to 1M) or a token count. See agentChat's spawn.
+   */
+  autocompact: string
   // Desktop notifications when a background agent turn finishes.
   notifications: boolean
   // Send anonymous crash reports (stored pref; parity with native).
@@ -134,6 +139,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claudeProfileByWorkspace: {},
   defaultChatModel: 'default',
   defaultPermissionMode: 'acceptEdits',
+  autocompact: '200000',
   notifications: true,
   crashReporting: true,
   uiScale: 1,
