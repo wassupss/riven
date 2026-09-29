@@ -169,7 +169,7 @@ function DetectedClis(): JSX.Element {
                   : u.from && u.to && u.from !== u.to
                     ? t('settings.cliUpdated', { from: u.from, to: u.to })
                     : t('settings.cliUpToDate', { v: u.to ?? '' })}
-                {u.status === 'done' && (u.restarted > 0 || u.deferred > 0)
+                {u.status === 'done' && u.answered === 'applied' && (u.restarted > 0 || u.deferred > 0)
                   ? ' · ' +
                     t('settings.cliRestarted', { n: String(u.restarted) }) +
                     (u.deferred > 0 ? ' · ' + t('settings.cliRestartBusy', { n: String(u.deferred) }) : '')

@@ -119,6 +119,8 @@ export interface CliUpdateState {
   output: string
   restarted: number
   deferred: number
+  open: number
+  answered?: 'applied' | 'later'
   at: number
 }
 
@@ -651,6 +653,11 @@ const api = {
   cli: {
     /** Run `<cmd> update` in the background; resolves when it has finished. */
     update: (cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> => ipcRenderer.invoke('cli:update', cmd),
+    /** Swap every open pane on `cmd` to the new build, in place (the user said yes). */
+    applyUpdate: (cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> =>
+      ipcRenderer.invoke('cli:applyUpdate', cmd),
+    /** The user said "later" — don't ask again for this update. */
+    deferUpdate: (cmd: 'claude' | 'codex'): Promise<void> => ipcRenderer.invoke('cli:deferUpdate', cmd),
     /** Updates running or finished this session, one per CLI. */
     updateStatus: (): Promise<CliUpdateState[]> => ipcRenderer.invoke('cli:updateStatus'),
     onUpdate: (cb: (s: CliUpdateState) => void): (() => void) => {

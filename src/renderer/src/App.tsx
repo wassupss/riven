@@ -13,6 +13,7 @@ import StatusBar from './components/StatusBar'
 import ErrorBoundary from './components/ErrorBoundary'
 import AgentWatch from './components/AgentWatch'
 import SettingsModal from './components/SettingsModal'
+import CliUpdatePrompt from './components/CliUpdatePrompt'
 import Palette from './components/Palette'
 import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
@@ -385,6 +386,7 @@ export default function App(): JSX.Element {
       </ErrorBoundary>
       <ImageLightbox />
       <SettingsModal />
+      <CliUpdatePrompt />
       <Palette />
       <QuickPanel />
       <AgentPicker />

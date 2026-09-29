@@ -94,7 +94,15 @@ test('after an update, open chat panes get the new build in place', async () => 
   await r.page.locator('.settings-nav-item').filter({ hasText: 'AI' }).first().click()
   const row = r.page.locator('.set-row').filter({ hasText: 'Claude Code' }).first()
   await row.getByRole('button', { name: '업데이트' }).click()
-  await expect(r.page.getByText(/채팅 1개를 새 프로세스로 다시 시작했어요/)).toBeVisible({ timeout: 20_000 })
+
+  // Not applied behind the user's back: it asks, and nothing changes until
+  // the answer.
+  const prompt = r.page.locator('.cli-update-prompt')
+  await expect(prompt).toContainText('v2.1.290', { timeout: 20_000 })
+  await expect(prompt).toContainText('에이전트 1개')
+  expect(agentPids(fake.bin)).toEqual(before)
+  await prompt.getByRole('button', { name: '지금 적용' }).click()
+  await expect(prompt).toHaveCount(0)
 
   // A new process behind the same pane: nothing was closed or reopened.
   await expect.poll(() => agentPids(fake.bin), { timeout: 10_000 }).not.toEqual(before)
@@ -122,5 +130,28 @@ test('a pane that reattaches after the CLI changed underneath it gets the new bu
 
   await expect.poll(() => agentPids(fake.bin), { timeout: 20_000 }).not.toEqual(before)
   expect(agentPids(fake.bin)).toHaveLength(1)
+  await r.app.close()
+})
+
+test('"later" leaves the open agents on the build they have, and does not ask again', async () => {
+  const fake = fakeClaude()
+  const r = await launchRiven({ files: { 'README.md': '# s\n' }, fakeAgents: true, env: { SHELL: fake.shell } })
+  await r.page.keyboard.press('Meta+Shift+a')
+  await expect.poll(() => agentPids(fake.bin).length, { timeout: 20_000 }).toBe(1)
+  const before = agentPids(fake.bin)
+  await r.page.keyboard.press('Meta+,')
+  await r.page.locator('.settings-nav-item').filter({ hasText: 'AI' }).first().click()
+  await r.page.locator('.set-row').filter({ hasText: 'Claude Code' }).first().getByRole('button', { name: '업데이트' }).click()
+  const prompt = r.page.locator('.cli-update-prompt')
+  await expect(prompt).toBeVisible({ timeout: 20_000 })
+  await prompt.getByRole('button', { name: '나중에' }).click()
+  await expect(prompt).toHaveCount(0)
+  await r.page.waitForTimeout(1500)
+  expect(agentPids(fake.bin)).toEqual(before)
+  // Reopening settings does not bring the question back.
+  await r.page.keyboard.press('Escape')
+  await r.page.keyboard.press('Meta+,')
+  await r.page.waitForTimeout(500)
+  await expect(prompt).toHaveCount(0)
   await r.app.close()
 })

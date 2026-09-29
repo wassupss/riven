@@ -910,6 +910,10 @@ export interface CliUpdateState {
   restarted: number
   /** Panes mid-turn: they get the new build when that turn ends. */
   deferred: number
+  /** Open panes on this CLI when the update finished — what the prompt asks about. */
+  open: number
+  /** Set once the user has answered the prompt (applied or not). */
+  answered?: 'applied' | 'later'
   at: number
 }
 
@@ -922,11 +926,36 @@ function publishUpdate(state: CliUpdateState): void {
   }
 }
 
+function openAgents(cmd: 'claude' | 'codex'): number {
+  return cmd === 'codex' ? codexChats.size : sessions.size
+}
+
+/**
+ * The user said yes: every open pane on this CLI gets the new build, in place —
+ * same pane, same spot in the layout, same conversation resumed. A pane
+ * mid-turn finishes that turn first.
+ */
+async function applyCliUpdate(cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> {
+  const cur = cliUpdates.get(cmd)
+  if (!cur || cur.status !== 'done') return null
+  let restarted = 0
+  let deferred = 0
+  const keys = cmd === 'codex' ? [...codexChats.keys()] : [...sessions.keys()]
+  for (const k of keys) {
+    const r = await restartInPlace(k)
+    if (r === 'restarted') restarted++
+    else if (r === 'deferred') deferred++
+  }
+  const next = { ...cur, restarted, deferred, answered: 'applied' as const }
+  publishUpdate(next)
+  return next
+}
+
 async function runCliUpdate(cmd: 'claude' | 'codex'): Promise<CliUpdateState> {
   const running = cliUpdates.get(cmd)
   if (running?.status === 'running') return running
   const bin = await resolveBin(cmd)
-  const base: CliUpdateState = { cmd, status: 'running', from: null, to: null, output: '', restarted: 0, deferred: 0, at: Date.now() }
+  const base: CliUpdateState = { cmd, status: 'running', from: null, to: null, output: '', restarted: 0, deferred: 0, open: 0, at: Date.now() }
   if (!bin) {
     const failed = { ...base, status: 'failed' as const, output: `${cmd} CLI not found on PATH` }
     publishUpdate(failed)
@@ -963,17 +992,9 @@ async function runCliUpdate(cmd: 'claude' | 'codex'): Promise<CliUpdateState> {
     publishUpdate(failed)
     return failed
   }
-  // Every open pane on this CLI gets the new build, in place — same pane, same
-  // spot in the layout, same conversation resumed. Ones mid-turn finish first.
-  let restarted = 0
-  let deferred = 0
-  const keys = cmd === 'codex' ? [...codexChats.keys()] : [...sessions.keys()]
-  for (const k of keys) {
-    const r = await restartInPlace(k)
-    if (r === 'restarted') restarted++
-    else if (r === 'deferred') deferred++
-  }
-  const done = { ...base, status: 'done' as const, from, to, output: output.trim().slice(-2000), restarted, deferred }
+  // The open panes are NOT restarted here: the user is asked first (see
+  // CliUpdatePrompt). `open` is how many there are to ask about.
+  const done = { ...base, status: 'done' as const, from, to, output: output.trim().slice(-2000), open: openAgents(cmd) }
   publishUpdate(done)
   return done
 }
@@ -1374,6 +1395,14 @@ export function registerAgentChatHandlers(): void {
     cmd === 'claude' || cmd === 'codex' ? runCliUpdate(cmd) : null
   )
   ipcMain.handle('cli:updateStatus', () => [...cliUpdates.values()])
+  ipcMain.handle('cli:applyUpdate', (_e, cmd: string) =>
+    cmd === 'claude' || cmd === 'codex' ? applyCliUpdate(cmd) : null
+  )
+  // "Later": remembered, so the prompt does not come back for this update.
+  ipcMain.handle('cli:deferUpdate', (_e, cmd: string) => {
+    const cur = cliUpdates.get(cmd)
+    if (cur?.status === 'done') publishUpdate({ ...cur, answered: 'later' })
+  })
 
   // Connected AI accounts (native Settings › Account). Reads each CLI's own login
   // state locally: Claude Code's plan from its keychain item, Codex's email/plan

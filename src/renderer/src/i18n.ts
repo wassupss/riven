@@ -627,9 +627,21 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.cliFound': { ko: '설치됨', en: 'Installed' },
   'settings.cliUpdate': { ko: '업데이트', en: 'Update' },
   'settings.cliUpdateDesc': {
-    ko: '백그라운드에서 업데이트합니다. 끝나면 열려 있는 채팅 패널(에이전트 그룹 포함)이 자리와 대화를 그대로 둔 채 새 버전으로 다시 시작됩니다.',
-    en: 'Updates in the background. When it finishes, open chat panes (agent groups included) restart on the new version in place, conversations intact.'
+    ko: '백그라운드에서 업데이트합니다. 끝나면 열려 있는 에이전트(에이전트 그룹 포함)에 바로 적용할지 물어봅니다.',
+    en: 'Updates in the background. When it finishes, you are asked whether to apply it to the open agents (agent groups included).'
   },
+  'cliUpdate.title': { ko: '{name} 업데이트 완료 · v{to}', en: '{name} updated · v{to}' },
+  'cliUpdate.question': {
+    ko: '열려 있는 에이전트 {n}개에 지금 바로 적용할까요?',
+    en: 'Apply it to the {n} open agent(s) now?'
+  },
+  'cliUpdate.how': {
+    ko: '패널 위치와 대화는 그대로 두고 프로세스만 새 버전으로 바꿉니다. 답변 중인 에이전트는 답이 끝난 뒤 바뀝니다. 나중에 하려면 설정 › AI › 에이전트 다시 시작.',
+    en: 'Each pane keeps its place and conversation; only its process is replaced. Agents mid-answer switch once they finish. To do it later: Settings › AI › Restart agents.'
+  },
+  'cliUpdate.apply': { ko: '지금 적용', en: 'Apply now' },
+  'cliUpdate.applying': { ko: '적용 중…', en: 'Applying…' },
+  'cliUpdate.later': { ko: '나중에', en: 'Later' },
   'settings.cliUpdating': { ko: '업데이트 중…', en: 'Updating…' },
   'settings.cliUpdated': { ko: 'v{from} → v{to} 업데이트 완료', en: 'Updated v{from} → v{to}' },
   'settings.cliUpToDate': { ko: '이미 최신 버전입니다 (v{v})', en: 'Already up to date (v{v})' },

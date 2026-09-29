@@ -9926,3 +9926,13 @@ body.win-unfocused .chat-ring::before {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* The "apply the CLI update to open agents?" prompt (CliUpdatePrompt). */
+.cli-update-prompt {
+  width: min(460px, 92vw);
+}
+.cli-update-q {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  color: var(--text);
+}
