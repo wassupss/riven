@@ -53,6 +53,11 @@ let initialized = false
 const started = new Map<string, Promise<unknown>>()
 const versions = new Map<string, number>()
 
+// Main stops a server nobody has a file open on (and those of a closed
+// workspace). Forget it here too, or the next file of that language would be
+// sent to a server that no longer exists instead of starting one.
+if (typeof window !== 'undefined') window.api?.lsp?.onStopped?.((key) => started.delete(key))
+
 function ensureStarted(serverKey: string): Promise<unknown> {
   let p = started.get(serverKey)
   if (!p) {

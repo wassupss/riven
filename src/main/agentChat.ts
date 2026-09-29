@@ -139,6 +139,8 @@ interface Session {
   // "task" to the CLI and every one of them ends with a task_notification, so
   // this is what tells the two apart.
   bgTaskIds: Set<string>
+  /** How many background tasks the CLI last said are running (its current list). */
+  bgRunning: number
 }
 
 const sessions = new Map<string, Session>()
@@ -154,8 +156,13 @@ const lastStart = new Map<string, { opts: StartOpts; sender: WebContents }>()
 // pane is untouched (its transcript lives in the renderer) and the next message
 // respawns it with --resume. Cost is one resume instead of a permanent process.
 // (RIVEN_CHAT_IDLE_PARK_MS shortens it so the park/revive path can be exercised
-// without waiting half an hour.)
-const IDLE_PARK_MS = Number(process.env.RIVEN_CHAT_IDLE_PARK_MS) || 30 * 60_000
+// without waiting a quarter of an hour.)
+// 15 minutes, not 30: a parked pane costs nothing to bring back (--resume keeps
+// the conversation, and the prompt cache lives an hour on the server, so the
+// revival is a few seconds' start-up, not tokens), while each idle CLI holds
+// ~130MB (measured: 19 of them, 2.5GB). Not 10: a lead hands work to its team
+// at about that interval, and each hand-off would wait on a cold start.
+const IDLE_PARK_MS = Number(process.env.RIVEN_CHAT_IDLE_PARK_MS) || 15 * 60_000
 const REAP_EVERY_MS = Math.min(60_000, Math.max(2_000, Math.floor(IDLE_PARK_MS / 2)))
 const parked = new Map<string, { opts: StartOpts; sender: WebContents }>()
 
@@ -546,6 +553,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     // notification arrives, and that notification is the only thing that still
     // needs to know this task was a background one.
     for (const task of raw) if (task.task_id) s.bgTaskIds.add(String(task.task_id))
+    s.bgRunning = raw.length
     emit(s, {
       key: s.key,
       kind: 'bgTasks',
@@ -819,7 +827,8 @@ async function startSession(
     turns: [],
     autoTurns: 0,
     autoTurnAt: 0,
-    bgTaskIds: new Set()
+    bgTaskIds: new Set(),
+    bgRunning: 0
   }
   sessions.set(key, s)
   lastStart.set(key, { opts, sender })
@@ -1075,6 +1084,10 @@ function reapIdleSessions(): void {
     // No sessionId means the CLI never reached init, so there is nothing to
     // --resume from: killing it would lose the pane's context outright.
     if (s.turnBusy || !s.sessionId) continue
+    // Something it started in the background is still running (a dev server,
+    // a watcher, a long test). Parking kills the CLI, and its background
+    // processes with it — quiet is not the same as done.
+    if (s.bgRunning > 0) continue
     if (now - s.lastActive < IDLE_PARK_MS) continue
     s.parking = true
     const entry = { opts: { ...s.opts, resume: s.sessionId }, sender: s.sender }

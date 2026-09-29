@@ -574,6 +574,12 @@ const api = {
       ipcRenderer.invoke('lsp:servers', rootPath),
     start: (serverKey: string, rootPath: string): Promise<unknown> =>
       ipcRenderer.invoke('lsp:start', serverKey, rootPath),
+    /** A server main stopped on its own (idle, or its workspace closed). */
+    onStopped: (cb: (serverKey: string) => void): (() => void) => {
+      const listener = (_e: unknown, key: string): void => cb(key)
+      ipcRenderer.on('lsp:stopped', listener)
+      return () => ipcRenderer.removeListener('lsp:stopped', listener)
+    },
     /** Stop every language server rooted at this folder; resolves to how many. */
     stopRoot: (rootPath: string): Promise<number> => ipcRenderer.invoke('lsp:stopRoot', rootPath),
     request: (serverKey: string, method: string, params: unknown): Promise<unknown> =>
