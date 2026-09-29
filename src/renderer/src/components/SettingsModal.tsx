@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { addTerminal } from '../dock/registry'
 import { useUI, type SettingsTab } from '../state/ui'
-import { useSettings, getSettings, type Settings } from '../state/settings'
+import { useSettings, getSettings, claudeConfigDirFor, type Settings } from '../state/settings'
 import { THEMES, applyTheme } from '../state/themes'
 import { CURATED_FONTS, injectFont } from '../state/fonts'
 import { MCP_TOOL_LABELS } from '../state/mcpTools'
@@ -11,6 +11,7 @@ import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
+import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
 import {
@@ -624,10 +625,11 @@ export default function SettingsModal(): JSX.Element | null {
                     value={settings.defaultChatModel}
                     onChange={(e) => upd('defaultChatModel', e.target.value)}
                   >
-                    <option value="default">default</option>
-                    <option value="opus">opus</option>
-                    <option value="sonnet">sonnet</option>
-                    <option value="haiku">haiku</option>
+                    <ModelOptions
+                      cli="claude"
+                      configDir={claudeConfigDirFor(null)}
+                      current={settings.defaultChatModel}
+                    />
                   </Select>
                 </Row>
                 <ToggleRow

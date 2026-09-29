@@ -28,6 +28,7 @@ import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpSer
 import { registerFocusTrace } from './focusTrace'
 import { registerKeepAwake } from './keepAwake'
 import { registerPermissionHandlers } from './permissions'
+import { registerModelCatalogHandlers } from './modelCatalog'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
 import { registerApiHandlers } from './apiclient'
@@ -296,6 +297,7 @@ app.whenReady().then(() => {
   registerFocusTrace()
   registerKeepAwake()
   registerPermissionHandlers()
+  registerModelCatalogHandlers()
   registerMcpServer(() => {
     const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
     return w ? w.webContents : null

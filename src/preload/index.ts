@@ -1004,6 +1004,14 @@ const api = {
       return () => ipcRenderer.removeListener('pet:hidden', l)
     }
   },
+  // The Claude models this account can use, from the CLI itself (see
+  // main/modelCatalog). null when the CLI could not be asked.
+  models: {
+    claude: (
+      configDir?: string
+    ): Promise<Array<{ value: string; resolvedModel?: string; displayName: string; description?: string }> | null> =>
+      ipcRenderer.invoke('models:claude', configDir)
+  },
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),

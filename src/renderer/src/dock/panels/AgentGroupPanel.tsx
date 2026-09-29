@@ -31,7 +31,9 @@ import { useGroupLog, activeEdges } from '../../state/groupLog'
 import { askAnyAgent, rosterEntry } from '../../state/askAgent'
 import { rosterFor } from '../../state/roster'
 import { useGoals, goalsFor, type Goal } from '../../state/goals'
-import { modelsFor, modelForCli, type Cli } from '../../lib/models'
+import { modelForCli, type Cli } from '../../lib/models'
+import ModelOptions from '../../components/ModelOptions'
+import { claudeConfigDirFor } from '../../state/settings'
 import { usePipelines, type PipelineDef } from '../../state/pipelines'
 import { useT, type TFn } from '../../i18n'
 import { promptInput } from '../../components/promptInput'
@@ -379,6 +381,8 @@ function priming(
 // pipeline; a group tab draws that group's reporting tree.
 export default function AgentGroupPanel({ workspace }: { workspace: string }): JSX.Element {
   const t = useT()
+  // The account this workspace's agents run under decides which models exist.
+  const cfgDir = claudeConfigDirFor(workspace)
   useAgents((s) => s.version) // re-render when the live roster changes
   const groups = useAgentGroups((s) => s.byWorkspace[workspace]) ?? []
   const {
@@ -1119,11 +1123,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                         value={d.model}
                         onChange={(e) => setDraft(i, { model: e.target.value })}
                       >
-                        {modelsFor(d.cli).map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
+                        <ModelOptions cli={d.cli} configDir={cfgDir} current={d.model} />
                       </select>
                     </div>
                     <div className="agp-card-row">
@@ -1222,11 +1222,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                       value={st.model}
                       onChange={(e) => setStage(i, { model: e.target.value })}
                     >
-                      {modelsFor(st.cli).map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
+                      <ModelOptions cli={st.cli} configDir={cfgDir} current={st.model} />
                     </select>
                     <textarea
                       className="ui-textarea agp-stage-role"
@@ -1356,11 +1352,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                           updateMember(workspace, shown.group, m.chatKey, { model: e.target.value })
                         }
                       >
-                        {modelsFor(m.cli).map((mm) => (
-                          <option key={mm} value={mm}>
-                            {mm}
-                          </option>
-                        ))}
+                        <ModelOptions cli={m.cli} configDir={cfgDir} current={m.model} />
                       </select>
                     </div>
                     <div className="agp-card-row">

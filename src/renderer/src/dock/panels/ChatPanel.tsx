@@ -51,7 +51,9 @@ import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 import { settleStaleTurns, isStaleEvent, endsOpenTurn } from '../../lib/chatTurns'
-import { modelsFor } from '../../lib/models'
+import { isPinnedClaude, modelLabel, modelsFor, pinnedModels } from '../../lib/models'
+import { useClaudeCatalog } from '../../state/modelCatalog'
+import ModelOptions from '../../components/ModelOptions'
 import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
 
@@ -223,14 +225,6 @@ const modelAlias = (m: string | null): string => {
   if (/fable/i.test(m)) return 'fable'
   return 'default'
 }
-// "claude-opus-5[1m]" → "opus 5" (friendly label for the active model).
-const fmtModel = (raw: string): string =>
-  raw
-    .replace(/^claude-/, '')
-    .replace(/^gpt-/, 'GPT ')
-    .replace(/\[.*\]$/, '')
-    .replace(/-/g, ' ')
-    .trim()
 
 const TOOL_ICON: Record<string, typeof FileText> = {
   Read: FileText,
@@ -1365,11 +1359,13 @@ function ResumeCard({
 // Inline /model card: pick the model with the keyboard (↑/↓/Enter), Esc cancels.
 function ModelCard({
   models,
+  label,
   current,
   onPick,
   onDismiss
 }: {
   models: string[]
+  label: (m: string) => string
   current: string
   onPick: (m: string) => void
   onDismiss: () => void
@@ -1399,7 +1395,7 @@ function ModelCard({
           onMouseMove={() => index !== i && setIndex(i)}
           onClick={() => onPick(m)}
         >
-          <span className="picker-title">{m}</span>
+          <span className="picker-title">{label(m)}</span>
           {m === current && <Check size={13} className="model-check" />}
         </button>
       ))}
@@ -2130,7 +2126,11 @@ export default function ChatPanel({
           break
         case 'init':
           setModel(e.model)
-          setPickedModel(modelAlias(e.model))
+          // A pinned version is reported back as itself — keep it, rather than
+          // collapsing "claude-opus-4-8" into the "opus" alias (which is 5.5).
+          setPickedModel((prev) =>
+            isPinnedClaude(prev) && e.model?.replace(/\[.*\]$/, '') === prev ? prev : modelAlias(e.model)
+          )
           if (e.slashCommands?.length) setSlashCommands(e.slashCommands)
           if (e.sessionId) savePane({ session: e.sessionId })
           break
@@ -2806,7 +2806,8 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = modelsFor(cli)
+  const catalog = useClaudeCatalog(cli === 'codex' ? undefined : claudeConfigDirFor(workspace))
+  const MODELS = cli === 'codex' ? modelsFor(cli) : [...modelsFor(cli), ...pinnedModels(catalog).map((p) => p.value)]
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],
@@ -3231,6 +3232,7 @@ export default function ChatPanel({
           <ModelCard
             key={msg.cardId ?? windowOffset + wi}
             models={MODELS}
+            label={(m) => (cli === 'codex' ? m : modelLabel(m, catalog))}
             current={pickedModel}
             onPick={(m) => {
               handlers.current.applyModel(m)
@@ -3248,7 +3250,7 @@ export default function ChatPanel({
           />
         )
       ),
-    [windowed, windowOffset, now, pickedModel, workspace]
+    [windowed, windowOffset, now, pickedModel, workspace, catalog]
   )
 
   return (
@@ -3618,15 +3620,7 @@ export default function ChatPanel({
             value={pickedModel}
             onChange={(e) => applyModel(e.target.value)}
           >
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m === 'default'
-                  ? 'default'
-                  : model && modelAlias(model) === m
-                    ? fmtModel(model)
-                    : m}
-              </option>
-            ))}
+            <ModelOptions cli={cli} configDir={claudeConfigDirFor(workspace)} current={pickedModel} />
           </select>
           <div className="chat-actions-spacer" />
           <button
