@@ -1,10 +1,10 @@
-import { app, ipcMain, WebContents } from 'electron'
+import { app, BrowserWindow, ipcMain, WebContents } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { promises as fsp } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { resolveBin } from './shellPath'
+import { resolveBin, binIdentity, getPathDirs } from './shellPath'
 import { PROBE_INIT, PROBE_STATUS, parseSessionProbeLine } from './sessionProbe'
 import { autocompactArg } from './cliArgs'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
@@ -77,6 +77,11 @@ function startCodexChat(key: string, opts: StartOpts, sender: WebContents): Prom
   const existing = codexChats.get(key)
   if (existing) {
     existing.sender = sender
+    // Same as a Claude pane reattaching: an updated CLI replaces the old build.
+    void (async () => {
+      const now = await binIdentity(await resolveBin('codex'))
+      if (existing.bin && now && now !== existing.bin) void restartInPlace(key)
+    })()
     return Promise.resolve({ ok: true })
   }
   const chat = new CodexChat(
@@ -107,6 +112,8 @@ function startCodexChat(key: string, opts: StartOpts, sender: WebContents): Prom
 interface Session {
   key: string
   proc: ChildProcess
+  /** Which installed CLI build this process runs (binIdentity at spawn). */
+  bin: string | null
   sender: WebContents
   buf: string
   sessionId: string | null // Claude session id — used to --resume after a restart
@@ -572,6 +579,9 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   }
   if (type === 'result') {
     s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
+    // A restart that waited for this turn (see restartInPlace) happens now —
+    // after the result has gone out, so the pane sees its turn finish first.
+    if (restartWhenIdle.has(s.key)) setTimeout(() => void restartInPlace(s.key), 0)
     s.sessionId = (ev.session_id as string) ?? s.sessionId
     // Resume THIS conversation if the pane ever has to be revived.
     const prev = lastStart.get(s.key)
@@ -668,6 +678,13 @@ async function startSession(
   if (existing) {
     existing.sender = sender // reattach after a renderer reload
     existing.lastActive = Date.now()
+    // Reattaching keeps the process a pane already had — across a reload, and
+    // on macOS across closing and reopening the window, since the app lives
+    // on. If the CLI was updated in between, that process is the OLD build:
+    // closing and reopening riven "did nothing". Swap it for the installed one,
+    // in place and resuming the same conversation (or once its turn is over).
+    const now = await binIdentity(await resolveBin('claude'))
+    if (existing.bin && now && now !== existing.bin) void restartInPlace(key)
     return { ok: true }
   }
   // Starting explicitly supersedes a parked child: this call carries the pane's
@@ -787,6 +804,7 @@ async function startSession(
   const s: Session = {
     key,
     proc,
+    bin: await binIdentity(cmd),
     sender,
     buf: '',
     sessionId: opts.resume ?? null,
@@ -854,8 +872,159 @@ async function startSession(
   return { ok: true }
 }
 
+/** `<cli> --version`, as a bare version number, or null. */
+async function cliVersion(bin: string): Promise<string | null> {
+  const r = await new Promise<string>((resolve) => {
+    let out = ''
+    const proc = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
+    proc.stdout?.on('data', (b: Buffer) => (out += b.toString()))
+    proc.on('close', () => resolve(out))
+    proc.on('error', () => resolve(''))
+    setTimeout(() => {
+      try {
+        proc.kill()
+      } catch {
+        /* ignore */
+      }
+      resolve(out)
+    }, 4000)
+  })
+  return r.match(/\d+\.\d+(\.\d+)?/)?.[0] ?? null
+}
+
+// ---- updating a CLI, in the background ----------------------------------------
+//
+// The update button used to open a terminal panel running `claude update` — a
+// panel the user had not asked for, landing in their layout, and after it
+// finished every open pane still ran the old build until each was restarted by
+// hand. It now runs here: the settings row shows it working, and when it
+// finishes every open pane on that CLI is swapped to the new build in place.
+
+export interface CliUpdateState {
+  cmd: 'claude' | 'codex'
+  status: 'running' | 'done' | 'failed'
+  from: string | null
+  to: string | null
+  /** The tail of what the updater printed — shown when it fails. */
+  output: string
+  restarted: number
+  /** Panes mid-turn: they get the new build when that turn ends. */
+  deferred: number
+  at: number
+}
+
+const cliUpdates = new Map<string, CliUpdateState>()
+
+function publishUpdate(state: CliUpdateState): void {
+  cliUpdates.set(state.cmd, state)
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('cli:update-changed', state)
+  }
+}
+
+async function runCliUpdate(cmd: 'claude' | 'codex'): Promise<CliUpdateState> {
+  const running = cliUpdates.get(cmd)
+  if (running?.status === 'running') return running
+  const bin = await resolveBin(cmd)
+  const base: CliUpdateState = { cmd, status: 'running', from: null, to: null, output: '', restarted: 0, deferred: 0, at: Date.now() }
+  if (!bin) {
+    const failed = { ...base, status: 'failed' as const, output: `${cmd} CLI not found on PATH` }
+    publishUpdate(failed)
+    return failed
+  }
+  const from = await cliVersion(bin)
+  publishUpdate({ ...base, from })
+  // The login shell's PATH, so an npm-installed CLI can find node.
+  const env = { ...process.env, PATH: (await getPathDirs()).join(':') }
+  const { code, output } = await new Promise<{ code: number | null; output: string }>((resolve) => {
+    let out = ''
+    const keep = (b: Buffer): void => {
+      out = (out + b.toString()).slice(-20_000)
+    }
+    const proc = spawn(bin, ['update'], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    proc.stdout?.on('data', keep)
+    proc.stderr?.on('data', keep)
+    proc.on('close', (c) => resolve({ code: c, output: out }))
+    proc.on('error', (e) => resolve({ code: -1, output: out + String(e) }))
+    // An updater that hangs (a prompt, a stalled download) must not leave the
+    // row spinning for ever.
+    setTimeout(() => {
+      try {
+        proc.kill()
+      } catch {
+        /* ignore */
+      }
+      resolve({ code: -1, output: out + '\n(10분이 지나 중단했습니다)' })
+    }, 10 * 60_000)
+  })
+  const to = await cliVersion((await resolveBin(cmd)) ?? bin)
+  if (code !== 0) {
+    const failed = { ...base, status: 'failed' as const, from, to, output: output.trim().slice(-2000) }
+    publishUpdate(failed)
+    return failed
+  }
+  // Every open pane on this CLI gets the new build, in place — same pane, same
+  // spot in the layout, same conversation resumed. Ones mid-turn finish first.
+  let restarted = 0
+  let deferred = 0
+  const keys = cmd === 'codex' ? [...codexChats.keys()] : [...sessions.keys()]
+  for (const k of keys) {
+    const r = await restartInPlace(k)
+    if (r === 'restarted') restarted++
+    else if (r === 'deferred') deferred++
+  }
+  const done = { ...base, status: 'done' as const, from, to, output: output.trim().slice(-2000), restarted, deferred }
+  publishUpdate(done)
+  return done
+}
+
+// Panes waiting for their turn to end before getting the new CLI.
+const restartWhenIdle = new Set<string>()
+
+/**
+ * Replace the process behind a pane with a fresh one from the installed CLI,
+ * resuming the same conversation — the pane itself, its place in the layout
+ * and its transcript are untouched. A pane mid-turn is not interrupted: it is
+ * marked, and restarted the moment that turn ends.
+ */
+async function restartInPlace(key: string): Promise<'restarted' | 'deferred' | 'none'> {
+  const claude = sessions.get(key)
+  if (claude) {
+    if (claude.turnBusy) {
+      restartWhenIdle.add(key)
+      return 'deferred'
+    }
+    restartWhenIdle.delete(key)
+    const opts = { ...claude.opts, resume: claude.sessionId ?? claude.opts.resume }
+    const sender = claude.sender
+    // The pane is not ending — it is getting a new process — so its exit
+    // must not reach the renderer as a session that stopped.
+    claude.parking = true
+    stopSession(key)
+    const res = await startSession(key, opts, sender)
+    return res.ok ? 'restarted' : 'none'
+  }
+  const codex = codexChats.get(key)
+  if (!codex) return 'none'
+  if (codex.turnBusy) {
+    restartWhenIdle.add(key)
+    codex.onTurnEnd = () => {
+      codex.onTurnEnd = null
+      setTimeout(() => void restartInPlace(key), 0)
+    }
+    return 'deferred'
+  }
+  restartWhenIdle.delete(key)
+  const opts = codex.restartOpts()
+  const sender = codex.sender
+  stopSession(key)
+  const res = await startCodexChat(key, { ...opts, cli: 'codex' }, sender)
+  return res.ok ? 'restarted' : 'none'
+}
+
 function stopSession(key: string): void {
   parked.delete(key)
+  restartWhenIdle.delete(key)
   const codex = codexChats.get(key)
   if (codex) {
     codexChats.delete(key)
@@ -1035,40 +1204,15 @@ export function registerAgentChatHandlers(): void {
   // what makes "update the CLI" mean anything for panes that are already open —
   // a running child keeps the binary it started with. A pane mid-turn is left
   // alone: killing it there would throw away the answer being written.
-  ipcMain.handle('chat:restart', async (event, key?: string) => {
+  ipcMain.handle('chat:restart', async (_event, key?: string) => {
     const keys = key ? [key] : [...sessions.keys(), ...codexChats.keys()]
     let restarted = 0
     let busy = 0
     for (const k of keys) {
-      const claude = sessions.get(k)
-      if (claude) {
-        if (claude.turnBusy) {
-          busy++
-          continue
-        }
-        const opts = { ...claude.opts, resume: claude.sessionId ?? claude.opts.resume }
-        const sender = claude.sender
-        // The pane is not ending — it is getting a new process — so its exit
-        // must not reach the renderer as a session that stopped.
-        claude.parking = true
-        stopSession(k)
-        const res = await startSession(k, opts, sender)
-        if (res.ok) restarted++
-        continue
-      }
-      const codex = codexChats.get(k)
-      if (!codex) continue
-      if (codex.turnBusy) {
-        busy++
-        continue
-      }
-      const opts = codex.restartOpts()
-      const sender = codex.sender
-      stopSession(k)
-      const res = await startCodexChat(k, { ...opts, cli: 'codex' }, sender)
-      if (res.ok) restarted++
+      const r = await restartInPlace(k)
+      if (r === 'restarted') restarted++
+      else if (r === 'deferred') busy++
     }
-    void event
     return { restarted, busy }
   })
 
@@ -1220,33 +1364,16 @@ export function registerAgentChatHandlers(): void {
       for (const c of candidates) {
         const p = await resolveBin(c.cmd)
         if (!p) continue
-        let version: string | null = null
-        try {
-          const r = await new Promise<string>((resolve) => {
-            let s = ''
-            const proc = spawn(p, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] })
-            proc.stdout?.on('data', (b: Buffer) => (s += b.toString()))
-            proc.on('close', () => resolve(s))
-            proc.on('error', () => resolve(''))
-            setTimeout(() => {
-              try {
-                proc.kill()
-              } catch {
-                /* ignore */
-              }
-              resolve(s)
-            }, 4000)
-          })
-          const m = r.match(/\d+\.\d+(\.\d+)?/)
-          version = m ? m[0] : null
-        } catch {
-          /* leave version null */
-        }
-        out.push({ name: c.name, cmd: c.cmd, path: p, version })
+        out.push({ name: c.name, cmd: c.cmd, path: p, version: await cliVersion(p) })
       }
       return out
     }
   )
+
+  ipcMain.handle('cli:update', (_e, cmd: string) =>
+    cmd === 'claude' || cmd === 'codex' ? runCliUpdate(cmd) : null
+  )
+  ipcMain.handle('cli:updateStatus', () => [...cliUpdates.values()])
 
   // Connected AI accounts (native Settings › Account). Reads each CLI's own login
   // state locally: Claude Code's plan from its keychain item, Codex's email/plan

@@ -270,6 +270,48 @@ export function getDelegator(): string | null {
   return delegator && activeApi?.getPanel(delegator) ? delegator : null
 }
 
+/**
+ * Bring back a chat pane that was closed but whose conversation was kept — a
+ * team member's (see Workbench's onDidRemovePanel). Same chatKey, so the pane
+ * finds its saved state on mount: the transcript comes back on screen and the
+ * CLI resumes the same session, not a new one. Returns '' when there is nothing
+ * saved under that key, so the caller can fall back to a fresh pane.
+ */
+export function reopenChat(
+  chatKey: string,
+  dir?: SplitDir,
+  refId?: string,
+  title?: string,
+  inactive?: boolean,
+  agent?: string,
+  inWorkspace?: string | null
+): string {
+  const target = dockAndWidFor(inWorkspace)
+  if (!target) return ''
+  const { api, wid } = target
+  const saved = useSession.getState().sessions[wid]?.panes?.[chatKey]
+  if (!saved?.session) return ''
+  if (api.getPanel(chatKey)) {
+    api.getPanel(chatKey)?.api.setActive()
+    return chatKey
+  }
+  // Never `fresh`: that flag means "start an empty conversation", the opposite
+  // of what reopening is for.
+  setPaneState(wid, chatKey, { fresh: undefined })
+  flushSessionSaveSync()
+  const prevActive = inactive ? api.activePanel?.id : undefined
+  api.addPanel({
+    id: chatKey,
+    component: 'chat',
+    title: title || saved.title || t('title.chat'),
+    params: { chatKey, pinnedTitle: title || undefined, agent: agent || saved.agent || undefined },
+    renderer: 'always',
+    position: placement(api, dir, refId)
+  })
+  if (prevActive && prevActive !== chatKey) api.getPanel(prevActive)?.api.setActive()
+  return chatKey
+}
+
 export function addChat(
   initialText?: string,
   dir?: SplitDir,

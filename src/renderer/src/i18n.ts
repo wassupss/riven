@@ -627,16 +627,20 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.cliFound': { ko: '설치됨', en: 'Installed' },
   'settings.cliUpdate': { ko: '업데이트', en: 'Update' },
   'settings.cliUpdateDesc': {
-    ko: '터미널에서 CLI 업데이트를 실행합니다. 이미 열려 있는 채팅은 아래에서 다시 시작해야 새 버전이 적용됩니다.',
-    en: 'Runs the CLI update in a terminal. Chats that are already open pick up the new version only after the restart below.'
+    ko: '백그라운드에서 업데이트합니다. 끝나면 열려 있는 채팅 패널(에이전트 그룹 포함)이 자리와 대화를 그대로 둔 채 새 버전으로 다시 시작됩니다.',
+    en: 'Updates in the background. When it finishes, open chat panes (agent groups included) restart on the new version in place, conversations intact.'
   },
+  'settings.cliUpdating': { ko: '업데이트 중…', en: 'Updating…' },
+  'settings.cliUpdated': { ko: 'v{from} → v{to} 업데이트 완료', en: 'Updated v{from} → v{to}' },
+  'settings.cliUpToDate': { ko: '이미 최신 버전입니다 (v{v})', en: 'Already up to date (v{v})' },
+  'settings.cliUpdateFailed': { ko: '업데이트 실패: {why}', en: 'Update failed: {why}' },
   'settings.cliRestart': { ko: '에이전트 다시 시작', en: 'Restart agents' },
   'settings.cliRestartDesc': {
     ko: '열려 있는 채팅 패널의 CLI를 새 프로세스로 교체합니다. 대화는 그대로 이어집니다 (터미널에서 직접 실행한 CLI는 제외).',
     en: "Replaces the CLI behind each open chat pane; the conversation continues. (A CLI you started in a terminal isn't touched.)"
   },
   'settings.cliRestarted': { ko: '채팅 {n}개를 새 프로세스로 다시 시작했어요', en: 'Restarted {n} chat(s) on a fresh process' },
-  'settings.cliRestartBusy': { ko: '답변 중인 {n}개는 건너뛰었어요', en: 'skipped {n} mid-turn' },
+  'settings.cliRestartBusy': { ko: '답변 중인 {n}개는 답이 끝나면 다시 시작해요', en: '{n} mid-turn will restart when they finish' },
   'settings.agentDefaults': { ko: '에이전트 기본값', en: 'Agent defaults' },
   'settings.termColors': { ko: '색상', en: 'Colors' },
   'settings.configFile': { ko: '설정 파일', en: 'Config file' },

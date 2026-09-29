@@ -36,6 +36,18 @@ export interface LaunchOptions {
   git?: boolean
   /** Agent groups to seed into the session tree for this workspace. */
   groups?: Array<{ group: string; members: Array<{ name: string; chatKey: string; parent: number | null }> }>
+  /**
+   * Saved pane state for chat panes that are NOT open — a closed team member's
+   * kept conversation, keyed by chatKey.
+   */
+  panes?: Record<string, Record<string, unknown>>
+  /**
+   * Extra environment for the app. With `fakeAgents`, RIVEN_E2E is left off so
+   * agent CLIs resolve — the caller must point SHELL at a login shell whose PATH
+   * holds only stand-ins, never the real, billed CLI.
+   */
+  env?: Record<string, string>
+  fakeAgents?: boolean
   /** Extra workspace folders to open alongside the first, for rail tests. */
   extraWorkspaces?: number
   /**
@@ -117,6 +129,7 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
             activePath: null,
             previewUrl: '',
             dockLayout: null,
+            ...(opts.panes ? { panes: opts.panes } : {}),
             ...(opts.jobs
               ? {
                   jobs: opts.jobs.map((j) => ({
@@ -152,11 +165,13 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
 
   const app = await electron.launch({
     args: [join(process.cwd(), 'out/main/index.js'), `--user-data-dir=${userDataDir}`],
-    env: {
-      ...process.env,
-      // A test must never spawn an agent CLI or a pet window by accident.
-      RIVEN_E2E: '1'
-    }
+    env: (() => {
+      const env: Record<string, string> = { ...(process.env as Record<string, string>), ...(opts.env ?? {}) }
+      // A test must never spawn a real agent CLI: RIVEN_E2E withholds them.
+      if (!opts.fakeAgents) env.RIVEN_E2E = '1'
+      else delete env.RIVEN_E2E
+      return env
+    })()
   })
   const page = await app.firstWindow()
   await page.waitForSelector('.ws-card', { timeout: 60_000 })

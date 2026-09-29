@@ -111,6 +111,17 @@ export type ChatEvent = { turn?: string | null } & (
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
 
+export interface CliUpdateState {
+  cmd: 'claude' | 'codex'
+  status: 'running' | 'done' | 'failed'
+  from: string | null
+  to: string | null
+  output: string
+  restarted: number
+  deferred: number
+  at: number
+}
+
 const api = {
   env: {
     defaults: (): Promise<{
@@ -638,6 +649,15 @@ const api = {
     }
   },
   cli: {
+    /** Run `<cmd> update` in the background; resolves when it has finished. */
+    update: (cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> => ipcRenderer.invoke('cli:update', cmd),
+    /** Updates running or finished this session, one per CLI. */
+    updateStatus: (): Promise<CliUpdateState[]> => ipcRenderer.invoke('cli:updateStatus'),
+    onUpdate: (cb: (s: CliUpdateState) => void): (() => void) => {
+      const listener = (_e: unknown, st: CliUpdateState): void => cb(st)
+      ipcRenderer.on('cli:update-changed', listener)
+      return () => ipcRenderer.removeListener('cli:update-changed', listener)
+    },
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
       ipcRenderer.invoke('cli:list')
   },

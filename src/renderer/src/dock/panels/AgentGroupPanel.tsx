@@ -24,7 +24,8 @@ import {
   type GroupMember,
   type AgentGroup
 } from '../../state/agentGroups'
-import { addChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
+import { addChat,
+  reopenChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { useGroupLog, activeEdges } from '../../state/groupLog'
@@ -779,6 +780,12 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       }
       if (!ref || !getActiveApi()?.getPanel(ref)) ref = openMemberKey(g)
     }
+    // Its own conversation first: what a member did is the team's work, so the
+    // pane comes back with its transcript and resumes the same session. Only a
+    // member with nothing saved (never ran, or closed before this was kept)
+    // gets a fresh pane.
+    const back = reopenChat(m.chatKey, dir, ref, memberTitle(m.name, g.group), true, m.agent || undefined)
+    if (back) return
     const newKey = addChat(
       undefined, // role goes in the system prompt, not a chat turn
       dir,

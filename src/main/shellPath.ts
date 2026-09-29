@@ -48,3 +48,21 @@ export async function resolveBin(cmd: string): Promise<string | null> {
   }
   return null
 }
+
+/**
+ * Which installed build `cmd` is: its real path (symlinks followed) plus that
+ * file's modification time. The native installer re-points ~/.local/bin/claude
+ * at …/versions/<version> on update, so the path changes; an npm install keeps
+ * the path and rewrites the file, so the time does. Either way, a different
+ * answer means a different CLI. Null when it cannot be read.
+ */
+export async function binIdentity(cmd: string | null): Promise<string | null> {
+  if (!cmd) return null
+  try {
+    const real = await fsp.realpath(cmd)
+    const st = await fsp.stat(real)
+    return `${real}#${Math.round(st.mtimeMs)}`
+  } catch {
+    return null
+  }
+}

@@ -1,4 +1,5 @@
-import { onWorkspaceClosed } from './session'
+import { onWorkspaceClosed, clearPaneState } from './session'
+import { getApiFor } from '../dock/registry'
 import { useJobs } from './jobs'
 import { useAgentGroups } from './agentGroups'
 import { useGoals } from './goals'
@@ -50,4 +51,31 @@ onWorkspaceClosed((wid, path, pathStillOpen) => {
   useBrowser.setState((s) => ({ byWs: drop(s.byWs, wid) }))
 
   if (!pathStillOpen) void window.api.lsp.stopRoot(path)
+})
+
+// A team member's closed pane keeps its conversation so the org chart can bring
+// it back (dock/Workbench, reopenChat). Once the member leaves the team — removed,
+// or the group deleted — nothing can reopen it any more, so a conversation kept
+// only for that is let go. An OPEN pane is left alone: it is still somebody's
+// chat, just no longer on a team.
+let members: Record<string, Set<string>> = {}
+const snapshot = (): Record<string, Set<string>> =>
+  Object.fromEntries(
+    Object.entries(useAgentGroups.getState().byWorkspace).map(([ws, gs]) => [
+      ws,
+      new Set(gs.flatMap((g) => g.members.map((m) => m.chatKey)))
+    ])
+  )
+members = snapshot()
+useAgentGroups.subscribe(() => {
+  const next = snapshot()
+  for (const [ws, before] of Object.entries(members)) {
+    const now = next[ws] ?? new Set<string>()
+    for (const key of before) {
+      if (now.has(key)) continue
+      if (getApiFor(ws)?.getPanel(key)) continue
+      clearPaneState(ws, key)
+    }
+  }
+  members = next
 })
