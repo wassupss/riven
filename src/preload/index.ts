@@ -382,6 +382,15 @@ const api = {
     ask: (kind: 'microphone' | 'camera'): Promise<boolean> => ipcRenderer.invoke('perm:ask', kind),
     open: (kind: string): Promise<void> => ipcRenderer.invoke('perm:open', kind)
   },
+  win: {
+    // Whether the main window is minimised or hidden — which the page cannot
+    // see for itself (see main/index.ts, backgroundThrottling).
+    onVisibility: (cb: (v: { hidden: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, v: { hidden: boolean }): void => cb(v)
+      ipcRenderer.on('win:visibility', listener)
+      return () => ipcRenderer.removeListener('win:visibility', listener)
+    }
+  },
   power: {
     // How many panes are mid-turn, and whether the user wants the machine kept
     // awake for them. Sent on every change; main refcounts it.

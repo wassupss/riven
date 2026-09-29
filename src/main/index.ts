@@ -103,11 +103,26 @@ function createWindow(): void {
       // comes back. Measured: with the window occluded, requestAnimationFrame
       // never ran and dockview never positioned a newly opened panel.
       backgroundThrottling: false,
+      // Chromium's spellchecker loads a dictionary and checks every keystroke
+      // in every text field — the editor and terminal have their own input
+      // handling, and in chat it underlined code identifiers more than typos.
+      spellcheck: false,
       contextIsolation: true
     }
   })
 
   mainWindow.on('ready-to-show', () => mainWindow.show())
+  // The page cannot tell it is hidden: backgroundThrottling is off (above), and
+  // that also keeps document.visibilityState at 'visible' while minimised — so
+  // every "stop when nobody is looking" rule in the renderer (animations, the
+  // port and usage polls) never fired. Main knows; it says so.
+  const sendVisibility = (): void => {
+    if (mainWindow.isDestroyed()) return
+    mainWindow.webContents.send('win:visibility', {
+      hidden: mainWindow.isMinimized() || !mainWindow.isVisible()
+    })
+  }
+  for (const ev of ['minimize', 'restore', 'hide', 'show'] as const) mainWindow.on(ev as 'minimize', sendVisibility)
   // The pet is riven's, not its own app: when the workbench goes, so does it
   // (otherwise a lone floating pet would keep the process alive on win/linux).
   mainWindow.on('closed', () => closePetWindow())

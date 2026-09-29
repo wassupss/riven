@@ -165,7 +165,17 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
 
 /** ⌘O, the panel picker: the one way in that does not depend on a menu bar. */
 export async function openPanel(page: Page, label: string): Promise<void> {
-  await page.keyboard.press('Meta+o')
+  // A keypress that lands while the app is still settling (a panel mounting,
+  // focus moving) can be eaten; press again rather than fail the whole test on
+  // a keystroke the user would simply have repeated.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.keyboard.press('Meta+o')
+    const opened = await page
+      .waitForSelector('.qp-dialog', { timeout: 3000 })
+      .then(() => true)
+      .catch(() => false)
+    if (opened) break
+  }
   await page.waitForSelector('.qp-dialog')
   await page.locator('.qp-item').filter({ hasText: label }).first().click()
   await page.waitForSelector('.qp-dialog', { state: 'detached' })

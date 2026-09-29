@@ -1,3 +1,4 @@
+import { isPageHidden } from '../lib/windowVisibility'
 import { create } from 'zustand'
 import { getSettings, useSettings } from './settings'
 
@@ -107,7 +108,7 @@ export const useUsage = create<UsageState>((set, get) => ({
     if (interval) return
     interval = setInterval(() => {
       // Skip while backgrounded — no point walking session logs for a hidden app.
-      if (document.visibilityState === 'visible') get().refresh()
+      if (!isPageHidden()) get().refresh()
     }, 60000)
   },
   release: () => {

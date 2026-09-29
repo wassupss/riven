@@ -1,3 +1,4 @@
+import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -387,7 +388,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   useEffect(() => {
     const compute = (): void => {
-      const next = document.visibilityState === 'visible' && document.hasFocus()
+      const next = !isPageHidden() && document.hasFocus()
       awakeRef.current = next
       setAwake(next)
     }
@@ -397,7 +398,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // frozen forever while you work in another app, which is exactly when you
     // want to see it.
     const computeDetached = (): void => {
-      const next = document.visibilityState === 'visible'
+      const next = !isPageHidden()
       awakeRef.current = next
       setAwake(next)
     }
