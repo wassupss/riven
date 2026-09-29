@@ -732,7 +732,7 @@ async function startSession(
   // Document available tools + the user's global instruction (--append-system-prompt).
   const globalPrompt = (opts.globalPrompt ?? '').trim()
   const promptParts: string[] = []
-  if (mcpConfig) promptParts.push(mcpSystemPrompt())
+  if (mcpConfig) promptParts.push(mcpSystemPrompt(enabled))
   if (globalPrompt) promptParts.push('# 사용자 지정 지침\n' + globalPrompt)
   if (promptParts.length) args.push('--append-system-prompt', promptParts.join('\n\n'))
   if (opts.model && opts.model !== 'default') args.push('--model', opts.model)

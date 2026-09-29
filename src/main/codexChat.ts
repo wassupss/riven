@@ -250,7 +250,10 @@ export class CodexChat {
 
   private developerInstructions(withTools: boolean): string | null {
     const parts: string[] = []
-    if (withTools) parts.push(mcpSystemPrompt())
+    if (withTools) {
+      const disabled = new Set(this.opts.mcpDisabled ?? [])
+      parts.push(mcpSystemPrompt(implementedToolNames().filter((n) => !disabled.has(n))))
+    }
     const g = (this.opts.globalPrompt ?? '').trim()
     if (g) parts.push('# 사용자 지정 지침\n' + g)
     return parts.length ? parts.join('\n\n') : null
