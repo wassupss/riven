@@ -263,7 +263,36 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
   return server
 }
 
+function stopServer(key: string, s: Server): void {
+  try {
+    s.conn.sendRequest('shutdown').catch(() => {})
+    s.conn.sendNotification('exit')
+  } catch {
+    /* connection already gone */
+  }
+  try {
+    s.proc.kill()
+  } catch {
+    /* already exited */
+  }
+  servers.delete(key)
+  starting.delete(key)
+}
+
 export function registerLspHandlers(): void {
+  // A workspace was closed and no other open workspace uses its folder: its
+  // language servers (tsserver, clangd, gopls, rust-analyzer — some of them
+  // indexing gigabytes) have nobody left to answer, so they go with it.
+  ipcMain.handle('lsp:stopRoot', (_e, rootPath: string) => {
+    let stopped = 0
+    for (const [key, s] of [...servers]) {
+      if (s.rootPath !== rootPath) continue
+      stopServer(key, s)
+      stopped++
+    }
+    return stopped
+  })
+
   // Don't orphan heavy indexers (clangd/gopls/rust-analyzer) after quit.
   app.on('before-quit', () => {
     for (const [, s] of servers) {

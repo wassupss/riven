@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { launchRiven } from './app'
+import { launchRiven, openPanel } from './app'
 
 // More than one workspace open at once: switching between them, what each one
 // keeps while the other is in front, and closing one without taking the rest
@@ -94,4 +94,41 @@ test.describe('the workspace rail', () => {
     await expect(rail).toBeVisible()
     await r.app.close()
   })
+})
+
+// Closing a workspace removes it from riven — and everything that belonged to it
+// has to go too. The schedule is the case that did damage: it kept firing into a
+// workspace that no longer existed, failed, and wrote the workspace back.
+test('a closed workspace takes its schedule, team and browser tabs with it', async () => {
+  const r = await launchRiven({
+    files: { 'README.md': '# s\n' },
+    extraWorkspaces: 1,
+    groups: [{ group: '팀', members: [{ name: '리드', chatKey: 'chat-lead', parent: null }] }],
+    // Due the moment the runner first looks (8s after launch).
+    jobs: [{ id: 'job_gone', name: '닫힌 곳의 예약', prompt: 'x', trigger: { kind: 'once', at: Date.now() - 60_000 } }]
+  })
+  await openPanel(r.page, '브라우저')
+  await r.page.locator('.browser-addr-wrap input').fill('about:blank')
+  await r.page.locator('.browser-addr-wrap input').press('Enter')
+  const views = (): Promise<number> => r.app.evaluate(({ webContents }) => webContents.getAllWebContents().length)
+  await expect.poll(views, { timeout: 10_000 }).toBeGreaterThan(1)
+  const before = await views()
+
+  await r.page.locator('.ws-card').first().click({ button: 'right' })
+  await r.page.locator('.ctx-item').filter({ hasText: '워크스페이스 닫기' }).click()
+  await expect(r.page.locator('.ws-card')).toHaveCount(1)
+
+  // The browser tab's view (its own renderer process) is gone.
+  await expect.poll(views, { timeout: 10_000 }).toBeLessThan(before)
+
+  // Past the scheduler's first tick: the job must not have run, and the
+  // workspace must not have been written back.
+  await r.page.waitForTimeout(12_000)
+  const d = onDisk(r.userDataDir) as unknown as { openWorkspaces: string[]; sessions: Record<string, unknown> }
+  expect(d.openWorkspaces).toEqual([r.extras[0]])
+  expect(d.sessions[r.workspace]).toBeUndefined()
+  // Nor offered anywhere as something still scheduled.
+  await r.page.locator('.ws-sched-row').click()
+  await expect(r.page.getByText('닫힌 곳의 예약')).toHaveCount(0)
+  await r.app.close()
 })

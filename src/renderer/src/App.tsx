@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import Workbench from './dock/Workbench'
+// Registers what a closed workspace takes with it (side-effect import).
+import './state/workspaceCleanup'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { Folder, Settings as SettingsIcon } from 'lucide-react'
 import ImageLightbox from './components/ImageLightbox'

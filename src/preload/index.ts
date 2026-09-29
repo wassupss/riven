@@ -552,6 +552,8 @@ const api = {
       ipcRenderer.invoke('lsp:servers', rootPath),
     start: (serverKey: string, rootPath: string): Promise<unknown> =>
       ipcRenderer.invoke('lsp:start', serverKey, rootPath),
+    /** Stop every language server rooted at this folder; resolves to how many. */
+    stopRoot: (rootPath: string): Promise<number> => ipcRenderer.invoke('lsp:stopRoot', rootPath),
     request: (serverKey: string, method: string, params: unknown): Promise<unknown> =>
       ipcRenderer.invoke('lsp:request', serverKey, method, params),
     notify: (serverKey: string, method: string, params: unknown): void =>

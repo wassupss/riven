@@ -137,6 +137,7 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {
   useSession.setState((st) => {
+    if (isGone(st, wid)) return {}
     const s = st.sessions[wid] ?? emptySession()
     const panes = { ...(s.panes ?? {}), [chatKey]: { ...(s.panes?.[chatKey] ?? {}), ...patch } }
     return { sessions: { ...st.sessions, [wid]: { ...s, panes } } }
@@ -249,6 +250,32 @@ function openTabIn(
   return { sessions: { ...st.sessions, [ws]: { ...s, openTabs, activePath: path } } }
 }
 
+// ---- closing a workspace ------------------------------------------------------
+//
+// Closing removes the workspace from riven: its panels, its layout and
+// everything that belonged to it. The session tree is only one of the places
+// that holds such things — schedules, teams, goal boards, browser tabs, language
+// servers each keep their own — so whoever owns one registers here to be told.
+// Without this they outlived the workspace: a closed workspace's schedule kept
+// firing, failing, notifying, and writing the workspace back into
+// sessions.json (see state/workspaceCleanup).
+type ClosedListener = (wid: string, path: string, pathStillOpen: boolean) => void
+const closedListeners = new Set<ClosedListener>()
+
+export function onWorkspaceClosed(fn: ClosedListener): () => void {
+  closedListeners.add(fn)
+  return () => closedListeners.delete(fn)
+}
+
+/**
+ * A workspace that is neither in the tree nor open — i.e. one that was closed.
+ * Writing to it would recreate it: every late write (a schedule recording a
+ * run, a pane saving its state as it unmounts) used to do exactly that.
+ */
+function isGone(st: { ready: boolean; sessions: Record<string, unknown>; openWorkspaces: string[] }, wid: string): boolean {
+  return st.ready && !st.sessions[wid] && !st.openWorkspaces.includes(wid)
+}
+
 export const useSession = create<SessionState>((set) => ({
   ready: false,
   openWorkspaces: [],
@@ -323,8 +350,23 @@ export const useSession = create<SessionState>((set) => ({
       delete sessions[wid]
       const activeWorkspace =
         st.activeWorkspace === wid ? (openWorkspaces.at(-1) ?? null) : st.activeWorkspace
-      return { openWorkspaces, sessions, activeWorkspace }
+      // The name and colour were this workspace's, not the folder's: reopening
+      // the folder later is a new workspace and starts plain.
+      const names = { ...st.names }
+      delete names[wid]
+      const colors = { ...st.colors }
+      delete colors[wid]
+      return { openWorkspaces, sessions, activeWorkspace, names, colors }
     })
+    const path = pathOf(wid)
+    const pathStillOpen = useSession.getState().openWorkspaces.some((w) => pathOf(w) === path)
+    for (const fn of closedListeners) {
+      try {
+        fn(wid, path, pathStillOpen)
+      } catch (e) {
+        console.error('[workspace] cleanup after close failed', e)
+      }
+    }
     // Dispose models for files that were open only in the just-closed workspace
     // (a sibling same-folder workspace still open keeps its shared model alive).
     const remaining = new Set(
@@ -365,9 +407,11 @@ export const useSession = create<SessionState>((set) => ({
     }),
 
   patch: (path, p) =>
-    set((st) => ({
-      sessions: { ...st.sessions, [path]: { ...(st.sessions[path] ?? emptySession()), ...p } }
-    })),
+    set((st) =>
+      isGone(st, path)
+        ? {}
+        : { sessions: { ...st.sessions, [path]: { ...(st.sessions[path] ?? emptySession()), ...p } } }
+    ),
 
   openFile: (path) =>
     set((st) => openTabIn(st, st.activeWorkspace, path)),
