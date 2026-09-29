@@ -482,11 +482,11 @@
     background-position: 11px 0;
   }
 }
-/* The whole rail moves while ANY child is working, rather than only the stretch
-   beside that child: the rail is shared, and dashing half of it made the shared
-   line look severed. Which child is actually being fed is said by its own joint
-   below, which is where that belongs. */
-.agp-tree-kids.flow > .agp-tree-rail {
+/* Only the path the work travels moves: from the parent's stub down the rail to
+   the joint of the child being asked. Moving the whole rail read as the lead
+   feeding every member. The path is its own element laid over the solid rail —
+   one element, one dash phase, so it cannot look severed where it ends. */
+.agp-tree-kids > .agp-tree-rail-flow {
   background-image: repeating-linear-gradient(
     180deg,
     var(--accent) 0 5px,

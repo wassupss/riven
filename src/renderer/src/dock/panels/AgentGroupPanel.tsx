@@ -25,12 +25,12 @@ import {
   type AgentGroup
 } from '../../state/agentGroups'
 import { addChat,
-  reopenChat, getActiveApi, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
+  reopenChat, getActiveApi, getApiFor, setChatTitle, setChatAvatar, type SplitDir } from '../registry'
 import { pathOf } from '../../state/session'
 import { usePipelineRuns, type RunStage } from '../../state/pipelineRuns'
 import { useGroupLog, activeEdges } from '../../state/groupLog'
 import { askAnyAgent, rosterEntry } from '../../state/askAgent'
-import { rosterFor } from '../../state/roster'
+import { rosterFor, useRoster } from '../../state/roster'
 import { useGoals, goalsFor, type Goal } from '../../state/goals'
 import { modelForCli, type Cli } from '../../lib/models'
 import ModelOptions from '../../components/ModelOptions'
@@ -290,7 +290,12 @@ function OrgBranch({ node, closedLabel, onPick }: {
   // line, and the dash pattern restarted at every joint. The line read as broken
   // in two different ways. One element cannot break.
   const [railHeight, setRailHeight] = useState(0)
+  // How far down the rail work is travelling: to the joint of the LOWEST child
+  // being asked something. Only that stretch moves — the whole rail moving made
+  // one delegation look like the lead was feeding every member at once.
+  const [flowHeight, setFlowHeight] = useState(0)
   const kidCount = node.children.length
+  const lastFlowing = node.children.reduce((at, c, i) => (c.flowIn ? i : at), -1)
   useLayoutEffect(() => {
     const box = kidsRef.current
     if (!box) return
@@ -302,6 +307,7 @@ function OrgBranch({ node, closedLabel, onPick }: {
       // and last joints is simply the last child's offset.
       const kids = kidsOf()
       setRailHeight(kids.length > 1 ? kids[kids.length - 1].offsetTop : 0)
+      setFlowHeight(lastFlowing > 0 ? (kids[lastFlowing]?.offsetTop ?? 0) : 0)
     }
     measure()
     // Cards change height when the panel narrows and their text wraps.
@@ -309,8 +315,8 @@ function OrgBranch({ node, closedLabel, onPick }: {
     ro.observe(box)
     for (const kid of kidsOf()) ro.observe(kid)
     return () => ro.disconnect()
-  }, [kidCount])
-  const flowing = node.children.some((c) => c.flowIn)
+  }, [kidCount, lastFlowing])
+  const flowing = lastFlowing >= 0
   return (
     <div className={`agp-tree-row${flowing ? ' flow' : ''}`}>
       <div className="agp-tree-self">
@@ -319,6 +325,7 @@ function OrgBranch({ node, closedLabel, onPick }: {
       {kidCount > 0 && (
         <div className={`agp-tree-kids${flowing ? ' flow' : ''}`} ref={kidsRef}>
           {railHeight > 0 && <span className="agp-tree-rail" style={{ height: railHeight }} />}
+          {flowHeight > 0 && <span className="agp-tree-rail agp-tree-rail-flow" style={{ height: flowHeight }} />}
           {node.children.map((c) => (
             <div className={`agp-tree-kid${c.flowIn ? ' flow' : ''}`} key={c.idx}>
               <OrgBranch node={c} closedLabel={closedLabel} onPick={onPick} />
@@ -385,6 +392,12 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // The account this workspace's agents run under decides which models exist.
   const cfgDir = claudeConfigDirFor(workspace)
   useAgents((s) => s.version) // re-render when the live roster changes
+  // …and when panes open or close, which is what "closed" on a card is about.
+  useRoster((s) => s.rev)
+  // This team's own dock. The one on screen is a different workspace's whenever
+  // the user is looking elsewhere, and asking it for a member's pane said
+  // "closed" for every member that was open all along.
+  const dock = (): ReturnType<typeof getActiveApi> => getApiFor(workspace) ?? getActiveApi()
   const groups = useAgentGroups((s) => s.byWorkspace[workspace]) ?? []
   const {
     createGroup,
@@ -451,7 +464,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // (so the org chart wrongly shows "closed" and loses control). If a member's
   // pane is gone but an OPEN chat pane carries its exact title, re-point to it.
   useEffect(() => {
-    const api = getActiveApi()
+    const api = dock()
     if (!api) return
     for (const g of groups) {
       const claimed = new Set(g.members.map((x) => x.chatKey))
@@ -522,7 +535,10 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // reading only the controllers showed every terminal member as closed.
   const roster = agentsForWorkspace(workspace)
   const paneRoster = rosterFor(workspace)
-  const isOpen = (chatKey: string): boolean => !!getActiveApi()?.getPanel(chatKey)
+  // A live agent in the pane is proof enough on its own: a pane is only
+  // registered while it is mounted.
+  const isOpen = (chatKey: string): boolean =>
+    !!dock()?.getPanel(chatKey) || roster.some((a) => a.id === chatKey)
   const isBusy = (chatKey: string): boolean =>
     roster.find((a) => a.id === chatKey)?.busy ?? paneRoster.find((e) => e.id === chatKey)?.busy ?? false
   const statusOf = (chatKey: string): string | undefined =>
@@ -751,12 +767,12 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   // The chatKey of an open member of this group — used to place a reopened/added
   // member right beside the existing team.
   const openMemberKey = (g: AgentGroup): string | undefined =>
-    g.members.find((mm) => getActiveApi()?.getPanel(mm.chatKey))?.chatKey
+    g.members.find((mm) => dock()?.getPanel(mm.chatKey))?.chatKey
   const onPickNode = (g: AgentGroup, node: TreeNode): void => {
     const m = g.members[node.idx]
     if (!m) return
     if (node.open) {
-      getActiveApi()?.getPanel(m.chatKey)?.api.setActive()
+      dock()?.getPanel(m.chatKey)?.api.setActive()
       return
     }
     // Closed → reopen: spawn a fresh pane primed the same way, re-point the member.
@@ -778,7 +794,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
         dir = 'below'
         ref = g.members[i - 1]?.chatKey
       }
-      if (!ref || !getActiveApi()?.getPanel(ref)) ref = openMemberKey(g)
+      if (!ref || !dock()?.getPanel(ref)) ref = openMemberKey(g)
     }
     // Its own conversation first: what a member did is the team's work, so the
     // pane comes back with its transcript and resumes the same session. Only a
@@ -855,7 +871,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       ref = g.members[i - 1]?.chatKey
     }
     // If that neighbour pane was closed, fall back to any open member.
-    if (!ref || !getActiveApi()?.getPanel(ref)) ref = openMemberKey(g)
+    if (!ref || !dock()?.getPanel(ref)) ref = openMemberKey(g)
     const chatKey = addChat(
       undefined, // role goes in the system prompt, not a chat turn
       dir,
@@ -876,7 +892,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
       })}`
     )
     if (!ok) return
-    const api = getActiveApi()
+    const api = dock()
     for (const m of g.members) {
       const p = api?.getPanel(m.chatKey)
       if (p && api) api.removePanel(p)
@@ -902,7 +918,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
   }
   const doRemoveMember = (g: AgentGroup, m: GroupMember): void => {
     if (g.members.length <= MIN) return
-    const api = getActiveApi()
+    const api = dock()
     const p = api?.getPanel(m.chatKey)
     if (p && api) api.removePanel(p)
     removeMember(workspace, g.group, m.chatKey)
@@ -1462,7 +1478,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                 <li
                   key={i}
                   className={`agp-run-stage ${s.status}${shownRun.current === i ? ' current' : ''}`}
-                  onClick={() => s.chatKey && getActiveApi()?.getPanel(s.chatKey)?.api.setActive()}
+                  onClick={() => s.chatKey && dock()?.getPanel(s.chatKey)?.api.setActive()}
                 >
                   <span className="agp-run-stage-ico">
                     {s.status === 'running' ? (
@@ -1536,7 +1552,7 @@ export default function AgentGroupPanel({ workspace }: { workspace: string }): J
                   <li
                     key={i}
                     className={`agp-run-stage ${status}${cur ? ' current' : ''}`}
-                    onClick={() => chatKey && getActiveApi()?.getPanel(chatKey)?.api.setActive()}
+                    onClick={() => chatKey && dock()?.getPanel(chatKey)?.api.setActive()}
                   >
                     <span className="agp-run-stage-ico">
                       {status === 'running' ? (

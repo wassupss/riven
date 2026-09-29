@@ -140,3 +140,89 @@ test('a closed member comes back with its own conversation, not a blank one', as
   expect(disk.sessions[r.workspace].groups[0].members[1].chatKey).toBe('chat-a')
   await r.app.close()
 })
+
+test('members whose panes are open read as open, including after a restart', async () => {
+  // The chart used to ask whichever dock was "active" whether a member's pane
+  // existed, and only looked again when an agent's status changed. Restored
+  // with the window, the panes were there and every card still said closed.
+  const said = (role: 'user' | 'assistant', text: string): Record<string, unknown> => ({
+    role,
+    text,
+    tools: [],
+    items: [{ type: 'text', text }],
+    done: true,
+    interrupted: false,
+    startedAt: 1
+  })
+  const pane = (title: string): Record<string, unknown> => ({
+    session: '11111111-2222-3333-4444-55555555555' + title.length,
+    title,
+    log: [said('user', 'hi'), said('assistant', 'hello')]
+  })
+  const first = await launchRiven({
+    files: { 'README.md': '# s\n' },
+    groups: [GROUP],
+    panes: {
+      'chat-lead': pane('지휘 · 리서치팀'),
+      'chat-a': pane('조사원 · 리서치팀'),
+      'chat-b': pane('검증자 · 리서치팀')
+    }
+  })
+  await openGroup(first.page, '리서치팀')
+  for (const name of ['지휘', '조사원', '검증자']) {
+    await first.page.locator('.agp-node', { has: first.page.locator('.agp-node-name', { hasText: name }) }).click()
+    await expect(first.page.locator('.dv-tab').filter({ hasText: name })).toHaveCount(1, { timeout: 15_000 })
+  }
+  await openGroup(first.page, '리서치팀')
+  await expect(first.page.locator('.agp-node-state.closed')).toHaveCount(0)
+  await first.page.waitForTimeout(1500) // let the layout save
+  await first.app.close()
+
+  const second = await launchRiven({ userDataDir: first.userDataDir, workspace: first.workspace })
+  await expect(second.page.locator('.dv-tab').filter({ hasText: '검증자' })).toHaveCount(1, { timeout: 15_000 })
+  await openGroup(second.page, '리서치팀')
+  await expect(second.page.locator('.agp-node')).toHaveCount(3)
+  await expect(second.page.locator('.agp-node-state.closed')).toHaveCount(0)
+  await second.app.close()
+})
+
+test('the chart still knows its members are open after another workspace was on screen', async () => {
+  const said = (role: 'user' | 'assistant', text: string): Record<string, unknown> => ({
+    role,
+    text,
+    tools: [],
+    items: [{ type: 'text', text }],
+    done: true,
+    interrupted: false,
+    startedAt: 1
+  })
+  const r = await launchRiven({
+    files: { 'README.md': '# s\n' },
+    groups: [GROUP],
+    extraWorkspaces: 1,
+    panes: {
+      'chat-a': {
+        session: '11111111-2222-3333-4444-555555555555',
+        title: '조사원 · 리서치팀',
+        log: [said('user', 'hi'), said('assistant', 'hello')]
+      }
+    }
+  })
+  await openGroup(r.page, '리서치팀')
+  const member = r.page.locator('.agp-node', { has: r.page.locator('.agp-node-name', { hasText: '조사원' }) })
+  await member.click()
+  await expect(r.page.locator('.dv-tab').filter({ hasText: '조사원' })).toHaveCount(1, { timeout: 15_000 })
+  await openGroup(r.page, '리서치팀')
+  await expect(member.locator('.agp-node-state')).not.toHaveClass(/closed/)
+
+  // Over in the other workspace, an agent comes and goes — the kind of change
+  // that makes every team chart in the window draw itself again.
+  await r.page.locator('.ws-card').nth(1).click()
+  await r.page.keyboard.press('Meta+Shift+a')
+  await expect(r.page.locator('.chat-composer')).toHaveCount(2, { timeout: 15_000 })
+  await r.page.waitForTimeout(500)
+
+  await r.page.locator('.ws-card').nth(0).click()
+  await expect(member.locator('.agp-node-state')).not.toHaveClass(/closed/)
+  await r.app.close()
+})
