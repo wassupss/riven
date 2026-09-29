@@ -61,6 +61,8 @@ interface Session {
   agentSessionKind: AgentKind | null
   poll: ReturnType<typeof setInterval> | null
   polling: boolean
+  /** When the pgrep/ps probe last ran (see the poll's backoff). */
+  lastProbe: number
   activeTimer: ReturnType<typeof setTimeout> | null
   busyStart: number
   lastInput: number
@@ -74,6 +76,7 @@ interface Session {
 const sessions = new Map<string, Session>()
 const POLL_MS = 1500
 const IDLE_POLL_MS = 5000 // skip the pgrep/ps child-process probe after this much silence
+const HOOKED_POLL_MS = 5000 // probe a hook-reporting agent this often, not every tick
 const ACTIVE_MS = 800 // output must flow within this window to count as "working"
 const INPUT_ECHO_MS = 350 // output within this long after a keystroke = echo, ignore
 const NOTIFY_MIN_BUSY_MS = 1200
@@ -547,6 +550,7 @@ export function registerPtyHandlers(): void {
         agentName: null,
         poll: null,
         polling: false,
+        lastProbe: 0,
         activeTimer: null,
         busyStart: 0,
         lastInput: 0,
@@ -589,6 +593,12 @@ export function registerPtyHandlers(): void {
         // pgrep/ps probe entirely — an agent can only appear after output flows
         // (its startup banner / the echoed command), which refreshes lastData.
         if (!s.agentPresent && Date.now() - s.lastData > IDLE_POLL_MS) return
+        // An agent that reports itself through hooks already tells us when it
+        // works, waits and stops; the probe is then only there to notice it
+        // exiting, which can wait a few seconds. Two process spawns every 1.5s
+        // per terminal were the rest of this loop's cost.
+        if (s.agentPresent && s.activity.hookDriven && Date.now() - s.lastProbe < HOOKED_POLL_MS) return
+        s.lastProbe = Date.now()
         s.polling = true
         const was = s.agentPresent
         const wasName = s.agentName

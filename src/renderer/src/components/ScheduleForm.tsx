@@ -4,7 +4,8 @@ import { useT } from '../i18n'
 import { listAgents } from '../state/agents'
 import { useJobs, type Job, type JobTarget } from '../state/jobs'
 import { nextRun, triggerLabel, untilLabel, type Trigger } from '../lib/schedule'
-import { CLAUDE_MODELS, CODEX_MODELS } from '../lib/models'
+import ModelOptions from './ModelOptions'
+import { claudeConfigDirFor } from '../state/settings'
 
 // Describing a piece of scheduled work.
 //
@@ -219,11 +220,7 @@ export default function ScheduleForm({
               <option value="codex">Codex</option>
             </select>
             <select className="sf-sel" value={model} onChange={(e) => setModel(e.target.value)}>
-              {(cli === 'codex' ? CODEX_MODELS : CLAUDE_MODELS).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              <ModelOptions cli={cli} configDir={claudeConfigDirFor(workspace)} current={model} />
             </select>
           </>
         )}

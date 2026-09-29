@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { WebContents } from 'electron'
-import { resolveBin } from './shellPath'
+import { resolveBin, binIdentity } from './shellPath'
 import { mcpPaneUrl, mcpSystemPrompt, mcpAuthToken, mcpRequestTimeoutMs, implementedToolNames, mcpReady } from './mcpServer'
 import { reportAgentEdit } from './agentHooks'
 import { isUsableImage, type ChatImageInput } from './chatContent'
@@ -184,6 +184,10 @@ export class CodexChat {
   // starts, so the changes panel gets a real before/after.
   private readonly baselines = new Map<string, string | null>()
   turnBusy = false
+  /** Called whenever a turn ends — how a restart deferred for a busy pane runs. */
+  onTurnEnd: (() => void) | null = null
+  /** Which installed build this process was started from (see agentChat). */
+  bin: string | null = null
   lastActive = Date.now()
 
   constructor(
@@ -205,6 +209,7 @@ export class CodexChat {
     await mcpReady()
     const cmd = await resolveBin('codex')
     if (!cmd) return { ok: false, error: 'codex CLI not found on PATH' }
+    this.bin = await binIdentity(cmd)
     const disabled = new Set(this.opts.mcpDisabled ?? [])
     const enabled = implementedToolNames().filter((n) => !disabled.has(n))
     const url = enabled.length ? mcpPaneUrl(enabled, this.key) : null
@@ -250,7 +255,10 @@ export class CodexChat {
 
   private developerInstructions(withTools: boolean): string | null {
     const parts: string[] = []
-    if (withTools) parts.push(mcpSystemPrompt())
+    if (withTools) {
+      const disabled = new Set(this.opts.mcpDisabled ?? [])
+      parts.push(mcpSystemPrompt(implementedToolNames().filter((n) => !disabled.has(n))))
+    }
     const g = (this.opts.globalPrompt ?? '').trim()
     if (g) parts.push('# 사용자 지정 지침\n' + g)
     return parts.length ? parts.join('\n\n') : null
@@ -437,6 +445,7 @@ export class CodexChat {
       case 'turn/completed': {
         const turn = (params.turn ?? {}) as { status?: string; error?: { message?: string } | null }
         this.turnBusy = false
+        this.onTurnEnd?.()
         this.turnId = null
         // Ends the oldest message still waiting, which may not be the one the
         // pane is showing now.
@@ -514,12 +523,14 @@ export class CodexChat {
     const ok = await (this.ready ?? Promise.resolve(false))
     if (!ok || !this.threadId) {
       this.turnBusy = false
+      this.onTurnEnd?.()
       this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: null, error: 'codex thread not open', turn: this.turns.pop() ?? null })
       return
     }
     const input = codexUserInput(text, images)
     if (!input.length) {
       this.turnBusy = false
+      this.onTurnEnd?.()
       if (turn) this.turns = this.turns.filter((t) => t !== turn)
       return
     }
@@ -538,6 +549,7 @@ export class CodexChat {
       }
     } catch (e) {
       this.turnBusy = false
+      this.onTurnEnd?.()
       this.emit({ key: this.key, kind: 'turnDone', costUSD: null, sessionId: this.threadId, error: (e as Error).message, turn: this.turns.pop() ?? null })
     }
   }

@@ -83,6 +83,84 @@ async function gitLog(folder: string, limit = 200): Promise<GitCommit[]> {
   }
 }
 
+/** Bumped by every change riven makes to a repo — see git:status's sharing. */
+let mutations = 0
+
+async function gitStatus(folder: string) {
+    try {
+      // --is-inside-work-tree succeeds on an unborn branch, so a fresh `git init`
+      // repo still reports isRepo:true (and its untracked files show up below).
+      await pexec('git', ['-C', folder, 'rev-parse', '--is-inside-work-tree'])
+      const br = await currentBranch(folder)
+      // -z: NUL-delimited records, and git emits raw (unquoted, un-escaped) paths
+      // — the only reliable way to read non-ASCII / spaced filenames. (Plain
+      // porcelain octal-escapes them, e.g. Korean → "\355\225\234...", which never
+      // matches the renderer's real UTF-8 path.)
+      const { stdout } = await pexec('git', ['-C', folder, 'status', '--porcelain=v1', '-z'], {
+        maxBuffer: 10 * 1024 * 1024
+      })
+      const records = stdout.split('\0')
+      const files: Array<{
+        path: string
+        x: string
+        y: string
+        staged: boolean
+        unstaged: boolean
+        untracked: boolean
+      }> = []
+      for (let i = 0; i < records.length; i++) {
+        const entry = records[i]
+        if (entry.length < 4) continue // need at least "XY p"
+        const x = entry[0]
+        const y = entry[1]
+        const p = entry.slice(3) // skip "XY " → destination path (raw, unquoted)
+        // Rename/copy entries carry a second field (the source path) in the next
+        // NUL token; consume it so it isn't parsed as its own entry.
+        if (x === 'R' || x === 'C' || y === 'R' || y === 'C') i++
+        const untracked = x === '?' && y === '?'
+        files.push({
+          path: p,
+          x,
+          y,
+          staged: !untracked && x !== ' ',
+          unstaged: untracked || y !== ' ',
+          untracked
+        })
+      }
+      let ahead = 0
+      let behind = 0
+      let hasUpstream = false
+      try {
+        const { stdout: lr } = await pexec('git', [
+          '-C',
+          folder,
+          'rev-list',
+          '--left-right',
+          '--count',
+          '@{upstream}...HEAD'
+        ])
+        const [b, a] = lr.trim().split(/\s+/).map(Number)
+        behind = b || 0
+        ahead = a || 0
+        hasUpstream = true
+      } catch {
+        /* no upstream configured */
+      }
+      // Who the checkout belongs to. Read from config rather than the network:
+      // the card wants an identity, not an API call.
+      let remote: string | null = null
+      try {
+        const { stdout: url } = await pexec('git', ['-C', folder, 'config', '--get', 'remote.origin.url'])
+        remote = url.trim() || null
+      } catch {
+        /* no origin — a local-only repo is still a repo */
+      }
+      return { branch: br, files, isRepo: true, ahead, behind, hasUpstream, remote }
+    } catch {
+      return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false, remote: null }
+    }
+}
+
 export function registerGitHandlers(): void {
   ipcMain.handle('git:info', (_e, folder: string) => gitInfo(folder))
 
@@ -183,87 +261,37 @@ export function registerGitHandlers(): void {
     }
   )
 
-  ipcMain.handle('git:status', async (_e, folder: string) => {
-    try {
-      // --is-inside-work-tree succeeds on an unborn branch, so a fresh `git init`
-      // repo still reports isRepo:true (and its untracked files show up below).
-      await pexec('git', ['-C', folder, 'rev-parse', '--is-inside-work-tree'])
-      const br = await currentBranch(folder)
-      // -z: NUL-delimited records, and git emits raw (unquoted, un-escaped) paths
-      // — the only reliable way to read non-ASCII / spaced filenames. (Plain
-      // porcelain octal-escapes them, e.g. Korean → "\355\225\234...", which never
-      // matches the renderer's real UTF-8 path.)
-      const { stdout } = await pexec('git', ['-C', folder, 'status', '--porcelain=v1', '-z'], {
-        maxBuffer: 10 * 1024 * 1024
-      })
-      const records = stdout.split('\0')
-      const files: Array<{
-        path: string
-        x: string
-        y: string
-        staged: boolean
-        unstaged: boolean
-        untracked: boolean
-      }> = []
-      for (let i = 0; i < records.length; i++) {
-        const entry = records[i]
-        if (entry.length < 4) continue // need at least "XY p"
-        const x = entry[0]
-        const y = entry[1]
-        const p = entry.slice(3) // skip "XY " → destination path (raw, unquoted)
-        // Rename/copy entries carry a second field (the source path) in the next
-        // NUL token; consume it so it isn't parsed as its own entry.
-        if (x === 'R' || x === 'C' || y === 'R' || y === 'C') i++
-        const untracked = x === '?' && y === '?'
-        files.push({
-          path: p,
-          x,
-          y,
-          staged: !untracked && x !== ' ',
-          unstaged: untracked || y !== ' ',
-          untracked
-        })
-      }
-      let ahead = 0
-      let behind = 0
-      let hasUpstream = false
-      try {
-        const { stdout: lr } = await pexec('git', [
-          '-C',
-          folder,
-          'rev-list',
-          '--left-right',
-          '--count',
-          '@{upstream}...HEAD'
-        ])
-        const [b, a] = lr.trim().split(/\s+/).map(Number)
-        behind = b || 0
-        ahead = a || 0
-        hasUpstream = true
-      } catch {
-        /* no upstream configured */
-      }
-      // Who the checkout belongs to. Read from config rather than the network:
-      // the card wants an identity, not an API call.
-      let remote: string | null = null
-      try {
-        const { stdout: url } = await pexec('git', ['-C', folder, 'config', '--get', 'remote.origin.url'])
-        remote = url.trim() || null
-      } catch {
-        /* no origin — a local-only repo is still a repo */
-      }
-      return { branch: br, files, isRepo: true, ahead, behind, hasUpstream, remote }
-    } catch {
-      return { branch: null, files: [], isRepo: false, ahead: 0, behind: 0, hasUpstream: false, remote: null }
-    }
+  // Several parts of the window ask at once — the git panel, the explorer's
+  // badges, the workspace card — and after a file change they all ask within a
+  // few hundred ms of each other. Each ask is ~5 git processes. One in flight
+  // (or just finished) for a folder answers all of them.
+  // Any change riven makes to the repo (stage, commit, checkout, …) starts a
+  // new generation: a status taken before it must not answer an ask after it,
+  // or the panel would show a file as unstaged right after staging it.
+  const statusShare = new Map<string, { at: number; gen: number; p: Promise<unknown> }>()
+  const STATUS_SHARE_MS = 300
+  ipcMain.handle('git:status', (_e, folder: string) => {
+    const hit = statusShare.get(folder)
+    if (hit && hit.gen === mutations && Date.now() - hit.at < STATUS_SHARE_MS) return hit.p
+    const p = gitStatus(folder)
+    statusShare.set(folder, { at: Date.now(), gen: mutations, p })
+    // Measured from when it finished, so a slow status still serves its peers.
+    void p.finally(() => {
+      const cur = statusShare.get(folder)
+      if (cur?.p === p) cur.at = Date.now()
+    })
+    return p
   })
 
   const run = async (folder: string, args: string[]): Promise<{ ok: boolean; error?: string }> => {
+    mutations++
     try {
       await pexec('git', ['-C', folder, ...args], { maxBuffer: 10 * 1024 * 1024 })
       return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    } finally {
+      mutations++ // and again once done: a status begun mid-change is stale too
     }
   }
 
@@ -273,12 +301,14 @@ export function registerGitHandlers(): void {
   // Discard local changes to a file: revert tracked files to HEAD; delete
   // untracked files.
   ipcMain.handle('git:discard', async (_e, folder: string, relPath: string, untracked: boolean) => {
+    mutations++
     if (untracked) {
       try {
         await fs.promises.rm(path.join(folder, relPath), { force: true })
       } catch {
         /* ignore */
       }
+      mutations++
       return { ok: true }
     }
     await run(folder, ['reset', '-q', 'HEAD', '--', relPath]) // unstage if staged
@@ -289,11 +319,14 @@ export function registerGitHandlers(): void {
   // (e.g. a lock file, a vanished path) doesn't become an unhandled rejection in
   // the renderer.
   const gitOk = async (args: string[]): Promise<{ ok: boolean; error?: string }> => {
+    mutations++
     try {
       await pexec('git', args)
       return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    } finally {
+      mutations++
     }
   }
 
@@ -308,11 +341,14 @@ export function registerGitHandlers(): void {
   ipcMain.handle('git:stageAll', (_e, folder: string) => gitOk(['-C', folder, 'add', '-A']))
 
   ipcMain.handle('git:commit', async (_e, folder: string, message: string) => {
+    mutations++
     try {
       await pexec('git', ['-C', folder, 'commit', '-m', message])
       return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as { stderr?: string; message?: string }).stderr || (e as Error).message }
+    } finally {
+      mutations++
     }
   })
 

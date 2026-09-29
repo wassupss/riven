@@ -17,8 +17,17 @@ import {
   getActiveApi,
   addChat,
   openEditorSplit,
-  openLauncher
+  openLauncher,
+  activateTerminalById
 } from '../dock/registry'
+
+// Run once the freshly-activated panel has actually been laid out. A panel that
+// has just been brought forward is not focusable in the same tick — and a single
+// setTimeout(0) still lands before dockview repaints under load, which showed up
+// as ⌘J occasionally leaving the caret where it was.
+function afterPaint(fn: () => void): void {
+  requestAnimationFrame(() => requestAnimationFrame(fn))
+}
 
 const RIVEN = '리븐 기본'
 const TERMINAL = '터미널'
@@ -75,7 +84,13 @@ export function registerDefaultActions(): void {
     category: RIVEN,
     context: 'riven',
     def: 'Mod+e',
-    run: () => focusEditor()
+    run: () => {
+      // Bring the editor to the front FIRST. Monaco cannot take focus while its
+      // panel is a background tab, so from a terminal sharing the editor's group
+      // ⌘E did nothing at all — the one situation it exists for.
+      togglePanel('editor')
+      afterPaint(focusEditor)
+    }
   })
   keymap.register({
     id: 'focus.terminal',
@@ -86,7 +101,10 @@ export function registerDefaultActions(): void {
     run: () => {
       const st = useSession.getState()
       const sink = contextBus.getActive(st.activeWorkspace)
-      if (sink) focusPane(sink.paneId)
+      if (!sink) return
+      // Same reason as ⌘E: front first, caret second.
+      activateTerminalById(sink.paneId)
+      afterPaint(() => focusPane(sink.paneId))
     }
   })
   keymap.register({

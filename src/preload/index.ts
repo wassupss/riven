@@ -111,6 +111,19 @@ export type ChatEvent = { turn?: string | null } & (
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
 
+export interface CliUpdateState {
+  cmd: 'claude' | 'codex'
+  status: 'running' | 'done' | 'failed'
+  from: string | null
+  to: string | null
+  output: string
+  restarted: number
+  deferred: number
+  open: number
+  answered?: 'applied' | 'later'
+  at: number
+}
+
 const api = {
   env: {
     defaults: (): Promise<{
@@ -259,6 +272,8 @@ const api = {
         cli?: 'claude' | 'codex'
         /** Built-in tools to leave out of --allowedTools (the CLI then asks). */
         toolsDenied?: string[]
+        /** 'auto' or a token count (100K–1M). */
+        autocompact?: string
       }
     ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('chat:start', key, opts),
     // Images go as content blocks in the same message — the model sees them
@@ -379,6 +394,15 @@ const api = {
     }> => ipcRenderer.invoke('perm:report'),
     ask: (kind: 'microphone' | 'camera'): Promise<boolean> => ipcRenderer.invoke('perm:ask', kind),
     open: (kind: string): Promise<void> => ipcRenderer.invoke('perm:open', kind)
+  },
+  win: {
+    // Whether the main window is minimised or hidden — which the page cannot
+    // see for itself (see main/index.ts, backgroundThrottling).
+    onVisibility: (cb: (v: { hidden: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, v: { hidden: boolean }): void => cb(v)
+      ipcRenderer.on('win:visibility', listener)
+      return () => ipcRenderer.removeListener('win:visibility', listener)
+    }
   },
   power: {
     // How many panes are mid-turn, and whether the user wants the machine kept
@@ -550,6 +574,14 @@ const api = {
       ipcRenderer.invoke('lsp:servers', rootPath),
     start: (serverKey: string, rootPath: string): Promise<unknown> =>
       ipcRenderer.invoke('lsp:start', serverKey, rootPath),
+    /** A server main stopped on its own (idle, or its workspace closed). */
+    onStopped: (cb: (serverKey: string) => void): (() => void) => {
+      const listener = (_e: unknown, key: string): void => cb(key)
+      ipcRenderer.on('lsp:stopped', listener)
+      return () => ipcRenderer.removeListener('lsp:stopped', listener)
+    },
+    /** Stop every language server rooted at this folder; resolves to how many. */
+    stopRoot: (rootPath: string): Promise<number> => ipcRenderer.invoke('lsp:stopRoot', rootPath),
     request: (serverKey: string, method: string, params: unknown): Promise<unknown> =>
       ipcRenderer.invoke('lsp:request', serverKey, method, params),
     notify: (serverKey: string, method: string, params: unknown): void =>
@@ -569,7 +601,10 @@ const api = {
     watchStart: (folder: string): Promise<void> => ipcRenderer.invoke('watch:start', folder),
     watchStop: (): void => ipcRenderer.send('watch:stop'),
     onFsChanged: (cb: (e: { type: string; path: string }) => void): (() => void) => {
-      const listener = (_e: unknown, payload: { type: string; path: string }): void => cb(payload)
+      // Main sends a batch (see bridge.ts); listeners still get one event each.
+      const listener = (_e: unknown, batch: Array<{ type: string; path: string }>): void => {
+        for (const ev of batch) cb(ev)
+      }
       ipcRenderer.on('fs:changed', listener)
       return () => ipcRenderer.removeListener('fs:changed', listener)
     }
@@ -625,6 +660,20 @@ const api = {
     }
   },
   cli: {
+    /** Run `<cmd> update` in the background; resolves when it has finished. */
+    update: (cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> => ipcRenderer.invoke('cli:update', cmd),
+    /** Swap every open pane on `cmd` to the new build, in place (the user said yes). */
+    applyUpdate: (cmd: 'claude' | 'codex'): Promise<CliUpdateState | null> =>
+      ipcRenderer.invoke('cli:applyUpdate', cmd),
+    /** The user said "later" — don't ask again for this update. */
+    deferUpdate: (cmd: 'claude' | 'codex'): Promise<void> => ipcRenderer.invoke('cli:deferUpdate', cmd),
+    /** Updates running or finished this session, one per CLI. */
+    updateStatus: (): Promise<CliUpdateState[]> => ipcRenderer.invoke('cli:updateStatus'),
+    onUpdate: (cb: (s: CliUpdateState) => void): (() => void) => {
+      const listener = (_e: unknown, st: CliUpdateState): void => cb(st)
+      ipcRenderer.on('cli:update-changed', listener)
+      return () => ipcRenderer.removeListener('cli:update-changed', listener)
+    },
     list: (): Promise<Array<{ name: string; cmd: string; group: string; path: string }>> =>
       ipcRenderer.invoke('cli:list')
   },
@@ -1004,9 +1053,20 @@ const api = {
       return () => ipcRenderer.removeListener('pet:hidden', l)
     }
   },
+  // The Claude models this account can use, from the CLI itself (see
+  // main/modelCatalog). null when the CLI could not be asked.
+  models: {
+    claude: (
+      configDir?: string
+    ): Promise<Array<{ value: string; resolvedModel?: string; displayName: string; description?: string }> | null> =>
+      ipcRenderer.invoke('models:claude', configDir)
+  },
   config: {
     load: (name: string): Promise<unknown> => ipcRenderer.invoke('config:load', name),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('config:save', name, data),
+    // Blocking write, for the last moment before the renderer goes away.
+    saveSync: (name: string, data: unknown): boolean =>
+      ipcRenderer.sendSync('config:save-sync', name, data) === true,
     reveal: (name: string): Promise<void> => ipcRenderer.invoke('config:reveal', name)
   },
   auth: {

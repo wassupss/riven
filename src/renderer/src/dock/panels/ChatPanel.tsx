@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode, useSyncExternalStore } from 'react'
 import {
   ArrowUp,
   ChevronDown,
@@ -51,7 +51,9 @@ import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
 import { settleStaleTurns, isStaleEvent, endsOpenTurn } from '../../lib/chatTurns'
-import { modelsFor } from '../../lib/models'
+import { isPinnedClaude, modelLabel, modelsFor, pinnedModels } from '../../lib/models'
+import { useClaudeCatalog } from '../../state/modelCatalog'
+import ModelOptions from '../../components/ModelOptions'
 import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
 
@@ -190,6 +192,44 @@ const fmtRelative = (ts: number, now: number, t: TFn): string => {
   if (s < 86400) return t('chat.time.hour', { n: Math.floor(s / 3600) })
   return t('chat.time.day', { n: Math.floor(s / 86400) })
 }
+
+// One minute-clock for every relative time in every pane — "2m ago" needs no
+// finer grain. Relative times read it through <RelTime>, a leaf, so a tick
+// re-renders a few words instead of whole transcripts: the turn list is
+// memoised, and it used to take `now` as a prop, so every tick re-rendered
+// (and re-parsed the markdown of) every turn of every open chat.
+const minuteClock = (() => {
+  let now = Date.now()
+  const subs = new Set<() => void>()
+  let timer: ReturnType<typeof setInterval> | null = null
+  return {
+    get: (): number => now,
+    subscribe: (fn: () => void): (() => void) => {
+      subs.add(fn)
+      if (!timer)
+        timer = setInterval(() => {
+          now = Date.now()
+          for (const f of subs) f()
+        }, 60_000)
+      return () => {
+        subs.delete(fn)
+        if (!subs.size && timer) {
+          clearInterval(timer)
+          timer = null
+        }
+      }
+    }
+  }
+})()
+
+function useMinuteClock(): number {
+  return useSyncExternalStore(minuteClock.subscribe, minuteClock.get)
+}
+
+function RelTime({ ts }: { ts: number }): JSX.Element {
+  const t = useT()
+  return <>{fmtRelative(ts, useMinuteClock(), t)}</>
+}
 const fmtDur = (ms: number): string => {
   const s = Math.round(ms / 1000)
   if (s < 60) return `${s}초`
@@ -223,14 +263,6 @@ const modelAlias = (m: string | null): string => {
   if (/fable/i.test(m)) return 'fable'
   return 'default'
 }
-// "claude-opus-5[1m]" → "opus 5" (friendly label for the active model).
-const fmtModel = (raw: string): string =>
-  raw
-    .replace(/^claude-/, '')
-    .replace(/^gpt-/, 'GPT ')
-    .replace(/\[.*\]$/, '')
-    .replace(/-/g, ' ')
-    .trim()
 
 const TOOL_ICON: Record<string, typeof FileText> = {
   Read: FileText,
@@ -730,12 +762,10 @@ function RunningFoot({
 // earlier turns (unchanged object identity) don't re-render or re-parse markdown.
 const ChatMessage = memo(function ChatMessage({
   msg,
-  now,
   lastEvent,
   note
 }: {
   msg: Msg
-  now: number
   note?: string | null
   /** When this pane last heard anything at all (see RunningFoot's quiet note). */
   lastEvent?: { current: number }
@@ -837,7 +867,7 @@ const ChatMessage = memo(function ChatMessage({
             {(msg.interrupted ? t('chat.stopped') : t('chat.done')) + ' · ' + fmtDur(msg.durationMs)}
             {(msg.tokensIn > 0 || msg.tokensOut > 0) &&
               ` · ↑${fmtK(msg.tokensIn)} ↓${fmtK(msg.tokensOut)}`}
-            {msg.completedAt ? ' · ' + fmtRelative(msg.completedAt, now, t) : ''}
+            {msg.completedAt ? <> · <RelTime ts={msg.completedAt} /></> : null}
             {msg.text && <CopyBtn code={msg.text} title={t('chat.copyMessage')} />}
           </span>
         )}
@@ -1221,13 +1251,11 @@ function McpCard({
 // Keyboard-navigable (↑/↓/Enter), Esc dismisses.
 function ResumeCard({
   cwd,
-  now,
   configDir,
   onResume,
   onDismiss
 }: {
   cwd: string
-  now: number
   // The pane's CLAUDE_CONFIG_DIR — past sessions live under the profile the
   // pane runs as, not under ~/.claude.
   configDir?: string
@@ -1318,7 +1346,7 @@ function ResumeCard({
                 >
                   <span className="picker-title">{s.title}</span>
                   <span className="picker-meta">
-                    {fmtRelative(s.mtime, now, t)} · {s.messages}
+                    <RelTime ts={s.mtime} /> · {s.messages}
                   </span>
                 </button>
               )}
@@ -1365,11 +1393,13 @@ function ResumeCard({
 // Inline /model card: pick the model with the keyboard (↑/↓/Enter), Esc cancels.
 function ModelCard({
   models,
+  label,
   current,
   onPick,
   onDismiss
 }: {
   models: string[]
+  label: (m: string) => string
   current: string
   onPick: (m: string) => void
   onDismiss: () => void
@@ -1399,7 +1429,7 @@ function ModelCard({
           onMouseMove={() => index !== i && setIndex(i)}
           onClick={() => onPick(m)}
         >
-          <span className="picker-title">{m}</span>
+          <span className="picker-title">{label(m)}</span>
           {m === current && <Check size={13} className="model-check" />}
         </button>
       ))}
@@ -1645,10 +1675,10 @@ export default function ChatPanel({
   // This pane's agent status drives the completion flash on the panel border.
   // (setAgentStatus bumps `version`, so this re-reads when the turn finishes.)
   useAgents((s) => s.version)
-  // Keep the @mention list live: a teammate opening, a CLI agent starting in a
-  // terminal, or a peer going busy all land in the roster.
-  useRoster((s) => s.rev)
-  useRoster((s) => s.live)
+  // (No subscription to the whole roster here. The @mention list is read fresh
+  // on every render — and typing "@" is itself a render — so it is always
+  // current; subscribing re-rendered this entire pane whenever ANY other pane
+  // in the window received a token.)
   const paneStatus = getAgentStatus(chatKey)
   // The roster remembers a completion across an unmount (the controller status
   // does not), so a pane that finished while its workspace was evicted still
@@ -1980,18 +2010,27 @@ export default function ChatPanel({
     const savedSession = pane0.session || undefined
     // Custom agent: prop on first mount, pane state after a reload/restore.
     const savedAgent = agent || pane0.agent || undefined
-    void window.api.chat.start(chatKey, {
-      cli,
-      cwd: pathOf(workspace),
-      resume: savedSession,
-      model: savedModel !== 'default' ? savedModel : undefined,
-      permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
-      mcpDisabled: st.mcpDisabledTools,
-      toolsDenied: st.deniedTools,
-      globalPrompt: withPersona(st.globalPrompt),
-      agent: savedAgent,
-      configDir: claudeConfigDirFor(workspace)
-    })
+    // Why the result is read instead of discarded: a start that fails — most
+    // often because the CLI isn't installed — left a pane that LOOKED ready, and
+    // the reason only surfaced on the first message, as "no agent for this pane",
+    // which names neither the CLI nor the problem. Say it when it happens.
+    void window.api.chat
+      .start(chatKey, {
+        cli,
+        cwd: pathOf(workspace),
+        resume: savedSession,
+        model: savedModel !== 'default' ? savedModel : undefined,
+        permissionMode: pane0.mode || st.defaultPermissionMode || 'acceptEdits',
+        mcpDisabled: st.mcpDisabledTools,
+        toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
+        globalPrompt: withPersona(st.globalPrompt),
+        agent: savedAgent,
+        configDir: claudeConfigDirFor(workspace)
+      })
+      .then((res) => {
+        if (res && !res.ok) setError(res.error || t('chat.startFailed'))
+      })
     const off = window.api.chat.onEvent((e) => {
       if (e.key !== chatKey) return
       // A turn that has already been closed on this side (Esc/Stop, a steer, the
@@ -2122,7 +2161,11 @@ export default function ChatPanel({
           break
         case 'init':
           setModel(e.model)
-          setPickedModel(modelAlias(e.model))
+          // A pinned version is reported back as itself — keep it, rather than
+          // collapsing "claude-opus-4-8" into the "opus" alias (which is 5.5).
+          setPickedModel((prev) =>
+            isPinnedClaude(prev) && e.model?.replace(/\[.*\]$/, '') === prev ? prev : modelAlias(e.model)
+          )
           if (e.slashCommands?.length) setSlashCommands(e.slashCommands)
           if (e.sessionId) savePane({ session: e.sessionId })
           break
@@ -2798,7 +2841,8 @@ export default function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const MODELS = modelsFor(cli)
+  const catalog = useClaudeCatalog(cli === 'codex' ? undefined : claudeConfigDirFor(workspace))
+  const MODELS = cli === 'codex' ? modelsFor(cli) : [...modelsFor(cli), ...pinnedModels(catalog).map((p) => p.value)]
   const MODES: Array<[string, string]> = [
     ['plan', t('chat.mode.plan')],
     ['acceptEdits', t('chat.mode.acceptEdits')],
@@ -2820,6 +2864,7 @@ export default function ChatPanel({
         model: m,
         mcpDisabled: st.mcpDisabledTools,
       toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
         globalPrompt: withPersona(st.globalPrompt),
         configDir: claudeConfigDirFor(workspace)
       })
@@ -3122,6 +3167,7 @@ export default function ChatPanel({
           permissionMode: mode || st.defaultPermissionMode || 'acceptEdits',
           mcpDisabled: st.mcpDisabledTools,
       toolsDenied: st.deniedTools,
+        autocompact: st.autocompact,
           globalPrompt: withPersona(st.globalPrompt),
           configDir: claudeConfigDirFor(workspace)
         }),
@@ -3215,7 +3261,6 @@ export default function ChatPanel({
             key={msg.cardId ?? windowOffset + wi}
             cwd={pathOf(workspace)}
             configDir={claudeConfigDirFor(workspace)}
-            now={now}
             onResume={(id, fork) => void handlers.current.resumeSession(id, fork)}
             onDismiss={() => handlers.current.dismissCard(msg.cardId)}
           />
@@ -3223,6 +3268,7 @@ export default function ChatPanel({
           <ModelCard
             key={msg.cardId ?? windowOffset + wi}
             models={MODELS}
+            label={(m) => (cli === 'codex' ? m : modelLabel(m, catalog))}
             current={pickedModel}
             onPick={(m) => {
               handlers.current.applyModel(m)
@@ -3234,13 +3280,12 @@ export default function ChatPanel({
           <ChatMessage
             key={windowOffset + wi}
             msg={msg}
-            now={now}
             lastEvent={lastEventRef}
             note={selfNote}
           />
         )
       ),
-    [windowed, windowOffset, now, pickedModel, workspace]
+    [windowed, windowOffset, pickedModel, workspace, catalog]
   )
 
   return (
@@ -3610,15 +3655,7 @@ export default function ChatPanel({
             value={pickedModel}
             onChange={(e) => applyModel(e.target.value)}
           >
-            {MODELS.map((m) => (
-              <option key={m} value={m}>
-                {m === 'default'
-                  ? 'default'
-                  : model && modelAlias(model) === m
-                    ? fmtModel(model)
-                    : m}
-              </option>
-            ))}
+            <ModelOptions cli={cli} configDir={claudeConfigDirFor(workspace)} current={pickedModel} />
           </select>
           <div className="chat-actions-spacer" />
           <button

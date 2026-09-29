@@ -65,6 +65,11 @@ export interface Settings {
   // Default model + permission mode new agent chats start on.
   defaultChatModel: string
   defaultPermissionMode: string
+  /**
+   * When a chat compacts its context: 'auto' (the CLI's own choice — near the
+   * model's full window, up to 1M) or a token count. See agentChat's spawn.
+   */
+  autocompact: string
   // Desktop notifications when a background agent turn finishes.
   notifications: boolean
   // Send anonymous crash reports (stored pref; parity with native).
@@ -134,6 +139,7 @@ export const DEFAULT_SETTINGS: Settings = {
   claudeProfileByWorkspace: {},
   defaultChatModel: 'default',
   defaultPermissionMode: 'acceptEdits',
+  autocompact: '200000',
   notifications: true,
   crashReporting: true,
   uiScale: 1,
@@ -243,6 +249,26 @@ useSettings.subscribe((s) => {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => window.api.config.save('settings.json', s.settings), 300)
 })
+
+// Flush the debounce before the page tears down, the same way session state does
+// — otherwise a setting changed and then quit within 300ms is simply lost, and
+// comes back on the next launch as whatever it used to be.
+// Guarded because this module is imported by unit tests that run in plain node,
+// where there is no window to listen on.
+if (typeof window !== 'undefined')
+  window.addEventListener('beforeunload', () => {
+    const s = useSettings.getState()
+    if (!s.ready) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    try {
+      window.api.config.saveSync('settings.json', s.settings)
+    } catch {
+      /* best effort on exit */
+    }
+  })
 
 export async function loadSettings(): Promise<void> {
   const saved = (await window.api.config.load('settings.json')) as Partial<Settings> | null

@@ -1,3 +1,4 @@
+import { isPageHidden } from '../lib/windowVisibility'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSession, pathOf } from '../state/session'
@@ -29,16 +30,25 @@ export default function PortsWidget(): JSX.Element | null {
       return
     }
     let cancelled = false
+    // Each poll is two `lsof` runs. Nobody reads the chips while the window is
+    // minimised, so it skips those; and it looks again the moment the window
+    // comes back or takes focus — which is when someone who just started a dev
+    // server looks for it — so the slower tick is not something they wait on.
     const poll = (): void => {
+      if (isPageHidden()) return
       window.api.ports.list(pathOf(folder)).then((p) => {
         if (!cancelled) setPorts(p)
       })
     }
     poll()
-    const id = setInterval(poll, 4000)
+    const id = setInterval(poll, 10_000)
+    document.addEventListener('visibilitychange', poll)
+    window.addEventListener('focus', poll)
     return () => {
       cancelled = true
       clearInterval(id)
+      document.removeEventListener('visibilitychange', poll)
+      window.removeEventListener('focus', poll)
     }
   }, [folder])
 

@@ -45,7 +45,12 @@ mac:
 dmg:
   title: ${productName}
 win:
-  target: nsis
+  # Explicit since Electron 44: it no longer publishes win32-ia32 binaries, so a
+  # build that quietly decides to make one has nothing to package.
+  target:
+    - target: nsis
+      arch:
+        - x64
   icon: build/icon.png
 linux:
   target: AppImage

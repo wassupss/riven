@@ -3237,7 +3237,9 @@ select {
   font-weight: 600;
   letter-spacing: 0.02em;
   pointer-events: none;
-  backdrop-filter: blur(8px);
+  /* No backdrop-filter: the pill's background is an opaque colour-mix, so the
+     blur behind it could never be seen — yet it sits on the terminal's WebGL
+     canvas and made the compositor re-blur that region on every frame. */
   box-shadow: var(--shadow-pill), var(--lift);
 }
 .term-status.running {
@@ -9271,6 +9273,16 @@ body.browser-active .pane-skel > * {
   animation-play-state: paused;
 }
 
+/* Hidden is hidden: nothing on screen, so nothing moves — every animation,
+   not a list of them. The list above kept missing new ones (a dozen were
+   found still running while minimised: attention pulses, spinners, skeletons,
+   the rail's rings). Pausing, not removing, so each resumes where it was. */
+body.win-hidden *,
+body.win-hidden *::before,
+body.win-hidden *::after {
+  animation-play-state: paused !important;
+}
+
 /* Unfocused but visible: the completion ring is the one piece of motion that
    says nothing a still frame doesn't — the ring is already there, spinning it
    adds no information — so it is the only thing that stops. Everything that
@@ -9913,4 +9925,14 @@ body.win-unfocused .chat-ring::before {
   color: var(--fg-dim);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* The "apply the CLI update to open agents?" prompt (CliUpdatePrompt). */
+.cli-update-prompt {
+  width: min(460px, 92vw);
+}
+.cli-update-q {
+  margin: 0 0 6px;
+  font-size: var(--text-sm);
+  color: var(--text);
 }

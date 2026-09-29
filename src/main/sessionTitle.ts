@@ -23,28 +23,39 @@ export interface TitleScan {
 }
 
 /** Read the title-bearing records out of a transcript's lines. */
-export function scanTitles(lines: Iterable<string>): TitleScan {
-  const out: TitleScan = { custom: '', ai: '', firstUser: '', messages: 0 }
-  for (const line of lines) {
-    if (!line) continue
-    let j: Record<string, unknown>
-    try {
-      j = JSON.parse(line)
-    } catch {
-      continue // a partially written line is not a reason to lose the rest
-    }
-    if (j.type === 'custom-title' && typeof j.customTitle === 'string' && j.customTitle.trim())
-      out.custom = j.customTitle.trim()
-    if (!out.ai && j.type === 'ai-title' && typeof j.title === 'string' && j.title.trim())
-      out.ai = j.title.trim()
-    if (j.type === 'user' || j.type === 'assistant') out.messages++
-    if (!out.firstUser && j.type === 'user') {
-      const c = (j.message as Record<string, unknown> | undefined)?.content
-      // A '<' opener is one of the CLI's own synthetic messages (command
-      // output, system reminders), which nobody would recognise as a title.
-      if (typeof c === 'string' && c && !c.startsWith('<')) out.firstUser = c.split('\n')[0].trim()
-    }
+export function emptyScan(): TitleScan {
+  return { custom: '', ai: '', firstUser: '', messages: 0 }
+}
+
+/**
+ * Fold one transcript line into a scan, in place. Line by line so a transcript
+ * can be scanned as a stream — and continued later from where it stopped,
+ * since the CLI only ever appends (see main/sessionScan).
+ */
+export function scanLine(out: TitleScan, line: string): void {
+  if (!line) return
+  let j: Record<string, unknown>
+  try {
+    j = JSON.parse(line)
+  } catch {
+    return // a partially written line is not a reason to lose the rest
   }
+  if (j.type === 'custom-title' && typeof j.customTitle === 'string' && j.customTitle.trim())
+    out.custom = j.customTitle.trim()
+  if (!out.ai && j.type === 'ai-title' && typeof j.title === 'string' && j.title.trim())
+    out.ai = j.title.trim()
+  if (j.type === 'user' || j.type === 'assistant') out.messages++
+  if (!out.firstUser && j.type === 'user') {
+    const c = (j.message as Record<string, unknown> | undefined)?.content
+    // A '<' opener is one of the CLI's own synthetic messages (command
+    // output, system reminders), which nobody would recognise as a title.
+    if (typeof c === 'string' && c && !c.startsWith('<')) out.firstUser = c.split('\n')[0].trim()
+  }
+}
+
+export function scanTitles(lines: Iterable<string>): TitleScan {
+  const out = emptyScan()
+  for (const line of lines) scanLine(out, line)
   return out
 }
 

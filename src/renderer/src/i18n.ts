@@ -627,21 +627,44 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.cliFound': { ko: '설치됨', en: 'Installed' },
   'settings.cliUpdate': { ko: '업데이트', en: 'Update' },
   'settings.cliUpdateDesc': {
-    ko: '터미널에서 CLI 업데이트를 실행합니다. 이미 열려 있는 채팅은 아래에서 다시 시작해야 새 버전이 적용됩니다.',
-    en: 'Runs the CLI update in a terminal. Chats that are already open pick up the new version only after the restart below.'
+    ko: '백그라운드에서 업데이트합니다. 끝나면 열려 있는 에이전트(에이전트 그룹 포함)에 바로 적용할지 물어봅니다.',
+    en: 'Updates in the background. When it finishes, you are asked whether to apply it to the open agents (agent groups included).'
   },
+  'cliUpdate.title': { ko: '{name} 업데이트 완료 · v{to}', en: '{name} updated · v{to}' },
+  'cliUpdate.question': {
+    ko: '열려 있는 에이전트 {n}개에 지금 바로 적용할까요?',
+    en: 'Apply it to the {n} open agent(s) now?'
+  },
+  'cliUpdate.how': {
+    ko: '패널 위치와 대화는 그대로 두고 프로세스만 새 버전으로 바꿉니다. 답변 중인 에이전트는 답이 끝난 뒤 바뀝니다. 나중에 하려면 설정 › AI › 에이전트 다시 시작.',
+    en: 'Each pane keeps its place and conversation; only its process is replaced. Agents mid-answer switch once they finish. To do it later: Settings › AI › Restart agents.'
+  },
+  'cliUpdate.apply': { ko: '지금 적용', en: 'Apply now' },
+  'cliUpdate.applying': { ko: '적용 중…', en: 'Applying…' },
+  'cliUpdate.later': { ko: '나중에', en: 'Later' },
+  'settings.cliUpdating': { ko: '업데이트 중…', en: 'Updating…' },
+  'settings.cliUpdated': { ko: 'v{from} → v{to} 업데이트 완료', en: 'Updated v{from} → v{to}' },
+  'settings.cliUpToDate': { ko: '이미 최신 버전입니다 (v{v})', en: 'Already up to date (v{v})' },
+  'settings.cliUpdateFailed': { ko: '업데이트 실패: {why}', en: 'Update failed: {why}' },
   'settings.cliRestart': { ko: '에이전트 다시 시작', en: 'Restart agents' },
   'settings.cliRestartDesc': {
     ko: '열려 있는 채팅 패널의 CLI를 새 프로세스로 교체합니다. 대화는 그대로 이어집니다 (터미널에서 직접 실행한 CLI는 제외).',
     en: "Replaces the CLI behind each open chat pane; the conversation continues. (A CLI you started in a terminal isn't touched.)"
   },
   'settings.cliRestarted': { ko: '채팅 {n}개를 새 프로세스로 다시 시작했어요', en: 'Restarted {n} chat(s) on a fresh process' },
-  'settings.cliRestartBusy': { ko: '답변 중인 {n}개는 건너뛰었어요', en: 'skipped {n} mid-turn' },
+  'settings.cliRestartBusy': { ko: '답변 중인 {n}개는 답이 끝나면 다시 시작해요', en: '{n} mid-turn will restart when they finish' },
   'settings.agentDefaults': { ko: '에이전트 기본값', en: 'Agent defaults' },
   'settings.termColors': { ko: '색상', en: 'Colors' },
   'settings.configFile': { ko: '설정 파일', en: 'Config file' },
   'settings.configFileDesc': { ko: 'settings.json 을 파인더에서 열기', en: 'Reveal settings.json in Finder' },
   'settings.resetAllDesc': { ko: '모든 설정을 기본값으로 되돌립니다', en: 'Restore every setting to its default' },
+  'settings.autocompact': { ko: '컨텍스트 압축 시점', en: 'Compact context at' },
+  'settings.autocompactDesc': {
+    ko: '대화가 이만큼 쌓이면 요약해 줄입니다. 요청마다 전체 컨텍스트를 다시 읽기 때문에, 낮을수록 긴 대화의 토큰이 크게 줄어듭니다. 에이전트가 다음에 시작될 때부터 적용됩니다.',
+    en: 'Summarise the conversation once it grows this large. Every request re-reads the whole context, so lower means far fewer tokens in long chats. Takes effect the next time an agent starts.'
+  },
+  'settings.autocompactRecommended': { ko: '{n} (권장)', en: '{n} (recommended)' },
+  'settings.autocompactAuto': { ko: '자동 (모델 한도 근처, 최대 1M)', en: 'Auto (near the model limit, up to 1M)' },
   'settings.defaultModelDesc': { ko: '새 대화가 시작할 기본 모델', en: 'Model new chats start with' },
   'settings.defaultPermModeDesc': { ko: '새 대화의 기본 권한 모드', en: 'Default permission mode for new chats' },
   'settings.promptSection': { ko: '전역 프롬프트', en: 'Global prompt' },
@@ -833,6 +856,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'chat.retrying': { ko: '재시도 {n}/{max} · {s}초 후', en: 'retry {n}/{max} · in {s}s' },
   'chat.hookRunning': { ko: '훅 실행 중: {name}', en: 'hook running: {name}' },
   'chat.hookFailed': { ko: '훅 "{name}" 실패: {why}', en: 'Hook "{name}" failed: {why}' },
+  'model.pinned': { ko: '버전 고정', en: 'Pinned versions' },
+  'chat.startFailed': { ko: '에이전트를 시작하지 못했어요.', en: 'Could not start the agent.' },
   'chat.bgTask': { ko: '백그라운드 실행 중: {what}', en: 'running in background: {what}' },
   'chat.bgTaskRunning': { ko: '실행 중', en: 'running' },
   'chat.bgTaskHint': {

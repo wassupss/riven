@@ -26,8 +26,16 @@ export function getPathDirs(): Promise<string[]> {
   return pathDirsPromise
 }
 
+// Agent CLIs cost the user money every time one starts a turn, and an e2e run
+// mounts panes by the dozen. Under RIVEN_E2E these resolve to nothing, so every
+// path that would have spawned one reports "not found" — the failure it already
+// knows how to show — instead of billing a test run. Everything else (git, the
+// shell, language servers) resolves normally: the tests need those.
+const BILLED = new Set(['claude', 'codex'])
+
 // Resolve an executable name to an absolute path across the login-shell PATH.
 export async function resolveBin(cmd: string): Promise<string | null> {
+  if (process.env.RIVEN_E2E && BILLED.has(cmd)) return null
   const dirs = await getPathDirs()
   for (const d of dirs) {
     const p = path.join(d, cmd)
@@ -39,4 +47,22 @@ export async function resolveBin(cmd: string): Promise<string | null> {
     }
   }
   return null
+}
+
+/**
+ * Which installed build `cmd` is: its real path (symlinks followed) plus that
+ * file's modification time. The native installer re-points ~/.local/bin/claude
+ * at …/versions/<version> on update, so the path changes; an npm install keeps
+ * the path and rewrites the file, so the time does. Either way, a different
+ * answer means a different CLI. Null when it cannot be read.
+ */
+export async function binIdentity(cmd: string | null): Promise<string | null> {
+  if (!cmd) return null
+  try {
+    const real = await fsp.realpath(cmd)
+    const st = await fsp.stat(real)
+    return `${real}#${Math.round(st.mtimeMs)}`
+  } catch {
+    return null
+  }
 }

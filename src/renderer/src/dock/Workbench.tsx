@@ -1,3 +1,4 @@
+import { useAgentGroups } from '../state/agentGroups'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DockviewReact, type DockviewReadyEvent, type IDockviewPanelProps } from 'dockview-react'
 import { themeAbyss, type DockviewApi } from 'dockview-core'
@@ -126,6 +127,12 @@ function ignoreZeroShellLayout(api: DockviewApi): void {
     if (w < 1 || h < 1) return
     layout(w, h)
   }
+}
+
+function isTeamMember(wid: string, chatKey: string): boolean {
+  return (useAgentGroups.getState().byWorkspace[wid] ?? []).some((g) =>
+    g.members.some((m) => m.chatKey === chatKey)
+  )
 }
 
 export default function Workbench({ workspace }: { workspace: string }): JSX.Element {
@@ -286,7 +293,13 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('chat-')) {
             window.api.chat.stop(panel.id)
-            clearPaneState(workspace, panel.id)
+            // A team member's pane is the member's desk, not a throwaway chat:
+            // what it did is the team's work, and the org chart reopens it
+            // (reopenChat). So its conversation — session id, transcript,
+            // model, persona — is kept. Any other chat closed is simply gone.
+            // A member dropped from its team later is cleaned up then (see
+            // state/workspaceCleanup).
+            if (!isTeamMember(workspace, panel.id)) clearPaneState(workspace, panel.id)
           }
           // A pure close does NOT reliably fire onDidLayoutChange in dockview, so the
           // debounced/structural save below can miss it and the closed panel revives

@@ -1,8 +1,10 @@
+import type { CliUpdateState } from '../../../preload/index'
+import { Loader2 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { addTerminal } from '../dock/registry'
 import { useUI, type SettingsTab } from '../state/ui'
-import { useSettings, getSettings, type Settings } from '../state/settings'
+import { useSettings, getSettings, claudeConfigDirFor, type Settings } from '../state/settings'
 import { THEMES, applyTheme } from '../state/themes'
 import { CURATED_FONTS, injectFont } from '../state/fonts'
 import { MCP_TOOL_LABELS } from '../state/mcpTools'
@@ -11,6 +13,7 @@ import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
+import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
 import {
@@ -113,6 +116,10 @@ function DetectedClis(): JSX.Element {
   // Bumped after an update runs, to re-read the versions.
   const [rev, setRev] = useState(0)
   const [restart, setRestart] = useState<{ restarted: number; busy: number } | null>(null)
+  // Updates run in main (see agentChat runCliUpdate), so their state outlives
+  // this window: closing settings mid-update and coming back shows it still
+  // going, or how it ended.
+  const [updates, setUpdates] = useState<Record<string, CliUpdateState>>({})
   useEffect(() => {
     let alive = true
     window.api.chat.detectClis().then((r) => alive && setClis(r))
@@ -120,28 +127,61 @@ function DetectedClis(): JSX.Element {
       alive = false
     }
   }, [rev])
+  useEffect(() => {
+    void window.api.cli.updateStatus().then((list) => {
+      setUpdates(Object.fromEntries(list.map((u) => [u.cmd, u])))
+    })
+    return window.api.cli.onUpdate((u) => {
+      setUpdates((cur) => ({ ...cur, [u.cmd]: u }))
+      if (u.status !== 'running') setRev((n) => n + 1)
+    })
+  }, [])
 
   if (clis === null) return <div className="set-note">{t('settings.cliDetecting')}</div>
   if (clis.length === 0) return <div className="set-note">{t('settings.cliNone')}</div>
   return (
     <>
-      {clis.map((c) => (
-        <Row key={c.cmd} title={c.name} desc={c.path}>
-          <span className="cli-chip ok">{c.version ? `v${c.version}` : t('settings.cliFound')}</span>
-          <Button
-            title={t('settings.cliUpdateDesc')}
-            onClick={() => {
-              addTerminal(`${c.cmd} update`)
-              useUI.getState().setSettingsOpen(false)
-            }}
-          >
-            {t('settings.cliUpdate')}
-          </Button>
-        </Row>
-      ))}
-      {/* An update only reaches panes that start afterwards: a running CLI keeps
-          the binary it launched with. Restarting them here replaces the process
-          and resumes the same conversation, so nothing is lost. */}
+      {clis.map((c) => {
+        const u = updates[c.cmd]
+        const running = u?.status === 'running'
+        return (
+          <div key={c.cmd}>
+            <Row title={c.name} desc={c.path}>
+              <span className="cli-chip ok">{c.version ? `v${c.version}` : t('settings.cliFound')}</span>
+              <Button
+                title={t('settings.cliUpdateDesc')}
+                disabled={running}
+                onClick={() => void window.api.cli.update(c.cmd as 'claude' | 'codex')}
+              >
+                {running ? (
+                  <>
+                    <Loader2 size={12} className="spin" /> {t('settings.cliUpdating')}
+                  </>
+                ) : (
+                  t('settings.cliUpdate')
+                )}
+              </Button>
+            </Row>
+            {u && u.status !== 'running' && (
+              <div className={u.status === 'failed' ? 'set-note mcp-error' : 'set-note'}>
+                {u.status === 'failed'
+                  ? t('settings.cliUpdateFailed', { why: u.output.split('\n').slice(-3).join(' ') })
+                  : u.from && u.to && u.from !== u.to
+                    ? t('settings.cliUpdated', { from: u.from, to: u.to })
+                    : t('settings.cliUpToDate', { v: u.to ?? '' })}
+                {u.status === 'done' && u.answered === 'applied' && (u.restarted > 0 || u.deferred > 0)
+                  ? ' · ' +
+                    t('settings.cliRestarted', { n: String(u.restarted) }) +
+                    (u.deferred > 0 ? ' · ' + t('settings.cliRestartBusy', { n: String(u.deferred) }) : '')
+                  : ''}
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {/* After an update the panes on that CLI are restarted automatically. This
+          is for the other cases — a CLI updated outside riven, say. It replaces
+          each pane's process and resumes the same conversation, in place. */}
       <Row title={t('settings.cliRestart')} desc={t('settings.cliRestartDesc')}>
         <Button
           onClick={() => {
@@ -624,10 +664,20 @@ export default function SettingsModal(): JSX.Element | null {
                     value={settings.defaultChatModel}
                     onChange={(e) => upd('defaultChatModel', e.target.value)}
                   >
-                    <option value="default">default</option>
-                    <option value="opus">opus</option>
-                    <option value="sonnet">sonnet</option>
-                    <option value="haiku">haiku</option>
+                    <ModelOptions
+                      cli="claude"
+                      configDir={claudeConfigDirFor(null)}
+                      current={settings.defaultChatModel}
+                    />
+                  </Select>
+                </Row>
+                <Row title={t('settings.autocompact')} desc={t('settings.autocompactDesc')}>
+                  <Select value={settings.autocompact} onChange={(e) => upd('autocompact', e.target.value)}>
+                    <option value="150000">150K</option>
+                    <option value="200000">{t('settings.autocompactRecommended', { n: '200K' })}</option>
+                    <option value="300000">300K</option>
+                    <option value="500000">500K</option>
+                    <option value="auto">{t('settings.autocompactAuto')}</option>
                   </Select>
                 </Row>
                 <ToggleRow

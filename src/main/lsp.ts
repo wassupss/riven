@@ -20,7 +20,17 @@ interface Server {
   sender: WebContents
   rootPath: string // the workspace root this server was initialized against
   env?: Record<string, string> // extra env for ELECTRON_RUN_AS_NODE etc.
+  /** Documents the editor has open on this server (didOpen minus didClose). */
+  openDocs: Set<string>
+  /** Running once the last of them closed — see IDLE_STOP_MS. */
+  idleTimer: ReturnType<typeof setTimeout> | null
 }
+
+// A language server is stopped once NO file of its language has been open in
+// the editor for this long. Not "no requests for N minutes": while a file is
+// open the server must stay warm — rust-analyzer or clangd can take minutes to
+// re-index — so only a language nobody is looking at any more is let go.
+const IDLE_STOP_MS = Number(process.env.RIVEN_LSP_IDLE_STOP_MS) || 10 * 60_000
 
 interface Spec {
   command: string
@@ -180,7 +190,7 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
   // Build the record up front with a MUTABLE sender; the forward reads
   // server.sender so after a ⌘R (which updates it in lsp:start) diagnostics keep
   // flowing instead of being dropped to the old, destroyed WebContents.
-  const server: Server = { proc, conn, initialized: Promise.resolve(), sender, rootPath }
+  const server: Server = { proc, conn, initialized: Promise.resolve(), sender, rootPath, openDocs: new Set(), idleTimer: null }
   // OS-level spawn failure (EMFILE/EACCES/…) → clean up so callers don't hang.
   proc.on('error', (e) => {
     console.error(`[lsp:${serverKey}] spawn error`, e)
@@ -263,7 +273,62 @@ async function startServer(serverKey: string, rootPath: string, sender: WebConte
   return server
 }
 
+function stopServer(key: string, s: Server): void {
+  if (s.idleTimer) clearTimeout(s.idleTimer)
+  s.idleTimer = null
+  try {
+    s.conn.sendRequest('shutdown').catch(() => {})
+    s.conn.sendNotification('exit')
+  } catch {
+    /* connection already gone */
+  }
+  try {
+    s.proc.kill()
+  } catch {
+    /* already exited */
+  }
+  servers.delete(key)
+  starting.delete(key)
+}
+
+function trackOpenDocs(serverKey: string, server: Server, method: string, params: unknown): void {
+  const uri = (params as { textDocument?: { uri?: string } } | null)?.textDocument?.uri
+  if (!uri) return
+  if (method === 'textDocument/didOpen') {
+    server.openDocs.add(uri)
+    if (server.idleTimer) clearTimeout(server.idleTimer)
+    server.idleTimer = null
+  } else if (method === 'textDocument/didClose') {
+    server.openDocs.delete(uri)
+    if (server.openDocs.size || server.idleTimer) return
+    server.idleTimer = setTimeout(() => {
+      server.idleTimer = null
+      if (servers.get(serverKey) !== server || server.openDocs.size) return
+      console.log(`[lsp:${serverKey}] no open files for ${IDLE_STOP_MS / 60_000}min — stopping`)
+      stopServer(serverKey, server)
+      // The renderer remembers it started this server; tell it, so the next
+      // file of this language starts a fresh one instead of talking to nothing.
+      if (!server.sender.isDestroyed()) server.sender.send('lsp:stopped', serverKey)
+    }, IDLE_STOP_MS)
+    server.idleTimer.unref?.()
+  }
+}
+
 export function registerLspHandlers(): void {
+  // A workspace was closed and no other open workspace uses its folder: its
+  // language servers (tsserver, clangd, gopls, rust-analyzer — some of them
+  // indexing gigabytes) have nobody left to answer, so they go with it.
+  ipcMain.handle('lsp:stopRoot', (_e, rootPath: string) => {
+    let stopped = 0
+    for (const [key, s] of [...servers]) {
+      if (s.rootPath !== rootPath) continue
+      stopServer(key, s)
+      if (!s.sender.isDestroyed()) s.sender.send('lsp:stopped', key)
+      stopped++
+    }
+    return stopped
+  })
+
   // Don't orphan heavy indexers (clangd/gopls/rust-analyzer) after quit.
   app.on('before-quit', () => {
     for (const [, s] of servers) {
@@ -345,6 +410,7 @@ export function registerLspHandlers(): void {
   ipcMain.on('lsp:notify', (_event, serverKey: string, method: string, params: unknown) => {
     const server = servers.get(serverKey)
     if (!server) return
+    trackOpenDocs(serverKey, server, method, params)
     server.initialized.then(() => server!.conn.sendNotification(method, params))
   })
 }

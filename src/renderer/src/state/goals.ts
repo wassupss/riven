@@ -49,6 +49,12 @@ export interface Goal {
   endedAt?: number
   /** The lead's closing words, once it declares the thing settled. */
   summary?: string
+  /**
+   * Per member (pane key): the id of the last post that member has been sent.
+   * A member is a pane that keeps its conversation, so what it was sent last
+   * round is still in its context — see boardUpdateFor.
+   */
+  sentUpTo?: Record<string, string>
 }
 
 /** A post is an argument, not a log line — but it still cannot be a novel. */
@@ -71,17 +77,69 @@ export function addPost(goal: Goal, post: GoalPost, kept = POSTS_KEPT): Goal {
  * and which round it belongs to. This is the shared context — the reason a
  * member does not have to be told what everyone else said.
  */
-export function boardText(goal: Goal, nameOf: (paneKey: string) => string): string {
-  const head = [
-    `목표: ${goal.goal}`,
-    `끝나는 조건: ${goal.doneWhen}`,
-    `라운드 ${goal.round} · ${goal.status}`
-  ].join('\n')
+export function boardText(
+  goal: Goal,
+  nameOf: (paneKey: string) => string,
+  maxChars = 0
+): string {
+  const head = boardHead(goal)
   if (!goal.posts.length) return `${head}\n\n(아직 올라온 글이 없습니다)`
-  const body = goal.posts
-    .map((p) => `--- R${p.round} · ${nameOf(p.by)} · ${p.kind}\n${p.text}`)
-    .join('\n\n')
-  return `${head}\n\n${body}`
+  const posts = goal.posts.map((p) => postText(p, nameOf))
+  if (maxChars <= 0) return `${head}\n\n${posts.join('\n\n')}`
+  // Over budget, the OLDEST posts go first: the newest are what a round is
+  // reacting to, and the head (goal, done-when) is never dropped.
+  const kept: string[] = []
+  let size = head.length
+  for (let i = posts.length - 1; i >= 0; i--) {
+    if (size + posts[i].length + 2 > maxChars && kept.length) break
+    kept.unshift(posts[i])
+    size += posts[i].length + 2
+  }
+  const dropped = posts.length - kept.length
+  const gap = dropped ? `(앞선 글 ${dropped}개 생략)\n\n` : ''
+  return `${head}\n\n${gap}${kept.join('\n\n')}`
+}
+
+function boardHead(goal: Goal): string {
+  return [`목표: ${goal.goal}`, `끝나는 조건: ${goal.doneWhen}`, `라운드 ${goal.round} · ${goal.status}`].join('\n')
+}
+
+function postText(p: GoalPost, nameOf: (paneKey: string) => string): string {
+  return `--- R${p.round} · ${nameOf(p.by)} · ${p.kind}\n${p.text}`
+}
+
+/** How much of the board goal_state hands back, in characters. */
+export const BOARD_CAP = 20_000
+
+/**
+ * What one member needs this round: the whole board the first time, and after
+ * that only what was posted since it was last sent the board.
+ *
+ * Every round used to send every member the entire board again. A member is a
+ * pane that keeps its conversation, so the previous boards were already in its
+ * context — each round re-sent all of them on top, and a goal's cost grew with
+ * the square of its rounds. `lastId` is what to record as sent.
+ *
+ * If the member's context has since been compacted it may have lost the older
+ * posts, so the update always says where the whole board is.
+ */
+export function boardUpdateFor(
+  goal: Goal,
+  member: string,
+  nameOf: (paneKey: string) => string
+): { text: string; lastId: string | null } {
+  const lastId = goal.posts.at(-1)?.id ?? null
+  const sent = goal.sentUpTo?.[member]
+  const from = sent ? goal.posts.findIndex((p) => p.id === sent) : -1
+  // Never sent, or what was sent has aged off the board: start from the top.
+  if (!sent || from < 0) return { text: boardText(goal, nameOf, BOARD_CAP), lastId }
+  // Its own posts are left out: it wrote them, and has them in full.
+  const fresh = goal.posts.slice(from + 1).filter((p) => p.by !== member)
+  const body = fresh.length
+    ? `--- 지난번 이후 새 글 ${fresh.length}개\n\n${fresh.map((p) => postText(p, nameOf)).join('\n\n')}`
+    : '(지난번 이후 새 글 없음)'
+  const where = `(이전 글은 이미 받은 보드에 있습니다. 전체가 필요하면 riven_goal_state(goal_id="${goal.id}"))`
+  return { text: `${boardHead(goal)}\n\n${body}\n\n${where}`, lastId }
 }
 
 interface State {
@@ -90,6 +148,8 @@ interface State {
   post: (id: string, post: Omit<GoalPost, 'id' | 'at'> & { at?: number }) => void
   openRound: (id: string) => number
   addTurns: (id: string, n: number) => void
+  /** Record that `member` has been sent the board up to post `postId`. */
+  markSent: (id: string, member: string, postId: string | null) => void
   finish: (id: string, summary: string) => void
   stop: (id: string) => void
   remove: (id: string) => void
@@ -170,6 +230,9 @@ export const useGoals = create<State>((set) => ({
   },
 
   addTurns: (id, n) => edit(id, (g) => ({ ...g, turns: g.turns + Math.max(0, n) })),
+
+  markSent: (id, member, postId) =>
+    edit(id, (g) => (postId ? { ...g, sentUpTo: { ...g.sentUpTo, [member]: postId } } : g)),
 
   finish: (id, summary) =>
     edit(id, (g) => ({ ...g, status: 'converged', summary, endedAt: Date.now() })),

@@ -270,6 +270,48 @@ export function getDelegator(): string | null {
   return delegator && activeApi?.getPanel(delegator) ? delegator : null
 }
 
+/**
+ * Bring back a chat pane that was closed but whose conversation was kept — a
+ * team member's (see Workbench's onDidRemovePanel). Same chatKey, so the pane
+ * finds its saved state on mount: the transcript comes back on screen and the
+ * CLI resumes the same session, not a new one. Returns '' when there is nothing
+ * saved under that key, so the caller can fall back to a fresh pane.
+ */
+export function reopenChat(
+  chatKey: string,
+  dir?: SplitDir,
+  refId?: string,
+  title?: string,
+  inactive?: boolean,
+  agent?: string,
+  inWorkspace?: string | null
+): string {
+  const target = dockAndWidFor(inWorkspace)
+  if (!target) return ''
+  const { api, wid } = target
+  const saved = useSession.getState().sessions[wid]?.panes?.[chatKey]
+  if (!saved?.session) return ''
+  if (api.getPanel(chatKey)) {
+    api.getPanel(chatKey)?.api.setActive()
+    return chatKey
+  }
+  // Never `fresh`: that flag means "start an empty conversation", the opposite
+  // of what reopening is for.
+  setPaneState(wid, chatKey, { fresh: undefined })
+  flushSessionSaveSync()
+  const prevActive = inactive ? api.activePanel?.id : undefined
+  api.addPanel({
+    id: chatKey,
+    component: 'chat',
+    title: title || saved.title || t('title.chat'),
+    params: { chatKey, pinnedTitle: title || undefined, agent: agent || saved.agent || undefined },
+    renderer: 'always',
+    position: placement(api, dir, refId)
+  })
+  if (prevActive && prevActive !== chatKey) api.getPanel(prevActive)?.api.setActive()
+  return chatKey
+}
+
 export function addChat(
   initialText?: string,
   dir?: SplitDir,
@@ -728,6 +770,15 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   agentgroup: { titleKey: 'title.agentgroup', direction: 'right' },
   scheduler: { titleKey: 'title.scheduler', direction: 'right' },
   explorer: { titleKey: 'title.explorer', direction: 'left' }
+}
+
+// Bring a terminal's panel to the front of its group, so focusing it can land:
+// xterm cannot take the caret while its tab is behind another (⌘J after ⌘E did
+// nothing for exactly this reason).
+export function activateTerminalById(paneId: number): void {
+  const api = activeApi
+  if (!api) return
+  api.getPanel(`term-${paneId}`)?.api.setActive()
 }
 
 // Close a terminal panel by its pane id (used by the focus-aware ⌘W handler).

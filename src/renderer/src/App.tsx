@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import Workbench from './dock/Workbench'
+// Registers what a closed workspace takes with it (side-effect import).
+import './state/workspaceCleanup'
+import { isPageHidden } from './lib/windowVisibility'
 import WorkspaceTabs from './components/WorkspaceTabs'
 import { Folder, Settings as SettingsIcon } from 'lucide-react'
 import ImageLightbox from './components/ImageLightbox'
@@ -10,6 +13,7 @@ import StatusBar from './components/StatusBar'
 import ErrorBoundary from './components/ErrorBoundary'
 import AgentWatch from './components/AgentWatch'
 import SettingsModal from './components/SettingsModal'
+import CliUpdatePrompt from './components/CliUpdatePrompt'
 import Palette from './components/Palette'
 import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
@@ -194,7 +198,7 @@ export default function App(): JSX.Element {
     // something else — which is how people watch an agent work — and freezing
     // every shimmer made a working app look hung.
     const markVisibility = (): void => {
-      document.body.classList.toggle('win-hidden', document.visibilityState === 'hidden')
+      document.body.classList.toggle('win-hidden', isPageHidden())
     }
     const markBlur = (): void => document.body.classList.add('win-unfocused')
     const markFocus = (): void => document.body.classList.remove('win-unfocused')
@@ -227,7 +231,7 @@ export default function App(): JSX.Element {
     let lastActivity = Date.now()
     const reportPresence = (): void =>
       window.api.notify.presence({
-        visible: document.visibilityState === 'visible',
+        visible: !isPageHidden(),
         focused: document.hasFocus(),
         activePane: getActiveApi()?.activePanel?.id ?? null,
         at: lastActivity
@@ -382,6 +386,7 @@ export default function App(): JSX.Element {
       </ErrorBoundary>
       <ImageLightbox />
       <SettingsModal />
+      <CliUpdatePrompt />
       <Palette />
       <QuickPanel />
       <AgentPicker />
