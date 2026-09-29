@@ -186,7 +186,10 @@
     inset 0 1px 0 rgb(255 255 255 / 0.06);
   --shadow-pill: 0 1px 6px rgb(0 0 0 / 0.35); /* floating status pills */
   --key-shadow: 0 1px 0 rgb(0 0 0 / 0.25); /* keycap bottom edge */
-  --glass: color-mix(in srgb, var(--bg-2) 80%, transparent);
+  /* Solid, not frosted: every overlay sits on live panes (terminals, streaming
+     chats), and a backdrop blur is recomputed each frame anything under it
+     moves — measured, it held settings' scroll to ~36fps against ~100 without. */
+  --glass: var(--bg-2);
 }
 
 /* ==========================================================================
@@ -230,7 +233,7 @@
     inset 0 1px 0 rgb(255 255 255 / 0.7);
   --shadow-pill: 0 1px 6px rgb(0 0 0 / 0.14);
   --key-shadow: 0 1px 0 rgb(0 0 0 / 0.1);
-  --glass: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  --glass: var(--bg-2);
 }
 
 html,
@@ -1927,7 +1930,6 @@ select {
   min-width: 180px;
   padding: 4px;
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
   box-shadow: var(--elevation-float);
@@ -3317,7 +3319,6 @@ select {
   gap: 3px;
   padding: 3px 4px 3px 9px;
   background: var(--glass);
-  backdrop-filter: blur(14px) saturate(1.4);
   border: 1px solid var(--edge);
   border-radius: var(--radius-md);
   box-shadow: var(--elevation-float);
@@ -4737,6 +4738,9 @@ select {
   font-size: var(--text-xs);
   font-family: inherit;
   cursor: pointer;
+  /* As wide as what is picked, not as the longest option — "Opus 5.5" sat in a
+     chip sized for "default · Opus 5.5". */
+  field-sizing: content;
   /* explicit caret so it reads as a dropdown (appearance:none removed the native one) */
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238a8f99' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");
   background-repeat: no-repeat;
@@ -5079,7 +5083,6 @@ select {
   font-weight: 500;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--bg-2));
-  backdrop-filter: blur(12px);
   border: 1px solid var(--accent-border);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -6712,7 +6715,6 @@ select {
   padding: 3px;
   border-radius: var(--radius-md);
   background: var(--glass);
-  backdrop-filter: blur(16px) saturate(1.4);
   border: 1px solid var(--edge);
   box-shadow: var(--elevation-float);
   animation: pop-in var(--dur-fast) var(--ease-out-expo);
@@ -6743,13 +6745,12 @@ select {
 }
 
 /* --------------------------------------------------------------------------
-   overlays: modal + context menu — frosted glass, lit from above
+   overlays: modal + context menu — solid panels, lit from above
    -------------------------------------------------------------------------- */
 .modal-overlay {
   position: fixed;
   inset: 0;
   background: var(--scrim);
-  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6766,7 +6767,6 @@ select {
   max-width: 90vw;
   max-height: 80vh;
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-xl);
   box-shadow: var(--elevation-float);
@@ -6806,7 +6806,6 @@ select {
   position: fixed;
   z-index: var(--z-context);
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   padding: 4px;
@@ -6925,7 +6924,6 @@ select {
   display: flex;
   flex-direction: column;
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   box-shadow: var(--elevation-float);
@@ -6998,7 +6996,6 @@ select {
   flex-direction: column;
   overflow: hidden;
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   box-shadow: var(--elevation-float);
@@ -8501,7 +8498,6 @@ select {
   flex-direction: column;
   overflow: hidden;
   background: var(--glass);
-  backdrop-filter: blur(28px) saturate(1.5);
   border: 1px solid var(--edge);
   border-radius: var(--radius-lg);
   box-shadow: var(--elevation-float);
@@ -9260,8 +9256,8 @@ body.win-hidden .agp-tree-row.flow > .agp-tree-self::after,
 body.browser-active .agp-tree-row.flow > .agp-tree-self::after,
 body.win-hidden .agp-tree-kid.flow::before,
 body.browser-active .agp-tree-kid.flow::before,
-body.win-hidden .agp-tree-kids.flow > .agp-tree-rail,
-body.browser-active .agp-tree-kids.flow > .agp-tree-rail,
+body.win-hidden .agp-tree-rail-flow,
+body.browser-active .agp-tree-rail-flow,
 body.win-hidden .chat-bgtask-dot,
 body.browser-active .chat-bgtask-dot,
 body.win-hidden .chat-compacting-fill,
@@ -9301,8 +9297,7 @@ body.win-unfocused .chat-ring::before {
   align-items: center;
   justify-content: center;
   padding: 40px;
-  background: rgb(0 0 0 / 0.72);
-  backdrop-filter: blur(6px);
+  background: rgb(0 0 0 / 0.82);
   cursor: zoom-out;
   animation: img-view-in var(--dur-fast) ease;
 }
