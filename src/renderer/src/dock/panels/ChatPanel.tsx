@@ -24,8 +24,10 @@ import {
   Server,
   RotateCw,
   Clock,
+  Forward,
   X as XIcon
 } from 'lucide-react'
+import { useDelegations, delegationsOf, type Delegation } from '../../state/delegations'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
 import { useRetainedValue } from '../RetainedPanel'
@@ -134,7 +136,7 @@ interface ToolLine {
 export interface MsgNotice {
   tone: 'info' | 'warn'
   /** What kind of thing happened — picks the glyph. */
-  icon?: 'compact' | 'task' | 'denied'
+  icon?: 'compact' | 'task' | 'denied' | 'delegation'
   text: string
   detail?: string
 }
@@ -665,6 +667,7 @@ const HOOK_NOTE_MS = 1_500
 
 function NoticeIcon({ notice }: { notice: MsgNotice }): JSX.Element {
   if (notice.icon === 'task') return <TerminalSquare size={12} />
+  if (notice.icon === 'delegation') return <Forward size={12} />
   if (notice.icon === 'compact') return <Scissors size={12} />
   if (notice.icon === 'denied' || notice.tone === 'warn') return <TriangleAlert size={12} />
   return <Scissors size={12} />
@@ -674,6 +677,25 @@ function NoticeIcon({ notice }: { notice: MsgNotice }): JSX.Element {
 // started it, so it gets its own row above the composer with its own clock —
 // the same question a long tool raises ("is this still going?") deserves the
 // same answer here.
+// Work this pane handed to another agent without waiting (riven_ask_agent
+// wait=false). Same row as a background command: it is the same situation —
+// something is still going on that this conversation will hear back from.
+function DelegationChip({ d }: { d: Delegation }): JSX.Element {
+  const t = useT()
+  const now = useTicker(true)
+  return (
+    <div className="chat-bgtask chat-delegation" title={t('chat.delegationHint', { what: d.toTitle })}>
+      <span className="chat-bgtask-dot" />
+      <Forward size={11} />
+      <span className="chat-bgtask-state">{t('chat.bgTaskRunning')}</span>
+      <span className="chat-bgtask-label">
+        {t('chat.delegating')} · {d.toTitle}
+      </span>
+      <span className="chat-bgtask-time">{fmtDur(now - d.startedAt)}</span>
+    </div>
+  )
+}
+
 function BgTaskChip({
   task,
   since
@@ -1649,6 +1671,8 @@ export default function ChatPanel({
   // Commands the agent put in the background; the CLI resends the whole list
   // whenever it changes, so this is a replace, never a merge.
   const [bgTasks, setBgTasks] = useState<{ id: string; label: string }[]>([])
+  // Work handed to other agents that has not come back yet.
+  const delegations = useDelegations((s) => delegationsOf(s, chatKey))
   const bgLabels = useRef(new Map<string, string>())
   const bgStarted = useRef(new Map<string, number>())
   // When the CLI started summarising the conversation, or null when it is not.
@@ -2650,8 +2674,13 @@ export default function ChatPanel({
   }
   // Returns the id of the turn this message starts (null when nothing was sent),
   // so a delegation can wait for the answer to THIS message.
+  // Read through a ref: `t` is a new function every render, and sendMessage is
+  // what the agent registration hangs off — depending on `t` re-registered the
+  // pane on every render, and registering re-renders.
+  const tRef = useRef(t)
+  tRef.current = t
   const sendMessage = useCallback(
-    (text: string, images: ChatImage[] = []): string | null => {
+    (text: string, images: ChatImage[] = [], notices?: string[]): string | null => {
       const clean = text.trim()
       // An image with nothing typed is a real message ("what's wrong here?" is
       // often just the screenshot).
@@ -2667,7 +2696,7 @@ export default function ChatPanel({
         return null
       }
       // Title the tab from the first message (CLI-style short title), like native.
-      if (!titleSet.current) {
+      if (!titleSet.current && !notices) {
         titleSet.current = true
         const first = (clean || images[0]?.name || '').split('\n')[0].trim()
         const short = first.length > 40 ? first.slice(0, 40) + '…' : first
@@ -2686,7 +2715,20 @@ export default function ChatPanel({
         })
       }
       lastEventRef.current = Date.now()
-      setMsgs((all) => [
+      // Not typed by anyone: the turn opens with what happened (a delegated
+      // answer came back) instead of a user bubble holding the raw answer.
+      if (notices) {
+        setMsgs((all) => [
+          ...all,
+          {
+            ...blankAssistant(),
+            items: notices.map((what) => ({
+              type: 'notice' as const,
+              notice: { tone: 'info' as const, icon: 'delegation' as const, text: tRef.current('chat.delegationDone', { what }) }
+            }))
+          }
+        ])
+      } else setMsgs((all) => [
         ...all,
         {
           role: 'user',
@@ -2748,6 +2790,7 @@ export default function ChatPanel({
       },
       isBusy: () => busyRef.current,
       send: (text) => sendMessage(text),
+      wake: (text, notices) => void sendMessage(text, [], notices),
       // Append context to the composer (not auto-send) so the user can add a note
       // before sending — used by the browser's "send to chat" actions.
       attach: (text) => {
@@ -3458,10 +3501,13 @@ export default function ChatPanel({
       {/* Backgrounded commands outlive the turn that started them. Without this
           the pane went quiet with work still running, and the only sign it had
           ever happened was the agent mentioning it, minutes later. */}
-      {bgTasks.length > 0 && (
+      {(bgTasks.length > 0 || delegations.length > 0) && (
         <div className="chat-bgtasks">
           {bgTasks.map((task) => (
             <BgTaskChip key={task.id} task={task} since={bgStarted.current.get(task.id)} />
+          ))}
+          {delegations.map((d) => (
+            <DelegationChip key={d.id} d={d} />
           ))}
         </div>
       )}

@@ -121,6 +121,12 @@ interface Session {
   ctrlSeq: number
   sawInit: boolean // whether the CLI reached its init (used for resume fallback)
   streamedText: boolean // any assistant text_delta this turn (else surface result)
+  // Token totals for the turn so far. A turn is many model calls — one per tool
+  // round — and each call's usage restarts from its own numbers, so shown as-is
+  // the count fell back every time the agent used a tool.
+  turnIn: number // new input (uncached + cache writes), summed over the calls
+  turnOutDone: number // output of the calls that have finished
+  callOut: number // output of the call streaming now (cumulative within it)
   opts: StartOpts // kept so an idle-parked pane can respawn its child unchanged
   lastActive: number
   turnBusy: boolean // a turn is in flight — never park mid-answer
@@ -473,16 +479,15 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     if (et === 'message_start') {
       s.streamedText = false
       const u = ((e.message as Record<string, unknown>)?.usage ?? {}) as Record<string, number>
-      emit(s, {
-        key: s.key,
-        kind: 'usage',
-        input: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0),
-        output: 0,
-        isStart: true
-      })
+      s.turnOutDone += s.callOut
+      s.callOut = 0
+      s.turnIn += (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)
+      emit(s, { key: s.key, kind: 'usage', input: s.turnIn, output: s.turnOutDone, isStart: true })
     } else if (et === 'message_delta') {
       const u = (e.usage ?? {}) as Record<string, number>
-      emit(s, { key: s.key, kind: 'usage', input: -1, output: u.output_tokens ?? 0, isStart: false })
+      // output_tokens here is the running total for THIS call, not an increment.
+      s.callOut = u.output_tokens ?? s.callOut
+      emit(s, { key: s.key, kind: 'usage', input: -1, output: s.turnOutDone + s.callOut, isStart: false })
     } else if (et === 'content_block_delta') {
       const delta = e.delta as Record<string, unknown> | undefined
       if (delta?.type === 'text_delta') {
@@ -607,6 +612,9 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     // The claim expires: if that self-started turn never materialises, a stale
     // token would swallow a real answer and leave the pane thinking forever.
     const turn = claimResult(s)
+    s.turnIn = 0
+    s.turnOutDone = 0
+    s.callOut = 0
     emit(s, {
       key: s.key,
       kind: 'turnDone',
@@ -820,6 +828,9 @@ async function startSession(
     ctrlSeq: 0,
     sawInit: false,
     streamedText: false,
+    turnIn: 0,
+    turnOutDone: 0,
+    callOut: 0,
     opts,
     lastActive: Date.now(),
     turnBusy: false,
