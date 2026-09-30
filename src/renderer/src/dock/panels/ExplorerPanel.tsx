@@ -148,6 +148,16 @@ function TreeNode({
   const load = useCallback(async () => {
     setChildren(await window.api.workspace.readDir(entry.path))
   }, [entry.path])
+  // The refresh button re-reads every folder that has been opened, not just the
+  // top level: it used to reload the root alone, so whatever changed inside an
+  // expanded folder stayed as it was however many times it was pressed.
+  const refreshToken = useTree((s) => s.refreshToken)
+  const seenToken = useRef(refreshToken)
+  useEffect(() => {
+    if (seenToken.current === refreshToken) return
+    seenToken.current = refreshToken
+    if (children !== null) void load()
+  }, [refreshToken, children, load])
 
   const toggle = useCallback(
     async (e: ReactMouseEvent) => {
@@ -323,7 +333,13 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   useClearDropOnDragEnd(useCallback(() => setRootDrop(false), []))
   const bump = useTree((s) => s.bump)
   const collapseAll = useTree((s) => s.collapseAll)
-  const rootVersion = useTree((s) => s.versions[workspace] ?? 0)
+  // Keyed by the folder's PATH, as every event is: `workspace` is the
+  // workspace id, which is the path plus a suffix when a folder is open twice —
+  // then nothing that happened on disk ever reached the top level.
+  const root = pathOf(workspace)
+  const rootVersion = useTree((s) => s.versions[root] ?? 0)
+  const refreshToken = useTree((s) => s.refreshToken)
+  const refreshAll = useTree((s) => s.refreshAll)
   const openFile = useSession((s) => s.openFile)
   const closeTab = useSession((s) => s.closeTab)
   const activeWorkspace = useSession((s) => s.activeWorkspace)
@@ -354,12 +370,12 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
 
   useEffect(() => {
     window.api.workspace.readDir(pathOf(workspace)).then(setRoots)
-  }, [workspace, rootVersion])
+  }, [workspace, rootVersion, refreshToken])
 
   useEffect(() => {
     return window.api.bridge.onFsChanged(({ type, path }) => {
       if (workspace !== activeWorkspace) return
-      if (type === 'add' || type === 'unlink') bump(dirname(path))
+      if (type === 'add' || type === 'unlink' || type === 'addDir' || type === 'unlinkDir') bump(dirname(path))
       scheduleGit()
     })
   }, [workspace, activeWorkspace, bump, scheduleGit])
@@ -373,9 +389,9 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const onNew = useCallback((kind: 'new-file' | 'new-folder', dir: string) => setEdit({ kind, dir }), [])
 
   const targetDir = (entry: DirEntry | null): string =>
-    entry ? (entry.isDirectory ? entry.path : dirname(entry.path)) : workspace
+    entry ? (entry.isDirectory ? entry.path : dirname(entry.path)) : root
 
-  const rel = (p: string): string => (p.startsWith(workspace) ? p.slice(workspace.length + 1) : p)
+  const rel = (p: string): string => (p.startsWith(root) ? p.slice(root.length + 1) : p)
 
   const sendMentions = (paths: string[]): void => {
     contextBus.sendText(workspace, '\n' + paths.map((p) => '@' + rel(p)).join(' ') + ' ')
@@ -528,15 +544,15 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   return (
     <div className="explorer-panel" onContextMenu={(e) => openMenu(e, null)}>
       <div className="ex-header">
-        <span className="ex-title">{workspace.split('/').pop()}</span>
+        <span className="ex-title">{root.split('/').pop()}</span>
         <span className="ex-header-actions">
-          <button title={t('explorer.newFile')} onClick={() => onNew('new-file', workspace)}>
+          <button title={t('explorer.newFile')} onClick={() => onNew('new-file', root)}>
             <ActionIcon type="new-file" />
           </button>
-          <button title={t('explorer.newFolder')} onClick={() => onNew('new-folder', workspace)}>
+          <button title={t('explorer.newFolder')} onClick={() => onNew('new-folder', root)}>
             <ActionIcon type="new-folder" />
           </button>
-          <button title={t('common.refresh')} onClick={() => bump(workspace)}>
+          <button title={t('common.refresh')} onClick={() => refreshAll()}>
             <ActionIcon type="refresh" />
           </button>
           <button title={t('explorer.collapseAll')} onClick={collapseAll}>
@@ -565,8 +581,8 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
           e.preventDefault()
           setRootDrop(false)
           // Dropping on the empty space below the tree moves back to the root.
-          if (internal) void movePaths(readRivenPaths(e), workspace)
-          else void importDrop(e, workspace)
+          if (internal) void movePaths(readRivenPaths(e), root)
+          else void importDrop(e, root)
         }}
         onKeyDown={(e) => {
           // Delete / ⌘⌫ removes the current selection (the tree holds focus after

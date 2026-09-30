@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { launchRiven, openPanel } from './app'
 
@@ -80,6 +80,40 @@ test.describe('the file tree', () => {
     await r.page.locator('.ex-label').filter({ hasText: 'src' }).click()
     await expect(r.page.locator('.ex-label').filter({ hasText: 'a.ts' })).toBeVisible()
     await expect(r.page.locator('.ex-label').filter({ hasText: 'b.ts' })).toBeVisible()
+    await r.app.close()
+  })
+
+  // What happens on disk behind the tree's back — an agent, a terminal, git.
+  test('a folder made outside riven appears on its own, and so does a file in an open folder', async () => {
+    const r = await launchRiven({ files: { 'src/a.ts': 'a\n' } })
+    await explorer(r.page)
+    await r.page.locator('.ex-label').filter({ hasText: 'src' }).click()
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'a.ts' })).toBeVisible()
+    await r.page.waitForTimeout(1000) // the watcher is up
+
+    mkdirSync(join(r.workspace, 'made-by-agent'))
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'made-by-agent' })).toHaveCount(1, { timeout: 10_000 })
+    writeFileSync(join(r.workspace, 'src', 'new.ts'), 'n\n')
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'new.ts' })).toHaveCount(1, { timeout: 10_000 })
+    await r.app.close()
+  })
+
+  test('refresh re-reads the folders that are open, not just the top level', async () => {
+    const r = await launchRiven({ files: { 'src/old.ts': 'o\n', 'README.md': '# s\n' } })
+    await explorer(r.page)
+    await r.page.locator('.ex-label').filter({ hasText: 'src' }).click()
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'old.ts' })).toBeVisible()
+
+    // With the watcher off, only the button can show what changed — which is
+    // the situation the button exists for (a change the watcher did not see).
+    await r.page.evaluate(() => (window as unknown as { api: { bridge: { watchStop: () => void } } }).api.bridge.watchStop())
+    await r.page.waitForTimeout(300)
+    writeFileSync(join(r.workspace, 'src', 'fresh.ts'), 'f\n')
+    await r.page.waitForTimeout(1500)
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'fresh.ts' })).toHaveCount(0)
+    await r.page.locator('.ex-header').hover()
+    await r.page.locator('.ex-header-actions button[title="새로고침"]').click()
+    await expect(r.page.locator('.ex-label').filter({ hasText: 'fresh.ts' })).toHaveCount(1, { timeout: 5000 })
     await r.app.close()
   })
 })
