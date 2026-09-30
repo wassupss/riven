@@ -1,4 +1,4 @@
-import { BrowserWindow, powerMonitor, WebContents } from 'electron'
+import { BrowserWindow, powerMonitor, screen, WebContents } from 'electron'
 
 // Waking from sleep can leave the compositor holding tiles it will never repaint:
 // the window is "there" but frozen until something forces it. paseo answers this
@@ -51,4 +51,21 @@ export function registerSystemResume(): void {
   // Display sleep and the lock screen produce the same frozen-tile symptom
   // without a full system suspend, so they get the same treatment.
   powerMonitor.on('unlock-screen', () => onWake('unlock-screen'))
+  // The displays rearranging themselves — which a screen going to sleep and
+  // waking does, most of all with an external monitor: the window is moved to
+  // another display and back, and its size changes under the page without the
+  // page reliably hearing about it. The dock was left laid out for the size in
+  // between, with a band of nothing under every panel, until something forced
+  // a relayout. Coalesced: one rearrangement fires several of these.
+  let displayTimer: ReturnType<typeof setTimeout> | null = null
+  const onDisplays = (): void => {
+    if (displayTimer) clearTimeout(displayTimer)
+    displayTimer = setTimeout(() => {
+      displayTimer = null
+      onWake('display')
+    }, 400)
+  }
+  screen.on('display-added', onDisplays)
+  screen.on('display-removed', onDisplays)
+  screen.on('display-metrics-changed', onDisplays)
 }

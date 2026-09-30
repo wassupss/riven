@@ -280,6 +280,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       tryRestore()
 
       if (workspace === useSession.getState().activeWorkspace) setActiveApi(api)
+      disposers.current.push(api.onDidLayoutChange(() => healRef.current?.()))
 
       // Kill a terminal's PTY session only when its panel is actually removed
       // (user close) — NOT on renderer reload, so sessions survive ⌘R.
@@ -382,13 +383,35 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
   // wrapper ourselves and pushing the size in is the cheap, always-correct
   // version: a no-op when the numbers already agree.
   const hostRef = useRef<HTMLDivElement>(null)
+  // The "does the dock still fill its space" check, for the layout-change
+  // listener registered in onReady (which runs before this effect has a host).
+  const healRef = useRef<(() => void) | null>(null)
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+    // Whether the panel groups actually reach the edges of the space. The dock
+    // was seen stopping short of the status bar — a band of nothing under every
+    // panel — while believing it was the right size, so the size it reports
+    // (api.height) cannot be the test; what is on screen is.
+    const fills = (hb: DOMRect): boolean => {
+      let bottom = 0
+      let right = 0
+      for (const g of host.querySelectorAll('.dv-groupview')) {
+        const r = g.getBoundingClientRect()
+        if (r.height < 1) continue
+        bottom = Math.max(bottom, r.bottom)
+        right = Math.max(right, r.right)
+      }
+      return bottom === 0 || (hb.bottom - bottom <= 1 && hb.right - right <= 1)
+    }
+    // Healing lays out again, which reports a layout change, which checks again:
+    // bounded, so a layout that can never fill (minimum sizes) cannot spin.
+    let heals = 0
     const sync = (force = false): void => {
       const api = apiRef.current
       if (!api) return
-      const { width, height } = host.getBoundingClientRect()
+      const hb = host.getBoundingClientRect()
+      const { width, height } = hb
       // A hidden workspace measures 0×0; laying a dock out at zero is what
       // mangles group positions, so leave it until it is on screen again.
       if (width < 1 || height < 1) return
@@ -398,10 +421,42 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       // overlay positioned from their group's box, and a group whose box ends up
       // where it was never re-positions them — their content stays at 0×0, a
       // dock of tab strips over blank space.
-      if (force || api.width !== w || api.height !== h) api.layout(w, h, force)
+      if (force || api.width !== w || api.height !== h) {
+        api.layout(w, h, force)
+        return
+      }
+      if (fills(hb)) {
+        heals = 0
+        return
+      }
+      if (heals++ < 3) api.layout(w, h, true)
     }
     const ro = new ResizeObserver(() => sync())
     ro.observe(host)
+    // Checked again whenever something could have left it short: the layout
+    // changed, or the window came back (a resize that happened while it was
+    // minimised or on another Space is not always delivered as one).
+    let pending = 0
+    const soon = (): void => {
+      if (pending) return
+      pending = requestAnimationFrame(() => {
+        pending = 0
+        sync()
+      })
+    }
+    healRef.current = soon
+    window.addEventListener('focus', soon)
+    document.addEventListener('visibilitychange', soon)
+    const offVis = window.api.win.onVisibility(soon)
+    // Back from sleep, or the displays rearranged (a screen that went dark
+    // overnight): the same full relayout a workspace switch does — which is
+    // what made the band under the panels go away when it was left there.
+    let wakeTimer: ReturnType<typeof setTimeout> | undefined
+    const offWake = window.api.onSystemResumed(() => {
+      sync(true)
+      clearTimeout(wakeTimer)
+      wakeTimer = setTimeout(() => sync(true), 600)
+    })
     // Becoming visible is not a resize of this element in every case (the parent
     // flips display), so re-check on the frame after it is shown too — and once
     // more after dockview's own deferred resize handling has run.
@@ -410,7 +465,14 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     return () => {
       ro.disconnect()
       cancelAnimationFrame(raf)
+      cancelAnimationFrame(pending)
       clearTimeout(late)
+      if (healRef.current === soon) healRef.current = null
+      window.removeEventListener('focus', soon)
+      document.removeEventListener('visibilitychange', soon)
+      offVis()
+      offWake()
+      clearTimeout(wakeTimer)
     }
   }, [activeWorkspace])
 
