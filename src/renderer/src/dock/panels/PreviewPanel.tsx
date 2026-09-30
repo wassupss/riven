@@ -87,6 +87,14 @@ export function normalizeUrl(input: string): string {
 // Browser panels currently in front (see the browser-active effect below).
 const activeBrowsers = new Set<string>()
 
+// A pop-out window's name for main: put on the window object itself, which main
+// can read back from that window's own page (the pop-out is same-origin).
+function popoutKey(w: Window): string {
+  const tagged = w as Window & { __rivenPopout?: string }
+  if (!tagged.__rivenPopout) tagged.__rivenPopout = `popout-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
+  return tagged.__rivenPopout
+}
+
 export default function PreviewPanel({
   workspace,
   api
@@ -168,6 +176,12 @@ export default function PreviewPanel({
     const el = viewportRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
+    // The window this panel is drawn in. Popped out, that is not `window`: the
+    // pop-out is a separate window that this same code renders into, so its
+    // measurements are against ITS viewport, and main has to be told which
+    // window to put the page in (see main/browser, pop-outs).
+    const hostWin = el.ownerDocument.defaultView ?? window
+    const host = hostWin === window ? null : popoutKey(hostWin)
     // Also require the dock panel itself to be the visible tab of its group — the
     // WebContentsView is a native overlay that keeps painting on top when this
     // panel becomes an inactive tab (e.g. a terminal opened beside it), so we must
@@ -180,7 +194,7 @@ export default function PreviewPanel({
     const onScreen = !!el.offsetParent
     // A box that isn't inside the window is a stale measurement, not a panel —
     // obeying it is what threw the page view into a corner (see placeable).
-    const sane = placeable(r, { width: window.innerWidth, height: window.innerHeight })
+    const sane = placeable(r, { width: hostWin.innerWidth, height: hostWin.innerHeight })
     // Only a panel that IS on screen gets the benefit of the doubt on a bad
     // measurement (a transient 0×0 during layout must not make the page blink).
     if (onScreen && panelVisible && !sane && !isPageHidden()) return
@@ -190,17 +204,18 @@ export default function PreviewPanel({
     // Hide all views on the blank start page (no view for this tab).
     const payload =
       visible && id && tab?.view
-        ? { activeId: id, rect: { x: r.left, y: r.top, width: r.width, height: r.height } }
-        : { activeId: null, rect: null }
+        ? { activeId: id, rect: { x: r.left, y: r.top, width: r.width, height: r.height }, host }
+        : { activeId: null, rect: null, host }
     const key = JSON.stringify(payload)
     if (key === lastSent.current) return
     lastSent.current = key
     window.api.browser.sync(
       payload.activeId,
       payload.rect,
-      { w: window.innerWidth, h: window.innerHeight },
+      { w: hostWin.innerWidth, h: hostWin.innerHeight },
       // Ours to hide, and nobody else's.
-      ownIds.split(',').filter(Boolean)
+      ownIds.split(',').filter(Boolean),
+      host
     )
     // A stable string, not the array: `tabs` is rebuilt on every render, and
     // depending on it would rebuild this callback (and its 250ms interval) just
@@ -266,6 +281,18 @@ export default function PreviewPanel({
   useEffect(
     () => () => window.api.browser.sync(null, null, undefined, ownRef.current.split(',').filter(Boolean)),
     []
+  )
+
+  // Main asks after it moved a page view back from a closed pop-out: the last
+  // position this panel sent may have been applied and then undone.
+  useEffect(
+    () =>
+      window.api.browser.onEvent((e) => {
+        if (e.kind !== 'resync') return
+        lastSent.current = ''
+        requestAnimationFrame(syncBounds)
+      }),
+    [syncBounds]
   )
 
   // While this browser panel is the one in front, the app's decorative motion

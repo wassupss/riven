@@ -88,6 +88,11 @@ export function registerBridgeHandlers(): void {
     watcher.on('change', emit('change'))
     watcher.on('add', emit('add'))
     watcher.on('unlink', emit('unlink'))
+    // Folders too: a folder an agent made (mkdir, or a file written into a new
+    // one) never appeared in the explorer — only file events were forwarded, and
+    // a file's event refreshes a folder that is not on screen yet.
+    watcher.on('addDir', emit('addDir'))
+    watcher.on('unlinkDir', emit('unlinkDir'))
     watcher.on('ready', () => console.log(`[watch] ready: ${folder}`))
   })
 

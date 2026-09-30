@@ -2,7 +2,8 @@ import { useSession, pathOf, widForPane, loadPaneState } from './session'
 import { useNav } from './nav'
 import { useAskUser } from './askUser'
 import { useBrowser, activeTab, activeTabId } from './browser'
-import { askChatTurn, listAgents, resolveAgent } from './agents'
+import { askChatTurn, listAgents, resolveAgent, returnToCaller } from './agents'
+import { useDelegations } from './delegations'
 import { contextBus } from '../bridge/contextBus'
 import {
   ensureEditorIn,
@@ -632,12 +633,36 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
   })
   void answer.then((reply) => note(c.ws as string, 'reply', target.chatKey, reply, from ?? undefined))
   if (!wait) {
-    void answer
-    return `delegated to "${target.getTitle()}" (async)`
+    // Handed off from a chat pane: it runs in the background and its answer is
+    // brought back when it lands. It used to be dropped — the caller was told
+    // "(async)", promised to report back, and never heard another word.
+    const caller = c.chatPane && resolveAgent(c.chatPane, undefined, c.ws) ? c.chatPane : null
+    if (!caller) {
+      void answer
+      return `delegated to "${target.getTitle()}" (async — nothing will bring its answer back to you)`
+    }
+    const title = target.getTitle()
+    const d = useDelegations.getState().start({ from: caller, to: target.chatKey, toTitle: title })
+    void answer.then(async (reply) => {
+      useDelegations.getState().finish(d.id)
+      const body = await deliverReply(reply, title, c)
+      const asked = message.length > 200 ? message.slice(0, 200) + '…' : message
+      returnToCaller(
+        caller,
+        `[백그라운드 위임 결과 · ${title}]\n맡긴 일: ${asked}\n\n${body}`,
+        `${title} · ${fmtElapsed(Date.now() - d.startedAt)}`
+      )
+    })
+    return `delegated to "${title}" — running in the background. Its answer will be delivered to you automatically as a new turn when it finishes; do not poll for it or ask it for a report. Carry on, or end your turn.`
   }
   return `[${target.getTitle()}] ${await deliverReply(await answer, target.getTitle(), c)}`
 }
 
+
+const fmtElapsed = (ms: number): string => {
+  const sec = Math.round(ms / 1000)
+  return sec < 60 ? `${sec}초` : sec < 3600 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분`
+}
 
 /**
  * A delegated answer as it goes back to the caller: whole when it is short,

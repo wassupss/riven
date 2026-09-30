@@ -1,4 +1,5 @@
 import { BrowserWindow, ipcMain } from 'electron'
+import { appWindow } from './appWindow'
 
 // OAuth in a desktop app: Supabase hands us a provider authorize URL (via
 // signInWithOAuth({ skipBrowserRedirect: true })). We open it in a dedicated
@@ -25,7 +26,7 @@ function extractCode(rawUrl: string, redirectPrefix: string): string | null {
 
 export function registerAuthHandlers(): void {
   ipcMain.handle('auth:oauth', async (_e, authorizeUrl: string, redirectTo: string): Promise<string> => {
-    const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? undefined
+    const parent = BrowserWindow.getFocusedWindow() ?? appWindow() ?? undefined
     return new Promise<string>((resolve, reject) => {
       const win = new BrowserWindow({
         width: 480,

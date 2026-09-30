@@ -184,6 +184,15 @@ export class CodexChat {
   // starts, so the changes panel gets a real before/after.
   private readonly baselines = new Map<string, string | null>()
   turnBusy = false
+  // The thread's running token totals, and where they stood when this turn
+  // began: the pane shows the turn's share, which only grows. (`last` is one
+  // model call, so showing it made the count drop at every tool round.)
+  //
+  // A resumed thread's first total already carries its history, so until one
+  // total has been seen the start of the turn is unknown (null) and is taken as
+  // that first total minus the call it reports (`last`).
+  private usageTotal: { input: number; output: number } | null = null
+  private usageAtTurn: { input: number; output: number } | null = null
   /** Called whenever a turn ends — how a restart deferred for a busy pane runs. */
   onTurnEnd: (() => void) | null = null
   /** Which installed build this process was started from (see agentChat). */
@@ -397,6 +406,7 @@ export class CodexChat {
       case 'turn/started':
         this.turnId = ((params.turn as { id?: string } | undefined)?.id ?? null) as string | null
         this.turnBusy = true
+        this.usageAtTurn = this.usageTotal && { ...this.usageTotal }
         return
       case 'item/agentMessage/delta':
         if (typeof params.delta === 'string') this.emit({ key: this.key, kind: 'text', delta: params.delta })
@@ -435,10 +445,28 @@ export class CodexChat {
         return
       }
       case 'thread/tokenUsage/updated': {
-        const last = (params.tokenUsage as { last?: Record<string, number> } | undefined)?.last
-        if (last) {
-          this.emit({ key: this.key, kind: 'usage', input: last.inputTokens ?? 0, output: 0, isStart: true })
-          this.emit({ key: this.key, kind: 'usage', input: -1, output: last.outputTokens ?? 0, isStart: false })
+        const usage = params.tokenUsage as
+          | { total?: Record<string, number>; last?: Record<string, number> }
+          | undefined
+        // New input only, as the claude side counts it: cached input is not sent again.
+        const norm = (u: Record<string, number>): { input: number; output: number } => ({
+          input: (u.inputTokens ?? 0) - (u.cachedInputTokens ?? 0),
+          output: u.outputTokens ?? 0
+        })
+        if (usage?.total) {
+          const total = norm(usage.total)
+          if (!this.usageAtTurn) {
+            const last = usage.last ? norm(usage.last) : { input: 0, output: 0 }
+            this.usageAtTurn = { input: total.input - last.input, output: total.output - last.output }
+          }
+          this.usageTotal = total
+          this.emit({
+            key: this.key,
+            kind: 'usage',
+            input: Math.max(0, total.input - this.usageAtTurn.input),
+            output: Math.max(0, total.output - this.usageAtTurn.output),
+            isStart: false
+          })
         }
         return
       }

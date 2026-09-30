@@ -64,4 +64,42 @@ test.describe('the browser page view', () => {
     await expect.poll(async () => (await views(r)).length, { timeout: 1500 }).toBe(1)
     await r.app.close()
   })
+
+  test('popped out into its own window, the page goes with the panel', async () => {
+    const r = await launchRiven({ files: { 'README.md': '# s\n' } })
+    await openPage(r.page)
+    await expect.poll(async () => (await views(r)).length, { timeout: 10_000 }).toBe(1)
+
+    // The panel's own command: "현재 패널 새 창으로".
+    await r.page.keyboard.press('Meta+Shift+p')
+    await r.page.locator('.palette-input').fill('새 창으로')
+    await r.page.locator('.palette-list .palette-label').filter({ hasText: '새 창으로' }).first().click()
+
+    // Where each window's visible page views are: none left in riven's own
+    // window, one in the pop-out, sized to it.
+    const where = (): Promise<{ main: number; popout: number }> =>
+      r.app.evaluate(({ BrowserWindow }) => {
+        const visible = (w: Electron.BrowserWindow): number =>
+          w.contentView.children.filter(
+            (v) => (v as unknown as { getVisible?: () => boolean }).getVisible?.() !== false && v.getBounds().width > 0
+          ).length
+        let main = 0
+        let popout = 0
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (w.isDestroyed() || !w.isFocusable()) continue
+          if (w.webContents.getURL().includes('index.html')) main += visible(w)
+          else popout += visible(w)
+        }
+        return { main, popout }
+      })
+    await expect.poll(where, { timeout: 15_000 }).toEqual({ main: 0, popout: 1 })
+
+    // Closing the pop-out puts the panel back — and the page with it.
+    await r.app.evaluate(({ BrowserWindow }) => {
+      for (const w of BrowserWindow.getAllWindows())
+        if (!w.isDestroyed() && w.isFocusable() && !w.webContents.getURL().includes('index.html')) w.close()
+    })
+    await expect.poll(where, { timeout: 15_000 }).toEqual({ main: 1, popout: 0 })
+    await r.app.close()
+  })
 })

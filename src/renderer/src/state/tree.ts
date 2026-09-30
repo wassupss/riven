@@ -7,11 +7,16 @@ interface TreeState {
   collapseToken: number
   bump: (dir: string) => void
   collapseAll: () => void
+  /** Bumped by the refresh button: every folder that is loaded reads itself again. */
+  refreshToken: number
+  refreshAll: () => void
 }
 
 export const useTree = create<TreeState>((set) => ({
   versions: {},
   collapseToken: 0,
   bump: (dir) => set((s) => ({ versions: { ...s.versions, [dir]: (s.versions[dir] ?? 0) + 1 } })),
-  collapseAll: () => set((s) => ({ collapseToken: s.collapseToken + 1 }))
+  collapseAll: () => set((s) => ({ collapseToken: s.collapseToken + 1 })),
+  refreshToken: 0,
+  refreshAll: () => set((s) => ({ refreshToken: s.refreshToken + 1 }))
 }))

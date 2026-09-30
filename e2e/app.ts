@@ -170,6 +170,8 @@ export async function launchRiven(opts: LaunchOptions = {}): Promise<Launched> {
       // A test must never spawn a real agent CLI: RIVEN_E2E withholds them.
       if (!opts.fakeAgents) env.RIVEN_E2E = '1'
       else delete env.RIVEN_E2E
+      // Never come to the front over what the person at the machine is doing.
+      env.RIVEN_TEST_BACKGROUND = '1'
       return env
     })()
   })

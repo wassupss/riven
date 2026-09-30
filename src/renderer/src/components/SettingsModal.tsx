@@ -544,6 +544,12 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(v) => upd('notifyOnFailure', v)}
                 />
                 <ToggleRow
+                  title={t('settings.menuBarIcon')}
+                  desc={t('settings.menuBarIconDesc')}
+                  checked={settings.menuBarIcon}
+                  onChange={(v) => upd('menuBarIcon', v)}
+                />
+                <ToggleRow
                   title={t('settings.crashReporting')}
                   desc={t('settings.crashDesc')}
                   checked={settings.crashReporting}

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { note } from './focusTrace'
 import { promises as fs } from 'fs'
 import { join } from 'path'
+import { appWindow } from './appWindow'
 import { atomicWriteJson } from './atomicWrite'
 
 // ---------------------------------------------------------------------------
@@ -48,7 +49,7 @@ function onScreen(x: number, y: number, width: number, height: number): boolean 
  * open and invisible. Right of the window, else left, else the display corner.
  */
 function firstSpot(): { x: number; y: number } {
-  const app = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w !== win)
+  const app = appWindow()
   const area = app
     ? screen.getDisplayMatching(app.getBounds()).workArea
     : screen.getPrimaryDisplay().workArea

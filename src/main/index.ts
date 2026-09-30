@@ -36,6 +36,8 @@ import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
 import { registerNotifyHandlers, ensureNotificationCenterRegistration } from './notify'
+import { registerTray } from './tray'
+import { appWindow, setAppWindow } from './appWindow'
 import { buildMenu } from './menu'
 
 // Chromium switches. Deliberately conservative — we do NOT disable
@@ -81,6 +83,12 @@ function resolveClaude(): string | null {
   return null
 }
 
+// Under the e2e suite: work without ever coming to the front. Every test
+// launches a fresh app, and each one took focus from whatever the person at the
+// machine was typing into — a whole suite is a hundred interruptions. The tests
+// drive the page over CDP, which needs neither focus nor a Dock icon.
+const testInBackground = process.env.RIVEN_TEST_BACKGROUND === '1'
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1600,
@@ -111,7 +119,8 @@ function createWindow(): void {
     }
   })
 
-  mainWindow.on('ready-to-show', () => mainWindow.show())
+  setAppWindow(mainWindow)
+  mainWindow.on('ready-to-show', () => (testInBackground ? mainWindow.showInactive() : mainWindow.show()))
   // The page cannot tell it is hidden: backgroundThrottling is off (above), and
   // that also keeps document.visibilityState at 'visible' while minimised — so
   // every "stop when nobody is looking" rule in the renderer (animations, the
@@ -281,6 +290,8 @@ function createWindow(): void {
 registerMediaScheme()
 
 app.whenReady().then(() => {
+  // No Dock icon and no activation: an "accessory" app never takes the front.
+  if (testInBackground && process.platform === 'darwin') app.setActivationPolicy('accessory')
   registerMediaProtocol()
   registerPtyHandlers()
   // Files an agent actually wrote, tagged with the pane that wrote them. Every
@@ -307,16 +318,15 @@ app.whenReady().then(() => {
   registerCliHandlers()
   registerPortsHandlers()
   registerAgentChatHandlers()
-  // riven's own MCP tool server (relays agent tool calls into the UI). Routes to
-  // the first live window's renderer.
+  // riven's own MCP tool server (relays agent tool calls into the UI), answered
+  // by the app window's renderer. It went to the first live window instead,
+  // which could be the pet's: every tool call then waited on a renderer that
+  // does not answer them, and the agent hung inside the call.
   registerFocusTrace()
   registerKeepAwake()
   registerPermissionHandlers()
   registerModelCatalogHandlers()
-  registerMcpServer(() => {
-    const w = BrowserWindow.getAllWindows().find((win) => !win.isDestroyed())
-    return w ? w.webContents : null
-  })
+  registerMcpServer(() => appWindow()?.webContents ?? null)
   // AFTER registerMcpServer: the shim hands terminals the --mcp-config that call
   // writes, so the paths have to exist before the first terminal opens.
   primeShellShim()
@@ -327,11 +337,12 @@ app.whenReady().then(() => {
     // focusable:false window, and picking IT as "the window" put the page view
     // and the dropdown itself at coordinates measured against a 419x98 box.
     () =>
-      BrowserWindow.getAllWindows().find((win) => !win.isDestroyed() && win.isFocusable()) ?? null
+      appWindow()
   )
   registerNotesHandlers()
   registerNotifyHandlers()
-  ensureNotificationCenterRegistration()
+  registerTray(appWindow)
+  if (!testInBackground) ensureNotificationCenterRegistration()
   registerApiHandlers()
   registerUsageHandlers()
   registerAuthHandlers()
@@ -345,7 +356,7 @@ app.whenReady().then(() => {
     const running = runningChatCount() + runningTerminalAgentCount()
     if (running === 0) return
     e.preventDefault()
-    const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.isFocusable())
+    const w = appWindow()
     // The app's own language, read from the settings the renderer persists.
     let ko = true
     try {

@@ -421,8 +421,9 @@ const api = {
       activeId: string | null,
       rect: { x: number; y: number; width: number; height: number } | null,
       css?: { w: number; h: number },
-      own?: string[]
-    ): void => ipcRenderer.send('browser:sync', { activeId, rect, css, own }),
+      own?: string[],
+      host?: string | null
+    ): void => ipcRenderer.send('browser:sync', { activeId, rect, css, own, host }),
     hideAll: (hidden: boolean): void => ipcRenderer.send('browser:hideAll', hidden),
     execJs: (id: string, code: string): Promise<unknown> =>
       ipcRenderer.invoke('browser:execJs', { id, code }),
@@ -636,6 +637,16 @@ const api = {
     metrics: (): Promise<
       Array<{ pid: number; type: string; serviceName?: string; name?: string; cpu: number }>
     > => ipcRenderer.invoke('perf:metrics')
+  },
+  // The menu bar icon's list (main/tray). Sent whole whenever it changes.
+  tray: {
+    feed: (feed: {
+      enabled: boolean
+      items: Array<{ paneId: string; title: string; workspace: string; kind: 'waiting' | 'done' }>
+      busy: number
+      ko: boolean
+    }): void => ipcRenderer.send('tray:feed', feed),
+    diag: (): Promise<{ title: string; labels: string[] }> => ipcRenderer.invoke('tray:diag')
   },
   notify: {
     // Main decides whether and where to show it from every window's presence
