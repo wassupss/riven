@@ -18,6 +18,8 @@ interface Tab {
   visible?: boolean
   id: string
   view: WebContentsView
+  // The window the view is attached to: riven's, or a panel's pop-out.
+  host?: BrowserWindow
 }
 
 const tabs = new Map<string, Tab>()
@@ -181,13 +183,70 @@ function wireEvents(tab: Tab): void {
   })
 }
 
+// ---- pop-outs --------------------------------------------------------------
+//
+// A browser panel popped out into its own window is still drawn by riven's
+// renderer — the pop-out is only a document it renders into — so every message
+// about it arrives from riven's window. The page view stayed attached there,
+// painted where the panel USED to be, and the pop-out showed an empty panel.
+// The panel now names the window it is really in (a key it puts on that window),
+// and the view is moved into it.
+const popouts = new Map<string, BrowserWindow>()
+// The newest browser:sync per panel (keyed by the tabs it owns) — see there.
+const syncSeq = new Map<string, number>()
+
+async function popoutWindow(key: string): Promise<BrowserWindow | null> {
+  const hit = popouts.get(key)
+  if (hit && !hit.isDestroyed()) return hit
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.isDestroyed() || w === win()) continue
+    let k: unknown = null
+    try {
+      k = await w.webContents.executeJavaScript('window.__rivenPopout || null', true)
+    } catch {
+      continue
+    }
+    if (k !== key) continue
+    popouts.set(key, w)
+    // Closing the pop-out must not take the page with it: back to riven's
+    // window, hidden, until its panel says where it is again.
+    w.once('close', () => {
+      popouts.delete(key)
+      const home = win()
+      for (const t of tabs.values()) {
+        if (t.host !== w) continue
+        t.view.setVisible(false)
+        t.visible = false
+        if (home) attach(t, home)
+      }
+      // The panel is on its way back into riven's window, and may already have
+      // said where it is — before this ran and hid the view again. Have every
+      // panel say it once more.
+      send('browser:event', { kind: 'resync' })
+    })
+    return w
+  }
+  return null
+}
+
+function attach(t: Tab, w: BrowserWindow): void {
+  if (t.host === w) return
+  try {
+    if (t.host && !t.host.isDestroyed()) t.host.contentView.removeChildView(t.view)
+  } catch {
+    /* already detached */
+  }
+  w.contentView.addChildView(t.view)
+  t.host = w
+}
+
 function createTab(id: string, url: string, partition?: string): void {
   const w = win()
   if (!w || tabs.has(id)) return
   const view = new WebContentsView({
     webPreferences: { partition: partition || 'persist:riven-browser' }
   })
-  const tab: Tab = { id, view }
+  const tab: Tab = { id, view, host: w }
   tabs.set(id, tab)
   w.contentView.addChildView(view)
   view.setVisible(false)
@@ -258,7 +317,7 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
   ipcMain.handle('browser:destroy', (_e, a: { id: string }) => {
     const t = tabs.get(a.id)
     if (!t) return
-    const w = win()
+    const w = t.host && !t.host.isDestroyed() ? t.host : win()
     try {
       w?.contentView.removeChildView(t.view)
     } catch {
@@ -294,9 +353,26 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
         // the hidden one telling us "show nothing" used to blank the visible
         // one's page — whichever message happened to arrive last won.
         own?: string[]
+        // Set when the panel is in a pop-out: the key it put on that window.
+        host?: string | null
       }
     ) => {
-      const w = senderWindow(e) ?? win()
+      // Finding a pop-out is asynchronous, so its message can land AFTER a newer
+      // one from the same panel — the panel coming back into riven's window said
+      // "show here", then the pop-out's late "hide" undid it. Per panel, only the
+      // newest message counts; and one about a pop-out that has since closed is
+      // about nothing.
+      const panel = (a.own ?? []).join(',')
+      const seq = (syncSeq.get(panel) ?? 0) + 1
+      syncSeq.set(panel, seq)
+      if (a.host) {
+        void popoutWindow(a.host).then((pw) => {
+          if (syncSeq.get(panel) === seq && pw && !pw.isDestroyed()) apply(pw)
+        })
+        return
+      }
+      apply(senderWindow(e) ?? win())
+    function apply(w: BrowserWindow | null): void {
       const showId = hiddenAll ? null : a.activeId
       // The renderer measures in CSS px; setBounds wants window DIP. If the web
       // content's CSS viewport differs from the window's DIP content size (page
@@ -321,6 +397,8 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
           note(`browser view ${on ? 'show' : 'hide'} ${id.slice(0, 8)}`)
           t.visible = on
         }
+        // The view goes where its panel is — riven's window or a pop-out.
+        if (on && w && t.host !== w) attach(t, w)
         t.view.setVisible(on)
         if (on && a.rect)
           t.view.setBounds({
@@ -330,6 +408,7 @@ export function registerBrowserHandlers(windowGetter: () => BrowserWindow | null
             height: Math.max(1, Math.round(a.rect.height * sy) - inset)
           })
       }
+    }
     }
   )
   // Modal z-order guard: hide every browser view while a renderer overlay is up.
