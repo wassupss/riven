@@ -220,7 +220,7 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
     ko: '에이전트에 위임',
     en: 'Delegate to an agent',
     description:
-      "Delegate to another agent (`agent` = title or id from riven_agents). Waits for and returns its answer to THIS message (wait=false returns at once); if it is mid-turn, the message waits for that turn. A terminal agent is typed into; its answer comes back only when riven_agents shows replies=true. A busy agent is refused — retry when idle.",
+      "Delegate to another agent (`agent` = title or id from riven_agents). Returns its answer to THIS message (if it is mid-turn, after that turn). wait=false runs it in the background: returns at once and the answer reaches you as a new turn when done — don't poll. A terminal agent is typed into; its answer returns only if riven_agents shows replies=true. A busy one is refused — retry when idle.",
     inputSchema: obj({ agent: str, message: str, wait: bool }, ['agent', 'message']),
     implemented: true
   },
@@ -229,7 +229,7 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
     ko: '여러 에이전트에 위임',
     en: 'Delegate to agents',
     description:
-      'Delegate to SEVERAL agents at once (parallel). By default waits and returns every reply; pass wait=false to return immediately.',
+      'Delegate to SEVERAL agents at once (parallel). By default waits and returns every reply; wait=false runs them in the background, each answer delivered to you as it lands.',
     inputSchema: obj(
       {
         tasks: {
@@ -280,7 +280,7 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
     ko: '그룹 전체에 전달',
     en: 'Broadcast to group',
     description:
-      "Send one message to every other member of `group` and return all answers together (wait=false just delivers). Each is asked in its own turn, so nobody is interrupted.",
+      "Send one message to every other member of `group` and return all answers together (wait=false: in the background, each answer delivered to you when it lands). Each is asked in its own turn, so nobody is interrupted.",
     inputSchema: obj({ group: str, message: str, wait: bool }, ['group', 'message']),
     implemented: true
   },

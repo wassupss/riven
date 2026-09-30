@@ -31,6 +31,10 @@ export interface AgentController {
   // see askChatTurnNow. A pane that does not report it falls back to a plain
   // wall-clock deadline.
   lastActivityAt?: () => number
+  // Start a turn with `text` that the transcript shows as the `notices` lines
+  // rather than as something the user typed — how an answer to work this pane
+  // handed off in the background is brought back to it (see returnToCaller).
+  wake?: (text: string, notices: string[]) => void
 }
 
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -155,6 +159,48 @@ async function askChatTurnNow(
   } finally {
     guard.cancel()
   }
+}
+
+// Answers to work a pane handed off without waiting, not yet given back to it.
+const returning = new Map<string, Array<{ text: string; notice: string }>>()
+
+/**
+ * Give an answer back to the pane that handed the work off — once that pane is
+ * free. A pane in the middle of a turn is not interrupted: the answer waits for
+ * the turn to end, and answers that pile up meanwhile go back together, as ONE
+ * turn, rather than one turn each.
+ */
+export function returnToCaller(chatKey: string, text: string, notice: string): void {
+  returning.set(chatKey, [...(returning.get(chatKey) ?? []), { text, notice }])
+  void queued(chatKey, async () => {
+    for (;;) {
+      const c = controllers.get(chatKey)
+      // The pane closed while the work was out: nobody left to tell.
+      if (!c?.wake) {
+        returning.delete(chatKey)
+        return
+      }
+      if (c.hasPendingOpening?.()) {
+        await pause(150)
+        continue
+      }
+      if (c.isBusy()) {
+        await c.waitNext()
+        continue
+      }
+      await pause(120)
+      if (c.isBusy() || c.hasPendingOpening?.()) continue
+      const batch = returning.get(chatKey) ?? []
+      returning.delete(chatKey)
+      // An earlier run already took this one along with its own.
+      if (!batch.length) return
+      c.wake(
+        batch.map((b) => b.text).join('\n\n'),
+        batch.map((b) => b.notice)
+      )
+      return
+    }
+  })
 }
 
 interface AgentsState {
