@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Notification, WebContents } from 'electron'
+import { appWindow } from './appWindow'
 import { note } from './focusTrace'
 
 // Desktop notifications, decided in ONE place.
@@ -155,8 +156,7 @@ function show(sender: WebContents, req: NotifyRequest): void {
   const target =
     (plan.recipient !== null ? windowFor(ids[plan.recipient]) : null) ??
     BrowserWindow.fromWebContents(sender) ??
-    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
-    null
+    appWindow()
   const n = new Notification({ title: req.title, body: req.body, silent: false })
   const release = retain(n)
   // 'show' is the OS accepting it; 'failed' is definitive rejection (an unsigned

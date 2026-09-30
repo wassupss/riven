@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow, shell } from 'electron'
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { appWindow } from './appWindow'
 import { atomicWriteText, TMP_SUFFIX } from './atomicWrite'
 
 export interface DirEntry {
@@ -258,12 +259,13 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle(
     'font:import',
     async (): Promise<{ family: string; dataUrl: string } | null> => {
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-      const res = await dialog.showOpenDialog(win, {
+      const win = BrowserWindow.getFocusedWindow() ?? appWindow()
+      const opts: Electron.OpenDialogOptions = {
         title: '폰트 파일 가져오기',
         properties: ['openFile'],
         filters: [{ name: 'Fonts', extensions: ['ttf', 'otf', 'woff', 'woff2'] }]
-      })
+      }
+      const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
       if (res.canceled || !res.filePaths[0]) return null
       const file = res.filePaths[0]
       const ext = path.extname(file).slice(1).toLowerCase()

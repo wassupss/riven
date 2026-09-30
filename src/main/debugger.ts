@@ -2,6 +2,7 @@ import { ipcMain, BrowserWindow, WebContents } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
 import { pathToFileURL, fileURLToPath } from 'url'
 import * as fs from 'fs'
+import { appWindow } from './appWindow'
 import * as path from 'path'
 
 // Node reports script URLs by their REAL path (symlinks resolved, e.g. /tmp ->
@@ -180,7 +181,7 @@ function cleanup(): void {
 
 async function start(cfg: { file: string; cwd?: string; args?: string[] }): Promise<{ ok: boolean; error?: string }> {
   if (child) cleanup() // one session at a time
-  sink = BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null
+  sink = appWindow()?.webContents ?? null
   const file = (() => {
     try {
       return fs.realpathSync(cfg.file)
