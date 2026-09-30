@@ -24,6 +24,7 @@ import { usePet } from './state/pet'
 import { useUsage } from './state/usage'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
+import { startTrayFeed } from './state/trayFeed'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
@@ -164,6 +165,8 @@ export default function App(): JSX.Element {
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
     // otherwise take its status (and its very existence) with it.
     const offRoster = startRoster()
+    // The menu bar icon's list, from the roster just started.
+    const offTray = startTrayFeed()
     // Reflect Chromium browser navigation events into the tab chrome.
     const offBrowser = initBrowserEvents()
     // A focused browser view swallows keyboard; main forwards Cmd/Ctrl chords here
@@ -278,6 +281,7 @@ export default function App(): JSX.Element {
       clearInterval(presenceBeat)
       offMcp()
       offRoster()
+      offTray()
       offBrowser()
       offBrowserKey()
       window.removeEventListener('keydown', onMetaDown, true)

@@ -593,6 +593,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'settings.notifyDone': { ko: '작업 완료', en: 'Turn finished' },
   'settings.notifyNeedsInput': { ko: '입력 필요 / 벨', en: 'Needs input / bell' },
   'settings.notifyFailure': { ko: '실패', en: 'Failure' },
+  'settings.menuBarIcon': { ko: '메뉴 막대 아이콘', en: 'Menu bar icon' },
+  'settings.menuBarIconDesc': {
+    ko: '상단 메뉴 막대에 riven 아이콘을 두고, 입력을 기다리거나 끝났는데 아직 안 본 에이전트 수를 옆에 표시합니다. 누르면 그 패널로 바로 갑니다.',
+    en: 'Keep riven in the menu bar with the number of agents waiting on you or finished and unseen beside it. Click one to go straight to its pane.'
+  },
   'settings.autoTitle': { ko: '대화 제목 자동 생성', en: 'Name chats automatically' },
   'settings.autoTitleDesc': {
     ko: '첫 메시지로 탭 이름을 짓습니다. 끄면 첫 줄을 그대로 쓰고 모델 호출도 하지 않습니다.',
@@ -866,6 +871,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'chat.bgTaskPlain': { ko: '백그라운드 작업', en: 'background task' },
   'chat.bgTaskDone': { ko: '백그라운드 작업 완료 · {what}', en: 'background task done · {what}' },
+  'chat.delegating': { ko: '위임', en: 'delegated' },
+  'chat.delegationHint': {
+    ko: '{what}에게 맡긴 일입니다. 끝나면 답이 이 패널로 자동으로 돌아옵니다.',
+    en: 'Work handed to {what}. Its answer comes back to this pane by itself when it is done.'
+  },
+  'chat.delegationDone': { ko: '위임한 일 완료 · {what}', en: 'delegated work done · {what}' },
   'chat.bgTaskFailed': { ko: '백그라운드 작업 실패 · {what}', en: 'background task failed · {what}' },
   'chat.compacting': { ko: '대화 압축 중', en: 'compacting the conversation' },
   'chat.compactFailed': { ko: '압축 실패', en: 'compaction failed' },

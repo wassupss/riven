@@ -92,6 +92,8 @@ export interface Settings {
   notifyOnDone: boolean
   notifyOnNeedsInput: boolean
   notifyOnFailure: boolean
+  // riven's icon in the macOS menu bar, with the count of agents that want you.
+  menuBarIcon: boolean
   // Terminal behaviour, all of it things xterm exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -150,6 +152,7 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyOnDone: true,
   notifyOnNeedsInput: true,
   notifyOnFailure: true,
+  menuBarIcon: true,
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,
