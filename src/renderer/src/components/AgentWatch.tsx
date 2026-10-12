@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { pathOf } from '../state/session'
+import { pathOf, useSession } from '../state/session'
 import { useAgentEdits, cacheSet } from '../state/agentEdits'
 import { workspaceOfPane } from '../state/roster'
 import { ensureChanges } from '../dock/registry'
@@ -21,6 +21,12 @@ import { ensureChanges } from '../dock/registry'
 // this window's layout doesn't own, which is how a popout keeps its own queue.
 // It reads the PERSISTED layout, so an agent working in a workspace that is
 // open but not currently mounted is still recorded.
+// Workspaces whose Changes panel was already auto-opened this run. Once is the
+// point — showing that the timeline exists. Doing it on every edit re-added a
+// panel the user had closed (squeezing every other column to make room), and
+// did it in whichever workspace was on screen, not the one being edited.
+const autoOpened = new Set<string>()
+
 export default function AgentWatch(): null {
   const record = useAgentEdits((s) => s.record)
 
@@ -30,8 +36,11 @@ export default function AgentWatch(): null {
         const workspace = workspaceOfPane(pane)
         if (!workspace) return
         cacheSet(path, after)
-        // Surface the timeline automatically (idempotent, no focus steal).
-        ensureChanges()
+        // Surface the timeline automatically (no focus steal), once per workspace.
+        if (useSession.getState().activeWorkspace === workspace && !autoOpened.has(workspace)) {
+          autoOpened.add(workspace)
+          ensureChanges()
+        }
 
         if (before !== null) {
           record(workspace, path, { before, after, hasBaseline: true }, false)

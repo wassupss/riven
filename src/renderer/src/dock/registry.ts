@@ -731,18 +731,17 @@ export function openEditorSplit(path?: string): void {
 // Auto-open the changes timeline when an agent edit arrives (idempotent). Opens
 // it on the left WITHOUT stealing focus from the terminal the user is typing in,
 // so agent activity surfaces the summary without hijacking the cursor.
-const CHANGES_WIDTH = 240
+// Not below the dock's own floor: at 240 against a 260 minimum the two pushed
+// the column back and forth, moving its neighbour each time.
+const CHANGES_WIDTH = MIN_PANEL_WIDTH
 
 export function ensureChanges(): void {
   const api = activeApi
   if (!api) return
-  const existing = api.getPanel('changes')
-  if (existing) {
-    // Already open (e.g. restored from a saved layout at a stale wide size) —
-    // keep it pinned narrow.
-    existing.group.api.setSize({ width: CHANGES_WIDTH })
-    return
-  }
+  // Already open: leave it exactly as the user has it. This used to re-pin it to
+  // 240px on EVERY agent edit, so with a chat and a terminal CLI both editing,
+  // the panels next to it kept resizing themselves.
+  if (api.getPanel('changes')) return
   const prev = api.activePanel
   const panel = api.addPanel({
     id: 'changes',
