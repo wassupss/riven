@@ -7,27 +7,31 @@
   height: 100%;
   min-height: 0;
   font-size: var(--text-sm);
-  container-type: inline-size; /* enable width-based responsive rules */
 }
 
 /* ---- left: search + tags + list ---- */
+/* The panel measures its own width (NotesPanel's ResizeObserver) and picks the
+   layout: under its NARROW width the list and the document take turns at the
+   full width (.narrow); above it the list may give up some width, never the
+   document's. */
 .notes-obsidian .no-side {
-  flex: 0 0 210px;
+  flex: 0 1 210px;
+  min-width: 160px;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--edge);
   background: var(--bg-2);
 }
-/* Folded away by the header toggle, so the document gets the whole panel. */
-.notes-obsidian .no-side.hidden {
-  display: none;
+.notes-obsidian.narrow .no-side {
+  flex: 1 1 auto;
+  min-width: 0;
+  border-right: none;
 }
-/* Narrow pane: drop the note-list sidebar so the editor stays usable. */
-@container (max-width: 440px) {
-  .notes-obsidian .no-side {
-    display: none;
-  }
+/* Folded away by the header toggle, or the column the narrow layout isn't on. */
+.notes-obsidian .no-side.hidden,
+.notes-obsidian .no-main.hidden {
+  display: none;
 }
 .notes-obsidian .no-side-head {
   display: flex;
@@ -151,9 +155,12 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 220px;
   min-height: 0;
   background: var(--bg);
+}
+.notes-obsidian.narrow .no-main {
+  min-width: 0;
 }
 .notes-obsidian .no-main-empty {
   flex: 1 1 auto;
