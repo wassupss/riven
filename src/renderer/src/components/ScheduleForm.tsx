@@ -5,6 +5,7 @@ import { listAgents } from '../state/agents'
 import { useJobs, type Job, type JobTarget } from '../state/jobs'
 import { nextRun, triggerLabel, untilLabel, type Trigger } from '../lib/schedule'
 import ModelOptions from './ModelOptions'
+import TimeField, { MinuteSelect } from './TimeField'
 import { claudeConfigDirFor } from '../state/settings'
 
 // Describing a piece of scheduled work.
@@ -24,8 +25,6 @@ const PRESETS: Preset[] = ['daily', 'weekdays', 'weekly', 'hourly', 'every', 'on
 const DAYS = ['일', '월', '화', '수', '목', '금', '토']
 /** The intervals people actually pick; anything else is typed. */
 const EVERY_CHIPS = [10, 30, 60, 180]
-
-const pad = (n: number): string => String(n).padStart(2, '0')
 
 function buildTrigger(preset: Preset, hour: number, minute: number, day: number, every: number): Trigger {
   switch (preset) {
@@ -172,26 +171,16 @@ export default function ScheduleForm({
         ) : preset === 'hourly' ? (
           <label className="sf-inline">
             {t('sched.atMinute')}
-            <input
-              className="sf-num"
-              type="number"
-              min={0}
-              max={59}
-              value={minute}
-              onChange={(e) => setMinute(Math.min(59, Math.max(0, Number(e.target.value) || 0)))}
-            />
+            <MinuteSelect minute={minute} onChange={setMinute} />
           </label>
         ) : (
-          // A time is a time field: two spinners for hour and minute was the
-          // form asking the person to do the parsing.
-          <input
-            className="sf-time"
-            type="time"
-            value={`${pad(hour)}:${pad(minute)}`}
-            onChange={(e) => {
-              const [h, m] = e.target.value.split(':').map(Number)
-              if (Number.isFinite(h)) setHour(h)
-              if (Number.isFinite(m)) setMinute(m)
+          // 오전/오후 · 시 · 분 as selects — see TimeField.
+          <TimeField
+            hour={hour}
+            minute={minute}
+            onChange={(h, m) => {
+              setHour(h)
+              setMinute(m)
             }}
           />
         )}
