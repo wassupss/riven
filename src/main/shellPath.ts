@@ -26,6 +26,16 @@ export function getPathDirs(): Promise<string[]> {
   return pathDirsPromise
 }
 
+/**
+ * process.env with the login shell's PATH. An agent CLI launched from Finder
+ * otherwise inherits /usr/bin:/bin:/usr/sbin:/sbin, and every stdio MCP server
+ * it starts through npx / uvx / node fails with "Executable not found in $PATH"
+ * (the same servers work in a terminal, which has the login PATH).
+ */
+export async function loginEnv(): Promise<NodeJS.ProcessEnv> {
+  return { ...process.env, PATH: (await getPathDirs()).join(':') }
+}
+
 // Agent CLIs cost the user money every time one starts a turn, and an e2e run
 // mounts panes by the dozen. Under RIVEN_E2E these resolve to nothing, so every
 // path that would have spawned one reports "not found" — the failure it already
