@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { WebContents } from 'electron'
-import { resolveBin, binIdentity } from './shellPath'
+import { resolveBin, binIdentity, loginEnv } from './shellPath'
 import { mcpPaneUrl, mcpSystemPrompt, mcpAuthToken, mcpRequestTimeoutMs, implementedToolNames, mcpReady } from './mcpServer'
 import { reportAgentEdit } from './agentHooks'
 import { isUsableImage, type ChatImageInput } from './chatContent'
@@ -235,10 +235,12 @@ export class CodexChat {
       args.push('-c', 'mcp_servers.riven.default_tools_approval_mode="approve"')
     }
     args.push('app-server')
+    // The login PATH, so the user's npx / uvx MCP servers can start.
+    const base = await loginEnv()
     try {
       this.proc = spawn(cmd, args, {
         cwd: this.opts.cwd,
-        env: { ...process.env, RIVEN_MCP_TOKEN: mcpAuthToken(), RIVEN_CHAT_KEY: this.key },
+        env: { ...base, RIVEN_MCP_TOKEN: mcpAuthToken(), RIVEN_CHAT_KEY: this.key },
         stdio: ['pipe', 'pipe', 'pipe']
       })
     } catch (e) {

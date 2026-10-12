@@ -4,9 +4,10 @@ import { randomUUID } from 'crypto'
 import { promises as fsp } from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import { resolveBin, binIdentity, getPathDirs } from './shellPath'
+import { resolveBin, binIdentity, loginEnv } from './shellPath'
 import { PROBE_INIT, PROBE_STATUS, parseSessionProbeLine } from './sessionProbe'
 import { autocompactArg } from './cliArgs'
+import { resultError } from './resultError'
 import { repairPastedAddServers, claudeStateFile } from './mcpRepair'
 import { hookEnv } from './agentHooks'
 import { userContent, type ChatImageInput } from './chatContent'
@@ -120,6 +121,9 @@ interface Session {
   alive: boolean
   ctrlSeq: number
   sawInit: boolean // whether the CLI reached its init (used for resume fallback)
+  // Messages written before init. If the --resume target turns out to be gone
+  // the CLI exits without reading them, and the fresh child gets them instead.
+  unsent: { line: unknown; turn: string }[]
   streamedText: boolean // any assistant text_delta this turn (else surface result)
   // Token totals for the turn so far. A turn is many model calls — one per tool
   // round — and each call's usage restarts from its own numbers, so shown as-is
@@ -202,6 +206,8 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'usage'; input: number; output: number; isStart: boolean }
   | { key: string; kind: 'turnDone'; costUSD: number | null; sessionId: string | null; error: string | null }
   | { key: string; kind: 'exit'; code: number }
+  // The session a pane asked to --resume no longer exists; it carries on fresh.
+  | { key: string; kind: 'sessionLost'; sessionId: string }
   // The CLI talking about itself, not about the answer. We parsed none of this
   // before, so a request stuck in retry backoff or an account that had hit its
   // limit looked exactly like a model thinking hard.
@@ -234,6 +240,22 @@ function writeLine(s: Session, obj: unknown): void {
   } catch {
     /* broken pipe — child exited */
   }
+}
+
+/** Hand a user message to the child, holding a slot for its result. */
+function deliver(s: Session, line: unknown, turn?: string): void {
+  s.turnBusy = true
+  s.lastActive = Date.now()
+  // ALWAYS push, even when the renderer did not name the turn (a bare
+  // /clear does not). One user line produces exactly one result, so a line
+  // with no id still has to occupy a slot — without it the queue runs one
+  // short and the NEXT turn's result is handed to the wrong id, which the
+  // pane then reads as "your new message is already done" while the agent
+  // is still working on it.
+  const id = turn ?? `main_${randomUUID()}`
+  s.turns.push(id)
+  if (!s.sawInit) s.unsent.push({ line, turn: id })
+  writeLine(s, line)
 }
 
 const shorten = (p: string): string =>
@@ -447,6 +469,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   }
   if (type === 'system' && ev.subtype === 'init') {
     s.sawInit = true
+    s.unsent = []
     s.sessionId = (ev.session_id as string) ?? s.sessionId
     // The servers this session really has, so the next pane in this folder is
     // allowed them even where `claude mcp list` leaves some out.
@@ -559,6 +582,9 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     // needs to know this task was a background one.
     for (const task of raw) if (task.task_id) s.bgTaskIds.add(String(task.task_id))
     s.bgRunning = raw.length
+    // A restart that waited for these to finish happens now.
+    if (!raw.length && !s.turnBusy && restartWhenIdle.has(s.key))
+      setTimeout(() => void restartInPlace(s.key), 0)
     emit(s, {
       key: s.key,
       kind: 'bgTasks',
@@ -592,6 +618,16 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
   }
   if (type === 'result') {
     s.turnBusy = false // turn over — the pane is now parkable if it stays quiet
+    // `--resume` of a session the CLI no longer has (it deletes transcripts after
+    // cleanupPeriodDays, 30 by default) answers with this result before init and
+    // exits. The exit handler restarts the pane fresh; reporting it as a failed
+    // turn put a bare red "error_during_execution" in a pane that had no turn.
+    if (!s.sawInit && s.opts.resume && ev.subtype === 'error_during_execution') {
+      console.log(`[chat:${s.key}] resume target gone:`, ev.errors)
+      s.sessionId = null
+      emit(s, { key: s.key, kind: 'sessionLost', sessionId: s.opts.resume })
+      return
+    }
     // A restart that waited for this turn (see restartInPlace) happens now —
     // after the result has gone out, so the pane sees its turn finish first.
     if (restartWhenIdle.has(s.key)) setTimeout(() => void restartInPlace(s.key), 0)
@@ -602,10 +638,11 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
     // Slash commands (e.g. /usage, /context) return their output ONLY in the
     // result — nothing streams as assistant text. Surface it so the pane shows the
     // command's answer instead of an empty turn.
-    if (!s.streamedText && typeof ev.result === 'string' && ev.result.trim()) {
+    // A failed turn's result is its error message, shown once as the error below.
+    const isError = ev.is_error === true || (ev.subtype && ev.subtype !== 'success')
+    if (!isError && !s.streamedText && typeof ev.result === 'string' && ev.result.trim()) {
       emit(s, { key: s.key, kind: 'text', delta: ev.result })
     }
-    const isError = ev.is_error === true || (ev.subtype && ev.subtype !== 'success')
     // This result ends the OLDEST unanswered message, which is not necessarily
     // the turn the pane is showing now — unless the CLI started this turn ITSELF
     // to report a background task, in which case no message is waiting on it.
@@ -620,7 +657,7 @@ function handleEvent(s: Session, ev: Record<string, unknown>): void {
       kind: 'turnDone',
       costUSD: typeof ev.total_cost_usd === 'number' ? ev.total_cost_usd : null,
       sessionId: s.sessionId,
-      error: isError ? String(ev.subtype ?? 'error') : null,
+      error: isError ? resultError(ev) : null,
       turn
     })
     return
@@ -799,7 +836,7 @@ async function startSession(
   const hooks = hookEnv(key)
   if (hooks.RIVEN_HOOKS_SETTINGS) args.push('--settings', hooks.RIVEN_HOOKS_SETTINGS)
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...(await loginEnv()),
     ...agentMcpEnv(),
     ...hooks,
     RIVEN_CHAT_KEY: key
@@ -827,6 +864,7 @@ async function startSession(
     alive: true,
     ctrlSeq: 0,
     sawInit: false,
+    unsent: [],
     streamedText: false,
     turnIn: 0,
     turnOutDone: 0,
@@ -879,7 +917,10 @@ async function startSession(
     // dying — the visible transcript is kept; only server-side context is lost.
     if (opts.resume && !s.sawInit) {
       console.log(`[chat:${key}] resume failed (stale session), starting fresh`)
-      void startSession(key, { ...opts, resume: undefined }, sender)
+      void startSession(key, { ...opts, resume: undefined }, sender).then(() => {
+        const fresh = sessions.get(key)
+        if (fresh) for (const u of s.unsent) deliver(fresh, u.line, u.turn)
+      })
       return
     }
     emit(s, { key, kind: 'exit', code: code ?? 0 })
@@ -984,7 +1025,7 @@ async function runCliUpdate(cmd: 'claude' | 'codex'): Promise<CliUpdateState> {
   const from = await cliVersion(bin)
   publishUpdate({ ...base, from })
   // The login shell's PATH, so an npm-installed CLI can find node.
-  const env = { ...process.env, PATH: (await getPathDirs()).join(':') }
+  const env = await loginEnv()
   const { code, output } = await new Promise<{ code: number | null; output: string }>((resolve) => {
     let out = ''
     const keep = (b: Buffer): void => {
@@ -1031,7 +1072,10 @@ const restartWhenIdle = new Set<string>()
 async function restartInPlace(key: string): Promise<'restarted' | 'deferred' | 'none'> {
   const claude = sessions.get(key)
   if (claude) {
-    if (claude.turnBusy) {
+    // A background command (a dev server, a watcher) lives in this process too:
+    // restarting under it killed it, and the pane later reported that as a
+    // failed task. Wait for those as well, as the idle reaper does.
+    if (claude.turnBusy || claude.bgRunning > 0) {
       restartWhenIdle.add(key)
       return 'deferred'
     }
@@ -1157,16 +1201,7 @@ export function registerAgentChatHandlers(): void {
     }
     const s = sessions.get(key)
     if (s) {
-      s.turnBusy = true
-      s.lastActive = Date.now()
-      // ALWAYS push, even when the renderer did not name the turn (a bare
-      // /clear does not). One user line produces exactly one result, so a line
-      // with no id still has to occupy a slot — without it the queue runs one
-      // short and the NEXT turn's result is handed to the wrong id, which the
-      // pane then reads as "your new message is already done" while the agent
-      // is still working on it.
-      s.turns.push(turn ?? `main_${randomUUID()}`)
-      writeLine(s, line)
+      deliver(s, line, turn)
       return
     }
     // Parked while idle, or simply gone (killed, crashed): respawn the child —
@@ -1190,11 +1225,7 @@ export function registerAgentChatHandlers(): void {
     parked.delete(key)
     void startSession(key, p.opts, event.sender).then(() => {
       const revived = sessions.get(key)
-      if (!revived) return
-      revived.turnBusy = true
-      revived.lastActive = Date.now()
-      revived.turns.push(turn ?? `main_${randomUUID()}`)
-      writeLine(revived, line)
+      if (revived) deliver(revived, line, turn)
     })
   })
   // Is there still an agent behind this pane? The pane asks before deciding a
@@ -1515,7 +1546,7 @@ async function probeSessionInfo(
     '--no-session-persistence'
   ]
   if (mcpConfig) args.push('--mcp-config', mcpConfig)
-  const env = { ...process.env }
+  const env = await loginEnv() // or its servers report "failed" for want of npx
   if (configDir) {
     env.CLAUDE_CONFIG_DIR = configDir
     await ensureProfilePlugins(configDir)
@@ -1852,7 +1883,7 @@ async function mcpList(cwd: string, configDir?: string): Promise<McpServer[]> {
     if (r.ok) console.log(`[mcp] repaired "${r.name}": it was registered as its own add command`)
     else console.warn(`[mcp] could not repair "${r.name}"`, r.output.slice(0, 300))
   }
-  const env = { ...process.env }
+  const env = await loginEnv() // `mcp list` health-checks each server by starting it
   if (configDir) env.CLAUDE_CONFIG_DIR = configDir
   const out = await new Promise<string>((resolve) => {
     let s = ''
@@ -1933,6 +1964,7 @@ async function runClaudeMcp(
 ): Promise<{ ok: boolean; output: string }> {
   const cmd = await resolveBin('claude')
   if (!cmd) return { ok: false, output: 'claude CLI not found' }
+  const env = await loginEnv() // `mcp list` / `add` start the servers to check them
   return await new Promise((resolve) => {
     let out = ''
     let done = false
@@ -1942,7 +1974,6 @@ async function runClaudeMcp(
       resolve({ ok, output: out })
     }
     // login opens the OS browser for the OAuth flow; inherit no stdin.
-    const env = { ...process.env }
     if (configDir) env.CLAUDE_CONFIG_DIR = configDir
     const p = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
     p.stdout?.on('data', (b: Buffer) => (out += b.toString()))

@@ -49,6 +49,7 @@ import { ensureEditor, addTerminal, setDelegator, hasInitialText, takeInitialTex
 import { promptInput } from '../../components/promptInput'
 import { useUI } from '../../state/ui'
 import { useT, t as staticT, type TFn } from '../../i18n'
+import { bgTaskOutcome } from '../../lib/bgTaskOutcome'
 import Markdown from '../../components/Markdown'
 import { splitMarkdownBlocks } from '../../lib/markdownBlocks'
 import { activeSubagents, isQuiet, toolGroupMode } from '../../lib/subagents'
@@ -495,15 +496,18 @@ function SubagentCard({
         <span className="chat-subagent-status">
           {running ? (
             <>
-              <Loader2 size={11} className="spin" /> {t('chat.tools.run')}
+              <Loader2 size={11} className="spin" />
+              <span className="chat-subagent-status-word">{t('chat.tools.run')}</span>
             </>
           ) : stopped ? (
             <>
-              <Square size={9} fill="currentColor" /> {t('chat.stopped')}
+              <Square size={9} fill="currentColor" />
+              <span className="chat-subagent-status-word">{t('chat.stopped')}</span>
             </>
           ) : (
             <>
-              <Check size={11} /> {t('chat.done')}
+              <Check size={11} />
+              <span className="chat-subagent-status-word">{t('chat.done')}</span>
             </>
           )}
         </span>
@@ -2145,17 +2149,23 @@ export default function ChatPanel({
         case 'taskDone': {
           // It finished outside any turn, so it goes in the transcript as its own
           // line: the pane may have been idle for minutes when this lands.
-          const ok = e.status === 'completed'
+          // A server the agent shut down itself is "stopped", not "failed" —
+          // see bgTaskOutcome.
+          const outcome = bgTaskOutcome(e.status, e.label)
+          const name = bgLabels.current.get(e.taskId) || e.label
           const started = bgStarted.current.get(e.taskId)
           pushNotice({
-            tone: ok ? 'info' : 'warn',
+            tone: outcome === 'failed' ? 'warn' : 'info',
             icon: 'task',
             // Its name, not the CLI's sentence about it — that sentence wraps
             // "background command … completed" around the name we already have.
             // A FAILURE is the exception: only the CLI's summary says why.
-            text: ok
-              ? t('chat.bgTaskDone', { what: bgLabels.current.get(e.taskId) || e.label })
-              : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
+            text:
+              outcome === 'done'
+                ? t('chat.bgTaskDone', { what: name })
+                : outcome === 'stopped'
+                  ? t('chat.bgTaskStopped', { what: name })
+                  : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
             detail: started ? fmtDur(Date.now() - started) : undefined
           })
           bgStarted.current.delete(e.taskId)
@@ -2345,6 +2355,14 @@ export default function ChatPanel({
           // after turnDone set 'done' and wiped the completion ring before anyone
           // could see it. A finished turn keeps its state until the user looks.
           if (getAgentStatus(chatKey) !== 'done') setAgentStatus(chatKey, 'idle')
+          break
+        case 'sessionLost':
+          // The CLI deleted that conversation (it keeps transcripts 30 days by
+          // default); main carries on with a fresh one. Forget the dead id, or
+          // every restart would try it again and the pane would never restore.
+          // `fresh` keeps it from adopting some other conversation instead.
+          if (useSession.getState().sessions[workspace]?.panes?.[chatKey]?.session === e.sessionId)
+            savePane({ session: undefined, fresh: true })
           break
         default:
           break

@@ -912,7 +912,6 @@ select {
 .sf-prompt,
 .sf-name,
 .sf-num,
-.sf-time,
 .sf-sel {
   font-size: var(--text-xs);
   color: var(--fg);
@@ -930,7 +929,6 @@ select {
 .sf-prompt:focus,
 .sf-name:focus,
 .sf-num:focus,
-.sf-time:focus,
 .sf-sel:focus {
   border-color: var(--accent-border);
 }
@@ -983,6 +981,19 @@ select {
 }
 .sf-num {
   width: 64px;
+}
+/* TimeField: 오전/오후 · 시 · 분, three selects sharing one row. They opt out
+   of .sf-sel's 110px floor — three of those overflow the 340px menu sideways. */
+.tf {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+}
+.tf .sf-sel {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .sf-inline {
   display: inline-flex;
@@ -3935,8 +3946,11 @@ select {
   color: var(--fg);
   font-weight: 500;
   flex: 0 0 auto;
+  white-space: nowrap;
 }
 .chat-tool-detail {
+  flex: 0 1 auto;
+  min-width: 0; /* the detail gives way, never the elapsed time after it */
   color: var(--fg-dim);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -4059,6 +4073,7 @@ select {
 /* Subagent (Task) card — its own block, distinct from the command group, with an
    accent left edge and a nested list of the subagent's tool calls (native SubagentEntry). */
 .chat-subagent {
+  container-type: inline-size; /* its head drops words when the card is narrow */
   margin: 3px 0;
   border: 1px solid var(--accent-2-border);
   border-left-width: 3px;
@@ -4080,11 +4095,17 @@ select {
   cursor: pointer;
   text-align: left;
 }
+.chat-subagent-head > svg {
+  flex: none;
+}
+/* One line, always: the fixed parts (icon, title, status, count, chevron) never
+   shrink or wrap; only the description gives way, with an ellipsis. */
 .chat-subagent-title {
   flex: 0 0 auto;
+  white-space: nowrap;
 }
 .chat-subagent-desc {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
   font-weight: 400;
   color: var(--fg-dim);
@@ -4094,6 +4115,7 @@ select {
 }
 .chat-subagent-status {
   flex: 0 0 auto;
+  white-space: nowrap;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -4112,10 +4134,19 @@ select {
 }
 .chat-subagent-count {
   flex: 0 0 auto;
+  white-space: nowrap;
   padding: 0 6px;
   border-radius: var(--radius-full);
   background: var(--accent-2-muted);
   font-size: 10px;
+}
+/* Narrow card: the icons already say "subagent" and running/done, so the words
+   go first, before the description is squeezed to nothing. */
+@container (max-width: 300px) {
+  .chat-subagent-title,
+  .chat-subagent-status-word {
+    display: none;
+  }
 }
 .chat-subagent-kids {
   display: flex;
@@ -9829,6 +9860,7 @@ body.win-unfocused .chat-ring::before {
    strip they were borrowing: a subagent belongs to the turn that spawned it and
    disappears with it, while these outlive it. */
 .chat-bgtasks {
+  container-type: inline-size;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -9838,13 +9870,19 @@ body.win-unfocused .chat-ring::before {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   max-width: 100%;
+  white-space: nowrap;
   padding: 4px 9px;
   font-size: var(--text-xs);
   color: var(--fg-dim);
   background: var(--hover);
   border: 1px solid var(--edge);
   border-radius: 999px;
+}
+.chat-bgtask > svg,
+.chat-bgtask-dot {
+  flex: none;
 }
 .chat-bgtask-dot {
   width: 5px;
@@ -9859,16 +9897,27 @@ body.win-unfocused .chat-ring::before {
   }
 }
 .chat-bgtask-state {
+  flex: none;
   color: var(--accent);
 }
+/* The label is the only part that gives way; the state and the clock stay whole. */
 .chat-bgtask-label {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .chat-bgtask-time {
+  flex: none;
   font-variant-numeric: tabular-nums;
   opacity: 0.75;
+}
+/* Narrow pane: the pulsing dot already says it's running. */
+@container (max-width: 260px) {
+  .chat-bgtask-state {
+    display: none;
+  }
 }
 /* Compaction in progress. Indeterminate: the CLI says it started, never how far
    along it is, so a percentage would be a lie. */

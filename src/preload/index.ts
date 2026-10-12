@@ -98,6 +98,7 @@ export type ChatEvent = { turn?: string | null } & (
       error: string | null
     }
   | { key: string; kind: 'exit'; code: number }
+  | { key: string; kind: 'sessionLost'; sessionId: string }
   | { key: string; kind: 'retry'; attempt: number; max: number; delayMs: number; status: number | null }
   | { key: string; kind: 'limit'; status: string; resetsAt?: number; limitKind?: string; utilization?: number }
   | { key: string; kind: 'compact'; trigger: 'manual' | 'auto'; pre: number; post?: number; durationMs?: number }

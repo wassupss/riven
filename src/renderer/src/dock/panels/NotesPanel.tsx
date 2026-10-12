@@ -44,6 +44,12 @@ interface NoteDoc {
 
 type Mode = 'edit' | 'preview' | 'split'
 
+// Panel widths (px) where the layout changes: under NARROW the list and the
+// document take turns; under WIDE the backlinks/outline rail is dropped so the
+// document keeps its room.
+const NARROW = 460
+const WIDE = 680
+
 const rel = (t: TFn, ms: number): string => {
   const s = Math.floor((Date.now() - ms) / 1000)
   if (s < 60) return t('notes.time.now')
@@ -123,6 +129,24 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
   // The note list costs 210px of a panel that is often docked narrow, so it can
   // be folded away to give the document the full width.
   const [sideOpen, setSideOpen] = useState(true)
+  // The panel's own width decides the layout. Both rails are fixed at 210px, so
+  // in a narrow dock they used to squeeze the document down to nothing. Below
+  // NARROW only one column fits: the list OR the document (listView picks).
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [width, setWidth] = useState(0)
+  const [listView, setListView] = useState(false)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setWidth(Math.round(e.contentRect.width)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const narrow = width > 0 && width < NARROW
+  // Before the first measurement, assume room for everything (the old layout).
+  const wide = width === 0 || width >= WIDE
+  // Opening a note in the single-column layout means "show me the note".
+  useEffect(() => setListView(false), [sel])
   // Workspace document picker (import) is open.
   const [picking, setPicking] = useState(false)
 
@@ -640,18 +664,24 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
   // so folding the list away never leaves it unreachable.
   const sideToggle = (
     <button
-      className={`no-btn${sideOpen ? ' active' : ''}`}
+      className={`no-btn${(narrow ? listView : sideOpen) ? ' active' : ''}`}
       title={t('notes.listToggle')}
-      onClick={() => setSideOpen((v) => !v)}
+      onClick={() => (narrow ? setListView((v) => !v) : setSideOpen((v) => !v))}
     >
       <PanelLeft size={14} />
     </button>
   )
 
+  // Single column: the list until a note is picked, then the note (the toggle
+  // flips back to the list).
+  const showList = narrow ? listView || !sel : sideOpen
+  const showMain = !narrow || !showList
+  const layout = narrow ? ' narrow' : ''
+
   return (
-    <div className="notes-panel notes-obsidian">
+    <div ref={rootRef} className={`notes-panel notes-obsidian${layout}`}>
       {/* left: search + tags + list */}
-      <div className={`no-side${sideOpen ? '' : ' hidden'}`}>
+      <div className={`no-side${showList ? '' : ' hidden'}`}>
         <div className="no-side-head">
           <span>{t('notes.title')}</span>
           <span className="no-side-acts">
@@ -693,7 +723,10 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
             <div
               key={n.name}
               className={`no-item${sel === n.name ? ' active' : ''}`}
-              onClick={() => open(n.name)}
+              onClick={() => {
+                open(n.name)
+                setListView(false) // also when it is the note already open
+              }}
             >
               <FileText size={13} />
               <span className="no-item-title">{n.title}</span>
@@ -704,7 +737,7 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
       </div>
 
       {/* center: title + toolbar + editor/preview */}
-      <div className="no-main">
+      <div className={`no-main${showMain ? '' : ' hidden'}`}>
         {sel ? (
           <>
             <div className="no-head">
@@ -726,13 +759,15 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
               <button className="no-btn" title={t('notes.delete')} onClick={() => del(sel)}>
                 <Trash2 size={14} />
               </button>
-              <button
-                className={`no-btn${asideOpen ? ' active' : ''}`}
-                title={t('notes.panelToggle')}
-                onClick={() => setAsideOpen((v) => !v)}
-              >
-                <PanelRight size={14} />
-              </button>
+              {wide && (
+                <button
+                  className={`no-btn${asideOpen ? ' active' : ''}`}
+                  title={t('notes.panelToggle')}
+                  onClick={() => setAsideOpen((v) => !v)}
+                >
+                  <PanelRight size={14} />
+                </button>
+              )}
             </div>
 
             {mode !== 'preview' && (
@@ -806,7 +841,7 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
       </div>
 
       {/* right: backlinks + outline */}
-      {sel && asideOpen && (
+      {sel && asideOpen && wide && (
         <div className="no-aside">
           <div className="no-aside-sec">
             <div className="no-aside-head">
