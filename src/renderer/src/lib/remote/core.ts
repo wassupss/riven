@@ -14,10 +14,15 @@
 //   none can read another's traffic. Supabase Realtime only relays ciphertext.
 // - Each message carries its time and is accepted once (random 24-byte nonce),
 //   so a captured message cannot be replayed later.
+// - The relay itself is closed to anyone not signed in: channels are PRIVATE
+//   Realtime channels named after the owner's account id, and the project's RLS
+//   policy (supabase/remote.sql) lets a signed-in user join only their own. The
+//   phone must be signed in to the same account as the computer to even reach
+//   it; the keys above are what it then needs to be understood.
 
 import nacl from 'tweetnacl'
 
-export const PROTOCOL = 2
+export const PROTOCOL = 3
 export const INVITE_TTL_MS = 10 * 60_000
 export const REPLAY_WINDOW_MS = 3 * 60_000
 
@@ -100,7 +105,7 @@ export interface PairingOffer {
   desk: string // this machine's public key
   invite: string // one-time invite
   url: string // Supabase project URL
-  anon: string // Supabase publishable key
+  owner: string // the account id the computer is signed in as
   name: string // this machine's display name
 }
 
@@ -116,7 +121,7 @@ export function parseOffer(text: string): PairingOffer | null {
     const o = JSON.parse(fromUtf8(fromB64u(raw)))
     const ok =
       o?.v === PROTOCOL &&
-      [o.channel, o.desk, o.invite, o.url, o.anon].every((x) => typeof x === 'string' && x.length > 0) &&
+      [o.channel, o.desk, o.invite, o.url, o.owner].every((x) => typeof x === 'string' && x.length > 0) &&
       /^https:\/\//.test(o.url)
     return ok ? { ...o, name: typeof o.name === 'string' ? o.name : '' } : null
   } catch {
@@ -215,12 +220,66 @@ export type AgentStatus = 'idle' | 'busy' | 'waiting' | 'done'
 
 export interface RemoteAgent {
   id: string // pane key
+  wsId: string // workspace id
   workspace: string // display name
   kind: 'chat' | 'terminal'
   title: string
   status: AgentStatus
   /** A chat pane: it can take a message (its workspace is opened if need be). */
   canSend: boolean
+}
+
+/** One choice in a picker: what is sent, and what the user reads. */
+export interface Choice {
+  value: string
+  label: string
+}
+
+/** A chat's settings, as its own pickers on the computer show them. */
+export interface ChatInfo {
+  chatKey: string
+  cli: string
+  model: string
+  mode: string
+  /** Every model this chat may be switched to; nothing else is accepted. */
+  models: Choice[]
+  modes: Choice[]
+  busy: boolean
+}
+
+/** When a scheduled job runs. The same shape as the computer's own (lib/schedule). */
+export type RemoteTrigger =
+  | { kind: 'once'; at: number }
+  | { kind: 'every'; minutes: number }
+  | { kind: 'hourly'; minute: number }
+  | { kind: 'daily'; hour: number; minute: number }
+  | { kind: 'weekdays'; hour: number; minute: number }
+  | { kind: 'weekly'; day: number; hour: number; minute: number }
+
+export type RemoteJobTarget =
+  | { kind: 'pane'; chatKey: string; title: string }
+  | { kind: 'new'; cli: 'claude' | 'codex'; model?: string }
+
+export interface RemoteJob {
+  id: string
+  workspace: string // workspace id
+  name: string
+  prompt: string
+  trigger: RemoteTrigger
+  target: RemoteJobTarget
+  enabled: boolean
+  /** When it fires next, as the computer's clock reckons it. */
+  next: number | null
+  last?: { at: number; status: 'ok' | 'failed' | 'missed'; note?: string }
+}
+
+/** A job made on the phone: everything but what the computer fills in. */
+export interface NewJob {
+  workspace: string
+  name: string
+  prompt: string
+  trigger: RemoteTrigger
+  target: RemoteJobTarget
 }
 
 /** Desk → phone. */
@@ -235,17 +294,81 @@ export type DeskMsg =
   | { t: 'reply'; reqId: string; chatKey: string; text: string }
   | { t: 'event'; kind: 'done' | 'attention'; id: string; title: string }
   | { t: 'history'; chatKey: string; items: HistoryItem[] }
+  | { t: 'chatInfo'; info: ChatInfo }
+  | { t: 'jobs'; workspaces: Choice[]; jobs: RemoteJob[]; models: Choice[] }
 
-/** Phone → desk. */
+/**
+ * Phone → desk. This list IS what a phone may do: there is no message for
+ * anything else (API keys, MCP servers, tools, settings at large), so no
+ * phone, however compromised, can ask for it.
+ */
 export type PhoneMsg =
   | { t: 'hello' }
   | { t: 'send'; reqId: string; chatKey: string; text: string }
   | { t: 'answer'; id: string; choice: string }
   | { t: 'push'; token: string | null }
   | { t: 'history'; chatKey: string }
+  | { t: 'chatInfo'; chatKey: string }
+  | { t: 'setModel'; reqId: string; chatKey: string; model: string }
+  | { t: 'setMode'; reqId: string; chatKey: string; mode: string }
+  | { t: 'stop'; reqId: string; chatKey: string }
+  | { t: 'jobs' }
+  | { t: 'jobSet'; reqId: string; id: string; enabled: boolean }
+  | { t: 'jobRun'; reqId: string; id: string }
+  | { t: 'jobDelete'; reqId: string; id: string }
+  | { t: 'jobAdd'; reqId: string; job: NewJob }
 
 export const MAX_TEXT = 20_000
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
+const int = (v: unknown, min: number, max: number): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
+
+/** A trigger from a phone, or null if it is not one the computer could run. */
+export function parseTrigger(v: unknown): RemoteTrigger | null {
+  const t = v as Record<string, unknown> | null
+  if (!t || typeof t !== 'object') return null
+  switch (t.kind) {
+    case 'once':
+      return int(t.at, 1, 8_640_000_000_000_000) ? { kind: 'once', at: t.at } : null
+    case 'every':
+      return int(t.minutes, 1, 7 * 24 * 60) ? { kind: 'every', minutes: t.minutes } : null
+    case 'hourly':
+      return int(t.minute, 0, 59) ? { kind: 'hourly', minute: t.minute } : null
+    case 'daily':
+    case 'weekdays':
+      return int(t.hour, 0, 23) && int(t.minute, 0, 59) ? { kind: t.kind, hour: t.hour, minute: t.minute } : null
+    case 'weekly':
+      return int(t.day, 0, 6) && int(t.hour, 0, 23) && int(t.minute, 0, 59)
+        ? { kind: 'weekly', day: t.day, hour: t.hour, minute: t.minute }
+        : null
+    default:
+      return null
+  }
+}
+
+function parseTarget(v: unknown): RemoteJobTarget | null {
+  const t = v as Record<string, unknown> | null
+  if (!t || typeof t !== 'object') return null
+  if (t.kind === 'pane')
+    return str(t.chatKey, 200) && typeof t.title === 'string' && t.title.length <= 200
+      ? { kind: 'pane', chatKey: t.chatKey, title: t.title }
+      : null
+  if (t.kind === 'new' && (t.cli === 'claude' || t.cli === 'codex'))
+    return t.model === undefined || str(t.model, 100)
+      ? { kind: 'new', cli: t.cli, ...(t.model ? { model: t.model as string } : {}) }
+      : null
+  return null
+}
+
+function parseNewJob(v: unknown): NewJob | null {
+  const j = v as Record<string, unknown> | null
+  if (!j || typeof j !== 'object') return null
+  const trigger = parseTrigger(j.trigger)
+  const target = parseTarget(j.target)
+  if (!trigger || !target || !str(j.workspace, 1000) || !str(j.name, 100) || !str(j.prompt, MAX_TEXT)) return null
+  if (!j.prompt.trim()) return null
+  return { workspace: j.workspace, name: j.name, prompt: j.prompt, trigger, target }
+}
 
 /** Validate what arrived from a phone. Anything malformed is dropped. */
 export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | null {
@@ -263,6 +386,31 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
       return str(m.chatKey, 200) ? { t: 'history', chatKey: m.chatKey } : null
     case 'push':
       return m.token === null || str(m.token, 300) ? { t: 'push', token: m.token as string | null } : null
+    case 'chatInfo':
+      return str(m.chatKey, 200) ? { t: 'chatInfo', chatKey: m.chatKey } : null
+    case 'setModel':
+      return str(m.reqId, 64) && str(m.chatKey, 200) && str(m.model, 100)
+        ? { t: 'setModel', reqId: m.reqId, chatKey: m.chatKey, model: m.model }
+        : null
+    case 'setMode':
+      return str(m.reqId, 64) && str(m.chatKey, 200) && str(m.mode, 40)
+        ? { t: 'setMode', reqId: m.reqId, chatKey: m.chatKey, mode: m.mode }
+        : null
+    case 'stop':
+      return str(m.reqId, 64) && str(m.chatKey, 200) ? { t: 'stop', reqId: m.reqId, chatKey: m.chatKey } : null
+    case 'jobs':
+      return { t: 'jobs' }
+    case 'jobSet':
+      return str(m.reqId, 64) && str(m.id, 100) && typeof m.enabled === 'boolean'
+        ? { t: 'jobSet', reqId: m.reqId, id: m.id, enabled: m.enabled }
+        : null
+    case 'jobRun':
+    case 'jobDelete':
+      return str(m.reqId, 64) && str(m.id, 100) ? { t: m.t, reqId: m.reqId, id: m.id } : null
+    case 'jobAdd': {
+      const job = parseNewJob(m.job)
+      return str(m.reqId, 64) && job ? { t: 'jobAdd', reqId: m.reqId, job } : null
+    }
     default:
       return null
   }
@@ -298,5 +446,9 @@ export function clipHistory(items: HistoryItem[]): HistoryItem[] {
   return out
 }
 
-/** Realtime channel name for a pairing channel id. */
-export const channelName = (id: string): string => `riven-remote-${id}`
+/**
+ * Realtime topic for one computer's channel. It starts with the owner's account
+ * id because that is what the RLS policy checks (supabase/remote.sql): a
+ * signed-in user can join `riven-remote:<their id>:…` and nothing else.
+ */
+export const channelName = (owner: string, id: string): string => `riven-remote:${owner}:${id}`

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { supabase, isSupabaseConfigured, url as supabaseUrl, anonKey } from '../lib/supabase'
+import { supabase, isSupabaseConfigured, url as supabaseUrl } from '../lib/supabase'
 import {
   INVITE_TTL_MS,
   PROTOCOL,
@@ -18,15 +18,24 @@ import {
   randomId,
   seal,
   sharedKey,
+  type ChatInfo,
+  type Choice,
   type DeskMsg,
   type PhoneMsg,
-  type RemoteAgent
+  type RemoteAgent,
+  type RemoteJob
 } from '../lib/remote/core'
 import { claudeConfigDirFor, getSettings, useSettings, type RemoteDevice } from './settings'
 import { loadPaneState, pathOf, useSession, workspaceName } from './session'
 import { useRoster, rosterFor, workspaceOfPane } from './roster'
 import { askChatTurn, listAgents, resolveAgent, useAgents, type AgentController } from './agents'
 import { useAskUser } from './askUser'
+import { useAuth } from './auth'
+import { nextRunOf, useJobs, type Job } from './jobs'
+import { runJob } from './jobRunner'
+import { claudeCatalog } from './modelCatalog'
+import { modelLabel, modelsFor } from '../lib/models'
+import { t } from '../i18n'
 
 // Remote control: the phone app (mobile/) drives this machine's agents through
 // a relay. See lib/remote/core for the protocol and its security model; this
@@ -40,7 +49,7 @@ import { useAskUser } from './askUser'
 // phone present nothing is sent at all, and while one is, only state CHANGES go
 // out (the roster, debounced), plus a chat's reply once its turn is over.
 
-export type RemoteState = 'off' | 'unconfigured' | 'connecting' | 'online' | 'error'
+export type RemoteState = 'off' | 'unconfigured' | 'signed-out' | 'connecting' | 'online' | 'error'
 
 export interface PairPending {
   deviceId: string
@@ -74,19 +83,33 @@ void window.api.env
 
 // ---- pairing state -------------------------------------------------------------
 
-/** Make sure this machine has its key pair and channel. */
-function ensureIdentity(): void {
+/** The signed-in account, the only one whose phones may reach this machine. */
+const ownerId = (): string => useAuth.getState().user?.id ?? ''
+
+/**
+ * Make sure this machine has its key pair and channel, for this account. A
+ * different account than the one it was made for starts over, phones and all:
+ * they were approved for that account, and its channel is not this one's.
+ */
+function ensureIdentity(owner: string): void {
   const s = getSettings()
-  if (s.remoteChannel && s.remoteDeskPublic && s.remoteDeskSecret) return
+  if (s.remoteChannel && s.remoteDeskPublic && s.remoteDeskSecret && s.remoteOwner === owner) return
   const k = newKeyPair()
-  useSettings.getState().set({ remoteChannel: randomId(), remoteDeskPublic: k.publicKey, remoteDeskSecret: k.secretKey })
+  useSettings.getState().set({
+    remoteChannel: randomId(),
+    remoteDeskPublic: k.publicKey,
+    remoteDeskSecret: k.secretKey,
+    remoteOwner: owner,
+    ...(s.remoteOwner && s.remoteOwner !== owner ? { remoteDevices: [] } : {})
+  })
 }
 
 /** A fresh one-time invite and the QR text that carries it, or null if remote is unavailable. */
 export function newInvite(): string | null {
-  ensureIdentity()
+  const owner = ownerId()
+  if (!supabaseUrl || !owner) return null
+  ensureIdentity(owner)
   const s = getSettings()
-  if (!supabaseUrl || !anonKey) return null
   const invite = { code: randomId(), expiresAt: Date.now() + INVITE_TTL_MS }
   setStore({ invite })
   return offerToUrl({
@@ -95,7 +118,7 @@ export function newInvite(): string | null {
     desk: s.remoteDeskPublic,
     invite: invite.code,
     url: supabaseUrl,
-    anon: anonKey,
+    owner,
     name: hostname || 'riven'
   })
 }
@@ -141,6 +164,7 @@ export function resetRemote(): void {
     remoteChannel: randomId(),
     remoteDeskPublic: k.publicKey,
     remoteDeskSecret: k.secretKey,
+    remoteOwner: ownerId(),
     remoteDevices: []
   })
   setStore({ invite: null, pending: null })
@@ -181,7 +205,15 @@ function snapshot(): RemoteAgent[] {
   for (const ws of openWorkspaces) {
     const label = workspaceName(ws, names)
     for (const r of rosterFor(ws))
-      out.push({ id: r.id, workspace: label, kind: r.kind, title: r.title, status: r.status, canSend: r.kind === 'chat' })
+      out.push({
+        id: r.id,
+        wsId: ws,
+        workspace: label,
+        kind: r.kind,
+        title: r.title,
+        status: r.status,
+        canSend: r.kind === 'chat'
+      })
   }
   return out
 }
@@ -297,6 +329,153 @@ async function sendHistory(d: RemoteDevice, chatKey: string): Promise<void> {
   sendTo(d, { t: 'history', chatKey, items: clipHistory(items) })
 }
 
+// ---- chat settings -------------------------------------------------------------
+
+// The chat pane's own three, in its own words.
+const MODES = ['plan', 'acceptEdits', 'default'] as const
+const modeLabel = (m: string): string => t(m === 'default' ? 'chat.mode.ask' : `chat.mode.${m}`)
+
+/**
+ * A chat's model, permission mode and the choices it has. From the pane itself
+ * when it is mounted (its own pickers' lists, live labels); otherwise from what
+ * the pane saved, which is what it will come back with. Looking does not mount.
+ */
+function chatInfo(chatKey: string): ChatInfo | null {
+  const c = mounted(chatKey)
+  if (c?.remote) return { chatKey, ...c.remote.info(), busy: c.isBusy() }
+  const ws = workspaceOfPane(chatKey)
+  if (!ws) return null
+  const pane = loadPaneState(ws, chatKey)
+  const st = getSettings()
+  const cli = pane.cli === 'codex' ? 'codex' : 'claude'
+  const catalog = cli === 'codex' ? null : claudeCatalog(claudeConfigDirFor(ws))
+  return {
+    chatKey,
+    cli,
+    model: pane.model || st.defaultChatModel || 'default',
+    mode: pane.mode || st.defaultPermissionMode || 'acceptEdits',
+    models: modelsFor(cli).map((v) => ({ value: v, label: cli === 'codex' ? v : modelLabel(v, catalog) })),
+    modes: MODES.map((value) => ({ value, label: modeLabel(value) })),
+    busy: !!useRoster.getState().live[chatKey]?.busy
+  }
+}
+
+function sendChatInfo(d: RemoteDevice, chatKey: string): void {
+  const info = chatInfo(chatKey)
+  if (info) sendTo(d, { t: 'chatInfo', info })
+}
+
+/** Change a chat the way its own pickers would, if what was asked is one of their choices. */
+async function chatAction(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'setModel' | 'setMode' | 'stop' }>): Promise<void> {
+  const c = await controllerFor(m.chatKey)
+  const ctl = c?.remote
+  if (!c || !ctl) return sendTo(d, { t: 'ack', reqId: m.reqId, ok: false, error: 'not-open' })
+  const info = ctl.info()
+  if (m.t === 'setModel') {
+    if (!info.models.some((x) => x.value === m.model))
+      return sendTo(d, { t: 'ack', reqId: m.reqId, ok: false, error: 'bad-model' })
+    ctl.setModel(m.model)
+  } else if (m.t === 'setMode') {
+    if (!info.modes.some((x) => x.value === m.mode))
+      return sendTo(d, { t: 'ack', reqId: m.reqId, ok: false, error: 'bad-mode' })
+    ctl.setMode(m.mode)
+  } else ctl.stop()
+  sendTo(d, { t: 'ack', reqId: m.reqId, ok: true })
+  // The pane re-renders with the change; read it back after that.
+  setTimeout(() => sendChatInfo(d, m.chatKey), 300)
+}
+
+// ---- scheduled jobs ------------------------------------------------------------
+
+/** Phones that have the job list open this session: they get it again when it changes. */
+const jobWatchers = new Set<string>()
+const PROMPT_PREVIEW = 1_000
+
+function jobsMsg(): DeskMsg {
+  const { openWorkspaces, names } = useSession.getState()
+  const by = useJobs.getState().byWorkspace
+  const ids = [...new Set([...openWorkspaces, ...Object.keys(by).filter((w) => by[w]?.length)])]
+  const now = Date.now()
+  const jobs: RemoteJob[] = []
+  for (const ws of ids)
+    for (const j of by[ws] ?? []) {
+      const last = j.runs[j.runs.length - 1]
+      jobs.push({
+        id: j.id,
+        workspace: ws,
+        name: j.name,
+        prompt: j.prompt.length > PROMPT_PREVIEW ? j.prompt.slice(0, PROMPT_PREVIEW) + '…' : j.prompt,
+        trigger: j.trigger,
+        target: j.target,
+        enabled: j.enabled,
+        next: j.enabled ? nextRunOf(j, now) : null,
+        ...(last ? { last: { at: last.at, status: last.status, ...(last.note ? { note: last.note } : {}) } } : {})
+      })
+    }
+  const catalog = claudeCatalog()
+  const models: Choice[] = modelsFor('claude').map((v) => ({ value: v, label: modelLabel(v, catalog) }))
+  return {
+    t: 'jobs',
+    workspaces: openWorkspaces.map((id) => ({ value: id, label: workspaceName(id, names) })),
+    jobs,
+    models
+  }
+}
+
+function sendJobs(d: RemoteDevice): void {
+  jobWatchers.add(d.id)
+  sendTo(d, jobsMsg())
+}
+
+let jobsTimer: ReturnType<typeof setTimeout> | null = null
+function pushJobs(): void {
+  if (!jobWatchers.size) return
+  if (jobsTimer) clearTimeout(jobsTimer)
+  jobsTimer = setTimeout(() => {
+    jobsTimer = null
+    const present = new Set(useRemote.getState().present)
+    const msg = jobsMsg()
+    for (const d of getSettings().remoteDevices) if (jobWatchers.has(d.id) && present.has(d.id)) sendTo(d, msg)
+  }, 600)
+}
+
+const findJob = (id: string): { ws: string; job: Job } | null => {
+  for (const [ws, list] of Object.entries(useJobs.getState().byWorkspace)) {
+    const job = list.find((j) => j.id === id)
+    if (job) return { ws, job }
+  }
+  return null
+}
+
+function jobAction(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'jobSet' | 'jobRun' | 'jobDelete' | 'jobAdd' }>): void {
+  const store = useJobs.getState()
+  const ack = (ok: boolean, error?: string): void =>
+    sendTo(d, { t: 'ack', reqId: m.reqId, ok, ...(error ? { error } : {}) })
+  if (m.t === 'jobAdd') {
+    const { workspace, name, prompt, trigger, target } = m.job
+    // Only into a workspace that is open here, and only at a chat that is in it.
+    if (!useSession.getState().openWorkspaces.includes(workspace)) return ack(false, 'no-workspace')
+    if (target.kind === 'pane' && workspaceOfPane(target.chatKey) !== workspace) return ack(false, 'no-chat')
+    if (target.kind === 'new' && target.model && !modelsFor(target.cli).includes(target.model))
+      return ack(false, 'bad-model')
+    store.add(workspace, { name, prompt, trigger, target, enabled: true, graceMinutes: 60 })
+    ack(true)
+  } else {
+    const hit = findJob(m.id)
+    if (!hit) return ack(false, 'no-job')
+    if (m.t === 'jobSet') store.update(hit.ws, m.id, { enabled: m.enabled })
+    else if (m.t === 'jobDelete') store.remove(hit.ws, m.id)
+    else {
+      const result = runJob(hit.job)
+      store.recordRun(hit.ws, m.id, { at: Date.now(), ...result })
+      if (result.status === 'failed') return ack(false, result.note ?? 'failed')
+    }
+    ack(true)
+  }
+  // The store change goes out through pushJobs, to this phone among others.
+  jobWatchers.add(d.id)
+}
+
 function handle(d: RemoteDevice, m: PhoneMsg): void {
   switch (m.t) {
     case 'hello':
@@ -315,6 +494,23 @@ function handle(d: RemoteDevice, m: PhoneMsg): void {
       useSettings.getState().set({
         remoteDevices: getSettings().remoteDevices.map((x) => (x.id === d.id ? { ...x, pushToken: m.token } : x))
       })
+      return
+    case 'chatInfo':
+      sendChatInfo(d, m.chatKey)
+      return
+    case 'setModel':
+    case 'setMode':
+    case 'stop':
+      void chatAction(d, m)
+      return
+    case 'jobs':
+      sendJobs(d)
+      return
+    case 'jobSet':
+    case 'jobRun':
+    case 'jobDelete':
+    case 'jobAdd':
+      jobAction(d, m)
       return
   }
 }
@@ -335,13 +531,16 @@ function onPairRequest(payload: unknown, guard: ReplayGuard): void {
 
 // ---- connection ----------------------------------------------------------------
 
-function connect(id: string): () => void {
-  if (!supabase) return () => {}
+function connect(owner: string, id: string): () => void {
+  const sb = supabase
+  if (!sb) return () => {}
   setStore({ state: 'connecting', present: [] })
   sharedCache.clear()
   const guard = new ReplayGuard()
-  const ch = supabase.channel(channelName(id), {
-    config: { broadcast: { self: false }, presence: { key: 'desk' } }
+  // Private: Realtime checks the signed-in user against the RLS policy
+  // (supabase/remote.sql) before letting this client on the channel at all.
+  const ch = sb.channel(channelName(owner, id), {
+    config: { private: true, broadcast: { self: false }, presence: { key: 'desk' } }
   })
   channel = ch
 
@@ -363,32 +562,40 @@ function connect(id: string): () => void {
       .filter((did) => known.has(did))
     const before = new Set(useRemote.getState().present)
     setStore({ present })
+    for (const did of [...jobWatchers]) if (!present.includes(did)) jobWatchers.delete(did)
     for (const did of present)
       if (!before.has(did)) {
         const d = getSettings().remoteDevices.find((x) => x.id === did)
         if (d) greet(d)
       }
   })
-  ch.subscribe((status) => {
+  // The session's token has to be on the socket before a private channel is
+  // asked for, or Realtime sees an anonymous client and refuses it.
+  void sb.realtime.setAuth().then(() => {
     if (channel !== ch) return
-    if (status === 'SUBSCRIBED') {
-      setStore({ state: 'online' })
-      void ch.track({ role: 'desk' })
-    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStore({ state: 'error' })
+    ch.subscribe((status) => {
+      if (channel !== ch) return
+      if (status === 'SUBSCRIBED') {
+        setStore({ state: 'online' })
+        void ch.track({ role: 'desk' })
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStore({ state: 'error' })
+    })
   })
 
   const offs = [
     useRoster.subscribe(() => pushRoster()),
     useAgents.subscribe(() => pushRoster()),
-    useAskUser.subscribe(() => pushAsks())
+    useAskUser.subscribe(() => pushAsks()),
+    useJobs.subscribe(() => pushJobs())
   ]
   return () => {
     offs.forEach((f) => f())
     if (channel === ch) channel = null
-    void supabase?.removeChannel(ch)
+    void sb.removeChannel(ch)
     lastRoster = ''
     lastStatus.clear()
     sentAsks.clear()
+    jobWatchers.clear()
   }
 }
 
@@ -397,10 +604,13 @@ export function startRemote(): () => void {
   let current = ''
   let stop: () => void = () => {}
   const apply = (): void => {
-    const s = getSettings()
-    if (s.remoteEnabled) ensureIdentity()
+    // Signed in or nothing: the relay admits only an account's own channels,
+    // so without one there is nothing to connect to.
+    const owner = ownerId()
+    if (getSettings().remoteEnabled && owner) ensureIdentity(owner)
     const now = getSettings()
-    const want = now.remoteEnabled && isSupabaseConfigured ? `${now.remoteChannel}:${now.remoteDeskPublic}` : ''
+    const want =
+      now.remoteEnabled && isSupabaseConfigured && owner ? `${owner}:${now.remoteChannel}:${now.remoteDeskPublic}` : ''
     // A device list change needs no reconnect, only fresh per-device keys.
     sharedCache.clear()
     if (want === current) return
@@ -409,7 +619,8 @@ export function startRemote(): () => void {
     stop = () => {}
     if (!now.remoteEnabled) setStore({ state: 'off', present: [], invite: null, pending: null })
     else if (!isSupabaseConfigured) setStore({ state: 'unconfigured', present: [] })
-    else stop = connect(now.remoteChannel)
+    else if (!owner) setStore({ state: 'signed-out', present: [], invite: null, pending: null })
+    else stop = connect(owner, now.remoteChannel)
     try {
       window.api.power.remote(!!want)
     } catch {
@@ -417,9 +628,9 @@ export function startRemote(): () => void {
     }
   }
   apply()
-  const off = useSettings.subscribe(apply)
+  const offs = [useSettings.subscribe(apply), useAuth.subscribe(apply)]
   return () => {
-    off()
+    offs.forEach((f) => f())
     stop()
   }
 }

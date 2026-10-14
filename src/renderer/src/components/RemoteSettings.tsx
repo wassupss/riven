@@ -4,6 +4,7 @@ import '../styles/remote-settings.css'
 import { useT } from '../i18n'
 import { useSettings } from '../state/settings'
 import { cancelInvite, newInvite, resetRemote, revokeDevice, useRemote } from '../state/remote'
+import { useUI } from '../state/ui'
 import { Button, Switch } from './ui/Controls'
 
 // Settings › 원격 제어. Adding a phone shows a QR code carrying a one-time
@@ -82,6 +83,17 @@ export default function RemoteSettings(): JSX.Element {
             </div>
           </div>
 
+          {state === 'signed-out' && (
+            <div className="set-row">
+              <div className="set-rowinfo">
+                <span className="set-rowdesc">{t('remote.signInNeeded')}</span>
+              </div>
+              <div className="set-rowctl">
+                <Button onClick={() => useUI.getState().openSettings('account')}>{t('remote.signIn')}</Button>
+              </div>
+            </div>
+          )}
+
           <div className="set-row">
             <div className="set-rowinfo">
               <span className="set-rowtitle">{t('remote.pair')}</span>
@@ -91,7 +103,7 @@ export default function RemoteSettings(): JSX.Element {
               {invite ? (
                 <Button onClick={() => cancelInvite()}>{t('remote.hideQr')}</Button>
               ) : (
-                <Button onClick={showQr} disabled={state === 'unconfigured'}>
+                <Button onClick={showQr} disabled={state === 'unconfigured' || state === 'signed-out'}>
                   {t('remote.showQr')}
                 </Button>
               )}

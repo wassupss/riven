@@ -32,6 +32,13 @@
           "cameraPermission": "riven 컴퓨터와 연결할 QR 코드를 찍기 위해 카메라를 사용해요.",
           "recordAudioAndroid": false
         }
+      ],
+      "expo-web-browser",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "riven 앱을 열 때 본인 확인을 위해 Face ID를 사용해요."
+        }
       ]
     ],
     "scheme": "rivenremote",

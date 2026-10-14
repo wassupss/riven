@@ -38,7 +38,8 @@ import {
   useAgents,
   setAgentStatus,
   getAgentStatus,
-  resolveAgent
+  resolveAgent,
+  type AgentController
 } from '../../state/agents'
 import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
 import { useAskUser } from '../../state/askUser'
@@ -2509,6 +2510,7 @@ export default function ChatPanel({
     pinned || msgs.find((m) => m.role === 'user')?.text.split('\n')[0].slice(0, 40) || 'Claude'
   )
   const busyRef = useRef(false)
+  const remoteRef = useRef<NonNullable<AgentController['remote']> | null>(null)
   const waitersRef = useRef<Array<(reply: string) => void>>([])
   // When this pane last heard ANYTHING from its agent, so a turn that goes
   // silent can be given up on instead of shimmering forever.
@@ -2837,7 +2839,13 @@ export default function ChatPanel({
       // The same clock the "무응답" warning reads: every event from the CLI
       // pushes it forward, so a delegating agent can wait on silence instead of
       // on a stopwatch.
-      lastActivityAt: () => lastEventRef.current
+      lastActivityAt: () => lastEventRef.current,
+      remote: {
+        info: () => remoteRef.current!.info(),
+        setModel: (m) => remoteRef.current?.setModel(m),
+        setMode: (m) => remoteRef.current?.setMode(m),
+        stop: () => remoteRef.current?.stop()
+      }
     })
   }, [chatKey, workspace, sendMessage])
 
@@ -2932,6 +2940,28 @@ export default function ChatPanel({
     } else {
       window.api.chat.setModel(chatKey, m)
     }
+  }
+  const applyMode = (m: string): void => {
+    setMode(m)
+    savePane({ mode: m })
+    window.api.chat.setMode(chatKey, m)
+  }
+  // What a paired phone may see and change here: exactly the two pickers below
+  // and Stop. Read through a ref so the agent registration does not churn.
+  remoteRef.current = {
+    info: () => ({
+      cli: cli ?? 'claude',
+      model: pickedModel,
+      mode,
+      models: MODELS.map((v) => ({
+        value: v,
+        label: cli === 'codex' ? v : modelLabel(v, catalog)
+      })),
+      modes: MODES.map(([value, label]) => ({ value, label }))
+    }),
+    setModel: applyModel,
+    setMode: applyMode,
+    stop: stopTurn
   }
 
   // Drag files (from the explorer or the OS) onto the chat to attach their paths
@@ -3702,11 +3732,7 @@ export default function ChatPanel({
           <select
             className="chat-chip"
             value={mode}
-            onChange={(e) => {
-              setMode(e.target.value)
-              savePane({ mode: e.target.value })
-              window.api.chat.setMode(chatKey, e.target.value)
-            }}
+            onChange={(e) => applyMode(e.target.value)}
           >
             {MODES.map(([v, label]) => (
               <option key={v} value={v}>

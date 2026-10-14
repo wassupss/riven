@@ -199,5 +199,13 @@ const s = StyleSheet.create({
   tableWrap: { borderColor: C.edge, borderWidth: 1, borderRadius: 8 },
   tr: { flexDirection: 'row', borderBottomColor: C.edge, borderBottomWidth: 1 },
   th: { backgroundColor: C.bg2 },
-  td: { color: C.fg, fontSize: 14, lineHeight: 20, paddingVertical: 6, paddingHorizontal: 10, minWidth: 90, maxWidth: 240 }
+  td: {
+    color: C.fg,
+    fontSize: 14,
+    lineHeight: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minWidth: 90,
+    maxWidth: 240
+  }
 })

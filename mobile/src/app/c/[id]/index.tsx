@@ -19,7 +19,7 @@ export const STATUS: Record<RemoteAgent['status'], { label: string; color: strin
 
 export default function ComputerScreen(): JSX.Element {
   const { id } = useLocalSearchParams<{ id: string }>()
-  const { computer, link, toast } = useComputerCtx()
+  const { computer, link } = useComputerCtx()
 
   const sections = useMemo(() => {
     const by = new Map<string, RemoteAgent[]>()
@@ -30,7 +30,11 @@ export default function ComputerScreen(): JSX.Element {
   const unpair = (): void =>
     Alert.alert('연결 해제', `이 휴대폰에서 ${computer?.name ?? '컴퓨터'} 연결 정보를 지울까요?`, [
       { text: '취소', style: 'cancel' },
-      { text: '해제', style: 'destructive', onPress: () => void forgetComputer(id).then(() => router.dismissTo('/')) }
+      {
+        text: '해제',
+        style: 'destructive',
+        onPress: () => void forgetComputer(id).then(() => router.dismissTo('/'))
+      }
     ])
 
   const banner =
@@ -74,24 +78,31 @@ export default function ComputerScreen(): JSX.Element {
         contentContainerStyle={s.list}
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={
-          link.asks.length ? (
-            <View style={s.asks}>
-              <Text style={s.section}>질문</Text>
-              {link.asks.map((q) => (
-                <View key={q.id} style={s.card}>
-                  {!!q.title && <Text style={s.who}>{q.title}</Text>}
-                  <Text style={s.question}>{q.question}</Text>
-                  <View style={s.opts}>
-                    {q.options.map((o) => (
-                      <Pressable key={o} style={s.opt} onPress={() => link.answer(q.id, o)}>
-                        <Text style={s.optText}>{o}</Text>
-                      </Pressable>
-                    ))}
+          <>
+            <Pressable style={s.jobsRow} onPress={() => router.push({ pathname: '/c/[id]/jobs', params: { id } })}>
+              <Ionicons name="calendar-outline" size={18} color={C.accent} />
+              <Text style={s.jobsText}>예약 작업</Text>
+              <Ionicons name="chevron-forward" size={18} color={C.dim} />
+            </Pressable>
+            {link.asks.length ? (
+              <View style={s.asks}>
+                <Text style={s.section}>질문</Text>
+                {link.asks.map((q) => (
+                  <View key={q.id} style={s.card}>
+                    {!!q.title && <Text style={s.who}>{q.title}</Text>}
+                    <Text style={s.question}>{q.question}</Text>
+                    <View style={s.opts}>
+                      {q.options.map((o) => (
+                        <Pressable key={o} style={s.opt} onPress={() => link.answer(q.id, o)}>
+                          <Text style={s.optText}>{o}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
                   </View>
-                </View>
-              ))}
-            </View>
-          ) : null
+                ))}
+              </View>
+            ) : null}
+          </>
         }
         ListEmptyComponent={<Text style={s.empty}>{link.deskOnline ? '열려 있는 에이전트가 없어요.' : ' '}</Text>}
         renderSectionHeader={({ section }) => <Text style={s.section}>{section.title}</Text>}
@@ -101,7 +112,12 @@ export default function ComputerScreen(): JSX.Element {
             <Pressable
               style={[s.agent, !item.canSend && s.agentOff]}
               disabled={!item.canSend}
-              onPress={() => router.push({ pathname: '/c/[id]/chat', params: { id, key: item.id } })}
+              onPress={() =>
+                router.push({
+                  pathname: '/c/[id]/chat',
+                  params: { id, key: item.id }
+                })
+              }
             >
               <Text style={s.agentTitle} numberOfLines={1}>
                 {item.title}
@@ -112,14 +128,6 @@ export default function ComputerScreen(): JSX.Element {
           )
         }}
       />
-
-      {toast && (
-        <View style={s.toast} pointerEvents="none">
-          <Text style={s.toastText} numberOfLines={2}>
-            {toast}
-          </Text>
-        </View>
-      )}
     </View>
   )
 }
@@ -128,18 +136,66 @@ const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: C.bg },
   back: { paddingRight: 8 },
   headerAction: { color: C.accent, fontSize: 16 },
-  conn: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+  conn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingBottom: 8
+  },
   dot: { width: 8, height: 8, borderRadius: 4 },
   connText: { color: C.dim, fontSize: 13 },
-  banner: { marginHorizontal: 16, marginBottom: 8, padding: 12, borderRadius: R, backgroundColor: C.bg3, color: C.fg, fontSize: 14 },
+  banner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    borderRadius: R,
+    backgroundColor: C.bg3,
+    color: C.fg,
+    fontSize: 14
+  },
   list: { padding: 16, paddingTop: 4 },
-  section: { color: C.dim, fontSize: 12, fontWeight: '600', letterSpacing: 0.6, marginTop: 14, marginBottom: 8 },
+  section: {
+    color: C.dim,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    marginTop: 14,
+    marginBottom: 8
+  },
   asks: { gap: 8 },
-  card: { backgroundColor: C.bg2, borderColor: C.edge, borderWidth: 1, borderRadius: R, padding: 14, gap: 8 },
+  jobsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: C.bg2,
+    borderColor: C.edge,
+    borderWidth: 1,
+    borderRadius: R,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginTop: 6
+  },
+  jobsText: { flex: 1, color: C.fg, fontSize: 15 },
+  card: {
+    backgroundColor: C.bg2,
+    borderColor: C.edge,
+    borderWidth: 1,
+    borderRadius: R,
+    padding: 14,
+    gap: 8
+  },
   who: { color: C.dim, fontSize: 12 },
   question: { color: C.fg, fontSize: 15, lineHeight: 21 },
   opts: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  opt: { backgroundColor: C.bg3, borderColor: C.edge, borderWidth: 1, borderRadius: 10, paddingVertical: 9, paddingHorizontal: 14 },
+  opt: {
+    backgroundColor: C.bg3,
+    borderColor: C.edge,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 14
+  },
   optText: { color: C.fg, fontSize: 15 },
   agent: {
     flexDirection: 'row',
@@ -157,7 +213,5 @@ const s = StyleSheet.create({
   agentTitle: { flex: 1, color: C.fg, fontSize: 15 },
   kind: { color: C.dim, fontSize: 12 },
   status: { fontSize: 12, fontWeight: '600' },
-  empty: { color: C.dim, fontSize: 14, textAlign: 'center', marginTop: 24 },
-  toast: { position: 'absolute', left: 16, right: 16, bottom: 28, backgroundColor: C.bg3, borderColor: C.edge, borderWidth: 1, borderRadius: R, padding: 14 },
-  toastText: { color: C.fg, fontSize: 14 }
+  empty: { color: C.dim, fontSize: 14, textAlign: 'center', marginTop: 24 }
 })

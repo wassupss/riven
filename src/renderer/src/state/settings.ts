@@ -113,6 +113,9 @@ export interface Settings {
   remoteDeskPublic: string
   remoteDeskSecret: string
   remoteDevices: RemoteDevice[]
+  // The account the identity above belongs to. Signing in as someone else
+  // starts over: another account's phones must not reach this machine.
+  remoteOwner: string
   // Terminal behaviour, all of it things xterm exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -177,6 +180,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteDeskPublic: '',
   remoteDeskSecret: '',
   remoteDevices: [],
+  remoteOwner: '',
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,

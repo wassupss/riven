@@ -3,8 +3,12 @@ import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInpu
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useLocalSearchParams } from 'expo-router'
 import { useHeaderHeight } from 'expo-router/react-navigation'
+import { Ionicons } from '@expo/vector-icons'
+import type { Choice } from '@riven/remote'
 import { useComputerCtx } from '@/lib/ComputerContext'
 import Markdown from '@/components/Markdown'
+import Sheet from '@/components/Sheet'
+import { reason } from '@/lib/reason'
 import { C, R } from '@/lib/theme'
 
 // Messages to one chat agent, and its replies. A screen of its own rather than
@@ -14,20 +18,38 @@ import { C, R } from '@/lib/theme'
 
 export default function Chat(): JSX.Element {
   const { key } = useLocalSearchParams<{ key: string }>()
-  const { link } = useComputerCtx()
+  const { link, notify } = useComputerCtx()
   const insets = useSafeAreaInsets()
   const headerHeight = useHeaderHeight()
   const [text, setText] = useState('')
+  const [picking, setPicking] = useState<'model' | 'mode' | null>(null)
   const scroll = useRef<ScrollView>(null)
   const agent = link.agents.find((a) => a.id === key)
   const lines = link.logs[key] ?? []
+  const info = link.chatInfo[key]
+  const busy = agent?.status === 'busy' || lines.some((l) => l.who === 'wait')
 
   // The conversation so far comes from the computer each time the chat is
   // opened (and again once the link is up, if it was not yet).
   useEffect(() => {
-    if (link.deskOnline) link.loadHistory(key)
+    if (!link.deskOnline) return
+    link.loadHistory(key)
+    link.loadChatInfo(key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, link.deskOnline])
+
+  // A change made here is the same one the chat's own picker makes on the
+  // computer; the computer says if it could not (the chat was closed there).
+  const apply = (what: 'model' | 'mode', value: string): void => {
+    void (what === 'model' ? link.setModel(key, value) : link.setMode(key, value)).then((a) => {
+      if (!a.ok) notify(what === 'model' ? '모델을 바꾸지 못했어요' : '권한 모드를 바꾸지 못했어요', reason(a.error))
+    })
+  }
+  const stop = (): void => {
+    void link.stop(key).then((a) => {
+      if (!a.ok) notify('중지하지 못했어요', reason(a.error))
+    })
+  }
 
   const submit = (): void => {
     const t = text.trim()
@@ -45,6 +67,27 @@ export default function Chat(): JSX.Element {
       keyboardVerticalOffset={headerHeight}
     >
       <Stack.Screen options={{ title: agent?.title ?? '' }} />
+      <View style={s.bar}>
+        <Pressable style={[s.chip, !info && s.off]} disabled={!info} onPress={() => setPicking('model')}>
+          <Ionicons name="sparkles-outline" size={14} color={C.dim} />
+          <Text style={s.chipText} numberOfLines={1}>
+            {info ? labelOf(info.models, info.model) : '모델'}
+          </Text>
+        </Pressable>
+        <Pressable style={[s.chip, !info && s.off]} disabled={!info} onPress={() => setPicking('mode')}>
+          <Ionicons name="shield-checkmark-outline" size={14} color={C.dim} />
+          <Text style={s.chipText} numberOfLines={1}>
+            {info ? labelOf(info.modes, info.mode) : '권한'}
+          </Text>
+        </Pressable>
+        <View style={s.flex} />
+        {busy && (
+          <Pressable style={s.stop} onPress={stop} hitSlop={6}>
+            <Ionicons name="stop" size={13} color={C.bad} />
+            <Text style={s.stopText}>중지</Text>
+          </Pressable>
+        )}
+      </View>
       <ScrollView
         ref={scroll}
         style={s.flex}
@@ -84,16 +127,66 @@ export default function Chat(): JSX.Element {
           <Text style={s.sendText}>보내기</Text>
         </Pressable>
       </View>
+      {picking && info && (
+        <Sheet
+          title={picking === 'model' ? '모델' : '권한 모드'}
+          options={picking === 'model' ? info.models : info.modes}
+          value={picking === 'model' ? info.model : info.mode}
+          onPick={(v) => apply(picking, v)}
+          onClose={() => setPicking(null)}
+        />
+      )}
     </KeyboardAvoidingView>
   )
 }
+
+const labelOf = (list: Choice[], value: string): string => list.find((x) => x.value === value)?.label ?? value
 
 const s = StyleSheet.create({
   flex: { flex: 1 },
   screen: { flex: 1, backgroundColor: C.bg },
   log: { padding: 16, gap: 10 },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    borderBottomColor: C.edge,
+    borderBottomWidth: 1
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    maxWidth: '42%',
+    backgroundColor: C.bg2,
+    borderColor: C.edge,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 11
+  },
+  off: { opacity: 0.5 },
+  chipText: { color: C.fg, fontSize: 13, flexShrink: 1 },
+  stop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderColor: C.bad,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingHorizontal: 11
+  },
+  stopText: { color: C.bad, fontSize: 13, fontWeight: '600' },
   empty: { color: C.dim, fontSize: 14, textAlign: 'center', marginTop: 24 },
-  bubble: { borderRadius: 14, paddingVertical: 10, paddingHorizontal: 13, maxWidth: '88%' },
+  bubble: {
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 13,
+    maxWidth: '88%'
+  },
   me: { alignSelf: 'flex-end', backgroundColor: '#3b3466' },
   it: { alignSelf: 'flex-start', backgroundColor: C.bg3 },
   error: { borderColor: C.bad, borderWidth: 1 },
@@ -123,6 +216,11 @@ const s = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15
   },
-  send: { backgroundColor: C.accent, borderRadius: R, paddingVertical: 12, paddingHorizontal: 16 },
+  send: {
+    backgroundColor: C.accent,
+    borderRadius: R,
+    paddingVertical: 12,
+    paddingHorizontal: 16
+  },
   sendText: { color: '#fff', fontSize: 15, fontWeight: '600' }
 })

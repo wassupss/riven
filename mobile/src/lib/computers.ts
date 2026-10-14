@@ -11,7 +11,7 @@ export interface Computer {
   channel: string
   desk: string // the computer's public key
   url: string
-  anon: string
+  owner: string // the account the computer is signed in as
   keys: KeyPair // this phone's key pair for this computer
   deviceId: string
   pairedAt: number
@@ -36,7 +36,10 @@ export async function listComputers(): Promise<Computer[]> {
   for (const id of await readIndex()) {
     try {
       const raw = await SecureStore.getItemAsync(entry(id), OPTS)
-      if (raw) out.push(JSON.parse(raw))
+      const c = raw ? JSON.parse(raw) : null
+      // Paired before sign-in was required (no owner): it can no longer be
+      // reached and has to be paired again.
+      if (c?.owner) out.push(c)
     } catch {
       /* skip an unreadable entry */
     }
@@ -47,7 +50,8 @@ export async function listComputers(): Promise<Computer[]> {
 export async function getComputer(id: string): Promise<Computer | null> {
   try {
     const raw = await SecureStore.getItemAsync(entry(id), OPTS)
-    return raw ? JSON.parse(raw) : null
+    const c = raw ? JSON.parse(raw) : null
+    return c?.owner ? c : null
   } catch {
     return null
   }
@@ -60,7 +64,7 @@ export function computerFrom(offer: PairingOffer, keys: KeyPair, name: string): 
     channel: offer.channel,
     desk: offer.desk,
     url: offer.url,
-    anon: offer.anon,
+    owner: offer.owner,
     keys,
     deviceId: deviceIdOf(keys.publicKey),
     pairedAt: Date.now()

@@ -8,11 +8,15 @@ import {
   randomId,
   seal,
   sharedKey,
+  type ChatInfo,
+  type Choice,
   type DeskMsg,
+  type NewJob,
   type PhoneMsg,
-  type RemoteAgent
+  type RemoteAgent,
+  type RemoteJob
 } from '@riven/remote'
-import { closeChannel, openChannel } from './relay'
+import { closeChannel, joinChannel, openChannel } from './relay'
 import type { Computer } from './computers'
 
 // The live link to one paired computer: who is there, its agents, the questions
@@ -34,6 +38,15 @@ export interface LogLine {
 
 export type LinkState = 'connecting' | 'online' | 'relay-error' | 'revoked'
 
+export interface JobsView {
+  workspaces: Choice[]
+  jobs: RemoteJob[]
+  models: Choice[]
+}
+
+/** What the computer said to a request: done, or why not. */
+export type Ack = { ok: true } | { ok: false; error: string }
+
 export interface ComputerLink {
   state: LinkState
   deskOnline: boolean
@@ -47,7 +60,25 @@ export interface ComputerLink {
   loadHistory: (chatKey: string) => void
   answer: (id: string, choice: string) => void
   setPushToken: (token: string | null) => void
+  /** Each chat's model and permission mode, once asked for. */
+  chatInfo: Record<string, ChatInfo>
+  loadChatInfo: (chatKey: string) => void
+  setModel: (chatKey: string, model: string) => Promise<Ack>
+  setMode: (chatKey: string, mode: string) => Promise<Ack>
+  stop: (chatKey: string) => Promise<Ack>
+  /** The computer's scheduled jobs, once asked for (kept current after that). */
+  jobs: JobsView | null
+  loadJobs: () => void
+  setJobEnabled: (id: string, enabled: boolean) => Promise<Ack>
+  runJob: (id: string) => Promise<Ack>
+  deleteJob: (id: string) => Promise<Ack>
+  addJob: (job: NewJob) => Promise<Ack>
 }
+
+// A request the computer never answers (it went to sleep mid-way) gives up.
+const ACK_TIMEOUT_MS = 20_000
+
+type Req<T extends PhoneMsg['t']> = Omit<Extract<PhoneMsg, { t: T }>, 'reqId'>
 
 export function useComputer(c: Computer | null, onEvent?: (title: string, body: string) => void): ComputerLink {
   const [state, setState] = useState<LinkState>('connecting')
@@ -56,6 +87,9 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const [asks, setAsks] = useState<Ask[]>([])
   const [logs, setLogs] = useState<Record<string, LogLine[]>>({})
   const [loaded, setLoaded] = useState<Record<string, boolean>>({})
+  const [chatInfo, setChatInfo] = useState<Record<string, ChatInfo>>({})
+  const [jobs, setJobs] = useState<JobsView | null>(null)
+  const waiting = useRef(new Map<string, (a: Ack) => void>())
   const chRef = useRef<RealtimeChannel | null>(null)
   const sharedRef = useRef<Uint8Array | null>(null)
   const eventRef = useRef(onEvent)
@@ -76,7 +110,11 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     const shared = sharedKey(c.desk, c.keys.secretKey)
     sharedRef.current = shared
     const guard = new ReplayGuard()
-    const ch = openChannel(c.url, c.anon, c.channel, `phone-${c.deviceId}`)
+    const ch = openChannel(c.owner, c.channel, `phone-${c.deviceId}`)
+    if (!ch) {
+      setState('relay-error')
+      return
+    }
     chRef.current = ch
     setState('connecting')
 
@@ -106,9 +144,16 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
         case 'askGone':
           setAsks((a) => a.filter((x) => x.id !== msg.id))
           break
-        case 'ack':
+        case 'ack': {
+          const done = waiting.current.get(msg.reqId)
+          if (done) {
+            waiting.current.delete(msg.reqId)
+            done(msg.ok ? { ok: true } : { ok: false, error: msg.error ?? 'failed' })
+            break
+          }
           if (!msg.ok) settle(msg.reqId, { who: 'error', text: '보내지 못했어요. 이 패널이 컴퓨터에서 닫혀 있어요.' })
           break
+        }
         case 'reply':
           settle(msg.reqId, { who: 'agent', text: msg.text })
           eventRef.current?.('답변이 도착했어요', '')
@@ -124,10 +169,23 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
           }))
           // The conversation as the computer has it, plus anything sent from
           // here that is still waiting for its answer.
-          setLogs((all) => ({ ...all, [msg.chatKey]: [...lines, ...(all[msg.chatKey] ?? []).filter((l) => l.who === 'wait')] }))
+          setLogs((all) => ({
+            ...all,
+            [msg.chatKey]: [...lines, ...(all[msg.chatKey] ?? []).filter((l) => l.who === 'wait')]
+          }))
           setLoaded((l) => ({ ...l, [msg.chatKey]: true }))
           break
         }
+        case 'chatInfo':
+          if (msg.info?.chatKey) setChatInfo((all) => ({ ...all, [msg.info.chatKey]: msg.info }))
+          break
+        case 'jobs':
+          setJobs({
+            workspaces: Array.isArray(msg.workspaces) ? msg.workspaces : [],
+            jobs: Array.isArray(msg.jobs) ? msg.jobs : [],
+            models: Array.isArray(msg.models) ? msg.models : []
+          })
+          break
         case 'revoked':
           setState('revoked')
           break
@@ -141,7 +199,7 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
       receive(m)
     })
     ch.on('presence', { event: 'sync' }, () => setDeskOnline(Object.keys(ch.presenceState()).includes('desk')))
-    ch.subscribe((status) => {
+    joinChannel(ch, (status) => {
       if (status === 'SUBSCRIBED') {
         setState((s) => (s === 'revoked' ? s : 'online'))
         void ch.track({ role: 'phone' })
@@ -156,7 +214,9 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     return () => {
       sub.remove()
       chRef.current = null
-      closeChannel(c.url, c.anon, ch)
+      closeChannel(ch)
+      for (const done of waiting.current.values()) done({ ok: false, error: 'closed' })
+      waiting.current.clear()
     }
   }, [c, post])
 
@@ -165,7 +225,11 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
       const reqId = randomId(9)
       setLogs((all) => ({
         ...all,
-        [chatKey]: [...(all[chatKey] ?? []), { who: 'me' as const, text }, { who: 'wait' as const, text: '', reqId }].slice(-60)
+        [chatKey]: [
+          ...(all[chatKey] ?? []),
+          { who: 'me' as const, text },
+          { who: 'wait' as const, text: '', reqId }
+        ].slice(-60)
       }))
       post({ t: 'send', reqId, chatKey, text })
     },
@@ -184,6 +248,43 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
 
   const setPushToken = useCallback((token: string | null) => post({ t: 'push', token }), [post])
 
+  /** Send a request and wait for the computer's ack to it. */
+  const request = useCallback(
+    <T extends PhoneMsg['t']>(msg: Req<T>): Promise<Ack> =>
+      new Promise<Ack>((resolve) => {
+        const reqId = randomId(9)
+        const timer = setTimeout(() => {
+          waiting.current.delete(reqId)
+          resolve({ ok: false, error: 'timeout' })
+        }, ACK_TIMEOUT_MS)
+        waiting.current.set(reqId, (a) => {
+          clearTimeout(timer)
+          resolve(a)
+        })
+        post({ ...msg, reqId } as unknown as PhoneMsg)
+      }),
+    [post]
+  )
+
+  const loadChatInfo = useCallback((chatKey: string) => post({ t: 'chatInfo', chatKey }), [post])
+  const setModel = useCallback(
+    (chatKey: string, model: string) => request<'setModel'>({ t: 'setModel', chatKey, model }),
+    [request]
+  )
+  const setMode = useCallback(
+    (chatKey: string, mode: string) => request<'setMode'>({ t: 'setMode', chatKey, mode }),
+    [request]
+  )
+  const stop = useCallback((chatKey: string) => request<'stop'>({ t: 'stop', chatKey }), [request])
+  const loadJobs = useCallback(() => post({ t: 'jobs' }), [post])
+  const setJobEnabled = useCallback(
+    (id: string, enabled: boolean) => request<'jobSet'>({ t: 'jobSet', id, enabled }),
+    [request]
+  )
+  const runJob = useCallback((id: string) => request<'jobRun'>({ t: 'jobRun', id }), [request])
+  const deleteJob = useCallback((id: string) => request<'jobDelete'>({ t: 'jobDelete', id }), [request])
+  const addJob = useCallback((job: NewJob) => request<'jobAdd'>({ t: 'jobAdd', job }), [request])
+
   return {
     state,
     deskOnline,
@@ -194,6 +295,17 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     send,
     loadHistory,
     answer,
-    setPushToken
+    setPushToken,
+    chatInfo,
+    loadChatInfo,
+    setModel,
+    setMode,
+    stop,
+    jobs,
+    loadJobs,
+    setJobEnabled,
+    runJob,
+    deleteJob,
+    addJob
   }
 }

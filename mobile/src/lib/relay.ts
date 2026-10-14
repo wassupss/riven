@@ -1,26 +1,30 @@
-import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js'
+import type { RealtimeChannel, REALTIME_SUBSCRIBE_STATES } from '@supabase/supabase-js'
 import { channelName } from '@riven/remote'
+import { supabase } from './supabase'
 
-// One Supabase client per relay project, reused across screens. Only Realtime
-// is used: no auth session is kept on the phone.
-const clients = new Map<string, SupabaseClient>()
+// The relay: private Realtime channels on the app's Supabase project. Joining
+// one is checked against the signed-in account (supabase/remote.sql), so a
+// channel opens only for the account that owns that computer.
 
-function client(url: string, anon: string): SupabaseClient {
-  const key = `${url}|${anon}`
-  let c = clients.get(key)
-  if (!c) {
-    c = createClient(url, anon, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } })
-    clients.set(key, c)
-  }
-  return c
-}
-
-export function openChannel(url: string, anon: string, channel: string, presenceKey: string): RealtimeChannel {
-  return client(url, anon).channel(channelName(channel), {
-    config: { broadcast: { self: false }, presence: { key: presenceKey } }
+export function openChannel(owner: string, channel: string, presenceKey: string): RealtimeChannel | null {
+  if (!supabase) return null
+  return supabase.channel(channelName(owner, channel), {
+    config: { private: true, broadcast: { self: false }, presence: { key: presenceKey } }
   })
 }
 
-export function closeChannel(url: string, anon: string, ch: RealtimeChannel): void {
-  void client(url, anon).removeChannel(ch)
+// Closed before its token was in place: it must not subscribe after all.
+const closed = new WeakSet<RealtimeChannel>()
+
+/** Subscribe with the session's token on the socket; without it a private channel is refused. */
+export function joinChannel(ch: RealtimeChannel, onStatus: (s: `${REALTIME_SUBSCRIBE_STATES}`) => void): void {
+  if (!supabase) return
+  void supabase.realtime.setAuth().then(() => {
+    if (!closed.has(ch)) ch.subscribe((s) => onStatus(s))
+  })
+}
+
+export function closeChannel(ch: RealtimeChannel): void {
+  closed.add(ch)
+  void supabase?.removeChannel(ch)
 }

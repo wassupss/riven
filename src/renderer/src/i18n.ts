@@ -1067,6 +1067,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'remote.status.off': { ko: '꺼짐', en: 'Off' },
   'remote.status.unconfigured': { ko: '이 빌드에는 Supabase가 설정되지 않았어요', en: 'Supabase is not configured in this build' },
   'remote.status.connecting': { ko: '연결 중…', en: 'Connecting…' },
+  'remote.status.signed-out': { ko: '로그인이 필요해요', en: 'Sign-in required' },
+  'remote.signInNeeded': {
+    ko: '원격 제어는 riven 계정으로 로그인해야 쓸 수 있어요. 휴대폰 앱도 같은 계정으로 로그인해야 이 컴퓨터에 연결돼요.',
+    en: 'Remote control needs you signed in to riven. The phone app must sign in to the same account to reach this machine.'
+  },
+  'remote.signIn': { ko: '로그인하러 가기', en: 'Sign in' },
   'remote.status.online': { ko: '대기 중', en: 'Ready' },
   'remote.status.error': { ko: '중계 서버에 연결할 수 없어요 (자동 재시도 중)', en: 'Cannot reach the relay (retrying)' },
   'remote.pair': { ko: '휴대폰 추가', en: 'Add a phone' },

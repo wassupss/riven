@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Stack, useLocalSearchParams } from 'expo-router'
 import { getComputer, type Computer } from '@/lib/computers'
 import { useComputer } from '@/lib/useComputer'
 import { ComputerProvider } from '@/lib/ComputerContext'
-import { C } from '@/lib/theme'
+import { StyleSheet, Text, View } from 'react-native'
+import { C, R } from '@/lib/theme'
 
 // A paired computer: the link to it is opened here, once, and shared by the
 // agent list and the chat screens below.
@@ -17,25 +18,54 @@ export default function ComputerLayout(): JSX.Element {
     void getComputer(id).then(setComputer)
   }, [id])
 
-  const link = useComputer(computer, (title, body) => {
+  const notify = useCallback((title: string, body?: string) => {
     setToast(body ? `${title} · ${body}` : title)
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setToast(null), 4000)
-  })
+  }, [])
+  const link = useComputer(computer, notify)
 
   return (
-    <ComputerProvider value={{ computer, link, toast }}>
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: C.bg },
-          headerTintColor: C.fg,
-          headerShadowVisible: false,
-          contentStyle: { backgroundColor: C.bg }
-        }}
-      >
-        <Stack.Screen name="index" options={{ title: computer?.name ?? '' }} />
-        <Stack.Screen name="chat" options={{ title: '' }} />
-      </Stack>
+    <ComputerProvider value={{ computer, link, toast, notify }}>
+      <View style={s.root}>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: C.bg },
+            headerTintColor: C.fg,
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: C.bg }
+          }}
+        >
+          <Stack.Screen name="index" options={{ title: computer?.name ?? '' }} />
+          <Stack.Screen name="chat" options={{ title: '' }} />
+          <Stack.Screen name="jobs" options={{ title: '예약 작업' }} />
+          <Stack.Screen name="job-new" options={{ title: '새 예약 작업' }} />
+        </Stack>
+        {/* Over every screen of this computer, so a chat's errors show too. */}
+        {toast && (
+          <View style={s.toast} pointerEvents="none">
+            <Text style={s.toastText} numberOfLines={3}>
+              {toast}
+            </Text>
+          </View>
+        )}
+      </View>
     </ComputerProvider>
   )
 }
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: C.bg },
+  toast: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 96,
+    backgroundColor: C.bg3,
+    borderColor: C.edge,
+    borderWidth: 1,
+    borderRadius: R,
+    padding: 14
+  },
+  toastText: { color: C.fg, fontSize: 14 }
+})

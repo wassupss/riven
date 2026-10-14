@@ -16,7 +16,9 @@ import {
   toB64u,
   utf8,
   fromUtf8,
-  clipHistory
+  clipHistory,
+  channelName,
+  parseTrigger
 } from './core'
 
 const offer = {
@@ -25,7 +27,7 @@ const offer = {
   desk: newKeyPair().publicKey,
   invite: 'inv',
   url: 'https://x.supabase.co',
-  anon: 'sb_publishable_x',
+  owner: 'user-1',
   name: 'office mac'
 }
 
@@ -144,5 +146,54 @@ describe('clipHistory', () => {
 
   it('accepts a history request', () => {
     expect(parsePhoneMsg({ t: 'history', chatKey: 'chat-1' })).toEqual({ t: 'history', chatKey: 'chat-1' })
+  })
+})
+
+describe('remote actions', () => {
+  it('names the channel after its owner, which is what RLS checks', () => {
+    expect(channelName('u-1', 'ch')).toBe('riven-remote:u-1:ch')
+  })
+
+  it('accepts only triggers the computer can run', () => {
+    expect(parseTrigger({ kind: 'daily', hour: 9, minute: 0 })).toEqual({ kind: 'daily', hour: 9, minute: 0 })
+    expect(parseTrigger({ kind: 'weekly', day: 1, hour: 9, minute: 30 })?.kind).toBe('weekly')
+    expect(parseTrigger({ kind: 'daily', hour: 24, minute: 0 })).toBeNull()
+    expect(parseTrigger({ kind: 'every', minutes: 0 })).toBeNull()
+    expect(parseTrigger({ kind: 'hourly', minute: 1.5 })).toBeNull()
+    expect(parseTrigger({ kind: 'cron', expr: '* * * * *' })).toBeNull()
+  })
+
+  it('validates a job made on the phone, dropping anything extra', () => {
+    const job = {
+      workspace: 'ws',
+      name: 'standup',
+      prompt: 'summarise',
+      trigger: { kind: 'weekdays', hour: 9, minute: 0 },
+      target: { kind: 'new', cli: 'claude', model: 'opus' },
+      enabled: true,
+      runs: [{ evil: 1 }]
+    }
+    expect(parsePhoneMsg({ t: 'jobAdd', reqId: 'r', job })).toEqual({
+      t: 'jobAdd',
+      reqId: 'r',
+      job: {
+        workspace: 'ws',
+        name: 'standup',
+        prompt: 'summarise',
+        trigger: { kind: 'weekdays', hour: 9, minute: 0 },
+        target: { kind: 'new', cli: 'claude', model: 'opus' }
+      }
+    })
+    expect(parsePhoneMsg({ t: 'jobAdd', reqId: 'r', job: { ...job, prompt: ' ' } })).toBeNull()
+    expect(parsePhoneMsg({ t: 'jobAdd', reqId: 'r', job: { ...job, target: { kind: 'shell' } } })).toBeNull()
+  })
+
+  it('parses the chat and job controls', () => {
+    expect(parsePhoneMsg({ t: 'setModel', reqId: 'r', chatKey: 'c', model: 'opus' })?.t).toBe('setModel')
+    expect(parsePhoneMsg({ t: 'setMode', reqId: 'r', chatKey: 'c', mode: '' })).toBeNull()
+    expect(parsePhoneMsg({ t: 'stop', reqId: 'r', chatKey: 'c' })?.t).toBe('stop')
+    expect(parsePhoneMsg({ t: 'jobSet', reqId: 'r', id: 'j', enabled: 'yes' })).toBeNull()
+    expect(parsePhoneMsg({ t: 'jobRun', reqId: 'r', id: 'j' })).toEqual({ t: 'jobRun', reqId: 'r', id: 'j' })
+    expect(parsePhoneMsg({ t: 'jobDelete', reqId: 'r', id: 'j' })?.t).toBe('jobDelete')
   })
 })
