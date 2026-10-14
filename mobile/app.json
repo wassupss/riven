@@ -37,6 +37,7 @@
     "scheme": "rivenremote",
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "backgroundColor": "#111214"
   }
 }
