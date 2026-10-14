@@ -11,6 +11,7 @@ import { MCP_TOOL_LABELS } from '../state/mcpTools'
 import { Button, NumberInput, Segmented, Select, Switch, TextArea, TextInput } from './ui/Controls'
 import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
+import RemoteSettings from './RemoteSettings'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
 import ModelOptions from './ModelOptions'
@@ -25,6 +26,7 @@ import {
   FileCode,
   TerminalSquare,
   Bell,
+  Smartphone,
   ShieldCheck,
   Egg,
   X,
@@ -243,6 +245,7 @@ export default function SettingsModal(): JSX.Element | null {
     { id: 'ai', label: 'AI', icon: <Bot size={15} /> },
     { id: 'perm', label: t('settings.tab.perm'), icon: <ShieldCheck size={15} /> },
     { id: 'notify', label: t('settings.tab.notify'), icon: <Bell size={15} /> },
+    { id: 'remote', label: t('settings.tab.remote'), icon: <Smartphone size={15} /> },
     { id: 'pet', label: t('pet.title'), icon: <Egg size={15} /> },
     { id: 'keys', label: t('settings.tab.keys'), icon: <Keyboard size={15} /> },
     { id: 'account', label: t('settings.tab.account'), icon: <User size={15} /> },
@@ -763,6 +766,7 @@ export default function SettingsModal(): JSX.Element | null {
               </>
             )}
 
+            {tab === 'remote' && <RemoteSettings />}
             {tab === 'account' && <AccountSettings />}
             {tab === 'keys' && <KeybindingsSettings />}
             {tab === 'about' && <AboutTab />}

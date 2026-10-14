@@ -94,6 +94,11 @@ export interface Settings {
   notifyOnFailure: boolean
   // riven's icon in the macOS menu bar, with the count of agents that want you.
   menuBarIcon: boolean
+  // Remote control from a phone (state/remote). The channel and key are this
+  // machine's pairing secret: never synced (settingsSync), replaced on re-pair.
+  remoteEnabled: boolean
+  remoteChannel: string
+  remoteKey: string
   // Terminal behaviour, all of it things xterm exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -153,6 +158,9 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyOnNeedsInput: true,
   notifyOnFailure: true,
   menuBarIcon: true,
+  remoteEnabled: false,
+  remoteChannel: '',
+  remoteKey: '',
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,

@@ -408,7 +408,9 @@ const api = {
   power: {
     // How many panes are mid-turn, and whether the user wants the machine kept
     // awake for them. Sent on every change; main refcounts it.
-    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled)
+    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled),
+    // Remote control is on: keep the machine reachable even when idle.
+    remote: (on: boolean): void => ipcRenderer.send('power:remote', on)
   },
   browser: {
     create: (id: string, url: string, partition?: string): Promise<void> =>

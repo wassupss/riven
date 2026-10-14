@@ -8,6 +8,7 @@ export type SettingsTab =
   | 'ai'
   | 'perm'
   | 'notify'
+  | 'remote'
   | 'pet'
   | 'keys'
   | 'account'

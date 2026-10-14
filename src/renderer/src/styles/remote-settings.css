@@ -1,0 +1,52 @@
+/* Settings › 원격 제어 (RemoteSettings). */
+.remote-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.remote-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: none;
+}
+.remote-state.online .remote-dot {
+  background: var(--accent);
+}
+.remote-state.phone {
+  color: var(--fg);
+}
+.remote-state.phone .remote-dot {
+  background: var(--success);
+}
+.remote-state.error .remote-dot,
+.remote-state.unconfigured .remote-dot {
+  background: var(--danger);
+}
+.remote-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.remote-qr img {
+  border-radius: var(--radius-md);
+  background: #fff;
+  padding: 8px;
+}
+.remote-qr-note,
+.remote-note {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  text-align: center;
+  line-height: 1.5;
+}
+.remote-note {
+  text-align: left;
+  margin: 8px 0 0;
+}

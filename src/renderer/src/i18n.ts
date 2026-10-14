@@ -1054,6 +1054,36 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.edit': { ko: '수정', en: 'Edit' },
   'sched.saveEdit': { ko: '수정 저장', en: 'Save changes' },
   'sched.cancel': { ko: '취소', en: 'Cancel' },
+  'settings.tab.remote': { ko: '원격 제어', en: 'Remote' },
+  'remote.title': { ko: '휴대폰에서 원격 제어', en: 'Remote control from your phone' },
+  'remote.enable': { ko: '원격 제어 켜기', en: 'Enable remote control' },
+  'remote.enableDesc': {
+    ko: '휴대폰에서 이 컴퓨터의 에이전트 상태를 보고, 메시지를 보내고, 질문에 답할 수 있어요. 모든 내용은 종단간 암호화됩니다.',
+    en: "See this machine's agents from your phone, message them and answer their questions. Everything is end-to-end encrypted."
+  },
+  'remote.state': { ko: '연결 상태', en: 'Status' },
+  'remote.statusOnline': { ko: '대기 중 (연결된 휴대폰 없음)', en: 'Ready (no phone connected)' },
+  'remote.statusPhone': { ko: '휴대폰 {n}대 연결됨', en: '{n} phone(s) connected' },
+  'remote.status.off': { ko: '꺼짐', en: 'Off' },
+  'remote.status.unconfigured': { ko: '이 빌드에는 Supabase가 설정되지 않았어요', en: 'Supabase is not configured in this build' },
+  'remote.status.connecting': { ko: '연결 중…', en: 'Connecting…' },
+  'remote.status.online': { ko: '대기 중', en: 'Ready' },
+  'remote.status.error': { ko: '중계 서버에 연결할 수 없어요 (자동 재시도 중)', en: 'Cannot reach the relay (retrying)' },
+  'remote.pair': { ko: '휴대폰 연결', en: 'Pair a phone' },
+  'remote.pairDesc': { ko: '휴대폰 카메라로 QR을 찍으면 연결돼요. 로그인은 필요 없어요.', en: 'Scan the QR code with your phone camera. No sign-in needed.' },
+  'remote.showQr': { ko: 'QR 보기', en: 'Show QR' },
+  'remote.hideQr': { ko: 'QR 숨기기', en: 'Hide QR' },
+  'remote.qrNote': {
+    ko: '이 QR은 이 컴퓨터의 에이전트를 조작할 수 있는 열쇠예요. 화면 공유 중에는 띄우지 마세요.',
+    en: "This QR code is a key to this machine's agents. Don't show it while sharing your screen."
+  },
+  'remote.rePair': { ko: '연결된 기기 모두 해제', en: 'Unpair all phones' },
+  'remote.rePairDesc': { ko: '새 열쇠를 만들어 기존 휴대폰 연결을 끊어요. 다시 쓰려면 QR을 새로 찍어야 해요.', en: 'Issues a new key; paired phones stop working until they scan the new QR.' },
+  'remote.rePairBtn': { ko: '해제', en: 'Unpair' },
+  'remote.awakeNote': {
+    ko: '원격 제어가 켜져 있는 동안 이 컴퓨터는 잠자기에 들어가지 않아요(화면은 꺼질 수 있어요). 노트북 덮개를 닫으면 잠들 수 있어요.',
+    en: 'While remote control is on, this machine will not sleep (the display may). Closing a laptop lid can still put it to sleep.'
+  },
   'sched.atMinute': { ko: '매시', en: 'at minute' },
   'sched.time': { ko: '시각', en: 'time' },
   'sched.hour': { ko: '시', en: 'h' },
