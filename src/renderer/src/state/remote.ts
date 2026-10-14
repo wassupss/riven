@@ -6,6 +6,7 @@ import {
   PROTOCOL,
   ReplayGuard,
   channelName,
+  clipHistory,
   clipReply,
   deviceIdOf,
   isWire,
@@ -21,8 +22,8 @@ import {
   type PhoneMsg,
   type RemoteAgent
 } from '../lib/remote/core'
-import { getSettings, useSettings, type RemoteDevice } from './settings'
-import { useSession, workspaceName } from './session'
+import { claudeConfigDirFor, getSettings, useSettings, type RemoteDevice } from './settings'
+import { loadPaneState, pathOf, useSession, workspaceName } from './session'
 import { useRoster, rosterFor, workspaceOfPane } from './roster'
 import { askChatTurn, listAgents, resolveAgent, useAgents, type AgentController } from './agents'
 import { useAskUser } from './askUser'
@@ -276,6 +277,26 @@ async function deliverFromPhone(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'send
   if (still) sendTo(still, { t: 'reply', reqId: m.reqId, chatKey: m.chatKey, text: clipReply(text) })
 }
 
+/**
+ * A chat's conversation so far, from the CLI's own transcript of its session:
+ * what the phone shows when a chat is opened, including everything typed on
+ * this machine. Nothing is kept on the phone between launches.
+ */
+async function sendHistory(d: RemoteDevice, chatKey: string): Promise<void> {
+  const ws = workspaceOfPane(chatKey)
+  const session = ws ? loadPaneState(ws, chatKey).session : null
+  let items: Array<{ role: 'user' | 'assistant'; text: string; tools?: number }> = []
+  if (ws && session) {
+    try {
+      const tr = await window.api.chat.sessionTranscript(pathOf(ws), session, claudeConfigDirFor(ws))
+      items = tr.map((m) => ({ role: m.role, text: m.text, ...(m.tools.length ? { tools: m.tools.length } : {}) }))
+    } catch {
+      /* no transcript (yet): an empty history */
+    }
+  }
+  sendTo(d, { t: 'history', chatKey, items: clipHistory(items) })
+}
+
 function handle(d: RemoteDevice, m: PhoneMsg): void {
   switch (m.t) {
     case 'hello':
@@ -286,6 +307,9 @@ function handle(d: RemoteDevice, m: PhoneMsg): void {
       return
     case 'send':
       void deliverFromPhone(d, m)
+      return
+    case 'history':
+      void sendHistory(d, m.chatKey)
       return
     case 'push':
       useSettings.getState().set({

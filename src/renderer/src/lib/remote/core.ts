@@ -234,6 +234,7 @@ export type DeskMsg =
   | { t: 'ack'; reqId: string; ok: boolean; error?: string }
   | { t: 'reply'; reqId: string; chatKey: string; text: string }
   | { t: 'event'; kind: 'done' | 'attention'; id: string; title: string }
+  | { t: 'history'; chatKey: string; items: HistoryItem[] }
 
 /** Phone → desk. */
 export type PhoneMsg =
@@ -241,6 +242,7 @@ export type PhoneMsg =
   | { t: 'send'; reqId: string; chatKey: string; text: string }
   | { t: 'answer'; id: string; choice: string }
   | { t: 'push'; token: string | null }
+  | { t: 'history'; chatKey: string }
 
 export const MAX_TEXT = 20_000
 const str = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max
@@ -257,6 +259,8 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
         : null
     case 'answer':
       return str(m.id, 200) && str(m.choice, MAX_TEXT) ? { t: 'answer', id: m.id, choice: m.choice } : null
+    case 'history':
+      return str(m.chatKey, 200) ? { t: 'history', chatKey: m.chatKey } : null
     case 'push':
       return m.token === null || str(m.token, 300) ? { t: 'push', token: m.token as string | null } : null
     default:
@@ -267,6 +271,32 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
 /** One relay message tops out at 256KB; keep replies well under it. */
 export const MAX_REPLY = 60_000
 export const clipReply = (s: string): string => (s.length > MAX_REPLY ? s.slice(0, MAX_REPLY) + '\n…' : s)
+
+/** One line of a chat's conversation, as the phone shows it. */
+export interface HistoryItem {
+  role: 'user' | 'assistant'
+  text: string
+  /** Tool calls the agent made in this message (shown as a count). */
+  tools?: number
+}
+
+const HISTORY_ITEMS = 40
+const HISTORY_ITEM_CHARS = 4_000
+const HISTORY_BUDGET = 120_000
+
+/**
+ * The tail of a conversation, sized for one relay message: the most recent
+ * items, each clipped, and the oldest dropped until the whole fits.
+ */
+export function clipHistory(items: HistoryItem[]): HistoryItem[] {
+  const out = items
+    .filter((m) => m.text.trim() || m.tools)
+    .slice(-HISTORY_ITEMS)
+    .map((m) => (m.text.length > HISTORY_ITEM_CHARS ? { ...m, text: m.text.slice(0, HISTORY_ITEM_CHARS) + '\n…' } : m))
+  let size = out.reduce((n, m) => n + m.text.length, 0)
+  while (out.length > 1 && size > HISTORY_BUDGET) size -= out.shift()!.text.length
+  return out
+}
 
 /** Realtime channel name for a pairing channel id. */
 export const channelName = (id: string): string => `riven-remote-${id}`

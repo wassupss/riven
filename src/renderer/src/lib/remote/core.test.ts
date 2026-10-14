@@ -15,7 +15,8 @@ import {
   sharedKey,
   toB64u,
   utf8,
-  fromUtf8
+  fromUtf8,
+  clipHistory
 } from './core'
 
 const offer = {
@@ -119,5 +120,29 @@ describe('parsePhoneMsg', () => {
     expect(parsePhoneMsg({ t: 'push', token: null })).toEqual({ t: 'push', token: null })
     expect(parsePhoneMsg({ t: 'exec', cmd: 'rm -rf /' })).toBeNull()
     expect(parsePhoneMsg({ t: 'send', reqId: 'r', chatKey: 'c', text: '   ' })).toBeNull()
+  })
+})
+
+describe('clipHistory', () => {
+  it('keeps the most recent items and fits the relay budget', () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ role: 'user' as const, text: `m${i}` }))
+    const out = clipHistory(many)
+    expect(out).toHaveLength(40)
+    expect(out[out.length - 1].text).toBe('m99')
+  })
+
+  it('clips long items and drops empty ones, but keeps tool-only turns', () => {
+    const out = clipHistory([
+      { role: 'assistant', text: 'x'.repeat(10_000) },
+      { role: 'assistant', text: '  ' },
+      { role: 'assistant', text: '', tools: 3 }
+    ])
+    expect(out).toHaveLength(2)
+    expect(out[0].text.length).toBeLessThan(4_100)
+    expect(out[1].tools).toBe(3)
+  })
+
+  it('accepts a history request', () => {
+    expect(parsePhoneMsg({ t: 'history', chatKey: 'chat-1' })).toEqual({ t: 'history', chatKey: 'chat-1' })
   })
 })

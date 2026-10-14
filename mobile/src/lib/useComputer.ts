@@ -29,6 +29,7 @@ export interface LogLine {
   who: 'me' | 'agent' | 'wait' | 'error'
   text: string
   reqId?: string
+  tools?: number // tool calls the agent made in this message
 }
 
 export type LinkState = 'connecting' | 'online' | 'relay-error' | 'revoked'
@@ -39,7 +40,11 @@ export interface ComputerLink {
   agents: RemoteAgent[]
   asks: Ask[]
   logs: Record<string, LogLine[]>
+  /** Chats whose history has arrived from the computer. */
+  loaded: Record<string, boolean>
   send: (chatKey: string, text: string) => void
+  /** Ask the computer for a chat's conversation so far. */
+  loadHistory: (chatKey: string) => void
   answer: (id: string, choice: string) => void
   setPushToken: (token: string | null) => void
 }
@@ -50,6 +55,7 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const [agents, setAgents] = useState<RemoteAgent[]>([])
   const [asks, setAsks] = useState<Ask[]>([])
   const [logs, setLogs] = useState<Record<string, LogLine[]>>({})
+  const [loaded, setLoaded] = useState<Record<string, boolean>>({})
   const chRef = useRef<RealtimeChannel | null>(null)
   const sharedRef = useRef<Uint8Array | null>(null)
   const eventRef = useRef(onEvent)
@@ -110,6 +116,18 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
         case 'event':
           eventRef.current?.(msg.kind === 'done' ? '작업이 끝났어요' : '확인이 필요해요', msg.title)
           break
+        case 'history': {
+          const lines: LogLine[] = (Array.isArray(msg.items) ? msg.items : []).map((h) => ({
+            who: h.role === 'user' ? 'me' : 'agent',
+            text: h.text,
+            ...(h.tools ? { tools: h.tools } : {})
+          }))
+          // The conversation as the computer has it, plus anything sent from
+          // here that is still waiting for its answer.
+          setLogs((all) => ({ ...all, [msg.chatKey]: [...lines, ...(all[msg.chatKey] ?? []).filter((l) => l.who === 'wait')] }))
+          setLoaded((l) => ({ ...l, [msg.chatKey]: true }))
+          break
+        }
         case 'revoked':
           setState('revoked')
           break
@@ -162,6 +180,8 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     [post]
   )
 
+  const loadHistory = useCallback((chatKey: string) => post({ t: 'history', chatKey }), [post])
+
   const setPushToken = useCallback((token: string | null) => post({ t: 'push', token }), [post])
 
   return {
@@ -170,7 +190,9 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     agents,
     asks,
     logs,
+    loaded,
     send,
+    loadHistory,
     answer,
     setPushToken
   }

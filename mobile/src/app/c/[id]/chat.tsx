@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useLocalSearchParams } from 'expo-router'
 import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useComputerCtx } from '@/lib/ComputerContext'
+import Markdown from '@/components/Markdown'
 import { C, R } from '@/lib/theme'
 
 // Messages to one chat agent, and its replies. A screen of its own rather than
@@ -20,6 +21,13 @@ export default function Chat(): JSX.Element {
   const scroll = useRef<ScrollView>(null)
   const agent = link.agents.find((a) => a.id === key)
   const lines = link.logs[key] ?? []
+
+  // The conversation so far comes from the computer each time the chat is
+  // opened (and again once the link is up, if it was not yet).
+  useEffect(() => {
+    if (link.deskOnline) link.loadHistory(key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, link.deskOnline])
 
   const submit = (): void => {
     const t = text.trim()
@@ -44,14 +52,24 @@ export default function Chat(): JSX.Element {
         keyboardDismissMode="interactive"
         onContentSizeChange={() => scroll.current?.scrollToEnd({ animated: true })}
       >
-        {lines.length === 0 && <Text style={s.empty}>보낸 메시지와 답변이 여기 보여요.</Text>}
-        {lines.map((l, i) => (
-          <View key={i} style={[s.bubble, l.who === 'me' ? s.me : s.it, l.who === 'error' && s.error]}>
-            <Text style={[s.bubbleText, l.who === 'wait' && { color: C.dim }]} selectable>
-              {l.who === 'wait' ? '답변을 기다리는 중…' : l.text}
-            </Text>
-          </View>
-        ))}
+        {lines.length === 0 && (
+          <Text style={s.empty}>{link.loaded[key] ? '아직 대화가 없어요.' : '대화를 불러오는 중…'}</Text>
+        )}
+        {lines.map((l, i) =>
+          l.who === 'agent' ? (
+            // The agent's reply, laid out like riven's chat: full width, rendered.
+            <View key={i} style={s.reply}>
+              {!!l.text.trim() && <Markdown text={l.text} />}
+              {!!l.tools && <Text style={s.tools}>도구 {l.tools}개 사용</Text>}
+            </View>
+          ) : (
+            <View key={i} style={[s.bubble, l.who === 'me' ? s.me : s.it, l.who === 'error' && s.error]}>
+              <Text style={[s.bubbleText, l.who === 'wait' && { color: C.dim }]} selectable>
+                {l.who === 'wait' ? '답변을 기다리는 중…' : l.text}
+              </Text>
+            </View>
+          )
+        )}
       </ScrollView>
       <View style={[s.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TextInput
@@ -79,6 +97,8 @@ const s = StyleSheet.create({
   me: { alignSelf: 'flex-end', backgroundColor: '#3b3466' },
   it: { alignSelf: 'flex-start', backgroundColor: C.bg3 },
   error: { borderColor: C.bad, borderWidth: 1 },
+  reply: { alignSelf: 'stretch', gap: 6, paddingVertical: 2 },
+  tools: { color: C.dim, fontSize: 12 },
   bubbleText: { color: C.fg, fontSize: 15, lineHeight: 21 },
   composer: {
     flexDirection: 'row',
