@@ -8,6 +8,8 @@ import type { Choice } from '@riven/remote'
 import { useComputerCtx } from '@/lib/ComputerContext'
 import Markdown from '@/components/Markdown'
 import Sheet from '@/components/Sheet'
+import ToolList from '@/components/ToolList'
+import WorkStrip from '@/components/WorkStrip'
 import { reason } from '@/lib/reason'
 import { C, R } from '@/lib/theme'
 
@@ -37,6 +39,13 @@ export default function Chat(): JSX.Element {
     link.loadChatInfo(key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, link.deskOnline])
+
+  // While this chat is on screen the computer keeps its running work current.
+  useEffect(() => {
+    link.watch(key)
+    return () => link.watch(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
 
   // A change made here is the same one the chat's own picker makes on the
   // computer; the computer says if it could not (the chat was closed there).
@@ -103,7 +112,7 @@ export default function Chat(): JSX.Element {
             // The agent's reply, laid out like riven's chat: full width, rendered.
             <View key={i} style={s.reply}>
               {!!l.text.trim() && <Markdown text={l.text} />}
-              {!!l.tools && <Text style={s.tools}>도구 {l.tools}개 사용</Text>}
+              {!!l.tools && <ToolList count={l.tools} list={l.toolList} />}
             </View>
           ) : (
             <View key={i} style={[s.bubble, l.who === 'me' ? s.me : s.it, l.who === 'error' && s.error]}>
@@ -114,6 +123,7 @@ export default function Chat(): JSX.Element {
           )
         )}
       </ScrollView>
+      <WorkStrip work={link.work[key]} />
       <View style={[s.composer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <TextInput
           style={s.input}

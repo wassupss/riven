@@ -122,6 +122,12 @@ export default function ComputerScreen(): JSX.Element {
               <Text style={s.agentTitle} numberOfLines={1}>
                 {item.title}
               </Text>
+              {!!item.work && (
+                <View style={s.work}>
+                  <Ionicons name="layers-outline" size={11} color={C.accent} />
+                  <Text style={s.workText}>{item.work}</Text>
+                </View>
+              )}
               <Text style={s.kind}>{item.kind === 'chat' ? '챗' : '터미널'}</Text>
               <Text style={[s.status, { color: st.color }]}>{st.label}</Text>
             </Pressable>
@@ -212,6 +218,17 @@ const s = StyleSheet.create({
   agentOff: { opacity: 0.6 },
   agentTitle: { flex: 1, color: C.fg, fontSize: 15 },
   kind: { color: C.dim, fontSize: 12 },
+  work: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderColor: C.accent,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 1
+  },
+  workText: { color: C.accent, fontSize: 11, fontWeight: '600' },
   status: { fontSize: 12, fontWeight: '600' },
   empty: { color: C.dim, fontSize: 14, textAlign: 'center', marginTop: 24 }
 })

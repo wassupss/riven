@@ -21,6 +21,7 @@ import {
   type ChatInfo,
   type Choice,
   type DeskMsg,
+  type HistoryItem,
   type PhoneMsg,
   type RemoteAgent,
   type RemoteJob
@@ -31,6 +32,7 @@ import { useRoster, rosterFor, workspaceOfPane } from './roster'
 import { askChatTurn, listAgents, resolveAgent, useAgents, type AgentController } from './agents'
 import { useAskUser } from './askUser'
 import { useAuth } from './auth'
+import { onTaskFinished, useChatWork, workCount, type LiveWork } from './chatWork'
 import { nextRunOf, useJobs, type Job } from './jobs'
 import { runJob } from './jobRunner'
 import { claudeCatalog } from './modelCatalog'
@@ -212,7 +214,8 @@ function snapshot(): RemoteAgent[] {
         kind: r.kind,
         title: r.title,
         status: r.status,
-        canSend: r.kind === 'chat'
+        canSend: r.kind === 'chat',
+        ...(r.kind === 'chat' && workCount(r.id) ? { work: workCount(r.id) } : {})
       })
   }
   return out
@@ -317,11 +320,15 @@ async function deliverFromPhone(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'send
 async function sendHistory(d: RemoteDevice, chatKey: string): Promise<void> {
   const ws = workspaceOfPane(chatKey)
   const session = ws ? loadPaneState(ws, chatKey).session : null
-  let items: Array<{ role: 'user' | 'assistant'; text: string; tools?: number }> = []
+  let items: HistoryItem[] = []
   if (ws && session) {
     try {
       const tr = await window.api.chat.sessionTranscript(pathOf(ws), session, claudeConfigDirFor(ws))
-      items = tr.map((m) => ({ role: m.role, text: m.text, ...(m.tools.length ? { tools: m.tools.length } : {}) }))
+      items = tr.map((m) => ({
+        role: m.role,
+        text: m.text,
+        ...(m.tools.length ? { tools: m.tools.length, toolList: m.tools } : {})
+      }))
     } catch {
       /* no transcript (yet): an empty history */
     }
@@ -383,6 +390,43 @@ async function chatAction(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'setModel' 
   sendTo(d, { t: 'ack', reqId: m.reqId, ok: true })
   // The pane re-renders with the change; read it back after that.
   setTimeout(() => sendChatInfo(d, m.chatKey), 300)
+}
+
+// ---- live work -----------------------------------------------------------------
+
+/** The chat each phone has open: it is sent that chat's work as it changes. */
+const watching = new Map<string, string>()
+const lastWork = new Map<string, string>()
+const EMPTY_WORK: LiveWork = { bg: [], agents: [], delegations: [] }
+// Subagents report every step; a phone does not need each one.
+const WORK_DEBOUNCE_MS = 1_500
+
+function sendWork(d: RemoteDevice, force = false): void {
+  const chatKey = watching.get(d.id)
+  if (!chatKey) return
+  const work = useChatWork.getState().byChat[chatKey] ?? EMPTY_WORK
+  const json = JSON.stringify(work)
+  if (!force && lastWork.get(d.id) === `${chatKey}:${json}`) return
+  lastWork.set(d.id, `${chatKey}:${json}`)
+  sendTo(d, { t: 'work', chatKey, now: Date.now(), work })
+}
+
+let workTimer: ReturnType<typeof setTimeout> | null = null
+function pushWork(): void {
+  if (!watching.size) return
+  if (workTimer) return
+  workTimer = setTimeout(() => {
+    workTimer = null
+    const present = new Set(useRemote.getState().present)
+    for (const d of getSettings().remoteDevices) if (present.has(d.id)) sendWork(d)
+  }, WORK_DEBOUNCE_MS)
+}
+
+function watch(d: RemoteDevice, chatKey: string | null): void {
+  if (chatKey) {
+    watching.set(d.id, chatKey)
+    sendWork(d, true)
+  } else watching.delete(d.id)
 }
 
 // ---- scheduled jobs ------------------------------------------------------------
@@ -498,6 +542,9 @@ function handle(d: RemoteDevice, m: PhoneMsg): void {
     case 'chatInfo':
       sendChatInfo(d, m.chatKey)
       return
+    case 'watch':
+      watch(d, m.chatKey)
+      return
     case 'setModel':
     case 'setMode':
     case 'stop':
@@ -563,6 +610,11 @@ function connect(owner: string, id: string): () => void {
     const before = new Set(useRemote.getState().present)
     setStore({ present })
     for (const did of [...jobWatchers]) if (!present.includes(did)) jobWatchers.delete(did)
+    for (const did of [...watching.keys()])
+      if (!present.includes(did)) {
+        watching.delete(did)
+        lastWork.delete(did)
+      }
     for (const did of present)
       if (!before.has(did)) {
         const d = getSettings().remoteDevices.find((x) => x.id === did)
@@ -586,7 +638,22 @@ function connect(owner: string, id: string): () => void {
     useRoster.subscribe(() => pushRoster()),
     useAgents.subscribe(() => pushRoster()),
     useAskUser.subscribe(() => pushAsks()),
-    useJobs.subscribe(() => pushJobs())
+    useJobs.subscribe(() => pushJobs()),
+    useChatWork.subscribe(() => {
+      pushWork()
+      pushRoster()
+    }),
+    // Ended while nobody was looking at that chat, likely: every phone hears it.
+    onTaskFinished((f) =>
+      broadcast({
+        t: 'taskDone',
+        chatKey: f.chatKey,
+        title: resolveAgent(f.chatKey)?.getTitle() ?? '',
+        label: f.label,
+        outcome: f.outcome,
+        ...(f.durationMs ? { durationMs: f.durationMs } : {})
+      })
+    )
   ]
   return () => {
     offs.forEach((f) => f())
@@ -596,6 +663,8 @@ function connect(owner: string, id: string): () => void {
     lastStatus.clear()
     sentAsks.clear()
     jobWatchers.clear()
+    watching.clear()
+    lastWork.clear()
   }
 }
 

@@ -28,6 +28,7 @@ import {
   X as XIcon
 } from 'lucide-react'
 import { useDelegations, delegationsOf, type Delegation } from '../../state/delegations'
+import { publishWork, reportTaskFinished } from '../../state/chatWork'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
 import { useRetainedValue } from '../RetainedPanel'
@@ -1853,6 +1854,23 @@ export default function ChatPanel({
     [lastMsg]
   )
 
+  // The same three strips, for whoever watches from outside the pane (a paired
+  // phone). Gone with the pane: nothing here outlives what it describes.
+  useEffect(() => {
+    publishWork(chatKey, {
+      bg: bgTasks.map((b) => ({ id: b.id, label: b.label, since: bgStarted.current.get(b.id) })),
+      agents: runningAgents.map((a) => ({
+        id: a.toolId,
+        label: a.label,
+        since: a.startedAt,
+        steps: a.steps,
+        lastActivityAt: a.lastActivityAt
+      })),
+      delegations: delegations.map((d) => ({ id: d.id, label: d.toTitle, since: d.startedAt }))
+    })
+  }, [chatKey, bgTasks, runningAgents, delegations])
+  useEffect(() => () => publishWork(chatKey, null), [chatKey])
+
   // The clock ticks once a minute normally — enough for "2h ago" on old turns.
   // While something is delegated it has to tick faster, because that counter is
   // the only thing that distinguishes an agent that is working from one that
@@ -2168,6 +2186,12 @@ export default function ChatPanel({
                   ? t('chat.bgTaskStopped', { what: name })
                   : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
             detail: started ? fmtDur(Date.now() - started) : undefined
+          })
+          reportTaskFinished({
+            chatKey,
+            label: outcome === 'failed' ? e.label || name : name,
+            outcome,
+            ...(started ? { durationMs: Date.now() - started } : {})
           })
           bgStarted.current.delete(e.taskId)
           break

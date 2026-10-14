@@ -14,7 +14,8 @@ import {
   type NewJob,
   type PhoneMsg,
   type RemoteAgent,
-  type RemoteJob
+  type RemoteJob,
+  type RemoteWork
 } from '@riven/remote'
 import { closeChannel, joinChannel, openChannel } from './relay'
 import type { Computer } from './computers'
@@ -34,9 +35,13 @@ export interface LogLine {
   text: string
   reqId?: string
   tools?: number // tool calls the agent made in this message
+  toolList?: Array<{ name: string; detail: string }>
 }
 
 export type LinkState = 'connecting' | 'online' | 'relay-error' | 'revoked'
+
+/** A chat's live work, with how far the computer's clock is ahead of this one. */
+export type ChatWork = RemoteWork & { offset: number }
 
 export interface JobsView {
   workspaces: Choice[]
@@ -66,6 +71,10 @@ export interface ComputerLink {
   setModel: (chatKey: string, model: string) => Promise<Ack>
   setMode: (chatKey: string, mode: string) => Promise<Ack>
   stop: (chatKey: string) => Promise<Ack>
+  /** What the watched chat has running besides its turn. */
+  work: Record<string, ChatWork>
+  /** The chat on screen (null when none): its work is kept current while it is. */
+  watch: (chatKey: string | null) => void
   /** The computer's scheduled jobs, once asked for (kept current after that). */
   jobs: JobsView | null
   loadJobs: () => void
@@ -90,6 +99,8 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const [chatInfo, setChatInfo] = useState<Record<string, ChatInfo>>({})
   const [jobs, setJobs] = useState<JobsView | null>(null)
   const waiting = useRef(new Map<string, (a: Ack) => void>())
+  const [work, setWork] = useState<Record<string, ChatWork>>({})
+  const watchRef = useRef<string | null>(null)
   const chRef = useRef<RealtimeChannel | null>(null)
   const sharedRef = useRef<Uint8Array | null>(null)
   const eventRef = useRef(onEvent)
@@ -158,6 +169,17 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
           settle(msg.reqId, { who: 'agent', text: msg.text })
           eventRef.current?.('답변이 도착했어요', '')
           break
+        case 'work':
+          setWork((all) => ({
+            ...all,
+            [msg.chatKey]: { ...msg.work, offset: msg.now - Date.now() }
+          }))
+          break
+        case 'taskDone': {
+          const word = msg.outcome === 'done' ? '완료' : msg.outcome === 'stopped' ? '중지됨' : '실패'
+          eventRef.current?.(`백그라운드 작업 ${word}`, [msg.title, msg.label].filter(Boolean).join(' · '))
+          break
+        }
         case 'event':
           eventRef.current?.(msg.kind === 'done' ? '작업이 끝났어요' : '확인이 필요해요', msg.title)
           break
@@ -165,7 +187,8 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
           const lines: LogLine[] = (Array.isArray(msg.items) ? msg.items : []).map((h) => ({
             who: h.role === 'user' ? 'me' : 'agent',
             text: h.text,
-            ...(h.tools ? { tools: h.tools } : {})
+            ...(h.tools ? { tools: h.tools } : {}),
+            ...(h.toolList?.length ? { toolList: h.toolList } : {})
           }))
           // The conversation as the computer has it, plus anything sent from
           // here that is still waiting for its answer.
@@ -204,12 +227,15 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
         setState((s) => (s === 'revoked' ? s : 'online'))
         void ch.track({ role: 'phone' })
         post({ t: 'hello' })
+        if (watchRef.current) post({ t: 'watch', chatKey: watchRef.current })
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setState('relay-error')
     })
 
     // Back from the background: ask for the current picture again.
     const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') post({ t: 'hello' })
+      if (s !== 'active') return
+      post({ t: 'hello' })
+      if (watchRef.current) post({ t: 'watch', chatKey: watchRef.current })
     })
     return () => {
       sub.remove()
@@ -277,6 +303,13 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   )
   const stop = useCallback((chatKey: string) => request<'stop'>({ t: 'stop', chatKey }), [request])
   const loadJobs = useCallback(() => post({ t: 'jobs' }), [post])
+  const watch = useCallback(
+    (chatKey: string | null) => {
+      watchRef.current = chatKey
+      post({ t: 'watch', chatKey })
+    },
+    [post]
+  )
   const setJobEnabled = useCallback(
     (id: string, enabled: boolean) => request<'jobSet'>({ t: 'jobSet', id, enabled }),
     [request]
@@ -301,6 +334,8 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     setModel,
     setMode,
     stop,
+    work,
+    watch,
     jobs,
     loadJobs,
     setJobEnabled,

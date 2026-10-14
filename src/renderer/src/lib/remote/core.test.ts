@@ -197,3 +197,19 @@ describe('remote actions', () => {
     expect(parsePhoneMsg({ t: 'jobDelete', reqId: 'r', id: 'j' })?.t).toBe('jobDelete')
   })
 })
+
+describe('live work', () => {
+  it('parses watch and unwatch', () => {
+    expect(parsePhoneMsg({ t: 'watch', chatKey: 'c' })).toEqual({ t: 'watch', chatKey: 'c' })
+    expect(parsePhoneMsg({ t: 'watch', chatKey: null })).toEqual({ t: 'watch', chatKey: null })
+    expect(parsePhoneMsg({ t: 'watch', chatKey: 5 })).toBeNull()
+  })
+
+  it('clips the tool list of each history item', () => {
+    const toolList = Array.from({ length: 50 }, (_, i) => ({ name: 'Bash', detail: 'x'.repeat(i === 0 ? 500 : 5) }))
+    const [m] = clipHistory([{ role: 'assistant', text: 'ok', tools: 50, toolList }])
+    expect(m.toolList).toHaveLength(30)
+    expect(m.toolList![0].detail.length).toBeLessThan(170)
+    expect(m.tools).toBe(50)
+  })
+})

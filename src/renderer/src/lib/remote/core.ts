@@ -227,6 +227,15 @@ export interface RemoteAgent {
   status: AgentStatus
   /** A chat pane: it can take a message (its workspace is opened if need be). */
   canSend: boolean
+  /** Background commands, subagents and hand-offs it has running. */
+  work?: number
+}
+
+/** What a chat has running besides its turn. Times are the computer's clock. */
+export interface RemoteWork {
+  bg: Array<{ id: string; label: string; since?: number }>
+  agents: Array<{ id: string; label: string; since: number; steps: number; lastActivityAt: number }>
+  delegations: Array<{ id: string; label: string; since: number }>
 }
 
 /** One choice in a picker: what is sent, and what the user reads. */
@@ -296,6 +305,16 @@ export type DeskMsg =
   | { t: 'history'; chatKey: string; items: HistoryItem[] }
   | { t: 'chatInfo'; info: ChatInfo }
   | { t: 'jobs'; workspaces: Choice[]; jobs: RemoteJob[]; models: Choice[] }
+  /** `now` is the computer's clock, so the phone can show durations without trusting its own. */
+  | { t: 'work'; chatKey: string; now: number; work: RemoteWork }
+  | {
+      t: 'taskDone'
+      chatKey: string
+      title: string
+      label: string
+      outcome: 'done' | 'stopped' | 'failed'
+      durationMs?: number
+    }
 
 /**
  * Phone → desk. This list IS what a phone may do: there is no message for
@@ -309,6 +328,8 @@ export type PhoneMsg =
   | { t: 'push'; token: string | null }
   | { t: 'history'; chatKey: string }
   | { t: 'chatInfo'; chatKey: string }
+  /** The chat this phone has open (null: none). Its live work is sent while it is. */
+  | { t: 'watch'; chatKey: string | null }
   | { t: 'setModel'; reqId: string; chatKey: string; model: string }
   | { t: 'setMode'; reqId: string; chatKey: string; mode: string }
   | { t: 'stop'; reqId: string; chatKey: string }
@@ -388,6 +409,8 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
       return m.token === null || str(m.token, 300) ? { t: 'push', token: m.token as string | null } : null
     case 'chatInfo':
       return str(m.chatKey, 200) ? { t: 'chatInfo', chatKey: m.chatKey } : null
+    case 'watch':
+      return m.chatKey === null || str(m.chatKey, 200) ? { t: 'watch', chatKey: m.chatKey as string | null } : null
     case 'setModel':
       return str(m.reqId, 64) && str(m.chatKey, 200) && str(m.model, 100)
         ? { t: 'setModel', reqId: m.reqId, chatKey: m.chatKey, model: m.model }
@@ -426,11 +449,23 @@ export interface HistoryItem {
   text: string
   /** Tool calls the agent made in this message (shown as a count). */
   tools?: number
+  /** The calls themselves, clipped: what was run, read or changed. */
+  toolList?: Array<{ name: string; detail: string }>
 }
 
 const HISTORY_ITEMS = 40
 const HISTORY_ITEM_CHARS = 4_000
 const HISTORY_BUDGET = 120_000
+const TOOLS_PER_ITEM = 30
+const TOOL_DETAIL_CHARS = 160
+
+/** The first calls of a message, each named and briefly described. */
+function clipTools(list: Array<{ name: string; detail: string }>): Array<{ name: string; detail: string }> {
+  return list.slice(0, TOOLS_PER_ITEM).map((t) => ({
+    name: t.name.slice(0, 60),
+    detail: t.detail.length > TOOL_DETAIL_CHARS ? t.detail.slice(0, TOOL_DETAIL_CHARS) + '…' : t.detail
+  }))
+}
 
 /**
  * The tail of a conversation, sized for one relay message: the most recent
@@ -440,9 +475,15 @@ export function clipHistory(items: HistoryItem[]): HistoryItem[] {
   const out = items
     .filter((m) => m.text.trim() || m.tools)
     .slice(-HISTORY_ITEMS)
-    .map((m) => (m.text.length > HISTORY_ITEM_CHARS ? { ...m, text: m.text.slice(0, HISTORY_ITEM_CHARS) + '\n…' } : m))
-  let size = out.reduce((n, m) => n + m.text.length, 0)
-  while (out.length > 1 && size > HISTORY_BUDGET) size -= out.shift()!.text.length
+    .map((m) => ({
+      ...m,
+      text: m.text.length > HISTORY_ITEM_CHARS ? m.text.slice(0, HISTORY_ITEM_CHARS) + '\n…' : m.text,
+      ...(m.toolList ? { toolList: clipTools(m.toolList) } : {})
+    }))
+  const sizeOf = (m: HistoryItem): number =>
+    m.text.length + (m.toolList?.reduce((n, t) => n + t.name.length + t.detail.length, 0) ?? 0)
+  let size = out.reduce((n, m) => n + sizeOf(m), 0)
+  while (out.length > 1 && size > HISTORY_BUDGET) size -= sizeOf(out.shift()!)
   return out
 }
 
