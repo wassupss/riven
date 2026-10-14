@@ -13,7 +13,9 @@ import {
   seal,
   sealPair,
   sharedKey,
-  toB64u
+  toB64u,
+  utf8,
+  fromUtf8
 } from './core'
 
 const offer = {
@@ -27,6 +29,13 @@ const offer = {
 }
 
 describe('encoding', () => {
+  it('encodes UTF-8 like TextEncoder, Korean and emoji included', () => {
+    for (const t of ['hello', '한글 메시지', 'emoji 🚀 ok', '']) {
+      expect(utf8(t)).toEqual(new TextEncoder().encode(t))
+      expect(fromUtf8(utf8(t))).toBe(t)
+    }
+  })
+
   it('round-trips base64url without padding or +/', () => {
     const b = new Uint8Array([0, 1, 250, 251, 252, 253, 254, 255])
     expect(fromB64u(toB64u(b))).toEqual(b)

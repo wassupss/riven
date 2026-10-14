@@ -1,7 +1,7 @@
 // Remote control: the protocol both ends speak. Shared, file for file, by this
 // app (state/remote.ts) and the phone app (mobile/), so it imports nothing but
-// tweetnacl and uses nothing but what both runtimes have (atob/btoa,
-// TextEncoder, crypto.getRandomValues through tweetnacl's PRNG hook).
+// tweetnacl and uses nothing but what both runtimes have (atob/btoa, and
+// randomness through tweetnacl's PRNG, which the phone app wires to expo-crypto).
 //
 // Shape of it:
 // - This machine has a long-term X25519 key pair. Its public key and a one-time
@@ -21,8 +21,43 @@ export const PROTOCOL = 2
 export const INVITE_TTL_MS = 10 * 60_000
 export const REPLAY_WINDOW_MS = 3 * 60_000
 
-const enc = new TextEncoder()
-const dec = new TextDecoder()
+// UTF-8 by hand: TextEncoder/TextDecoder are not something every React Native
+// engine can be counted on to have, and this file runs in both.
+export function utf8(s: string): Uint8Array {
+  const out: number[] = []
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i)
+    if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length) {
+      const d = s.charCodeAt(i + 1)
+      if (d >= 0xdc00 && d < 0xe000) {
+        c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00)
+        i++
+      }
+    }
+    if (c < 0x80) out.push(c)
+    else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63))
+    else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+    else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63))
+  }
+  return new Uint8Array(out)
+}
+
+export function fromUtf8(b: Uint8Array): string {
+  let s = ''
+  for (let i = 0; i < b.length; ) {
+    const c = b[i++]
+    let cp: number
+    if (c < 0x80) cp = c
+    else if (c < 0xe0) cp = ((c & 31) << 6) | (b[i++] & 63)
+    else if (c < 0xf0) cp = ((c & 15) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63)
+    else cp = ((c & 7) << 18) | ((b[i++] & 63) << 12) | ((b[i++] & 63) << 6) | (b[i++] & 63)
+    if (cp >= 0x10000) {
+      cp -= 0x10000
+      s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 1023))
+    } else s += String.fromCharCode(cp)
+  }
+  return s
+}
 
 export function toB64u(bytes: Uint8Array): string {
   let s = ''
@@ -72,13 +107,13 @@ export interface PairingOffer {
 export const OFFER_SCHEME = 'rivenremote://pair?o='
 
 export function offerToUrl(o: PairingOffer): string {
-  return OFFER_SCHEME + toB64u(enc.encode(JSON.stringify(o)))
+  return OFFER_SCHEME + toB64u(utf8(JSON.stringify(o)))
 }
 
 export function parseOffer(text: string): PairingOffer | null {
   try {
     const raw = text.startsWith(OFFER_SCHEME) ? text.slice(OFFER_SCHEME.length) : text
-    const o = JSON.parse(dec.decode(fromB64u(raw)))
+    const o = JSON.parse(fromUtf8(fromB64u(raw)))
     const ok =
       o?.v === PROTOCOL &&
       [o.channel, o.desk, o.invite, o.url, o.anon].every((x) => typeof x === 'string' && x.length > 0) &&
@@ -100,7 +135,7 @@ export interface Wire {
 
 export function seal(shared: Uint8Array, deviceId: string, msg: object): Wire {
   const nonce = nacl.randomBytes(nacl.box.nonceLength)
-  const body = enc.encode(JSON.stringify({ ...msg, ts: Date.now() }))
+  const body = utf8(JSON.stringify({ ...msg, ts: Date.now() }))
   return { d: deviceId, nonce: toB64u(nonce), box: toB64u(nacl.box.after(body, nonce, shared)) }
 }
 
@@ -108,7 +143,7 @@ export function openWire(shared: Uint8Array, w: Wire): Record<string, unknown> |
   try {
     const pt = nacl.box.open.after(fromB64u(w.box), fromB64u(w.nonce), shared)
     if (!pt) return null
-    const obj = JSON.parse(dec.decode(pt))
+    const obj = JSON.parse(fromUtf8(pt))
     return obj && typeof obj === 'object' ? obj : null
   } catch {
     return null
