@@ -1,54 +1,178 @@
 import { create } from 'zustand'
 import type { RealtimeChannel } from '@supabase/supabase-js'
-import { supabase, isSupabaseConfigured } from '../lib/supabase'
-import { importRemoteKey, newChannelId, newRemoteKey, open, seal, ReplayGuard } from '../lib/remoteCrypto'
-import { clipReply, parsePhoneMsg, type DeskMsg, type PhoneMsg, type RemoteAgent } from '../lib/remoteProtocol'
-import { getSettings, useSettings } from './settings'
+import { supabase, isSupabaseConfigured, url as supabaseUrl, anonKey } from '../lib/supabase'
+import {
+  INVITE_TTL_MS,
+  PROTOCOL,
+  ReplayGuard,
+  channelName,
+  clipReply,
+  deviceIdOf,
+  isWire,
+  newKeyPair,
+  offerToUrl,
+  openPair,
+  openWire,
+  parsePhoneMsg,
+  randomId,
+  seal,
+  sharedKey,
+  type DeskMsg,
+  type PhoneMsg,
+  type RemoteAgent
+} from '../lib/remote/core'
+import { getSettings, useSettings, type RemoteDevice } from './settings'
 import { useSession, workspaceName } from './session'
 import { useRoster, rosterFor, workspaceOfPane } from './roster'
 import { askChatTurn, listAgents, resolveAgent, useAgents, type AgentController } from './agents'
 import { useAskUser } from './askUser'
 
-// Remote control: a phone drives this machine's agents through a relay.
+// Remote control: the phone app (mobile/) drives this machine's agents through
+// a relay. See lib/remote/core for the protocol and its security model; this
+// file is the desktop end of it.
 //
-// The relay is a Supabase Realtime channel whose name is an unguessable id, and
-// everything on it is sealed end to end with a key the phone got from a QR code
-// (lib/remoteCrypto): Supabase only ever carries ciphertext. This window is the
-// hub because it already holds everything the phone needs: the roster, titles,
-// the ask_user queue and the send path that puts a message in a chat pane the
-// same way typing it would.
+// This window is the hub because it already holds everything a phone needs:
+// the roster, titles, the ask_user queue and the send path that puts a message
+// in a chat pane the same way typing it would.
 //
-// Free-tier Realtime counts every message, so nothing streams: while no phone
-// is present nothing is sent at all, and while one is, only state CHANGES go
+// Free-tier Realtime counts every message, so nothing streams: with no paired
+// phone present nothing is sent at all, and while one is, only state CHANGES go
 // out (the roster, debounced), plus a chat's reply once its turn is over.
 
 export type RemoteState = 'off' | 'unconfigured' | 'connecting' | 'online' | 'error'
 
+export interface PairPending {
+  deviceId: string
+  publicKey: string
+  name: string
+  platform: string
+}
+
 interface RemoteStore {
   state: RemoteState
-  phones: number
+  /** Paired devices present on the channel right now. */
+  present: string[]
+  /** The invite the QR code currently carries, if one is showing. */
+  invite: { code: string; expiresAt: number } | null
+  /** A phone asking to pair, waiting for the user's yes or no. */
+  pending: PairPending | null
 }
-export const useRemote = create<RemoteStore>(() => ({ state: 'off', phones: 0 }))
-const setState = (p: Partial<RemoteStore>): void => useRemote.setState(p)
+export const useRemote = create<RemoteStore>(() => ({ state: 'off', present: [], invite: null, pending: null }))
+const setStore = (p: Partial<RemoteStore>): void => useRemote.setState(p)
 
 const ROSTER_DEBOUNCE_MS = 500
-// A message sent from the phone waits as long as the agent keeps working; it
-// gives up only after this long of silence (see askChatTurn).
+// A message from the phone waits as long as the agent keeps working; it gives
+// up only after this long of silence (see askChatTurn).
 const REPLY_QUIET_MS = 30 * 60_000
 
-/** Make sure this machine has a pairing (channel + key); returns it. */
-export function ensurePairing(): { channel: string; key: string } {
+let hostname = ''
+void window.api.env
+  .defaults()
+  .then((d) => (hostname = d.hostname ?? ''))
+  .catch(() => {})
+
+// ---- pairing state -------------------------------------------------------------
+
+/** Make sure this machine has its key pair and channel. */
+function ensureIdentity(): void {
   const s = getSettings()
-  if (s.remoteChannel && s.remoteKey) return { channel: s.remoteChannel, key: s.remoteKey }
-  const pair = { channel: newChannelId(), key: newRemoteKey() }
-  useSettings.getState().set({ remoteChannel: pair.channel, remoteKey: pair.key })
-  return pair
+  if (s.remoteChannel && s.remoteDeskPublic && s.remoteDeskSecret) return
+  const k = newKeyPair()
+  useSettings.getState().set({ remoteChannel: randomId(), remoteDeskPublic: k.publicKey, remoteDeskSecret: k.secretKey })
 }
 
-/** Forget every paired phone: a new channel and key, so the old QR stops working. */
-export function rePair(): void {
-  useSettings.getState().set({ remoteChannel: newChannelId(), remoteKey: newRemoteKey() })
+/** A fresh one-time invite and the QR text that carries it, or null if remote is unavailable. */
+export function newInvite(): string | null {
+  ensureIdentity()
+  const s = getSettings()
+  if (!supabaseUrl || !anonKey) return null
+  const invite = { code: randomId(), expiresAt: Date.now() + INVITE_TTL_MS }
+  setStore({ invite })
+  return offerToUrl({
+    v: PROTOCOL,
+    channel: s.remoteChannel,
+    desk: s.remoteDeskPublic,
+    invite: invite.code,
+    url: supabaseUrl,
+    anon: anonKey,
+    name: hostname || 'riven'
+  })
 }
+
+export function cancelInvite(): void {
+  setStore({ invite: null })
+}
+
+/** The user's answer to a pairing request. */
+export function decidePairing(allow: boolean): void {
+  const p = useRemote.getState().pending
+  if (!p) return
+  setStore({ pending: null })
+  const shared = sharedKey(p.publicKey, getSettings().remoteDeskSecret)
+  if (allow) {
+    const device: RemoteDevice = {
+      id: p.deviceId,
+      name: p.name || 'phone',
+      platform: p.platform,
+      publicKey: p.publicKey,
+      addedAt: Date.now()
+    }
+    const others = getSettings().remoteDevices.filter((d) => d.id !== device.id)
+    useSettings.getState().set({ remoteDevices: [...others, device] })
+    rawSend(seal(shared, p.deviceId, { t: 'paired', name: hostname || 'riven', from: 'desk' }))
+  } else {
+    rawSend(seal(shared, p.deviceId, { t: 'denied', from: 'desk' }))
+  }
+}
+
+/** Forget one phone. It is told, if it is listening, and nothing it sends is read again. */
+export function revokeDevice(id: string): void {
+  const d = getSettings().remoteDevices.find((x) => x.id === id)
+  if (d) sendTo(d, { t: 'revoked' })
+  useSettings.getState().set({ remoteDevices: getSettings().remoteDevices.filter((x) => x.id !== id) })
+}
+
+/** Forget every phone and this machine's identity: old QR codes and keys all stop working. */
+export function resetRemote(): void {
+  for (const d of getSettings().remoteDevices) sendTo(d, { t: 'revoked' })
+  const k = newKeyPair()
+  useSettings.getState().set({
+    remoteChannel: randomId(),
+    remoteDeskPublic: k.publicKey,
+    remoteDeskSecret: k.secretKey,
+    remoteDevices: []
+  })
+  setStore({ invite: null, pending: null })
+}
+
+// ---- wire ----------------------------------------------------------------------
+
+let channel: RealtimeChannel | null = null
+const sharedCache = new Map<string, Uint8Array>()
+
+function sharedFor(d: RemoteDevice): Uint8Array {
+  const hit = sharedCache.get(d.id)
+  if (hit) return hit
+  const k = sharedKey(d.publicKey, getSettings().remoteDeskSecret)
+  sharedCache.set(d.id, k)
+  return k
+}
+
+function rawSend(payload: unknown, event = 'm'): void {
+  void channel?.send({ type: 'broadcast', event, payload })
+}
+
+function sendTo(d: RemoteDevice, msg: DeskMsg): void {
+  rawSend(seal(sharedFor(d), d.id, { ...msg, from: 'desk' }))
+}
+
+/** To every paired phone that is listening. Nothing is sent to nobody. */
+function broadcast(msg: DeskMsg): void {
+  const present = new Set(useRemote.getState().present)
+  for (const d of getSettings().remoteDevices) if (present.has(d.id)) sendTo(d, msg)
+}
+
+// ---- outgoing state ------------------------------------------------------------
 
 function snapshot(): RemoteAgent[] {
   const { openWorkspaces, names } = useSession.getState()
@@ -61,86 +185,59 @@ function snapshot(): RemoteAgent[] {
   return out
 }
 
-interface Link {
-  channel: RealtimeChannel
-  id: string
-  key: CryptoKey
-  guard: ReplayGuard
-  stop: () => void
-}
-let link: Link | null = null
-
-async function send(msg: DeskMsg): Promise<void> {
-  const l = link
-  if (!l || useRemote.getState().phones === 0) return
-  const env = await seal(l.key, l.id, { ...msg, from: 'desk' })
-  if (link !== l) return
-  void l.channel.send({ type: 'broadcast', event: 'm', payload: env })
-}
-
-// ---- outgoing state ----------------------------------------------------------
-
 let lastRoster = ''
 let rosterTimer: ReturnType<typeof setTimeout> | null = null
 const lastStatus = new Map<string, string>()
 
-function pushRoster(force = false): void {
+function pushRoster(): void {
   if (rosterTimer) clearTimeout(rosterTimer)
   rosterTimer = setTimeout(() => {
     rosterTimer = null
     const agents = snapshot()
-    // What finished or started waiting since last time is worth a notification.
+    // What finished or started waiting since last time is worth an alert.
     for (const a of agents) {
       const prev = lastStatus.get(a.id)
       if (prev && prev !== a.status && (a.status === 'done' || a.status === 'waiting'))
-        void send({ t: 'event', kind: a.status === 'done' ? 'done' : 'attention', id: a.id, title: a.title })
+        broadcast({ t: 'event', kind: a.status === 'done' ? 'done' : 'attention', id: a.id, title: a.title })
       lastStatus.set(a.id, a.status)
     }
     const json = JSON.stringify(agents)
-    if (!force && json === lastRoster) return
+    if (json === lastRoster) return
     lastRoster = json
-    void send({ t: 'roster', agents })
-  }, force ? 0 : ROSTER_DEBOUNCE_MS)
+    broadcast({ t: 'roster', agents })
+  }, ROSTER_DEBOUNCE_MS)
 }
 
 const sentAsks = new Set<string>()
-function pushAsks(all = false): void {
+function pushAsks(to?: RemoteDevice): void {
   const live = useAskUser.getState().pending.filter((r) => !r.expired)
   const ids = new Set(live.map((r) => r.id))
   for (const r of live) {
-    if (!all && sentAsks.has(r.id)) continue
+    if (!to && sentAsks.has(r.id)) continue
     sentAsks.add(r.id)
-    const title = r.chatKey ? resolveAgent(r.chatKey)?.getTitle() ?? '' : ''
-    void send({ t: 'ask', id: r.id, title, question: r.question, options: r.options })
+    const title = r.chatKey ? (resolveAgent(r.chatKey)?.getTitle() ?? '') : ''
+    const msg: DeskMsg = { t: 'ask', id: r.id, title, question: r.question, options: r.options }
+    if (to) sendTo(to, msg)
+    else broadcast(msg)
   }
+  if (to) return
   for (const id of [...sentAsks])
     if (!ids.has(id)) {
       sentAsks.delete(id)
-      void send({ t: 'askGone', id })
+      broadcast({ t: 'askGone', id })
     }
+}
+
+/** Everything a phone needs to draw its screen, sent to that phone. */
+function greet(d: RemoteDevice): void {
+  sendTo(d, { t: 'roster', agents: snapshot() })
+  pushAsks(d)
 }
 
 // ---- incoming ------------------------------------------------------------------
 
-function handle(m: PhoneMsg): void {
-  switch (m.t) {
-    case 'hello':
-      // A phone (re)joined: give it the whole picture once.
-      lastRoster = ''
-      pushRoster(true)
-      pushAsks(true)
-      return
-    case 'answer':
-      useAskUser.getState().answer(m.id, m.choice)
-      return
-    case 'send':
-      void deliverFromPhone(m)
-      return
-  }
-}
-
-// Exact pane key only: resolveAgent's fuzzy title match must not decide where
-// a remote command lands.
+// Exact pane key only: resolveAgent's fuzzy title match must not decide where a
+// remote command lands.
 const mounted = (chatKey: string): AgentController | null =>
   listAgents().some((a) => a.id === chatKey) ? resolveAgent(chatKey) : null
 
@@ -149,8 +246,8 @@ const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 /**
  * The pane's controller, mounting its workspace if need be. Only the few most
  * recent workspaces stay mounted (App's LRU), and a chat in any other has no
- * controller to take a message: from the phone, almost every agent looked
- * unreachable. Switching to its workspace mounts it, as clicking it would.
+ * controller to take a message. Switching to its workspace mounts it, as
+ * clicking it would.
  */
 async function controllerFor(chatKey: string): Promise<AgentController | null> {
   const now = mounted(chatKey)
@@ -166,93 +263,131 @@ async function controllerFor(chatKey: string): Promise<AgentController | null> {
   return null
 }
 
-async function deliverFromPhone(m: Extract<PhoneMsg, { t: 'send' }>): Promise<void> {
+async function deliverFromPhone(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'send' }>): Promise<void> {
   const target = await controllerFor(m.chatKey)
   if (!target) {
-    void send({ t: 'ack', reqId: m.reqId, ok: false, error: 'not-open' })
+    sendTo(d, { t: 'ack', reqId: m.reqId, ok: false, error: 'not-open' })
     return
   }
-  void send({ t: 'ack', reqId: m.reqId, ok: true })
+  sendTo(d, { t: 'ack', reqId: m.reqId, ok: true })
   const text = await askChatTurn(target, m.text, REPLY_QUIET_MS, '(no reply: the agent went quiet)')
-  void send({ t: 'reply', reqId: m.reqId, chatKey: m.chatKey, text: clipReply(text) })
+  // Re-read the device: it may have been unpaired while the agent worked.
+  const still = getSettings().remoteDevices.find((x) => x.id === d.id)
+  if (still) sendTo(still, { t: 'reply', reqId: m.reqId, chatKey: m.chatKey, text: clipReply(text) })
+}
+
+function handle(d: RemoteDevice, m: PhoneMsg): void {
+  switch (m.t) {
+    case 'hello':
+      greet(d)
+      return
+    case 'answer':
+      useAskUser.getState().answer(m.id, m.choice)
+      return
+    case 'send':
+      void deliverFromPhone(d, m)
+      return
+    case 'push':
+      useSettings.getState().set({
+        remoteDevices: getSettings().remoteDevices.map((x) => (x.id === d.id ? { ...x, pushToken: m.token } : x))
+      })
+      return
+  }
+}
+
+function onPairRequest(payload: unknown, guard: ReplayGuard): void {
+  const { invite, pending } = useRemote.getState()
+  // One request per invite, one prompt at a time.
+  if (!invite || pending || Date.now() > invite.expiresAt) return
+  const got = openPair(payload, getSettings().remoteDeskSecret)
+  if (!got || got.req.invite !== invite.code) return
+  if (!guard.accept(got.ts, (payload as { nonce: string }).nonce)) return
+  // The invite is spent the moment it is used, approved or not.
+  setStore({
+    invite: null,
+    pending: { deviceId: deviceIdOf(got.publicKey), publicKey: got.publicKey, name: got.req.name, platform: got.req.platform }
+  })
 }
 
 // ---- connection ----------------------------------------------------------------
 
-async function connect(id: string, keyB64: string): Promise<void> {
-  if (!supabase) return
-  setState({ state: 'connecting', phones: 0 })
-  const key = await importRemoteKey(keyB64)
+function connect(id: string): () => void {
+  if (!supabase) return () => {}
+  setStore({ state: 'connecting', present: [] })
+  sharedCache.clear()
   const guard = new ReplayGuard()
-  const channel = supabase.channel(`riven-remote-${id}`, {
+  const ch = supabase.channel(channelName(id), {
     config: { broadcast: { self: false }, presence: { key: 'desk' } }
   })
-  const offs: Array<() => void> = []
-  const l: Link = {
-    channel,
-    id,
-    key,
-    guard,
-    stop: () => {
-      offs.forEach((f) => f())
-      void supabase?.removeChannel(channel)
-    }
-  }
-  link = l
+  channel = ch
 
-  channel.on('broadcast', { event: 'm' }, ({ payload }) => {
-    void open(key, id, payload).then((raw) => {
-      if (link !== l || !raw || raw.from !== 'phone' || !guard.accept(raw.ts, raw.n)) return
-      const m = parsePhoneMsg(raw)
-      if (m) handle(m)
-    })
+  ch.on('broadcast', { event: 'm' }, ({ payload }) => {
+    if (!isWire(payload)) return
+    const d = getSettings().remoteDevices.find((x) => x.id === payload.d)
+    if (!d) return // not (or no longer) paired: not even opened
+    const raw = openWire(sharedFor(d), payload)
+    if (!raw || raw.from !== 'phone' || !guard.accept(raw.ts, payload.nonce)) return
+    const m = parsePhoneMsg(raw)
+    if (m) handle(d, m)
   })
-  channel.on('presence', { event: 'sync' }, () => {
-    const phones = Object.keys(channel.presenceState()).filter((k) => k.startsWith('phone')).length
-    const before = useRemote.getState().phones
-    setState({ phones })
-    if (phones > 0 && before === 0) {
-      lastRoster = ''
-      pushRoster(true)
-      pushAsks(true)
-    }
+  ch.on('broadcast', { event: 'pair' }, ({ payload }) => onPairRequest(payload, guard))
+  ch.on('presence', { event: 'sync' }, () => {
+    const known = new Set(getSettings().remoteDevices.map((d) => d.id))
+    const present = Object.keys(ch.presenceState())
+      .filter((k) => k.startsWith('phone-'))
+      .map((k) => k.slice('phone-'.length))
+      .filter((did) => known.has(did))
+    const before = new Set(useRemote.getState().present)
+    setStore({ present })
+    for (const did of present)
+      if (!before.has(did)) {
+        const d = getSettings().remoteDevices.find((x) => x.id === did)
+        if (d) greet(d)
+      }
   })
-  channel.subscribe((status) => {
-    if (link !== l) return
+  ch.subscribe((status) => {
+    if (channel !== ch) return
     if (status === 'SUBSCRIBED') {
-      setState({ state: 'online' })
-      void channel.track({ role: 'desk' })
-    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setState({ state: 'error' })
+      setStore({ state: 'online' })
+      void ch.track({ role: 'desk' })
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setStore({ state: 'error' })
   })
 
-  // State that changes while a phone watches.
-  offs.push(useRoster.subscribe(() => pushRoster()))
-  offs.push(useAgents.subscribe(() => pushRoster()))
-  offs.push(useAskUser.subscribe(() => pushAsks()))
-}
-
-function disconnect(): void {
-  link?.stop()
-  link = null
-  lastRoster = ''
-  lastStatus.clear()
-  sentAsks.clear()
+  const offs = [
+    useRoster.subscribe(() => pushRoster()),
+    useAgents.subscribe(() => pushRoster()),
+    useAskUser.subscribe(() => pushAsks())
+  ]
+  return () => {
+    offs.forEach((f) => f())
+    if (channel === ch) channel = null
+    void supabase?.removeChannel(ch)
+    lastRoster = ''
+    lastStatus.clear()
+    sentAsks.clear()
+  }
 }
 
 /** Call once at startup: follows the remote settings for the life of the window. */
 export function startRemote(): () => void {
   let current = ''
+  let stop: () => void = () => {}
   const apply = (): void => {
     const s = getSettings()
-    const want = s.remoteEnabled && s.remoteChannel && s.remoteKey ? `${s.remoteChannel}:${s.remoteKey}` : ''
+    if (s.remoteEnabled) ensureIdentity()
+    const now = getSettings()
+    const want = now.remoteEnabled && isSupabaseConfigured ? `${now.remoteChannel}:${now.remoteDeskPublic}` : ''
+    // A device list change needs no reconnect, only fresh per-device keys.
+    sharedCache.clear()
     if (want === current) return
     current = want
-    disconnect()
-    if (!s.remoteEnabled) setState({ state: 'off', phones: 0 })
-    else if (!isSupabaseConfigured) setState({ state: 'unconfigured', phones: 0 })
-    else if (want) void connect(s.remoteChannel, s.remoteKey)
+    stop()
+    stop = () => {}
+    if (!now.remoteEnabled) setStore({ state: 'off', present: [], invite: null, pending: null })
+    else if (!isSupabaseConfigured) setStore({ state: 'unconfigured', present: [] })
+    else stop = connect(now.remoteChannel)
     try {
-      window.api.power.remote(!!want && isSupabaseConfigured)
+      window.api.power.remote(!!want)
     } catch {
       /* an older preload has no remote bridge */
     }
@@ -261,6 +396,6 @@ export function startRemote(): () => void {
   const off = useSettings.subscribe(apply)
   return () => {
     off()
-    disconnect()
+    stop()
   }
 }

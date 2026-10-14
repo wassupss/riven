@@ -132,6 +132,7 @@ const api = {
       shell: string
       platform: string
       claudePath: string | null
+      hostname?: string
     }> => ipcRenderer.invoke('env:defaults')
   },
   workspace: {

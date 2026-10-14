@@ -2,6 +2,17 @@ import { create } from 'zustand'
 
 export type PetChrome = 'full' | 'screen' | 'bare'
 
+/** A phone the user approved for remote control (state/remote). */
+export interface RemoteDevice {
+  id: string
+  name: string
+  platform: string
+  publicKey: string
+  addedAt: number
+  // Expo push token, when the phone allowed notifications.
+  pushToken?: string | null
+}
+
 export interface Settings {
   theme: string
   editorKeymap: string
@@ -94,11 +105,14 @@ export interface Settings {
   notifyOnFailure: boolean
   // riven's icon in the macOS menu bar, with the count of agents that want you.
   menuBarIcon: boolean
-  // Remote control from a phone (state/remote). The channel and key are this
-  // machine's pairing secret: never synced (settingsSync), replaced on re-pair.
+  // Remote control from a phone (state/remote). This machine's key pair, its
+  // relay channel and the phones the user approved: never synced
+  // (settingsSync), all replaced when every phone is unpaired.
   remoteEnabled: boolean
   remoteChannel: string
-  remoteKey: string
+  remoteDeskPublic: string
+  remoteDeskSecret: string
+  remoteDevices: RemoteDevice[]
   // Terminal behaviour, all of it things xterm exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -160,7 +174,9 @@ export const DEFAULT_SETTINGS: Settings = {
   menuBarIcon: true,
   remoteEnabled: false,
   remoteChannel: '',
-  remoteKey: '',
+  remoteDeskPublic: '',
+  remoteDeskSecret: '',
+  remoteDevices: [],
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,

@@ -1058,7 +1058,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'remote.title': { ko: '휴대폰에서 원격 제어', en: 'Remote control from your phone' },
   'remote.enable': { ko: '원격 제어 켜기', en: 'Enable remote control' },
   'remote.enableDesc': {
-    ko: '휴대폰에서 이 컴퓨터의 에이전트 상태를 보고, 메시지를 보내고, 질문에 답할 수 있어요. 모든 내용은 종단간 암호화됩니다.',
+    ko: 'riven 휴대폰 앱에서 이 컴퓨터의 에이전트 상태를 보고, 메시지를 보내고, 질문에 답할 수 있어요. 모든 내용은 종단간 암호화됩니다.',
     en: "See this machine's agents from your phone, message them and answer their questions. Everything is end-to-end encrypted."
   },
   'remote.state': { ko: '연결 상태', en: 'Status' },
@@ -1069,17 +1069,37 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'remote.status.connecting': { ko: '연결 중…', en: 'Connecting…' },
   'remote.status.online': { ko: '대기 중', en: 'Ready' },
   'remote.status.error': { ko: '중계 서버에 연결할 수 없어요 (자동 재시도 중)', en: 'Cannot reach the relay (retrying)' },
-  'remote.pair': { ko: '휴대폰 연결', en: 'Pair a phone' },
-  'remote.pairDesc': { ko: '휴대폰 카메라로 QR을 찍으면 연결돼요. 로그인은 필요 없어요.', en: 'Scan the QR code with your phone camera. No sign-in needed.' },
+  'remote.pair': { ko: '휴대폰 추가', en: 'Add a phone' },
+  'remote.pairDesc': {
+    ko: 'riven 앱으로 QR을 찍으면 이 컴퓨터에 승인 요청이 떠요. QR은 10분 동안 한 번만 쓸 수 있어요.',
+    en: 'Scan the QR with the riven app, then approve the phone here. The QR works once, for 10 minutes.'
+  },
   'remote.showQr': { ko: 'QR 보기', en: 'Show QR' },
   'remote.hideQr': { ko: 'QR 숨기기', en: 'Hide QR' },
+  'remote.qrLeft': { ko: '{m}:{s} 남음', en: '{m}:{s} left' },
   'remote.qrNote': {
-    ko: '이 QR은 이 컴퓨터의 에이전트를 조작할 수 있는 열쇠예요. 화면 공유 중에는 띄우지 마세요.',
-    en: "This QR code is a key to this machine's agents. Don't show it while sharing your screen."
+    ko: 'QR만으로는 연결되지 않고, 이 컴퓨터에서 승인해야 해요. 그래도 화면 공유 중에는 띄우지 마세요.',
+    en: "A QR alone does not pair: you approve the phone here. Still, don't show it while sharing your screen."
   },
-  'remote.rePair': { ko: '연결된 기기 모두 해제', en: 'Unpair all phones' },
-  'remote.rePairDesc': { ko: '새 열쇠를 만들어 기존 휴대폰 연결을 끊어요. 다시 쓰려면 QR을 새로 찍어야 해요.', en: 'Issues a new key; paired phones stop working until they scan the new QR.' },
-  'remote.rePairBtn': { ko: '해제', en: 'Unpair' },
+  'remote.devices': { ko: '연결된 휴대폰', en: 'Paired phones' },
+  'remote.noDevices': { ko: '아직 연결된 휴대폰이 없어요.', en: 'No phones paired yet.' },
+  'remote.live': { ko: '접속 중', en: 'online' },
+  'remote.addedAt': { ko: '{when} 연결', en: 'paired {when}' },
+  'remote.revoke': { ko: '해제', en: 'Unpair' },
+  'remote.reset': { ko: '모두 해제하고 키 재발급', en: 'Unpair all and reissue keys' },
+  'remote.resetDesc': {
+    ko: '이 컴퓨터의 키와 채널을 새로 만들어요. 연결된 모든 휴대폰이 끊겨요.',
+    en: "Creates a new key and channel for this machine. Every paired phone is disconnected."
+  },
+  'remote.resetBtn': { ko: '재발급', en: 'Reissue' },
+  'remote.pairAsk': { ko: '이 휴대폰의 원격 제어를 허용할까요?', en: 'Allow this phone to control riven?' },
+  'remote.unknownPhone': { ko: '이름 없는 휴대폰', en: 'Unnamed phone' },
+  'remote.pairWarn': {
+    ko: '허용하면 이 휴대폰이 이 컴퓨터의 에이전트에게 작업을 시킬 수 있어요. 내가 방금 QR을 찍은 게 아니라면 거절하세요.',
+    en: "Once allowed, this phone can give this machine's agents work. If you didn't just scan the QR, deny."
+  },
+  'remote.allow': { ko: '허용', en: 'Allow' },
+  'remote.deny': { ko: '거절', en: 'Deny' },
   'remote.awakeNote': {
     ko: '원격 제어가 켜져 있는 동안 이 컴퓨터는 잠자기에 들어가지 않아요(화면은 꺼질 수 있어요). 노트북 덮개를 닫으면 잠들 수 있어요.',
     en: 'While remote control is on, this machine will not sleep (the display may). Closing a laptop lid can still put it to sleep.'

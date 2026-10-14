@@ -402,7 +402,9 @@ app.whenReady().then(() => {
     home: os.homedir(),
     shell: process.env.SHELL || '/bin/zsh',
     platform: process.platform,
-    claudePath
+    claudePath,
+    // What a paired phone calls this machine (remote control).
+    hostname: os.hostname().replace(/\.local$/, '')
   }))
 
   // Dock icon: packaged builds use the bundled .icns, but in dev the app would

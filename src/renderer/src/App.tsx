@@ -18,6 +18,7 @@ import Palette from './components/Palette'
 import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
+import RemotePairPrompt from './components/RemotePairPrompt'
 import PetHost from './components/PetHost'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
@@ -399,6 +400,7 @@ export default function App(): JSX.Element {
       <QuickPanel />
       <AgentPicker />
       <AskUserModal />
+      <RemotePairPrompt />
       <AgentWatch />
       {/* The floating virtual-pet device — always on top of the workbench, never
           a dock tab (a pet behind a tab is a pet you forget to feed). */}
