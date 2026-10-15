@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Stack, useLocalSearchParams } from 'expo-router'
@@ -8,9 +8,10 @@ import type { Choice } from '@riven/remote'
 import { useComputerCtx } from '@/lib/ComputerContext'
 import Markdown from '@/components/Markdown'
 import Sheet from '@/components/Sheet'
-import ToolList from '@/components/ToolList'
+import { isSubagent, SubagentCard, ToolGroup, type Tool } from '@/components/ToolGroup'
 import WorkStrip from '@/components/WorkStrip'
 import { reason } from '@/lib/reason'
+import type { LogLine } from '@/lib/useComputer'
 import { C, R } from '@/lib/theme'
 
 // Messages to one chat agent, and its replies. A screen of its own rather than
@@ -30,6 +31,8 @@ export default function Chat(): JSX.Element {
   const lines = link.logs[key] ?? []
   const info = link.chatInfo[key]
   const busy = agent?.status === 'busy' || lines.some((l) => l.who === 'wait')
+  const raw = link.logs[key]
+  const blocks = useMemo(() => toBlocks(raw ?? []), [raw])
 
   // The conversation so far comes from the computer each time the chat is
   // opened (and again once the link is up, if it was not yet).
@@ -107,17 +110,28 @@ export default function Chat(): JSX.Element {
         {lines.length === 0 && (
           <Text style={s.empty}>{link.loaded[key] ? '아직 대화가 없어요.' : '대화를 불러오는 중…'}</Text>
         )}
-        {lines.map((l, i) =>
-          l.who === 'agent' ? (
-            // The agent's reply, laid out like riven's chat: full width, rendered.
+        {blocks.map((b, i) =>
+          b.k === 'turn' ? (
+            // The agent's turn, laid out like riven's chat: full width, rendered,
+            // its tool calls folded where they happened.
             <View key={i} style={s.reply}>
-              {!!l.text.trim() && <Markdown text={l.text} />}
-              {!!l.tools && <ToolList count={l.tools} list={l.toolList} />}
+              {b.parts.map((p, j) =>
+                p.k === 'text' ? (
+                  <Markdown key={j} text={p.text} />
+                ) : p.k === 'agent' ? (
+                  <SubagentCard key={j} task={p.task} kids={[]} />
+                ) : (
+                  <ToolGroup key={j} tools={p.tools} />
+                )
+              )}
             </View>
           ) : (
-            <View key={i} style={[s.bubble, l.who === 'me' ? s.me : s.it, l.who === 'error' && s.error]}>
-              <Text style={[s.bubbleText, l.who === 'wait' && { color: C.dim }]} selectable>
-                {l.who === 'wait' ? '답변을 기다리는 중…' : l.text}
+            <View
+              key={i}
+              style={[s.bubble, b.line.who === 'me' ? s.me : s.it, b.line.who === 'error' && s.error]}
+            >
+              <Text style={[s.bubbleText, b.line.who === 'wait' && { color: C.dim }]} selectable>
+                {b.line.who === 'wait' ? '답변을 기다리는 중…' : b.line.text}
               </Text>
             </View>
           )
@@ -149,6 +163,45 @@ export default function Chat(): JSX.Element {
     </KeyboardAvoidingView>
   )
 }
+
+type Part = { k: 'text'; text: string } | { k: 'tools'; tools: Tool[] } | { k: 'agent'; task: Tool }
+type Block = { k: 'turn'; parts: Part[] } | { k: 'line'; line: LogLine }
+
+// The transcript keeps each step of a turn as its own message (a run of text,
+// one tool call). riven's chat shows them as one turn, the calls between two
+// runs of text folded into one group, so the lines are put back together the
+// same way here.
+function toBlocks(lines: LogLine[]): Block[] {
+  const out: Block[] = []
+  for (const l of lines) {
+    if (l.who !== 'agent') {
+      out.push({ k: 'line', line: l })
+      continue
+    }
+    let turn = out[out.length - 1]
+    if (turn?.k !== 'turn') {
+      turn = { k: 'turn', parts: [] }
+      out.push(turn)
+    }
+    const parts = turn.parts
+    if (l.text.trim()) parts.push({ k: 'text', text: l.text })
+    // The calls themselves, or (from an older computer) only how many.
+    const calls = l.toolList?.length
+      ? [...l.toolList, ...more(l.tools ?? 0, l.toolList.length)]
+      : more(l.tools ?? 0, 0)
+    for (const t of calls) {
+      const last = parts[parts.length - 1]
+      if (isSubagent(t.name)) parts.push({ k: 'agent', task: t })
+      else if (last?.k === 'tools') last.tools.push(t)
+      else parts.push({ k: 'tools', tools: [t] })
+    }
+  }
+  return out
+}
+
+// Calls counted but not listed: still counted in the group's "명령 N개".
+const more = (count: number, listed: number): Tool[] =>
+  Array.from({ length: Math.max(0, count - listed) }, () => ({ name: '…', detail: '' }))
 
 const labelOf = (list: Choice[], value: string): string => list.find((x) => x.value === value)?.label ?? value
 
