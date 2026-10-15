@@ -61,6 +61,7 @@ import { useClaudeCatalog } from '../../state/modelCatalog'
 import ModelOptions from '../../components/ModelOptions'
 import { retryLabel, limitLabel, compactLabel } from '../../lib/agentNotice'
 import { viewImage } from '../../components/ImageLightbox'
+import { scrollWithin } from '../../lib/scrollWithin'
 
 // An image waiting in the composer to go with the next message.
 export interface ChatImage {
@@ -977,7 +978,7 @@ function useCardNav(
   const [index, setIndex] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    ref.current?.focus()
+    ref.current?.focus({ preventScroll: true })
   }, [])
   const clamped = count > 0 ? Math.min(index, count - 1) : 0
   const onKeyDown = (e: React.KeyboardEvent): void => {
@@ -1194,7 +1195,7 @@ function McpCard({
   }
   const { index, setIndex, ref, onKeyDown } = useCardNav(count, enter, onDismiss)
   useEffect(() => {
-    if (servers) ref.current?.scrollIntoView({ block: 'end' })
+    if (servers) scrollWithin(ref.current, 'end')
   }, [servers, ref])
 
   return (
@@ -1331,10 +1332,10 @@ function ResumeCard({
     onDismiss
   )
   useEffect(() => {
-    if (sessions) ref.current?.scrollIntoView({ block: 'end' })
+    if (sessions) scrollWithin(ref.current, 'end')
   }, [sessions, ref])
   useEffect(() => {
-    itemRefs.current[index]?.scrollIntoView({ block: 'nearest' })
+    scrollWithin(itemRefs.current[index])
   }, [index])
 
   return (
@@ -1441,7 +1442,7 @@ function ModelCard({
   )
   useEffect(() => {
     setIndex(start)
-    ref.current?.scrollIntoView({ block: 'end' })
+    scrollWithin(ref.current, 'end')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
@@ -1779,7 +1780,7 @@ export default function ChatPanel({
     void Promise.all(files.map(readImage)).then((imgs) => {
       const ok = imgs.filter((x): x is ChatImage => !!x)
       if (ok.length) putAttachments([...attachmentsRef.current, ...ok])
-      inputRef.current?.focus()
+      inputRef.current?.focus({ preventScroll: true })
     })
   }
   // Slash-command menu: open while the input is a bare "/query" (no space yet).
@@ -1822,7 +1823,7 @@ export default function ChatPanel({
     if (api && !api.isActive) return
     const id = setTimeout(() => {
       if (api && !api.isActive) return
-      inputRef.current?.focus()
+      inputRef.current?.focus({ preventScroll: true })
     }, 50)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3093,7 +3094,7 @@ export default function ChatPanel({
   // change fought with hover: scrollIntoView moved items under the cursor, which
   // fired mouseEnter, which changed the index again — the highlight jittered.
   const scrollSlashIntoView = (i: number): void => {
-    slashItemRefs.current[i]?.scrollIntoView({ block: 'nearest' })
+    scrollWithin(slashItemRefs.current[i])
   }
 
   // @mention: every agent pane in this workspace except self — native chats AND
@@ -3119,7 +3120,7 @@ export default function ChatPanel({
     setMentionIndex(0)
     if (inputRef.current) {
       inputRef.current.value = next
-      inputRef.current.focus()
+      inputRef.current.focus({ preventScroll: true })
     }
   }
   // Deliver a mentioned line to one pane. A native chat takes it as a message; a
@@ -3315,7 +3316,7 @@ export default function ChatPanel({
   // Remove a card (Esc) and hand focus back to the composer.
   const dismissCard = (cardId?: string): void => {
     setMsgs((m) => m.filter((x) => x.cardId !== cardId))
-    setTimeout(() => inputRef.current?.focus(), 0)
+    setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 0)
   }
 
   // Pick a command from the menu: just FILL the composer with "/name " (never run
@@ -3326,7 +3327,7 @@ export default function ChatPanel({
     setSlashIndex(0)
     if (inputRef.current) {
       inputRef.current.value = next
-      inputRef.current.focus()
+      inputRef.current.focus({ preventScroll: true })
     }
   }
 
@@ -3515,9 +3516,7 @@ export default function ChatPanel({
                   quiet ? ` · ${t('chat.subagent.quiet', { t: fmtDur(now - a.lastActivityAt) })}` : ''
                 }`}
                 onClick={() => {
-                  document
-                    .querySelector(`[data-agent-id="${a.toolId}"]`)
-                    ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                  scrollWithin(document.querySelector(`[data-agent-id="${a.toolId}"]`), 'center', 'smooth')
                 }}
               >
                 <Bot size={11} className={quiet ? undefined : 'spin-slow'} />

@@ -28,6 +28,7 @@ import {
   PanelRight,
   Columns2
 } from 'lucide-react'
+import { scrollWithin } from '../../lib/scrollWithin'
 
 interface NoteMeta {
   name: string
@@ -441,7 +442,7 @@ export default function NotesPanel({ workspace }: { workspace: string }): JSX.El
         (h) => (h.textContent || '').trim() === text
       )
       if (el) {
-        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+        scrollWithin(el, 'start', 'smooth')
         return
       }
     }
