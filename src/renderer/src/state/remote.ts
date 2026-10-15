@@ -24,7 +24,8 @@ import {
   type HistoryItem,
   type PhoneMsg,
   type RemoteAgent,
-  type RemoteJob
+  type RemoteJob,
+  type RemoteUsage
 } from '../lib/remote/core'
 import { claudeConfigDirFor, getSettings, useSettings, type RemoteDevice } from './settings'
 import { loadPaneState, pathOf, useSession, workspaceName } from './session'
@@ -36,6 +37,7 @@ import { onTaskFinished, useChatWork, workCount, type LiveWork } from './chatWor
 import { nextRunOf, useJobs, type Job } from './jobs'
 import { runJob } from './jobRunner'
 import { claudeCatalog } from './modelCatalog'
+import { useUsage, type AccountUsage } from './usage'
 import { modelLabel, modelsFor } from '../lib/models'
 import { t } from '../i18n'
 
@@ -552,6 +554,45 @@ function pushJobs(): void {
   }, 600)
 }
 
+// ---- usage -------------------------------------------------------------------
+
+function usageOf(a: AccountUsage): RemoteUsage {
+  const days = a.cli === 'codex' ? Math.round((a.codexWindowMinutes ?? 0) / 1440) : 0
+  return {
+    id: a.id,
+    cli: a.cli,
+    label: a.label,
+    todayTokens: a.today?.totalTokens ?? 0,
+    todayCost: a.cli === 'claude' && a.today ? a.today.totalCost : null,
+    session: a.limits?.session ?? null,
+    weekly: a.limits?.weekly ?? null,
+    ...(days && days !== 7 ? { windowDays: days } : {}),
+    ...(a.limits?.stale ? { stale: true } : {})
+  }
+}
+
+// The figures come from walking session logs and asking the provider; a phone
+// reopening its screen again and again should not redo that every time.
+const USAGE_FRESH_MS = 30_000
+let usageAt = 0
+let usageRun: Promise<void> | null = null
+
+async function sendUsage(d: RemoteDevice): Promise<void> {
+  if (Date.now() - usageAt > USAGE_FRESH_MS || !useUsage.getState().accounts.length) {
+    usageRun ??= useUsage
+      .getState()
+      .refresh()
+      .then(() => {
+        usageAt = Date.now()
+      })
+      .finally(() => {
+        usageRun = null
+      })
+    await usageRun.catch(() => {})
+  }
+  sendTo(d, { t: 'usage', accounts: useUsage.getState().accounts.map(usageOf), at: Date.now() })
+}
+
 const findJob = (id: string): { ws: string; job: Job } | null => {
   for (const [ws, list] of Object.entries(useJobs.getState().byWorkspace)) {
     const job = list.find((j) => j.id === id)
@@ -621,6 +662,9 @@ function handle(d: RemoteDevice, m: PhoneMsg): void {
       return
     case 'jobs':
       sendJobs(d)
+      return
+    case 'usage':
+      void sendUsage(d)
       return
     case 'jobSet':
     case 'jobRun':

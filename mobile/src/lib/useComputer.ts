@@ -15,6 +15,7 @@ import {
   type PhoneMsg,
   type RemoteAgent,
   type RemoteJob,
+  type RemoteUsage,
   type RemoteWork
 } from '@riven/remote'
 import { closeChannel, joinChannel, openChannel } from './relay'
@@ -47,6 +48,12 @@ export interface JobsView {
   workspaces: Choice[]
   jobs: RemoteJob[]
   models: Choice[]
+}
+
+/** The computer's plan usage, with when it was read (the computer's clock). */
+export interface UsageView {
+  accounts: RemoteUsage[]
+  at: number
 }
 
 /** What the computer said to a request: done, or why not. */
@@ -82,6 +89,9 @@ export interface ComputerLink {
   runJob: (id: string) => Promise<Ack>
   deleteJob: (id: string) => Promise<Ack>
   addJob: (job: NewJob) => Promise<Ack>
+  /** Plan usage per account, once asked for. */
+  usage: UsageView | null
+  loadUsage: () => void
 }
 
 // A request the computer never answers (it went to sleep mid-way) gives up.
@@ -98,6 +108,7 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const [loaded, setLoaded] = useState<Record<string, boolean>>({})
   const [chatInfo, setChatInfo] = useState<Record<string, ChatInfo>>({})
   const [jobs, setJobs] = useState<JobsView | null>(null)
+  const [usage, setUsage] = useState<UsageView | null>(null)
   const waiting = useRef(new Map<string, (a: Ack) => void>())
   const [work, setWork] = useState<Record<string, ChatWork>>({})
   const watchRef = useRef<string | null>(null)
@@ -209,6 +220,9 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
             models: Array.isArray(msg.models) ? msg.models : []
           })
           break
+        case 'usage':
+          setUsage({ accounts: Array.isArray(msg.accounts) ? msg.accounts : [], at: msg.at })
+          break
         case 'revoked':
           setState('revoked')
           break
@@ -317,6 +331,7 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const runJob = useCallback((id: string) => request<'jobRun'>({ t: 'jobRun', id }), [request])
   const deleteJob = useCallback((id: string) => request<'jobDelete'>({ t: 'jobDelete', id }), [request])
   const addJob = useCallback((job: NewJob) => request<'jobAdd'>({ t: 'jobAdd', job }), [request])
+  const loadUsage = useCallback(() => post({ t: 'usage' }), [post])
 
   return {
     state,
@@ -341,6 +356,8 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     setJobEnabled,
     runJob,
     deleteJob,
-    addJob
+    addJob,
+    usage,
+    loadUsage
   }
 }

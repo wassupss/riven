@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Alert, Pressable, SectionList, StyleSheet, Text, View } from 'react-native'
-import { Stack, router, useLocalSearchParams } from 'expo-router'
+import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import type { RemoteAgent } from '@riven/remote'
+import { UsageCard } from '@/components/UsageCard'
 import { forgetComputer } from '@/lib/computers'
 import { useComputerCtx } from '@/lib/ComputerContext'
 import { C, R } from '@/lib/theme'
@@ -26,6 +27,15 @@ export default function ComputerScreen(): JSX.Element {
     for (const a of link.agents) by.set(a.workspace, [...(by.get(a.workspace) ?? []), a])
     return [...by].map(([title, data]) => ({ title, data }))
   }, [link.agents])
+
+  // Usage is asked for when this screen shows and when the computer comes
+  // online; it is not polled, so the screen costs the computer nothing idle.
+  const { loadUsage, deskOnline } = link
+  useFocusEffect(
+    useCallback(() => {
+      if (deskOnline) loadUsage()
+    }, [deskOnline, loadUsage])
+  )
 
   const unpair = (): void =>
     Alert.alert('연결 해제', `이 휴대폰에서 ${computer?.name ?? '컴퓨터'} 연결 정보를 지울까요?`, [
@@ -79,6 +89,7 @@ export default function ComputerScreen(): JSX.Element {
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={
           <>
+            <UsageCard usage={link.usage} online={link.deskOnline} onRefresh={link.loadUsage} />
             <Pressable style={s.jobsRow} onPress={() => router.push({ pathname: '/c/[id]/jobs', params: { id } })}>
               <Ionicons name="calendar-outline" size={18} color={C.accent} />
               <Text style={s.jobsText}>예약 작업</Text>

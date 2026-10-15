@@ -282,6 +282,30 @@ export interface RemoteJob {
   last?: { at: number; status: 'ok' | 'failed' | 'missed'; note?: string }
 }
 
+/** How full one plan window is, as the provider reports it. */
+export interface RemoteLimit {
+  usedPct: number
+  resetsAt: string | null
+}
+
+/** One account's usage, as the computer's own usage readout shows it. */
+export interface RemoteUsage {
+  id: string
+  cli: 'claude' | 'codex'
+  label: string
+  todayTokens: number
+  /** API-rate cost of today's tokens (Claude only; Codex logs no prices). */
+  todayCost: number | null
+  /** The short window (Claude: 5 hours). */
+  session: RemoteLimit | null
+  /** The long window (Claude: 7 days; Codex: its plan window). */
+  weekly: RemoteLimit | null
+  /** Length of the long window in days, when it is not a week. */
+  windowDays?: number
+  /** The provider did not answer; these are the last figures it gave. */
+  stale?: boolean
+}
+
 /** A job made on the phone: everything but what the computer fills in. */
 export interface NewJob {
   workspace: string
@@ -305,6 +329,7 @@ export type DeskMsg =
   | { t: 'history'; chatKey: string; items: HistoryItem[] }
   | { t: 'chatInfo'; info: ChatInfo }
   | { t: 'jobs'; workspaces: Choice[]; jobs: RemoteJob[]; models: Choice[] }
+  | { t: 'usage'; accounts: RemoteUsage[]; at: number }
   /** `now` is the computer's clock, so the phone can show durations without trusting its own. */
   | { t: 'work'; chatKey: string; now: number; work: RemoteWork }
   | {
@@ -334,6 +359,7 @@ export type PhoneMsg =
   | { t: 'setMode'; reqId: string; chatKey: string; mode: string }
   | { t: 'stop'; reqId: string; chatKey: string }
   | { t: 'jobs' }
+  | { t: 'usage' }
   | { t: 'jobSet'; reqId: string; id: string; enabled: boolean }
   | { t: 'jobRun'; reqId: string; id: string }
   | { t: 'jobDelete'; reqId: string; id: string }
@@ -423,6 +449,8 @@ export function parsePhoneMsg(m: Record<string, unknown> | null): PhoneMsg | nul
       return str(m.reqId, 64) && str(m.chatKey, 200) ? { t: 'stop', reqId: m.reqId, chatKey: m.chatKey } : null
     case 'jobs':
       return { t: 'jobs' }
+    case 'usage':
+      return { t: 'usage' }
     case 'jobSet':
       return str(m.reqId, 64) && str(m.id, 100) && typeof m.enabled === 'boolean'
         ? { t: 'jobSet', reqId: m.reqId, id: m.id, enabled: m.enabled }
