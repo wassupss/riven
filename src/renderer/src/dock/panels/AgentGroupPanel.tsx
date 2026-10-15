@@ -47,6 +47,7 @@ import {
   AVATAR_NONE
 } from '../../lib/avatar'
 import '../../styles/agent-group.css'
+import { scrollWithin } from '../../lib/scrollWithin'
 
 // A member pane's tab title: "name · group" so the tab shows who it is and which
 // team it belongs to.
@@ -1652,7 +1653,7 @@ function GroupTalk({ workspace, group }: { workspace: string; group: string }): 
   const mine = (events ?? []).filter((e) => e.group === group)
   const endRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' })
+    scrollWithin(endRef.current, 'end')
   }, [mine.length])
 
   const roster = (useAgentGroups((s) => s.byWorkspace[workspace]) ?? []).find((g) => g.group === group)

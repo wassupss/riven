@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAskUser } from '../../state/askUser'
 import { useT } from '../../i18n'
+import { scrollWithin } from '../../lib/scrollWithin'
 
 // The `ask_user` prompt, rendered INSIDE the conversation that asked it. Besides
 // the agent's options you can type your own answer or dismiss the question, so a
@@ -20,10 +21,10 @@ export default function AskInline({ chatKey }: { chatKey: string }): JSX.Element
   useEffect(() => {
     setText('')
     setSel(0)
-    boxRef.current?.scrollIntoView({ block: 'nearest' })
+    scrollWithin(boxRef.current)
     // Take focus so the arrow keys work immediately — the question is the thing
     // blocking the agent, so it owns the keyboard until answered.
-    optsRef.current?.focus()
+    optsRef.current?.focus({ preventScroll: true })
   }, [req?.id])
 
   if (!req) return null

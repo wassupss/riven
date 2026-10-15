@@ -367,6 +367,7 @@ select {
   position: relative;
   height: 100%;
   width: 100%;
+  overflow: clip;
 }
 .dock-empty {
   position: absolute;
@@ -2057,6 +2058,11 @@ select {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* clip, not hidden: hidden-tab render overlays hang below the dock, and an
+     overflow:hidden box can still be scrolled by scrollIntoView, which pushed
+     the whole column up on workspace switch. A clip box never scrolls.
+     !important: react-resizable-panels sets overflow:hidden inline. */
+  overflow: clip !important;
 }
 /* Dock top bar (right zone): add-panel + today's cost, separated from the
    sidebar's own top zone at the column boundary (native layout). */
@@ -3627,11 +3633,13 @@ select {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
+  overflow: clip;
 }
 .grid-layer {
   position: absolute;
   inset: 0;
   flex-direction: column;
+  overflow: clip;
 }
 
 /* --------------------------------------------------------------------------

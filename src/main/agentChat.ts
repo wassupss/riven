@@ -1825,6 +1825,9 @@ async function readSessionTranscript(
     } catch {
       continue
     }
+    // A compaction stores its summary as a user message ("This session is being
+    // continued..."); it was never said by anyone and must not show as a bubble.
+    if (j.isCompactSummary || j.isVisibleInTranscriptOnly) continue
     const msg = j.message as Record<string, unknown> | undefined
     if (j.type === 'user' && msg) {
       const c = msg.content
