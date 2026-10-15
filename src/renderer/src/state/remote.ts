@@ -68,8 +68,10 @@ interface RemoteStore {
   invite: { code: string; expiresAt: number } | null
   /** A phone asking to pair, waiting for the user's yes or no. */
   pending: PairPending | null
+  /** The signed-in account may use remote control at all (see hasAccess). */
+  allowed: boolean
 }
-export const useRemote = create<RemoteStore>(() => ({ state: 'off', present: [], invite: null, pending: null }))
+export const useRemote = create<RemoteStore>(() => ({ state: 'off', present: [], invite: null, pending: null, allowed: false }))
 const setStore = (p: Partial<RemoteStore>): void => useRemote.setState(p)
 
 const ROSTER_DEBOUNCE_MS = 500
@@ -87,6 +89,29 @@ void window.api.env
 
 /** The signed-in account, the only one whose phones may reach this machine. */
 const ownerId = (): string => useAuth.getState().user?.id ?? ''
+
+// Remote control is still in testing, so only accounts listed in the
+// remote_testers table (supabase/remote.sql) see it. The relay enforces the
+// same list, so this only decides what the UI shows. Asked once per account.
+let accessFor = ''
+let accessAsk: Promise<boolean> = Promise.resolve(false)
+function hasAccess(owner: string): Promise<boolean> {
+  if (owner !== accessFor) {
+    accessFor = owner
+    // A failed ask (offline, say) is asked again on the next change; a plain
+    // "not listed" is kept, so other accounts don't query on every settings edit.
+    const failed = (): boolean => {
+      if (accessFor === owner) accessFor = ''
+      return false
+    }
+    accessAsk = supabase
+      ? Promise.resolve(supabase.from('remote_testers').select('user_id').eq('user_id', owner).maybeSingle())
+          .then(({ data, error }) => (error ? failed() : !!data))
+          .catch(failed)
+      : Promise.resolve(false)
+  }
+  return accessAsk
+}
 
 // The secret half of this machine's key pair. It lives in memory only; on disk
 // it is sealed with the OS keystore (main/remoteKey.ts), never in settings.json,
@@ -741,10 +766,15 @@ export function startRemote(): () => void {
     // to say why, or the QR button stays live and does nothing.
     const owner = ownerId()
     const s = getSettings()
-    if (!s.remoteEnabled) return disconnect('off')
-    if (!isSupabaseConfigured) return disconnect('unconfigured')
-    if (!owner) return disconnect('signed-out')
-    void ensureIdentity(owner).then((ok) => {
+    if (!isSupabaseConfigured || !owner) {
+      if (useRemote.getState().allowed) setStore({ allowed: false })
+      return disconnect(!s.remoteEnabled ? 'off' : !isSupabaseConfigured ? 'unconfigured' : 'signed-out')
+    }
+    void hasAccess(owner).then(async (allowed) => {
+      if (!alive || ownerId() !== owner) return
+      if (useRemote.getState().allowed !== allowed) setStore({ allowed })
+      if (!allowed || !getSettings().remoteEnabled) return disconnect('off')
+      const ok = await ensureIdentity(owner)
       const now = getSettings()
       // Something changed while the key was being read; that change's own
       // apply has the final say.
