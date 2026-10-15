@@ -147,7 +147,9 @@ export default function RemoteSettings(): JSX.Element {
               <span className="set-rowdesc">{t('remote.resetDesc')}</span>
             </div>
             <div className="set-rowctl">
-              <Button onClick={() => resetRemote()}>{t('remote.resetBtn')}</Button>
+              <Button onClick={() => resetRemote()} disabled={state === 'unconfigured' || state === 'signed-out'}>
+                {t('remote.resetBtn')}
+              </Button>
             </div>
           </div>
 

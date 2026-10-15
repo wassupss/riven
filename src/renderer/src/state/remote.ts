@@ -682,13 +682,24 @@ export function startRemote(): () => void {
       now.remoteEnabled && isSupabaseConfigured && owner ? `${owner}:${now.remoteChannel}:${now.remoteDeskPublic}` : ''
     // A device list change needs no reconnect, only fresh per-device keys.
     sharedCache.clear()
-    if (want === current) return
+    // Not connecting still has to say why. At startup want and current are
+    // both '', so returning early here left the store at 'off' for a signed-out
+    // user with remote on: the QR button stayed live and did nothing.
+    const idle: RemoteState | null = want
+      ? null
+      : !now.remoteEnabled
+        ? 'off'
+        : !isSupabaseConfigured
+          ? 'unconfigured'
+          : 'signed-out'
+    if (want === current) {
+      if (idle && useRemote.getState().state !== idle) setStore({ state: idle, present: [], invite: null, pending: null })
+      return
+    }
     current = want
     stop()
     stop = () => {}
-    if (!now.remoteEnabled) setStore({ state: 'off', present: [], invite: null, pending: null })
-    else if (!isSupabaseConfigured) setStore({ state: 'unconfigured', present: [] })
-    else if (!owner) setStore({ state: 'signed-out', present: [], invite: null, pending: null })
+    if (idle) setStore({ state: idle, present: [], invite: null, pending: null })
     else stop = connect(owner, now.remoteChannel)
     try {
       window.api.power.remote(!!want)
