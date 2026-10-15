@@ -18,7 +18,12 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.riven.remote"
+      "package": "dev.riven.remote",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -45,6 +50,12 @@
     "experiments": {
       "typedRoutes": true
     },
-    "backgroundColor": "#111214"
+    "backgroundColor": "#111214",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0411901c-67ee-47c0-9777-73b8fc2a5bca"
+      }
+    }
   }
 }
