@@ -111,6 +111,8 @@ export interface Settings {
   remoteEnabled: boolean
   remoteChannel: string
   remoteDeskPublic: string
+  // Always '' now: the secret half is sealed in the OS keystore
+  // (main/remoteKey.ts). Older builds kept it here; it is moved out on load.
   remoteDeskSecret: string
   remoteDevices: RemoteDevice[]
   // The account the identity above belongs to. Signing in as someone else
@@ -215,7 +217,9 @@ export const REMOVED_SETTINGS: ReadonlyArray<string> = [
   'aiProvider',
   'aiCompleteEndpoint',
   'aiCompleteModel',
-  'aiApiKey'
+  'aiApiKey',
+  // The first remote-control build's shared secret, replaced by per-device keys.
+  'remoteKey'
 ]
 
 // Old default terminal-font stacks. Users who never customized the terminal font

@@ -103,7 +103,7 @@ export default function RemoteSettings(): JSX.Element {
               {invite ? (
                 <Button onClick={() => cancelInvite()}>{t('remote.hideQr')}</Button>
               ) : (
-                <Button onClick={showQr} disabled={state === 'unconfigured' || state === 'signed-out'}>
+                <Button onClick={showQr} disabled={state === 'unconfigured' || state === 'signed-out' || state === 'nokeystore'}>
                   {t('remote.showQr')}
                 </Button>
               )}
@@ -147,7 +147,7 @@ export default function RemoteSettings(): JSX.Element {
               <span className="set-rowdesc">{t('remote.resetDesc')}</span>
             </div>
             <div className="set-rowctl">
-              <Button onClick={() => resetRemote()} disabled={state === 'unconfigured' || state === 'signed-out'}>
+              <Button onClick={() => resetRemote()} disabled={state === 'unconfigured' || state === 'signed-out' || state === 'nokeystore'}>
                 {t('remote.resetBtn')}
               </Button>
             </div>

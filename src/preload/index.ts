@@ -413,6 +413,13 @@ const api = {
     // Remote control is on: keep the machine reachable even when idle.
     remote: (on: boolean): void => ipcRenderer.send('power:remote', on)
   },
+  // Remote control's key pair, sealed with the OS keystore (main/remoteKey.ts).
+  remoteKey: {
+    available: (): Promise<boolean> => ipcRenderer.invoke('remoteKey:available'),
+    load: (): Promise<{ publicKey: string; secretKey: string } | null> => ipcRenderer.invoke('remoteKey:load'),
+    save: (k: { publicKey: string; secretKey: string } | null): Promise<boolean> =>
+      ipcRenderer.invoke('remoteKey:save', k)
+  },
   browser: {
     create: (id: string, url: string, partition?: string): Promise<void> =>
       ipcRenderer.invoke('browser:create', { id, url, partition }),

@@ -1068,6 +1068,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'remote.status.unconfigured': { ko: '이 빌드에는 Supabase가 설정되지 않았어요', en: 'Supabase is not configured in this build' },
   'remote.status.connecting': { ko: '연결 중…', en: 'Connecting…' },
   'remote.status.signed-out': { ko: '로그인이 필요해요', en: 'Sign-in required' },
+  'remote.status.nokeystore': {
+    ko: '이 컴퓨터의 키체인에 키를 안전하게 보관할 수 없어 꺼 두었어요',
+    en: "Off: this computer's keystore can't hold the key securely"
+  },
   'remote.signInNeeded': {
     ko: '원격 제어는 riven 계정으로 로그인해야 쓸 수 있어요. 휴대폰 앱도 같은 계정으로 로그인해야 이 컴퓨터에 연결돼요.',
     en: 'Remote control needs you signed in to riven. The phone app must sign in to the same account to reach this machine.'

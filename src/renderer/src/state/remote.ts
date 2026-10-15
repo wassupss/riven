@@ -51,7 +51,7 @@ import { t } from '../i18n'
 // phone present nothing is sent at all, and while one is, only state CHANGES go
 // out (the roster, debounced), plus a chat's reply once its turn is over.
 
-export type RemoteState = 'off' | 'unconfigured' | 'signed-out' | 'connecting' | 'online' | 'error'
+export type RemoteState = 'off' | 'unconfigured' | 'signed-out' | 'nokeystore' | 'connecting' | 'online' | 'error'
 
 export interface PairPending {
   deviceId: string
@@ -88,30 +88,76 @@ void window.api.env
 /** The signed-in account, the only one whose phones may reach this machine. */
 const ownerId = (): string => useAuth.getState().user?.id ?? ''
 
+// The secret half of this machine's key pair. It lives in memory only; on disk
+// it is sealed with the OS keystore (main/remoteKey.ts), never in settings.json,
+// which any process running as the user can read. deskSecretFor is the public
+// half it belongs to, so a reset made since is noticed.
+let deskSecret = ''
+let deskSecretFor = ''
+// One identity check at a time: two overlapping ones could each make a key.
+let identityChain: Promise<boolean> = Promise.resolve(true)
+
+/**
+ * A new key pair and channel for this account, sealed before anything uses
+ * it. Every paired phone is dropped: they were approved for the old key, and
+ * without its secret nothing they send can be read. False if the OS keystore
+ * cannot hold the key, in which case remote control stays off.
+ */
+async function newIdentity(owner: string): Promise<boolean> {
+  const k = newKeyPair()
+  if (!(await window.api.remoteKey.save(k))) return false
+  deskSecret = k.secretKey
+  deskSecretFor = k.publicKey
+  useSettings.getState().set({
+    remoteChannel: randomId(),
+    remoteDeskPublic: k.publicKey,
+    remoteDeskSecret: '',
+    remoteOwner: owner,
+    remoteDevices: []
+  })
+  return true
+}
+
 /**
  * Make sure this machine has its key pair and channel, for this account. A
  * different account than the one it was made for starts over, phones and all:
  * they were approved for that account, and its channel is not this one's.
  */
-function ensureIdentity(owner: string): void {
-  const s = getSettings()
-  if (s.remoteChannel && s.remoteDeskPublic && s.remoteDeskSecret && s.remoteOwner === owner) return
-  const k = newKeyPair()
-  useSettings.getState().set({
-    remoteChannel: randomId(),
-    remoteDeskPublic: k.publicKey,
-    remoteDeskSecret: k.secretKey,
-    remoteOwner: owner,
-    ...(s.remoteOwner && s.remoteOwner !== owner ? { remoteDevices: [] } : {})
+function ensureIdentity(owner: string): Promise<boolean> {
+  identityChain = identityChain.then(async () => {
+    const s = getSettings()
+    if (!s.remoteChannel || !s.remoteDeskPublic || s.remoteOwner !== owner) return newIdentity(owner)
+    if (deskSecret && deskSecretFor === s.remoteDeskPublic) return true
+    // Builds before the keystore kept the secret in settings.json: move it
+    // there, then wipe it here.
+    if (s.remoteDeskSecret) {
+      const k = { publicKey: s.remoteDeskPublic, secretKey: s.remoteDeskSecret }
+      if (!(await window.api.remoteKey.save(k))) return false
+      deskSecret = k.secretKey
+      deskSecretFor = k.publicKey
+      useSettings.getState().set({ remoteDeskSecret: '' })
+      return true
+    }
+    const k = await window.api.remoteKey.load()
+    if (k && k.publicKey === s.remoteDeskPublic) {
+      deskSecret = k.secretKey
+      deskSecretFor = k.publicKey
+      return true
+    }
+    // Lost or sealed somewhere else (a copied profile): the old key is gone.
+    return newIdentity(owner)
   })
+  // A failed keystore call means no key, not a stuck chain.
+  identityChain = identityChain.catch(() => false)
+  return identityChain
 }
 
 /** A fresh one-time invite and the QR text that carries it, or null if remote is unavailable. */
 export function newInvite(): string | null {
   const owner = ownerId()
-  if (!supabaseUrl || !owner) return null
-  ensureIdentity(owner)
   const s = getSettings()
+  if (!supabaseUrl || !owner || !deskSecret || deskSecretFor !== s.remoteDeskPublic || s.remoteOwner !== owner)
+    return null
   const invite = { code: randomId(), expiresAt: Date.now() + INVITE_TTL_MS }
   setStore({ invite })
   return offerToUrl({
@@ -134,7 +180,7 @@ export function decidePairing(allow: boolean): void {
   const p = useRemote.getState().pending
   if (!p) return
   setStore({ pending: null })
-  const shared = sharedKey(p.publicKey, getSettings().remoteDeskSecret)
+  const shared = sharedKey(p.publicKey, deskSecret)
   if (allow) {
     const device: RemoteDevice = {
       id: p.deviceId,
@@ -161,15 +207,13 @@ export function revokeDevice(id: string): void {
 /** Forget every phone and this machine's identity: old QR codes and keys all stop working. */
 export function resetRemote(): void {
   for (const d of getSettings().remoteDevices) sendTo(d, { t: 'revoked' })
-  const k = newKeyPair()
-  useSettings.getState().set({
-    remoteChannel: randomId(),
-    remoteDeskPublic: k.publicKey,
-    remoteDeskSecret: k.secretKey,
-    remoteOwner: ownerId(),
-    remoteDevices: []
-  })
   setStore({ invite: null, pending: null })
+  const owner = ownerId()
+  identityChain = identityChain.then(async () => {
+    // No keystore to seal a new key in: the phones are still forgotten.
+    if (!(await newIdentity(owner).catch(() => false))) useSettings.getState().set({ remoteDevices: [] })
+    return true
+  })
 }
 
 // ---- wire ----------------------------------------------------------------------
@@ -180,7 +224,7 @@ const sharedCache = new Map<string, Uint8Array>()
 function sharedFor(d: RemoteDevice): Uint8Array {
   const hit = sharedCache.get(d.id)
   if (hit) return hit
-  const k = sharedKey(d.publicKey, getSettings().remoteDeskSecret)
+  const k = sharedKey(d.publicKey, deskSecret)
   sharedCache.set(d.id, k)
   return k
 }
@@ -566,7 +610,7 @@ function onPairRequest(payload: unknown, guard: ReplayGuard): void {
   const { invite, pending } = useRemote.getState()
   // One request per invite, one prompt at a time.
   if (!invite || pending || Date.now() > invite.expiresAt) return
-  const got = openPair(payload, getSettings().remoteDeskSecret)
+  const got = openPair(payload, deskSecret)
   if (!got || got.req.invite !== invite.code) return
   if (!guard.accept(got.ts, (payload as { nonce: string }).nonce)) return
   // The invite is spent the moment it is used, approved or not.
@@ -672,44 +716,52 @@ function connect(owner: string, id: string): () => void {
 export function startRemote(): () => void {
   let current = ''
   let stop: () => void = () => {}
-  const apply = (): void => {
-    // Signed in or nothing: the relay admits only an account's own channels,
-    // so without one there is nothing to connect to.
-    const owner = ownerId()
-    if (getSettings().remoteEnabled && owner) ensureIdentity(owner)
-    const now = getSettings()
-    const want =
-      now.remoteEnabled && isSupabaseConfigured && owner ? `${owner}:${now.remoteChannel}:${now.remoteDeskPublic}` : ''
-    // A device list change needs no reconnect, only fresh per-device keys.
-    sharedCache.clear()
-    // Not connecting still has to say why. At startup want and current are
-    // both '', so returning early here left the store at 'off' for a signed-out
-    // user with remote on: the QR button stayed live and did nothing.
-    const idle: RemoteState | null = want
-      ? null
-      : !now.remoteEnabled
-        ? 'off'
-        : !isSupabaseConfigured
-          ? 'unconfigured'
-          : 'signed-out'
-    if (want === current) {
-      if (idle && useRemote.getState().state !== idle) setStore({ state: idle, present: [], invite: null, pending: null })
-      return
-    }
-    current = want
-    stop()
-    stop = () => {}
-    if (idle) setStore({ state: idle, present: [], invite: null, pending: null })
-    else stop = connect(owner, now.remoteChannel)
+  let alive = true
+  const power = (on: boolean): void => {
     try {
-      window.api.power.remote(!!want)
+      window.api.power.remote(on)
     } catch {
       /* an older preload has no remote bridge */
     }
   }
+  const disconnect = (state: RemoteState): void => {
+    if (current) {
+      current = ''
+      stop()
+      stop = () => {}
+      power(false)
+    }
+    if (useRemote.getState().state !== state) setStore({ state, present: [], invite: null, pending: null })
+  }
+  const apply = (): void => {
+    // A device list change needs no reconnect, only fresh per-device keys.
+    sharedCache.clear()
+    // Signed in or nothing: the relay admits only an account's own channels,
+    // so without one there is nothing to connect to. Not connecting still has
+    // to say why, or the QR button stays live and does nothing.
+    const owner = ownerId()
+    const s = getSettings()
+    if (!s.remoteEnabled) return disconnect('off')
+    if (!isSupabaseConfigured) return disconnect('unconfigured')
+    if (!owner) return disconnect('signed-out')
+    void ensureIdentity(owner).then((ok) => {
+      const now = getSettings()
+      // Something changed while the key was being read; that change's own
+      // apply has the final say.
+      if (!alive || !now.remoteEnabled || ownerId() !== owner) return
+      if (!ok) return disconnect('nokeystore')
+      const want = `${owner}:${now.remoteChannel}:${now.remoteDeskPublic}`
+      if (want === current) return
+      current = want
+      stop()
+      stop = connect(owner, now.remoteChannel)
+      power(true)
+    })
+  }
   apply()
   const offs = [useSettings.subscribe(apply), useAuth.subscribe(apply)]
   return () => {
+    alive = false
     offs.forEach((f) => f())
     stop()
   }

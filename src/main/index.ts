@@ -27,6 +27,7 @@ import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from
 import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerFocusTrace } from './focusTrace'
 import { registerKeepAwake } from './keepAwake'
+import { registerRemoteKey } from './remoteKey'
 import { registerPermissionHandlers } from './permissions'
 import { registerModelCatalogHandlers } from './modelCatalog'
 import { registerBrowserHandlers } from './browser'
@@ -324,6 +325,7 @@ app.whenReady().then(() => {
   // does not answer them, and the agent hung inside the call.
   registerFocusTrace()
   registerKeepAwake()
+  registerRemoteKey()
   registerPermissionHandlers()
   registerModelCatalogHandlers()
   registerMcpServer(() => appWindow()?.webContents ?? null)
