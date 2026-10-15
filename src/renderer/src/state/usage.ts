@@ -43,7 +43,8 @@ interface UsageState {
   limits: UsageLimits | null
   // Per-account breakdown, in display order: Claude accounts, then Codex.
   accounts: AccountUsage[]
-  refresh: () => void
+  // Settles once `accounts` holds the new figures.
+  refresh: () => Promise<void>
   // A usage consumer (status widget / pinned view) mounted / unmounted; poll
   // only while at least one is mounted, and never while the window is hidden.
   acquire: () => void
@@ -70,7 +71,7 @@ export const useUsage = create<UsageState>((set, get) => ({
         : [{ id: 'claude', label: '', dir: undefined }]
     )
 
-    void Promise.all(
+    return Promise.all(
       claudeAccounts.map(async (a) => {
         const [today, limits] = await Promise.all([
           window.api.usage.today(a.dir).catch(() => null),

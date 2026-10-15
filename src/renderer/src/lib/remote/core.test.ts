@@ -120,6 +120,8 @@ describe('parsePhoneMsg', () => {
     expect(parsePhoneMsg({ t: 'answer', id: 'q', choice: 'yes' })?.t).toBe('answer')
     expect(parsePhoneMsg({ t: 'push', token: 'ExponentPushToken[x]' })?.t).toBe('push')
     expect(parsePhoneMsg({ t: 'push', token: null })).toEqual({ t: 'push', token: null })
+    // Only the request: a phone cannot ask for another account's dir or token.
+    expect(parsePhoneMsg({ t: 'usage', configDir: '/etc' })).toEqual({ t: 'usage' })
     expect(parsePhoneMsg({ t: 'exec', cmd: 'rm -rf /' })).toBeNull()
     expect(parsePhoneMsg({ t: 'send', reqId: 'r', chatKey: 'c', text: '   ' })).toBeNull()
   })
