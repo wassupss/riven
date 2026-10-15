@@ -481,7 +481,10 @@ export interface HistoryItem {
   toolList?: Array<{ name: string; detail: string }>
 }
 
-const HISTORY_ITEMS = 40
+// The transcript stores each tool call as its own assistant message, so one
+// turn can be dozens of items. The phone folds them back into turns; the byte
+// budget below, not this count, is what bounds the message.
+const HISTORY_ITEMS = 200
 const HISTORY_ITEM_CHARS = 4_000
 const HISTORY_BUDGET = 120_000
 const TOOLS_PER_ITEM = 30

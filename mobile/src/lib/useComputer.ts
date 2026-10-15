@@ -105,6 +105,11 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const [agents, setAgents] = useState<RemoteAgent[]>([])
   const [asks, setAsks] = useState<Ask[]>([])
   const [logs, setLogs] = useState<Record<string, LogLine[]>>({})
+  // What the receiver reads to find which chat a reply belongs to.
+  const logsRef = useRef(logs)
+  useEffect(() => {
+    logsRef.current = logs
+  }, [logs])
   const [loaded, setLoaded] = useState<Record<string, boolean>>({})
   const [chatInfo, setChatInfo] = useState<Record<string, ChatInfo>>({})
   const [jobs, setJobs] = useState<JobsView | null>(null)
@@ -176,10 +181,18 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
           if (!msg.ok) settle(msg.reqId, { who: 'error', text: '보내지 못했어요. 이 패널이 컴퓨터에서 닫혀 있어요.' })
           break
         }
-        case 'reply':
+        case 'reply': {
+          // A reply carries only the final text. The turn as the computer's chat
+          // shows it (each tool call, in order) is in the transcript, so the
+          // chat's history is fetched again for it.
+          const key = Object.keys(logsRef.current).find((k) =>
+            logsRef.current[k].some((l) => l.reqId === msg.reqId)
+          )
           settle(msg.reqId, { who: 'agent', text: msg.text })
           eventRef.current?.('답변이 도착했어요', '')
+          if (key) post({ t: 'history', chatKey: key })
           break
+        }
         case 'work':
           setWork((all) => ({
             ...all,
@@ -269,7 +282,9 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
           ...(all[chatKey] ?? []),
           { who: 'me' as const, text },
           { who: 'wait' as const, text: '', reqId }
-        ].slice(-60)
+          // As many as a history can bring (one per tool call), so sending does
+          // not cut the conversation already on screen.
+        ].slice(-240)
       }))
       post({ t: 'send', reqId, chatKey, text })
     },

@@ -129,10 +129,10 @@ describe('parsePhoneMsg', () => {
 
 describe('clipHistory', () => {
   it('keeps the most recent items and fits the relay budget', () => {
-    const many = Array.from({ length: 100 }, (_, i) => ({ role: 'user' as const, text: `m${i}` }))
+    const many = Array.from({ length: 300 }, (_, i) => ({ role: 'user' as const, text: `m${i}` }))
     const out = clipHistory(many)
-    expect(out).toHaveLength(40)
-    expect(out[out.length - 1].text).toBe('m99')
+    expect(out).toHaveLength(200)
+    expect(out[out.length - 1].text).toBe('m299')
   })
 
   it('clips long items and drops empty ones, but keeps tool-only turns', () => {
