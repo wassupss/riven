@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "riven",
+    "slug": "riven-remote",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.riven.remote"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#111214",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "dev.riven.remote",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "riven 컴퓨터와 연결할 QR 코드를 찍기 위해 카메라를 사용해요.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-web-browser",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "riven 앱을 열 때 본인 확인을 위해 Face ID를 사용해요."
+        }
+      ]
+    ],
+    "scheme": "rivenremote",
+    "experiments": {
+      "typedRoutes": true
+    },
+    "backgroundColor": "#111214",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0411901c-67ee-47c0-9777-73b8fc2a5bca"
+      }
+    }
+  }
+}

@@ -34,3 +34,9 @@ export function useClaudeCatalog(configDir?: string): ModelInfo[] | null {
   useEffect(() => ensureClaudeCatalog(configDir), [configDir])
   return models ?? null
 }
+
+/** The same list outside React (state/remote): what is known now, asking for it if not yet. */
+export function claudeCatalog(configDir?: string): ModelInfo[] | null {
+  ensureClaudeCatalog(configDir)
+  return useCatalog.getState().byDir[configDir ?? ''] ?? null
+}

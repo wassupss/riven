@@ -1054,6 +1054,66 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'sched.edit': { ko: '수정', en: 'Edit' },
   'sched.saveEdit': { ko: '수정 저장', en: 'Save changes' },
   'sched.cancel': { ko: '취소', en: 'Cancel' },
+  'settings.tab.remote': { ko: '원격 제어', en: 'Remote' },
+  'remote.title': { ko: '휴대폰에서 원격 제어', en: 'Remote control from your phone' },
+  'remote.enable': { ko: '원격 제어 켜기', en: 'Enable remote control' },
+  'remote.enableDesc': {
+    ko: 'riven 휴대폰 앱에서 이 컴퓨터의 에이전트 상태를 보고, 메시지를 보내고, 질문에 답할 수 있어요. 모든 내용은 종단간 암호화됩니다.',
+    en: "See this machine's agents from your phone, message them and answer their questions. Everything is end-to-end encrypted."
+  },
+  'remote.state': { ko: '연결 상태', en: 'Status' },
+  'remote.statusOnline': { ko: '대기 중 (연결된 휴대폰 없음)', en: 'Ready (no phone connected)' },
+  'remote.statusPhone': { ko: '휴대폰 {n}대 연결됨', en: '{n} phone(s) connected' },
+  'remote.status.off': { ko: '꺼짐', en: 'Off' },
+  'remote.status.unconfigured': { ko: '이 빌드에는 Supabase가 설정되지 않았어요', en: 'Supabase is not configured in this build' },
+  'remote.status.connecting': { ko: '연결 중…', en: 'Connecting…' },
+  'remote.status.signed-out': { ko: '로그인이 필요해요', en: 'Sign-in required' },
+  'remote.status.nokeystore': {
+    ko: '이 컴퓨터의 키체인에 키를 안전하게 보관할 수 없어 꺼 두었어요',
+    en: "Off: this computer's keystore can't hold the key securely"
+  },
+  'remote.signInNeeded': {
+    ko: '원격 제어는 riven 계정으로 로그인해야 쓸 수 있어요. 휴대폰 앱도 같은 계정으로 로그인해야 이 컴퓨터에 연결돼요.',
+    en: 'Remote control needs you signed in to riven. The phone app must sign in to the same account to reach this machine.'
+  },
+  'remote.signIn': { ko: '로그인하러 가기', en: 'Sign in' },
+  'remote.status.online': { ko: '대기 중', en: 'Ready' },
+  'remote.status.error': { ko: '중계 서버에 연결할 수 없어요 (자동 재시도 중)', en: 'Cannot reach the relay (retrying)' },
+  'remote.pair': { ko: '휴대폰 추가', en: 'Add a phone' },
+  'remote.pairDesc': {
+    ko: 'riven 앱으로 QR을 찍으면 이 컴퓨터에 승인 요청이 떠요. QR은 10분 동안 한 번만 쓸 수 있어요.',
+    en: 'Scan the QR with the riven app, then approve the phone here. The QR works once, for 10 minutes.'
+  },
+  'remote.showQr': { ko: 'QR 보기', en: 'Show QR' },
+  'remote.hideQr': { ko: 'QR 숨기기', en: 'Hide QR' },
+  'remote.qrLeft': { ko: '{m}:{s} 남음', en: '{m}:{s} left' },
+  'remote.qrNote': {
+    ko: 'QR만으로는 연결되지 않고, 이 컴퓨터에서 승인해야 해요. 그래도 화면 공유 중에는 띄우지 마세요.',
+    en: "A QR alone does not pair: you approve the phone here. Still, don't show it while sharing your screen."
+  },
+  'remote.devices': { ko: '연결된 휴대폰', en: 'Paired phones' },
+  'remote.noDevices': { ko: '아직 연결된 휴대폰이 없어요.', en: 'No phones paired yet.' },
+  'remote.live': { ko: '접속 중', en: 'online' },
+  'remote.addedAt': { ko: '{when} 연결', en: 'paired {when}' },
+  'remote.revoke': { ko: '해제', en: 'Unpair' },
+  'remote.reset': { ko: '모두 해제하고 키 재발급', en: 'Unpair all and reissue keys' },
+  'remote.resetDesc': {
+    ko: '이 컴퓨터의 키와 채널을 새로 만들어요. 연결된 모든 휴대폰이 끊겨요.',
+    en: "Creates a new key and channel for this machine. Every paired phone is disconnected."
+  },
+  'remote.resetBtn': { ko: '재발급', en: 'Reissue' },
+  'remote.pairAsk': { ko: '이 휴대폰의 원격 제어를 허용할까요?', en: 'Allow this phone to control riven?' },
+  'remote.unknownPhone': { ko: '이름 없는 휴대폰', en: 'Unnamed phone' },
+  'remote.pairWarn': {
+    ko: '허용하면 이 휴대폰이 이 컴퓨터의 에이전트에게 작업을 시킬 수 있어요. 내가 방금 QR을 찍은 게 아니라면 거절하세요.',
+    en: "Once allowed, this phone can give this machine's agents work. If you didn't just scan the QR, deny."
+  },
+  'remote.allow': { ko: '허용', en: 'Allow' },
+  'remote.deny': { ko: '거절', en: 'Deny' },
+  'remote.awakeNote': {
+    ko: '원격 제어가 켜져 있는 동안 이 컴퓨터는 잠자기에 들어가지 않아요(화면은 꺼질 수 있어요). 노트북 덮개를 닫으면 잠들 수 있어요.',
+    en: 'While remote control is on, this machine will not sleep (the display may). Closing a laptop lid can still put it to sleep.'
+  },
   'sched.atMinute': { ko: '매시', en: 'at minute' },
   'sched.time': { ko: '시각', en: 'time' },
   'sched.hour': { ko: '시', en: 'h' },

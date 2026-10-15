@@ -28,6 +28,7 @@ import {
   X as XIcon
 } from 'lucide-react'
 import { useDelegations, delegationsOf, type Delegation } from '../../state/delegations'
+import { publishWork, reportTaskFinished } from '../../state/chatWork'
 import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
 import { useRetainedValue } from '../RetainedPanel'
@@ -38,7 +39,8 @@ import {
   useAgents,
   setAgentStatus,
   getAgentStatus,
-  resolveAgent
+  resolveAgent,
+  type AgentController
 } from '../../state/agents'
 import { useRoster, rosterFor, markPaneSeen, type RosterEntry } from '../../state/roster'
 import { useAskUser } from '../../state/askUser'
@@ -1852,6 +1854,23 @@ export default function ChatPanel({
     [lastMsg]
   )
 
+  // The same three strips, for whoever watches from outside the pane (a paired
+  // phone). Gone with the pane: nothing here outlives what it describes.
+  useEffect(() => {
+    publishWork(chatKey, {
+      bg: bgTasks.map((b) => ({ id: b.id, label: b.label, since: bgStarted.current.get(b.id) })),
+      agents: runningAgents.map((a) => ({
+        id: a.toolId,
+        label: a.label,
+        since: a.startedAt,
+        steps: a.steps,
+        lastActivityAt: a.lastActivityAt
+      })),
+      delegations: delegations.map((d) => ({ id: d.id, label: d.toTitle, since: d.startedAt }))
+    })
+  }, [chatKey, bgTasks, runningAgents, delegations])
+  useEffect(() => () => publishWork(chatKey, null), [chatKey])
+
   // The clock ticks once a minute normally — enough for "2h ago" on old turns.
   // While something is delegated it has to tick faster, because that counter is
   // the only thing that distinguishes an agent that is working from one that
@@ -2167,6 +2186,12 @@ export default function ChatPanel({
                   ? t('chat.bgTaskStopped', { what: name })
                   : t('chat.bgTaskFailed', { what: e.label || bgLabels.current.get(e.taskId) || '' }),
             detail: started ? fmtDur(Date.now() - started) : undefined
+          })
+          reportTaskFinished({
+            chatKey,
+            label: outcome === 'failed' ? e.label || name : name,
+            outcome,
+            ...(started ? { durationMs: Date.now() - started } : {})
           })
           bgStarted.current.delete(e.taskId)
           break
@@ -2509,6 +2534,7 @@ export default function ChatPanel({
     pinned || msgs.find((m) => m.role === 'user')?.text.split('\n')[0].slice(0, 40) || 'Claude'
   )
   const busyRef = useRef(false)
+  const remoteRef = useRef<NonNullable<AgentController['remote']> | null>(null)
   const waitersRef = useRef<Array<(reply: string) => void>>([])
   // When this pane last heard ANYTHING from its agent, so a turn that goes
   // silent can be given up on instead of shimmering forever.
@@ -2837,7 +2863,13 @@ export default function ChatPanel({
       // The same clock the "무응답" warning reads: every event from the CLI
       // pushes it forward, so a delegating agent can wait on silence instead of
       // on a stopwatch.
-      lastActivityAt: () => lastEventRef.current
+      lastActivityAt: () => lastEventRef.current,
+      remote: {
+        info: () => remoteRef.current!.info(),
+        setModel: (m) => remoteRef.current?.setModel(m),
+        setMode: (m) => remoteRef.current?.setMode(m),
+        stop: () => remoteRef.current?.stop()
+      }
     })
   }, [chatKey, workspace, sendMessage])
 
@@ -2932,6 +2964,28 @@ export default function ChatPanel({
     } else {
       window.api.chat.setModel(chatKey, m)
     }
+  }
+  const applyMode = (m: string): void => {
+    setMode(m)
+    savePane({ mode: m })
+    window.api.chat.setMode(chatKey, m)
+  }
+  // What a paired phone may see and change here: exactly the two pickers below
+  // and Stop. Read through a ref so the agent registration does not churn.
+  remoteRef.current = {
+    info: () => ({
+      cli: cli ?? 'claude',
+      model: pickedModel,
+      mode,
+      models: MODELS.map((v) => ({
+        value: v,
+        label: cli === 'codex' ? v : modelLabel(v, catalog)
+      })),
+      modes: MODES.map(([value, label]) => ({ value, label }))
+    }),
+    setModel: applyModel,
+    setMode: applyMode,
+    stop: stopTurn
   }
 
   // Drag files (from the explorer or the OS) onto the chat to attach their paths
@@ -3702,11 +3756,7 @@ export default function ChatPanel({
           <select
             className="chat-chip"
             value={mode}
-            onChange={(e) => {
-              setMode(e.target.value)
-              savePane({ mode: e.target.value })
-              window.api.chat.setMode(chatKey, e.target.value)
-            }}
+            onChange={(e) => applyMode(e.target.value)}
           >
             {MODES.map(([v, label]) => (
               <option key={v} value={v}>

@@ -2,6 +2,17 @@ import { create } from 'zustand'
 
 export type PetChrome = 'full' | 'screen' | 'bare'
 
+/** A phone the user approved for remote control (state/remote). */
+export interface RemoteDevice {
+  id: string
+  name: string
+  platform: string
+  publicKey: string
+  addedAt: number
+  // Expo push token, when the phone allowed notifications.
+  pushToken?: string | null
+}
+
 export interface Settings {
   theme: string
   editorKeymap: string
@@ -94,6 +105,19 @@ export interface Settings {
   notifyOnFailure: boolean
   // riven's icon in the macOS menu bar, with the count of agents that want you.
   menuBarIcon: boolean
+  // Remote control from a phone (state/remote). This machine's key pair, its
+  // relay channel and the phones the user approved: never synced
+  // (settingsSync), all replaced when every phone is unpaired.
+  remoteEnabled: boolean
+  remoteChannel: string
+  remoteDeskPublic: string
+  // Always '' now: the secret half is sealed in the OS keystore
+  // (main/remoteKey.ts). Older builds kept it here; it is moved out on load.
+  remoteDeskSecret: string
+  remoteDevices: RemoteDevice[]
+  // The account the identity above belongs to. Signing in as someone else
+  // starts over: another account's phones must not reach this machine.
+  remoteOwner: string
   // Terminal behaviour, all of it things xterm exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -153,6 +177,12 @@ export const DEFAULT_SETTINGS: Settings = {
   notifyOnNeedsInput: true,
   notifyOnFailure: true,
   menuBarIcon: true,
+  remoteEnabled: false,
+  remoteChannel: '',
+  remoteDeskPublic: '',
+  remoteDeskSecret: '',
+  remoteDevices: [],
+  remoteOwner: '',
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,
@@ -187,7 +217,9 @@ export const REMOVED_SETTINGS: ReadonlyArray<string> = [
   'aiProvider',
   'aiCompleteEndpoint',
   'aiCompleteModel',
-  'aiApiKey'
+  'aiApiKey',
+  // The first remote-control build's shared secret, replaced by per-device keys.
+  'remoteKey'
 ]
 
 // Old default terminal-font stacks. Users who never customized the terminal font

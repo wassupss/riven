@@ -4,8 +4,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 // renderer). When they're absent the whole account/sync feature degrades
 // gracefully: the UI shows a "not configured" note and nothing throws.
 
-const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim()
-const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
+export const url = (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.trim()
+export const anonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim()
 
 // Where the provider redirects after auth. We never actually load this page —
 // the main process intercepts the navigation and lifts the PKCE code out — so

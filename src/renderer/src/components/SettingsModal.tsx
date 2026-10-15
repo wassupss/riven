@@ -11,6 +11,8 @@ import { MCP_TOOL_LABELS } from '../state/mcpTools'
 import { Button, NumberInput, Segmented, Select, Switch, TextArea, TextInput } from './ui/Controls'
 import KeybindingsSettings from '../keybindings/KeybindingsSettings'
 import AccountSettings from './AccountSettings'
+import RemoteSettings from './RemoteSettings'
+import { useRemote } from '../state/remote'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
 import ModelOptions from './ModelOptions'
@@ -25,6 +27,7 @@ import {
   FileCode,
   TerminalSquare,
   Bell,
+  Smartphone,
   ShieldCheck,
   Egg,
   X,
@@ -212,6 +215,8 @@ export default function SettingsModal(): JSX.Element | null {
   const settings = useSettings((s) => s.settings)
   const set = useSettings((s) => s.set)
   const reset = useSettings((s) => s.reset)
+  // Remote control is shown to tester accounts only while it is being tried out.
+  const remoteAllowed = useRemote((s) => s.allowed)
   const upd = <K extends keyof Settings>(k: K, v: Settings[K]): void =>
     set({ [k]: v } as Partial<Settings>)
 
@@ -243,6 +248,7 @@ export default function SettingsModal(): JSX.Element | null {
     { id: 'ai', label: 'AI', icon: <Bot size={15} /> },
     { id: 'perm', label: t('settings.tab.perm'), icon: <ShieldCheck size={15} /> },
     { id: 'notify', label: t('settings.tab.notify'), icon: <Bell size={15} /> },
+    ...(remoteAllowed ? [{ id: 'remote' as const, label: t('settings.tab.remote'), icon: <Smartphone size={15} /> }] : []),
     { id: 'pet', label: t('pet.title'), icon: <Egg size={15} /> },
     { id: 'keys', label: t('settings.tab.keys'), icon: <Keyboard size={15} /> },
     { id: 'account', label: t('settings.tab.account'), icon: <User size={15} /> },
@@ -763,6 +769,7 @@ export default function SettingsModal(): JSX.Element | null {
               </>
             )}
 
+            {tab === 'remote' && remoteAllowed && <RemoteSettings />}
             {tab === 'account' && <AccountSettings />}
             {tab === 'keys' && <KeybindingsSettings />}
             {tab === 'about' && <AboutTab />}

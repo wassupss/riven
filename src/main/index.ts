@@ -27,6 +27,7 @@ import { registerAgentChatHandlers, killAllChatSessions, runningChatCount } from
 import { failPendingToolCalls, registerMcpServer, stopMcpServer } from './mcpServer'
 import { registerFocusTrace } from './focusTrace'
 import { registerKeepAwake } from './keepAwake'
+import { registerRemoteKey } from './remoteKey'
 import { registerPermissionHandlers } from './permissions'
 import { registerModelCatalogHandlers } from './modelCatalog'
 import { registerBrowserHandlers } from './browser'
@@ -324,6 +325,7 @@ app.whenReady().then(() => {
   // does not answer them, and the agent hung inside the call.
   registerFocusTrace()
   registerKeepAwake()
+  registerRemoteKey()
   registerPermissionHandlers()
   registerModelCatalogHandlers()
   registerMcpServer(() => appWindow()?.webContents ?? null)
@@ -402,7 +404,9 @@ app.whenReady().then(() => {
     home: os.homedir(),
     shell: process.env.SHELL || '/bin/zsh',
     platform: process.platform,
-    claudePath
+    claudePath,
+    // What a paired phone calls this machine (remote control).
+    hostname: os.hostname().replace(/\.local$/, '')
   }))
 
   // Dock icon: packaged builds use the bundled .icns, but in dev the app would

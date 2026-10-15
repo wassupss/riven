@@ -18,6 +18,7 @@ import Palette from './components/Palette'
 import QuickPanel from './components/QuickPanel'
 import AgentPicker from './components/AgentPicker'
 import AskUserModal from './components/AskUserModal'
+import RemotePairPrompt from './components/RemotePairPrompt'
 import PetHost from './components/PetHost'
 import { useAskUser } from './state/askUser'
 import { usePet } from './state/pet'
@@ -25,6 +26,7 @@ import { useUsage } from './state/usage'
 import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startTrayFeed } from './state/trayFeed'
+import { startRemote } from './state/remote'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
@@ -167,6 +169,8 @@ export default function App(): JSX.Element {
     const offRoster = startRoster()
     // The menu bar icon's list, from the roster just started.
     const offTray = startTrayFeed()
+    // Remote control from a phone, when the user has turned it on (state/remote).
+    const offRemote = startRemote()
     // Reflect Chromium browser navigation events into the tab chrome.
     const offBrowser = initBrowserEvents()
     // A focused browser view swallows keyboard; main forwards Cmd/Ctrl chords here
@@ -282,6 +286,7 @@ export default function App(): JSX.Element {
       offMcp()
       offRoster()
       offTray()
+      offRemote()
       offBrowser()
       offBrowserKey()
       window.removeEventListener('keydown', onMetaDown, true)
@@ -395,6 +400,7 @@ export default function App(): JSX.Element {
       <QuickPanel />
       <AgentPicker />
       <AskUserModal />
+      <RemotePairPrompt />
       <AgentWatch />
       {/* The floating virtual-pet device — always on top of the workbench, never
           a dock tab (a pet behind a tab is a pet you forget to feed). */}

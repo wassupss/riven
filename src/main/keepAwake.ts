@@ -14,14 +14,17 @@ import { ipcMain, powerSaveBlocker } from 'electron'
 let blockerId: number | null = null
 let busyPanes = 0
 let enabled = true
+// Remote control is on: a machine left at the office has to stay reachable,
+// working or not, or the phone finds nobody home (see renderer state/remote).
+let remoteHold = false
 
 function sync(): void {
-  const want = enabled && busyPanes > 0
+  const want = (enabled && busyPanes > 0) || remoteHold
   if (want && blockerId == null) {
     blockerId = powerSaveBlocker.start('prevent-app-suspension')
     // Worth a line in the log: "why didn't my machine sleep last night" has
     // exactly one answer here, and it should be findable.
-    console.log(`[power] holding sleep off — ${busyPanes} pane(s) working`)
+    console.log(remoteHold ? '[power] holding sleep off - remote control is on' : `[power] holding sleep off - ${busyPanes} pane(s) working`)
     return
   }
   if (!want && blockerId != null) {
@@ -37,10 +40,15 @@ export function registerKeepAwake(): void {
     enabled = on
     sync()
   })
+  ipcMain.on('power:remote', (_e, on: boolean) => {
+    remoteHold = !!on
+    sync()
+  })
 }
 
 /** For tests and shutdown: let the machine sleep again. */
 export function releaseKeepAwake(): void {
   busyPanes = 0
+  remoteHold = false
   sync()
 }

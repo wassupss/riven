@@ -132,6 +132,7 @@ const api = {
       shell: string
       platform: string
       claudePath: string | null
+      hostname?: string
     }> => ipcRenderer.invoke('env:defaults')
   },
   workspace: {
@@ -408,7 +409,16 @@ const api = {
   power: {
     // How many panes are mid-turn, and whether the user wants the machine kept
     // awake for them. Sent on every change; main refcounts it.
-    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled)
+    busy: (count: number, enabled: boolean): void => ipcRenderer.send('power:busy', count, enabled),
+    // Remote control is on: keep the machine reachable even when idle.
+    remote: (on: boolean): void => ipcRenderer.send('power:remote', on)
+  },
+  // Remote control's key pair, sealed with the OS keystore (main/remoteKey.ts).
+  remoteKey: {
+    available: (): Promise<boolean> => ipcRenderer.invoke('remoteKey:available'),
+    load: (): Promise<{ publicKey: string; secretKey: string } | null> => ipcRenderer.invoke('remoteKey:load'),
+    save: (k: { publicKey: string; secretKey: string } | null): Promise<boolean> =>
+      ipcRenderer.invoke('remoteKey:save', k)
   },
   browser: {
     create: (id: string, url: string, partition?: string): Promise<void> =>

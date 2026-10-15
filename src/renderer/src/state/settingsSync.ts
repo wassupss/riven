@@ -10,8 +10,19 @@ const TABLE = 'user_settings'
 // Never synced. `importedFonts` holds multi-MB base64 data URLs that would blow
 // past the row/payload limits and get re-uploaded on every unrelated settings
 // change — fonts stay device-local. Settings of removed features aren't synced
-// either; among them is the old inline-completion API key, a secret.
-const SYNC_EXCLUDE: ReadonlySet<string> = new Set(['importedFonts', ...REMOVED_SETTINGS])
+// either; among them is the old inline-completion API key, a secret. Remote
+// control is per machine, and its key is a secret that lets a phone drive this
+// machine's agents: it must never leave the machine through sync.
+const SYNC_EXCLUDE: ReadonlySet<string> = new Set([
+  'importedFonts',
+  'remoteEnabled',
+  'remoteChannel',
+  'remoteDeskPublic',
+  'remoteDeskSecret',
+  'remoteDevices',
+  'remoteOwner',
+  ...REMOVED_SETTINGS
+])
 
 export function pickSyncable(s: Settings): Partial<Settings> {
   const out: Record<string, unknown> = {}

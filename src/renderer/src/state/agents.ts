@@ -35,6 +35,20 @@ export interface AgentController {
   // rather than as something the user typed — how an answer to work this pane
   // handed off in the background is brought back to it (see returnToCaller).
   wake?: (text: string, notices: string[]) => void
+  // The chat's own pickers, for a paired phone (state/remote): what they show,
+  // and the very changes choosing in them makes. Nothing else is reachable.
+  remote?: {
+    info: () => {
+      cli: string
+      model: string
+      mode: string
+      models: Array<{ value: string; label: string }>
+      modes: Array<{ value: string; label: string }>
+    }
+    setModel: (model: string) => void
+    setMode: (mode: string) => void
+    stop: () => void
+  }
 }
 
 const pause = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
