@@ -7,6 +7,11 @@ publish:
   provider: github
   owner: wassupss
   repo: riven
+# Only the UI languages riven ships (i18n is en/ko). Every other Chromium
+# locale pack was dead weight in the bundle.
+electronLanguages:
+  - en
+  - ko
 directories:
   buildResources: build
   output: release
