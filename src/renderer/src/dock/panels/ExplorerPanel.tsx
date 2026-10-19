@@ -15,6 +15,7 @@ import { FilePlus, FolderPlus, RefreshCw, ChevronsDownUp } from 'lucide-react'
 import InputModal from '../../components/InputModal'
 import { FileIcon } from '../../components/FileIcon'
 import { useT } from '../../i18n'
+import { useClearDropOnDragEnd, useClearDropWhenDragQuiet, dragLeftElement } from '../../lib/dropHighlight'
 
 const dirname = (p: string): string => p.slice(0, p.lastIndexOf('/')) || '/'
 const join = (dir: string, name: string): string => `${dir}/${name}`
@@ -24,31 +25,6 @@ const join = (dir: string, name: string): string => `${dir}/${name}`
 // (never the paths), so the decision to accept has to be made from `types`.
 function hasOsFiles(e: React.DragEvent): boolean {
   return Array.from(e.dataTransfer.types).includes('Files')
-}
-
-// Every drop indicator in the tree, cleared together when the drag is over.
-//
-// A highlight is turned on by `dragover` and off by `dragleave` — and there are
-// two ways to end a drag that fire NEITHER: dropping on a row (which stops the
-// event before the container that lit up ever sees it) and pressing Escape.
-// Both left the dashed outline on screen with no drag in progress, and nothing
-// but another drag could clear it. `dragend`/`drop` on the window always fire,
-// so that is what clears everything.
-const dropClears = new Set<() => void>()
-let dropClearsBound = false
-function useClearDropOnDragEnd(clear: () => void): void {
-  useEffect(() => {
-    dropClears.add(clear)
-    if (!dropClearsBound) {
-      dropClearsBound = true
-      const all = (): void => dropClears.forEach((fn) => fn())
-      window.addEventListener('dragend', all, true)
-      window.addEventListener('drop', all, true)
-    }
-    return () => {
-      dropClears.delete(clear)
-    }
-  }, [clear])
 }
 
 /* ---- move within the explorer ---------------------------------------------- */
@@ -129,7 +105,9 @@ function TreeNode({
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<DirEntry[] | null>(null)
   const [dropTarget, setDropTarget] = useState(false)
-  useClearDropOnDragEnd(useCallback(() => setDropTarget(false), []))
+  const clearDropTarget = useCallback(() => setDropTarget(false), [])
+  useClearDropOnDragEnd(clearDropTarget)
+  const dropStillOver = useClearDropWhenDragQuiet(clearDropTarget)
   const rowRef = useRef<HTMLDivElement>(null)
   const revealTarget = useExplorerReveal((s) => s.target)
   const activePath = useSession((s) =>
@@ -251,6 +229,7 @@ function TreeNode({
           e.stopPropagation()
           e.dataTransfer.dropEffect = internal ? 'move' : 'copy'
           if (!dropTarget) setDropTarget(true)
+          dropStillOver()
         }}
         onDragLeave={() => setDropTarget(false)}
         onDrop={(e) => {
@@ -330,7 +309,9 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
   const [menu, setMenu] = useState<Menu | null>(null)
   const [edit, setEdit] = useState<Edit>(null)
   const [rootDrop, setRootDrop] = useState(false)
-  useClearDropOnDragEnd(useCallback(() => setRootDrop(false), []))
+  const clearRootDrop = useCallback(() => setRootDrop(false), [])
+  useClearDropOnDragEnd(clearRootDrop)
+  const rootDropStillOver = useClearDropWhenDragQuiet(clearRootDrop)
   const bump = useTree((s) => s.bump)
   const collapseAll = useTree((s) => s.collapseAll)
   // Keyed by the folder's PATH, as every event is: `workspace` is the
@@ -571,9 +552,10 @@ export default function ExplorerPanel({ workspace }: { workspace: string }): JSX
           e.preventDefault()
           e.dataTransfer.dropEffect = internal ? 'move' : 'copy'
           if (!rootDrop) setRootDrop(true)
+          rootDropStillOver()
         }}
         onDragLeave={(e) => {
-          if (e.currentTarget === e.target) setRootDrop(false)
+          if (dragLeftElement(e)) setRootDrop(false)
         }}
         onDrop={(e) => {
           const internal = hasRivenPaths(e)

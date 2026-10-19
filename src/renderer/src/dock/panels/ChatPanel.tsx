@@ -33,6 +33,7 @@ import type { DockviewPanelApi } from 'dockview-core'
 import { pathOf, useSession, loadPaneState, setPaneState, flushSessionSaveSync } from '../../state/session'
 import { useRetainedValue } from '../RetainedPanel'
 import AskInline from './AskInline'
+import { useClearDropOnDragEnd, useClearDropWhenDragQuiet, dragLeftElement } from '../../lib/dropHighlight'
 import { getSettings, claudeConfigDirFor } from '../../state/settings'
 import {
   registerAgent,
@@ -1762,6 +1763,9 @@ export default function ChatPanel({
 
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const clearDragOver = useCallback(() => setDragOver(false), [])
+  useClearDropOnDragEnd(clearDragOver)
+  const dragStillOver = useClearDropWhenDragQuiet(clearDragOver)
   // Images to send with the next message, shown as thumbnails above the input.
   //
   // Mirrored in a ref because sending has to EMPTY them synchronously. The
@@ -3428,10 +3432,11 @@ export default function ChatPanel({
         if (e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes('text/plain')) {
           e.preventDefault()
           if (!dragOver) setDragOver(true)
+          dragStillOver()
         }
       }}
       onDragLeave={(e) => {
-        if (e.currentTarget === e.target) setDragOver(false)
+        if (dragLeftElement(e)) setDragOver(false)
       }}
       onDrop={onDropFiles}
     >
