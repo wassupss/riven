@@ -5,7 +5,13 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
 import { ChevronUp, ChevronDown, X, Loader2 } from 'lucide-react'
-import { registerPaneFocuser, registerPaneClearer, setFocusRegion } from '../keybindings/focus'
+import {
+  registerPaneFocuser,
+  registerPaneClearer,
+  setFocusRegion,
+  paneFocusRequested,
+  clearPaneFocusRequest
+} from '../keybindings/focus'
 import { useT } from '../i18n'
 import { useSettings, getSettings } from '../state/settings'
 
@@ -171,6 +177,26 @@ export default function TerminalPane({
       // throw in its viewport sync. We open on the first non-zero size instead;
       // until then main holds the bytes (see reportVisible).
       let opened = false
+      // Focus a freshly opened pane. Not a plain term.focus(): dockview keeps a
+      // new panel's overlay at visibility:hidden for a frame or two after it is
+      // laid out, and focus given to a hidden element is dropped on the spot.
+// So keep trying each frame until the caret is really in here, and give
+      // up if the user has put it somewhere else in the meantime. The request is
+      // only cleared once settled: if this xterm is torn down before then, the
+      // remounted one picks the request up again.
+      let focusRaf = 0
+      const claimFocus = (): void => {
+        if (paneId == null || !paneFocusRequested(paneId)) return
+        const a = document.activeElement
+        if (!container.contains(a) && (!a || a === document.body)) {
+          if (container.checkVisibility({ visibilityProperty: true })) term.focus()
+          if (!container.contains(document.activeElement)) {
+            focusRaf = requestAnimationFrame(claimFocus)
+            return
+          }
+        }
+        clearPaneFocusRequest(paneId)
+      }
       // Returns true only on the call that actually opens, so the caller can defer
       // the first resize by a frame — xterm measures its render dimensions on the
       // first paint (async), and resizing before that throws in syncScrollArea.
@@ -179,6 +205,7 @@ export default function TerminalPane({
           return false
         opened = true
         term.open(container)
+        claimFocus()
         // Expose the terminal font to CSS so the IME composition overlay (a separate
         // DOM element xterm doesn't font-style) matches the grid — otherwise Korean
         // shows a fallback font while composing and only snaps to D2Coding on commit.
@@ -599,6 +626,7 @@ export default function TerminalPane({
       return () => {
         torn = true
         cancelAnimationFrame(raf)
+        cancelAnimationFrame(focusRaf)
         clearTimeout(t1)
         clearTimeout(t2)
         if (fitDebounce) clearTimeout(fitDebounce)

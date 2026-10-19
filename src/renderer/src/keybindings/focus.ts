@@ -87,6 +87,29 @@ export function focusPane(id: number): void {
   paneFocusers.get(id)?.()
 }
 
+// A terminal the user just opened should take the caret, but it can't yet: xterm
+// opens only once its pane has a size, a frame or two after addPanel, and
+// focus() before that is a no-op. So the opener records the wish and the pane
+// claims it the moment it opens. Session restores and agent-driven opens never
+// ask, so they don't steal focus. The wish outlives a pane's first xterm (the
+// pane may be torn down and remounted while dockview settles) but not by long:
+// a pane that only opens much later must not grab the caret out of nowhere.
+const PANE_FOCUS_TTL_MS = 3000
+const pendingPaneFocus = new Map<number, number>()
+export function requestPaneFocusOnOpen(id: number): void {
+  pendingPaneFocus.set(id, Date.now() + PANE_FOCUS_TTL_MS)
+}
+export function paneFocusRequested(id: number): boolean {
+  const until = pendingPaneFocus.get(id)
+  if (until === undefined) return false
+  if (Date.now() < until) return true
+  pendingPaneFocus.delete(id)
+  return false
+}
+export function clearPaneFocusRequest(id: number): void {
+  pendingPaneFocus.delete(id)
+}
+
 const paneClearers = new Map<number, () => void>()
 export function registerPaneClearer(id: number, fn: () => void): () => void {
   paneClearers.set(id, fn)
