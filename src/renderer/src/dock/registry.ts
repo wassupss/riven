@@ -1,7 +1,7 @@
 import type { DockviewApi } from 'dockview'
 import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
-import { focusPane, focusEditor } from '../keybindings/focus'
+import { focusPane, focusEditor, requestPaneFocusOnOpen } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
 import { renameAgent, getAgentStatus } from '../state/agents'
@@ -447,6 +447,9 @@ export function addTerminal(
   const api = dockFor(inWorkspace)
   if (!api) return
   const paneId = nextPaneId()
+  // The user opened it, so they mean to type in it. An agent opening one
+  // (inWorkspace given) must not pull the caret out from under the user.
+  if (inWorkspace === undefined) requestPaneFocusOnOpen(paneId)
   api.addPanel({
     id: `term-${paneId}`,
     component: 'terminal',
@@ -576,6 +579,7 @@ export function splitTerminal(direction: 'right' | 'below'): void {
   if (!api) return
   const paneId = nextPaneId()
   const ref = api.activePanel
+  requestPaneFocusOnOpen(paneId)
   api.addPanel({
     id: `term-${paneId}`,
     component: 'terminal',
