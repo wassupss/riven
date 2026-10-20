@@ -146,7 +146,7 @@ async function run(): Promise<void> {
   await wait(800)
 
   await phase('singletons', async () => {
-    const kinds: NamedPanel[] = ['editor', 'search', 'git', 'changes', 'notes', 'api', 'preview', 'agentgroup']
+    const kinds: NamedPanel[] = ['editor', 'search', 'git', 'changes', 'notes', 'api', 'db', 'preview', 'agentgroup']
     for (const k of kinds) {
       togglePanel(k as Parameters<typeof togglePanel>[0])
       await frame()

@@ -13,5 +13,5 @@
     "baseUrl": ".",
     "paths": { "@/*": ["src/renderer/src/*"] }
   },
-  "include": ["src/renderer/**/*", "src/preload/index.ts", "src/preload/api.d.ts"]
+  "include": ["src/renderer/**/*", "src/preload/index.ts", "src/preload/api.d.ts", "src/main/db/types.ts", "src/main/db/sqlText.ts"]
 }

@@ -1,4 +1,12 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import type {
+  ConnectionConfig,
+  ConnectionInfo,
+  DbObject,
+  QueryResult,
+  SchemaInfo,
+  TableInfo
+} from '../main/db/types'
 
 export interface DirEntry {
   name: string
@@ -519,6 +527,30 @@ const api = {
       contentType: string
       error?: string
     }> => ipcRenderer.invoke('api:request', opts)
+  },
+  // Saved data sources + browsing/querying (DB panels; agents use riven_db_*).
+  // A password argument: undefined keeps the stored one, '' or null clears it.
+  db: {
+    list: (): Promise<ConnectionInfo[]> => ipcRenderer.invoke('db:list'),
+    save: (cfg: ConnectionConfig, password?: string | null): Promise<ConnectionInfo> =>
+      ipcRenderer.invoke('db:save', cfg, password),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('db:delete', id),
+    test: (cfg: ConnectionConfig, password?: string): Promise<string> => ipcRenderer.invoke('db:test', cfg, password),
+    databases: (id: string): Promise<string[]> => ipcRenderer.invoke('db:databases', id),
+    schemas: (id: string, db?: string): Promise<SchemaInfo[]> => ipcRenderer.invoke('db:schemas', id, db),
+    objects: (id: string, db: string | undefined, schema: string): Promise<DbObject[]> =>
+      ipcRenderer.invoke('db:objects', id, db, schema),
+    table: (id: string, db: string | undefined, schema: string, name: string): Promise<TableInfo | null> =>
+      ipcRenderer.invoke('db:table', id, db, schema, name),
+    ddl: (id: string, db: string | undefined, schema: string, name: string): Promise<string> =>
+      ipcRenderer.invoke('db:ddl', id, db, schema, name),
+    query: (
+      id: string,
+      db: string | undefined,
+      sql: string,
+      o: { limit?: number; queryId?: string }
+    ): Promise<QueryResult> => ipcRenderer.invoke('db:query', id, db, sql, o),
+    cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId)
   },
   // Scratch markdown notes (Notes panel + note_* MCP tools).
   notes: {

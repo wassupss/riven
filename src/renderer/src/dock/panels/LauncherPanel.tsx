@@ -7,6 +7,7 @@ import {
   Globe,
   StickyNote,
   Server,
+  Database,
   Search,
   GitBranch,
   GitCompare,
@@ -55,6 +56,7 @@ export default function LauncherPanel({
     { kind: 'agentgroup', label: t('title.agentgroup'), Icon: Users },
     { kind: 'notes', label: t('title.notes'), Icon: StickyNote },
     { kind: 'api', label: t('title.api'), Icon: Server },
+    { kind: 'db', label: t('title.db'), Icon: Database },
     { kind: 'search', label: t('title.search'), Icon: Search },
     { kind: 'git', label: t('title.git'), Icon: GitBranch },
     { kind: 'changes', label: t('title.changes'), Icon: GitCompare }

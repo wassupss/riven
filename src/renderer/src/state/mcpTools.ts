@@ -229,7 +229,7 @@ function listPanels(c: Ctx): string {
   return JSON.stringify(panels)
 }
 
-const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api'])
+const PANEL_KINDS = new Set(['editor', 'search', 'git', 'changes', 'preview', 'notes', 'api', 'db', 'dbconsole'])
 const SPLIT_DIRS = new Set(['right', 'below', 'left', 'above'])
 // The agent a chat pane runs. Claude when unsaid; the CLI's own names and the
 // product names are both understood, since that is how a model will say it.
@@ -284,7 +284,7 @@ async function openPanel(args: Args, c: Ctx): Promise<string> {
     return JSON.stringify({ opened: 'chat', agent: cli, id, title: title ?? (cli === 'codex' ? 'Codex' : 'chat') })
   }
   if (PANEL_KINDS.has(kind)) {
-    togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api', ws)
+    togglePanel(kind as 'editor' | 'search' | 'git' | 'changes' | 'preview' | 'notes' | 'api' | 'db' | 'dbconsole', ws)
     return `opened ${kind}`
   }
   return `error: unknown panel kind "${kind}"`

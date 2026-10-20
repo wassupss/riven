@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as monaco from 'monaco-editor'
+import { Database, FileCode2, Lock, Play, Plus, Square, Table2, X } from 'lucide-react'
+import '../../styles/db-panel.css'
+import type { DbKind } from '../../../../main/db/types'
+import { splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
+import { editorTheme } from '../../editor/highlight'
+import { useT } from '../../i18n'
+import { dbUid, useDb, type RunResult, type SqlTab } from '../../state/db'
+import { Button, Select } from '../../components/ui/Controls'
+import ResultGrid, { toDelimited } from './db/ResultGrid'
+import ObjectView from './db/ObjectView'
+import { errText } from './db/ConnectionForm'
+
+// =============================================================================
+// DbConsolePanel: tabbed SQL consoles and object views. One Monaco editor is
+// shared by every SQL tab (a model per tab), so ten open consoles cost one
+// editor. Each run executes statement by statement (the engine's cursor runs a
+// single statement per call) and stops at the first error.
+// =============================================================================
+
+const LIMITS = [100, 500, 1000, 5000, 10000]
+const LS_LIMIT = 'db.console.limit'
+const LS_SPLIT = 'db.console.split'
+
+/** The statement under (or just before) the cursor. */
+function statementAt(text: string, offset: number, kind: DbKind): string[] {
+  const ranges = splitStatements(text, kind)
+  if (!ranges.length) return []
+  let pick = ranges[0]
+  for (const r of ranges) {
+    const body = text.slice(r[0], r[1])
+    const start = r[0] + body.length - body.trimStart().length
+    if (start <= offset) pick = r
+    else break
+  }
+  return [text.slice(pick[0], pick[1]).trim()]
+}
+
+export default function DbConsolePanel(): JSX.Element {
+  const t = useT()
+  const tabs = useDb((s) => s.tabs)
+  const active = useDb((s) => s.active)
+  const connections = useDb((s) => s.connections)
+  const loaded = useDb((s) => s.loaded)
+  const reload = useDb((s) => s.reload)
+  const setActive = useDb((s) => s.setActive)
+  const closeTab = useDb((s) => s.closeTab)
+  const openSql = useDb((s) => s.openSql)
+
+  useEffect(() => {
+    if (!loaded) void reload()
+  }, [loaded, reload])
+
+  const tab = tabs.find((x) => x.id === active) ?? null
+
+  const newTab = (): void => {
+    const connId = tab?.connId ?? connections[0]?.id
+    if (connId) openSql(connId, tab?.db)
+  }
+
+  return (
+    <div className="dbx-root dbx-console">
+      <div className="dbx-tabs">
+        {tabs.map((x) => {
+          const conn = connections.find((c) => c.id === x.connId)
+          return (
+            <div
+              key={x.id}
+              className={`dbx-tab${x.id === active ? ' on' : ''}`}
+              onClick={() => setActive(x.id)}
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault()
+                  closeTab(x.id)
+                }
+              }}
+              title={conn ? `${conn.name}${x.db ? ` / ${x.db}` : ''}` : undefined}
+            >
+              {conn?.color && <span className="dbx-dot" style={{ background: conn.color }} />}
+              {x.kind === 'sql' ? <FileCode2 size={12} /> : <Table2 size={12} />}
+              <span className="dbx-tab-title">{x.title}</span>
+              <button
+                className="dbx-tab-x"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeTab(x.id)
+                }}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )
+        })}
+        <button className="dbx-icon-btn" title={t('db.newConsole')} disabled={!connections.length} onClick={newTab}>
+          <Plus size={14} />
+        </button>
+      </div>
+      <div className="dbx-console-body">
+        {/* Always mounted: the editor and its models outlive tab switches. */}
+        <SqlView tab={tab?.kind === 'sql' ? tab : null} hidden={tab?.kind !== 'sql'} />
+        {tab?.kind === 'object' && <ObjectView key={tab.id} tab={tab} />}
+        {!tab && (
+          <div className="dbx-empty-state">
+            <Database size={28} />
+            <div>{connections.length ? t('db.consoleEmpty') : t('db.noConnections')}</div>
+            {connections.length > 0 && (
+              <button className="dbx-link" onClick={newTab}>
+                {t('db.newConsole')}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.Element {
+  const t = useT()
+  const connections = useDb((s) => s.connections)
+  const tabs = useDb((s) => s.tabs)
+  const patchTab = useDb((s) => s.patchTab)
+  const setRun = useDb((s) => s.setRun)
+  const runState = useDb((s) => (tab ? s.runs[tab.id] : undefined))
+  const autoRun = useDb((s) => s.autoRun)
+  const clearAutoRun = useDb((s) => s.clearAutoRun)
+  const conn = connections.find((c) => c.id === tab?.connId)
+
+  const hostRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const edRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const models = useRef(new Map<string, { model: monaco.editor.ITextModel; view: monaco.editor.ICodeEditorViewState | null; sub: monaco.IDisposable }>())
+  const shownId = useRef<string | null>(null)
+  const [limit, setLimit] = useState(() => Number(localStorage.getItem(LS_LIMIT)) || 1000)
+  const [split, setSplit] = useState(() => Number(localStorage.getItem(LS_SPLIT)) || 0.45)
+  const [dbs, setDbs] = useState<Record<string, string[]>>({})
+
+  // Latest values for the Monaco command closure, which is bound once.
+  const live = useRef({ tab, conn, limit, runState })
+  live.current = { tab, conn, limit, runState }
+
+  useEffect(() => {
+    const ed = monaco.editor.create(hostRef.current!, {
+      model: null,
+      theme: editorTheme(),
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 12,
+      scrollBeyondLastLine: false,
+      wordWrap: 'off',
+      tabSize: 2
+    })
+    edRef.current = ed
+    ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => void runRef.current())
+    const ms = models.current
+    return () => {
+      ed.dispose()
+      for (const m of ms.values()) {
+        m.sub.dispose()
+        m.model.dispose()
+      }
+      ms.clear()
+      edRef.current = null
+    }
+  }, [])
+
+  // Swap the editor onto this tab's model, keeping each tab's cursor and scroll.
+  useEffect(() => {
+    const ed = edRef.current
+    if (!ed) return
+    const prev = shownId.current && models.current.get(shownId.current)
+    if (prev) prev.view = ed.saveViewState()
+    if (!tab) {
+      shownId.current = null
+      return
+    }
+    let entry = models.current.get(tab.id)
+    if (!entry) {
+      const model = monaco.editor.createModel(tab.sql, 'sql')
+      const id = tab.id
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const sub = model.onDidChangeContent(() => {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(() => {
+          timer = null
+          if (!model.isDisposed()) patchTab(id, { sql: model.getValue() })
+        }, 300)
+      })
+      entry = { model, view: null, sub }
+      models.current.set(tab.id, entry)
+    }
+    shownId.current = tab.id
+    ed.setModel(entry.model)
+    if (entry.view) ed.restoreViewState(entry.view)
+    if (!hidden) ed.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab?.id])
+
+  // A closed tab's model goes with it.
+  useEffect(() => {
+    const ids = new Set(tabs.map((x) => x.id))
+    for (const [id, m] of models.current) {
+      if (ids.has(id)) continue
+      if (shownId.current === id) {
+        edRef.current?.setModel(null)
+        shownId.current = null
+      }
+      m.sub.dispose()
+      m.model.dispose()
+      models.current.delete(id)
+    }
+  }, [tabs])
+
+  // Databases on this tab's server, for the picker.
+  useEffect(() => {
+    const id = conn?.id
+    if (!id || dbs[id]) return
+    window.api.db
+      .databases(id)
+      .then((list) => setDbs((m) => ({ ...m, [id]: list })))
+      .catch(() => setDbs((m) => ({ ...m, [id]: [] })))
+  }, [conn?.id, dbs])
+
+  const run = useCallback(async (): Promise<void> => {
+    const { tab, conn, limit, runState } = live.current
+    const ed = edRef.current
+    const model = ed?.getModel()
+    if (!tab || !conn || !ed || !model || runState?.running) return
+    const sel = ed.getSelection()
+    const list =
+      sel && !sel.isEmpty()
+        ? statements(model.getValueInRange(sel), conn.kind)
+        : statementAt(model.getValue(), model.getOffsetAt(ed.getPosition() ?? { lineNumber: 1, column: 1 }), conn.kind)
+    if (!list.length) return
+    if (!conn.readOnly) {
+      for (const sql of list) {
+        const why = unsafeStatement(sql, conn.kind)
+        if (why && !window.confirm(`${why}\n\n${sql.slice(0, 400)}\n\n${t('db.confirmRun')}`)) return
+      }
+    }
+    const queryId = dbUid()
+    const results: RunResult[] = []
+    setRun(tab.id, { running: true, queryId, results, shown: 0 })
+    for (const sql of list) {
+      try {
+        const result = await window.api.db.query(conn.id, tab.db, sql, { limit, queryId })
+        results.push({ sql, result })
+      } catch (e) {
+        results.push({ sql, error: errText(e) })
+        break
+      }
+      if (results.length < list.length) setRun(tab.id, { running: true, queryId, results: [...results], shown: results.length - 1 })
+    }
+    // Show the error if there was one, else the last result that has rows.
+    const err = results.findIndex((r) => r.error)
+    let shown = err
+    if (shown < 0) {
+      shown = results.length - 1
+      for (let i = results.length - 1; i >= 0; i--)
+        if (results[i].result?.columns.length) {
+          shown = i
+          break
+        }
+    }
+    setRun(tab.id, { running: false, results: [...results], shown })
+  }, [setRun, t])
+
+  const runRef = useRef(run)
+  runRef.current = run
+
+  useEffect(() => {
+    if (tab && autoRun === tab.id && edRef.current?.getModel()) {
+      clearAutoRun()
+      void run()
+    }
+  }, [autoRun, tab, run, clearAutoRun])
+
+  const cancel = (): void => {
+    if (conn && runState?.queryId) void window.api.db.cancel(conn.id, runState.queryId)
+  }
+
+  const startDrag = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const box = bodyRef.current!.getBoundingClientRect()
+    let last = split
+    const move = (ev: MouseEvent): void => {
+      last = Math.min(0.85, Math.max(0.12, (ev.clientY - box.top) / box.height))
+      setSplit(last)
+    }
+    const up = (): void => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      localStorage.setItem(LS_SPLIT, String(last))
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
+
+  const shown = runState?.results[runState.shown]
+  const dbList = conn ? dbs[conn.id] ?? [] : []
+  const curDb = tab?.db ?? conn?.database ?? ''
+
+  return (
+    <div className="dbx-sql" style={hidden ? { display: 'none' } : undefined} ref={bodyRef}>
+      <div className="dbx-bar">
+        <Select
+          className="dbx-conn-select"
+          value={tab?.connId ?? ''}
+          onChange={(e) => tab && patchTab(tab.id, { connId: e.target.value, db: undefined })}
+        >
+          {!conn && <option value={tab?.connId ?? ''}>{t('db.missingConnection')}</option>}
+          {connections.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+        <Select className="dbx-db-select" value={curDb} onChange={(e) => tab && patchTab(tab.id, { db: e.target.value })}>
+          {!dbList.includes(curDb) && <option value={curDb}>{curDb}</option>}
+          {dbList.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
+        </Select>
+        {conn?.readOnly && (
+          <span className="dbx-badge" title={t('db.readOnly')}>
+            <Lock size={10} /> {t('db.readOnlyShort')}
+          </span>
+        )}
+        <span className="dbx-spacer" />
+        <Select
+          className="dbx-limit"
+          value={String(limit)}
+          title={t('db.limit')}
+          onChange={(e) => {
+            setLimit(Number(e.target.value))
+            localStorage.setItem(LS_LIMIT, e.target.value)
+          }}
+        >
+          {LIMITS.map((n) => (
+            <option key={n} value={n}>
+              {t('db.limitN', { n: String(n) })}
+            </option>
+          ))}
+        </Select>
+        {runState?.running ? (
+          <Button onClick={cancel}>
+            <Square size={11} /> {t('db.cancel')}
+          </Button>
+        ) : (
+          <Button variant="primary" disabled={!conn} onClick={() => void run()} title={t('db.runHint')}>
+            <Play size={11} /> {t('db.run')}
+          </Button>
+        )}
+      </div>
+      <div className="dbx-editor" style={{ flexBasis: `${split * 100}%` }}>
+        <div className="dbx-monaco" ref={hostRef} />
+      </div>
+      <div className="dbx-split" onMouseDown={startDrag} />
+      <div className="dbx-results">
+        {runState && runState.results.length > 1 && (
+          <div className="dbx-result-tabs">
+            {runState.results.map((r, i) => (
+              <button
+                key={i}
+                className={`dbx-chip${i === runState.shown ? ' on' : ''}${r.error ? ' err' : ''}`}
+                title={r.sql}
+                onClick={() => tab && setRun(tab.id, { ...runState, shown: i })}
+              >
+                {i + 1}. {r.error ? t('db.error') : r.result?.command || 'OK'}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="dbx-result-body">
+          {!runState ? (
+            <div className="dbx-empty">{t('db.runHint')}</div>
+          ) : !shown ? (
+            <div className="dbx-empty">{t('db.running')}</div>
+          ) : shown.error ? (
+            <div className="dbx-error">
+              <pre>{shown.error}</pre>
+              <pre className="dbx-error-sql">{shown.sql}</pre>
+            </div>
+          ) : shown.result && shown.result.columns.length ? (
+            <ResultGrid columns={shown.result.columns} rows={shown.result.rows} />
+          ) : (
+            <div className="dbx-empty">
+              {shown.result?.command} {shown.result?.rowCount ?? ''}
+            </div>
+          )}
+        </div>
+        <div className="dbx-status">
+          {runState?.running && <span className="dbx-spin">{t('db.running')}</span>}
+          {shown?.result && (
+            <>
+              {shown.result.columns.length > 0 ? (
+                <span>
+                  {t('db.rowsN', { n: shown.result.rows.length.toLocaleString() })}
+                  {shown.result.truncated && <span className="dbx-warn"> {t('db.truncated', { n: String(limit) })}</span>}
+                </span>
+              ) : (
+                <span>
+                  {shown.result.command}
+                  {shown.result.rowCount != null && ` ${shown.result.rowCount}`}
+                </span>
+              )}
+              <span className="dbx-meta">{shown.result.timeMs} ms</span>
+              <span className="dbx-spacer" />
+              {shown.result.columns.length > 0 && (
+                <>
+                  <button
+                    className="dbx-link"
+                    onClick={() => void navigator.clipboard.writeText(toDelimited(shown.result!.columns, shown.result!.rows, ','))}
+                  >
+                    {t('db.copyCsv')}
+                  </button>
+                  <button
+                    className="dbx-link"
+                    onClick={() => void navigator.clipboard.writeText(toDelimited(shown.result!.columns, shown.result!.rows, '\t'))}
+                  >
+                    {t('db.copyTsv')}
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

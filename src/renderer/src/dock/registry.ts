@@ -473,6 +473,8 @@ export type NamedPanel =
   | 'preview'
   | 'notes'
   | 'api'
+  | 'db'
+  | 'dbconsole'
   | 'agentgroup'
   | 'scheduler'
   | 'explorer'
@@ -770,6 +772,8 @@ const SINGLETONS: Record<string, { titleKey: string; direction: 'left' | 'right'
   changes: { titleKey: 'title.changes', direction: 'right' },
   notes: { titleKey: 'title.notes', direction: 'right' },
   api: { titleKey: 'title.api', direction: 'right' },
+  db: { titleKey: 'title.db', direction: 'left' },
+  dbconsole: { titleKey: 'title.dbconsole', direction: 'right' },
   agentgroup: { titleKey: 'title.agentgroup', direction: 'right' },
   scheduler: { titleKey: 'title.scheduler', direction: 'right' },
   explorer: { titleKey: 'title.explorer', direction: 'left' }

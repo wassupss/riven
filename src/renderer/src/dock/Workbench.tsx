@@ -13,6 +13,8 @@ import GitPanel from './panels/GitPanel'
 import ChangesPanel from './panels/ChangesPanel'
 import NotesPanel from './panels/NotesPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
+import DbExplorerPanel from './panels/DbExplorerPanel'
+import DbConsolePanel from './panels/DbConsolePanel'
 import ChatPanel from './panels/ChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
 import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
@@ -170,6 +172,8 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       changes: () => boxed('changes', <ChangesPanel workspace={workspace} />),
       notes: () => boxed('notes', <NotesPanel workspace={workspace} />),
       api: () => boxed('api', <ApiClientPanel />),
+      db: () => boxed('db', <DbExplorerPanel />),
+      dbconsole: () => boxed('dbconsole', <DbConsolePanel />),
       agentgroup: () => boxed('agentgroup', <AgentGroupPanel workspace={workspace} />),
       scheduler: () => boxed('scheduler', <SchedulerPanel workspace={workspace} />),
       explorer: () => boxed('explorer', <ExplorerPanel workspace={workspace} />),
