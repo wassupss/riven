@@ -2,8 +2,7 @@ import { pgRows } from './pg'
 import { literal, quoteIdent } from './sqlText'
 import type { ColumnInfo, ConnectionConfig, DbObject, ObjectKind, SchemaInfo, TableInfo } from './types'
 
-// PostgreSQL catalog queries. Adapted from dbtool (https://github.com/Hkhyyy/dbtool,
-// MIT, crates/core/src/meta.rs).
+// PostgreSQL catalog queries.
 
 const REL_OID =
   '(select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relname = $2)'

@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { literal, quoteIdent, readOnlyViolation, splitStatements, statements, unsafeStatement } from './sqlText'
 
-// Cases ported from dbtool (crates/core/src/sql.rs + guard.rs tests, MIT).
-
 describe('splitStatements', () => {
   it('splits and quotes', () => {
     const t = "select ';' as a; -- x;\nselect $$a;b$$; select \"x;y\""

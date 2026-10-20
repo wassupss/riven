@@ -1,8 +1,7 @@
 // SQL text rules shared by the DB engine and its MCP tools: statement splitting,
 // identifier quoting, and the read-only / dangerous-statement guards.
 //
-// Ported from dbtool (https://github.com/Hkhyyy/dbtool, MIT, crates/core/src/
-// sql.rs + guard.rs). The scanner must read text the way the SERVER does, since
+// The scanner must read text the way the SERVER does, since
 // the read-only check counts statements with it: MySQL needs whitespace after
 // `--` for a comment and runs the body of `/*! ... */`, PostgreSQL nests block
 // comments and treats `\` as an escape inside E'...'. A mismatch here is how a

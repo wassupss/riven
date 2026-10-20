@@ -4,9 +4,7 @@ export type { DbKind }
 
 export type SslMode = 'disable' | 'require' | 'verify-ca' | 'verify-full'
 
-// One saved data source. Field names follow dbtool's ConnectionConfig so its
-// export file ({app:"dbtool", connections}) can be imported later. The password
-// never lives here: it's sealed separately in the store.
+// One saved data source. The password never lives here: it's sealed separately in the store.
 export interface ConnectionConfig {
   id: string
   name: string
