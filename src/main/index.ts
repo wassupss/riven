@@ -33,6 +33,7 @@ import { registerModelCatalogHandlers } from './modelCatalog'
 import { registerBrowserHandlers } from './browser'
 import { registerNotesHandlers } from './notes'
 import { registerApiHandlers } from './apiclient'
+import { registerDbHandlers } from './db/engine'
 import { registerUsageHandlers } from './usage'
 import { registerAuthHandlers } from './auth'
 import { registerUpdateHandlers } from './update'
@@ -342,6 +343,7 @@ app.whenReady().then(() => {
       appWindow()
   )
   registerNotesHandlers()
+  registerDbHandlers()
   registerNotifyHandlers()
   registerTray(appWindow)
   if (!testInBackground) ensureNotificationCenterRegistration()
