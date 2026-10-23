@@ -114,6 +114,16 @@ export const useDb = create<DbState>((set, get) => {
       set({ connections, loaded: true })
     },
     openSql: (connId, db, sql = '', run = false) => {
+      // Re-running the same canned query (double-clicking a table again) reuses
+      // its tab instead of stacking copies. An edited tab no longer matches.
+      const same = run && sql
+        ? get().tabs.find((t) => t.kind === 'sql' && t.connId === connId && t.db === db && t.sql === sql)
+        : undefined
+      if (same) {
+        commit(get().tabs, same.id)
+        set({ autoRun: same.id })
+        return same.id
+      }
       const conn = get().connections.find((c) => c.id === connId)
       const n = get().tabs.filter((t) => t.kind === 'sql').length + 1
       const tab: SqlTab = {

@@ -238,6 +238,11 @@ export default function DbExplorerPanel(): JSX.Element {
     openObject(row.conn.id, row.db, row.schema, row.obj.name, row.obj.kind)
   }
 
+  // Tables and views open as data (the usual double-click); routines and the
+  // like have no rows, so they open their definition.
+  const selectTop = (row: Extract<Row, { type: 'obj' }>): void =>
+    openConsole(row.conn, row.db, `select * from ${qualified(row.conn, row.schema, row.obj.name)} limit 100;`, true)
+
   const removeConn = async (conn: ConnectionInfo): Promise<void> => {
     if (!window.confirm(t('db.confirmDelete', { name: conn.name }))) return
     await window.api.db.delete(conn.id)
@@ -266,8 +271,7 @@ export default function DbExplorerPanel(): JSX.Element {
       case 'obj': {
         const q = qualified(row.conn, row.schema, row.obj.name)
         const items: MenuItem[] = [{ label: t('db.open'), onClick: () => openObj(row) }]
-        if (isRelation(row.obj.kind))
-          items.push({ label: t('db.select100'), onClick: () => openConsole(row.conn, row.db, `select * from ${q} limit 100;`, true) })
+        if (isRelation(row.obj.kind)) items.push({ label: t('db.select100'), onClick: () => selectTop(row) })
         items.push(
           { label: t('db.copyName'), onClick: () => void navigator.clipboard.writeText(row.obj.name), separator: true },
           { label: t('db.copyQualified'), onClick: () => void navigator.clipboard.writeText(q) }
@@ -286,7 +290,9 @@ export default function DbExplorerPanel(): JSX.Element {
   }
 
   const onRowDouble = (row: Row): void => {
-    if (row.type === 'obj') openObj(row)
+    if (row.type !== 'obj') return
+    if (isRelation(row.obj.kind)) selectTop(row)
+    else openObj(row)
   }
 
   const first = Math.max(0, Math.floor(top / ROW_H) - OVERSCAN)
