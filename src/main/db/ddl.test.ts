@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   alterTableSql,
+  canRename,
   createDatabaseSql,
   createSchemaSql,
   createTableSql,
@@ -8,6 +9,7 @@ import {
   draftFromTable,
   draftProblems,
   dropKindOf,
+  isDdl,
   dropSql,
   emptyColumn,
   emptyConstraint,
@@ -192,6 +194,27 @@ describe('object actions', () => {
       stmts: ['REFRESH MATERIALIZED VIEW CONCURRENTLY public.mv'],
       atomic: false
     })
+  })
+  it('speaks MySQL and SQLite', () => {
+    expect(dropSql('table', 'shop', 'order', { cascade: true, engine: 'mysql' }).stmts).toEqual(['DROP TABLE shop.`order`'])
+    expect(dropSql('procedure', 'shop', 'p', { args: 'int', engine: 'mysql' }).stmts).toEqual(['DROP PROCEDURE shop.p'])
+    expect(dropSql('database', '', 'x', { force: true, engine: 'mysql' })).toEqual({ stmts: ['DROP DATABASE x'], atomic: false, release: 'x' })
+    expect(dropSql('view', 'main', 'v', { cascade: true, engine: 'sqlite' }).stmts).toEqual(['DROP VIEW main.v'])
+    expect(renameSql('table', 'shop', 'a', 'B', undefined, 'mysql').stmts).toEqual(['RENAME TABLE shop.a TO shop.B'])
+    expect(renameSql('table', 'main', 'a', 'b c', undefined, 'sqlite').stmts).toEqual(['ALTER TABLE main.a RENAME TO "b c"'])
+    expect([canRename('view', 'mysql'), canRename('view', 'sqlite'), canRename('database', 'mysql')]).toEqual([true, false, false])
+    expect(truncateSql('shop', 't', { restartIdentity: true, cascade: true, engine: 'mysql' }).stmts).toEqual(['TRUNCATE TABLE shop.t'])
+    expect(truncateSql('main', 't', { engine: 'sqlite' }).stmts).toEqual(['DELETE FROM main.t'])
+    expect(createDatabaseSql('shop', { owner: 'bob', encoding: 'utf8mb4', engine: 'mysql' }).stmts).toEqual(['CREATE DATABASE shop CHARACTER SET utf8mb4'])
+  })
+  it('accepts only DDL, per engine', () => {
+    expect(isDdl('drop table t')).toBe(true)
+    expect(isDdl('rename table a to b')).toBe(false)
+    expect(isDdl('rename table a to b', 'mysql')).toBe(true)
+    expect(isDdl('DELETE FROM main."t x"', 'sqlite')).toBe(true)
+    expect(isDdl('delete from t where 1', 'sqlite')).toBe(false)
+    expect(isDdl('delete from t; select 1', 'sqlite')).toBe(false)
+    expect(isDdl('delete from t', 'postgres')).toBe(false)
   })
   it('previews statements with semicolons', () => {
     expect(planText({ stmts: ['A', 'B'], atomic: true })).toBe('A;\n\nB;')

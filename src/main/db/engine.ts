@@ -1,27 +1,12 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { writeFile } from 'fs/promises'
-import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget, completionMeta } from './meta'
 import type { EditStatement } from './edit'
-import { DDL_VERBS, type DdlPlan } from './ddl'
+import { isDdl, type DdlPlan } from './ddl'
 import { defaultAcls, listRoles, objectPrivileges, rlsInfo, roleGrants } from './privMeta'
 import { indexStats, listLocks, listSessions, listSettings, reloadConf, serverOverview, signalBackend, tableStats } from './monitorMeta'
-import {
-  closeConnection,
-  closeDatabase,
-  pgDdl,
-  hasSession,
-  pgApply,
-  pgCancel,
-  pgExecute,
-  pgQuery,
-  pgRows,
-  pgSessionClose,
-  pgSessionEnd,
-  pgSessionQuery,
-  pgSessionStatus,
-  pgStream,
-  pgTest
-} from './pg'
+import { pgCancel, pgRows } from './pg'
+import { DRIVERS, driverOf } from './drivers'
+import { caps } from './engines'
 import { openExport, XLSX_MAX_ROWS } from './export'
 import type { ExportOptions } from './mask'
 import type { ImportOptions } from './csv'
@@ -37,7 +22,8 @@ import type { ConnectionConfig, PrivTarget, QueryResult } from './types'
 
 // DB engine entry points: the riven_db_* MCP tools (agents) and db:* IPC (panels).
 // Lives in main so an agent can use a data source whether or not a DB panel is
-// open. PostgreSQL only for now; MySQL/Redis plug in behind the same functions.
+// open. Browsing, querying, editing and DDL go through the connection's driver;
+// roles, monitoring, backup and the other tools are PostgreSQL-only.
 
 const AGENT_TIMEOUT_MS = 30_000
 const DDL_TIMEOUT_MS = 10 * 60_000
@@ -46,9 +32,16 @@ const AGENT_MAX_LIMIT = 1000
 const CELL_MAX = 500
 const OUTPUT_MAX = 20_000
 
-function requirePg(cfg: ConnectionConfig): void {
-  if (cfg.kind !== 'postgres') throw new Error(`${cfg.kind} data sources are not supported yet (PostgreSQL only for now)`)
+function requirePg(cfg: ConnectionConfig): ConnectionConfig {
+  if (cfg.kind !== 'postgres') throw new Error(`Not available for ${caps(cfg.kind).label} (PostgreSQL only)`)
+  return cfg
 }
+
+const driver = (cfg: ConnectionConfig) => driverOf(cfg.kind)
+const dbName = (cfg: ConnectionConfig, db?: string): string => db || cfg.database || caps(cfg.kind).defaultDb
+
+// A session lives in exactly one driver; an unknown id answers like an idle one.
+const sessionDriver = (session: string) => DRIVERS.find((d) => d.hasSession(session)) ?? DRIVERS[0]
 
 // ---- text formatting for agents ----------------------------------------------
 
@@ -110,11 +103,11 @@ async function toolConnections(): Promise<string> {
 
 async function toolBrowse(args: Record<string, unknown>): Promise<string> {
   const cfg = resolveConnection(a(args.connection))
-  requirePg(cfg)
+  const d = driver(cfg)
   const db = a(args.database) || undefined
   const schema = a(args.schema)
   if (schema) {
-    const objs = await listObjects(cfg, db, schema)
+    const objs = await d.listObjects(cfg, db, schema)
     if (!objs.length) return `Schema ${schema} has no tables, views or routines (or does not exist).`
     return formatTable(
       ['name', 'kind', 'rows≈ / signature', 'comment'],
@@ -128,25 +121,25 @@ async function toolBrowse(args: Record<string, unknown>): Promise<string> {
   }
   // No schema: the database's schemas, plus (when no database was named) the
   // other databases on the server, so one call orients the agent.
-  const schemas = (await listSchemas(cfg, db)).filter((s) => !s.isSystem).map((s) => s.name)
+  const schemas = (await d.listSchemas(cfg, db)).filter((s) => !s.isSystem).map((s) => s.name)
   const lines = [
-    `Database ${db || cfg.database || 'postgres'} schemas: ${schemas.join(', ') || '(none)'} (system schemas hidden)`
+    `Database ${dbName(cfg, db) || '(default)'} schemas: ${schemas.join(', ') || '(none)'} (system schemas hidden)`
   ]
-  if (!db) lines.push(`Databases on this server: ${(await listDatabases(cfg)).join(', ')}`)
+  if (!db && caps(cfg.kind).databases) lines.push(`Databases on this server: ${(await d.listDatabases(cfg)).join(', ')}`)
   return lines.join('\n')
 }
 
 async function toolDescribe(args: Record<string, unknown>): Promise<string> {
   const cfg = resolveConnection(a(args.connection))
-  requirePg(cfg)
+  const d = driver(cfg)
   const db = a(args.database) || undefined
   const [qs, name] = splitQualified(a(args.table))
   if (!name) return 'error: table is required'
-  const schema = a(args.schema) || qs || (await findSchema(cfg, db, name))
+  const schema = a(args.schema) || qs || (await d.findSchema(cfg, db, name))
   if (!schema) return `error: no table, view or routine named ${name}`
-  if (args.ddl === true) return await objectDdl(cfg, db, schema, name)
-  const t = await tableInfo(cfg, db, schema, name)
-  if (!t) return await objectDdl(cfg, db, schema, name) // a routine: its definition is the description
+  if (args.ddl === true) return await d.objectDdl(cfg, db, schema, name)
+  const t = await d.tableInfo(cfg, db, schema, name)
+  if (!t) return await d.objectDdl(cfg, db, schema, name) // a routine: its definition is the description
   const out = [`${t.kind} ${t.schema}.${t.name}${t.comment ? ` -- ${t.comment}` : ''}`]
   out.push(
     formatTable(
@@ -161,29 +154,28 @@ async function toolDescribe(args: Record<string, unknown>): Promise<string> {
 
 async function toolQuery(args: Record<string, unknown>): Promise<string> {
   const cfg = resolveConnection(a(args.connection))
-  requirePg(cfg)
   const sql = a(args.sql).replace(/;\s*$/, '')
   if (!sql) return 'error: sql is required'
   const bad = readOnlyViolation(sql, cfg.kind, true)
   if (bad) return `refused: ${bad}. riven_db_query is read-only; use riven_db_execute for changes.`
   const n = typeof args.limit === 'number' ? Math.floor(args.limit) : AGENT_DEFAULT_LIMIT
   const limit = Math.min(Math.max(n, 1), AGENT_MAX_LIMIT)
-  const r = await pgQuery(cfg, a(args.database) || undefined, sql, { limit, readOnly: true, timeoutMs: AGENT_TIMEOUT_MS })
+  const r = await driver(cfg).query(cfg, a(args.database) || undefined, sql, { limit, readOnly: true, timeoutMs: AGENT_TIMEOUT_MS })
   return formatResult(r)
 }
 
 async function toolExecute(args: Record<string, unknown>, ask: Ask): Promise<string> {
   const cfg = resolveConnection(a(args.connection))
-  requirePg(cfg)
+  const d = driver(cfg)
   if (cfg.readOnly) return `refused: data source "${cfg.name}" is read-only.`
   const raw = Array.isArray(args.statements) ? args.statements.map(a) : [a(args.statements ?? args.sql)]
   const stmts = raw.flatMap((s) => statements(s, cfg.kind))
   if (!stmts.length) return 'error: statements is required'
-  const db = a(args.database) || cfg.database || 'postgres'
+  const db = dbName(cfg, a(args.database))
   const warnings = stmts.map((s) => unsafeStatement(s, cfg.kind)).filter((w): w is string => !!w)
   const preview = stmts.map((s) => (s.length > 300 ? s.slice(0, 300) + '…' : s)).join(';\n')
   const question =
-    `${cfg.name} / ${db} 에 아래 SQL ${stmts.length}개를 한 트랜잭션으로 실행할까요?\n\n${preview}` +
+    `${cfg.name}${db ? ` / ${db}` : ''} 에 아래 SQL ${stmts.length}개를 한 트랜잭션으로 실행할까요?\n\n${preview}` +
     (warnings.length ? `\n\n주의: ${[...new Set(warnings)].join(', ')}` : '')
   const answer = await ask(question, ['실행', '취소'])
   if (answer !== '실행') {
@@ -191,7 +183,7 @@ async function toolExecute(args: Record<string, unknown>, ask: Ask): Promise<str
       return 'refused: riven_db_execute needs the user to confirm in a riven chat pane. Show the SQL to the user instead.'
     return `not executed: the user did not approve (${answer || 'no answer'}).`
   }
-  const results = await pgExecute(cfg, db, stmts, AGENT_TIMEOUT_MS)
+  const results = await d.execute(cfg, db || undefined, stmts, AGENT_TIMEOUT_MS)
   return 'committed:\n' + results.map((r, i) => `  ${i + 1}. ${r.command}${r.rowCount !== null ? ` ${r.rowCount}` : ''}`).join('\n')
 }
 
@@ -222,30 +214,63 @@ export async function runDbTool(tool: string, args: Record<string, unknown>, ask
 function byId(id: string): ConnectionConfig {
   const c = getConnection(id)
   if (!c) throw new Error('Unknown connection')
-  requirePg(c)
+  driverOf(c.kind)
   return c
 }
+
+const pgById = (id: string): ConnectionConfig => requirePg(byId(id))
+const closeEverywhere = (id: string): Promise<unknown> => Promise.all(DRIVERS.map((d) => d.closeConnection(id)))
+
+/** MySQL can't wrap a result with duplicate column names in a derived table (1060). */
+const duplicateColumns = (err: unknown): boolean => (err as { errno?: number })?.errno === 1060
 
 export function registerDbHandlers(): void {
   ipcMain.handle('db:list', () => listConnections())
   ipcMain.handle('db:save', async (_e, cfg: ConnectionConfig, password?: string | null) => {
     const saved = saveConnection(cfg, password)
-    await closeConnection(saved.id) // config may have changed: reconnect lazily
+    await closeEverywhere(saved.id) // config (even kind) may have changed: reconnect lazily
     return saved
   })
   ipcMain.handle('db:delete', async (_e, id: string) => {
-    await closeConnection(id)
+    await closeEverywhere(id)
     deleteConnection(id)
   })
   ipcMain.handle('db:test', (_e, cfg: ConnectionConfig, password?: string) => {
-    requirePg(cfg)
-    return pgTest(cfg, password)
+    return driverOf(cfg.kind).test(cfg, password)
   })
-  ipcMain.handle('db:databases', (_e, id: string) => listDatabases(byId(id)))
-  ipcMain.handle('db:schemas', (_e, id: string, db?: string) => listSchemas(byId(id), db))
-  ipcMain.handle('db:objects', (_e, id: string, db: string | undefined, schema: string) => listObjects(byId(id), db, schema))
-  ipcMain.handle('db:table', (_e, id: string, db: string | undefined, schema: string, name: string) => tableInfo(byId(id), db, schema, name))
-  ipcMain.handle('db:ddl', (_e, id: string, db: string | undefined, schema: string, name: string) => objectDdl(byId(id), db, schema, name))
+  ipcMain.handle('db:sqlite-pick', async (e) => {
+    if (!app.isPackaged && process.env.RIVEN_DEV_SQLITE_FILE) return process.env.RIVEN_DEV_SQLITE_FILE
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile', 'createDirectory'],
+      filters: [
+        { name: 'SQLite', extensions: ['db', 'sqlite', 'sqlite3', 'db3'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    }
+    const pick = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
+    return pick.canceled || !pick.filePaths[0] ? null : pick.filePaths[0]
+  })
+  ipcMain.handle('db:databases', (_e, id: string) => {
+    const cfg = byId(id)
+    return driver(cfg).listDatabases(cfg)
+  })
+  ipcMain.handle('db:schemas', (_e, id: string, db?: string) => {
+    const cfg = byId(id)
+    return driver(cfg).listSchemas(cfg, db)
+  })
+  ipcMain.handle('db:objects', (_e, id: string, db: string | undefined, schema: string) => {
+    const cfg = byId(id)
+    return driver(cfg).listObjects(cfg, db, schema)
+  })
+  ipcMain.handle('db:table', (_e, id: string, db: string | undefined, schema: string, name: string) => {
+    const cfg = byId(id)
+    return driver(cfg).tableInfo(cfg, db, schema, name)
+  })
+  ipcMain.handle('db:ddl', (_e, id: string, db: string | undefined, schema: string, name: string) => {
+    const cfg = byId(id)
+    return driver(cfg).objectDdl(cfg, db, schema, name)
+  })
   ipcMain.handle(
     'db:query',
     (
@@ -260,6 +285,8 @@ export function registerDbHandlers(): void {
         const bad = readOnlyViolation(sql, cfg.kind, false)
         if (bad) throw new Error(bad)
       }
+      const d = driver(cfg)
+      const original = sql
       // A later page of an earlier result: only plain reads may be re-run.
       if (o?.offset) {
         const paged = pagedQuery(sql, cfg.kind, o.offset)
@@ -269,66 +296,83 @@ export function registerDbHandlers(): void {
       const limit = Math.min(Math.max(o?.limit ?? 1000, 1), 100_000)
       // A manual-commit tab runs on its own connection. Paging and counts join
       // it only while it exists (to see the open transaction's rows).
-      if (o?.session && (!o.aux || hasSession(o.session)))
-        return pgSessionQuery(cfg, db, o.session, sql, { limit, queryId: o.queryId, aux: o.aux })
-      return pgQuery(cfg, db, sql, { limit, queryId: o?.queryId })
+      const session = o?.session && (!o.aux || d.hasSession(o.session)) ? o.session : undefined
+      const run = (text: string, skip?: number): Promise<QueryResult> =>
+        session
+          ? d.sessionQuery(cfg, db, session, text, { limit, queryId: o.queryId, aux: o.aux, skip })
+          : d.query(cfg, db, text, { limit, queryId: o?.queryId, skip })
+      return run(sql).catch((err) => {
+        // Re-read from the start and skip on the client instead.
+        if (!o?.offset || cfg.kind !== 'mysql' || !duplicateColumns(err)) throw err
+        return run(original, o.offset)
+      })
     }
   )
-  ipcMain.handle('db:session-commit', (_e, session: string) => pgSessionEnd(session, 'commit'))
-  ipcMain.handle('db:session-rollback', (_e, session: string) => pgSessionEnd(session, 'rollback'))
-  ipcMain.handle('db:session-status', (_e, session: string) => pgSessionStatus(session))
-  ipcMain.handle('db:session-close', (_e, session: string) => pgSessionClose(session))
-  ipcMain.handle('db:editTarget', (_e, id: string, db: string | undefined, table: number) => editTarget(byId(id), db, table))
+  ipcMain.handle('db:session-commit', (_e, session: string) => sessionDriver(session).sessionEnd(session, 'commit'))
+  ipcMain.handle('db:session-rollback', (_e, session: string) => sessionDriver(session).sessionEnd(session, 'rollback'))
+  ipcMain.handle('db:session-status', (_e, session: string) => sessionDriver(session).sessionStatus(session))
+  ipcMain.handle('db:session-close', (_e, session: string) => sessionDriver(session).sessionClose(session))
+  ipcMain.handle('db:editTarget', (_e, id: string, db: string | undefined, table: number) => {
+    const cfg = byId(id)
+    return driver(cfg).editTarget(cfg, db, table)
+  })
   ipcMain.handle('db:apply', (_e, id: string, db: string | undefined, session: string | undefined, stmts: EditStatement[]) => {
     const cfg = byId(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     if (!Array.isArray(stmts) || !stmts.length) return []
-    return pgApply(cfg, db, session, stmts)
+    return driver(cfg).apply(cfg, db, session, stmts)
   })
   ipcMain.handle('db:ddl-apply', async (_e, id: string, db: string | undefined, plan: DdlPlan) => {
     const cfg = byId(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     const stmts = Array.isArray(plan?.stmts) ? plan.stmts.filter((s) => typeof s === 'string' && s.trim()) : []
     if (!stmts.length) return 0
-    const bad = stmts.find((s) => !DDL_VERBS.test(s.trim()))
+    const bad = stmts.find((s) => !isDdl(s, cfg.kind === 'redis' ? 'postgres' : cfg.kind))
     if (bad) throw new Error(`Not a DDL statement: ${bad.slice(0, 60)}`)
     // Can't drop the database the statement runs on; ours are closed so they don't block it.
     if (plan.release) {
-      if (plan.release === (db || cfg.database || 'postgres')) throw new Error('Run this from another database')
-      await closeDatabase(id, plan.release)
+      if (plan.release === dbName(cfg, db)) throw new Error('Run this from another database')
+      await driver(cfg).closeDatabase(id, plan.release)
     }
     const searchPath = typeof plan.searchPath === 'string' && plan.searchPath ? plan.searchPath : undefined
-    return pgDdl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS, searchPath)
+    return driver(cfg).ddl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS, searchPath)
   })
-  ipcMain.handle('db:roles', (_e, id: string) => listRoles(byId(id)))
-  ipcMain.handle('db:privileges', (_e, id: string, db: string | undefined, target: PrivTarget) => objectPrivileges(byId(id), db, target))
-  ipcMain.handle('db:default-acl', (_e, id: string, db: string | undefined) => defaultAcls(byId(id), db))
-  ipcMain.handle('db:rls', (_e, id: string, db: string | undefined, schema: string, table: string) => rlsInfo(byId(id), db, schema, table))
-  ipcMain.handle('db:completion-meta', (_e, id: string, db: string | undefined) => completionMeta(byId(id), db))
-  ipcMain.handle('db:role-grants', (_e, id: string, db: string | undefined, role: string) => roleGrants(byId(id), db, role))
-  ipcMain.handle('db:mon-overview', (_e, id: string, db: string | undefined) => serverOverview(byId(id), db))
-  ipcMain.handle('db:mon-sessions', (_e, id: string, db: string | undefined) => listSessions(byId(id), db))
-  ipcMain.handle('db:mon-locks', (_e, id: string, db: string | undefined) => listLocks(byId(id), db))
-  ipcMain.handle('db:mon-tables', (_e, id: string, db: string | undefined) => tableStats(byId(id), db))
-  ipcMain.handle('db:mon-indexes', (_e, id: string, db: string | undefined) => indexStats(byId(id), db))
-  ipcMain.handle('db:mon-settings', (_e, id: string, db: string | undefined) => listSettings(byId(id), db))
-  ipcMain.handle('db:mon-signal', (_e, id: string, db: string | undefined, pid: number, terminate: boolean) => {
+  ipcMain.handle('db:roles', (_e, id: string) => listRoles(pgById(id)))
+  ipcMain.handle('db:privileges', (_e, id: string, db: string | undefined, target: PrivTarget) => objectPrivileges(pgById(id), db, target))
+  ipcMain.handle('db:default-acl', (_e, id: string, db: string | undefined) => defaultAcls(pgById(id), db))
+  ipcMain.handle('db:rls', (_e, id: string, db: string | undefined, schema: string, table: string) => rlsInfo(pgById(id), db, schema, table))
+  ipcMain.handle('db:completion-meta', (_e, id: string, db: string | undefined) => {
     const cfg = byId(id)
+    return driver(cfg).completionMeta(cfg, db)
+  })
+  ipcMain.handle('db:role-grants', (_e, id: string, db: string | undefined, role: string) => roleGrants(pgById(id), db, role))
+  ipcMain.handle('db:mon-overview', (_e, id: string, db: string | undefined) => serverOverview(pgById(id), db))
+  ipcMain.handle('db:mon-sessions', (_e, id: string, db: string | undefined) => listSessions(pgById(id), db))
+  ipcMain.handle('db:mon-locks', (_e, id: string, db: string | undefined) => listLocks(pgById(id), db))
+  ipcMain.handle('db:mon-tables', (_e, id: string, db: string | undefined) => tableStats(pgById(id), db))
+  ipcMain.handle('db:mon-indexes', (_e, id: string, db: string | undefined) => indexStats(pgById(id), db))
+  ipcMain.handle('db:mon-settings', (_e, id: string, db: string | undefined) => listSettings(pgById(id), db))
+  ipcMain.handle('db:mon-signal', (_e, id: string, db: string | undefined, pid: number, terminate: boolean) => {
+    const cfg = pgById(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     if (!Number.isInteger(pid) || pid <= 0) throw new Error('Bad pid')
     return signalBackend(cfg, db, pid, terminate === true)
   })
   ipcMain.handle('db:mon-reload', (_e, id: string, db: string | undefined) => {
-    const cfg = byId(id)
+    const cfg = pgById(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     return reloadConf(cfg, db)
   })
-  ipcMain.handle('db:cancel',(_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
-  ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
-    columnDetail(byId(id), db, table, attnum)
-  )
-  ipcMain.handle('db:erd', (_e, id: string, db: string | undefined, schema: string) => erdModel(byId(id), db, schema))
-  ipcMain.handle('db:schema-snapshot', (_e, id: string, db: string | undefined, schema: string) => schemaSnapshot(byId(id), db, schema))
+  ipcMain.handle('db:cancel', (_e, id: string, queryId: string) => {
+    const cfg = byId(id)
+    return driver(cfg).cancel(cfg, queryId)
+  })
+  ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) => {
+    const cfg = byId(id)
+    return driver(cfg).columnDetail(cfg, db, table, attnum)
+  })
+  ipcMain.handle('db:erd', (_e, id: string, db: string | undefined, schema: string) => erdModel(pgById(id), db, schema))
+  ipcMain.handle('db:schema-snapshot', (_e, id: string, db: string | undefined, schema: string) => schemaSnapshot(pgById(id), db, schema))
   // Saves renderer-made text (a diagram, a script) through a save dialog.
   ipcMain.handle('db:save-text', async (e, name: string, ext: string, text: string) => {
     if (typeof text !== 'string' || !SAVE_TEXT[ext]) throw new Error('Unsupported file type')
@@ -355,16 +399,16 @@ export function registerDbHandlers(): void {
     const pick = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
     return pick.canceled || !pick.filePaths[0] ? null : pick.filePaths[0]
   })
-  ipcMain.handle('db:search-tables', (_e, id: string, db: string | undefined, o: SearchOptions) => searchTables(byId(id), db, o))
+  ipcMain.handle('db:search-tables', (_e, id: string, db: string | undefined, o: SearchOptions) => searchTables(pgById(id), db, o))
   ipcMain.handle('db:search-run', (e, id: string, db: string | undefined, o: SearchOptions, searchId: string) =>
-    runSearch(byId(id), db, o, searchId, (p) => {
+    runSearch(pgById(id), db, o, searchId, (p) => {
       if (!e.sender.isDestroyed()) e.sender.send('db:search-progress', searchId, p)
     })
   )
   ipcMain.handle('db:search-cancel', (_e, searchId: string) => cancelSearch(searchId))
   ipcMain.handle('db:import-preview', (_e, path: string, encoding: string, delimiter?: string) => previewCsv(path, encoding, delimiter))
   ipcMain.handle('db:import-run', (e, id: string, db: string | undefined, o: ImportOptions, queryId?: string) => {
-    const cfg = byId(id)
+    const cfg = pgById(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     let last = 0
     return runImport(cfg, db, o, queryId, (rows, bytes, size) => {
@@ -376,7 +420,7 @@ export function registerDbHandlers(): void {
   })
   ipcMain.handle('db:import-cancel', (_e, id: string, queryId: string) => {
     cancelImport(queryId)
-    return pgCancel(byId(id), queryId)
+    return pgCancel(pgById(id), queryId)
   })
   // Backup and restore through pg_dump / pg_restore / psql.
   const toolAt = async (dir: string | undefined, extra?: string): Promise<ToolInfo> => {
@@ -390,11 +434,11 @@ export function registerDbHandlers(): void {
   }
   ipcMain.handle('db:backup-tools', (_e, extra?: string, refresh?: boolean) => findTools(extra || undefined, refresh === true))
   ipcMain.handle('db:backup-server', async (_e, id: string, db: string | undefined) => {
-    const r = await pgRows(byId(id), db, 'show server_version_num')
+    const r = await pgRows(pgById(id), db, 'show server_version_num')
     return serverMajor(Number(r[0]?.[0]))
   })
   ipcMain.handle('db:backup-run', async (e, id: string, db: string | undefined, toolDir: string | undefined, extra: string | undefined, name: string, o: BackupOptions, jobId: string) => {
-    const cfg = byId(id)
+    const cfg = pgById(id)
     const tool = await toolAt(toolDir, extra)
     let file: string | null = null
     if (!app.isPackaged && process.env.RIVEN_DEV_SAVE_FILE) file = process.env.RIVEN_DEV_SAVE_FILE
@@ -434,7 +478,7 @@ export function registerDbHandlers(): void {
     return inspectArchive(path, tool)
   })
   ipcMain.handle('db:restore-run', async (e, id: string, db: string | undefined, toolDir: string | undefined, extra: string | undefined, o: RestoreOptions, jobId: string) => {
-    const cfg = byId(id)
+    const cfg = pgById(id)
     if (cfg.readOnly) throw new Error('This connection is read-only')
     const tool = await toolAt(toolDir, extra)
     const ver = await pgRows(cfg, db, 'show server_version_num')
@@ -469,7 +513,7 @@ export function registerDbHandlers(): void {
     }
     try {
       if (sql) {
-        await pgStream(cfg, db, sql, { queryId: req.queryId, max: Math.min(req.max ?? cap, cap) }, async (rows) => {
+        await driver(cfg).stream(cfg, db, sql, { queryId: req.queryId, max: Math.min(req.max ?? cap, cap) }, async (rows) => {
           await w.rows(rows)
           n += rows.length
           progress()

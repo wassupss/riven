@@ -103,7 +103,12 @@ describe('pagedQuery', () => {
       'show all'
     ])
       expect(pagedQuery(q, 'postgres', 10)).toBeNull()
-    expect(pagedQuery('select 1', 'mysql', 10)).toBeNull()
+    expect(pagedQuery('select 1', 'redis', 10)).toBeNull()
+  })
+
+  it('mysql and sqlite need a limit before the offset', () => {
+    expect(pagedQuery('select 1', 'mysql', 10)).toBe('select * from (\nselect 1\n) as riven_page limit 18446744073709551615 offset 10')
+    expect(pagedQuery('select 1', 'sqlite', 10)).toBe('select * from (\nselect 1\n) as riven_page limit -1 offset 10')
   })
 })
 
@@ -130,5 +135,11 @@ describe('viewQuery', () => {
     expect(pagedQuery(v, 'postgres', 10)).not.toBeNull()
     expect(countQuery(v, 'postgres')).toMatch(/^select count\(\*\) from \(\n/)
     expect(countQuery('show all', 'postgres')).toBeNull()
+  })
+
+  it('filters in each dialect', () => {
+    const f = { filters: [{ col: 'a', op: 'ne' as const, value: '1' }, { col: 'b', op: 'like' as const, value: "x'" }] }
+    expect(viewQuery('select * from t', 'mysql', f)).toBe("select * from (\nselect * from t\n) as riven_view where not (a <=> '1') and b like '%x''%'")
+    expect(viewQuery('select * from t', 'sqlite', f)).toBe("select * from (\nselect * from t\n) as riven_view where a is not '1' and b like '%x''%' escape '\\'")
   })
 })

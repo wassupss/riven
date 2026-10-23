@@ -11,7 +11,7 @@ import type { ConnectionConfig, QueryColumn, QueryResult, TxStatus } from './typ
 // their own so an unused pool holds no sockets. Reads go through a cursor and
 // stop at limit+1 rows, so `select * from big_table` never lands in memory.
 
-type Cell = string | number | boolean | null
+export type Cell = string | number | boolean | null
 
 // Only types that map losslessly to JS stay parsed; everything else (int8,
 // numeric, dates, json, arrays, bytea) comes back as the server's text.
@@ -50,7 +50,7 @@ const running = new Map<string, { connKey: string; pid: number }>()
 
 const expand = (p: string): string => (p.startsWith('~') ? homedir() + p.slice(1) : p)
 
-function sslOption(cfg: ConnectionConfig): pg.PoolConfig['ssl'] {
+export function sslOption(cfg: ConnectionConfig): pg.PoolConfig['ssl'] {
   const s = cfg.ssl
   if (!s || s.mode === 'disable') return undefined
   const files = {

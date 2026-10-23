@@ -93,3 +93,37 @@ describe('editCount and previewSql', () => {
     )
   })
 })
+
+describe('buildEdits for MySQL and SQLite', () => {
+  const p = edits({ updates: { 1: { 1: 'b', 0: 9 } }, deletes: [0], inserts: [{ 1: 'new' }, {}] })
+  it('MySQL uses ? and reads rows back by the new key', () => {
+    const plan = buildEdits({ ...target, schema: 'shop' }, columns, rows, p, 'mysql')
+    expect(plan.stmts.map((s) => s.text)).toEqual([
+      'DELETE FROM shop.users WHERE id = ?',
+      'UPDATE shop.users SET id = ?, name = ? WHERE id = ?',
+      'INSERT INTO shop.users (name) VALUES (?)',
+      'INSERT INTO shop.users () VALUES ()'
+    ])
+    expect(plan.stmts[0].fetch).toBeUndefined()
+    expect(plan.stmts[1].fetch).toEqual({ text: 'SELECT id, name, `full` FROM shop.users WHERE id = ?', values: ['9'] })
+    expect(plan.stmts[2].fetch).toEqual({ text: 'SELECT id, name, `full` FROM shop.users WHERE id = ?', values: [], insertId: true })
+  })
+  it('MySQL inserts with the key given read back by it', () => {
+    const plan = buildEdits(target, columns, rows, edits({ inserts: [{ 0: 7, 1: 'x' }] }), 'mysql')
+    expect(plan.stmts[0].fetch?.values).toEqual(['7'])
+  })
+  it('SQLite keeps RETURNING with ? placeholders', () => {
+    const plan = buildEdits({ ...target, schema: 'main' }, columns, rows, p, 'sqlite')
+    expect(plan.stmts.map((s) => s.text)).toEqual([
+      'DELETE FROM main.users WHERE id = ?',
+      'UPDATE main.users SET id = ?, name = ? WHERE id = ? RETURNING id, name, "full"',
+      'INSERT INTO main.users (name) VALUES (?) RETURNING id, name, "full"',
+      'INSERT INTO main.users DEFAULT VALUES RETURNING id, name, "full"'
+    ])
+  })
+  it('previews ? placeholders, skipping quoted text', () => {
+    expect(previewSql([{ text: "UPDATE `a?` SET b = ?, c = '?' WHERE d = ?", values: ["o'k", null] }], 'mysql')).toBe(
+      "UPDATE `a?` SET b = 'o''k', c = '?' WHERE d = NULL;"
+    )
+  })
+})

@@ -1,3 +1,4 @@
+import { caps } from '../../../../../main/db/engines'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { KeyRound } from 'lucide-react'
@@ -91,7 +92,7 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub])
 
-  const privKind = conn?.kind === 'postgres' ? privKindOf(tab.objKind) : null
+  const privKind = conn && caps(conn.kind).roles ? privKindOf(tab.objKind) : null
   const isTable = tab.objKind === 'table' || tab.objKind === 'partitioned'
   const subs: Array<{ value: Sub; label: string }> = [
     ...(relation

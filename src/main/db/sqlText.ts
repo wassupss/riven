@@ -7,7 +7,7 @@
 // comments and treats `\` as an escape inside E'...'. A mismatch here is how a
 // "single SELECT" smuggles a second statement past the guard.
 
-export type DbKind = 'postgres' | 'mysql' | 'redis'
+export type DbKind = 'postgres' | 'mysql' | 'sqlite' | 'redis'
 
 const isSpace = (c: string): boolean => c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v'
 const isCtl = (c: string): boolean => c.length > 0 && c.charCodeAt(0) < 0x20
@@ -281,14 +281,14 @@ const NOT_PAGEABLE = new Set(['insert', 'update', 'delete', 'merge', 'into', 'fo
  * order next time; the console accepts that, as every LIMIT/OFFSET pager does.
  */
 export function pagedQuery(sql: string, kind: DbKind, offset: number): string | null {
-  if (kind !== 'postgres' || splitStatements(sql, kind).length !== 1) return null
+  if (kind === 'redis' || splitStatements(sql, kind).length !== 1) return null
   const sc = scan(sql, kind)
   if (sc.execComment) return null
   const words = sc.toks.filter((t) => t.word).map((t) => t.text)
   if (!['select', 'with', 'values', 'table'].includes(words[0] ?? '')) return null
   if (words.some((w) => NOT_PAGEABLE.has(w) || SIDE_EFFECT_FUNCS.has(w))) return null
   // Newlines, so a trailing `-- comment` can't swallow the closing paren.
-  return `select * from (\n${body(sql)}\n) as riven_page offset ${Math.max(0, Math.floor(offset))}`
+  return `select * from (\n${body(sql)}\n) as riven_page ${OFFSET[kind](Math.max(0, Math.floor(offset)))}`
 }
 
 /** A column filter of a result view (the column by name; values as text). */
@@ -307,13 +307,23 @@ export interface ResultView {
 
 const body = (sql: string): string => sql.trim().replace(/;\s*$/, '')
 
-// Postgres only, like pagedQuery (which gates every view).
-const FILTER_SQL: Record<ViewFilter['op'], (col: string, v: string) => string> = {
-  eq: (c, v) => `${c} = ${v}`,
-  ne: (c, v) => `${c} is distinct from ${v}`,
-  null: (c) => `${c} is null`,
-  notnull: (c) => `${c} is not null`,
-  like: (c, v) => `${c}::text ilike ${v}`
+// MySQL and SQLite have no bare OFFSET: a LIMIT of "everything" goes first.
+const OFFSET: Record<Exclude<DbKind, 'redis'>, (n: number) => string> = {
+  postgres: (n) => `offset ${n}`,
+  mysql: (n) => `limit 18446744073709551615 offset ${n}`,
+  sqlite: (n) => `limit -1 offset ${n}`
+}
+
+type FilterSql = Record<ViewFilter['op'], (col: string, v: string) => string>
+
+const FILTER_BASE = { eq: (c: string, v: string) => `${c} = ${v}`, null: (c: string) => `${c} is null`, notnull: (c: string) => `${c} is not null` }
+
+// The like pattern escapes with a backslash (MySQL's default; SQLite needs it said).
+// MySQL and SQLite compare case-insensitively under their default collations.
+const FILTER_SQL: Record<Exclude<DbKind, 'redis'>, FilterSql> = {
+  postgres: { ...FILTER_BASE, ne: (c, v) => `${c} is distinct from ${v}`, like: (c, v) => `${c}::text ilike ${v}` },
+  mysql: { ...FILTER_BASE, ne: (c, v) => `not (${c} <=> ${v})`, like: (c, v) => `${c} like ${v}` },
+  sqlite: { ...FILTER_BASE, ne: (c, v) => `${c} is not ${v}`, like: (c, v) => `${c} like ${v} escape '\\'` }
 }
 
 /**
@@ -328,7 +338,7 @@ export function viewQuery(sql: string, kind: DbKind, view: ResultView): string |
   if (!view.filters.length && !view.sort) return body(sql)
   const where = view.filters.map((f) => {
     const v = f.op === 'like' ? literal(kind, `%${(f.value ?? '').replace(/[\\%_]/g, '\\$&')}%`) : literal(kind, f.value ?? null)
-    return FILTER_SQL[f.op](quoteIdent(kind, f.col), v)
+    return FILTER_SQL[kind as Exclude<DbKind, 'redis'>][f.op](quoteIdent(kind, f.col), v)
   })
   return (
     `select * from (\n${body(sql)}\n) as riven_view` +

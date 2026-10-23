@@ -1,3 +1,4 @@
+import { caps } from '../../../../../main/db/engines'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Download, Plus, X } from 'lucide-react'
 import type { DbKind, QueryColumn, QueryResult } from '../../../../../main/db/types'
@@ -175,7 +176,7 @@ export default function ResultPane({
     const oids = new Set(res.columns.filter((c) => c.table !== undefined).map((c) => c.table!))
     return oids.size === 1 ? [...oids][0] : oids.size > 1 ? -1 : undefined
   }, [res.columns])
-  const canEditKind = !!editable && kind === 'postgres'
+  const canEditKind = !!editable && caps(kind).edit
   const [target, setTarget] = useState<EditTarget | null | undefined>(undefined)
   useEffect(() => {
     setTarget(undefined)
@@ -265,8 +266,8 @@ export default function ResultPane({
   }
 
   const plan = useMemo(
-    () => (target && mapping && nEdits ? buildEdits(target, res.columns, res.rows, pending) : null),
-    [target, mapping, nEdits, res.columns, res.rows, pending]
+    () => (target && mapping && nEdits ? buildEdits(target, res.columns, res.rows, pending, kind) : null),
+    [target, mapping, nEdits, res.columns, res.rows, pending, kind]
   )
 
   const apply = async (): Promise<void> => {
@@ -411,7 +412,7 @@ export default function ResultPane({
       </div>
       {(nEdits > 0 || applyError) && (
         <div className="dbx-edits">
-          {showSql && plan && <pre className="dbx-edits-sql">{previewSql(plan.stmts)}</pre>}
+          {showSql && plan && <pre className="dbx-edits-sql">{previewSql(plan.stmts, kind)}</pre>}
           <div className="dbx-edits-bar">
             {nEdits > 0 && <span className="dbx-edits-n">{t('db.ed.pending', { n: nEdits })}</span>}
             {applyError && (

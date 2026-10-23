@@ -554,6 +554,8 @@ const api = {
       ipcRenderer.invoke('db:save', cfg, password),
     delete: (id: string): Promise<void> => ipcRenderer.invoke('db:delete', id),
     test: (cfg: ConnectionConfig, password?: string): Promise<string> => ipcRenderer.invoke('db:test', cfg, password),
+    // A SQLite file (a new path is created on first connect).
+    pickSqlite: (): Promise<string | null> => ipcRenderer.invoke('db:sqlite-pick'),
     databases: (id: string): Promise<string[]> => ipcRenderer.invoke('db:databases', id),
     schemas: (id: string, db?: string): Promise<SchemaInfo[]> => ipcRenderer.invoke('db:schemas', id, db),
     objects: (id: string, db: string | undefined, schema: string): Promise<DbObject[]> =>

@@ -19,7 +19,9 @@ import {
 import '../../styles/db-panel.css'
 import type { ConnectionInfo, DbObject, ObjectKind, SchemaInfo } from '../../../../main/db/types'
 import { quoteIdent } from '../../../../main/db/sqlText'
+import { caps } from '../../../../main/db/engines'
 import {
+  canRename,
   createDatabaseSql,
   createSchemaSql,
   createViewSql,
@@ -28,7 +30,8 @@ import {
   refreshMatviewSql,
   renameSql,
   truncateSql,
-  type DropKind
+  type DropKind,
+  type SqlEngine
 } from '../../../../main/db/ddl'
 import { useDb } from '../../state/db'
 import { useT } from '../../i18n'
@@ -41,7 +44,8 @@ import BackupDialog from './db/BackupDialog'
 
 // =============================================================================
 // DbExplorerPanel: the data source tree. connection > database > schema >
-// kind group > object, each level fetched on first expand. Opening an object or
+// kind group > object, each level fetched on first expand. A level the engine
+// lacks (SQLite's database, MySQL's schema) folds into its parent. Opening an object or
 // a console hands off to the SQL console panel (shared state in state/db.ts).
 // =============================================================================
 
@@ -74,13 +78,17 @@ const isRelation = (k: ObjectKind): boolean => k === 'table' || k === 'partition
 
 type Load<T> = { loading: boolean; error?: string; data?: T }
 
-type Row =
-  | { key: string; depth: 0; type: 'conn'; conn: ConnectionInfo }
-  | { key: string; depth: 1; type: 'db'; conn: ConnectionInfo; db: string }
-  | { key: string; depth: 2; type: 'schema'; conn: ConnectionInfo; db: string; schema: string }
-  | { key: string; depth: 3; type: 'group'; conn: ConnectionInfo; db: string; schema: string; group: Group; count: number }
-  | { key: string; depth: 4; type: 'obj'; conn: ConnectionInfo; db: string; schema: string; obj: DbObject }
-  | { key: string; depth: number; type: 'status'; text: string; error?: boolean }
+/** `hidden`: a folded level, loaded as if open but not drawn. */
+type Row = (
+  | { type: 'conn'; conn: ConnectionInfo }
+  | { type: 'db'; conn: ConnectionInfo; db: string }
+  | { type: 'schema'; conn: ConnectionInfo; db: string; schema: string }
+  | { type: 'group'; conn: ConnectionInfo; db: string; schema: string; group: Group; count: number }
+  | { type: 'obj'; conn: ConnectionInfo; db: string; schema: string; obj: DbObject }
+  | { type: 'status'; text: string; error?: boolean }
+) & { key: string; depth: number; hidden?: boolean }
+
+const engineOf = (c: ConnectionInfo): SqlEngine => (c.kind === 'redis' ? 'postgres' : c.kind)
 
 const LS_SYS = 'db.explorer.showSystem'
 
@@ -200,7 +208,7 @@ export default function DbExplorerPanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changed?.seq])
 
-  const rows = useMemo(() => {
+  const allRows = useMemo(() => {
     const out: Row[] = []
     const q = filter.trim().toLowerCase()
     const status = (key: string, depth: number, l: Load<unknown> | undefined): boolean => {
@@ -218,37 +226,44 @@ export default function DbExplorerPanel(): JSX.Element {
       const ck = keys.conn(conn.id)
       out.push({ key: ck, depth: 0, type: 'conn', conn })
       if (!expanded.has(ck)) continue
+      const cp = caps(conn.kind)
       const dbl = cache.get(ck) as Load<string[]> | undefined
       if (status(ck, 1, dbl)) continue
       // The configured database first; the rest alphabetically after it.
       const dbs = [...(dbl!.data ?? [])].sort((a, b) =>
         a === conn.database ? -1 : b === conn.database ? 1 : a.localeCompare(b)
       )
+      const dbHidden = !cp.databases && dbs.length === 1
+      const dd = dbHidden ? 0 : 1
       for (const db of dbs) {
         const dk = keys.db(conn.id, db)
-        out.push({ key: dk, depth: 1, type: 'db', conn, db })
-        if (!expanded.has(dk)) continue
+        out.push({ key: dk, depth: dd, type: 'db', conn, db, hidden: dbHidden })
+        if (!dbHidden && !expanded.has(dk)) continue
         const sl = cache.get(dk) as Load<SchemaInfo[]> | undefined
-        if (status(dk, 2, sl)) continue
-        for (const s of sl!.data ?? []) {
-          if (s.isSystem && !showSystem) continue
+        if (status(dk, dd + 1, sl)) continue
+        const schemas = (sl!.data ?? []).filter((s) => !s.isSystem || showSystem || !cp.schemas)
+        // MySQL's schema is its database; SQLite shows `main` alone unless something is attached.
+        const sHidden = !cp.schemas && schemas.length === 1
+        const sd = sHidden ? dd : dd + 1
+        for (const s of schemas) {
           const sk = keys.schema(conn.id, db, s.name)
-          out.push({ key: sk, depth: 2, type: 'schema', conn, db, schema: s.name })
-          if (!expanded.has(sk)) continue
+          out.push({ key: sk, depth: sd, type: 'schema', conn, db, schema: s.name, hidden: sHidden })
+          if (!sHidden && !expanded.has(sk)) continue
           const ol = cache.get(sk) as Load<DbObject[]> | undefined
-          if (status(sk, 3, ol)) continue
+          if (status(sk, sd + 1, ol)) continue
           const objs = q ? (ol!.data ?? []).filter((o) => o.name.toLowerCase().includes(q)) : ol!.data ?? []
           for (const g of GROUPS) {
             const items = objs.filter((o) => g.kinds.includes(o.kind))
             if (!items.length) continue
             const gk = keys.group(conn.id, db, s.name, g.id)
-            out.push({ key: gk, depth: 3, type: 'group', conn, db, schema: s.name, group: g.id, count: items.length })
+            out.push({ key: gk, depth: sd + 1, type: 'group', conn, db, schema: s.name, group: g.id, count: items.length })
             // Tables start open: that's what people come for. A filter opens all.
             const open = q ? !expanded.has(`${gk}!`) : expanded.has(gk) !== (g.id === 'tables')
             if (!open) continue
-            for (const obj of items) out.push({ key: `o:${gk}\u0000${obj.name}\u0000${obj.args ?? ''}`, depth: 4, type: 'obj', conn, db, schema: s.name, obj })
+            for (const obj of items)
+              out.push({ key: `o:${gk}\u0000${obj.name}\u0000${obj.args ?? ''}`, depth: sd + 2, type: 'obj', conn, db, schema: s.name, obj })
           }
-          if (!objs.length) out.push({ key: `${sk}#0`, depth: 3, type: 'status', text: q ? t('db.noMatch') : t('db.empty') })
+          if (!objs.length) out.push({ key: `${sk}#0`, depth: sd + 1, type: 'status', text: q ? t('db.noMatch') : t('db.empty') })
         }
       }
     }
@@ -256,12 +271,23 @@ export default function DbExplorerPanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connections, expanded, cache, filter, showSystem, t])
 
-  // An open node whose list was dropped (a parent refreshed) fetches it again.
+  // An open node whose list was dropped (a parent refreshed) fetches it again;
+  // a folded level is always open.
   useEffect(() => {
-    for (const r of rows)
-      if (r.type !== 'status' && r.type !== 'group' && r.type !== 'obj' && expanded.has(r.key) && !cache.has(r.key))
+    for (const r of allRows)
+      if (r.type !== 'status' && r.type !== 'group' && r.type !== 'obj' && (r.hidden || expanded.has(r.key)) && !cache.has(r.key))
         loadChildren(r)
-  }, [rows, expanded, cache, loadChildren])
+  }, [allRows, expanded, cache, loadChildren])
+
+  const rows = useMemo(() => allRows.filter((r) => !r.hidden), [allRows])
+
+  // The folded rows a drawn row stands for (their menus join its own).
+  const foldedUnder = (row: Row): Row[] => {
+    if (row.type !== 'conn' && row.type !== 'db') return []
+    const out: Row[] = []
+    for (let i = allRows.indexOf(row) + 1; i < allRows.length && allRows[i].hidden; i++) out.push(allRows[i])
+    return out
+  }
 
   const groupOpen = (row: Extract<Row, { type: 'group' }>): boolean =>
     filter.trim() ? !expanded.has(`${row.key}!`) : expanded.has(row.key) !== (row.group === 'tables')
@@ -305,21 +331,40 @@ export default function DbExplorerPanel(): JSX.Element {
   const str = (v: Record<string, FieldValue>, k: string): string => String(v[k] ?? '').trim()
   // Dropping or renaming a database has to run while connected to another one.
   const otherDb = (conn: ConnectionInfo, target: string): string =>
-    conn.database && conn.database !== target ? conn.database : target !== 'postgres' ? 'postgres' : 'template1'
+    conn.database && conn.database !== target
+      ? conn.database
+      : conn.kind === 'mysql'
+        ? 'information_schema'
+        : target !== 'postgres'
+          ? 'postgres'
+          : 'template1'
 
   const newDatabase = (conn: ConnectionInfo): void =>
     setDdl({
       title: t('db.d.newDatabase'),
       connId: conn.id,
       db: conn.database,
-      fields: [
-        { key: 'name', label: t('db.c.name'), kind: 'text' },
-        { key: 'owner', label: t('db.d.owner'), kind: 'text', hint: t('db.d.optional') },
-        { key: 'template', label: t('db.d.template'), kind: 'text', placeholder: 'template1', hint: t('db.d.optional') },
-        { key: 'encoding', label: t('db.d.encoding'), kind: 'text', placeholder: 'UTF8', hint: t('db.d.optional') }
-      ],
+      fields:
+        conn.kind === 'mysql'
+          ? [
+              { key: 'name', label: t('db.c.name'), kind: 'text' },
+              { key: 'encoding', label: t('db.d.charset'), kind: 'text', placeholder: 'utf8mb4', hint: t('db.d.optional') }
+            ]
+          : [
+              { key: 'name', label: t('db.c.name'), kind: 'text' },
+              { key: 'owner', label: t('db.d.owner'), kind: 'text', hint: t('db.d.optional') },
+              { key: 'template', label: t('db.d.template'), kind: 'text', placeholder: 'template1', hint: t('db.d.optional') },
+              { key: 'encoding', label: t('db.d.encoding'), kind: 'text', placeholder: 'UTF8', hint: t('db.d.optional') }
+            ],
       build: (v) =>
-        str(v, 'name') ? createDatabaseSql(str(v, 'name'), { owner: str(v, 'owner'), template: str(v, 'template'), encoding: str(v, 'encoding') }) : null,
+        str(v, 'name')
+          ? createDatabaseSql(str(v, 'name'), {
+              owner: str(v, 'owner'),
+              template: str(v, 'template'),
+              encoding: str(v, 'encoding'),
+              engine: engineOf(conn)
+            })
+          : null,
       onDone: () => invalidate({ connId: conn.id })
     })
 
@@ -357,7 +402,7 @@ export default function DbExplorerPanel(): JSX.Element {
       db: kind === 'database' ? otherDb(conn, name) : db,
       fields: [{ key: 'to', label: t('db.d.newName'), kind: 'text' }],
       initial: { to: name },
-      build: (v) => (str(v, 'to') && str(v, 'to') !== name ? renameSql(kind, schema, name, str(v, 'to'), args) : null),
+      build: (v) => (str(v, 'to') && str(v, 'to') !== name ? renameSql(kind, schema, name, str(v, 'to'), args, engineOf(conn)) : null),
       onDone: (v) =>
         kind === 'database' || kind === 'schema'
           ? gone(conn, db, kind === 'schema' ? name : undefined)
@@ -375,11 +420,14 @@ export default function DbExplorerPanel(): JSX.Element {
       title: t('db.d.dropTitle', { name }),
       connId: conn.id,
       db: kind === 'database' ? otherDb(conn, name) : db,
+      // FORCE and CASCADE are PostgreSQL's.
       fields:
-        kind === 'database'
-          ? [{ key: 'force', label: 'FORCE', kind: 'switch', hint: t('db.d.forceHint') }]
-          : [{ key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.cascadeHint') }],
-      build: (v) => dropSql(kind, schema, name, { cascade: !!v.cascade, force: !!v.force, args }),
+        conn.kind !== 'postgres'
+          ? []
+          : kind === 'database'
+            ? [{ key: 'force', label: 'FORCE', kind: 'switch', hint: t('db.d.forceHint') }]
+            : [{ key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.cascadeHint') }],
+      build: (v) => dropSql(kind, schema, name, { cascade: !!v.cascade, force: !!v.force, args, engine: engineOf(conn) }),
       confirm: name,
       danger: true,
       applyLabel: t('db.d.drop'),
@@ -394,11 +442,14 @@ export default function DbExplorerPanel(): JSX.Element {
       title: t('db.d.truncateTitle', { name }),
       connId: conn.id,
       db,
-      fields: [
-        { key: 'restart', label: 'RESTART IDENTITY', kind: 'switch', hint: t('db.d.restartHint') },
-        { key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.truncCascadeHint') }
-      ],
-      build: (v) => truncateSql(schema, name, { restartIdentity: !!v.restart, cascade: !!v.cascade }),
+      fields:
+        conn.kind === 'postgres'
+          ? [
+              { key: 'restart', label: 'RESTART IDENTITY', kind: 'switch', hint: t('db.d.restartHint') },
+              { key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.truncCascadeHint') }
+            ]
+          : [],
+      build: (v) => truncateSql(schema, name, { restartIdentity: !!v.restart, cascade: !!v.cascade, engine: engineOf(conn) }),
       confirm: name,
       danger: true,
       applyLabel: t('db.d.truncate'),
@@ -425,11 +476,11 @@ export default function DbExplorerPanel(): JSX.Element {
   }
 
   const createItems = (conn: ConnectionInfo, db: string, schema: string, only?: Group): MenuItem[] => {
-    const all: Array<[Group, MenuItem]> = [
-      ['tables', { label: t('db.d.newTable'), onClick: () => openDesign(conn.id, db, schema) }],
-      ['views', { label: t('db.d.newView'), onClick: () => newView(conn, db, schema, false) }],
-      ['matviews', { label: t('db.d.newMatview'), onClick: () => newView(conn, db, schema, true) }]
-    ]
+    const cp = caps(conn.kind)
+    const all: Array<[Group, MenuItem]> = []
+    if (cp.designer) all.push(['tables', { label: t('db.d.newTable'), onClick: () => openDesign(conn.id, db, schema) }])
+    if (cp.createView) all.push(['views', { label: t('db.d.newView'), onClick: () => newView(conn, db, schema, false) }])
+    if (conn.kind === 'postgres') all.push(['matviews', { label: t('db.d.newMatview'), onClick: () => newView(conn, db, schema, true) }])
     return all.filter(([g]) => !only || g === only).map(([, m]) => m)
   }
 
@@ -444,68 +495,89 @@ export default function DbExplorerPanel(): JSX.Element {
         : [m]
     )
 
-  const menuFor = (row: Row): MenuItem[] => {
-    const rw = row.type !== 'status' && !row.conn.readOnly
-    const pg = row.type !== 'status' && row.conn.kind === 'postgres'
+  // A drawn row's own menu, then the actions of the levels folded under it.
+  const menuFor = (row: Row): MenuItem[] => [...itemsFor(row, false), ...foldedUnder(row).flatMap((r) => itemsFor(r, true))]
+
+  // `inner`: a folded level, whose console and refresh its parent already offers.
+  const itemsFor = (row: Row, inner: boolean): MenuItem[] => {
+    if (row.type === 'status') return []
+    const rw = !row.conn.readOnly
+    const cp = caps(row.conn.kind)
+    const head = (console: () => void): MenuItem[] =>
+      inner
+        ? []
+        : [
+            { label: t('db.newConsole'), onClick: console },
+            { label: t('db.refresh'), onClick: () => refresh(row) }
+          ]
     switch (row.type) {
       case 'conn':
         return [
-          { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.conn.database) },
-          { label: t('db.refresh'), onClick: () => refresh(row) },
-          ...(rw ? withSep([{ label: t('db.d.newDatabase'), onClick: () => newDatabase(row.conn) }]) : []),
-          ...(pg
-            ? withSep([
-                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.conn.database) },
-                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.conn.database) }
-              ])
-            : []),
+          ...head(() => openConsole(row.conn, row.conn.database)),
+          ...(rw && cp.createDatabase ? withSep([{ label: t('db.d.newDatabase'), onClick: () => newDatabase(row.conn) }]) : []),
+          ...withSep([
+            ...(cp.roles ? [{ label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.conn.database) }] : []),
+            ...(cp.monitor ? [{ label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.conn.database) }] : [])
+          ]),
           { label: t('db.editConnection'), onClick: () => setForm({ initial: row.conn }), separator: true },
           { label: t('db.deleteConnection'), onClick: () => void removeConn(row.conn), danger: true }
         ]
       case 'db':
         return [
-          { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.db) },
-          { label: t('db.refresh'), onClick: () => refresh(row) },
-          ...(pg
-            ? withSep([
-                { label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db) },
-                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db), separator: true },
-                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) },
-                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) },
-                { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup' }), separator: true },
-                ...(rw ? [{ label: t('db.bk.menuRestore'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'restore' }) }] : [])
-              ])
-            : []),
+          ...head(() => openConsole(row.conn, row.db)),
+          ...withSep([
+            ...(cp.search ? [{ label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db) }] : []),
+            ...(cp.roles
+              ? [
+                  { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db), separator: true },
+                  { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) }
+                ]
+              : []),
+            ...(cp.monitor ? [{ label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) }] : []),
+            ...(cp.backup
+              ? [
+                  { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup' }), separator: true },
+                  ...(rw ? [{ label: t('db.bk.menuRestore'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'restore' }) }] : [])
+                ]
+              : [])
+          ]),
           ...(rw
             ? withSep([
-                { label: t('db.d.newSchema'), onClick: () => newSchema(row.conn, row.db) },
-                { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'database', row.db, '', row.db), separator: true },
-                { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'database', row.db, '', row.db), danger: true }
+                ...(cp.createSchema ? [{ label: t('db.d.newSchema'), onClick: () => newSchema(row.conn, row.db) }] : []),
+                ...(cp.databases && cp.rename && canRename('database', engineOf(row.conn))
+                  ? [{ label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'database', row.db, '', row.db), separator: true }]
+                  : []),
+                ...(cp.databases && cp.drop
+                  ? [{ label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'database', row.db, '', row.db), danger: true }]
+                  : [])
               ])
             : [])
         ]
       case 'schema':
         return [
-          {
-            label: t('db.newConsole'),
-            onClick: () => openConsole(row.conn, row.db, `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n`)
-          },
-          { label: t('db.refresh'), onClick: () => refresh(row) },
-          ...(pg
-            ? withSep([
-                { label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) },
-                { label: t('db.diff.open'), onClick: () => openDiff(row.conn.id, row.db, row.schema) },
-                { label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db, row.schema) },
-                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) },
-                { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup', schema: row.schema }) }
-              ])
-            : []),
+          ...head(() =>
+            openConsole(row.conn, row.db, cp.schemas ? `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n` : '')
+          ),
+          ...withSep([
+            ...(cp.erd ? [{ label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) }] : []),
+            ...(cp.diff ? [{ label: t('db.diff.open'), onClick: () => openDiff(row.conn.id, row.db, row.schema) }] : []),
+            ...(cp.search ? [{ label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db, row.schema) }] : []),
+            ...(cp.roles ? [{ label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) }] : []),
+            ...(cp.backup
+              ? [{ label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup', schema: row.schema }) }]
+              : [])
+          ]),
           ...(rw
             ? withSep([
                 ...createItems(row.conn, row.db, row.schema),
-                ...(pg ? [{ label: t('db.imp.menu'), onClick: () => setImp({ conn: row.conn, db: row.db, schema: row.schema }) }] : []),
-                { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'schema', row.db, '', row.schema), separator: true },
-                { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'schema', row.db, '', row.schema), danger: true }
+                ...(cp.import ? [{ label: t('db.imp.menu'), onClick: () => setImp({ conn: row.conn, db: row.db, schema: row.schema }) }] : []),
+                // A schema of its own (not MySQL's database, not an attached SQLite file).
+                ...(cp.createSchema
+                  ? [
+                      { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'schema', row.db, '', row.schema), separator: true },
+                      { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'schema', row.db, '', row.schema), danger: true }
+                    ]
+                  : [])
               ])
             : [])
         ]
@@ -516,22 +588,22 @@ export default function DbExplorerPanel(): JSX.Element {
         const q = qualified(conn, schema, obj.name)
         const items: MenuItem[] = [{ label: t('db.open'), onClick: () => openObj(row) }]
         if (isRelation(obj.kind)) items.push({ label: t('db.select100'), onClick: () => selectTop(row) })
-        if (pg && (obj.kind === 'table' || obj.kind === 'partitioned'))
+        if (cp.backup && (obj.kind === 'table' || obj.kind === 'partitioned'))
           items.push({ label: t('db.bk.menuBackup'), onClick: () => setBk({ conn, db, mode: 'backup', schema, table: obj.name }) })
         const kind = dropKindOf(obj.kind)
         if (rw && kind) {
           const acts: MenuItem[] = []
-          if (obj.kind === 'table' || obj.kind === 'partitioned')
-            acts.push({ label: t('db.d.design'), onClick: () => openDesign(conn.id, db, schema, obj.name) })
-          if (obj.kind === 'view') acts.push({ label: t('db.d.editDefinition'), onClick: () => editView(conn, db, schema, obj.name) })
+          const table = obj.kind === 'table' || obj.kind === 'partitioned'
+          if (table && cp.designer) acts.push({ label: t('db.d.design'), onClick: () => openDesign(conn.id, db, schema, obj.name) })
+          if (obj.kind === 'view' && cp.createView)
+            acts.push({ label: t('db.d.editDefinition'), onClick: () => editView(conn, db, schema, obj.name) })
           if (obj.kind === 'matview') acts.push({ label: t('db.d.refreshMv'), onClick: () => refreshMatview(conn, db, schema, obj.name) })
-          acts.push({ label: t('db.d.rename'), onClick: () => renameIt(conn, kind, db, schema, obj.name, obj.args) })
-          if ((obj.kind === 'table' || obj.kind === 'partitioned') && pg)
-            acts.push({ label: t('db.imp.menu'), onClick: () => setImp({ conn, db, schema, table: obj.name }) })
-          if (obj.kind === 'table' || obj.kind === 'partitioned')
-            acts.push({ label: t('db.d.truncate'), onClick: () => truncateIt(conn, db, schema, obj.name), danger: true })
-          acts.push({ label: t('db.d.drop'), onClick: () => dropIt(conn, kind, db, schema, obj.name, obj.args), danger: true })
-          items.push(...withSep(acts))
+          if (cp.rename && canRename(kind, engineOf(conn)))
+            acts.push({ label: t('db.d.rename'), onClick: () => renameIt(conn, kind, db, schema, obj.name, obj.args) })
+          if (table && cp.import) acts.push({ label: t('db.imp.menu'), onClick: () => setImp({ conn, db, schema, table: obj.name }) })
+          if (table && cp.truncate) acts.push({ label: t('db.d.truncate'), onClick: () => truncateIt(conn, db, schema, obj.name), danger: true })
+          if (cp.drop) acts.push({ label: t('db.d.drop'), onClick: () => dropIt(conn, kind, db, schema, obj.name, obj.args), danger: true })
+          if (acts.length) items.push(...withSep(acts))
         }
         items.push(
           { label: t('db.copyName'), onClick: () => void navigator.clipboard.writeText(obj.name), separator: true },
@@ -693,7 +765,7 @@ function NodeBody({ row, t }: { row: Row; t: (k: string) => string }): JSX.Eleme
             </span>
           )}
           <span className="dbx-meta">
-            {row.conn.host}:{row.conn.port}
+            {caps(row.conn.kind).network ? `${row.conn.host}:${row.conn.port}` : row.conn.host.split(/[\\/]/).pop()}
           </span>
         </>
       )

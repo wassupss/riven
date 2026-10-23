@@ -1,3 +1,4 @@
+import { caps } from '../../../../../main/db/engines'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { ArrowRight, Copy, Download, FileCode2, GitCompare, Play, RefreshCw, TriangleAlert } from 'lucide-react'
@@ -312,7 +313,7 @@ function StatusBadge({ status }: { status: DiffStatus }): JSX.Element {
 function EndpointPicker({ value, onChange }: { value: Endpoint; onChange: (v: Endpoint) => void }): JSX.Element {
   const t = useT()
   const connections = useDb((s) => s.connections)
-  const pg = connections.filter((c) => c.kind === 'postgres')
+  const pg = connections.filter((c) => caps(c.kind).diff)
   const conn = connections.find((c) => c.id === value.connId)
   const [dbs, setDbs] = useState<string[]>([])
   const [schemas, setSchemas] = useState<SchemaInfo[]>([])

@@ -1,5 +1,5 @@
 import { literal, quoteIdent } from './sqlText'
-import type { TableInfo } from './types'
+import type { DbKind, TableInfo } from './types'
 
 // DDL builders for the table designer and the explorer's object actions.
 // Pure functions shared with the renderer (preview) and main (apply).
@@ -332,28 +332,63 @@ const KEYWORD: Record<DropKind, string> = {
 export const dropKindOf = (k: string): DropKind | null =>
   k === 'partitioned' ? 'table' : k === 'window' ? 'function' : k in KEYWORD ? (k as DropKind) : null
 
+/** SQL engines the object actions speak; the designer and the rest are PostgreSQL. */
+export type SqlEngine = Exclude<DbKind, 'redis'>
+
+const qe = (e: SqlEngine, s: string): string => quoteIdent(e, s)
+const qualifyIn = (e: SqlEngine, schema: string, name: string): string => (schema ? `${qe(e, schema)}.${qe(e, name)}` : qe(e, name))
+
 /** `args` is a routine's identity argument list (routines are overloadable). */
-function target(kind: DropKind, schema: string, name: string, args?: string): string {
-  if (kind === 'schema' || kind === 'database') return qi(name)
-  const base = qualify(schema, name)
-  return kind === 'function' || kind === 'procedure' || kind === 'aggregate' ? `${base}(${args ?? ''})` : base
+function target(kind: DropKind, schema: string, name: string, args?: string, e: SqlEngine = 'postgres'): string {
+  if (kind === 'schema' || kind === 'database') return qe(e, name)
+  const base = qualifyIn(e, schema, name)
+  return kind === 'function' || kind === 'procedure' || kind === 'aggregate' ? `${base}(${e === 'postgres' ? (args ?? '') : ''})` : base
 }
 
-export function dropSql(kind: DropKind, schema: string, name: string, o: { cascade?: boolean; args?: string; force?: boolean } = {}): DdlPlan {
+export function dropSql(
+  kind: DropKind,
+  schema: string,
+  name: string,
+  o: { cascade?: boolean; args?: string; force?: boolean; engine?: SqlEngine } = {}
+): DdlPlan {
+  const e = o.engine ?? 'postgres'
+  const pg = e === 'postgres'
   if (kind === 'database')
-    return { stmts: [`DROP DATABASE ${qi(name)}${o.force ? ' WITH (FORCE)' : ''}`], atomic: false, release: name }
-  return { stmts: [`DROP ${KEYWORD[kind]} ${target(kind, schema, name, o.args)}${o.cascade ? ' CASCADE' : ''}`], atomic: true }
+    return { stmts: [`DROP DATABASE ${qe(e, name)}${o.force && pg ? ' WITH (FORCE)' : ''}`], atomic: false, release: name }
+  // MySQL routines are named without arguments; only PostgreSQL cascades.
+  const t = e !== 'postgres' && (kind === 'function' || kind === 'procedure') ? qualifyIn(e, schema, name) : target(kind, schema, name, o.args, e)
+  return { stmts: [`DROP ${KEYWORD[kind]} ${t}${o.cascade && pg ? ' CASCADE' : ''}`], atomic: true }
 }
 
-export function renameSql(kind: DropKind, schema: string, name: string, to: string, args?: string): DdlPlan {
+/** Whether an engine can rename this kind in place. */
+export function canRename(kind: DropKind, e: SqlEngine = 'postgres'): boolean {
+  if (e === 'postgres') return true
+  if (e === 'mysql') return kind === 'table' || kind === 'view'
+  return kind === 'table'
+}
+
+export function renameSql(kind: DropKind, schema: string, name: string, to: string, args?: string, e: SqlEngine = 'postgres'): DdlPlan {
+  const next = to.trim()
+  if (e === 'mysql') return { stmts: [`RENAME TABLE ${qualifyIn(e, schema, name)} TO ${qualifyIn(e, schema, next)}`], atomic: true }
+  // SQLite names the new table without its schema.
+  if (e === 'sqlite') return { stmts: [`ALTER TABLE ${qualifyIn(e, schema, name)} RENAME TO ${qe(e, next)}`], atomic: true }
   const stmt =
     kind === 'database' || kind === 'schema'
-      ? `ALTER ${KEYWORD[kind]} ${qi(name)} RENAME TO ${qi(to.trim())}`
-      : `ALTER ${KEYWORD[kind]} ${target(kind, schema, name, args)} RENAME TO ${qi(to.trim())}`
+      ? `ALTER ${KEYWORD[kind]} ${qi(name)} RENAME TO ${qi(next)}`
+      : `ALTER ${KEYWORD[kind]} ${target(kind, schema, name, args)} RENAME TO ${qi(next)}`
   return kind === 'database' ? { stmts: [stmt], atomic: false, release: name } : { stmts: [stmt], atomic: true }
 }
 
-export function truncateSql(schema: string, name: string, o: { restartIdentity?: boolean; cascade?: boolean } = {}): DdlPlan {
+export function truncateSql(
+  schema: string,
+  name: string,
+  o: { restartIdentity?: boolean; cascade?: boolean; engine?: SqlEngine } = {}
+): DdlPlan {
+  const e = o.engine ?? 'postgres'
+  // SQLite has no TRUNCATE: an unfiltered DELETE takes its fast path.
+  if (e === 'sqlite') return { stmts: [`DELETE FROM ${qualifyIn(e, schema, name)}`], atomic: true }
+  // MySQL's TRUNCATE always restarts AUTO_INCREMENT and never cascades.
+  if (e === 'mysql') return { stmts: [`TRUNCATE TABLE ${qualifyIn(e, schema, name)}`], atomic: true }
   let s = `TRUNCATE TABLE ${qualify(schema, name)}`
   if (o.restartIdentity) s += ' RESTART IDENTITY'
   if (o.cascade) s += ' CASCADE'
@@ -364,7 +399,11 @@ export function createSchemaSql(name: string, owner?: string): DdlPlan {
   return { stmts: [`CREATE SCHEMA ${qi(name.trim())}${owner?.trim() ? ` AUTHORIZATION ${qi(owner.trim())}` : ''}`], atomic: true }
 }
 
-export function createDatabaseSql(name: string, o: { owner?: string; template?: string; encoding?: string } = {}): DdlPlan {
+export function createDatabaseSql(name: string, o: { owner?: string; template?: string; encoding?: string; engine?: SqlEngine } = {}): DdlPlan {
+  if (o.engine === 'mysql') {
+    const cs = o.encoding?.trim()
+    return { stmts: [`CREATE DATABASE ${qe('mysql', name.trim())}${cs ? ` CHARACTER SET ${qe('mysql', cs)}` : ''}`], atomic: false }
+  }
   let s = `CREATE DATABASE ${qi(name.trim())}`
   if (o.owner?.trim()) s += ` OWNER ${qi(o.owner.trim())}`
   if (o.template?.trim()) s += ` TEMPLATE ${qi(o.template.trim())}`
@@ -388,3 +427,12 @@ export function refreshMatviewSql(schema: string, name: string, concurrently: bo
 
 /** Statements an apply call accepts: DDL only, so the IPC can't be used to run arbitrary reads or DML. */
 export const DDL_VERBS = /^(create|alter|drop|truncate|comment|refresh|reindex|vacuum|analyze|grant|revoke|cluster|reassign)\b/i
+
+/** DDL_VERBS per engine: MySQL renames with RENAME, SQLite empties a table with an unfiltered DELETE. */
+export function isDdl(stmt: string, e: SqlEngine = 'postgres'): boolean {
+  const s = stmt.trim()
+  if (DDL_VERBS.test(s)) return true
+  if (e === 'mysql') return /^rename\s+table\b/i.test(s)
+  if (e === 'sqlite') return /^delete\s+from\s+("([^"]|"")*"|\w+)(\s*\.\s*("([^"]|"")*"|\w+))?\s*$/i.test(s)
+  return false
+}

@@ -35,6 +35,7 @@ import {
   parsePlan,
   readOnlyStatement,
 } from "../../../../main/db/explain";
+import { caps } from "../../../../main/db/engines";
 import { editorTheme } from "../../editor/highlight";
 import { useT } from "../../i18n";
 import {
@@ -381,6 +382,7 @@ function SqlView({
       const ed = edRef.current;
       const model = ed?.getModel();
       if (!tab || !conn || !ed || !model || runState?.running) return;
+      if (mode !== "run" && !caps(conn.kind).explain) return;
       const sel = ed.getSelection();
       const list =
         text !== undefined
@@ -699,7 +701,7 @@ function SqlView({
         >
           <Sparkles size={13} />
         </button>
-        {conn?.kind === "postgres" && (
+        {conn && caps(conn.kind).explain && (
           <>
             <button
               className="dbx-icon-btn"
