@@ -38,8 +38,19 @@ let editorCloser: (() => boolean) | null = null
 export function setEditorCloser(fn: (() => boolean) | null): void {
   editorCloser = fn
 }
-export function getEditorCloser(): (() => boolean) | null {
-  return editorCloser
+
+// Other panels with tabs of their own (DB consoles, browser tabs) do the same,
+// keyed by their singleton dockview panel id. `wid` is the workspace whose dock
+// is on screen. Returns true if an inner tab was closed, false if there was
+// nothing to close (so ⌘W falls through to closing the panel itself).
+type TabCloser = (wid: string | null) => boolean
+const tabClosers = new Map<string, TabCloser>()
+export function registerTabCloser(panelId: string, fn: TabCloser): void {
+  tabClosers.set(panelId, fn)
+}
+export function closeInnerTab(panelId: string, wid: string | null): boolean {
+  if (panelId === 'editor') return editorCloser?.() ?? false
+  return tabClosers.get(panelId)?.(wid) ?? false
 }
 
 // Same multi-pane hazard as editorSaver: every workspace mounts an editor, so

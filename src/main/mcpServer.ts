@@ -69,7 +69,7 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
     ko: '패널 열기',
     en: 'Open panel',
     description:
-      "Open a panel. kind: editor|terminal|chat|search|git|preview|changes. For an agent use kind=chat: `agent` claude|codex, `model` (claude: opus|sonnet|haiku|fable; codex: gpt-5.6-terra|gpt-5.6-luna|gpt-5.5), `title`. `message` is sent as its first prompt without waiting — for an answer, omit it and call riven_ask_agent. Use kind=terminal with `command` only for non-agent commands or when the user asks. `dir`: right|below|left|above. Returns the pane id.",
+      "Open a panel. kind: editor|terminal|chat|search|git|preview|changes|db. For an agent use kind=chat: `agent` claude|codex, `model` (claude: opus|sonnet|haiku|fable; codex: gpt-5.6-terra|gpt-5.6-luna|gpt-5.5), `title`. `message` is sent as its first prompt without waiting; for an answer, omit it and call riven_ask_agent. Use kind=terminal with `command` only for non-agent commands or on user request. `dir`: right|below|left|above. Returns pane id.",
     inputSchema: obj({ kind: str, command: str, dir: str, agent: str, model: str, message: str, title: str }, ['kind']),
     implemented: true
   },
@@ -418,6 +418,53 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
       'url'
     ]),
     implemented: true
+  },
+  {
+    name: 'riven_db_connections',
+    ko: 'DB: 데이터 소스 목록',
+    en: 'DB: data sources',
+    description: "List the user's saved database connections (name, kind, host, database, read-only). Use a name with the other riven_db_* tools.",
+    inputSchema: obj({}),
+    implemented: true
+  },
+  {
+    name: 'riven_db_browse',
+    ko: 'DB: 스키마/객체 탐색',
+    en: 'DB: browse',
+    description:
+      'Browse a data source. Without schema: its schemas and the databases on the server. With schema: tables, views, sequences and routines (with row estimates and comments).',
+    inputSchema: obj({ connection: str, database: str, schema: str }, ['connection']),
+    implemented: true
+  },
+  {
+    name: 'riven_db_describe',
+    ko: 'DB: 테이블 구조',
+    en: 'DB: describe',
+    description:
+      'Columns (type, null, default, PK, comment), constraints and indexes of a table or view. table may be schema-qualified. ddl=true returns the CREATE statement (also works for views, sequences, functions).',
+    inputSchema: obj({ connection: str, table: str, schema: str, database: str, ddl: bool }, ['connection', 'table']),
+    implemented: true
+  },
+  {
+    name: 'riven_db_query',
+    ko: 'DB: 읽기 쿼리',
+    en: 'DB: read query',
+    description:
+      'Run ONE read-only SQL statement (SELECT/WITH/EXPLAIN/SHOW) in a read-only transaction with a 30s timeout. Returns a text table; limit defaults to 100 rows (max 1000). Writes and side-effect functions are refused.',
+    inputSchema: obj({ connection: str, sql: str, database: str, limit: num }, ['connection', 'sql']),
+    implemented: true
+  },
+  {
+    name: 'riven_db_execute',
+    ko: 'DB: 변경 실행(확인 필요)',
+    en: 'DB: execute (confirmed)',
+    description:
+      'Run data/schema changes (INSERT/UPDATE/DELETE/DDL) in one transaction, all or nothing. The user sees the SQL and must approve it first; refused on read-only data sources.',
+    inputSchema: obj({ connection: str, statements: { type: 'array', items: str }, database: str }, [
+      'connection',
+      'statements'
+    ]),
+    implemented: true
   }
 ]
 
@@ -561,6 +608,12 @@ function invokeTool(
   onAbort: (cancel: () => void) => void
 ): Promise<string> {
   if (tool === 'riven_api_request') return runApiRequest(args)
+  // DB tools run in main (the engine owns the connections); only the
+  // confirmation for riven_db_execute goes to the caller's pane as an ask_user.
+  if (tool.startsWith('riven_db_') && TOOL_BY_NAME.has(tool))
+    return import('./db/engine').then((m) =>
+      m.runDbTool(tool, args, (question, options) => invokeTool('ask_user', { question, options }, cwd, key, onAbort))
+    )
   if (!TOOL_BY_NAME.get(tool)?.implemented) return Promise.resolve(`error: unknown tool ${tool}`)
   const wc = getWebContents?.()
   if (!wc || wc.isDestroyed()) return Promise.resolve('riven: no window available')
@@ -830,6 +883,7 @@ const PROMPT_LINES: Array<[string[], string]> = [
   [['riven_open_file'], "- 코드/파일을 사용자와 함께 볼 땐 riven_open_file(path, line?)로 riven 에디터에 엽니다."],
   [['riven_panels', 'riven_open_panel', 'riven_close_panel', 'riven_workspaces', 'riven_open_workspace'], "- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 에이전트(Claude Code·Codex)를 새로 띄울 땐 터미널이 아니라 채팅 패널로 엽니다: riven_open_panel(kind='chat', agent='codex', message='첫 지시', dir='right') — 돌려받은 패널 id로 riven_ask_agent를 쓸 수 있습니다. 터미널(kind='terminal', command=...)은 사용자가 터미널/CLI를 원할 때나 에이전트가 아닌 명령에만 씁니다."],
   [['riven_api_request'], "- HTTP/API 테스트는 riven_api_request(method, url, headers?, body?)로 실행하고 상태/본문을 돌려받습니다."],
+  [['riven_db_connections', 'riven_db_browse', 'riven_db_describe', 'riven_db_query', 'riven_db_execute'], "- 사용자가 riven에 등록한 DB를 직접 볼 수 있습니다: riven_db_connections로 데이터 소스를 확인하고, riven_db_browse(connection, schema?)·riven_db_describe(connection, table)로 구조를 파악한 뒤 riven_db_query(connection, sql)로 읽기 쿼리를 실행합니다. 데이터·스키마 변경은 riven_db_execute(connection, statements)만 쓰며, 사용자가 SQL을 보고 승인해야 실행됩니다."],
   [['riven_browser_open', 'riven_browser_state', 'riven_browser_read', 'riven_browser_click', 'riven_screenshot'], "- riven 브라우저를 직접 운전할 수 있습니다: riven_browser_open(url, new_tab?), riven_browser_state(), riven_browser_read(selector?, html?), riven_browser_click/fill/wait/scroll, riven_browser_go(action), riven_screenshot(url?). 페이지는 쿠키·세션을 유지합니다."],
   [['riven_note_write', 'riven_note_append', 'riven_note_read', 'riven_note_list', 'riven_doc_write'], "- 긴 결과(요약·계획·조사)는 대화에 쏟지 말고 riven_note_write(title, body, note?)로 메모에 남기세요(note 주면 갈아끼움). 이어쓰기 riven_note_append, 읽기 riven_note_read, 목록 riven_note_list. 문서로 저장소에 남길 땐 riven_doc_write(path, body)(.claude/docs 기준), 메모를 파일로는 riven_note_save_file."],
   [['riven_agents', 'riven_ask_agent', 'riven_ask_agents', 'riven_group_add_agent', 'riven_start_pipeline'], "- 다른 에이전트와 협업: riven_agents로 열린 동료(채팅·터미널의 Claude Code, Codex 등 — cli 필드로 구분)를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 다른 모델에게 검토·반론을 맡기면 서로의 결과를 교차 확인할 수 있습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다."]

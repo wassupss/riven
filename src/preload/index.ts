@@ -1,4 +1,30 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
+import type {
+  ColumnDetail,
+  ConnectionConfig,
+  ConnectionInfo,
+  DbObject,
+  DefaultAcl,
+  PrivInfo,
+  PrivTarget,
+  QueryResult,
+  RlsInfo,
+  RoleGrant,
+  RoleInfo,
+  SchemaInfo,
+  TableInfo,
+  TxStatus
+} from '../main/db/types'
+import type { ExportOptions } from '../main/db/mask'
+import type { ImportOptions, ImportPreview, ImportResult } from '../main/db/csv'
+import type { EditStatement, EditTarget } from '../main/db/edit'
+import type { DdlPlan } from '../main/db/ddl'
+import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
+import type { CompletionMeta } from '../main/db/complete'
+import type { ErdModel } from '../main/db/erd'
+import type { SchemaSnapshot } from '../main/db/schemaDiff'
+import type { SearchOptions, SearchProgress, SearchSummary, SearchTable } from '../main/db/dataSearchSql'
+import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../main/db/dumpArgs'
 
 export interface DirEntry {
   name: string
@@ -519,6 +545,160 @@ const api = {
       contentType: string
       error?: string
     }> => ipcRenderer.invoke('api:request', opts)
+  },
+  // Saved data sources + browsing/querying (DB panels; agents use riven_db_*).
+  // A password argument: undefined keeps the stored one, '' or null clears it.
+  db: {
+    list: (): Promise<ConnectionInfo[]> => ipcRenderer.invoke('db:list'),
+    save: (cfg: ConnectionConfig, password?: string | null): Promise<ConnectionInfo> =>
+      ipcRenderer.invoke('db:save', cfg, password),
+    delete: (id: string): Promise<void> => ipcRenderer.invoke('db:delete', id),
+    test: (cfg: ConnectionConfig, password?: string): Promise<string> => ipcRenderer.invoke('db:test', cfg, password),
+    // A SQLite file (a new path is created on first connect).
+    pickSqlite: (): Promise<string | null> => ipcRenderer.invoke('db:sqlite-pick'),
+    databases: (id: string): Promise<string[]> => ipcRenderer.invoke('db:databases', id),
+    schemas: (id: string, db?: string): Promise<SchemaInfo[]> => ipcRenderer.invoke('db:schemas', id, db),
+    objects: (id: string, db: string | undefined, schema: string): Promise<DbObject[]> =>
+      ipcRenderer.invoke('db:objects', id, db, schema),
+    table: (id: string, db: string | undefined, schema: string, name: string): Promise<TableInfo | null> =>
+      ipcRenderer.invoke('db:table', id, db, schema, name),
+    ddl: (id: string, db: string | undefined, schema: string, name: string): Promise<string> =>
+      ipcRenderer.invoke('db:ddl', id, db, schema, name),
+    query: (
+      id: string,
+      db: string | undefined,
+      sql: string,
+      o: { limit?: number; queryId?: string; offset?: number; session?: string; aux?: boolean }
+    ): Promise<QueryResult> => ipcRenderer.invoke('db:query', id, db, sql, o),
+    // A manual-commit console tab's own connection and transaction.
+    session: {
+      commit: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-commit', session),
+      rollback: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-rollback', session),
+      status: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-status', session),
+      close: (session: string): Promise<void> => ipcRenderer.invoke('db:session-close', session)
+    },
+    editTarget: (id: string, db: string | undefined, table: number): Promise<EditTarget | null> =>
+      ipcRenderer.invoke('db:editTarget', id, db, table),
+    /** Grid edits, all or nothing. Each statement's RETURNING row. */
+    apply: (
+      id: string,
+      db: string | undefined,
+      session: string | undefined,
+      stmts: EditStatement[]
+    ): Promise<Array<Array<string | number | boolean | null> | null>> => ipcRenderer.invoke('db:apply', id, db, session, stmts),
+    /** Runs a DDL plan (designer, object actions); resolves to the number of statements run. */
+    ddlApply: (id: string, db: string | undefined, plan: DdlPlan): Promise<number> => ipcRenderer.invoke('db:ddl-apply', id, db, plan),
+    // Roles, privileges, default privileges and row-level security (read side; changes go through ddlApply).
+    roles: (id: string): Promise<RoleInfo[]> => ipcRenderer.invoke('db:roles', id),
+    privileges: (id: string, db: string | undefined, target: PrivTarget): Promise<PrivInfo | null> =>
+      ipcRenderer.invoke('db:privileges', id, db, target),
+    defaultAcl: (id: string, db: string | undefined): Promise<DefaultAcl[]> => ipcRenderer.invoke('db:default-acl', id, db),
+    rls: (id: string, db: string | undefined, schema: string, table: string): Promise<RlsInfo | null> =>
+      ipcRenderer.invoke('db:rls', id, db, schema, table),
+    roleGrants: (id: string, db: string | undefined, role: string): Promise<RoleGrant[]> =>
+      ipcRenderer.invoke('db:role-grants', id, db, role),
+    /** Schemas, tables with columns and functions for SQL autocomplete. */
+    completionMeta: (id: string, db: string | undefined): Promise<CompletionMeta> => ipcRenderer.invoke('db:completion-meta', id, db),
+    cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
+    // Server monitoring (sessions, locks, stats, settings). Maintenance and ALTER SYSTEM go through ddlApply.
+    monitor: {
+      overview: (id: string, db: string | undefined): Promise<ServerOverview> => ipcRenderer.invoke('db:mon-overview', id, db),
+      sessions: (id: string, db: string | undefined): Promise<SessionInfo[]> => ipcRenderer.invoke('db:mon-sessions', id, db),
+      locks: (id: string, db: string | undefined): Promise<LockInfo[]> => ipcRenderer.invoke('db:mon-locks', id, db),
+      tables: (id: string, db: string | undefined): Promise<TableStat[]> => ipcRenderer.invoke('db:mon-tables', id, db),
+      indexes: (id: string, db: string | undefined): Promise<IndexStat[]> => ipcRenderer.invoke('db:mon-indexes', id, db),
+      settings: (id: string, db: string | undefined): Promise<SettingInfo[]> => ipcRenderer.invoke('db:mon-settings', id, db),
+      /** Cancels the backend's query, or with terminate ends its session. */
+      signal: (id: string, db: string | undefined, pid: number, terminate: boolean): Promise<boolean> =>
+        ipcRenderer.invoke('db:mon-signal', id, db, pid, terminate),
+      reload: (id: string, db: string | undefined): Promise<boolean> => ipcRenderer.invoke('db:mon-reload', id, db)
+    },
+    /** Tables, columns and keys of a schema for the ER diagram. */
+    erd: (id: string, db: string | undefined, schema: string): Promise<ErdModel> => ipcRenderer.invoke('db:erd', id, db, schema),
+    schemaSnapshot: (id: string, db: string | undefined, schema: string): Promise<SchemaSnapshot> => ipcRenderer.invoke('db:schema-snapshot', id, db, schema),
+    /** Writes text through a save dialog; the path, or null when cancelled. */
+    saveText: (name: string, ext: 'svg' | 'sql' | 'mmd' | 'txt', text: string): Promise<string | null> =>
+      ipcRenderer.invoke('db:save-text', name, ext, text),
+    column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
+      ipcRenderer.invoke('db:column', id, db, table, attnum),
+    /** Asks for a file, then writes it. null when the save dialog is cancelled. */
+    export: (
+      id: string,
+      db: string | undefined,
+      req: {
+        options: ExportOptions
+        name: string
+        rows?: Array<Array<string | number | boolean | null>>
+        sql?: string
+        offset?: number
+        max?: number
+        queryId?: string
+      }
+    ): Promise<{ path: string; rows: number } | null> => ipcRenderer.invoke('db:export', id, db, req),
+    // CSV import: pick a file, preview it, then load it into a table in one transaction.
+    import: {
+      pick: (): Promise<string | null> => ipcRenderer.invoke('db:import-pick'),
+      preview: (path: string, encoding: string, delimiter?: string): Promise<ImportPreview> =>
+        ipcRenderer.invoke('db:import-preview', path, encoding, delimiter),
+      run: (id: string, db: string | undefined, o: ImportOptions, queryId?: string): Promise<ImportResult> =>
+        ipcRenderer.invoke('db:import-run', id, db, o, queryId),
+      cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:import-cancel', id, queryId),
+      onProgress: (cb: (queryId: string, rows: number, bytes: number, size: number) => void): (() => void) => {
+        const listener = (_e: unknown, queryId: string, rows: number, bytes: number, size: number): void => cb(queryId, rows, bytes, size)
+        ipcRenderer.on('db:import-progress', listener)
+        return () => ipcRenderer.removeListener('db:import-progress', listener)
+      }
+    },
+    // Full data search: scans every table of the chosen schemas for a value.
+    search: {
+      tables: (id: string, db: string | undefined, o: Pick<SearchOptions, 'schemas' | 'allTypes' | 'includeViews'>): Promise<SearchTable[]> =>
+        ipcRenderer.invoke('db:search-tables', id, db, o),
+      run: (id: string, db: string | undefined, o: SearchOptions, searchId: string): Promise<SearchSummary> =>
+        ipcRenderer.invoke('db:search-run', id, db, o, searchId),
+      cancel: (searchId: string): Promise<void> => ipcRenderer.invoke('db:search-cancel', searchId),
+      onProgress: (cb: (searchId: string, p: SearchProgress) => void): (() => void) => {
+        const listener = (_e: unknown, searchId: string, p: SearchProgress): void => cb(searchId, p)
+        ipcRenderer.on('db:search-progress', listener)
+        return () => ipcRenderer.removeListener('db:search-progress', listener)
+      }
+    },
+    // Backup / restore through pg_dump, pg_restore and psql.
+    backup: {
+      tools: (extra?: string, refresh?: boolean): Promise<ToolInfo[]> => ipcRenderer.invoke('db:backup-tools', extra, refresh),
+      serverMajor: (id: string, db: string | undefined): Promise<number> => ipcRenderer.invoke('db:backup-server', id, db),
+      run: (
+        id: string,
+        db: string | undefined,
+        toolDir: string | undefined,
+        extra: string | undefined,
+        name: string,
+        o: BackupOptions,
+        jobId: string
+      ): Promise<{ path: string; size: number; warnings: number } | null> =>
+        ipcRenderer.invoke('db:backup-run', id, db, toolDir, extra, name, o, jobId),
+      pick: (dir: boolean): Promise<string | null> => ipcRenderer.invoke('db:restore-pick', dir),
+      inspect: (path: string, toolDir: string | undefined, extra: string | undefined): Promise<ArchiveInfo> =>
+        ipcRenderer.invoke('db:restore-inspect', path, toolDir, extra),
+      restore: (
+        id: string,
+        db: string | undefined,
+        toolDir: string | undefined,
+        extra: string | undefined,
+        o: RestoreOptions,
+        jobId: string
+      ): Promise<{ ignored: number; errors: string[] }> => ipcRenderer.invoke('db:restore-run', id, db, toolDir, extra, o, jobId),
+      cancel: (jobId: string): Promise<boolean> => ipcRenderer.invoke('db:backup-cancel', jobId),
+      onProgress: (cb: (jobId: string, obj: string | null, lines: number) => void): (() => void) => {
+        const listener = (_e: unknown, jobId: string, obj: string | null, lines: number): void => cb(jobId, obj, lines)
+        ipcRenderer.on('db:backup-progress', listener)
+        return () => ipcRenderer.removeListener('db:backup-progress', listener)
+      }
+    },
+    onExportProgress: (cb: (queryId: string, rows: number) => void): (() => void) => {
+      const listener = (_e: unknown, queryId: string, rows: number): void => cb(queryId, rows)
+      ipcRenderer.on('db:export-progress', listener)
+      return () => ipcRenderer.removeListener('db:export-progress', listener)
+    }
   },
   // Scratch markdown notes (Notes panel + note_* MCP tools).
   notes: {
@@ -1102,6 +1282,11 @@ const api = {
       const listener = (): void => cb()
       ipcRenderer.on('menu:close-tab', listener)
       return () => ipcRenderer.removeListener('menu:close-tab', listener)
+    },
+    onClosePanel: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('menu:close-panel', listener)
+      return () => ipcRenderer.removeListener('menu:close-panel', listener)
     }
   },
   app: {

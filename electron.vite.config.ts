@@ -15,7 +15,8 @@ export default defineConfig({
         // would not load.
         input: {
           index: resolve('src/main/index.ts'),
-          'terminal-worker': resolve('src/main/terminal/worker-entry.ts')
+          'terminal-worker': resolve('src/main/terminal/worker-entry.ts'),
+          'sqlite-worker': resolve('src/main/db/sqlite-worker.ts')
         }
       }
     }

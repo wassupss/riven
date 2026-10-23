@@ -1,8 +1,9 @@
 import { Menu, BrowserWindow, MenuItemConstructorOptions } from 'electron'
 
 // Custom application menu. The key change vs. the default: Cmd+W closes the
-// active editor tab (via IPC) instead of the whole window, so people stop
-// quitting the IDE by reflex. Window close moves to Cmd+Shift+W.
+// active panel's current tab (via IPC) instead of the whole window, so people
+// stop quitting the IDE by reflex. Cmd+Alt+W closes the whole panel, and window
+// close moves to Cmd+Shift+W.
 export function buildMenu(): void {
   const isMac = process.platform === 'darwin'
   const sendToFocused = (channel: string) => (): void => {
@@ -17,6 +18,7 @@ export function buildMenu(): void {
       label: 'File',
       submenu: [
         { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: sendToFocused('menu:close-tab') },
+        { label: 'Close Panel', accelerator: 'CmdOrCtrl+Alt+W', click: sendToFocused('menu:close-panel') },
         { type: 'separator' },
         isMac
           ? { label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W', role: 'close' }

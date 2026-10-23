@@ -10,6 +10,7 @@ import { attachToWorkspaceAgent } from '../../state/agents'
 import { useT } from '../../i18n'
 import { useBrowser, activeTab, activeTabId } from '../../state/browser'
 import { getSettings } from '../../state/settings'
+import { registerTabCloser } from '../../keybindings/focus'
 import {
   ArrowLeft,
   ArrowRight,
@@ -94,6 +95,16 @@ function popoutKey(w: Window): string {
   if (!tagged.__rivenPopout) tagged.__rivenPopout = `popout-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`
   return tagged.__rivenPopout
 }
+
+// ⌘W closes the current browser tab. The last one is left to close the panel:
+// the panel reopens a blank tab whenever it has none, so closing it would only
+// swap it for an empty one.
+registerTabCloser('preview', (wid) => {
+  const cur = wid ? useBrowser.getState().byWs[wid] : undefined
+  if (!wid || !cur?.activeId || cur.tabs.length <= 1) return false
+  useBrowser.getState().closeTab(wid, cur.activeId)
+  return true
+})
 
 export default function PreviewPanel({
   workspace,
