@@ -4,6 +4,7 @@ import { planText, type DdlPlan } from '../../../../../main/db/ddl'
 import { useT } from '../../../i18n'
 import { Button, Select, Switch, TextArea, TextInput } from '../../../components/ui/Controls'
 import { Row, errText } from './ConnectionForm'
+import { invalidateCompletion } from './sqlComplete'
 
 export type FieldValue = string | boolean
 
@@ -63,6 +64,7 @@ export default function DdlDialog({ action, onClose }: { action: DdlAction; onCl
     setError(null)
     try {
       await window.api.db.ddlApply(action.connId, action.db, plan)
+      invalidateCompletion(action.connId)
       action.onDone(v)
       onClose()
     } catch (e) {

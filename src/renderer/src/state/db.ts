@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { ConnectionInfo, ObjectKind, QueryResult, TxStatus } from '../../../main/db/types'
 import { t } from '../i18n'
 import type { ResultView } from '../../../main/db/sqlText'
+import type { Plan } from '../../../main/db/explain'
 
 // Shared state of the two DB panels: the saved connections (owned by main, cached
 // here) and the SQL console's tabs. The explorer opens tabs; the console shows
@@ -81,6 +82,8 @@ export interface DbChange {
 
 export interface RunResult {
   sql: string
+  /** An EXPLAIN run: the parsed plan (the raw JSON stays in result). */
+  plan?: Plan
   result?: QueryResult
   error?: string
   /** A further page is being fetched (infinite scroll). */

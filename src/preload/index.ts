@@ -18,6 +18,7 @@ import type {
 import type { ExportOptions } from '../main/db/mask'
 import type { EditStatement, EditTarget } from '../main/db/edit'
 import type { DdlPlan } from '../main/db/ddl'
+import type { CompletionMeta } from '../main/db/complete'
 
 export interface DirEntry {
   name: string
@@ -588,6 +589,8 @@ const api = {
       ipcRenderer.invoke('db:rls', id, db, schema, table),
     roleGrants: (id: string, db: string | undefined, role: string): Promise<RoleGrant[]> =>
       ipcRenderer.invoke('db:role-grants', id, db, role),
+    /** Schemas, tables with columns and functions for SQL autocomplete. */
+    completionMeta: (id: string, db: string | undefined): Promise<CompletionMeta> => ipcRenderer.invoke('db:completion-meta', id, db),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
     column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
       ipcRenderer.invoke('db:column', id, db, table, attnum),

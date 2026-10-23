@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { KeyRound, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import type { TableInfo } from '../../../../../main/db/types'
+import { invalidateCompletion } from './sqlComplete'
 import {
   FK_ACTIONS,
   INDEX_METHODS,
@@ -119,6 +120,7 @@ export default function TableDesigner({ tab }: { tab: DesignTab }): JSX.Element 
     setStatus(null)
     try {
       await window.api.db.ddlApply(tab.connId, tab.db, plan)
+      invalidateCompletion(tab.connId)
       const name = draft.name.trim()
       const change = { connId: tab.connId, db: tab.db, schema: tab.schema }
       if (!tab.name) {

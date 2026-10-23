@@ -1,6 +1,7 @@
 import { pgRows } from './pg'
 import { literal, quoteIdent } from './sqlText'
 import type { EditTarget } from './edit'
+import type { CompletionMeta } from './complete'
 import type { ColumnDetail, ColumnInfo, ConnectionConfig, DbObject, ObjectKind, SchemaInfo, TableInfo } from './types'
 
 // PostgreSQL catalog queries.
@@ -289,5 +290,51 @@ export async function editTarget(cfg: ConnectionConfig, db: string | undefined, 
     reason: !okKind ? 'kind' : keys.length ? undefined : 'nopk',
     pk: keys,
     columns: cols.map((r) => ({ attnum: Number(r[0]), name: str(r[1]), type: str(r[2]), readOnly: r[3] === true }))
+  }
+}
+
+const COMPLETION_TABLES = 3000
+
+/** One snapshot of the names the SQL console autocompletes. */
+export async function completionMeta(cfg: ConnectionConfig, db: string | undefined): Promise<CompletionMeta> {
+  const hidden = `n.nspname not in ('pg_catalog', 'information_schema') and n.nspname !~ '^pg_(toast|temp)'`
+  const [schemas, path, tables, fns] = await Promise.all([
+    pgRows(cfg, db, `select n.nspname::text from pg_namespace n where ${hidden} order by 1`),
+    pgRows(cfg, db, 'select array_to_json(current_schemas(false))::text'),
+    pgRows(
+      cfg,
+      db,
+      `select n.nspname::text, c.relname::text, c.relkind::text,
+              (select json_agg(json_build_array(a.attname, format_type(a.atttypid, a.atttypmod)) order by a.attnum)::text
+                 from pg_attribute a where a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped)
+         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        where c.relkind in ('r', 'p', 'v', 'm', 'f') and not c.relispartition and ${hidden}
+        order by n.nspname, c.relname limit ${COMPLETION_TABLES + 1}`
+    ),
+    pgRows(
+      cfg,
+      db,
+      `select distinct n.nspname::text || '.' || p.proname::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+        where ${hidden} and p.prokind in ('f', 'a', 'w') order by 1 limit 2000`
+    )
+  ])
+  const parse = <T>(v: unknown, fallback: T): T => {
+    try {
+      return v == null ? fallback : (JSON.parse(String(v)) as T)
+    } catch {
+      return fallback
+    }
+  }
+  return {
+    schemas: schemas.map((r) => str(r[0])),
+    searchPath: parse<string[]>(path[0]?.[0], ['public']),
+    tables: tables.slice(0, COMPLETION_TABLES).map((r) => ({
+      schema: str(r[0]),
+      name: str(r[1]),
+      kind: str(r[2]),
+      columns: parse<Array<[string, string]>>(r[3], []).map(([name, type]) => ({ name, type }))
+    })),
+    functions: fns.map((r) => str(r[0])),
+    truncated: tables.length > COMPLETION_TABLES
   }
 }

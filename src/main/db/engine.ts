@@ -1,5 +1,5 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
-import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget } from './meta'
+import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget, completionMeta } from './meta'
 import type { EditStatement } from './edit'
 import { DDL_VERBS, type DdlPlan } from './ddl'
 import { defaultAcls, listRoles, objectPrivileges, rlsInfo, roleGrants } from './privMeta'
@@ -293,6 +293,7 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:privileges', (_e, id: string, db: string | undefined, target: PrivTarget) => objectPrivileges(byId(id), db, target))
   ipcMain.handle('db:default-acl', (_e, id: string, db: string | undefined) => defaultAcls(byId(id), db))
   ipcMain.handle('db:rls', (_e, id: string, db: string | undefined, schema: string, table: string) => rlsInfo(byId(id), db, schema, table))
+  ipcMain.handle('db:completion-meta', (_e, id: string, db: string | undefined) => completionMeta(byId(id), db))
   ipcMain.handle('db:role-grants', (_e, id: string, db: string | undefined, role: string) => roleGrants(byId(id), db, role))
   ipcMain.handle('db:cancel',(_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
