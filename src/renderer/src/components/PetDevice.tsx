@@ -63,6 +63,7 @@ import {
   usePet,
   HUNGRY_AT,
   KIBBLE_TOKENS,
+  MAX_PETS,
   MAX_POOPS,
   type Accessory,
   type Form,
@@ -313,6 +314,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const playRound = usePet((s) => s.playRound)
   const rename = usePet((s) => s.rename)
   const reset = usePet((s) => s.reset)
+  const pets = usePet((s) => s.pets)
+  const active = usePet((s) => s.active)
+  const adopt = usePet((s) => s.adopt)
+  const letGo = usePet((s) => s.release)
+  const select = usePet((s) => s.select)
   // What the workspaces are doing right now. The roster is app-wide on purpose:
   // a turn running in a workspace that is not on screen is exactly the one worth
   // telling you about.
@@ -516,14 +522,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // Chew whenever a meal actually lands — true in both windows, unlike the chat
   // stream (which only reaches the window that started the turn).
   const lastMeal = useRef(0)
+  const mealOf = useRef(active)
   useEffect(() => {
     if (!pet.lastFedAt || pet.lastFedAt === lastMeal.current) return
-    const first = lastMeal.current === 0
+    // Picking another pet out of the nest shows ITS last meal, not a new one.
+    const first = lastMeal.current === 0 || mealOf.current !== active
     lastMeal.current = pet.lastFedAt
+    mealOf.current = active
     if (first) return // the meal that came out of the save file, not a fresh one
     setChewing(true)
     later(() => setChewing(false), CHEW_MS)
-  }, [pet.lastFedAt, later])
+  }, [pet.lastFedAt, active, later])
 
   // ---- reacting to the work ----
   //
@@ -1005,7 +1014,35 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       : []),
     { id: 'size', label: t('pet.settings.size'), value: t(`pet.size.${chrome}`) },
     { id: 'hide', label: t('pet.settings.hide'), value: t('pet.settings.hideDo') },
-    { id: 'restart', label: t('pet.settings.restart'), value: t('pet.settings.restartDo'), danger: true }
+    // Which pet the buttons look after; one press shows the next one round.
+    ...(pets.length > 1
+      ? [
+          {
+            id: 'switch',
+            label: t('pet.settings.switch'),
+            value: `${active + 1}/${pets.length}`
+          }
+        ]
+      : []),
+    {
+      id: 'adopt',
+      label: t('pet.settings.adopt'),
+      value:
+        pets.length < MAX_PETS
+          ? t('pet.settings.adoptDo', { n: pets.length, max: MAX_PETS })
+          : t('pet.settings.nestFull', { max: MAX_PETS })
+    },
+    { id: 'restart', label: t('pet.settings.restart'), value: t('pet.settings.restartDo'), danger: true },
+    ...(pets.length > 1
+      ? [
+          {
+            id: 'release',
+            label: t('pet.settings.release'),
+            value: t('pet.settings.releaseDo'),
+            danger: true
+          }
+        ]
+      : [])
   ]
   const NEXT_SIZE: Record<PetChrome, PetChrome> = { full: 'screen', screen: 'bare', bare: 'full' }
   const runSetting = (id: string): void => {
@@ -1023,6 +1060,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         return void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
       case 'restart':
         if (window.confirm(t('pet.resetConfirm'))) reset()
+        return
+      case 'switch':
+        return select()
+      case 'adopt':
+        if (pets.length >= MAX_PETS) return speak(t('pet.settings.nestFull', { max: MAX_PETS }))
+        adopt()
+        return setMode('char')
+      case 'release':
+        if (window.confirm(t('pet.releaseConfirm'))) letGo()
         return
     }
   }
@@ -1139,6 +1185,26 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'char' && (
         <div className="pet-yard">
+          {/* The nest: one dot per pet, the shown one filled. Press a dot to
+              look after that one instead. */}
+          {pets.length > 1 && !guessing && (
+            <div className="pet-nest">
+              {pets.map((p, i) => {
+                const who = p.name || t(`pet.species.${p.species}`)
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`pet-nest-dot${i === active ? ' on' : ''}`}
+                    title={who}
+                    aria-label={who}
+                    aria-pressed={i === active}
+                    onClick={() => select(i)}
+                  />
+                )
+              })}
+            </div>
+          )}
           {/* Pick a side by pressing that side (or with the A / B keys). */}
           {guessing && (
             <button

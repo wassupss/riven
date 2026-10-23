@@ -74,10 +74,10 @@ export const FLAVORS: Flavor[] = ['opus', 'sonnet', 'haiku', 'codex', 'other']
 // shell carries the coat pattern), so the pull is something you see at once.
 //
 // A strain is a different ANIMAL, not a recolour: it owns the silhouette at every
-// stage (see petSprites.ts), because twelve blobs in twelve colours are one pet
-// with twelve hats. Care still decides the adult FORM, which is applied to
-// whichever animal you got — twelve animals × four forms is forty-eight grown-up
-// pets, from twelve eggs you can tell apart.
+// stage (see petSprites.ts), because a dozen blobs in a dozen colours are one pet
+// with a dozen hats. Care still decides the adult FORM, which is applied to
+// whichever animal you got: eighteen animals x four forms is seventy-two grown-up
+// pets, from eighteen eggs you can tell apart.
 export type Species =
   | 'cat'
   | 'rabbit'
@@ -91,6 +91,12 @@ export type Species =
   | 'frog'
   | 'crab'
   | 'dragon'
+  | 'fox'
+  | 'owl'
+  | 'bear'
+  | 'octopus'
+  | 'axolotl'
+  | 'slime'
 export const SPECIES: Species[] = [
   'cat',
   'rabbit',
@@ -103,7 +109,13 @@ export const SPECIES: Species[] = [
   'penguin',
   'frog',
   'crab',
-  'dragon'
+  'dragon',
+  'fox',
+  'owl',
+  'bear',
+  'octopus',
+  'axolotl',
+  'slime'
 ]
 
 /** An even draw from the strains. */
@@ -808,24 +820,101 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
 }
 
 // ---------------------------------------------------------------------------
+// The nest: more than one pet at a time. Each keeps its own save; the album is
+// the keeper's, so it is shared by all of them and kept in step on every change.
+// ---------------------------------------------------------------------------
+
+/** How many pets can be raised at once. */
+export const MAX_PETS = 4
+
+export interface Nest {
+  version: 2
+  /** Which pet the device is showing and the buttons act on. */
+  active: number
+  pets: PetSave[]
+}
+
+/** Give every pet the same album, the longest one any of them carries. */
+function shareAlbum(pets: PetSave[], album?: AlbumEntry[]): PetSave[] {
+  const keep =
+    album ?? pets.reduce<AlbumEntry[]>((a, p) => (p.album.length > a.length ? p.album : a), [])
+  return pets.map((p) => (p.album === keep ? p : { ...p, album: keep }))
+}
+
+/**
+ * Read pet.json, whichever shape it is in. A save from before the nest is a
+ * single pet, and becomes the first and only one.
+ */
+export function normalizeNest(raw: unknown, now: number): Nest {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+  const list = o && Array.isArray(o.pets) ? o.pets.slice(0, MAX_PETS) : [raw]
+  // An empty nest is a broken save; it still hatches someone.
+  if (!list.length) list.push(null)
+  const pets = shareAlbum(list.map((p) => normalize(p, now)))
+  const active = Math.floor(num(o?.active, 0))
+  return { version: 2, active: Math.min(pets.length - 1, Math.max(0, active)), pets }
+}
+
+/**
+ * A pet's share of `tokens` when `n` pets eat from the same work. The leftover
+ * dots go to the first pets so nothing is lost; each pet's carry does the rest.
+ */
+export function shareOf(tokens: number, n: number, i: number): number {
+  if (n <= 1) return tokens
+  return Math.floor(tokens / n) + (i < tokens % n ? 1 : 0)
+}
+
+/** A fresh egg in the nest, shown at once. Nothing happens when it is full. */
+export function adopt(n: Nest, now: number): Nest {
+  if (n.pets.length >= MAX_PETS) return n
+  const egg = { ...initialState(now), album: n.pets[0]?.album ?? [] }
+  return { ...n, pets: [...n.pets, egg], active: n.pets.length }
+}
+
+/** Let the shown pet go, into the album. The last pet is never let go. */
+export function release(n: Nest, now: number): Nest {
+  if (n.pets.length <= 1) return n
+  const album = archive(n.pets[n.active], now)
+  const pets = shareAlbum(
+    n.pets.filter((_, i) => i !== n.active),
+    album
+  )
+  return { ...n, pets, active: Math.min(n.active, pets.length - 1) }
+}
+
+/** Start the shown pet over from an egg, keeping the one it was in the album. */
+export function restart(n: Nest, now: number): Nest {
+  const album = archive(n.pets[n.active], now)
+  const pets = shareAlbum(
+    n.pets.map((p, i) => (i === n.active ? initialState(now) : p)),
+    album
+  )
+  return { ...n, pets }
+}
+
+// ---------------------------------------------------------------------------
 // Store — thin wrapper over the pure functions plus persistence.
 // ---------------------------------------------------------------------------
 
 const FILE = 'pet.json'
 
 interface PetStore {
+  /** The pet on screen: always `pets[active]`, kept so readers need not index. */
   pet: PetSave
+  pets: PetSave[]
+  active: number
   loaded: boolean
   // Per-account daily totals as of the last sample. Deliberately NOT persisted:
   // after a restart every account is "new" again, so the day's already-counted
   // tokens are re-baselined instead of being fed twice.
   seen: Record<string, number>
   load: () => Promise<void>
-  /** Apply elapsed-time hunger/mood decay up to `now`. */
+  /** Apply elapsed-time hunger/mood decay up to `now`, to every pet. */
   tick: (now?: number) => void
   /**
    * Record a usage sample and feed the growth. Keys are `<account>::<flavor>`,
-   * so each model's tokens are tracked (and fed) separately.
+   * so each model's tokens are tracked (and fed) separately. With more than one
+   * pet the tokens are shared out between them.
    */
   sample: (totals: Record<string, number>, now?: number) => void
   /** The stage it has just reached, for the device to celebrate. Cleared by ack. */
@@ -840,12 +929,24 @@ interface PetStore {
   /** Play a round; returns null when it declined (cooldown, ill, too hungry). */
   playRound: (guess: 'left' | 'right') => { win: boolean; petPick: 'left' | 'right' } | null
   rename: (name: string) => void
-  /** Start over, keeping the finished pet in the album. */
+  /** Start the shown pet over, keeping the finished one in the album. */
   reset: () => void
+  /** Take in another egg, if the nest has room; it becomes the shown pet. */
+  adopt: () => void
+  /** Let the shown pet go into the album, if it is not the only one. */
+  release: () => void
+  /** Show another pet: by index, or the next one round when omitted. */
+  select: (i?: number) => void
 }
 
+const nestOf = (s: { pets: PetSave[]; active: number }): Nest => ({
+  version: 2,
+  active: s.active,
+  pets: s.pets
+})
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleSave(state: PetSave): void {
+function scheduleSave(state: Nest): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
@@ -857,91 +958,114 @@ export function flushPetSave(): void {
   if (!saveTimer) return
   clearTimeout(saveTimer)
   saveTimer = null
-  void window.api.config.save(FILE, usePet.getState().pet)
+  void window.api.config.save(FILE, nestOf(usePet.getState()))
 }
 
-export const usePet = create<PetStore>((set, get) => ({
-  pet: initialState(Date.now()),
-  loaded: false,
-  seen: {},
-  justEvolved: null,
-  ackEvolution: () => set({ justEvolved: null }),
-  justLeveled: null,
-  ackLevel: () => set({ justLeveled: null }),
-  load: async () => {
-    if (get().loaded) return
-    const raw = await window.api.config.load(FILE).catch(() => null)
-    const now = Date.now()
-    // Charge for the time the app was closed right away, so reopening after two
-    // days shows a starving pet instead of the one we left.
-    set({ pet: decay(normalize(raw, now), now), loaded: true })
-  },
-  tick: (now = Date.now()) => {
-    const next = decay(get().pet, now)
-    if (next === get().pet) return
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  sample: (totals, now = Date.now()) => {
-    const before = get().pet
-    const { deltas, seen } = sampleAccounts(get().seen, totals)
-    set({ seen })
-    // One feed per flavour, so the diet records which model actually paid.
-    let next = before
-    for (const [key, delta] of Object.entries(deltas)) {
-      if (delta <= 0) continue
-      next = feed(next, delta, now, flavorOf(key.split('::')[1] ?? ''))
-    }
-    if (next === before) return
-    const evolutions = noteEvolution(before, next, now)
-    if (evolutions !== next.evolutions) {
-      next = { ...next, evolutions }
-      set({ justEvolved: evolutions[evolutions.length - 1] })
-    } else {
-      // Growing up is level 1, and already celebrated as an evolution.
-      const lvl = levelOf(next.xp).level
-      if (lvl > 1 && lvl > levelOf(before.xp).level) set({ justLeveled: lvl })
-    }
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  patHead: (now = Date.now()) => {
-    const next = pet(get().pet, now)
-    if (next === get().pet) return
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  cleanUp: () => {
-    const next = clean(get().pet)
-    if (next === get().pet) return
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  giveMedicine: () => {
-    const next = cure(get().pet)
-    if (next === get().pet) return
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  playRound: (guess) => {
-    // The pet's pick is drawn here, not in the pure function, so the game stays
-    // testable with a fixed opponent.
-    const petPick = Math.random() < 0.5 ? 'left' : 'right'
-    const { state, win, played } = play(get().pet, guess, petPick, Date.now())
-    if (!played) return null
-    set({ pet: state })
-    scheduleSave(state)
-    return { win, petPick }
-  },
-  rename: (name) => {
-    const next = { ...get().pet, name: name.slice(0, 24) }
-    set({ pet: next })
-    scheduleSave(next)
-  },
-  reset: () => {
-    const now = Date.now()
-    const next = { ...initialState(now), album: archive(get().pet, now) }
-    set({ pet: next, seen: {} })
-    scheduleSave(next)
+export const usePet = create<PetStore>((set, get) => {
+  /** Swap in a new nest and persist it. */
+  const commit = (n: { pets: PetSave[]; active: number }): void => {
+    set({ pets: n.pets, active: n.active, pet: n.pets[n.active] })
+    scheduleSave(nestOf(n))
   }
-}))
+  /** Replace the shown pet with what `fn` makes of it; nothing if unchanged. */
+  const onActive = (fn: (p: PetSave) => PetSave): void => {
+    const { pets, active } = get()
+    const next = fn(pets[active])
+    if (next === pets[active]) return
+    commit({ pets: pets.map((p, i) => (i === active ? next : p)), active })
+  }
+  const first = initialState(Date.now())
+  return {
+    pet: first,
+    pets: [first],
+    active: 0,
+    loaded: false,
+    seen: {},
+    justEvolved: null,
+    ackEvolution: () => set({ justEvolved: null }),
+    justLeveled: null,
+    ackLevel: () => set({ justLeveled: null }),
+    load: async () => {
+      if (get().loaded) return
+      const raw = await window.api.config.load(FILE).catch(() => null)
+      const now = Date.now()
+      const n = normalizeNest(raw, now)
+      // Charge for the time the app was closed right away, so reopening after two
+      // days shows a starving pet instead of the one we left.
+      const pets = n.pets.map((p) => decay(p, now))
+      set({ pets, active: n.active, pet: pets[n.active], loaded: true })
+    },
+    tick: (now = Date.now()) => {
+      const { pets, active } = get()
+      const next = pets.map((p) => decay(p, now))
+      if (next.every((p, i) => p === pets[i])) return
+      commit({ pets: next, active })
+    },
+    sample: (totals, now = Date.now()) => {
+      const { pets, active } = get()
+      const { deltas, seen } = sampleAccounts(get().seen, totals)
+      set({ seen })
+      let changed = false
+      const next = pets.map((before, i) => {
+        // One feed per flavour, so the diet records which model actually paid.
+        let p = before
+        for (const [key, delta] of Object.entries(deltas)) {
+          const share = shareOf(delta, pets.length, i)
+          if (share <= 0) continue
+          p = feed(p, share, now, flavorOf(key.split('::')[1] ?? ''))
+        }
+        if (p === before) return p
+        changed = true
+        const evolutions = noteEvolution(before, p, now)
+        if (evolutions !== p.evolutions) {
+          p = { ...p, evolutions }
+          // Only the pet on screen is celebrated; the others' stories still
+          // record it, and show it when they are picked.
+          if (i === active) set({ justEvolved: evolutions[evolutions.length - 1] })
+        } else if (i === active) {
+          // Growing up is level 1, and already celebrated as an evolution.
+          const lvl = levelOf(p.xp).level
+          if (lvl > 1 && lvl > levelOf(before.xp).level) set({ justLeveled: lvl })
+        }
+        return p
+      })
+      if (changed) commit({ pets: next, active })
+    },
+    patHead: (now = Date.now()) => onActive((p) => pet(p, now)),
+    cleanUp: () => onActive(clean),
+    giveMedicine: () => onActive(cure),
+    playRound: (guess) => {
+      // The pet's pick is drawn here, not in the pure function, so the game stays
+      // testable with a fixed opponent.
+      const petPick = Math.random() < 0.5 ? 'left' : 'right'
+      const { state, win, played } = play(get().pet, guess, petPick, Date.now())
+      if (!played) return null
+      onActive(() => state)
+      return { win, petPick }
+    },
+    rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
+    reset: () => {
+      set({ seen: {}, justEvolved: null, justLeveled: null })
+      commit(restart(nestOf(get()), Date.now()))
+    },
+    adopt: () => {
+      const n = adopt(nestOf(get()), Date.now())
+      if (n.pets === get().pets) return
+      set({ justEvolved: null, justLeveled: null })
+      commit(n)
+    },
+    release: () => {
+      const n = release(nestOf(get()), Date.now())
+      if (n.pets === get().pets) return
+      set({ justEvolved: null, justLeveled: null })
+      commit(n)
+    },
+    select: (i) => {
+      const { pets, active } = get()
+      const to = i === undefined ? (active + 1) % pets.length : i
+      if (to === active || to < 0 || to >= pets.length) return
+      set({ justEvolved: null, justLeveled: null })
+      commit({ pets, active: to })
+    }
+  }
+})

@@ -891,6 +891,408 @@ const dragon: Bodies = {
   }
 }
 
+// Big ears, and a brush of a tail curled up one side.
+const fox: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '.....o....o.....',
+      '....obo..obo....',
+      '....oobbbboo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo.o..',
+      '....obbbbbboobo.',
+      '.....obbbbbbbo..',
+      '......ooooooo...',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '...o......o.....',
+      '..obo....obo....',
+      '..oobbbbbboo....',
+      '..obbbbbbbbo....',
+      '..obbbbbbbbo..o.',
+      '..obbbbbbbbo.obo',
+      '..obbbbbbbbo.obo',
+      '..obbbbbbbboobbo',
+      '...obbbbbbbbbbo.',
+      '....oooooooooo..',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '...o.......o....',
+      '..obo.....obo...',
+      '..obbo...obbo...',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo...',
+      '..obbbbbbbbbo.o.',
+      '..obbbbbbbbboobo',
+      '..obbbbbbbbboobo',
+      '..obbbbbbbbbobbo',
+      '..obbbbbbbbbbbbo',
+      '...obbbbbbbbbbo.',
+      '..sobbbbbbbbos..',
+      '...obbbbbbbbo...',
+      '....oooooooo....',
+      '................'
+    ]
+  }
+}
+
+// Ear tufts, folded wings, talons.
+const owl: Bodies = {
+  baby: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '.....o....o.....',
+      '.....oo..oo.....',
+      '....oobbbboo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '.....oooooo.....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '....o......o....',
+      '....oo....oo....',
+      '...oobbbbbboo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '..sobbbbbbbbos..',
+      '..sobbbbbbbbos..',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....obbbbbbo....',
+      '.....oo..oo.....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '...o........o...',
+      '...oo......oo...',
+      '..oobbbbbbbboo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '.sobbbbbbbbbbos.',
+      '.sobbbbbbbbbbos.',
+      '.sobbbbbbbbbbos.',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...obbbbbbbbo...',
+      '....oooooooo....',
+      '.....oo..oo.....',
+      '................'
+    ]
+  }
+}
+
+// Round ears, a solid build, and two stubby legs.
+const bear: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '....oo....oo....',
+      '...obbo..obbo...',
+      '....oobbbboo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '.....obbbbo.....',
+      '......oooo......',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '...oo......oo...',
+      '..obbo....obbo..',
+      '...oobbbbbboo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbo..obbo...',
+      '...oooo..oooo...',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '..oo........oo..',
+      '.obbo......obbo.',
+      '..oobbbbbbbboo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '.sobbbbbbbbbbos.',
+      '.sobbbbbbbbbbos.',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbo..obbbo..',
+      '..ooooo..ooooo..',
+      '................'
+    ]
+  }
+}
+
+// A dome of a head and a skirt of curling arms.
+const octopus: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '......oooo......',
+      '.....obbbbo.....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obobbobo....',
+      '....o.o..o.o....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '.....oooooo.....',
+      '....obbbbbbo....',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '..obbbbbbbbbbo..',
+      '..obo.obbo.obo..',
+      '.obo..obbo..obo.',
+      '.oo....oo....oo.',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '.....oooooo.....',
+      '....obbbbbbo....',
+      '...obbbbbbbbo...',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '.obbbbbbbbbbbbo.',
+      '.obo.obbbbo.obo.',
+      'obo..obbbbo..obo',
+      'oo..obo..obo..oo',
+      '....oo....oo....',
+      '................',
+      '................'
+    ]
+  }
+}
+
+// A wide head fringed with pink gills, and a little paddle of a tail.
+const axolotl: Bodies = {
+  baby: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '................',
+      '....oooooooo....',
+      '...aobbbbbboa...',
+      '..a.obbbbbbo.a..',
+      '...aobbbbbboa...',
+      '....obbbbbbo....',
+      '.....oooooo.....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '.a..oooooooo..a.',
+      '..aobbbbbbbboa..',
+      '.a.obbbbbbbbo.a.',
+      '..aobbbbbbbboa..',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '....obbbbbbo....',
+      '....obbbbbbooo..',
+      '.....oooooobbo..',
+      '...........oo...',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 5 },
+    rows: [
+      '................',
+      '................',
+      'a..oooooooooo..a',
+      '.aobbbbbbbbbboa.',
+      'a.obbbbbbbbbbo.a',
+      '.aobbbbbbbbbboa.',
+      'a.obbbbbbbbbbo.a',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...obbbbbbbbo...',
+      '..sobbbbbbbbos..',
+      '...obbbbbbbbooo.',
+      '....oooooooobbo.',
+      '............oo..',
+      '................',
+      '................'
+    ]
+  }
+}
+
+// A drop of jelly: a peak on top, settling wider as it grows.
+const slime: Bodies = {
+  baby: {
+    face: { x: 6, y: 6 },
+    rows: [
+      '................',
+      '................',
+      '................',
+      '.......oo.......',
+      '......obbo......',
+      '.....obbbbo.....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '....obbbbbbo....',
+      '.....oooooo.....',
+      '.....w.ww.w.....',
+      '....wwwwwwww....',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  young: {
+    face: { x: 6, y: 7 },
+    rows: [
+      '................',
+      '................',
+      '.......oo.......',
+      '......obbo......',
+      '.....obbbbo.....',
+      '....obbbbbbo....',
+      '...obbbbbbbbo...',
+      '...obbbbbbbbo...',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '...oooooooooo...',
+      '................',
+      '................',
+      '................',
+      '................'
+    ]
+  },
+  grown: {
+    face: { x: 6, y: 7 },
+    rows: [
+      '................',
+      '.......oo.......',
+      '......obbo......',
+      '.....obbbbo.....',
+      '....obbbbbbo....',
+      '...obbbbbbbbo...',
+      '..obbbbbbbbbbo..',
+      '..obbbbbbbbbbo..',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '.obbbbbbbbbbbbo.',
+      '..oooooooooooo..',
+      '................',
+      '................',
+      '................'
+    ]
+  }
+}
+
 export const BODIES: Record<Species, Bodies> = {
   cat,
   rabbit,
@@ -903,7 +1305,13 @@ export const BODIES: Record<Species, Bodies> = {
   penguin,
   frog,
   crab,
-  dragon
+  dragon,
+  fox,
+  owl,
+  bear,
+  octopus,
+  axolotl,
+  slime
 }
 
 /** Every grid in the art, flat, for the shape checks in the tests. */
@@ -1034,13 +1442,25 @@ export const COAT_RULES: Record<
   // A hard shell, marked across it.
   crab: (x, y) => ((x + y) % 5 === 0 ? 'h' : null),
   // Scales down the back, in the accent: a dragon is allowed to be flashy.
-  dragon: (x, y) => ((x + y) % 3 === 0 ? 'a' : null)
+  dragon: (x, y) => ((x + y) % 3 === 0 ? 'a' : null),
+  // A pale bib down the middle of the chest.
+  fox: (x, y, b) => (y >= b.y1 - 3 && Math.abs(x - (b.x0 + b.x1) / 2) < 2 ? 'h' : null),
+  // Rows of little feather chevrons.
+  owl: (x, y, b) => ((y - b.y0) % 3 === 0 && (x + y) % 2 === 0 ? 'h' : null),
+  // A lighter tummy, set well in from the sides.
+  bear: (x, y, b) => (y >= b.y1 - 4 && x > b.x0 + 3 && x < b.x1 - 3 ? 'h' : null),
+  // Suckers, in the accent.
+  octopus: (x, y) => ((x * 2 + y * 3) % 5 === 0 ? 'a' : null),
+  // Freckles.
+  axolotl: (x, y) => ((x * 7 + y * 3) % 10 === 0 ? 'h' : null),
+  // Bubbles caught in the jelly.
+  slime: (x, y) => ((x * 5 + y * 7) % 11 === 0 ? 'h' : null)
 }
 
 // ---- the adult forms, as changes made to the grown body ----
 //
 // A form used to be its own grid, which cannot work once a strain owns the
-// silhouette: four forms × twelve animals is forty-eight bodies to draw and keep
+// silhouette: four forms × eighteen animals is seventy-two bodies to draw and keep
 // in step. Each form is a transformation instead, so it composes with any animal.
 //
 // Every form has to be something worth growing into. The first versions were

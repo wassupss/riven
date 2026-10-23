@@ -1159,6 +1159,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.species.frog': { ko: '개구리', en: 'Frog' },
   'pet.species.crab': { ko: '게', en: 'Crab' },
   'pet.species.dragon': { ko: '용', en: 'Dragon' },
+  'pet.species.fox': { ko: '여우', en: 'Fox' },
+  'pet.species.owl': { ko: '부엉이', en: 'Owl' },
+  'pet.species.bear': { ko: '곰', en: 'Bear' },
+  'pet.species.octopus': { ko: '문어', en: 'Octopus' },
+  'pet.species.axolotl': { ko: '우파루파', en: 'Axolotl' },
+  'pet.species.slime': { ko: '슬라임', en: 'Slime' },
   'pet.stat.species': { ko: '종', en: 'Strain' },
   'pet.form.radiant': { ko: '광휘', en: 'Radiant' },
   'pet.form.sturdy': { ko: '견실', en: 'Sturdy' },
@@ -1291,6 +1297,12 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.settings.hideDo': { ko: '숨기기', en: 'hide' },
   'pet.settings.restart': { ko: '처음부터', en: 'Start over' },
   'pet.settings.restartDo': { ko: '새 알', en: 'new egg' },
+  'pet.settings.switch': { ko: '돌보는 펫', en: 'Looking after' },
+  'pet.settings.adopt': { ko: '한 마리 더', en: 'Another pet' },
+  'pet.settings.adoptDo': { ko: '알 받기 ({n}/{max})', en: 'add an egg ({n}/{max})' },
+  'pet.settings.nestFull': { ko: '최대 {max}마리', en: '{max} at most' },
+  'pet.settings.release': { ko: '보내주기', en: 'Let go' },
+  'pet.settings.releaseDo': { ko: '도감으로', en: 'to the album' },
   'pet.say.egg': { ko: '아직 알이에요', en: 'Still an egg' },
   'pet.say.alreadyClean': { ko: '이미 깨끗해요', en: 'Already clean' },
   'pet.say.notIll': { ko: '아프지 않아요', en: 'Not ill' },
@@ -1332,6 +1344,10 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.resetConfirm': {
     ko: '지금까지 키운 걸 버리고 새 알부터 시작할까요?',
     en: 'Abandon this pet and start again from an egg?'
+  },
+  'pet.releaseConfirm': {
+    ko: '지금 보이는 펫을 도감에 남기고 떠나보낼까요?',
+    en: 'Let this pet go? It stays in the album.'
   },
   'pet.hint': {
     ko: '에이전트가 쓴 토큰 {n}개가 먹이 한 알이 됩니다. 캐시를 다시 읽은 분량은 세지 않아요.',

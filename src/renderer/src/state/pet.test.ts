@@ -1,7 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
 import { DEFAULT_SETTINGS } from './settings'
-import { feedFrame, drawSpecies, speciesFromBirth, strainsSeen, SPECIES } from './pet'
+import {
+  adopt,
+  feedFrame,
+  drawSpecies,
+  normalizeNest,
+  release,
+  restart,
+  shareOf,
+  speciesFromBirth,
+  strainsSeen,
+  MAX_PETS,
+  SPECIES
+} from './pet'
 import {
   archive,
   awardsOf,
@@ -756,7 +768,7 @@ describe('species', () => {
   it('draws evenly across the strains', () => {
     // The draw is a pure function of one number, so the whole distribution is
     // checkable without a random source.
-    const n = 600
+    const n = SPECIES.length * 50
     const drawn = Array.from({ length: n }, (_, i) => drawSpecies(i / n))
     for (const sp of SPECIES)
       expect(drawn.filter((d) => d === sp)).toHaveLength(n / SPECIES.length)
@@ -823,5 +835,68 @@ describe('species', () => {
     expect(strainsSeen(base({ species: 'cat', album: [] }))).toBe(1)
     expect(strainsSeen(base({ species: 'cat', album: [entry('cat'), entry('cat')] }))).toBe(1)
     expect(strainsSeen(base({ species: 'cat', album: [entry('rabbit'), entry('turtle')] }))).toBe(3)
+  })
+})
+
+describe('the nest', () => {
+  const now = Date.UTC(2026, 9, 1, 12)
+  const grown = (): ReturnType<typeof initialState> => ({ ...initialState(now), xp: 500 })
+
+  it('reads a save from before the nest as a nest of one', () => {
+    const old = { ...grown(), name: 'mochi' }
+    const n = normalizeNest(old, now)
+    expect(n.pets).toHaveLength(1)
+    expect(n.active).toBe(0)
+    expect(n.pets[0].name).toBe('mochi')
+    expect(n.pets[0].xp).toBe(500)
+  })
+
+  it('reads a nest back, capped and with the shown pet in range', () => {
+    const pets = Array.from({ length: MAX_PETS + 2 }, (_, i) => ({ ...grown(), name: `p${i}` }))
+    const n = normalizeNest({ version: 2, active: 99, pets }, now)
+    expect(n.pets).toHaveLength(MAX_PETS)
+    expect(n.active).toBe(MAX_PETS - 1)
+    expect(normalizeNest({ version: 2, active: 0, pets: [] }, now).pets).toHaveLength(1)
+    expect(normalizeNest(null, now).pets).toHaveLength(1)
+  })
+
+  it('shares the work out without losing a token', () => {
+    for (const n of [1, 2, 3, 4])
+      for (const tokens of [0, 1, 7, 1000, 12345]) {
+        const parts = Array.from({ length: n }, (_, i) => shareOf(tokens, n, i))
+        expect(parts.reduce((a, b) => a + b, 0)).toBe(tokens)
+        expect(Math.max(...parts) - Math.min(...parts)).toBeLessThanOrEqual(1)
+      }
+  })
+
+  it('takes in eggs until it is full, showing the newest', () => {
+    let n = normalizeNest(grown(), now)
+    for (let i = 1; i < MAX_PETS; i++) {
+      n = adopt(n, now)
+      expect(n.pets).toHaveLength(i + 1)
+      expect(n.active).toBe(i)
+      expect(n.pets[i].xp).toBe(0)
+    }
+    expect(adopt(n, now)).toBe(n)
+  })
+
+  it('lets a pet go into the album, never the last one', () => {
+    let n = adopt(normalizeNest(grown(), now), now)
+    n = { ...n, active: 0 }
+    const after = release(n, now)
+    expect(after.pets).toHaveLength(1)
+    expect(after.active).toBe(0)
+    expect(after.pets[0].album).toHaveLength(1)
+    expect(release(after, now)).toBe(after)
+  })
+
+  it('keeps one album for every pet in it', () => {
+    let n = adopt(adopt(normalizeNest(grown(), now), now), now)
+    n = restart({ ...n, active: 0 }, now)
+    expect(n.pets[0].xp).toBe(0)
+    for (const p of n.pets) expect(p.album).toHaveLength(1)
+    // A save whose pets disagree is brought into step on load.
+    const odd = { version: 2, active: 0, pets: [n.pets[0], { ...n.pets[1], album: [] }] }
+    for (const p of normalizeNest(odd, now).pets) expect(p.album).toHaveLength(1)
   })
 })
