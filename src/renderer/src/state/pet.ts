@@ -143,6 +143,7 @@ export function speciesFromBirth(bornAt: number): Species {
 export type Stage = 'egg' | 'hatchling' | 'child' | 'teen' | 'adult'
 // Non-adult stages all render 'base'; an adult's shape depends on its upbringing.
 export type Form = 'base' | 'radiant' | 'sturdy' | 'titan' | 'wraith'
+export const FORMS: Form[] = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
 // 'asleep' is never returned by moodOf — sleep is a property of the CLOCK, not
 // of the pet's state, so the device decides it (see isNight) and moodOf stays
 // free of the current time.
@@ -194,6 +195,12 @@ export interface PetSave {
   plays: number
   wins: number
   lastPlayAt: number
+  // ---- friend battles (see petBattle.ts) ----
+  battles: number
+  battleWins: number
+  // Which friends' pets it has already fought today, as `<their bornAt>@<day>`,
+  // so pasting the same friend again does not stack up wins.
+  fought: string[]
   // Kibble eaten per model — what it has grown up on.
   diet: Record<Flavor, number>
   // Every stage it has reached, in order. A pet's whole life story is four or
@@ -261,6 +268,9 @@ export function initialState(now: number): PetSave {
     plays: 0,
     wins: 0,
     lastPlayAt: 0,
+    battles: 0,
+    battleWins: 0,
+    fought: [],
     diet: { opus: 0, sonnet: 0, haiku: 0, codex: 0, other: 0 },
     // The story starts with the egg it was born as, so a pet that jumps two
     // stages in one big meal still has a beginning.
@@ -311,6 +321,11 @@ export function normalize(raw: unknown, now: number): PetSave {
     plays: Math.max(0, Math.floor(num(o.plays, 0))),
     wins: Math.max(0, Math.floor(num(o.wins, 0))),
     lastPlayAt: Math.max(0, num(o.lastPlayAt, 0)),
+    battles: Math.max(0, Math.floor(num(o.battles, 0))),
+    battleWins: Math.max(0, Math.floor(num(o.battleWins, 0))),
+    fought: Array.isArray(o.fought)
+      ? o.fought.filter((k): k is string => typeof k === 'string').slice(-FOUGHT_KEEP)
+      : [],
     diet: FLAVORS.reduce(
       (d, f) => ({ ...d, [f]: Math.max(0, Math.floor(num((o.diet as Record<string, unknown>)?.[f], 0))) }),
       {} as Record<Flavor, number>
@@ -506,6 +521,30 @@ export function play(
     },
     win,
     played: true
+  }
+}
+
+/** How many of the day's fights the record remembers. */
+export const FOUGHT_KEEP = 40
+
+/**
+ * Put a friend battle on the record. Each friend's pet counts once a day: the
+ * fight is fixed by the two codes, so pasting a beaten friend again would just
+ * be the same win twice. Returns the same object when it does not count.
+ */
+export function recordBattle(
+  s: PetSave,
+  foeBornAt: number,
+  result: 'win' | 'loss' | 'draw',
+  now: number
+): PetSave {
+  const key = `${foeBornAt}@${dayKey(now)}`
+  if (s.fought.includes(key)) return s
+  return {
+    ...s,
+    battles: s.battles + 1,
+    battleWins: s.battleWins + (result === 'win' ? 1 : 0),
+    fought: [...s.fought, key].slice(-FOUGHT_KEEP)
   }
 }
 
@@ -848,7 +887,10 @@ export function awardsOf(s: PetSave, now: number): Award[] {
     // starting over rather than of raising one pet well.
     { id: 'strains', done: strainsSeen(s) >= 3 },
     // Kept feeding it long after it grew up: the crown is the proof.
-    { id: 'crowned', done: levelOf(s.xp).level >= 10 }
+    { id: 'crowned', done: levelOf(s.xp).level >= 10 },
+    // Met a friend's pet in a fight, and beat five.
+    { id: 'challenger', done: s.battles >= 1 },
+    { id: 'champion', done: s.battleWins >= 5 }
   ]
 }
 
@@ -992,6 +1034,8 @@ interface PetStore {
   /** Play a round; returns null when it declined (cooldown, ill, too hungry). */
   playRound: (guess: 'left' | 'right') => { win: boolean; petPick: 'left' | 'right' } | null
   rename: (name: string) => void
+  /** Put a friend battle on the shown pet's record; false when it already counted today. */
+  recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw') => boolean
   /** Start the shown pet over, keeping the finished one in the album. */
   reset: () => void
   /** Take in another egg, if the nest has room; it becomes the shown pet. */
@@ -1096,6 +1140,11 @@ export const usePet = create<PetStore>((set, get) => {
       return { win, petPick }
     },
     rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
+    recordBattle: (foeBornAt, result) => {
+      const before = get().pet
+      onActive((p) => recordBattle(p, foeBornAt, result, Date.now()))
+      return get().pet !== before
+    },
     reset: () => {
       set({ seen: {}, justEvolved: null, justLeveled: null })
       commit(restart(nestOf(get()), Date.now()))

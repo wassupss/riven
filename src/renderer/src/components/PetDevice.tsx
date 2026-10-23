@@ -20,6 +20,7 @@ import {
   Settings,
   Smile,
   MessageCircle,
+  Swords,
   Trash2,
   Trophy,
   Utensils,
@@ -71,6 +72,15 @@ import {
   type Species,
   type Stage
 } from '../state/pet'
+import {
+  cardOf,
+  decodeCard,
+  encodeCard,
+  fight,
+  moodOfCard,
+  type BattleCard,
+  type Bout
+} from '../state/petBattle'
 
 // ---------------------------------------------------------------------------
 // 리븐펫 — a handheld virtual pet that floats over the workbench, or lives in its
@@ -100,7 +110,26 @@ const CHEW_MS = 1600
 const FLASH_MS = 1800
 const MARGIN = 12
 
-type ScreenMode = 'char' | 'clock' | 'stats' | 'graph' | 'awards' | 'album' | 'settings' | 'talk'
+type ScreenMode =
+  | 'char'
+  | 'clock'
+  | 'stats'
+  | 'graph'
+  | 'awards'
+  | 'album'
+  | 'settings'
+  | 'talk'
+  | 'battle'
+
+/** A friend's pet against ours, played back one blow at a time. */
+interface Duel {
+  mine: BattleCard
+  foe: BattleCard
+  bout: Bout
+}
+type DuelResult = 'win' | 'loss' | 'draw'
+// Slow enough to follow who hit whom, quick enough that 30 blows is not a wait.
+const BLOW_MS = 650
 
 /** A turn that finished somewhere, kept just long enough to be asked about. */
 interface Finished {
@@ -311,6 +340,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const adopt = usePet((s) => s.adopt)
   const letGo = usePet((s) => s.release)
   const select = usePet((s) => s.select)
+  const recordBattle = usePet((s) => s.recordBattle)
   // What the workspaces are doing right now. The roster is app-wide on purpose:
   // a turn running in a workspace that is not on screen is exactly the one worth
   // telling you about.
@@ -357,6 +387,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const justLeveled = usePet((s) => s.justLeveled)
   const ackLevel = usePet((s) => s.ackLevel)
   const [evolving, setEvolving] = useState(false)
+  // A friend battle: the fight, how far through it the playback is, and once it
+  // is over, how it went and whether it went on the record (once a day a friend).
+  const [duel, setDuel] = useState<Duel | null>(null)
+  const [step, setStep] = useState(0)
+  const [outcome, setOutcome] = useState<{ result: DuelResult; counted: boolean } | null>(null)
   // Dragging never goes through React. A pointermove that re-renders the device
   // has to rebuild a hundred-odd <rect> dots before the pixel moves, which is
   // exactly the lag you feel in the hand; instead the node is moved directly and
@@ -374,6 +409,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     },
     []
   )
+
+  // Battle playback: one blow per beat, and the record written exactly once, at
+  // the end. Holds still while nobody is looking, like everything else here.
+  useEffect(() => {
+    if (!duel || outcome || !awake) return
+    if (step < duel.bout.blows.length) {
+      const id = setTimeout(() => setStep((n) => n + 1), BLOW_MS)
+      return () => clearTimeout(id)
+    }
+    const w = duel.bout.winner
+    const result: DuelResult = w === null ? 'draw' : w === 0 ? 'win' : 'loss'
+    setOutcome({ result, counted: recordBattle(duel.foe.bornAt, result) })
+  }, [duel, step, outcome, awake, recordBattle])
 
   useEffect(() => {
     if (!show && !detached) return
@@ -809,6 +857,43 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       REVEAL_MS
     )
   }
+  // ---- friend battles ----
+  // No server: you send your code, your friend sends theirs, and each side
+  // pastes the other's. The same two codes make the same fight on both machines.
+  const copyCode = async (): Promise<void> => {
+    const mine = cardOf(pet, Date.now())
+    if (!mine) return speak(t('pet.say.egg'))
+    await window.api.pet.copy(encodeCard(mine))
+    say(t('pet.battle.copied'))
+  }
+  const pasteCode = async (): Promise<void> => {
+    const mine = cardOf(pet, Date.now())
+    if (!mine) return speak(t('pet.say.egg'))
+    // The pasted code needs a keyboard, which the floating pet borrows (see doRename).
+    if (detached) await window.api.pet.focusable(true)
+    let text: string | null
+    try {
+      text = await promptInput({ title: t('pet.battle.pasteTitle'), initial: '' })
+    } finally {
+      if (detached) void window.api.pet.focusable(false)
+    }
+    if (!text?.trim()) return
+    const foe = decodeCard(text)
+    if (!foe) return speak(t('pet.battle.bad'))
+    // A friend's pet, never one of your own: a pet is known by its birthday.
+    if (pets.some((p) => Math.floor(p.bornAt) === foe.bornAt)) return speak(t('pet.battle.own'))
+    setSpeech(null)
+    setOutcome(null)
+    setStep(0)
+    setDuel({ mine, foe, bout: fight(mine, foe) })
+  }
+  /** Out of the arena, back to the battle menu. */
+  const leaveDuel = (): void => {
+    setDuel(null)
+    setOutcome(null)
+    setStep(0)
+  }
+
   // ---- the menu strip ----
   //
   // The functions live on the SCREEN, as a strip of segments along its foot, and
@@ -908,6 +993,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('album')
     },
     {
+      id: 'battle',
+      label: t('pet.mode.battle'),
+      node: <Swords size={11} />,
+      on: mode === 'battle',
+      run: () => {
+        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
+        openScreen('battle')
+      }
+    },
+    {
       id: 'talk',
       label: t('pet.talk.label'),
       node: <MessageCircle size={11} />,
@@ -926,6 +1021,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** Open a screen. The ask field belongs to the talk screen and follows it. */
   const openScreen = (m: ScreenMode): void => {
     setTalking(m === 'talk')
+    leaveDuel()
     setMode(m)
   }
 
@@ -934,6 +1030,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setSpeech(null)
     setGuessing(false)
     setTalking(false)
+    leaveDuel()
     setMode('char')
   }
 
@@ -946,6 +1043,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pressA = (): void => {
     if (guessing) return doGuess('left')
     if (mode === 'settings') return setRow((r) => (r + 1) % settingRows.length)
+    if (mode === 'battle') return void copyCode()
     if (METER_PAGES.includes(mode)) {
       const next = METER_PAGES[(METER_PAGES.indexOf(mode) + 1) % METER_PAGES.length]
       return setMode(next)
@@ -958,6 +1056,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pressB = (): void => {
     if (guessing) return doGuess('right')
     if (mode === 'settings') return runSetting(settingRows[row]?.id ?? '')
+    if (mode === 'battle') {
+      // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
+      if (duel && !outcome) return setStep(duel.bout.blows.length)
+      return void pasteCode()
+    }
     if (sel === null) return setMode(mode === 'clock' ? 'char' : 'clock')
     icons[sel].run()
   }
@@ -966,6 +1069,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // dismissed instead of waited out.
     setSpeech(null)
     if (guessing) return setGuessing(false)
+    if (mode === 'battle' && duel) return leaveDuel()
     if (mode !== 'char') {
       setTalking(false)
       setMode('char')
@@ -1305,6 +1409,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dt>{t('pet.stat.games')}</dt>
             <dd>{pet.plays ? t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays }) : t('pet.never')}</dd>
           </div>
+          <div>
+            <dt>{t('pet.battle.record')}</dt>
+            <dd>
+              {pet.battles
+                ? t('pet.battle.recordValue', { n: pet.battles, w: pet.battleWins })
+                : t('pet.never')}
+            </dd>
+          </div>
           {limit && (
             <div>
               <dt>{t('pet.stat.limit')}</dt>
@@ -1428,6 +1540,88 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           ))}
         </div>
       )}
+
+      {mode === 'battle' && !duel && (
+        <div className="pet-rows pet-settings">
+          <button type="button" data-row="copy" className="pet-row" onClick={() => void copyCode()}>
+            <span>{t('pet.battle.copy')}</span>
+            <b>A</b>
+          </button>
+          <button type="button" data-row="paste" className="pet-row" onClick={() => void pasteCode()}>
+            <span>{t('pet.battle.paste')}</span>
+            <b>B</b>
+          </button>
+          <div className="pet-row">
+            <span>{t('pet.battle.record')}</span>
+            <b>
+              {pet.battles
+                ? t('pet.battle.recordValue', { n: pet.battles, w: pet.battleWins })
+                : t('pet.never')}
+            </b>
+          </div>
+          <p className="pet-note">{t('pet.battle.hint')}</p>
+        </div>
+      )}
+
+      {mode === 'battle' && duel && (() => {
+        const blow = step > 0 ? duel.bout.blows[step - 1] : null
+        const hp = blow?.hp ?? [duel.bout.fighters[0].hp, duel.bout.fighters[1].hp]
+        // Faces change only once it is over: the winner beams, the loser sulks.
+        const winner = outcome && outcome.result !== 'draw' ? duel.bout.winner : null
+        const side = (i: 0 | 1, c: BattleCard): JSX.Element => {
+          const swung = blow && blow.by === i
+          const hit = blow && blow.by !== i && !blow.miss
+          const pct = Math.round((hp[i] / duel.bout.fighters[i].hp) * 100)
+          return (
+            <div className={`pet-fighter side-${i}`}>
+              <span className="pet-fighter-name">{c.name || t(`pet.species.${c.species}`)}</span>
+              <i className="pet-hp">
+                <i style={{ width: `${pct}%` }} className={pct <= 25 ? 'low' : undefined} />
+              </i>
+              <div
+                key={step}
+                className={`pet-fighter-body${swung ? ' swing' : ''}${hit ? ' hit' : ''}`}
+              >
+                <Creature
+                  stage={c.stage}
+                  form={c.form}
+                  species={c.species}
+                  mood={
+                    winner === null ? moodOfCard(c) : winner === i ? 'happy' : 'sad'
+                  }
+                  chewing={false}
+                  level={c.level}
+                />
+              </div>
+              {hit && (
+                <b key={`d${step}`} className={`pet-dmg${blow.crit ? ' crit' : ''}`}>
+                  -{blow.dmg}
+                </b>
+              )}
+              {blow && blow.miss && blow.by !== i && (
+                <b key={`m${step}`} className="pet-dmg miss">
+                  {t('pet.battle.miss')}
+                </b>
+              )}
+            </div>
+          )
+        }
+        return (
+          <div className="pet-arena">
+            <div className="pet-arena-row">
+              {side(0, duel.mine)}
+              {side(1, duel.foe)}
+            </div>
+            <div className="pet-arena-foot">
+              {outcome
+                ? `${t(`pet.battle.${outcome.result}`)}${outcome.counted ? '' : ` · ${t('pet.battle.notCounted')}`}`
+                : blow?.crit
+                  ? t('pet.battle.crit')
+                  : t('pet.battle.turn', { n: step, of: duel.bout.blows.length })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* The menu: one strip along the foot of the screen. */}
       {iconRow(0, icons.length)}
