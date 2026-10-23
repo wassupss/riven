@@ -668,3 +668,52 @@
   padding: 10px 16px;
   border-top: 1px solid var(--hairline);
 }
+
+/* ---- Single DB panel: tree sidebar + console ---- */
+.dbx-shell {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+}
+.dbx-side {
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 100%;
+  border-right: 1px solid var(--hairline);
+}
+.dbx-main {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+.dbx-vsplit {
+  flex: 0 0 4px;
+  margin-left: -2px;
+  margin-right: -2px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 1;
+}
+.dbx-vsplit:hover {
+  background: var(--accent);
+  opacity: 0.5;
+}
+.dbx-shell.narrow .dbx-side {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 3;
+  background: var(--glass);
+  box-shadow: var(--elevation-float);
+}
+.dbx-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+.dbx-icon-btn.on {
+  color: var(--accent);
+}

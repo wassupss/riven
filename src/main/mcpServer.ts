@@ -69,7 +69,7 @@ export const MCP_TOOLS: Array<McpToolDef & { implemented: boolean; advertised?: 
     ko: '패널 열기',
     en: 'Open panel',
     description:
-      "Open a panel. kind: editor|terminal|chat|search|git|preview|changes|db|dbconsole. For an agent use kind=chat: `agent` claude|codex, `model` (claude: opus|sonnet|haiku|fable; codex: gpt-5.6-terra|gpt-5.6-luna|gpt-5.5), `title`. `message` is sent as its first prompt without waiting; for an answer, omit it and call riven_ask_agent. Use kind=terminal with `command` only for non-agent commands or on user request. `dir`: right|below|left|above. Returns pane id.",
+      "Open a panel. kind: editor|terminal|chat|search|git|preview|changes|db. For an agent use kind=chat: `agent` claude|codex, `model` (claude: opus|sonnet|haiku|fable; codex: gpt-5.6-terra|gpt-5.6-luna|gpt-5.5), `title`. `message` is sent as its first prompt without waiting; for an answer, omit it and call riven_ask_agent. Use kind=terminal with `command` only for non-agent commands or on user request. `dir`: right|below|left|above. Returns pane id.",
     inputSchema: obj({ kind: str, command: str, dir: str, agent: str, model: str, message: str, title: str }, ['kind']),
     implemented: true
   },

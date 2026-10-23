@@ -37,7 +37,7 @@ function statementAt(text: string, offset: number, kind: DbKind): string[] {
   return [text.slice(pick[0], pick[1]).trim()]
 }
 
-export default function DbConsolePanel(): JSX.Element {
+export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): JSX.Element {
   const t = useT()
   const tabs = useDb((s) => s.tabs)
   const active = useDb((s) => s.active)
@@ -62,6 +62,7 @@ export default function DbConsolePanel(): JSX.Element {
   return (
     <div className="dbx-root dbx-console">
       <div className="dbx-tabs">
+        {leading}
         {tabs.map((x) => {
           const conn = connections.find((c) => c.id === x.connId)
           return (

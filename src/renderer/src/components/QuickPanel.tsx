@@ -141,14 +141,6 @@ export default function QuickPanel(): JSX.Element | null {
         icon: <Database size={15} />,
         panelId: 'db',
         run: () => togglePanel('db')
-      },
-      {
-        id: 'dbconsole',
-        label: t('title.dbconsole'),
-        section: sPanel,
-        icon: <Database size={15} />,
-        panelId: 'dbconsole',
-        run: () => togglePanel('dbconsole')
       }
     ]
     arr.push({

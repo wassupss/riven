@@ -21,7 +21,6 @@ import type { ConnectionInfo, DbObject, ObjectKind, SchemaInfo } from '../../../
 import { quoteIdent } from '../../../../main/db/sqlText'
 import { useDb } from '../../state/db'
 import { useT } from '../../i18n'
-import { openNamedPanel } from '../registry'
 import ContextMenu, { type MenuItem } from '../../components/ContextMenu'
 import { TextInput } from '../../components/ui/Controls'
 import ConnectionForm, { errText } from './db/ConnectionForm'
@@ -230,7 +229,6 @@ export default function DbExplorerPanel(): JSX.Element {
 
   const openConsole = (conn: ConnectionInfo, db?: string, sql = '', run = false): void => {
     openSql(conn.id, db, sql, run)
-    openNamedPanel('dbconsole', 'right', 'db')
   }
 
   const qualified = (conn: ConnectionInfo, schema: string, name: string): string =>
@@ -238,7 +236,6 @@ export default function DbExplorerPanel(): JSX.Element {
 
   const openObj = (row: Extract<Row, { type: 'obj' }>): void => {
     openObject(row.conn.id, row.db, row.schema, row.obj.name, row.obj.kind)
-    openNamedPanel('dbconsole', 'right', 'db')
   }
 
   const removeConn = async (conn: ConnectionInfo): Promise<void> => {
