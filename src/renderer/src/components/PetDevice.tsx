@@ -43,13 +43,14 @@ import {
   MIMES,
   POOP,
   ZZZ,
-  accessoryPixels,
+  outfitPixels,
   pixelsOf,
   runsOf,
   SPRITE_SIZE
 } from './petSprites'
 import {
-  accessoryOf,
+  accessoriesOf,
+  giftAt,
   awardsOf,
   dietOf,
   flushPetSave,
@@ -65,7 +66,6 @@ import {
   KIBBLE_TOKENS,
   MAX_PETS,
   MAX_POOPS,
-  type Accessory,
   type Form,
   type Mood,
   type Species,
@@ -185,7 +185,7 @@ function Creature({
   chewing,
   flavor,
   evolving,
-  accessory
+  level = 0
 }: {
   stage: Stage
   form: Form
@@ -194,7 +194,8 @@ function Creature({
   chewing: boolean
   flavor?: string
   evolving?: boolean
-  accessory?: Accessory | null
+  /** Its level, for the keepsakes it has earned by it. */
+  level?: number
 }): JSX.Element {
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
@@ -202,10 +203,21 @@ function Creature({
     () => runsOf(pixelsOf(stage, form, mood, species)),
     [stage, form, mood, species]
   )
-  const worn = useMemo(
-    () => runsOf(accessoryPixels(stage, form, species, accessory ?? null)),
-    [stage, form, species, accessory]
-  )
+  const outfit = useMemo(() => {
+    const { back, front } = outfitPixels(stage, form, species, accessoriesOf(level))
+    return { back: runsOf(back), front: runsOf(front) }
+  }, [stage, form, species, level])
+  const dots = (list: typeof runs): JSX.Element[] =>
+    list.map((d) => (
+      <rect
+        key={`${d.x},${d.y}`}
+        className={`pet-px pet-px-${d.ch}`}
+        x={d.x}
+        y={d.y}
+        width={d.w}
+        height="1"
+      />
+    ))
   return (
     <svg
       className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
@@ -214,31 +226,11 @@ function Creature({
       aria-hidden="true"
     >
       <g className={`pet-sprite${chewing ? ' chew' : ''}`}>
-        {runs.map((d) => (
-          <rect
-            key={`${d.x},${d.y}`}
-            className={`pet-px pet-px-${d.ch}`}
-            x={d.x}
-            y={d.y}
-            width={d.w}
-            height="1"
-          />
-        ))}
-        {/* What it has earned since growing up, worn on its head. */}
-        {worn.length > 0 && (
-          <g className="pet-acc">
-            {worn.map((d) => (
-              <rect
-                key={`${d.x},${d.y}`}
-                className={`pet-px pet-px-${d.ch}`}
-                x={d.x}
-                y={d.y}
-                width={d.w}
-                height="1"
-              />
-            ))}
-          </g>
-        )}
+        {/* What it has earned since growing up: its shine behind it, left to
+            twinkle, and the rest on top of it. */}
+        {outfit.back.length > 0 && <g className="pet-aura">{dots(outfit.back)}</g>}
+        {dots(runs)}
+        {outfit.front.length > 0 && <g className="pet-acc">{dots(outfit.front)}</g>}
       </g>
       {chewing && (
         <g className="pet-crumbs">
@@ -492,11 +484,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   useEffect(() => {
     if (!justLeveled) return
     ackLevel()
-    const gift = accessoryOf(justLeveled)
-    const fresh = gift && accessoryOf(justLeveled - 1) !== gift
+    const gift = giftAt(justLeveled)
     setEvolving(true)
     setFlash(
-      fresh
+      gift
         ? t('pet.levelGift', { n: justLeveled, item: t(`pet.acc.${gift}`) })
         : t('pet.levelUp', { n: justLeveled })
     )
@@ -1185,12 +1176,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'char' && (
         <div className="pet-yard">
-          {/* The nest: one dot per pet, the shown one filled. Press a dot to
-              look after that one instead. */}
+          {/* The bag: one dot per pet, the one out (and eating) filled. Press
+              a dot to bring that one out instead; the rest wait, paused. */}
           {pets.length > 1 && !guessing && (
             <div className="pet-nest">
               {pets.map((p, i) => {
-                const who = p.name || t(`pet.species.${p.species}`)
+                const who = t(i === active ? 'pet.nestOut' : 'pet.nestIn', {
+                  name: p.name || t(`pet.species.${p.species}`)
+                })
                 return (
                   <button
                     key={i}
@@ -1229,7 +1222,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
-              accessory={accessoryOf(growth.level)}
+              level={growth.level}
             />
           </div>
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
@@ -1541,7 +1534,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
-              accessory={accessoryOf(growth.level)}
+              level={growth.level}
             />
             {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
             {(pet.sick || pet.poops > 0) && (

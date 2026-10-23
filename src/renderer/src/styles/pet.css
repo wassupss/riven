@@ -1081,6 +1081,10 @@
 .pet-acc .pet-px-a {
   animation: none;
 }
+/* Its shine twinkles out of step, so it glitters rather than blinks. */
+.pet-aura .pet-px-a:nth-child(2n) {
+  animation-delay: -0.7s;
+}
 
 /* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
    hopped by one: always whole dots. */

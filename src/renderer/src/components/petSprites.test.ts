@@ -8,12 +8,13 @@ import {
   SPRITES,
   SPRITE_SIZE,
   accessoryPixels,
+  outfitPixels,
   bigFaceOf,
   bodyOf,
   pixelsOf,
   runsOf
 } from './petSprites'
-import { SPECIES, STAGES, type Form } from '../state/pet'
+import { MAX_LEVEL, SPECIES, STAGES, accessoriesOf, slotOf, type Form } from '../state/pet'
 
 const FORMS: Form[] = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
 
@@ -233,6 +234,36 @@ describe('accessoryPixels', () => {
             expect(d.x).toBeLessThan(SPRITE_SIZE)
             expect(d.y).toBeGreaterThanOrEqual(0)
             expect(d.y).toBeLessThan(face.y * 2)
+          }
+        }
+  })
+
+  it('fits every piece it has earned, off its face and clear of each other', () => {
+    const order = ['head', 'neck', 'float', 'ground', 'aura']
+    for (const species of SPECIES)
+      for (const form of FORMS)
+        for (const level of [5, 10, 20, 30, 50, 65, MAX_LEVEL]) {
+          const worn = [...accessoriesOf(level)].sort(
+            (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
+          )
+          // Pieces are fitted in this order, so each one must add something.
+          let before = 0
+          worn.forEach((_, k) => {
+            const o = outfitPixels('adult', form, species, worn.slice(0, k + 1))
+            const n = o.back.length + o.front.length
+            expect(n, `${species}/${form}/${worn[k]}`).toBeGreaterThan(before)
+            before = n
+          })
+          const { back, front } = outfitPixels('adult', form, species, worn)
+          const face = bigFaceOf(bodyOf(species, 'adult'))!
+          const seen = new Set<string>()
+          for (const d of [...back, ...front]) {
+            expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
+            const onFace =
+              d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
+            expect(onFace, `${species}/${form} L${level} on its face`).toBe(false)
+            expect(seen.has(`${d.x},${d.y}`)).toBe(false)
+            seen.add(`${d.x},${d.y}`)
           }
         }
   })

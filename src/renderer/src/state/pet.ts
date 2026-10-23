@@ -598,12 +598,44 @@ export const MAX_LEVEL = 99
 /** Kibble from level `lvl` to the next: 100, 150, 200, ... */
 export const levelCost = (lvl: number): number => 100 + 50 * (lvl - 1)
 
-export type Accessory = 'sprout' | 'bow' | 'crown'
-/** What it wears from which level on. The newest one it has earned is worn. */
-export const ACCESSORIES: Array<{ id: Accessory; level: number }> = [
-  { id: 'sprout', level: 3 },
-  { id: 'bow', level: 6 },
-  { id: 'crown', level: 10 }
+export type Accessory =
+  | 'sprout'
+  | 'bow'
+  | 'crown'
+  | 'scarf'
+  | 'bell'
+  | 'medal'
+  | 'heart'
+  | 'star'
+  | 'moon'
+  | 'flowers'
+  | 'mushrooms'
+  | 'sparkle'
+  | 'glitter'
+  | 'legend'
+/**
+ * Where a keepsake goes. One of each is worn at once, so the higher it gets the
+ * more it has on: a hat, then something round its neck, a little friend
+ * floating by, things growing at its feet, and at last a shine all round it.
+ */
+export type AccessorySlot = 'head' | 'neck' | 'float' | 'ground' | 'aura'
+export const ACCESSORY_SLOTS: AccessorySlot[] = ['aura', 'ground', 'float', 'neck', 'head']
+/** What it earns at which level. In each slot the newest one earned is worn. */
+export const ACCESSORIES: Array<{ id: Accessory; level: number; slot: AccessorySlot }> = [
+  { id: 'sprout', level: 3, slot: 'head' },
+  { id: 'scarf', level: 5, slot: 'neck' },
+  { id: 'bow', level: 6, slot: 'head' },
+  { id: 'heart', level: 8, slot: 'float' },
+  { id: 'crown', level: 10, slot: 'head' },
+  { id: 'flowers', level: 13, slot: 'ground' },
+  { id: 'bell', level: 16, slot: 'neck' },
+  { id: 'star', level: 20, slot: 'float' },
+  { id: 'sparkle', level: 25, slot: 'aura' },
+  { id: 'medal', level: 30, slot: 'neck' },
+  { id: 'moon', level: 40, slot: 'float' },
+  { id: 'mushrooms', level: 50, slot: 'ground' },
+  { id: 'glitter', level: 65, slot: 'aura' },
+  { id: 'legend', level: 99, slot: 'aura' }
 ]
 
 /** Level 1 the day it grows up, 0 before that. */
@@ -619,14 +651,36 @@ export function levelOf(xp: number): { level: number; from: number; to: number }
   return { level, from, to: level >= MAX_LEVEL ? from : from + levelCost(level) }
 }
 
+/** The hat it wears at `level`, the newest one earned; null before the first. */
 export function accessoryOf(level: number): Accessory | null {
-  let worn: Accessory | null = null
-  for (const a of ACCESSORIES) if (level >= a.level) worn = a.id
-  return worn
+  return accessoriesOf(level).find((a) => slotOf(a) === 'head') ?? null
+}
+
+export const slotOf = (a: Accessory): AccessorySlot =>
+  ACCESSORIES.find((x) => x.id === a)?.slot ?? 'head'
+
+/**
+ * Everything it wears at `level`: the newest keepsake in each slot, back to
+ * front (the shine behind it first, its hat last), so they can be drawn in order.
+ */
+export function accessoriesOf(level: number): Accessory[] {
+  const worn = new Map<AccessorySlot, Accessory>()
+  for (const a of ACCESSORIES) if (level >= a.level) worn.set(a.slot, a.id)
+  return ACCESSORY_SLOTS.flatMap((slot) => {
+    const a = worn.get(slot)
+    return a ? [a] : []
+  })
+}
+
+/** The keepsake earned exactly at `level`, if that level brings one. */
+export function giftAt(level: number): Accessory | null {
+  return ACCESSORIES.find((a) => a.level === level)?.id ?? null
 }
 
 /** The next keepsake still to earn, if any. */
-export function nextAccessory(level: number): { id: Accessory; level: number } | null {
+export function nextAccessory(
+  level: number
+): { id: Accessory; level: number; slot: AccessorySlot } | null {
   return ACCESSORIES.find((a) => a.level > level) ?? null
 }
 
@@ -820,8 +874,11 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
 }
 
 // ---------------------------------------------------------------------------
-// The nest: more than one pet at a time. Each keeps its own save; the album is
-// the keeper's, so it is shared by all of them and kept in step on every change.
+// The nest: more than one pet at a time, the way a trainer carries a bag of
+// them. Only the one out of the bag (the one on screen) eats the agents' work,
+// gets hungry and grows; the others are paused where they were left, their
+// clocks stopped, and pick up from there when they come out. Each keeps its own
+// save; the album is the keeper's, so it is shared and kept in step.
 // ---------------------------------------------------------------------------
 
 /** How many pets can be raised at once. */
@@ -855,23 +912,28 @@ export function normalizeNest(raw: unknown, now: number): Nest {
   return { version: 2, active: Math.min(pets.length - 1, Math.max(0, active)), pets }
 }
 
+/** Take a pet out of the bag: its clock starts again from now, not from when it went in. */
+const wake = (p: PetSave, now: number): PetSave =>
+  p.lastTickAt === now ? p : { ...p, lastTickAt: now }
+
 /**
- * A pet's share of `tokens` when `n` pets eat from the same work. The leftover
- * dots go to the first pets so nothing is lost; each pet's carry does the rest.
+ * Put the shown pet away and bring out pet `i`. The one going in is brought up
+ * to date first, so it is paused exactly as it was.
  */
-export function shareOf(tokens: number, n: number, i: number): number {
-  if (n <= 1) return tokens
-  return Math.floor(tokens / n) + (i < tokens % n ? 1 : 0)
+export function show(n: Nest, i: number, now: number): Nest {
+  if (i === n.active || i < 0 || i >= n.pets.length) return n
+  const pets = n.pets.map((p, k) => (k === n.active ? decay(p, now) : k === i ? wake(p, now) : p))
+  return { ...n, pets, active: i }
 }
 
-/** A fresh egg in the nest, shown at once. Nothing happens when it is full. */
+/** A fresh egg in the nest, brought out at once. Nothing happens when it is full. */
 export function adopt(n: Nest, now: number): Nest {
   if (n.pets.length >= MAX_PETS) return n
   const egg = { ...initialState(now), album: n.pets[0]?.album ?? [] }
-  return { ...n, pets: [...n.pets, egg], active: n.pets.length }
+  return show({ ...n, pets: [...n.pets, egg] }, n.pets.length, now)
 }
 
-/** Let the shown pet go, into the album. The last pet is never let go. */
+/** Let the shown pet go, into the album, and bring out the next. Never the last one. */
 export function release(n: Nest, now: number): Nest {
   if (n.pets.length <= 1) return n
   const album = archive(n.pets[n.active], now)
@@ -879,7 +941,8 @@ export function release(n: Nest, now: number): Nest {
     n.pets.filter((_, i) => i !== n.active),
     album
   )
-  return { ...n, pets, active: Math.min(n.active, pets.length - 1) }
+  const active = Math.min(n.active, pets.length - 1)
+  return { ...n, pets: pets.map((p, i) => (i === active ? wake(p, now) : p)), active }
 }
 
 /** Start the shown pet over from an egg, keeping the one it was in the album. */
@@ -909,12 +972,12 @@ interface PetStore {
   // tokens are re-baselined instead of being fed twice.
   seen: Record<string, number>
   load: () => Promise<void>
-  /** Apply elapsed-time hunger/mood decay up to `now`, to every pet. */
+  /** Apply elapsed-time hunger/mood decay up to `now`, to the pet out of the bag. */
   tick: (now?: number) => void
   /**
    * Record a usage sample and feed the growth. Keys are `<account>::<flavor>`,
-   * so each model's tokens are tracked (and fed) separately. With more than one
-   * pet the tokens are shared out between them.
+   * so each model's tokens are tracked (and fed) separately. Only the pet out
+   * of the bag eats; the rest wait their turn.
    */
   sample: (totals: Record<string, number>, now?: number) => void
   /** The stage it has just reached, for the device to celebrate. Cleared by ack. */
@@ -935,7 +998,7 @@ interface PetStore {
   adopt: () => void
   /** Let the shown pet go into the album, if it is not the only one. */
   release: () => void
-  /** Show another pet: by index, or the next one round when omitted. */
+  /** Bring another pet out of the bag: by index, or the next one round when omitted. */
   select: (i?: number) => void
 }
 
@@ -991,45 +1054,34 @@ export const usePet = create<PetStore>((set, get) => {
       const now = Date.now()
       const n = normalizeNest(raw, now)
       // Charge for the time the app was closed right away, so reopening after two
-      // days shows a starving pet instead of the one we left.
-      const pets = n.pets.map((p) => decay(p, now))
+      // days shows a starving pet instead of the one we left. The ones in the
+      // bag were paused all along, and start again when they come out.
+      const pets = n.pets.map((p, i) => (i === n.active ? decay(p, now) : p))
       set({ pets, active: n.active, pet: pets[n.active], loaded: true })
     },
-    tick: (now = Date.now()) => {
-      const { pets, active } = get()
-      const next = pets.map((p) => decay(p, now))
-      if (next.every((p, i) => p === pets[i])) return
-      commit({ pets: next, active })
-    },
+    tick: (now = Date.now()) => onActive((p) => decay(p, now)),
     sample: (totals, now = Date.now()) => {
-      const { pets, active } = get()
       const { deltas, seen } = sampleAccounts(get().seen, totals)
       set({ seen })
-      let changed = false
-      const next = pets.map((before, i) => {
+      onActive((before) => {
         // One feed per flavour, so the diet records which model actually paid.
         let p = before
         for (const [key, delta] of Object.entries(deltas)) {
-          const share = shareOf(delta, pets.length, i)
-          if (share <= 0) continue
-          p = feed(p, share, now, flavorOf(key.split('::')[1] ?? ''))
+          if (delta <= 0) continue
+          p = feed(p, delta, now, flavorOf(key.split('::')[1] ?? ''))
         }
         if (p === before) return p
-        changed = true
         const evolutions = noteEvolution(before, p, now)
         if (evolutions !== p.evolutions) {
           p = { ...p, evolutions }
-          // Only the pet on screen is celebrated; the others' stories still
-          // record it, and show it when they are picked.
-          if (i === active) set({ justEvolved: evolutions[evolutions.length - 1] })
-        } else if (i === active) {
+          set({ justEvolved: evolutions[evolutions.length - 1] })
+        } else {
           // Growing up is level 1, and already celebrated as an evolution.
           const lvl = levelOf(p.xp).level
           if (lvl > 1 && lvl > levelOf(before.xp).level) set({ justLeveled: lvl })
         }
         return p
       })
-      if (changed) commit({ pets: next, active })
     },
     patHead: (now = Date.now()) => onActive((p) => pet(p, now)),
     cleanUp: () => onActive(clean),
@@ -1061,11 +1113,11 @@ export const usePet = create<PetStore>((set, get) => {
       commit(n)
     },
     select: (i) => {
-      const { pets, active } = get()
-      const to = i === undefined ? (active + 1) % pets.length : i
-      if (to === active || to < 0 || to >= pets.length) return
+      const n = nestOf(get())
+      const next = show(n, i ?? (n.active + 1) % n.pets.length, Date.now())
+      if (next === n) return
       set({ justEvolved: null, justLeveled: null })
-      commit({ pets, active: to })
+      commit(next)
     }
   }
 })

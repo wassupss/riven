@@ -1,4 +1,5 @@
-import type { Accessory, Form, Mood, Species, Stage } from '../state/pet'
+import { slotOf } from '../state/pet'
+import type { Accessory, AccessorySlot, Form, Mood, Species, Stage } from '../state/pet'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every creature is authored as a 16×16 grid of characters, one
@@ -1869,46 +1870,256 @@ export function runsOf(dots: Dot[]): Run[] {
 }
 
 /**
- * Keepsakes a grown-up earns by levelling, worn on top of its head. Drawn as
- * their own layer (see Creature), so a crown's gold doesn't twinkle like the
- * stars do. Drawn at the drawn size.
+ * Keepsakes a grown-up earns by levelling. Drawn as their own layer (see
+ * Creature), so a crown's gold doesn't twinkle like the stars do, at the drawn
+ * size. A hat sits on its head; the neckwear is made to fit (see neckwear) and
+ * only its charm is drawn here; the rest find a free spot of air around it.
  */
 export const ACCESSORY_ART: Record<Accessory, string[]> = {
   sprout: ['hh...hh', 'hhh.hhh', '.hhshh.', '...s...'],
   bow: ['mm.....mm', 'mhmm.mmhm', 'mhhmmmhhm', 'mhmm.mmhm', 'mm.....mm'],
-  crown: ['w...w...w', 'a..aaa..a', 'aa.aaa.aa', 'aaaaaaaaa', 'aamaaamaa', 'aaaaaaaaa']
+  crown: ['w...w...w', 'a..aaa..a', 'aa.aaa.aa', 'aaaaaaaaa', 'aamaaamaa', 'aaaaaaaaa'],
+  scarf: ['mm', 'hm', 'mm', 'hm'],
+  bell: ['.aaa.', 'aaaaa', 'awaaa', 'aaaaa', '..o..'],
+  medal: ['.m.m.', '.aaa.', 'aawaa', 'aaaaa', '.aaa.'],
+  heart: ['mm.mm', 'hmmmm', 'mmmmm', '.mmm.', '..m..'],
+  star: ['..a..', '.awa.', 'aaaaa', '.aaa.', '.a.a.'],
+  moon: ['.aaa', 'aa..', 'aa..', 'aa..', '.aaa'],
+  flowers: ['.w.', 'waw', '.w.', '.s.'],
+  mushrooms: ['.mmm.', 'mwmmm', 'mmmwm', '..w..'],
+  sparkle: ['.a.', 'awa', '.a.'],
+  glitter: ['.a.', 'awa', '.a.'],
+  legend: ['..a..', '..a..', 'aawaa', '..a..', '..a..']
+}
+
+/** Smaller ones, for a pet that leaves no room for the full-size piece. */
+const ACCESSORY_MINI: Partial<Record<Accessory, string[]>> = {
+  heart: ['m.m', 'mmm', '.m.'],
+  star: ['.a.', 'awa', 'a.a'],
+  moon: ['.aa', 'aa.', '.aa'],
+  flowers: ['waw', '.s.'],
+  mushrooms: ['mmm', 'mwm', '.w.']
+}
+
+/** How many twinkles each shine scatters round it, and how many are big ones. */
+const AURA: Partial<Record<Accessory, { small: number; big: number }>> = {
+  sparkle: { small: 2, big: 0 },
+  glitter: { small: 4, big: 0 },
+  legend: { small: 4, big: 2 }
+}
+
+/** Where twinkles go first, spread round the pet before they fill in. */
+const AURA_SPOTS: Array<[number, number]> = [
+  [2, 2],
+  [27, 27],
+  [27, 2],
+  [2, 27],
+  [1, 14],
+  [28, 14],
+  [14, 1],
+  [14, 28]
+]
+
+const keyOf = (x: number, y: number): number => y * SPRITE_SIZE + x
+
+/** Stamp `art` with its top-left at (x0, y0), keeping what lands in the grid and above `below`. */
+function stamp(art: string[], x0: number, y0: number, below = SPRITE_SIZE): Dot[] {
+  const dots: Dot[] = []
+  art.forEach((row, dy) =>
+    row.split('').forEach((ch, dx) => {
+      const x = x0 + dx
+      const y = y0 + dy
+      if (ch !== '.' && x >= 0 && x < SPRITE_SIZE && y >= 0 && y < below) dots.push({ x, y, ch })
+    })
+  )
+  return dots
 }
 
 /**
- * Where a keepsake sits: centred over the face, its bottom row sunk into the
- * outline of the head (so it sits ON the head, not floating above it).
+ * The free spot nearest `anchor`, between rows `minY` and `maxY`, where `art`
+ * fits with `margin` dots of air all round it; null when there is none.
  */
-export function accessoryPixels(
-  stage: Stage,
-  form: Form,
-  species: Species,
-  accessory: Accessory | null
+function nearestFit(
+  art: string[],
+  anchor: [number, number],
+  taken: Set<number>,
+  minY = 0,
+  margin = 1,
+  maxY = SPRITE_SIZE
+): { x: number; y: number } | null {
+  const w = art[0].length
+  const h = art.length
+  let best: { x: number; y: number } | null = null
+  let bestD = Infinity
+  for (let y = Math.max(0, minY); y + h <= Math.min(SPRITE_SIZE, maxY); y++)
+    for (let x = 0; x + w <= SPRITE_SIZE; x++) {
+      const d = (x - anchor[0]) ** 2 + (y - anchor[1]) ** 2
+      if (d >= bestD) continue
+      let free = true
+      for (let yy = y - margin; free && yy < y + h + margin; yy++)
+        for (let xx = x - margin; xx < x + w + margin; xx++)
+          if (taken.has(keyOf(xx, yy))) {
+            free = false
+            break
+          }
+      if (free) {
+        best = { x, y }
+        bestD = d
+      }
+    }
+  return best
+}
+
+/**
+ * Something worn round the neck: a band wrapped round the body just under the
+ * face, cut to its outline, with the item's charm (or a scarf's tail) on it.
+ */
+function neckwear(
+  id: Accessory,
+  face: { x: number; y: number; w: number; rows: string[] },
+  body: Set<number>
 ): Dot[] {
-  if (!accessory || stage !== 'adult') return []
-  const art = ACCESSORY_ART[accessory]
-  const sprite = bodyOf(species, stage)
-  const face = faceOf(stage, sprite, 'ok')
-  if (!face) return []
+  const from = face.y + face.rows.length
+  // The first row under the face that is mostly body, where a collar would rest.
+  let y = -1
+  for (let yy = from; yy < Math.min(SPRITE_SIZE - 1, from + 5) && y < 0; yy++) {
+    let n = 0
+    for (let x = face.x; x < face.x + face.w; x++) if (body.has(keyOf(x, yy))) n++
+    if (n * 2 >= face.w) y = yy
+  }
+  if (y < 0) return []
+  const dots: Dot[] = []
+  const band = id === 'scarf' ? 2 : 1
+  for (let dy = 0; dy < band; dy++)
+    for (let x = 0; x < SPRITE_SIZE; x++)
+      if (body.has(keyOf(x, y + dy)) && Math.abs(x - (face.x + face.w / 2)) <= face.w)
+        dots.push({ x, y: y + dy, ch: id === 'medal' ? 'h' : id === 'scarf' && (x + dy) % 3 === 0 ? 'h' : 'm' })
+  if (!dots.length) return []
+  const art = ACCESSORY_ART[id]
+  const w = art[0].length
+  // A scarf's tail hangs off one side; a bell or medal hangs in the middle.
+  const x0 =
+    id === 'scarf'
+      ? face.x + face.w - 3
+      : face.x + Math.floor((face.w - w) / 2)
+  return [...dots, ...stamp(art, x0, y + band)]
+}
+
+/** Where a hat sits: centred over the face, its bottom row sunk into the outline of the head. */
+function headwear(
+  art: string[],
+  face: { x: number; y: number; w: number },
+  body: Dot[]
+): Dot[] {
   const w = art[0].length
   const x0 = Math.max(0, Math.min(SPRITE_SIZE - w, face.x + Math.floor((face.w - w) / 2)))
   // The top of the head under the keepsake, ignoring a radiant pet's stars.
-  const body = pixelsOf(stage, form, 'ok', species).filter((d) => d.ch !== 'a' && d.ch !== 'w')
   let top = SPRITE_SIZE
   for (const d of body) if (d.x >= x0 && d.x < x0 + w && d.y < top) top = d.y
   // Over a head that touches the top of the grid it sinks into the head
   // instead, and where even that leaves no room above the eyes, the bottom of
   // it is cut off rather than drawn over them.
   const y0 = Math.max(0, Math.min(top - art.length + 2, face.y - art.length))
-  const dots: Dot[] = []
-  art.forEach((row, dy) =>
-    row.split('').forEach((ch, dx) => {
-      if (ch !== '.' && y0 + dy < face.y) dots.push({ x: x0 + dx, y: y0 + dy, ch })
-    })
-  )
-  return dots
+  return stamp(art, x0, y0, face.y)
+}
+
+/**
+ * Everything a grown-up wears, already placed: `back` (its shine, drawn
+ * behind and left to twinkle) and `front` (the rest). Each piece is fitted in
+ * turn around the pet and what it already has on, so nothing covers its face
+ * or another piece, and a piece with nowhere to go is left off.
+ */
+export function outfitPixels(
+  stage: Stage,
+  form: Form,
+  species: Species,
+  worn: Accessory[]
+): { back: Dot[]; front: Dot[] } {
+  const none = { back: [], front: [] }
+  if (!worn.length || stage !== 'adult') return none
+  const face = faceOf(stage, bodyOf(species, stage), 'ok')
+  if (!face) return none
+  const all = pixelsOf(stage, form, 'ok', species)
+  const flesh = all.filter((d) => d.ch !== 'a' && d.ch !== 'w')
+  const body = new Set(flesh.map((d) => keyOf(d.x, d.y)))
+  const taken = new Set(all.map((d) => keyOf(d.x, d.y)))
+  // The same without a radiant pet's stars, which a piece may cover if it must.
+  const bare = new Set(body)
+  const back: Dot[] = []
+  const front: Dot[] = []
+  const put = (dots: Dot[], into = front): void => {
+    for (const d of dots) {
+      taken.add(keyOf(d.x, d.y))
+      bare.add(keyOf(d.x, d.y))
+    }
+    into.push(...dots)
+  }
+  const fit = (
+    art: string[],
+    anchor: [number, number],
+    [minY, maxY] = [0, SPRITE_SIZE],
+    into = front
+  ): boolean => {
+    // Best with a dot of air round it (a twinkle may brush the pet), then
+    // snug against it, then over the stars rather than not at all.
+    const tries: Array<[Set<number>, number]> =
+      into === back
+        ? [[taken, 0], [bare, 0]]
+        : [[taken, 1], [taken, 0], [bare, 1], [bare, 0]]
+    for (const [set, margin] of tries) {
+      const at = nearestFit(art, anchor, set, minY, margin, maxY)
+      if (at) {
+        put(stamp(art, at.x, at.y), into)
+        return true
+      }
+    }
+    return false
+  }
+  const slotted = (slot: AccessorySlot): Accessory | undefined =>
+    worn.find((a) => slotOf(a) === slot)
+  // Fitted from the head out, so the pieces on the body get the best spots.
+  const hat = slotted('head')
+  if (hat) put(headwear(ACCESSORY_ART[hat], face, flesh))
+  const neck = slotted('neck')
+  if (neck) put(neckwear(neck, face, body))
+  const friend = slotted('float')
+  // Full size where it fits, else a smaller one, else left off.
+  const fitAny = (id: Accessory, at: (art: string[]) => [number, number], rows: [number, number]): void => {
+    for (const art of [ACCESSORY_ART[id], ACCESSORY_MINI[id]])
+      if (art && fit(art, at(art), rows)) return
+  }
+  // Up by its head, never down at its feet.
+  if (friend) fitAny(friend, (art) => [SPRITE_SIZE - art[0].length - 1, 1], [0, face.y + face.rows.length])
+  const ground = slotted('ground')
+  if (ground) {
+    // One at each side of its feet, kept to the bottom few rows.
+    const rows: [number, number] = [SPRITE_SIZE - 10, SPRITE_SIZE]
+    fitAny(ground, (art) => [0, SPRITE_SIZE - art.length], rows)
+    fitAny(ground, (art) => [SPRITE_SIZE - art[0].length, SPRITE_SIZE - art.length], rows)
+  }
+  const shine = slotted('aura')
+  const aura = shine && AURA[shine]
+  if (aura) {
+    let spot = 0
+    // A big twinkle with no room for it is a small one instead.
+    for (let i = 0; i < aura.big; i++) {
+      const at = AURA_SPOTS[spot++]
+      if (!fit(ACCESSORY_ART.legend, at, undefined, back)) fit(ACCESSORY_ART.sparkle, at, undefined, back)
+    }
+    for (let i = 0; i < aura.small; i++)
+      fit(ACCESSORY_ART.sparkle, AURA_SPOTS[spot++ % AURA_SPOTS.length], undefined, back)
+  }
+  return { back, front }
+}
+
+/** One keepsake on its own, as `outfitPixels` would place it. */
+export function accessoryPixels(
+  stage: Stage,
+  form: Form,
+  species: Species,
+  accessory: Accessory | null
+): Dot[] {
+  if (!accessory) return []
+  const { back, front } = outfitPixels(stage, form, species, [accessory])
+  return [...back, ...front]
 }

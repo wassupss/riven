@@ -8,7 +8,7 @@ import {
   normalizeNest,
   release,
   restart,
-  shareOf,
+  show,
   speciesFromBirth,
   strainsSeen,
   MAX_PETS,
@@ -34,6 +34,8 @@ import {
   formOf,
   growthOf,
   accessoryOf,
+  accessoriesOf,
+  giftAt,
   levelCost,
   levelOf,
   nextAccessory,
@@ -257,8 +259,23 @@ describe('levels', () => {
     expect(accessoryOf(3)).toBe('sprout')
     expect(accessoryOf(7)).toBe('bow')
     expect(accessoryOf(50)).toBe('crown')
-    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3 })
-    expect(nextAccessory(10)).toBeNull()
+    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3, slot: 'head' })
+    expect(nextAccessory(MAX_LEVEL)).toBeNull()
+  })
+
+  it('wears more the higher it gets, one in each slot', () => {
+    expect(accessoriesOf(2)).toEqual([])
+    expect(accessoriesOf(5)).toEqual(['scarf', 'sprout'])
+    expect(accessoriesOf(10)).toEqual(['heart', 'scarf', 'crown'])
+    expect(accessoriesOf(MAX_LEVEL)).toEqual(['legend', 'mushrooms', 'moon', 'medal', 'crown'])
+    let worn = 0
+    for (let lvl = 1; lvl <= MAX_LEVEL; lvl++) {
+      const now = accessoriesOf(lvl).length
+      expect(now).toBeGreaterThanOrEqual(worn)
+      worn = now
+    }
+    expect(giftAt(8)).toBe('heart')
+    expect(giftAt(9)).toBeNull()
   })
 })
 
@@ -860,13 +877,21 @@ describe('the nest', () => {
     expect(normalizeNest(null, now).pets).toHaveLength(1)
   })
 
-  it('shares the work out without losing a token', () => {
-    for (const n of [1, 2, 3, 4])
-      for (const tokens of [0, 1, 7, 1000, 12345]) {
-        const parts = Array.from({ length: n }, (_, i) => shareOf(tokens, n, i))
-        expect(parts.reduce((a, b) => a + b, 0)).toBe(tokens)
-        expect(Math.max(...parts) - Math.min(...parts)).toBeLessThanOrEqual(1)
-      }
+  it('pauses a pet in the bag and starts its clock again when it comes out', () => {
+    const first = normalizeNest({ ...grown(), lastTickAt: now }, now)
+    let n = adopt(first, now)
+    expect(n.active).toBe(1)
+    // Six hours with the egg out: the one in the bag is untouched.
+    expect(n.pets[0]).toBe(first.pets[0])
+    const later = now + 6 * 3600_000
+    n = show(n, 0, later)
+    expect(n.active).toBe(0)
+    expect(n.pets[0].lastTickAt).toBe(later)
+    expect(n.pets[0].fullness).toBe(first.pets[0].fullness)
+    // The egg going in was brought up to date before it was put away.
+    expect(n.pets[1].lastTickAt).toBe(later)
+    expect(show(n, 0, later)).toBe(n)
+    expect(show(n, 9, later)).toBe(n)
   })
 
   it('takes in eggs until it is full, showing the newest', () => {
