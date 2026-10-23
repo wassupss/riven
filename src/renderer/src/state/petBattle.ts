@@ -1,11 +1,13 @@
 import {
   FORMS,
+  PRIZES,
   HUNGRY_AT,
   MAX_LEVEL,
   SPECIES,
   STAGES,
   growthOf,
   type Form,
+  type Accessory,
   type Mood,
   type PetSave,
   type Species,
@@ -37,6 +39,8 @@ export interface BattleCard {
   sick: boolean
   /** Its birthday, which is how a keeper's own pets are told apart from a friend's. */
   bornAt: number
+  /** Prizes it has on, so a friend sees it dressed up. Looks only, never strength. */
+  worn?: Accessory[]
 }
 
 /** Matchups: each family has the edge on the next one round. */
@@ -87,8 +91,17 @@ export function cardOf(s: PetSave, now: number): BattleCard | null {
     fullness: Math.round(s.fullness),
     mood: Math.round(s.mood),
     sick: s.sick,
-    bornAt: Math.floor(s.bornAt)
+    bornAt: Math.floor(s.bornAt),
+    ...(s.worn.length ? { worn: [...s.worn] } : {})
   }
+}
+
+/**
+ * Did the first card beat the odds? A friend's pet a whole stage ahead, or ten
+ * levels up on it, is a giant worth bragging about.
+ */
+export function isUpset(mine: BattleCard, foe: BattleCard): boolean {
+  return STAGES.indexOf(foe.stage) > STAGES.indexOf(mine.stage) || foe.level >= mine.level + 10
 }
 
 /** The face a friend's pet wears, read off its card the way moodOf reads a save. */
@@ -127,21 +140,25 @@ const fromB64url = (b64: string): string => {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
 }
 
+// The fields that decide a fight. What it wears rides along after them as an
+// optional tenth, so codes from before prizes still read, and changing clothes
+// cannot change how a fight goes (see `fight`).
+const fieldsOf = (c: BattleCard): unknown[] => [
+  c.name,
+  c.species,
+  STAGES.indexOf(c.stage),
+  c.form,
+  c.level,
+  c.fullness,
+  c.mood,
+  c.sick ? 1 : 0,
+  c.bornAt
+]
+
 /** The code to send a friend: `RP1.<data>.<check>`. */
 export function encodeCard(c: BattleCard): string {
-  const body = toB64url(
-    JSON.stringify([
-      c.name,
-      c.species,
-      STAGES.indexOf(c.stage),
-      c.form,
-      c.level,
-      c.fullness,
-      c.mood,
-      c.sick ? 1 : 0,
-      c.bornAt
-    ])
-  )
+  const fields = c.worn?.length ? [...fieldsOf(c), c.worn] : fieldsOf(c)
+  const body = toB64url(JSON.stringify(fields))
   return `${PREFIX}.${body}.${hashOf(body).toString(36)}`
 }
 
@@ -163,7 +180,7 @@ export function decodeCard(text: string): BattleCard | null {
     return null
   }
   if (!Array.isArray(raw) || raw.length < 9) return null
-  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt] = raw
+  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt, worn] = raw
   const int = (v: unknown, lo: number, hi: number): number | null =>
     typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : null
   const stage = STAGES[int(stageIx, 1, STAGES.length - 1) ?? -1]
@@ -186,6 +203,10 @@ export function decodeCard(text: string): BattleCard | null {
   // A grown-up has a level and may have a form; nothing younger has either.
   const adult = stage === 'adult'
   if (adult !== lvl > 0 || (!adult && form !== 'base')) return null
+  // Unknown prizes (a newer riven's) are dropped rather than failing the code.
+  const dressed = Array.isArray(worn)
+    ? PRIZES.filter((p) => worn.includes(p.id)).map((p) => p.id)
+    : []
   return {
     name: name.slice(0, 24),
     species: species as Species,
@@ -195,7 +216,8 @@ export function decodeCard(text: string): BattleCard | null {
     fullness: full,
     mood: md,
     sick: sick === 1,
-    bornAt: born
+    bornAt: born,
+    ...(dressed.length ? { worn: dressed } : {})
   }
 }
 
@@ -297,8 +319,8 @@ function rngOf(seed: number): () => number {
  * other's code and watch the same thing happen.
  */
 export function fight(a: BattleCard, b: BattleCard): Bout {
-  const ca = encodeCard(a)
-  const cb = encodeCard(b)
+  const ca = JSON.stringify(fieldsOf(a))
+  const cb = JSON.stringify(fieldsOf(b))
   if (cb < ca) return flip(simulate(b, a, hashOf(`${cb}|${ca}`)))
   return simulate(a, b, hashOf(`${ca}|${cb}`))
 }

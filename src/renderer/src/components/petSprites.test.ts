@@ -14,7 +14,16 @@ import {
   pixelsOf,
   runsOf
 } from './petSprites'
-import { MAX_LEVEL, SPECIES, STAGES, accessoriesOf, slotOf, type Form } from '../state/pet'
+import {
+  MAX_LEVEL,
+  PRIZES,
+  SPECIES,
+  STAGES,
+  accessoriesOf,
+  outfitOf,
+  slotOf,
+  type Form
+} from '../state/pet'
 
 const FORMS: Form[] = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
 
@@ -266,6 +275,31 @@ describe('accessoryPixels', () => {
             seen.add(`${d.x},${d.y}`)
           }
         }
+  })
+
+  it('fits every prize, alone or over its level keepsakes', () => {
+    const order = ['head', 'neck', 'float', 'ground', 'aura']
+    for (const species of SPECIES)
+      for (const form of FORMS)
+        for (const { id } of PRIZES)
+          for (const level of [1, 30, MAX_LEVEL]) {
+            const worn = outfitOf([id], level).sort(
+              (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
+            )
+            const alone = outfitPixels('adult', form, species, [id])
+            expect(alone.front.length, `${species}/${form}/${id}`).toBeGreaterThan(0)
+            const { back, front } = outfitPixels('adult', form, species, worn)
+            const face = bigFaceOf(bodyOf(species, 'adult'))!
+            const seen = new Set<string>()
+            for (const d of [...back, ...front]) {
+              expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
+              const onFace =
+                d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
+              expect(onFace, `${species}/${form} ${id} L${level} on its face`).toBe(false)
+              expect(seen.has(`${d.x},${d.y}`)).toBe(false)
+              seen.add(`${d.x},${d.y}`)
+            }
+          }
   })
 })
 

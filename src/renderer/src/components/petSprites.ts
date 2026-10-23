@@ -1889,7 +1889,17 @@ export const ACCESSORY_ART: Record<Accessory, string[]> = {
   mushrooms: ['.mmm.', 'mwmmm', 'mmmwm', '..w..'],
   sparkle: ['.a.', 'awa', '.a.'],
   glitter: ['.a.', 'awa', '.a.'],
-  legend: ['..a..', '..a..', 'aawaa', '..a..', '..a..']
+  legend: ['..a..', '..a..', 'aawaa', '..a..', '..a..'],
+  // Prizes (see PRIZES in state/pet.ts).
+  bandana: ['..mmmmm..', '.mhmhmhm.', 'mmmmmmmmm'],
+  laurel: ['aa.....aa', 'a.a...a.a', '.aaa.aaa.', '..a.w.a..'],
+  pumpkin: ['...o...', '.aaoaa.', 'aaaaaaa', 'aeaaaea', 'aaaeaaa', '.aaaaa.'],
+  santa: ['......w', '....mmw', '..mmmm.', '.mmmmm.', 'wwwwwww'],
+  gem: ['.w.', 'whw', '.h.'],
+  sword: ['....w', '...w.', 'a.w..', '.a...', 'o.a..'],
+  trophy: ['a.aaa.a', 'aawaaaa', '.aaaaa.', '..aaa..', '...a...', '..aaa..'],
+  coin: ['.aaa.', 'aawaa', 'awaaa', 'aaaaa', '.aaa.'],
+  blossom: ['.h....', 'hah.h.', '.h.hah', '....h.']
 }
 
 /** Smaller ones, for a pet that leaves no room for the full-size piece. */
@@ -1898,7 +1908,11 @@ const ACCESSORY_MINI: Partial<Record<Accessory, string[]>> = {
   star: ['.a.', 'awa', 'a.a'],
   moon: ['.aa', 'aa.', '.aa'],
   flowers: ['waw', '.s.'],
-  mushrooms: ['mmm', 'mwm', '.w.']
+  mushrooms: ['mmm', 'mwm', '.w.'],
+  sword: ['..w', 'aw.', 'oa.'],
+  trophy: ['aaa', '.a.', 'aaa'],
+  coin: ['aa', 'wa'],
+  blossom: ['.h.', 'hah', '.h.']
 }
 
 /** How many twinkles each shine scatters round it, and how many are big ones. */

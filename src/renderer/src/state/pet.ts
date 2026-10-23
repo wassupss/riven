@@ -201,6 +201,13 @@ export interface PetSave {
   // Which friends' pets it has already fought today, as `<their bornAt>@<day>`,
   // so pasting the same friend again does not stack up wins.
   fought: string[]
+  // Wins over a friend's pet a stage or ten levels ahead of it.
+  upsets: number
+  // ---- rewards ----
+  // Seasonal events it was around for (see EVENTS); each one leaves a prize.
+  events: string[]
+  // Prizes it has chosen to wear, at most one per slot, over its level keepsakes.
+  worn: Accessory[]
   // Kibble eaten per model — what it has grown up on.
   diet: Record<Flavor, number>
   // Every stage it has reached, in order. A pet's whole life story is four or
@@ -271,6 +278,9 @@ export function initialState(now: number): PetSave {
     battles: 0,
     battleWins: 0,
     fought: [],
+    upsets: 0,
+    events: [],
+    worn: [],
     diet: { opus: 0, sonnet: 0, haiku: 0, codex: 0, other: 0 },
     // The story starts with the egg it was born as, so a pet that jumps two
     // stages in one big meal still has a beginning.
@@ -326,6 +336,11 @@ export function normalize(raw: unknown, now: number): PetSave {
     fought: Array.isArray(o.fought)
       ? o.fought.filter((k): k is string => typeof k === 'string').slice(-FOUGHT_KEEP)
       : [],
+    upsets: Math.max(0, Math.floor(num(o.upsets, 0))),
+    events: Array.isArray(o.events)
+      ? [...new Set(o.events.filter((e): e is string => EVENTS.some((x) => x.id === e)))]
+      : [],
+    worn: Array.isArray(o.worn) ? wornOf(o.worn) : [],
     diet: FLAVORS.reduce(
       (d, f) => ({ ...d, [f]: Math.max(0, Math.floor(num((o.diet as Record<string, unknown>)?.[f], 0))) }),
       {} as Record<Flavor, number>
@@ -536,7 +551,8 @@ export function recordBattle(
   s: PetSave,
   foeBornAt: number,
   result: 'win' | 'loss' | 'draw',
-  now: number
+  now: number,
+  upset = false
 ): PetSave {
   const key = `${foeBornAt}@${dayKey(now)}`
   if (s.fought.includes(key)) return s
@@ -544,8 +560,42 @@ export function recordBattle(
     ...s,
     battles: s.battles + 1,
     battleWins: s.battleWins + (result === 'win' ? 1 : 0),
+    upsets: s.upsets + (result === 'win' && upset ? 1 : 0),
     fought: [...s.fought, key].slice(-FOUGHT_KEEP)
   }
+}
+
+// ---- seasonal events ----
+// A few weeks of the year leave a keepsake behind: any hatched pet that is
+// around (out of the bag, the app open) during one gets that season's prize
+// for good. Local calendar dates, inclusive, [month, day] with January = 1.
+export const EVENTS: Array<{ id: string; from: [number, number]; to: [number, number] }> = [
+  { id: 'spring', from: [4, 1], to: [4, 14] },
+  { id: 'halloween', from: [10, 17], to: [11, 2] },
+  { id: 'christmas', from: [12, 18], to: [12, 31] }
+]
+
+/** The events running on this day. */
+export function eventsOn(now: number): string[] {
+  const d = new Date(now)
+  const md = (d.getMonth() + 1) * 100 + d.getDate()
+  return EVENTS.filter((e) => {
+    const from = e.from[0] * 100 + e.from[1]
+    const to = e.to[0] * 100 + e.to[1]
+    return from <= to ? md >= from && md <= to : md >= from || md <= to
+  }).map((e) => e.id)
+}
+
+/**
+ * Hand out the running events' prizes. An egg has to hatch first: the prize is
+ * for the pet, and an egg has nobody to give it to yet. Same object when nothing
+ * new was claimed.
+ */
+export function claimEvents(s: PetSave, now: number): PetSave {
+  if (s.xp < STAGE_XP[1]) return s
+  const fresh = eventsOn(now).filter((id) => !s.events.includes(id))
+  if (fresh.length === 0) return s
+  return { ...s, events: [...s.events, ...fresh] }
 }
 
 // Charge for the time since the last tick. The interval is split into the part
@@ -652,6 +702,16 @@ export type Accessory =
   | 'sparkle'
   | 'glitter'
   | 'legend'
+  // Prizes: won through awards and events rather than levels (see PRIZES).
+  | 'bandana'
+  | 'laurel'
+  | 'sword'
+  | 'trophy'
+  | 'coin'
+  | 'gem'
+  | 'pumpkin'
+  | 'santa'
+  | 'blossom'
 /**
  * Where a keepsake goes. One of each is worn at once, so the higher it gets the
  * more it has on: a hat, then something round its neck, a little friend
@@ -696,7 +756,65 @@ export function accessoryOf(level: number): Accessory | null {
 }
 
 export const slotOf = (a: Accessory): AccessorySlot =>
-  ACCESSORIES.find((x) => x.id === a)?.slot ?? 'head'
+  ACCESSORIES.find((x) => x.id === a)?.slot ?? PRIZES.find((x) => x.id === a)?.slot ?? 'head'
+
+/**
+ * Keepsakes that are won rather than grown into: each one comes with an award
+ * (and the seasonal ones with an event). The keeper puts them on by hand, one
+ * per slot, in place of whatever its level would have it wear there.
+ */
+export const PRIZES: Array<{ id: Accessory; slot: AccessorySlot; award: string }> = [
+  { id: 'bandana', slot: 'head', award: 'challenger' },
+  { id: 'laurel', slot: 'head', award: 'champion' },
+  { id: 'sword', slot: 'float', award: 'gladiator' },
+  { id: 'trophy', slot: 'float', award: 'giantSlayer' },
+  { id: 'coin', slot: 'float', award: 'million' },
+  { id: 'gem', slot: 'neck', award: 'tenMillion' },
+  { id: 'pumpkin', slot: 'head', award: 'halloween' },
+  { id: 'santa', slot: 'head', award: 'christmas' },
+  { id: 'blossom', slot: 'float', award: 'spring' }
+]
+
+/** A worn list read defensively: known prizes only, one per slot. */
+function wornOf(raw: unknown[]): Accessory[] {
+  const out: Accessory[] = []
+  for (const a of raw) {
+    const p = PRIZES.find((x) => x.id === a)
+    if (p && !out.some((w) => slotOf(w) === p.slot)) out.push(p.id)
+  }
+  return out
+}
+
+/** The prizes this pet has won so far, in PRIZES order. */
+export function prizesOf(s: PetSave, now: number): Accessory[] {
+  const done = new Set(awardsOf(s, now).filter((a) => a.done).map((a) => a.id))
+  return PRIZES.filter((p) => done.has(p.award)).map((p) => p.id)
+}
+
+/**
+ * Put a won prize on, or take it off. Putting one on takes off whatever other
+ * prize was in that slot. A prize not yet won does nothing.
+ */
+export function toggleWear(s: PetSave, id: Accessory, now: number): PetSave {
+  if (s.worn.includes(id)) return { ...s, worn: s.worn.filter((w) => w !== id) }
+  if (!prizesOf(s, now).includes(id)) return s
+  const slot = slotOf(id)
+  return { ...s, worn: [...s.worn.filter((w) => slotOf(w) !== slot), id] }
+}
+
+/**
+ * What it actually has on at `level`: its level keepsakes, with each worn prize
+ * taking over its slot. Back to front, like accessoriesOf.
+ */
+export function outfitOf(worn: readonly Accessory[], level: number): Accessory[] {
+  const bySlot = new Map<AccessorySlot, Accessory>()
+  for (const a of accessoriesOf(level)) bySlot.set(slotOf(a), a)
+  for (const a of worn) bySlot.set(slotOf(a), a)
+  return ACCESSORY_SLOTS.flatMap((slot) => {
+    const a = bySlot.get(slot)
+    return a ? [a] : []
+  })
+}
 
 /**
  * Everything it wears at `level`: the newest keepsake in each slot, back to
@@ -859,6 +977,8 @@ export function feedFrame(
 export interface Award {
   id: string
   done: boolean
+  /** A seasonal one: only to be had while its event is on. */
+  event?: boolean
 }
 
 /**
@@ -890,7 +1010,11 @@ export function awardsOf(s: PetSave, now: number): Award[] {
     { id: 'crowned', done: levelOf(s.xp).level >= 10 },
     // Met a friend's pet in a fight, and beat five.
     { id: 'challenger', done: s.battles >= 1 },
-    { id: 'champion', done: s.battleWins >= 5 }
+    { id: 'champion', done: s.battleWins >= 5 },
+    { id: 'gladiator', done: s.battleWins >= 20 },
+    // Beat a friend's pet a stage or ten levels ahead of it.
+    { id: 'giantSlayer', done: s.upsets >= 1 },
+    ...EVENTS.map((e) => ({ id: e.id, done: s.events.includes(e.id), event: true }))
   ]
 }
 
@@ -1035,7 +1159,9 @@ interface PetStore {
   playRound: (guess: 'left' | 'right') => { win: boolean; petPick: 'left' | 'right' } | null
   rename: (name: string) => void
   /** Put a friend battle on the shown pet's record; false when it already counted today. */
-  recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw') => boolean
+  recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw', upset?: boolean) => boolean
+  /** Put a won prize on the shown pet, or take it off. */
+  wear: (id: Accessory) => void
   /** Start the shown pet over, keeping the finished one in the album. */
   reset: () => void
   /** Take in another egg, if the nest has room; it becomes the shown pet. */
@@ -1103,7 +1229,9 @@ export const usePet = create<PetStore>((set, get) => {
       const pets = n.pets.map((p, i) => (i === n.active ? decay(p, now) : p))
       set({ pets, active: n.active, pet: pets[n.active], loaded: true })
     },
-    tick: (now = Date.now()) => onActive((p) => decay(p, now)),
+    // Seasonal prizes are handed out here, so a pet that is only being looked at
+    // (no agent working) still gets its event.
+    tick: (now = Date.now()) => onActive((p) => claimEvents(decay(p, now), now)),
     sample: (totals, now = Date.now()) => {
       const { deltas, seen } = sampleAccounts(get().seen, totals)
       set({ seen })
@@ -1140,11 +1268,12 @@ export const usePet = create<PetStore>((set, get) => {
       return { win, petPick }
     },
     rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
-    recordBattle: (foeBornAt, result) => {
+    recordBattle: (foeBornAt, result, upset) => {
       const before = get().pet
-      onActive((p) => recordBattle(p, foeBornAt, result, Date.now()))
+      onActive((p) => recordBattle(p, foeBornAt, result, Date.now(), upset))
       return get().pet !== before
     },
+    wear: (id) => onActive((p) => toggleWear(p, id, Date.now())),
     reset: () => {
       set({ seen: {}, justEvolved: null, justLeveled: null })
       commit(restart(nestOf(get()), Date.now()))

@@ -875,6 +875,33 @@
   background: var(--warning);
   box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 60%, transparent);
 }
+/* Festival awards: a different colour of dot, so they read as limited. */
+.pet-award.event.done i {
+  background: var(--accent);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* The prize that comes with an award, after its name. */
+.pet-award em {
+  margin-left: auto;
+  font-style: normal;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.pet-award.prize {
+  cursor: pointer;
+}
+.pet-award.prize:hover em {
+  opacity: 1;
+}
+.pet-award.worn em {
+  color: var(--warning);
+  opacity: 1;
+}
+.pet-award-note {
+  font-size: 8px;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  padding-top: 2px;
+}
 
 /* ---- the stats / graph / album screens ---- */
 .pet-rows {
