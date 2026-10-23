@@ -15,6 +15,8 @@ export interface DdlPlan {
   atomic: boolean
   /** A database whose open connections (ours) must close first: dropping or renaming it needs it unused. */
   release?: string
+  /** Literals (passwords) the preview masks. */
+  secret?: string[]
 }
 
 // ---- table designer ---------------------------------------------------------
@@ -301,7 +303,10 @@ export function alterTableSql(orig: TableInfo, d: TableDraft): DdlPlan {
 }
 
 /** Plain-text preview of a plan. */
-export const planText = (p: DdlPlan): string => (p.stmts.length ? p.stmts.map((s) => `${s};`).join('\n\n') : '')
+export const planText = (p: DdlPlan): string =>
+  p.stmts
+    .map((s) => (p.secret ?? []).reduce((x, v) => (v ? x.split(v).join("'********'") : x), s) + ';')
+    .join('\n\n')
 
 // ---- object actions ---------------------------------------------------------
 
@@ -380,4 +385,4 @@ export function refreshMatviewSql(schema: string, name: string, concurrently: bo
 }
 
 /** Statements an apply call accepts: DDL only, so the IPC can't be used to run arbitrary reads or DML. */
-export const DDL_VERBS = /^(create|alter|drop|truncate|comment|refresh|reindex|vacuum|analyze|grant|revoke|cluster)\b/i
+export const DDL_VERBS = /^(create|alter|drop|truncate|comment|refresh|reindex|vacuum|analyze|grant|revoke|cluster|reassign)\b/i

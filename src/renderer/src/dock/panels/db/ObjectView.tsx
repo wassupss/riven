@@ -10,8 +10,11 @@ import { Segmented } from '../../../components/ui/Controls'
 import ResultPane from './ResultPane'
 import { errText } from './ConnectionForm'
 import { typeTone } from './tone'
+import { privKindOf } from '../../../../../main/db/privs'
+import GrantsEditor from './GrantsEditor'
+import RlsView from './RlsView'
 
-type Sub = 'columns' | 'indexes' | 'constraints' | 'ddl' | 'data'
+type Sub = 'columns' | 'indexes' | 'constraints' | 'ddl' | 'data' | 'privs' | 'rls'
 
 const DATA_LIMIT = 200
 
@@ -88,15 +91,21 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub])
 
-  const subs: Array<{ value: Sub; label: string }> = relation
-    ? [
-        { value: 'columns', label: t('db.columns') },
-        { value: 'indexes', label: t('db.indexes') },
-        { value: 'constraints', label: t('db.constraints') },
-        { value: 'ddl', label: 'DDL' },
-        { value: 'data', label: t('db.data') }
-      ]
-    : [{ value: 'ddl', label: 'DDL' }]
+  const privKind = conn?.kind === 'postgres' ? privKindOf(tab.objKind) : null
+  const isTable = tab.objKind === 'table' || tab.objKind === 'partitioned'
+  const subs: Array<{ value: Sub; label: string }> = [
+    ...(relation
+      ? [
+          { value: 'columns' as const, label: t('db.columns') },
+          { value: 'indexes' as const, label: t('db.indexes') },
+          { value: 'constraints' as const, label: t('db.constraints') },
+          { value: 'ddl' as const, label: 'DDL' },
+          { value: 'data' as const, label: t('db.data') }
+        ]
+      : [{ value: 'ddl' as const, label: 'DDL' }]),
+    ...(privKind ? [{ value: 'privs' as const, label: t('db.r.privileges') }] : []),
+    ...(privKind && isTable ? [{ value: 'rls' as const, label: 'RLS' }] : [])
+  ]
 
   const ti = info.data
 
@@ -132,7 +141,20 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
         </div>
       )}
       <div className="dbx-obj-body">
-        {sub === 'ddl' ? (
+        {sub === 'privs' && privKind ? (
+          <div className="dbx-privs-page">
+            <GrantsEditor
+              connId={tab.connId}
+              db={tab.db}
+              target={{ kind: privKind, schema: tab.schema, name: tab.name, args: tab.args }}
+              readOnly={!!conn?.readOnly}
+            />
+          </div>
+        ) : sub === 'rls' && privKind ? (
+          <div className="dbx-privs-page">
+            <RlsView connId={tab.connId} db={tab.db} schema={tab.schema} table={tab.name} readOnly={!!conn?.readOnly} />
+          </div>
+        ) : sub === 'ddl' ? (
           ddl.error ? (
             <div className="dbx-error">{ddl.error}</div>
           ) : ddl.text === undefined ? (

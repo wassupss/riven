@@ -1448,3 +1448,289 @@
 div.dbx-design-problems {
   padding: 0;
 }
+
+/* ---- privileges: GRANT matrix, default privileges, RLS, roles ---- */
+.dbx-tab-ico.roles {
+  color: var(--success);
+}
+.dbx-mono {
+  font-family: var(--font-mono);
+}
+.dbx-nowrap {
+  white-space: nowrap;
+}
+.dbx-table tr.clickable {
+  cursor: pointer;
+}
+.dbx-privs-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dbx-privs-page > .dbx-form-sect:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.dbx-privs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.dbx-privs > .dbx-table-wrap {
+  flex: 0 0 auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+}
+.dbx-privs .dbx-form-status {
+  border-top: none;
+  padding: 0;
+}
+.dbx-privs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dbx-privs-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dbx-privs-add {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dbx-privs-add .dbx-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.dbx-privs-add .w-schema {
+  width: 140px;
+  font-family: var(--font-mono);
+}
+.dbx-role-pick {
+  width: 180px;
+}
+.dbx-priv-grid th.c,
+.dbx-priv-grid td.c {
+  text-align: center;
+  width: 1%;
+}
+.dbx-priv-grid tr.added td:first-child {
+  box-shadow: inset 2px 0 0 var(--success);
+}
+.dbx-priv-head {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.dbx-priv-head:hover:not(:disabled) {
+  color: var(--accent);
+}
+.dbx-priv-head:disabled {
+  cursor: default;
+}
+.dbx-priv-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.dbx-priv-cell:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.dbx-priv-cell.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--accent);
+}
+.dbx-priv-cell.opt {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 26%, transparent);
+  color: var(--success);
+}
+.dbx-priv-cell:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.dbx-defacl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dbx-defacl-cells {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-left: 8px;
+}
+.dbx-defacl-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+.dbx-roles {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.dbx-roles-list {
+  flex: 0 0 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-right: 1px solid var(--hairline);
+}
+.dbx-roles-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.dbx-roles-tools > .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dbx-roles-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.dbx-roles-item {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.dbx-roles-item:hover {
+  background: var(--hover);
+}
+.dbx-roles-item.sel {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.dbx-roles-item.new {
+  color: var(--accent);
+}
+.dbx-roles-item svg {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+}
+.dbx-roles-item svg.login {
+  color: var(--success);
+}
+.dbx-roles-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+.dbx-roles-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dbx-roles-edit {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dbx-roles-edit > .dbx-privs-bar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-roles-edit > .dbx-form-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 12px 16px;
+}
+.dbx-roles-edit .dbx-form-row {
+  max-width: 720px;
+}
+.dbx-roles-edit .dbx-form-status {
+  border-top: none;
+  padding: 0;
+}
+.dbx-form-ctl > .ui-input.w-num {
+  flex: 0 0 120px;
+}
+.dbx-roles-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 6px 12px;
+  max-width: 720px;
+}
+.dbx-roles-members {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.dbx-roles-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dbx-roles-pw {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dbx-roles-pw > .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dbx-roles-grants td {
+  font-family: inherit;
+}
+.dbx-roles-grants .dbx-tag {
+  margin-right: 4px;
+}

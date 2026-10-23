@@ -108,3 +108,91 @@ export interface TableInfo {
 
 /** A manual-commit session: none (no connection), idle, in a transaction, or in a failed one. */
 export type TxStatus = 'none' | 'idle' | 'active' | 'failed'
+
+// ---- roles and privileges ----------------------------------------------------
+
+export interface RoleInfo {
+  name: string
+  superuser: boolean
+  login: boolean
+  inherit: boolean
+  createDb: boolean
+  createRole: boolean
+  replication: boolean
+  bypassRls: boolean
+  /** -1: no limit. */
+  connLimit: number
+  validUntil: string | null
+  comment: string | null
+  /** Roles this one is a member of. */
+  memberOf: Array<{ role: string; admin: boolean }>
+  /** Built-in pg_* role. */
+  system: boolean
+}
+
+/** What GRANT/REVOKE act on. Views, matviews and foreign tables are 'table'. */
+export type PrivKind = 'table' | 'sequence' | 'schema' | 'database' | 'function' | 'procedure'
+
+export interface PrivTarget {
+  kind: PrivKind
+  /** Empty for schemas and databases. */
+  schema: string
+  name: string
+  /** Routines: identity arguments. */
+  args?: string
+}
+
+/** One privilege held by a grantee ('PUBLIC' for everyone). */
+export interface Grant {
+  grantee: string
+  privilege: string
+  grantable: boolean
+}
+
+export interface PrivInfo {
+  owner: string
+  grants: Grant[]
+  /** Privileges this kind of object has on this server. */
+  available: string[]
+}
+
+export type DefaultObjType = 'tables' | 'sequences' | 'functions' | 'types' | 'schemas'
+
+/** An ALTER DEFAULT PRIVILEGES rule: what `role` creates in `schema` gets granted. */
+export interface DefaultAcl {
+  role: string
+  /** Null: everywhere (the role's global default). */
+  schema: string | null
+  objType: DefaultObjType
+  grantee: string
+  privilege: string
+  grantable: boolean
+}
+
+export type PolicyCommand = 'ALL' | 'SELECT' | 'INSERT' | 'UPDATE' | 'DELETE'
+
+export interface PolicyInfo {
+  name: string
+  command: PolicyCommand
+  permissive: boolean
+  roles: string[]
+  using: string | null
+  check: string | null
+}
+
+export interface RlsInfo {
+  enabled: boolean
+  forced: boolean
+  policies: PolicyInfo[]
+}
+
+/** A role's privilege on one object in a database (the role's "what can I touch" view). */
+export interface RoleGrant {
+  kind: 'table' | 'view' | 'matview' | 'foreign' | 'partitioned' | 'sequence' | 'schema' | 'function' | 'procedure' | 'database'
+  schema: string
+  name: string
+  privileges: string[]
+  grantable: string[]
+  /** Held through PUBLIC rather than directly. */
+  viaPublic: boolean
+}

@@ -90,6 +90,8 @@ export default function DbExplorerPanel(): JSX.Element {
   const openSql = useDb((s) => s.openSql)
   const openObject = useDb((s) => s.openObject)
   const openDesign = useDb((s) => s.openDesign)
+  const openRoles = useDb((s) => s.openRoles)
+  const openPrivs = useDb((s) => s.openPrivs)
   const invalidate = useDb((s) => s.invalidate)
   const changed = useDb((s) => s.changed)
 
@@ -270,7 +272,7 @@ export default function DbExplorerPanel(): JSX.Element {
     `${quoteIdent(conn.kind, schema)}.${quoteIdent(conn.kind, name)}`
 
   const openObj = (row: Extract<Row, { type: 'obj' }>): void => {
-    openObject(row.conn.id, row.db, row.schema, row.obj.name, row.obj.kind)
+    openObject(row.conn.id, row.db, row.schema, row.obj.name, row.obj.kind, row.obj.args)
   }
 
   // Tables and views open as data (the usual double-click); routines and the
@@ -430,12 +432,14 @@ export default function DbExplorerPanel(): JSX.Element {
 
   const menuFor = (row: Row): MenuItem[] => {
     const rw = row.type !== 'status' && !row.conn.readOnly
+    const pg = row.type !== 'status' && row.conn.kind === 'postgres'
     switch (row.type) {
       case 'conn':
         return [
           { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.conn.database) },
           { label: t('db.refresh'), onClick: () => refresh(row) },
           ...(rw ? withSep([{ label: t('db.d.newDatabase'), onClick: () => newDatabase(row.conn) }]) : []),
+          ...(pg ? withSep([{ label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.conn.database) }]) : []),
           { label: t('db.editConnection'), onClick: () => setForm({ initial: row.conn }), separator: true },
           { label: t('db.deleteConnection'), onClick: () => void removeConn(row.conn), danger: true }
         ]
@@ -443,6 +447,12 @@ export default function DbExplorerPanel(): JSX.Element {
         return [
           { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.db) },
           { label: t('db.refresh'), onClick: () => refresh(row) },
+          ...(pg
+            ? withSep([
+                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db) },
+                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) }
+              ])
+            : []),
           ...(rw
             ? withSep([
                 { label: t('db.d.newSchema'), onClick: () => newSchema(row.conn, row.db) },
@@ -458,6 +468,7 @@ export default function DbExplorerPanel(): JSX.Element {
             onClick: () => openConsole(row.conn, row.db, `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n`)
           },
           { label: t('db.refresh'), onClick: () => refresh(row) },
+          ...(pg ? withSep([{ label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) }]) : []),
           ...(rw
             ? withSep([
                 ...createItems(row.conn, row.db, row.schema),

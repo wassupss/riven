@@ -245,4 +245,67 @@ describe.skipIf(!target)('postgres engine (live)', async () => {
     await pg.pgDdl(cfg, undefined, drop.stmts, drop.atomic, 10_000)
     expect(await (await import('./meta')).listDatabases(cfg)).not.toContain('riven_ddl_t')
   })
+  it('manages roles, grants, default privileges and row-level security', async () => {
+    const pv = await import('./privs')
+    const pm = await import('./privMeta')
+    const cfg = store.getConnection(id)!
+    const run = (plan: { stmts: string[]; atomic?: boolean }): Promise<number> => pg.pgDdl(cfg, undefined, plan.stmts, plan.atomic !== false, 10_000)
+    // Leftovers of an aborted run (roles outlive the schema).
+    for (const r of ['"Riven App"', 'riven_ro']) {
+      await pg.pgExecute(cfg, undefined, [`drop owned by ${r}`], 10_000).catch(() => undefined)
+      await pg.pgExecute(cfg, undefined, [`drop role if exists ${r}`], 10_000)
+    }
+    await run(pv.createRoleSql({ ...pv.newRole(), name: 'riven_ro', login: false }))
+    await run(pv.createRoleSql({ ...pv.newRole(), name: 'Riven App', connLimit: '3', password: 'pw', comment: '앱', memberOf: [{ role: 'riven_ro', admin: true }] }))
+    let roles = await pm.listRoles(cfg)
+    const app = roles.find((r) => r.name === 'Riven App')!
+    expect(app).toMatchObject({ login: true, connLimit: 3, comment: '앱', memberOf: [{ role: 'riven_ro', admin: true }], system: false })
+    expect(roles.find((r) => r.name === 'pg_read_all_data')?.system).toBe(true)
+
+    const orig = pv.roleDraft(app, roles)
+    await run(pv.alterRoleSql(orig, { ...orig, createDb: true, connLimit: '', validUntil: '2099-01-01', memberOf: [{ role: 'riven_ro', admin: false }] }))
+    roles = await pm.listRoles(cfg)
+    expect(roles.find((r) => r.name === 'Riven App')).toMatchObject({ createDb: true, connLimit: -1, memberOf: [{ role: 'riven_ro', admin: false }] })
+    expect(roles.find((r) => r.name === 'Riven App')!.validUntil).toMatch(/^2099-01-01/)
+
+    const target = { kind: 'table' as const, schema: 'riven_t', name: 'parent' }
+    const before = (await pm.objectPrivileges(cfg, undefined, target))!
+    expect(before.owner).toBe(user)
+    expect(before.available).toContain('SELECT')
+    await run(pv.grantsSql(target, before.grants, [
+      ...before.grants,
+      { grantee: 'Riven App', privilege: 'SELECT', grantable: true },
+      { grantee: 'riven_ro', privilege: 'SELECT', grantable: false }
+    ]))
+    const after = (await pm.objectPrivileges(cfg, undefined, target))!
+    expect(after.grants).toContainEqual({ grantee: 'Riven App', privilege: 'SELECT', grantable: true })
+    expect((await pm.roleGrants(cfg, undefined, 'riven_ro')).find((g) => g.name === 'parent')).toMatchObject({ kind: 'table', privileges: ['SELECT'] })
+    await run(pv.grantsSql(target, after.grants, before.grants))
+    expect((await pm.objectPrivileges(cfg, undefined, target))!.grants).toEqual(before.grants)
+    const sch = (await pm.objectPrivileges(cfg, undefined, { kind: 'schema', schema: '', name: 'riven_t' }))!
+    expect(sch.available).toEqual(['USAGE', 'CREATE'])
+    const fn = await pm.objectPrivileges(cfg, undefined, { kind: 'function', schema: 'riven_t', name: 'add1', args: 'i integer' })
+    expect(fn?.grants).toContainEqual({ grantee: 'PUBLIC', privilege: 'EXECUTE', grantable: false })
+
+    const rule = { role: user, schema: 'riven_t', objType: 'tables' as const, grantee: 'riven_ro', privileges: ['SELECT'], grantable: [] }
+    await run(pv.defaultRuleSql(null, rule))
+    expect(pv.defaultRules(await pm.defaultAcls(cfg, undefined))).toContainEqual(rule)
+    await run(pv.defaultRuleSql(rule, null))
+    expect(pv.defaultRules(await pm.defaultAcls(cfg, undefined))).not.toContainEqual(rule)
+
+    await pg.pgExecute(cfg, undefined, ['create table riven_t.secured (id int, owner text)'], 10_000)
+    await run(pv.rlsSql('riven_t', 'secured', { enabled: false, forced: false }, { enabled: true, forced: true }))
+    const pol = { ...pv.newPolicy(), name: 'mine', command: 'SELECT' as const, roles: 'riven_ro', using: 'owner = current_user' }
+    await run(pv.policySql('riven_t', 'secured', pol))
+    const rls = (await pm.rlsInfo(cfg, undefined, 'riven_t', 'secured'))!
+    expect(rls).toMatchObject({ enabled: true, forced: true })
+    expect(rls.policies).toEqual([{ name: 'mine', command: 'SELECT', permissive: true, roles: ['riven_ro'], using: '(owner = CURRENT_USER)', check: null }])
+    await run(pv.policySql('riven_t', 'secured', { ...pv.policyDraft(rls.policies[0]), command: 'ALL', check: 'true' }, pv.policyDraft(rls.policies[0])))
+    expect((await pm.rlsInfo(cfg, undefined, 'riven_t', 'secured'))!.policies[0]).toMatchObject({ command: 'ALL', check: 'true' })
+    expect(await pm.rlsInfo(cfg, undefined, 'riven_t', 'nope')).toBeNull()
+
+    await run(pv.dropRoleSql('Riven App', { reassignTo: user, dropOwned: true }))
+    await run(pv.dropRoleSql('riven_ro', { dropOwned: true }))
+    expect((await pm.listRoles(cfg)).map((r) => r.name)).not.toContain('riven_ro')
+  })
 })

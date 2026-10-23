@@ -27,6 +27,8 @@ export interface ObjectTab {
   schema: string
   name: string
   objKind: ObjectKind
+  /** Routines: identity arguments, telling overloads apart. */
+  args?: string
 }
 
 /** The table designer: an existing table (`name`) or a new one. */
@@ -40,7 +42,32 @@ export interface DesignTab {
   name?: string
 }
 
-export type ConsoleTab = SqlTab | ObjectTab | DesignTab
+/** Roles of a connection (cluster-wide). `db` is where per-role privileges are read. */
+export interface RolesTab {
+  id: string
+  kind: 'roles'
+  title: string
+  connId: string
+  db?: string
+}
+
+/** GRANTs and default privileges of a database or a schema. */
+export interface PrivsTab {
+  id: string
+  kind: 'privs'
+  title: string
+  connId: string
+  db?: string
+  scope: 'database' | 'schema'
+  /** The database or schema name. */
+  name: string
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab
+
+/** The schema a tab lives in, or undefined when it spans the database (or more). */
+const tabSchema = (x: ConsoleTab): string | undefined =>
+  x.kind === 'object' || x.kind === 'design' ? x.schema : x.kind === 'privs' && x.scope === 'schema' ? x.name : undefined
 
 /** The last DDL change, so views of what it touched reload. */
 export interface DbChange {
@@ -127,9 +154,11 @@ interface DbState {
   changed: DbChange | null
   reload: () => Promise<void>
   openSql: (connId: string, db?: string, sql?: string, run?: boolean) => string
-  openObject: (connId: string, db: string | undefined, schema: string, name: string, objKind: ObjectKind) => string
+  openObject: (connId: string, db: string | undefined, schema: string, name: string, objKind: ObjectKind, args?: string) => string
   /** Opens the designer for `name`, or for a new table in `schema`. */
   openDesign: (connId: string, db: string | undefined, schema: string, name?: string) => string
+  openRoles: (connId: string, db?: string) => string
+  openPrivs: (connId: string, db: string | undefined, scope: PrivsTab['scope'], name: string) => string
   /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
   invalidate: (
     change: Omit<DbChange, 'seq'>,
@@ -195,15 +224,15 @@ export const useDb = create<DbState>((set, get) => {
       if (run) set({ autoRun: tab.id })
       return tab.id
     },
-    openObject: (connId, db, schema, name, objKind) => {
+    openObject: (connId, db, schema, name, objKind, args) => {
       const same = get().tabs.find(
-        (t) => t.kind === 'object' && t.connId === connId && t.db === db && t.schema === schema && t.name === name
+        (t) => t.kind === 'object' && t.connId === connId && t.db === db && t.schema === schema && t.name === name && t.args === args
       )
       if (same) {
         commit(get().tabs, same.id)
         return same.id
       }
-      const tab: ObjectTab = { id: dbUid(), kind: 'object', title: name, connId, db, schema, name, objKind }
+      const tab: ObjectTab = { id: dbUid(), kind: 'object', title: name, connId, db, schema, name, objKind, args }
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },
@@ -219,9 +248,34 @@ export const useDb = create<DbState>((set, get) => {
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },
+    openRoles: (connId, db) => {
+      const same = get().tabs.find((t) => t.kind === 'roles' && t.connId === connId)
+      if (same) {
+        commit(get().tabs.map((x) => (x.id === same.id ? { ...x, db } : x)), same.id)
+        return same.id
+      }
+      const conn = get().connections.find((c) => c.id === connId)
+      const tab: RolesTab = { id: dbUid(), kind: 'roles', title: t('db.r.rolesOf', { name: conn?.name ?? '' }), connId, db }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
+    openPrivs: (connId, db, scope, name) => {
+      const same = get().tabs.find((t) => t.kind === 'privs' && t.connId === connId && t.db === db && t.scope === scope && t.name === name)
+      if (same) {
+        commit(get().tabs, same.id)
+        return same.id
+      }
+      const tab: PrivsTab = { id: dbUid(), kind: 'privs', title: t('db.r.privsOf', { name }), connId, db, scope, name }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
     closeWithin: (connId, db, schema) => {
       const inside = (x: ConsoleTab): boolean =>
-        x.kind !== 'sql' && x.connId === connId && x.db === db && (schema === undefined || x.schema === schema)
+        x.kind !== 'sql' &&
+        x.kind !== 'roles' &&
+        x.connId === connId &&
+        x.db === db &&
+        (schema === undefined || tabSchema(x) === schema)
       const { tabs, active } = get()
       if (!tabs.some(inside)) return
       const keep = tabs.filter((x) => !inside(x))
@@ -231,7 +285,11 @@ export const useDb = create<DbState>((set, get) => {
       set((s) => ({ changed: { ...change, seq: (s.changed?.seq ?? 0) + 1 } }))
       if (!object || change.schema === undefined) return
       const hit = (x: ConsoleTab): boolean =>
-        x.kind !== 'sql' && x.connId === change.connId && x.db === change.db && x.schema === change.schema && x.name === object.name
+        (x.kind === 'object' || x.kind === 'design') &&
+        x.connId === change.connId &&
+        x.db === change.db &&
+        x.schema === change.schema &&
+        x.name === object.name
       if (object.dropped) {
         commit(
           get().tabs.filter((x) => !hit(x)),
@@ -240,7 +298,7 @@ export const useDb = create<DbState>((set, get) => {
       } else if (object.renamed) {
         const to = object.renamed
         commit(
-          get().tabs.map((x) => (hit(x) && x.kind !== 'sql' ? { ...x, name: to, title: to } : x)),
+          get().tabs.map((x) => (hit(x) ? { ...x, name: to, title: to } : x)),
           get().active
         )
       }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
-import { Check, Database, FileCode2, Lock, PencilRuler, Play, Plus, Square, Table2, Undo2, X } from 'lucide-react'
+import { Check, Database, FileCode2, Lock, PencilRuler, Play, Plus, ShieldCheck, Square, Table2, Undo2, Users, X } from 'lucide-react'
 import '../../styles/db-panel.css'
 import type { DbKind, QueryResult } from '../../../../main/db/types'
 import { splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
@@ -11,6 +11,8 @@ import { Button, Select, Switch } from '../../components/ui/Controls'
 import ResultPane from './db/ResultPane'
 import ObjectView from './db/ObjectView'
 import TableDesigner from './db/TableDesigner'
+import RolesView from './db/RolesView'
+import PrivsView from './db/PrivsView'
 import { errText } from './db/ConnectionForm'
 
 // =============================================================================
@@ -84,6 +86,10 @@ export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): 
                 <FileCode2 size={12} className="dbx-tab-ico sql" />
               ) : x.kind === 'design' ? (
                 <PencilRuler size={12} className="dbx-tab-ico design" />
+              ) : x.kind === 'roles' ? (
+                <Users size={12} className="dbx-tab-ico roles" />
+              ) : x.kind === 'privs' ? (
+                <ShieldCheck size={12} className="dbx-tab-ico roles" />
               ) : (
                 <Table2 size={12} className="dbx-tab-ico obj" />
               )}
@@ -109,6 +115,8 @@ export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): 
         <SqlView tab={tab?.kind === 'sql' ? tab : null} hidden={tab?.kind !== 'sql'} />
         {tab?.kind === 'object' && <ObjectView key={tab.id} tab={tab} />}
         {tab?.kind === 'design' && <TableDesigner key={tab.id} tab={tab} />}
+        {tab?.kind === 'roles' && <RolesView key={tab.id} tab={tab} />}
+        {tab?.kind === 'privs' && <PrivsView key={tab.id} tab={tab} />}
         {!tab && (
           <div className="dbx-empty-state">
             <Database size={28} />

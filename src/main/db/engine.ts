@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget } from './meta'
 import type { EditStatement } from './edit'
 import { DDL_VERBS, type DdlPlan } from './ddl'
+import { defaultAcls, listRoles, objectPrivileges, rlsInfo, roleGrants } from './privMeta'
 import {
   closeConnection,
   closeDatabase,
@@ -22,7 +23,7 @@ import { openExport, XLSX_MAX_ROWS } from './export'
 import type { ExportOptions } from './mask'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
 import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
-import type { ConnectionConfig, QueryResult } from './types'
+import type { ConnectionConfig, PrivTarget, QueryResult } from './types'
 
 // DB engine entry points: the riven_db_* MCP tools (agents) and db:* IPC (panels).
 // Lives in main so an agent can use a data source whether or not a DB panel is
@@ -288,6 +289,11 @@ export function registerDbHandlers(): void {
     }
     return pgDdl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS)
   })
+  ipcMain.handle('db:roles', (_e, id: string) => listRoles(byId(id)))
+  ipcMain.handle('db:privileges', (_e, id: string, db: string | undefined, target: PrivTarget) => objectPrivileges(byId(id), db, target))
+  ipcMain.handle('db:default-acl', (_e, id: string, db: string | undefined) => defaultAcls(byId(id), db))
+  ipcMain.handle('db:rls', (_e, id: string, db: string | undefined, schema: string, table: string) => rlsInfo(byId(id), db, schema, table))
+  ipcMain.handle('db:role-grants', (_e, id: string, db: string | undefined, role: string) => roleGrants(byId(id), db, role))
   ipcMain.handle('db:cancel',(_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)

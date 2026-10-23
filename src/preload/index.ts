@@ -4,7 +4,13 @@ import type {
   ConnectionConfig,
   ConnectionInfo,
   DbObject,
+  DefaultAcl,
+  PrivInfo,
+  PrivTarget,
   QueryResult,
+  RlsInfo,
+  RoleGrant,
+  RoleInfo,
   SchemaInfo,
   TableInfo,
   TxStatus
@@ -573,6 +579,15 @@ const api = {
     ): Promise<Array<Array<string | number | boolean | null> | null>> => ipcRenderer.invoke('db:apply', id, db, session, stmts),
     /** Runs a DDL plan (designer, object actions); resolves to the number of statements run. */
     ddlApply: (id: string, db: string | undefined, plan: DdlPlan): Promise<number> => ipcRenderer.invoke('db:ddl-apply', id, db, plan),
+    // Roles, privileges, default privileges and row-level security (read side; changes go through ddlApply).
+    roles: (id: string): Promise<RoleInfo[]> => ipcRenderer.invoke('db:roles', id),
+    privileges: (id: string, db: string | undefined, target: PrivTarget): Promise<PrivInfo | null> =>
+      ipcRenderer.invoke('db:privileges', id, db, target),
+    defaultAcl: (id: string, db: string | undefined): Promise<DefaultAcl[]> => ipcRenderer.invoke('db:default-acl', id, db),
+    rls: (id: string, db: string | undefined, schema: string, table: string): Promise<RlsInfo | null> =>
+      ipcRenderer.invoke('db:rls', id, db, schema, table),
+    roleGrants: (id: string, db: string | undefined, role: string): Promise<RoleGrant[]> =>
+      ipcRenderer.invoke('db:role-grants', id, db, role),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
     column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
       ipcRenderer.invoke('db:column', id, db, table, attnum),

@@ -14,6 +14,8 @@ export interface DdlField {
   hint?: string
   placeholder?: string
   options?: Array<{ value: string; label: string }>
+  /** Height of an sql field (default 8). */
+  rows?: number
 }
 
 export interface DdlAction {
@@ -98,7 +100,7 @@ export default function DdlDialog({ action, onClose }: { action: DdlAction; onCl
               ) : f.kind === 'sql' ? (
                 <TextArea
                   className="dbx-ddl-sql"
-                  rows={8}
+                  rows={f.rows ?? 8}
                   spellCheck={false}
                   value={String(v[f.key])}
                   placeholder={f.placeholder}
