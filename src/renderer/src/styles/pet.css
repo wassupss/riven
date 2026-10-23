@@ -559,7 +559,7 @@
 
 /* Growing up: the ring of dots flies outward and fades. */
 .pet-burst {
-  transform-origin: 8px 8px;
+  transform-origin: 16px 16px;
   animation: pet-burst 0.9s steps(4, end) 3;
 }
 @keyframes pet-burst {
@@ -982,6 +982,13 @@
 .pet-px-a {
   fill: var(--warning);
 }
+/* Shading, made at the drawn size: light from the top left. */
+.pet-px-l {
+  fill: color-mix(in srgb, var(--accent-2) 72%, white);
+}
+.pet-px-d {
+  fill: color-mix(in srgb, var(--accent-2) 82%, black);
+}
 
 /* Grown-up forms used to recolour the body here (grey with red eyes for the
    neglected one), which is a lot of why adults read as a downgrade. A form is
@@ -991,6 +998,12 @@
 }
 .pet-s-egg .pet-px-o {
   fill: color-mix(in srgb, var(--fg) 34%, black);
+}
+.pet-s-egg .pet-px-l {
+  fill: color-mix(in srgb, var(--fg) 92%, white);
+}
+.pet-s-egg .pet-px-d {
+  fill: color-mix(in srgb, var(--fg) 66%, var(--accent-2));
 }
 
 /* ---- animation: whole-dot steps, never a smooth slide ---- */
@@ -1007,7 +1020,7 @@
 /* The little ghost: see-through, and it drifts rather than hops. */
 .pet-f-wraith .pet-sprite {
   opacity: 0.78;
-  animation: pet-float 2.4s steps(1, end) infinite;
+  animation: pet-float 3.2s steps(1, end) infinite;
 }
 .pet-sprite.chew {
   animation: pet-chew 0.3s steps(1, end) infinite;
@@ -1026,7 +1039,8 @@
   animation: none;
 }
 
-/* A one-dot hop — the whole sprite moves by exactly one pixel of the grid. */
+/* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
+   hopped by one: always whole dots. */
 @keyframes pet-hop {
   0%,
   50% {
@@ -1034,23 +1048,40 @@
   }
   51%,
   100% {
-    transform: translateY(-1px);
-  }
-}
-@keyframes pet-float {
-  0%,
-  25% {
-    transform: translateY(0);
-  }
-  26%,
-  50% {
-    transform: translateY(-1px);
-  }
-  51%,
-  75% {
     transform: translateY(-2px);
   }
+}
+/* The ghost drifts a dot at a time, which the finer grid makes smooth. */
+@keyframes pet-float {
+  0%,
+  12% {
+    transform: translateY(0);
+  }
+  13%,
+  25% {
+    transform: translateY(-1px);
+  }
+  26%,
+  37% {
+    transform: translateY(-2px);
+  }
+  38%,
+  50% {
+    transform: translateY(-3px);
+  }
+  51%,
+  62% {
+    transform: translateY(-4px);
+  }
+  63%,
+  75% {
+    transform: translateY(-3px);
+  }
   76%,
+  87% {
+    transform: translateY(-2px);
+  }
+  88%,
   100% {
     transform: translateY(-1px);
   }
@@ -1062,13 +1093,13 @@
   }
   51%,
   100% {
-    transform: translateY(1px);
+    transform: translateY(2px);
   }
 }
 @keyframes pet-rock {
   0%,
   33% {
-    transform: translateX(-1px);
+    transform: translateX(-2px);
   }
   34%,
   66% {
@@ -1076,7 +1107,7 @@
   }
   67%,
   100% {
-    transform: translateX(1px);
+    transform: translateX(2px);
   }
 }
 @keyframes pet-twinkle {
@@ -1096,7 +1127,7 @@
   }
   100% {
     opacity: 0;
-    transform: translate(-3px, 6px);
+    transform: translate(-6px, 12px);
   }
 }
 

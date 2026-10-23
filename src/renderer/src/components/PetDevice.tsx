@@ -45,6 +45,7 @@ import {
   ZZZ,
   accessoryPixels,
   pixelsOf,
+  runsOf,
   SPRITE_SIZE
 } from './petSprites'
 import {
@@ -194,9 +195,14 @@ function Creature({
   evolving?: boolean
   accessory?: Accessory | null
 }): JSX.Element {
-  const dots = useMemo(() => pixelsOf(stage, form, mood, species), [stage, form, mood, species])
+  // Same-coloured neighbours in a row share one rect: the drawn grid is four
+  // times the dots, and this keeps the rect count near what it was.
+  const runs = useMemo(
+    () => runsOf(pixelsOf(stage, form, mood, species)),
+    [stage, form, mood, species]
+  )
   const worn = useMemo(
-    () => accessoryPixels(stage, form, species, accessory ?? null),
+    () => runsOf(accessoryPixels(stage, form, species, accessory ?? null)),
     [stage, form, species, accessory]
   )
   return (
@@ -207,13 +213,13 @@ function Creature({
       aria-hidden="true"
     >
       <g className={`pet-sprite${chewing ? ' chew' : ''}`}>
-        {dots.map((d) => (
+        {runs.map((d) => (
           <rect
             key={`${d.x},${d.y}`}
             className={`pet-px pet-px-${d.ch}`}
             x={d.x}
             y={d.y}
-            width="1"
+            width={d.w}
             height="1"
           />
         ))}
@@ -226,7 +232,7 @@ function Creature({
                 className={`pet-px pet-px-${d.ch}`}
                 x={d.x}
                 y={d.y}
-                width="1"
+                width={d.w}
                 height="1"
               />
             ))}
@@ -235,24 +241,24 @@ function Creature({
       </g>
       {chewing && (
         <g className="pet-crumbs">
-          <rect className="pet-px pet-px-a" x="13" y="2" width="1" height="1" />
-          <rect className="pet-px pet-px-a" x="2" y="1" width="1" height="1" />
+          <rect className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />
+          <rect className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
         </g>
       )}
       {/* Growing up: a ring of dots bursts outward for a moment. */}
       {evolving && (
         <g className="pet-burst">
           {[
-            [8, 0],
-            [14, 2],
-            [15, 8],
-            [13, 14],
-            [8, 15],
-            [2, 13],
-            [0, 8],
-            [2, 2]
+            [16, 0],
+            [28, 4],
+            [30, 16],
+            [26, 28],
+            [16, 30],
+            [4, 26],
+            [0, 16],
+            [4, 4]
           ].map(([x, y]) => (
-            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="1" height="1" />
+            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
           ))}
         </g>
       )}
