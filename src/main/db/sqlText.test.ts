@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { literal, quoteIdent, readOnlyViolation, splitStatements, statements, unsafeStatement } from './sqlText'
+import { literal, pagedQuery, quoteIdent, readOnlyViolation, splitStatements, statements, unsafeStatement } from './sqlText'
 
 describe('splitStatements', () => {
   it('splits and quotes', () => {
@@ -81,5 +81,28 @@ describe('unsafeStatement', () => {
     expect(u('select * from t')).toBeNull()
     expect(unsafeStatement('FLUSHALL', 'redis')).not.toBeNull()
     expect(unsafeStatement('GET a', 'redis')).toBeNull()
+  })
+})
+
+describe('pagedQuery', () => {
+  it('wraps plain reads', () => {
+    expect(pagedQuery('select * from t;', 'postgres', 100)).toBe('select * from (\nselect * from t\n) as riven_page offset 100')
+    expect(pagedQuery('with a as (select 1) select * from a -- note', 'postgres', 5)).toMatch(/-- note\n\) as riven_page offset 5$/)
+    expect(pagedQuery('values (1)', 'postgres', 1)).not.toBeNull()
+  })
+
+  it('refuses anything a re-run would change', () => {
+    for (const q of [
+      'insert into t values (1)',
+      'with d as (delete from t returning *) select * from d',
+      'select * into t2 from t',
+      'select * from t for update',
+      "select nextval('s')",
+      'select pg_sleep(1)',
+      'select 1; select 2',
+      'show all'
+    ])
+      expect(pagedQuery(q, 'postgres', 10)).toBeNull()
+    expect(pagedQuery('select 1', 'mysql', 10)).toBeNull()
   })
 })

@@ -270,6 +270,28 @@ export function unsafeStatement(sql: string, kind: DbKind): string | null {
   return null
 }
 
+// Words that make re-running a query unsafe or impossible: writes (a data-
+// modifying CTE would apply again), SELECT ... INTO, row locks, sequences.
+const NOT_PAGEABLE = new Set(['insert', 'update', 'delete', 'merge', 'into', 'for', 'nextval', 'setval'])
+
+/**
+ * The query re-read from `offset` on, or null when it can't be paged that way.
+ * Used to load more rows of a result: it re-runs the query, so only a plain
+ * read qualifies. Without an ORDER BY the server may return rows in a different
+ * order next time; the console accepts that, as every LIMIT/OFFSET pager does.
+ */
+export function pagedQuery(sql: string, kind: DbKind, offset: number): string | null {
+  if (kind !== 'postgres' || splitStatements(sql, kind).length !== 1) return null
+  const sc = scan(sql, kind)
+  if (sc.execComment) return null
+  const words = sc.toks.filter((t) => t.word).map((t) => t.text)
+  if (!['select', 'with', 'values', 'table'].includes(words[0] ?? '')) return null
+  if (words.some((w) => NOT_PAGEABLE.has(w) || SIDE_EFFECT_FUNCS.has(w))) return null
+  const body = sql.trim().replace(/;\s*$/, '')
+  // Newlines, so a trailing `-- comment` can't swallow the closing paren.
+  return `select * from (\n${body}\n) as riven_page offset ${Math.max(0, Math.floor(offset))}`
+}
+
 // ---- identifiers ------------------------------------------------------------
 
 // Words that break the grammar unquoted (PG + MySQL union; quoting one needlessly is harmless).

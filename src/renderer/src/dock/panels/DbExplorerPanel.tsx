@@ -241,7 +241,7 @@ export default function DbExplorerPanel(): JSX.Element {
   // Tables and views open as data (the usual double-click); routines and the
   // like have no rows, so they open their definition.
   const selectTop = (row: Extract<Row, { type: 'obj' }>): void =>
-    openConsole(row.conn, row.db, `select * from ${qualified(row.conn, row.schema, row.obj.name)} limit 100;`, true)
+    openConsole(row.conn, row.db, `select * from ${qualified(row.conn, row.schema, row.obj.name)};`, true)
 
   const removeConn = async (conn: ConnectionInfo): Promise<void> => {
     if (!window.confirm(t('db.confirmDelete', { name: conn.name }))) return

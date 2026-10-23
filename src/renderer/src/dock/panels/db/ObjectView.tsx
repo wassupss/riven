@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { KeyRound } from 'lucide-react'
 import type { QueryResult, TableInfo } from '../../../../../main/db/types'
-import { quoteIdent } from '../../../../../main/db/sqlText'
+import { pagedQuery, quoteIdent } from '../../../../../main/db/sqlText'
 import { editorTheme } from '../../../editor/highlight'
 import { useT } from '../../../i18n'
 import { useDb, type ObjectTab } from '../../../state/db'
@@ -14,8 +14,10 @@ import { typeTone } from './tone'
 type Sub = 'columns' | 'indexes' | 'constraints' | 'ddl' | 'data'
 
 const DATA_LIMIT = 200
+// Scrolling pages in more rows up to this many.
+const MAX_ROWS = 100_000
 
-// One table/view/routine: structure, DDL, and a first page of data.
+// One table/view/routine: structure, DDL, and its data, paged in as it scrolls.
 export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
   const t = useT()
   const conn = useDb((s) => s.connections.find((c) => c.id === tab.connId))
@@ -24,7 +26,15 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
   const [sub, setSub] = useState<Sub>(relation ? 'columns' : 'ddl')
   const [info, setInfo] = useState<{ data?: TableInfo | null; error?: string }>({})
   const [ddl, setDdl] = useState<{ text?: string; error?: string }>({})
-  const [data, setData] = useState<{ result?: QueryResult; error?: string; loading?: boolean }>({})
+  const [data, setData] = useState<{
+    result?: QueryResult
+    error?: string
+    loading?: boolean
+    loadingMore?: boolean
+    moreError?: string
+  }>({})
+  // Bumped by every reload so a page still in flight can't land on a fresh result.
+  const gen = useRef(0)
 
   const qualified = conn ? `${quoteIdent(conn.kind, tab.schema)}.${quoteIdent(conn.kind, tab.name)}` : tab.name
 
@@ -53,12 +63,38 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
     }
   }, [sub, ddl.text, tab.connId, tab.db, tab.schema, tab.name])
 
+  const dataSql = `select * from ${qualified}`
   const loadData = (): void => {
+    const g = ++gen.current
     setData({ loading: true })
     window.api.db
-      .query(tab.connId, tab.db, `select * from ${qualified}`, { limit: DATA_LIMIT })
-      .then((result) => setData({ result }))
-      .catch((e) => setData({ error: errText(e) }))
+      .query(tab.connId, tab.db, dataSql, { limit: DATA_LIMIT })
+      .then((result) => g === gen.current && setData({ result }))
+      .catch((e) => g === gen.current && setData({ error: errText(e) }))
+  }
+
+  const canMore =
+    !!data.result?.truncated &&
+    !data.moreError &&
+    data.result.rows.length < MAX_ROWS &&
+    !!conn &&
+    pagedQuery(dataSql, conn.kind, 1) !== null
+  const loadMore = (): void => {
+    const offset = data.result?.rows.length ?? 0
+    if (!canMore || data.loadingMore) return
+    const g = gen.current
+    setData((d) => ({ ...d, loadingMore: true }))
+    window.api.db
+      .query(tab.connId, tab.db, dataSql, { limit: DATA_LIMIT, offset })
+      .then((page) => {
+        if (g !== gen.current) return
+        setData((d) =>
+          d.result && d.result.rows.length === offset
+            ? { result: { ...d.result, rows: d.result.rows.concat(page.rows), truncated: page.truncated } }
+            : { ...d, loadingMore: false }
+        )
+      })
+      .catch((e) => g === gen.current && setData((d) => ({ ...d, loadingMore: false, moreError: errText(e) })))
   }
 
   useEffect(() => {
@@ -89,7 +125,7 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
         {ti?.comment && <span className="dbx-meta">{ti.comment}</span>}
         <span className="dbx-spacer" />
         {relation && conn && (
-          <button className="dbx-link" onClick={() => openSql(conn.id, tab.db, `select * from ${qualified} limit 100;`, true)}>
+          <button className="dbx-link" onClick={() => openSql(conn.id, tab.db, `select * from ${qualified};`, true)}>
             {t('db.queryIt')}
           </button>
         )}
@@ -117,7 +153,12 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
           data.error ? (
             <div className="dbx-error">{data.error}</div>
           ) : data.result ? (
-            <ResultGrid columns={data.result.columns} rows={data.result.rows} />
+            <ResultGrid
+              columns={data.result.columns}
+              rows={data.result.rows}
+              onMore={canMore ? loadMore : undefined}
+              loadingMore={data.loadingMore}
+            />
           ) : (
             <div className="dbx-empty">{t('db.loading')}</div>
           )

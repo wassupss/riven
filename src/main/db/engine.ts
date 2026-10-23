@@ -2,7 +2,7 @@ import { ipcMain } from 'electron'
 import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema } from './meta'
 import { closeConnection, pgCancel, pgExecute, pgQuery, pgTest } from './pg'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
-import { readOnlyViolation, statements, unsafeStatement } from './sqlText'
+import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
 import type { ConnectionConfig, QueryResult } from './types'
 
 // DB engine entry points: the riven_db_* MCP tools (agents) and db:* IPC (panels).
@@ -217,11 +217,17 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:ddl', (_e, id: string, db: string | undefined, schema: string, name: string) => objectDdl(byId(id), db, schema, name))
   ipcMain.handle(
     'db:query',
-    (_e, id: string, db: string | undefined, sql: string, o: { limit?: number; queryId?: string }) => {
+    (_e, id: string, db: string | undefined, sql: string, o: { limit?: number; queryId?: string; offset?: number }) => {
       const cfg = byId(id)
       if (cfg.readOnly) {
         const bad = readOnlyViolation(sql, cfg.kind, false)
         if (bad) throw new Error(bad)
+      }
+      // A later page of an earlier result: only plain reads may be re-run.
+      if (o?.offset) {
+        const paged = pagedQuery(sql, cfg.kind, o.offset)
+        if (!paged) throw new Error('This query cannot be paged')
+        sql = paged
       }
       return pgQuery(cfg, db, sql, { limit: Math.min(Math.max(o?.limit ?? 1000, 1), 100_000), queryId: o?.queryId })
     }

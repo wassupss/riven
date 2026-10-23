@@ -31,6 +31,10 @@ export interface RunResult {
   sql: string
   result?: QueryResult
   error?: string
+  /** A further page is being fetched (infinite scroll). */
+  loadingMore?: boolean
+  /** The last page fetch failed; scrolling stops until a retry. */
+  moreError?: string
 }
 
 export interface RunState {

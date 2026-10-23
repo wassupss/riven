@@ -548,7 +548,7 @@ const api = {
       id: string,
       db: string | undefined,
       sql: string,
-      o: { limit?: number; queryId?: string }
+      o: { limit?: number; queryId?: string; offset?: number }
     ): Promise<QueryResult> => ipcRenderer.invoke('db:query', id, db, sql, o),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId)
   },

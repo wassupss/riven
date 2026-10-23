@@ -43,8 +43,19 @@ function initialWidths(columns: QueryColumn[], rows: Cell[][]): number[] {
 }
 
 // A read-only, row-virtualized result table: only the rows in view are in the
-// DOM, so a 100k-row result scrolls like a 10-row one.
-export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; rows: Cell[][] }): JSX.Element {
+// DOM, so a 100k-row result scrolls like a 10-row one. `onMore` is passed while
+// the source has more rows; it fires once the view nears the bottom.
+export default function ResultGrid({
+  columns,
+  rows,
+  onMore,
+  loadingMore
+}: {
+  columns: QueryColumn[]
+  rows: Cell[][]
+  onMore?: () => void
+  loadingMore?: boolean
+}): JSX.Element {
   const t = useT()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState(0)
@@ -53,12 +64,15 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null)
   const [viewer, setViewer] = useState<string | null>(null)
 
+  // A new result always brings new columns; appended pages keep them, so
+  // scroll position, selection and widths survive a load-more.
   useEffect(() => {
     setWidths(initialWidths(columns, rows))
     setSel(null)
     setTop(0)
     if (scrollRef.current) scrollRef.current.scrollTop = 0
-  }, [columns, rows])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [columns])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -74,6 +88,13 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
   const template = useMemo(() => `${NUM_W}px ${widths.map((w) => `${w}px`).join(' ')}`, [widths])
   const first = Math.max(0, Math.floor(top / ROW_H) - OVERSCAN)
   const last = Math.min(rows.length, Math.ceil((top + height) / ROW_H) + OVERSCAN)
+  const more = !!onMore || !!loadingMore
+
+  // Prefetch one screen ahead so the next page usually lands before the bottom.
+  useEffect(() => {
+    if (!onMore || loadingMore) return
+    if (Math.ceil((top + height) / ROW_H) + Math.ceil(height / ROW_H) >= rows.length) onMore()
+  }, [onMore, loadingMore, top, height, rows.length])
 
   const startResize = (i: number, e: React.MouseEvent): void => {
     e.preventDefault()
@@ -135,7 +156,7 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
               </div>
             ))}
           </div>
-          <div style={{ height: rows.length * ROW_H, position: 'relative' }}>
+          <div style={{ height: (rows.length + (more ? 1 : 0)) * ROW_H, position: 'relative' }}>
             {rows.slice(first, last).map((row, k) => {
               const r = first + k
               return (
@@ -162,6 +183,11 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
                 </div>
               )
             })}
+            {more && (
+              <div className="dbx-grid-more" style={{ top: rows.length * ROW_H }}>
+                {loadingMore ? t('db.loadingMore') : ''}
+              </div>
+            )}
           </div>
         </div>
         {rows.length === 0 && <div className="dbx-empty">{t('db.noRows')}</div>}
