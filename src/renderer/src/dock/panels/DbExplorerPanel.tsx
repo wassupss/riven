@@ -94,6 +94,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const openRoles = useDb((s) => s.openRoles)
   const openPrivs = useDb((s) => s.openPrivs)
   const openMonitor = useDb((s) => s.openMonitor)
+  const openErd = useDb((s) => s.openErd)
   const invalidate = useDb((s) => s.invalidate)
   const changed = useDb((s) => s.changed)
 
@@ -477,7 +478,12 @@ export default function DbExplorerPanel(): JSX.Element {
             onClick: () => openConsole(row.conn, row.db, `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n`)
           },
           { label: t('db.refresh'), onClick: () => refresh(row) },
-          ...(pg ? withSep([{ label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) }]) : []),
+          ...(pg
+            ? withSep([
+                { label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) },
+                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) }
+              ])
+            : []),
           ...(rw
             ? withSep([
                 ...createItems(row.conn, row.db, row.schema),

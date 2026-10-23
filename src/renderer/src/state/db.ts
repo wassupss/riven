@@ -73,11 +73,21 @@ export interface MonitorTab {
   db?: string
 }
 
-export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab
+/** ER diagram of a schema. */
+export interface ErdTab {
+  id: string
+  kind: 'erd'
+  title: string
+  connId: string
+  db?: string
+  schema: string
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab | ErdTab
 
 /** The schema a tab lives in, or undefined when it spans the database (or more). */
 const tabSchema = (x: ConsoleTab): string | undefined =>
-  x.kind === 'object' || x.kind === 'design' ? x.schema : x.kind === 'privs' && x.scope === 'schema' ? x.name : undefined
+  x.kind === 'object' || x.kind === 'design' || x.kind === 'erd' ? x.schema : x.kind === 'privs' && x.scope === 'schema' ? x.name : undefined
 
 /** The last DDL change, so views of what it touched reload. */
 export interface DbChange {
@@ -172,6 +182,7 @@ interface DbState {
   openRoles: (connId: string, db?: string) => string
   openPrivs: (connId: string, db: string | undefined, scope: PrivsTab['scope'], name: string) => string
   openMonitor: (connId: string, db?: string) => string
+  openErd: (connId: string, db: string | undefined, schema: string) => string
   /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
   invalidate: (
     change: Omit<DbChange, 'seq'>,
@@ -291,6 +302,16 @@ export const useDb = create<DbState>((set, get) => {
       const conn = get().connections.find((c) => c.id === connId)
       const name = db && db !== conn?.database ? `${conn?.name ?? ''} / ${db}` : (conn?.name ?? '')
       const tab: MonitorTab = { id: dbUid(), kind: 'monitor', title: t('db.mon.title', { name }), connId, db }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
+    openErd: (connId, db, schema) => {
+      const same = get().tabs.find((t) => t.kind === 'erd' && t.connId === connId && t.db === db && t.schema === schema)
+      if (same) {
+        commit(get().tabs, same.id)
+        return same.id
+      }
+      const tab: ErdTab = { id: dbUid(), kind: 'erd', title: t('db.erd.title', { name: schema }), connId, db, schema }
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },

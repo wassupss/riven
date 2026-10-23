@@ -2317,3 +2317,49 @@ div.dbx-design-problems {
   font-size: 11px;
   color: var(--fg-dim);
 }
+
+/* ---- ER diagram ---- */
+.dbx-tab-ico.erd {
+  color: var(--accent-2);
+}
+.dbx-erd .dbx-obj-head {
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-erd .dbx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.dbx-erd-q {
+  width: 180px;
+  flex: 0 0 auto;
+}
+.dbx-erd-zoom {
+  min-width: 36px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.dbx-erd-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+  background-image: radial-gradient(var(--hairline) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.dbx-erd-canvas:active {
+  cursor: grabbing;
+}
+.dbx-erd-svg {
+  display: block;
+}
+.dbx-erd-canvas .dbx-empty-state {
+  position: absolute;
+  inset: 0;
+}

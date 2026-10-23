@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { writeFile } from 'fs/promises'
 import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget, completionMeta } from './meta'
 import type { EditStatement } from './edit'
 import { DDL_VERBS, type DdlPlan } from './ddl'
@@ -24,6 +25,7 @@ import { openExport, XLSX_MAX_ROWS } from './export'
 import type { ExportOptions } from './mask'
 import type { ImportOptions } from './csv'
 import { cancelImport, previewCsv, runImport } from './importer'
+import { erdModel } from './erdMeta'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
 import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
 import type { ConnectionConfig, PrivTarget, QueryResult } from './types'
@@ -319,6 +321,19 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)
   )
+  ipcMain.handle('db:erd', (_e, id: string, db: string | undefined, schema: string) => erdModel(byId(id), db, schema))
+  // Saves renderer-made text (a diagram, a script) through a save dialog.
+  ipcMain.handle('db:save-text', async (e, name: string, ext: string, text: string) => {
+    if (typeof text !== 'string' || !SAVE_TEXT[ext]) throw new Error('Unsupported file type')
+    const win = BrowserWindow.fromWebContents(e.sender)
+    // eslint-disable-next-line no-control-regex
+    const safe = (name || 'untitled').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 120)
+    const opts: Electron.SaveDialogOptions = { defaultPath: `${safe}.${ext}`, filters: [SAVE_TEXT[ext]] }
+    const pick = await (win ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts))
+    if (pick.canceled || !pick.filePath) return null
+    await writeFile(pick.filePath, text, 'utf8')
+    return pick.filePath
+  })
   ipcMain.handle('db:import-pick', async (e) => {
     // Dev-only hook for driving the dialog without the native picker.
     if (!app.isPackaged && process.env.RIVEN_DEV_PICK_FILE) return process.env.RIVEN_DEV_PICK_FILE
@@ -416,6 +431,13 @@ const FILTERS: Record<string, { name: string; extensions: string[] }> = {
   tsv: { name: 'TSV', extensions: ['tsv'] },
   json: { name: 'JSON', extensions: ['json'] },
   sql: { name: 'SQL', extensions: ['sql'] }
+}
+
+const SAVE_TEXT: Record<string, { name: string; extensions: string[] }> = {
+  svg: { name: 'SVG', extensions: ['svg'] },
+  sql: { name: 'SQL', extensions: ['sql'] },
+  mmd: { name: 'Mermaid', extensions: ['mmd', 'md'] },
+  txt: { name: 'Text', extensions: ['txt'] }
 }
 
 function saveOpts(name: string, ext: string): Electron.SaveDialogOptions {
