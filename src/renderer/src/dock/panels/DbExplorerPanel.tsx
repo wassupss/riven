@@ -19,11 +19,23 @@ import {
 import '../../styles/db-panel.css'
 import type { ConnectionInfo, DbObject, ObjectKind, SchemaInfo } from '../../../../main/db/types'
 import { quoteIdent } from '../../../../main/db/sqlText'
+import {
+  createDatabaseSql,
+  createSchemaSql,
+  createViewSql,
+  dropKindOf,
+  dropSql,
+  refreshMatviewSql,
+  renameSql,
+  truncateSql,
+  type DropKind
+} from '../../../../main/db/ddl'
 import { useDb } from '../../state/db'
 import { useT } from '../../i18n'
 import ContextMenu, { type MenuItem } from '../../components/ContextMenu'
 import { TextInput } from '../../components/ui/Controls'
 import ConnectionForm, { errText } from './db/ConnectionForm'
+import DdlDialog, { type DdlAction, type FieldValue } from './db/DdlDialog'
 
 // =============================================================================
 // DbExplorerPanel: the data source tree. connection > database > schema >
@@ -77,6 +89,9 @@ export default function DbExplorerPanel(): JSX.Element {
   const reload = useDb((s) => s.reload)
   const openSql = useDb((s) => s.openSql)
   const openObject = useDb((s) => s.openObject)
+  const openDesign = useDb((s) => s.openDesign)
+  const invalidate = useDb((s) => s.invalidate)
+  const changed = useDb((s) => s.changed)
 
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   // Fetch results per node key. A Map in state, replaced on every write.
@@ -86,6 +101,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const [selected, setSelected] = useState<string | null>(null)
   const [form, setForm] = useState<{ initial?: ConnectionInfo } | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const [ddl, setDdl] = useState<DdlAction | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState(0)
   const [height, setHeight] = useState(400)
@@ -156,6 +172,18 @@ export default function DbExplorerPanel(): JSX.Element {
     }
   }
 
+  // A DDL apply anywhere (designer, dialogs): refetch the list it changed.
+  useEffect(() => {
+    if (!changed) return
+    const conn = connections.find((c) => c.id === changed.connId)
+    if (!conn) return
+    const { db, schema } = changed
+    if (db === undefined) refresh({ key: keys.conn(conn.id), depth: 0, type: 'conn', conn })
+    else if (schema === undefined) refresh({ key: keys.db(conn.id, db), depth: 1, type: 'db', conn, db })
+    else refresh({ key: keys.schema(conn.id, db, schema), depth: 2, type: 'schema', conn, db, schema })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changed?.seq])
+
   const rows = useMemo(() => {
     const out: Row[] = []
     const q = filter.trim().toLowerCase()
@@ -212,6 +240,13 @@ export default function DbExplorerPanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connections, expanded, cache, filter, showSystem, t])
 
+  // An open node whose list was dropped (a parent refreshed) fetches it again.
+  useEffect(() => {
+    for (const r of rows)
+      if (r.type !== 'status' && r.type !== 'group' && r.type !== 'obj' && expanded.has(r.key) && !cache.has(r.key))
+        loadChildren(r)
+  }, [rows, expanded, cache, loadChildren])
+
   const groupOpen = (row: Extract<Row, { type: 'group' }>): boolean =>
     filter.trim() ? !expanded.has(`${row.key}!`) : expanded.has(row.key) !== (row.group === 'tables')
 
@@ -249,31 +284,210 @@ export default function DbExplorerPanel(): JSX.Element {
     await reload()
   }
 
+  // ---- DDL actions ---------------------------------------------------------
+
+  const str = (v: Record<string, FieldValue>, k: string): string => String(v[k] ?? '').trim()
+  // Dropping or renaming a database has to run while connected to another one.
+  const otherDb = (conn: ConnectionInfo, target: string): string =>
+    conn.database && conn.database !== target ? conn.database : target !== 'postgres' ? 'postgres' : 'template1'
+
+  const newDatabase = (conn: ConnectionInfo): void =>
+    setDdl({
+      title: t('db.d.newDatabase'),
+      connId: conn.id,
+      db: conn.database,
+      fields: [
+        { key: 'name', label: t('db.c.name'), kind: 'text' },
+        { key: 'owner', label: t('db.d.owner'), kind: 'text', hint: t('db.d.optional') },
+        { key: 'template', label: t('db.d.template'), kind: 'text', placeholder: 'template1', hint: t('db.d.optional') },
+        { key: 'encoding', label: t('db.d.encoding'), kind: 'text', placeholder: 'UTF8', hint: t('db.d.optional') }
+      ],
+      build: (v) =>
+        str(v, 'name') ? createDatabaseSql(str(v, 'name'), { owner: str(v, 'owner'), template: str(v, 'template'), encoding: str(v, 'encoding') }) : null,
+      onDone: () => invalidate({ connId: conn.id })
+    })
+
+  const newSchema = (conn: ConnectionInfo, db: string): void =>
+    setDdl({
+      title: t('db.d.newSchema'),
+      connId: conn.id,
+      db,
+      fields: [
+        { key: 'name', label: t('db.c.name'), kind: 'text' },
+        { key: 'owner', label: t('db.d.owner'), kind: 'text', hint: t('db.d.optional') }
+      ],
+      build: (v) => (str(v, 'name') ? createSchemaSql(str(v, 'name'), str(v, 'owner')) : null),
+      onDone: () => invalidate({ connId: conn.id, db })
+    })
+
+  const newView = (conn: ConnectionInfo, db: string, schema: string, materialized: boolean): void =>
+    setDdl({
+      title: t(materialized ? 'db.d.newMatview' : 'db.d.newView'),
+      connId: conn.id,
+      db,
+      fields: [
+        { key: 'name', label: t('db.c.name'), kind: 'text' },
+        { key: 'query', label: t('db.d.query'), kind: 'sql', placeholder: 'select ...' }
+      ],
+      build: (v) => (str(v, 'name') && str(v, 'query') ? createViewSql(schema, str(v, 'name'), str(v, 'query'), materialized) : null),
+      onDone: () => invalidate({ connId: conn.id, db, schema })
+    })
+
+  // Rename and drop for databases, schemas and schema objects alike.
+  const renameIt = (conn: ConnectionInfo, kind: DropKind, db: string, schema: string, name: string, args?: string): void =>
+    setDdl({
+      title: t('db.d.renameTitle', { name }),
+      connId: conn.id,
+      db: kind === 'database' ? otherDb(conn, name) : db,
+      fields: [{ key: 'to', label: t('db.d.newName'), kind: 'text' }],
+      initial: { to: name },
+      build: (v) => (str(v, 'to') && str(v, 'to') !== name ? renameSql(kind, schema, name, str(v, 'to'), args) : null),
+      onDone: (v) =>
+        kind === 'database' || kind === 'schema'
+          ? gone(conn, db, kind === 'schema' ? name : undefined)
+          : invalidate({ connId: conn.id, db, schema }, { name, renamed: str(v, 'to') })
+    })
+
+  // A database or schema dropped or renamed: refresh its parent and close its tabs.
+  const gone = (conn: ConnectionInfo, db: string, schema?: string): void => {
+    invalidate(schema === undefined ? { connId: conn.id } : { connId: conn.id, db })
+    useDb.getState().closeWithin(conn.id, db, schema)
+  }
+
+  const dropIt = (conn: ConnectionInfo, kind: DropKind, db: string, schema: string, name: string, args?: string): void =>
+    setDdl({
+      title: t('db.d.dropTitle', { name }),
+      connId: conn.id,
+      db: kind === 'database' ? otherDb(conn, name) : db,
+      fields:
+        kind === 'database'
+          ? [{ key: 'force', label: 'FORCE', kind: 'switch', hint: t('db.d.forceHint') }]
+          : [{ key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.cascadeHint') }],
+      build: (v) => dropSql(kind, schema, name, { cascade: !!v.cascade, force: !!v.force, args }),
+      confirm: name,
+      danger: true,
+      applyLabel: t('db.d.drop'),
+      onDone: () =>
+        kind === 'database' || kind === 'schema'
+          ? gone(conn, db, kind === 'schema' ? name : undefined)
+          : invalidate({ connId: conn.id, db, schema }, { name, dropped: true })
+    })
+
+  const truncateIt = (conn: ConnectionInfo, db: string, schema: string, name: string): void =>
+    setDdl({
+      title: t('db.d.truncateTitle', { name }),
+      connId: conn.id,
+      db,
+      fields: [
+        { key: 'restart', label: 'RESTART IDENTITY', kind: 'switch', hint: t('db.d.restartHint') },
+        { key: 'cascade', label: 'CASCADE', kind: 'switch', hint: t('db.d.truncCascadeHint') }
+      ],
+      build: (v) => truncateSql(schema, name, { restartIdentity: !!v.restart, cascade: !!v.cascade }),
+      confirm: name,
+      danger: true,
+      applyLabel: t('db.d.truncate'),
+      onDone: () => invalidate({ connId: conn.id, db, schema })
+    })
+
+  const refreshMatview = (conn: ConnectionInfo, db: string, schema: string, name: string): void =>
+    setDdl({
+      title: t('db.d.refreshTitle', { name }),
+      connId: conn.id,
+      db,
+      fields: [{ key: 'concurrently', label: 'CONCURRENTLY', kind: 'switch', hint: t('db.d.concurrentlyHint') }],
+      build: (v) => refreshMatviewSql(schema, name, !!v.concurrently),
+      applyLabel: t('db.d.refreshMv'),
+      onDone: () => invalidate({ connId: conn.id, db, schema })
+    })
+
+  // A view's definition, in a console as CREATE OR REPLACE.
+  const editView = (conn: ConnectionInfo, db: string, schema: string, name: string): void => {
+    window.api.db
+      .ddl(conn.id, db, schema, name)
+      .then((text) => openConsole(conn, db, text))
+      .catch((e) => window.alert(errText(e)))
+  }
+
+  const createItems = (conn: ConnectionInfo, db: string, schema: string, only?: Group): MenuItem[] => {
+    const all: Array<[Group, MenuItem]> = [
+      ['tables', { label: t('db.d.newTable'), onClick: () => openDesign(conn.id, db, schema) }],
+      ['views', { label: t('db.d.newView'), onClick: () => newView(conn, db, schema, false) }],
+      ['matviews', { label: t('db.d.newMatview'), onClick: () => newView(conn, db, schema, true) }]
+    ]
+    return all.filter(([g]) => !only || g === only).map(([, m]) => m)
+  }
+
+  const withSep = (items: MenuItem[]): MenuItem[] => items.map((m, i) => (i === 0 ? { ...m, separator: true } : m))
+
+  // ContextMenu draws a separator item as a bare line, so a labelled item marked
+  // `separator` becomes a line followed by the item itself.
+  const expandSeps = (items: MenuItem[]): MenuItem[] =>
+    items.flatMap((m, i) =>
+      m.separator && m.label
+        ? [...(i ? [{ label: '', onClick: () => {}, separator: true }] : []), { ...m, separator: false }]
+        : [m]
+    )
+
   const menuFor = (row: Row): MenuItem[] => {
+    const rw = row.type !== 'status' && !row.conn.readOnly
     switch (row.type) {
       case 'conn':
         return [
           { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.conn.database) },
           { label: t('db.refresh'), onClick: () => refresh(row) },
+          ...(rw ? withSep([{ label: t('db.d.newDatabase'), onClick: () => newDatabase(row.conn) }]) : []),
           { label: t('db.editConnection'), onClick: () => setForm({ initial: row.conn }), separator: true },
           { label: t('db.deleteConnection'), onClick: () => void removeConn(row.conn), danger: true }
         ]
       case 'db':
+        return [
+          { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.db) },
+          { label: t('db.refresh'), onClick: () => refresh(row) },
+          ...(rw
+            ? withSep([
+                { label: t('db.d.newSchema'), onClick: () => newSchema(row.conn, row.db) },
+                { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'database', row.db, '', row.db), separator: true },
+                { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'database', row.db, '', row.db), danger: true }
+              ])
+            : [])
+        ]
       case 'schema':
         return [
           {
             label: t('db.newConsole'),
-            onClick: () =>
-              openConsole(row.conn, row.db, row.type === 'schema' ? `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n` : '')
+            onClick: () => openConsole(row.conn, row.db, `set search_path to ${quoteIdent(row.conn.kind, row.schema)};\n`)
           },
-          { label: t('db.refresh'), onClick: () => refresh(row) }
+          { label: t('db.refresh'), onClick: () => refresh(row) },
+          ...(rw
+            ? withSep([
+                ...createItems(row.conn, row.db, row.schema),
+                { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'schema', row.db, '', row.schema), separator: true },
+                { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'schema', row.db, '', row.schema), danger: true }
+              ])
+            : [])
         ]
+      case 'group':
+        return rw ? createItems(row.conn, row.db, row.schema, row.group) : []
       case 'obj': {
-        const q = qualified(row.conn, row.schema, row.obj.name)
+        const { conn, db, schema, obj } = row
+        const q = qualified(conn, schema, obj.name)
         const items: MenuItem[] = [{ label: t('db.open'), onClick: () => openObj(row) }]
-        if (isRelation(row.obj.kind)) items.push({ label: t('db.select100'), onClick: () => selectTop(row) })
+        if (isRelation(obj.kind)) items.push({ label: t('db.select100'), onClick: () => selectTop(row) })
+        const kind = dropKindOf(obj.kind)
+        if (rw && kind) {
+          const acts: MenuItem[] = []
+          if (obj.kind === 'table' || obj.kind === 'partitioned')
+            acts.push({ label: t('db.d.design'), onClick: () => openDesign(conn.id, db, schema, obj.name) })
+          if (obj.kind === 'view') acts.push({ label: t('db.d.editDefinition'), onClick: () => editView(conn, db, schema, obj.name) })
+          if (obj.kind === 'matview') acts.push({ label: t('db.d.refreshMv'), onClick: () => refreshMatview(conn, db, schema, obj.name) })
+          acts.push({ label: t('db.d.rename'), onClick: () => renameIt(conn, kind, db, schema, obj.name, obj.args) })
+          if (obj.kind === 'table' || obj.kind === 'partitioned')
+            acts.push({ label: t('db.d.truncate'), onClick: () => truncateIt(conn, db, schema, obj.name), danger: true })
+          acts.push({ label: t('db.d.drop'), onClick: () => dropIt(conn, kind, db, schema, obj.name, obj.args), danger: true })
+          items.push(...withSep(acts))
+        }
         items.push(
-          { label: t('db.copyName'), onClick: () => void navigator.clipboard.writeText(row.obj.name), separator: true },
+          { label: t('db.copyName'), onClick: () => void navigator.clipboard.writeText(obj.name), separator: true },
           { label: t('db.copyQualified'), onClick: () => void navigator.clipboard.writeText(q) }
         )
         return items
@@ -348,7 +562,7 @@ export default function DbExplorerPanel(): JSX.Element {
                 onClick={() => onRowClick(row)}
                 onDoubleClick={() => onRowDouble(row)}
                 onContextMenu={(e) => {
-                  const items = menuFor(row)
+                  const items = expandSeps(menuFor(row))
                   if (!items.length) return
                   e.preventDefault()
                   e.stopPropagation()
@@ -384,6 +598,7 @@ export default function DbExplorerPanel(): JSX.Element {
           }}
         />
       )}
+      {ddl && <DdlDialog action={ddl} onClose={() => setDdl(null)} />}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   )

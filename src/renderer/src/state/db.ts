@@ -29,7 +29,28 @@ export interface ObjectTab {
   objKind: ObjectKind
 }
 
-export type ConsoleTab = SqlTab | ObjectTab
+/** The table designer: an existing table (`name`) or a new one. */
+export interface DesignTab {
+  id: string
+  kind: 'design'
+  title: string
+  connId: string
+  db?: string
+  schema: string
+  name?: string
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab
+
+/** The last DDL change, so views of what it touched reload. */
+export interface DbChange {
+  seq: number
+  connId: string
+  /** Undefined: the connection's database list changed. */
+  db?: string
+  /** Undefined: the database's schema list changed. */
+  schema?: string
+}
 
 export interface RunResult {
   sql: string
@@ -103,9 +124,21 @@ interface DbState {
   tx: Record<string, TxStatus>
   /** A tab the console should run as soon as it shows it (explorer's "SELECT *"). */
   autoRun: string | null
+  changed: DbChange | null
   reload: () => Promise<void>
   openSql: (connId: string, db?: string, sql?: string, run?: boolean) => string
   openObject: (connId: string, db: string | undefined, schema: string, name: string, objKind: ObjectKind) => string
+  /** Opens the designer for `name`, or for a new table in `schema`. */
+  openDesign: (connId: string, db: string | undefined, schema: string, name?: string) => string
+  /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
+  invalidate: (
+    change: Omit<DbChange, 'seq'>,
+    object?: { name: string; renamed?: string; dropped?: boolean }
+  ) => void
+  /** Closes object and designer tabs inside a database or schema that was dropped or renamed. */
+  closeWithin: (connId: string, db: string, schema?: string) => void
+  /** Points a designer tab at the table it just created or renamed. */
+  retarget: (id: string, name: string) => void
   /** False when the user kept the tab (it had an open transaction). */
   closeTab: (id: string) => boolean
   setTx: (id: string, tx: TxStatus) => void
@@ -132,6 +165,7 @@ export const useDb = create<DbState>((set, get) => {
     runs: {},
     tx: {},
     autoRun: null,
+    changed: null,
     reload: async () => {
       const connections = await window.api.db.list().catch(() => [] as ConnectionInfo[])
       set({ connections, loaded: true })
@@ -173,6 +207,49 @@ export const useDb = create<DbState>((set, get) => {
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },
+    openDesign: (connId, db, schema, name) => {
+      const same = name
+        ? get().tabs.find((t) => t.kind === 'design' && t.connId === connId && t.db === db && t.schema === schema && t.name === name)
+        : undefined
+      if (same) {
+        commit(get().tabs, same.id)
+        return same.id
+      }
+      const tab: DesignTab = { id: dbUid(), kind: 'design', title: name ?? t('db.d.newTable'), connId, db, schema, name }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
+    closeWithin: (connId, db, schema) => {
+      const inside = (x: ConsoleTab): boolean =>
+        x.kind !== 'sql' && x.connId === connId && x.db === db && (schema === undefined || x.schema === schema)
+      const { tabs, active } = get()
+      if (!tabs.some(inside)) return
+      const keep = tabs.filter((x) => !inside(x))
+      commit(keep, keep.some((x) => x.id === active) ? active : (keep[0]?.id ?? null))
+    },
+    invalidate: (change, object) => {
+      set((s) => ({ changed: { ...change, seq: (s.changed?.seq ?? 0) + 1 } }))
+      if (!object || change.schema === undefined) return
+      const hit = (x: ConsoleTab): boolean =>
+        x.kind !== 'sql' && x.connId === change.connId && x.db === change.db && x.schema === change.schema && x.name === object.name
+      if (object.dropped) {
+        commit(
+          get().tabs.filter((x) => !hit(x)),
+          get().tabs.some((x) => x.id === get().active && hit(x)) ? (get().tabs.find((x) => !hit(x))?.id ?? null) : get().active
+        )
+      } else if (object.renamed) {
+        const to = object.renamed
+        commit(
+          get().tabs.map((x) => (hit(x) && x.kind !== 'sql' ? { ...x, name: to, title: to } : x)),
+          get().active
+        )
+      }
+    },
+    retarget: (id, name) =>
+      commit(
+        get().tabs.map((x) => (x.id === id && x.kind === 'design' ? { ...x, name, title: name } : x)),
+        get().active
+      ),
     closeTab: (id) => {
       const tabs = get().tabs
       const i = tabs.findIndex((t) => t.id === id)

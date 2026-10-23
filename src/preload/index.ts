@@ -11,6 +11,7 @@ import type {
 } from '../main/db/types'
 import type { ExportOptions } from '../main/db/mask'
 import type { EditStatement, EditTarget } from '../main/db/edit'
+import type { DdlPlan } from '../main/db/ddl'
 
 export interface DirEntry {
   name: string
@@ -570,6 +571,8 @@ const api = {
       session: string | undefined,
       stmts: EditStatement[]
     ): Promise<Array<Array<string | number | boolean | null> | null>> => ipcRenderer.invoke('db:apply', id, db, session, stmts),
+    /** Runs a DDL plan (designer, object actions); resolves to the number of statements run. */
+    ddlApply: (id: string, db: string | undefined, plan: DdlPlan): Promise<number> => ipcRenderer.invoke('db:ddl-apply', id, db, plan),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
     column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
       ipcRenderer.invoke('db:column', id, db, table, attnum),

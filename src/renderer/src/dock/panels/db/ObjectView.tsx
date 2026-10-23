@@ -20,6 +20,13 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
   const t = useT()
   const conn = useDb((s) => s.connections.find((c) => c.id === tab.connId))
   const openSql = useDb((s) => s.openSql)
+  const openDesign = useDb((s) => s.openDesign)
+  // A DDL change in this schema: reload structure and DDL.
+  const changed = useDb((s) =>
+    s.changed && s.changed.connId === tab.connId && s.changed.db === tab.db && (s.changed.schema === undefined || s.changed.schema === tab.schema)
+      ? s.changed.seq
+      : 0
+  )
   const relation = ['table', 'partitioned', 'view', 'matview', 'foreign'].includes(tab.objKind)
   const [sub, setSub] = useState<Sub>(relation ? 'columns' : 'ddl')
   const [info, setInfo] = useState<{ data?: TableInfo | null; error?: string }>({})
@@ -41,7 +48,11 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
     return () => {
       live = false
     }
-  }, [tab.connId, tab.db, tab.schema, tab.name, relation])
+  }, [tab.connId, tab.db, tab.schema, tab.name, relation, changed])
+
+  useEffect(() => {
+    if (changed) setDdl({})
+  }, [changed])
 
   useEffect(() => {
     if (sub !== 'ddl' || ddl.text !== undefined) return
@@ -99,6 +110,11 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
         <span className={`dbx-kind k-${tab.objKind}`}>{t(`db.kind.${tab.objKind}`)}</span>
         {ti?.comment && <span className="dbx-meta">{ti.comment}</span>}
         <span className="dbx-spacer" />
+        {conn && !conn.readOnly && (tab.objKind === 'table' || tab.objKind === 'partitioned') && (
+          <button className="dbx-link" onClick={() => openDesign(conn.id, tab.db, tab.schema, tab.name)}>
+            {t('db.d.design')}
+          </button>
+        )}
         {relation && conn && (
           <button className="dbx-link" onClick={() => openSql(conn.id, tab.db, `select * from ${qualified};`, true)}>
             {t('db.queryIt')}

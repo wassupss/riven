@@ -188,4 +188,61 @@ describe.skipIf(!target)('postgres engine (live)', async () => {
     const cfg = store.getConnection('ro')!
     await expect(pg.pgExecute(cfg, undefined, ['delete from riven_t.child'], 5000)).rejects.toThrow(/read-only/)
   })
+
+  it('applies designer and object DDL', async () => {
+    const ddl = await import('./ddl')
+    const meta = await import('./meta')
+    const cfg = store.getConnection(id)!
+    const run = (plan: { stmts: string[]; atomic: boolean }, db?: string): Promise<number> =>
+      pg.pgDdl(cfg, db, plan.stmts, plan.atomic, 10_000)
+
+    const d = ddl.newTable('riven_t')
+    d.name = 'designed'
+    d.columns.push({ ...ddl.emptyColumn(), name: 'pid', type: 'integer', nullable: false, comment: 'owner' })
+    d.constraints.push({ ...ddl.emptyConstraint('foreign key'), columns: 'pid', refTable: 'parent', refColumns: 'id', onDelete: 'CASCADE' })
+    d.indexes.push({ ...ddl.emptyIndex(), name: 'designed_pid_idx', columns: 'pid' })
+    expect(ddl.draftProblems(d)).toEqual([])
+    await run(ddl.createTableSql(d))
+    let info = (await meta.tableInfo(cfg, undefined, 'riven_t', 'designed'))!
+    expect(info.columns.map((c) => c.name)).toEqual(['id', 'pid'])
+    expect(info.columns[1].comment).toBe('owner')
+    expect(ddl.alterTableSql(info, ddl.draftFromTable(info)).stmts).toEqual([])
+
+    const e = ddl.draftFromTable(info)
+    e.name = 'designed2'
+    e.columns[1].name = 'parent_id'
+    e.columns.push({ ...ddl.emptyColumn(), name: 'note', type: 'varchar(20)', default: "'x'" })
+    e.indexes[0].dropped = true
+    await run(ddl.alterTableSql(info, e))
+    info = (await meta.tableInfo(cfg, undefined, 'riven_t', 'designed2'))!
+    expect(info.columns.map((c) => c.name)).toEqual(['id', 'parent_id', 'note'])
+    expect(info.indexes.some((i) => i.name === 'designed_pid_idx')).toBe(false)
+    expect(ddl.alterTableSql(info, ddl.draftFromTable(info)).stmts).toEqual([])
+
+    // An atomic plan that fails part way leaves nothing behind.
+    await expect(
+      run({ stmts: ['ALTER TABLE riven_t.designed2 ADD COLUMN gone int', 'ALTER TABLE riven_t.nope ADD COLUMN x int'], atomic: true })
+    ).rejects.toThrow()
+    info = (await meta.tableInfo(cfg, undefined, 'riven_t', 'designed2'))!
+    expect(info.columns.some((c) => c.name === 'gone')).toBe(false)
+
+    await run(ddl.truncateSql('riven_t', 'designed2', { restartIdentity: true }))
+    await run(ddl.renameSql('table', 'riven_t', 'designed2', 'designed3'))
+    await run(ddl.dropSql('table', 'riven_t', 'designed3'))
+    expect(await meta.tableInfo(cfg, undefined, 'riven_t', 'designed3')).toBeNull()
+  })
+
+  it('creates and drops a database it has a pool on', async () => {
+    const ddl = await import('./ddl')
+    const cfg = store.getConnection(id)!
+    await pg.pgDdl(cfg, undefined, ['DROP DATABASE IF EXISTS riven_ddl_t WITH (FORCE)'], false, 10_000)
+    const c = ddl.createDatabaseSql('riven_ddl_t', { encoding: 'UTF8' })
+    await pg.pgDdl(cfg, undefined, c.stmts, c.atomic, 10_000)
+    expect((await pg.pgQuery(cfg, 'riven_ddl_t', 'select 1', { limit: 1 })).rows[0][0]).toBe(1)
+    const drop = ddl.dropSql('database', '', 'riven_ddl_t')
+    expect(drop.release).toBe('riven_ddl_t')
+    await pg.closeDatabase(id, drop.release!)
+    await pg.pgDdl(cfg, undefined, drop.stmts, drop.atomic, 10_000)
+    expect(await (await import('./meta')).listDatabases(cfg)).not.toContain('riven_ddl_t')
+  })
 })

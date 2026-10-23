@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
-import { Check, Database, FileCode2, Lock, Play, Plus, Square, Table2, Undo2, X } from 'lucide-react'
+import { Check, Database, FileCode2, Lock, PencilRuler, Play, Plus, Square, Table2, Undo2, X } from 'lucide-react'
 import '../../styles/db-panel.css'
 import type { DbKind, QueryResult } from '../../../../main/db/types'
 import { splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
@@ -10,6 +10,7 @@ import { dbUid, useDb, type RunResult, type RunState, type SqlTab } from '../../
 import { Button, Select, Switch } from '../../components/ui/Controls'
 import ResultPane from './db/ResultPane'
 import ObjectView from './db/ObjectView'
+import TableDesigner from './db/TableDesigner'
 import { errText } from './db/ConnectionForm'
 
 // =============================================================================
@@ -79,7 +80,13 @@ export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): 
               title={conn ? `${conn.name}${x.db ? ` / ${x.db}` : ''}` : undefined}
             >
               {conn?.color && <span className="dbx-dot" style={{ background: conn.color }} />}
-              {x.kind === 'sql' ? <FileCode2 size={12} className="dbx-tab-ico sql" /> : <Table2 size={12} className="dbx-tab-ico obj" />}
+              {x.kind === 'sql' ? (
+                <FileCode2 size={12} className="dbx-tab-ico sql" />
+              ) : x.kind === 'design' ? (
+                <PencilRuler size={12} className="dbx-tab-ico design" />
+              ) : (
+                <Table2 size={12} className="dbx-tab-ico obj" />
+              )}
               <span className="dbx-tab-title">{x.title}</span>
               <button
                 className="dbx-tab-x"
@@ -101,6 +108,7 @@ export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): 
         {/* Always mounted: the editor and its models outlive tab switches. */}
         <SqlView tab={tab?.kind === 'sql' ? tab : null} hidden={tab?.kind !== 'sql'} />
         {tab?.kind === 'object' && <ObjectView key={tab.id} tab={tab} />}
+        {tab?.kind === 'design' && <TableDesigner key={tab.id} tab={tab} />}
         {!tab && (
           <div className="dbx-empty-state">
             <Database size={28} />

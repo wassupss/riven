@@ -121,6 +121,17 @@ export async function closeConnection(id: string): Promise<void> {
   await Promise.all(ends)
 }
 
+/** Close a connection's pools and sessions on one database (before dropping or renaming it). */
+export async function closeDatabase(id: string, db: string): Promise<void> {
+  const key = `${id}::${db}`
+  const e = pools.get(key)
+  pools.delete(key)
+  await Promise.all([
+    e?.pool.end().catch(() => {}),
+    ...[...sessions].filter(([, s]) => s.key === key).map(([sid]) => dropSession(sid))
+  ])
+}
+
 export async function closeAll(): Promise<void> {
   const all = [...pools.values()]
   pools.clear()
@@ -284,6 +295,54 @@ export async function pgExecute(
     client.release()
   }
 }
+
+/**
+ * DDL from the designer and object actions. Atomic plans run in one
+ * transaction; the rest (CREATE DATABASE, REFRESH ... CONCURRENTLY) one by
+ * one outside a transaction, stopping at the first error. A short lock
+ * timeout keeps an ALTER from queueing every other query behind it.
+ */
+export async function pgDdl(
+  cfg: ConnectionConfig,
+  database: string | undefined,
+  stmts: string[],
+  atomic: boolean,
+  timeoutMs: number
+): Promise<number> {
+  if (atomic) {
+    const { e } = entry(cfg, database)
+    const client = await e.pool.connect()
+    let ok = false
+    try {
+      await client.query('begin')
+      await client.query(`set local statement_timeout = ${Math.floor(timeoutMs)}`)
+      await client.query(`set local lock_timeout = ${DDL_LOCK_TIMEOUT_MS}`)
+      for (const s of stmts) await client.query(s)
+      await client.query('commit')
+      ok = true
+      return stmts.length
+    } finally {
+      if (!ok) await client.query('rollback').catch(() => {})
+      client.release()
+    }
+  }
+  const { e } = entry(cfg, database)
+  const client = await e.pool.connect()
+  try {
+    await client.query(`set statement_timeout = ${Math.floor(timeoutMs)}`)
+    let n = 0
+    for (const s of stmts) {
+      await client.query(s)
+      n++
+    }
+    return n
+  } finally {
+    await client.query('reset statement_timeout').catch(() => {})
+    client.release()
+  }
+}
+
+const DDL_LOCK_TIMEOUT_MS = 10_000
 
 // ---- sessions ------------------------------------------------------------------
 // A console tab in manual-commit mode owns one dedicated connection, so its

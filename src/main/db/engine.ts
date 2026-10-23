@@ -1,8 +1,11 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget } from './meta'
 import type { EditStatement } from './edit'
+import { DDL_VERBS, type DdlPlan } from './ddl'
 import {
   closeConnection,
+  closeDatabase,
+  pgDdl,
   hasSession,
   pgApply,
   pgCancel,
@@ -26,6 +29,7 @@ import type { ConnectionConfig, QueryResult } from './types'
 // open. PostgreSQL only for now; MySQL/Redis plug in behind the same functions.
 
 const AGENT_TIMEOUT_MS = 30_000
+const DDL_TIMEOUT_MS = 10 * 60_000
 const AGENT_DEFAULT_LIMIT = 100
 const AGENT_MAX_LIMIT = 1000
 const CELL_MAX = 500
@@ -270,7 +274,21 @@ export function registerDbHandlers(): void {
     if (!Array.isArray(stmts) || !stmts.length) return []
     return pgApply(cfg, db, session, stmts)
   })
-  ipcMain.handle('db:cancel', (_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
+  ipcMain.handle('db:ddl-apply', async (_e, id: string, db: string | undefined, plan: DdlPlan) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    const stmts = Array.isArray(plan?.stmts) ? plan.stmts.filter((s) => typeof s === 'string' && s.trim()) : []
+    if (!stmts.length) return 0
+    const bad = stmts.find((s) => !DDL_VERBS.test(s.trim()))
+    if (bad) throw new Error(`Not a DDL statement: ${bad.slice(0, 60)}`)
+    // Can't drop the database the statement runs on; ours are closed so they don't block it.
+    if (plan.release) {
+      if (plan.release === (db || cfg.database || 'postgres')) throw new Error('Run this from another database')
+      await closeDatabase(id, plan.release)
+    }
+    return pgDdl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS)
+  })
+  ipcMain.handle('db:cancel',(_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)
   )
