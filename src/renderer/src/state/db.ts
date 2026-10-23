@@ -220,6 +220,8 @@ interface DbState {
   retarget: (id: string, name: string) => void
   /** False when the user kept the tab (it had an open transaction). */
   closeTab: (id: string) => boolean
+  /** Closes several tabs with one question for those holding a transaction; false when the user kept them all. */
+  closeTabs: (ids: string[]) => boolean
   setTx: (id: string, tx: TxStatus) => void
   /** Re-reads a tab's transaction state from main. */
   syncTx: (id: string) => Promise<void>
@@ -429,6 +431,31 @@ export const useDb = create<DbState>((set, get) => {
       delete runs[id]
       const txs = { ...get().tx }
       delete txs[id]
+      set({ runs, tx: txs })
+      commit(next, active)
+      return true
+    },
+    closeTabs: (ids) => {
+      const drop = new Set(ids)
+      const tabs = get().tabs
+      if (!tabs.some((t) => drop.has(t.id))) return false
+      const open = ids.some((id) => get().tx[id] === 'active' || get().tx[id] === 'failed')
+      if (open && !window.confirm(t('db.tx.closeConfirm'))) return false
+      for (const x of tabs) if (drop.has(x.id) && x.kind === 'sql') void window.api.db.session.close(x.id)
+      const next = tabs.filter((t) => !drop.has(t.id))
+      let active = get().active
+      if (active && drop.has(active)) {
+        // The nearest survivor to the right of the active tab, else to its left.
+        const i = tabs.findIndex((t) => t.id === active)
+        const keep = (t: ConsoleTab): boolean => !drop.has(t.id)
+        active = (tabs.slice(i + 1).find(keep) ?? tabs.slice(0, i).reverse().find(keep))?.id ?? null
+      }
+      const runs = { ...get().runs }
+      const txs = { ...get().tx }
+      for (const id of ids) {
+        delete runs[id]
+        delete txs[id]
+      }
       set({ runs, tx: txs })
       commit(next, active)
       return true

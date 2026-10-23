@@ -46,6 +46,7 @@ import {
   type SqlTab,
 } from "../../state/db";
 import { Button, Select, Switch } from "../../components/ui/Controls";
+import ContextMenu, { type MenuItem } from "../../components/ContextMenu";
 import ResultPane from "./db/ResultPane";
 import ObjectView from "./db/ObjectView";
 import TableDesigner from "./db/TableDesigner";
@@ -109,7 +110,14 @@ export default function DbConsolePanel({
   const reload = useDb((s) => s.reload);
   const setActive = useDb((s) => s.setActive);
   const closeTab = useDb((s) => s.closeTab);
+  const closeTabs = useDb((s) => s.closeTabs);
   const openSql = useDb((s) => s.openSql);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    items: MenuItem[];
+  } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
 
   useEffect(() => {
     if (!loaded) void reload();
@@ -120,6 +128,46 @@ export default function DbConsolePanel({
   const newTab = (): void => {
     const connId = tab?.connId ?? connections[0]?.id;
     if (connId) openSql(connId, tab?.db);
+  };
+
+  const tabMenu = (id: string): MenuItem[] => {
+    const i = tabs.findIndex((x) => x.id === id);
+    const x = tabs[i];
+    const ids = (pick: (y: (typeof tabs)[number], j: number) => boolean): string[] =>
+      tabs.filter(pick).map((y) => y.id);
+    const items: MenuItem[] = [
+      { label: t("tab.close"), onClick: () => closeTab(id) },
+    ];
+    if (tabs.length > 1)
+      items.push({
+        label: t("tab.closeOthers"),
+        onClick: () => closeTabs(ids((y) => y.id !== id)),
+      });
+    if (i < tabs.length - 1)
+      items.push({
+        label: t("tab.closeRight"),
+        onClick: () => closeTabs(ids((_, j) => j > i)),
+      });
+    if (tabs.some((y) => y.id !== id && y.connId === x.connId))
+      items.push({
+        label: t("db.tab.closeConn"),
+        onClick: () => closeTabs(ids((y) => y.connId === x.connId)),
+      });
+    items.push({
+      label: t("tab.closeAll"),
+      onClick: () => closeTabs(tabs.map((y) => y.id)),
+    });
+    items.push({ label: "", onClick: () => {}, separator: true });
+    if (x.kind === "sql")
+      items.push({
+        label: t("db.tab.duplicate"),
+        onClick: () => openSql(x.connId, x.db, x.sql),
+      });
+    items.push({
+      label: t("db.tab.copyTitle"),
+      onClick: () => void navigator.clipboard.writeText(x.title),
+    });
+    return items;
   };
 
   return (
@@ -133,6 +181,11 @@ export default function DbConsolePanel({
               key={x.id}
               className={`dbx-tab${x.id === active ? " on" : ""}`}
               onClick={() => setActive(x.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenu({ x: e.clientX, y: e.clientY, items: tabMenu(x.id) });
+              }}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
@@ -187,6 +240,14 @@ export default function DbConsolePanel({
           <Plus size={14} />
         </button>
       </div>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menu.items}
+          onClose={closeMenu}
+        />
+      )}
       <div className="dbx-console-body">
         {/* Always mounted: the editor and its models outlive tab switches. */}
         <SqlView
