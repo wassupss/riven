@@ -1056,6 +1056,53 @@
   font-size: var(--text-xs);
 }
 
+/* ---- backup / restore dialog ---- */
+.dbx-bk .dbx-imp-file .ui-select,
+.dbx-bk .dbx-imp-file .ui-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dbx-bk .dbx-form-ctl > .ui-input-num {
+  flex: 0 0 90px;
+  width: 90px;
+}
+.dbx-bk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 96px;
+  overflow: auto;
+}
+.dbx-bk-note {
+  margin-top: -4px;
+}
+.dbx-bk-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.dbx-bk-inline {
+  padding: 0;
+  background: none;
+}
+.dbx-bk-msg {
+  word-break: break-all;
+}
+.dbx-bk-bar > div {
+  width: 30%;
+  animation: dbx-bk-slide 1.2s ease-in-out infinite;
+}
+@keyframes dbx-bk-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
 /* ---- export dialog ---- */
 .dbx-form.dbx-export {
   width: 700px;

@@ -22,6 +22,7 @@ import type { DdlPlan } from '../main/db/ddl'
 import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
 import type { CompletionMeta } from '../main/db/complete'
 import type { ErdModel } from '../main/db/erd'
+import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../main/db/dumpArgs'
 
 export interface DirEntry {
   name: string
@@ -641,6 +642,38 @@ const api = {
         const listener = (_e: unknown, queryId: string, rows: number, bytes: number, size: number): void => cb(queryId, rows, bytes, size)
         ipcRenderer.on('db:import-progress', listener)
         return () => ipcRenderer.removeListener('db:import-progress', listener)
+      }
+    },
+    // Backup / restore through pg_dump, pg_restore and psql.
+    backup: {
+      tools: (extra?: string, refresh?: boolean): Promise<ToolInfo[]> => ipcRenderer.invoke('db:backup-tools', extra, refresh),
+      serverMajor: (id: string, db: string | undefined): Promise<number> => ipcRenderer.invoke('db:backup-server', id, db),
+      run: (
+        id: string,
+        db: string | undefined,
+        toolDir: string | undefined,
+        extra: string | undefined,
+        name: string,
+        o: BackupOptions,
+        jobId: string
+      ): Promise<{ path: string; size: number; warnings: number } | null> =>
+        ipcRenderer.invoke('db:backup-run', id, db, toolDir, extra, name, o, jobId),
+      pick: (dir: boolean): Promise<string | null> => ipcRenderer.invoke('db:restore-pick', dir),
+      inspect: (path: string, toolDir: string | undefined, extra: string | undefined): Promise<ArchiveInfo> =>
+        ipcRenderer.invoke('db:restore-inspect', path, toolDir, extra),
+      restore: (
+        id: string,
+        db: string | undefined,
+        toolDir: string | undefined,
+        extra: string | undefined,
+        o: RestoreOptions,
+        jobId: string
+      ): Promise<{ ignored: number; errors: string[] }> => ipcRenderer.invoke('db:restore-run', id, db, toolDir, extra, o, jobId),
+      cancel: (jobId: string): Promise<boolean> => ipcRenderer.invoke('db:backup-cancel', jobId),
+      onProgress: (cb: (jobId: string, obj: string | null, lines: number) => void): (() => void) => {
+        const listener = (_e: unknown, jobId: string, obj: string | null, lines: number): void => cb(jobId, obj, lines)
+        ipcRenderer.on('db:backup-progress', listener)
+        return () => ipcRenderer.removeListener('db:backup-progress', listener)
       }
     },
     onExportProgress: (cb: (queryId: string, rows: number) => void): (() => void) => {

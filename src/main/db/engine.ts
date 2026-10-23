@@ -14,6 +14,7 @@ import {
   pgCancel,
   pgExecute,
   pgQuery,
+  pgRows,
   pgSessionClose,
   pgSessionEnd,
   pgSessionQuery,
@@ -26,6 +27,8 @@ import type { ExportOptions } from './mask'
 import type { ImportOptions } from './csv'
 import { cancelImport, previewCsv, runImport } from './importer'
 import { erdModel } from './erdMeta'
+import { cancelDump, findTools, inspectArchive, runBackup, runRestore } from './dump'
+import { DUMP_EXT, serverMajor, type BackupOptions, type RestoreOptions, type ToolInfo } from './dumpArgs'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
 import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
 import type { ConnectionConfig, PrivTarget, QueryResult } from './types'
@@ -364,6 +367,70 @@ export function registerDbHandlers(): void {
     cancelImport(queryId)
     return pgCancel(byId(id), queryId)
   })
+  // Backup and restore through pg_dump / pg_restore / psql.
+  const toolAt = async (dir: string | undefined, extra?: string): Promise<ToolInfo> => {
+    const tools = await findTools(extra)
+    const t = dir ? tools.find((x) => x.dir === dir) : tools[0]
+    if (!t) throw new Error('pg_dump not found. Install the PostgreSQL client tools or pick their folder.')
+    return t
+  }
+  const progressTo = (e: Electron.IpcMainInvokeEvent, jobId: string) => (obj: string | null, lines: number): void => {
+    if (!e.sender.isDestroyed()) e.sender.send('db:backup-progress', jobId, obj, lines)
+  }
+  ipcMain.handle('db:backup-tools', (_e, extra?: string, refresh?: boolean) => findTools(extra || undefined, refresh === true))
+  ipcMain.handle('db:backup-server', async (_e, id: string, db: string | undefined) => {
+    const r = await pgRows(byId(id), db, 'show server_version_num')
+    return serverMajor(Number(r[0]?.[0]))
+  })
+  ipcMain.handle('db:backup-run', async (e, id: string, db: string | undefined, toolDir: string | undefined, extra: string | undefined, name: string, o: BackupOptions, jobId: string) => {
+    const cfg = byId(id)
+    const tool = await toolAt(toolDir, extra)
+    let file: string | null = null
+    if (!app.isPackaged && process.env.RIVEN_DEV_SAVE_FILE) file = process.env.RIVEN_DEV_SAVE_FILE
+    else {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      // eslint-disable-next-line no-control-regex
+      const safe = (name || 'backup').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 120)
+      const ext = DUMP_EXT[o.format]
+      const opts: Electron.SaveDialogOptions = {
+        defaultPath: ext ? `${safe}.${ext}` : safe,
+        filters: ext ? [{ name: o.format === 'plain' ? 'SQL' : 'pg_dump archive', extensions: [ext] }] : undefined
+      }
+      const pick = await (win ? dialog.showSaveDialog(win, opts) : dialog.showSaveDialog(opts))
+      if (pick.canceled || !pick.filePath) return null
+      file = pick.filePath
+    }
+    const r = await runBackup(cfg, db, tool, o, file, jobId, progressTo(e, jobId))
+    return { path: file, size: r.size, warnings: r.errors.length }
+  })
+  ipcMain.handle('db:restore-pick', async (e, dir: boolean) => {
+    if (!app.isPackaged && process.env.RIVEN_DEV_PICK_FILE) return process.env.RIVEN_DEV_PICK_FILE
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts: Electron.OpenDialogOptions = dir
+      ? { properties: ['openDirectory'] }
+      : {
+          properties: ['openFile'],
+          filters: [
+            { name: 'Backups', extensions: ['dump', 'backup', 'sql', 'tar', 'pgdump'] },
+            { name: 'All files', extensions: ['*'] }
+          ]
+        }
+    const pick = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
+    return pick.canceled || !pick.filePaths[0] ? null : pick.filePaths[0]
+  })
+  ipcMain.handle('db:restore-inspect', async (_e, path: string, toolDir: string | undefined, extra: string | undefined) => {
+    const tool = await toolAt(toolDir, extra).catch(() => undefined)
+    return inspectArchive(path, tool)
+  })
+  ipcMain.handle('db:restore-run', async (e, id: string, db: string | undefined, toolDir: string | undefined, extra: string | undefined, o: RestoreOptions, jobId: string) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    const tool = await toolAt(toolDir, extra)
+    const ver = await pgRows(cfg, db, 'show server_version_num')
+    const r = await runRestore(cfg, db, tool, o, serverMajor(Number(ver[0]?.[0])), jobId, progressTo(e, jobId))
+    return { ignored: r.ignored, errors: r.errors }
+  })
+  ipcMain.handle('db:backup-cancel', (_e, jobId: string) => cancelDump(jobId))
   ipcMain.handle('db:export', async (e, id: string, db: string | undefined, req: ExportRequest) => {
     const cfg = byId(id)
     const o = req.options

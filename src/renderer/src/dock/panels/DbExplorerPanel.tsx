@@ -37,6 +37,7 @@ import { TextInput } from '../../components/ui/Controls'
 import ConnectionForm, { errText } from './db/ConnectionForm'
 import DdlDialog, { type DdlAction, type FieldValue } from './db/DdlDialog'
 import ImportDialog from './db/ImportDialog'
+import BackupDialog from './db/BackupDialog'
 
 // =============================================================================
 // DbExplorerPanel: the data source tree. connection > database > schema >
@@ -108,6 +109,13 @@ export default function DbExplorerPanel(): JSX.Element {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [ddl, setDdl] = useState<DdlAction | null>(null)
   const [imp, setImp] = useState<{ conn: ConnectionInfo; db: string | undefined; schema: string; table?: string } | null>(null)
+  const [bk, setBk] = useState<{
+    conn: ConnectionInfo
+    db: string | undefined
+    mode: 'backup' | 'restore'
+    schema?: string
+    table?: string
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState(0)
   const [height, setHeight] = useState(400)
@@ -460,7 +468,9 @@ export default function DbExplorerPanel(): JSX.Element {
             ? withSep([
                 { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db) },
                 { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) },
-                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) }
+                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) },
+                { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup' }), separator: true },
+                ...(rw ? [{ label: t('db.bk.menuRestore'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'restore' }) }] : [])
               ])
             : []),
           ...(rw
@@ -481,7 +491,8 @@ export default function DbExplorerPanel(): JSX.Element {
           ...(pg
             ? withSep([
                 { label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) },
-                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) }
+                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) },
+                { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup', schema: row.schema }) }
               ])
             : []),
           ...(rw
@@ -500,6 +511,8 @@ export default function DbExplorerPanel(): JSX.Element {
         const q = qualified(conn, schema, obj.name)
         const items: MenuItem[] = [{ label: t('db.open'), onClick: () => openObj(row) }]
         if (isRelation(obj.kind)) items.push({ label: t('db.select100'), onClick: () => selectTop(row) })
+        if (pg && (obj.kind === 'table' || obj.kind === 'partitioned'))
+          items.push({ label: t('db.bk.menuBackup'), onClick: () => setBk({ conn, db, mode: 'backup', schema, table: obj.name }) })
         const kind = dropKindOf(obj.kind)
         if (rw && kind) {
           const acts: MenuItem[] = []
@@ -636,6 +649,17 @@ export default function DbExplorerPanel(): JSX.Element {
           table={imp.table}
           onClose={() => setImp(null)}
           onDone={(name, created) => created && invalidate({ connId: imp.conn.id, db: imp.db, schema: imp.schema })}
+        />
+      )}
+      {bk && (
+        <BackupDialog
+          mode={bk.mode}
+          connId={bk.conn.id}
+          db={bk.db ?? bk.conn.database ?? 'postgres'}
+          schema={bk.schema}
+          table={bk.table}
+          onClose={() => setBk(null)}
+          onRestored={() => invalidate({ connId: bk.conn.id, db: bk.db })}
         />
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
