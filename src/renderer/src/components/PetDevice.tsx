@@ -36,8 +36,19 @@ import { useSettings, type PetChrome } from '../state/settings'
 import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
-import { ARROW_LEFT, ARROW_RIGHT, CROSS, MIMES, POOP, ZZZ, pixelsOf, SPRITE_SIZE } from './petSprites'
 import {
+  ARROW_LEFT,
+  ARROW_RIGHT,
+  CROSS,
+  MIMES,
+  POOP,
+  ZZZ,
+  accessoryPixels,
+  pixelsOf,
+  SPRITE_SIZE
+} from './petSprites'
+import {
+  accessoryOf,
   awardsOf,
   dietOf,
   flushPetSave,
@@ -47,10 +58,12 @@ import {
   growthOf,
   isNight,
   moodOf,
+  nextAccessory,
   usePet,
   HUNGRY_AT,
   KIBBLE_TOKENS,
   MAX_POOPS,
+  type Accessory,
   type Form,
   type Mood,
   type Species,
@@ -169,7 +182,8 @@ function Creature({
   mood,
   chewing,
   flavor,
-  evolving
+  evolving,
+  accessory
 }: {
   stage: Stage
   form: Form
@@ -178,8 +192,13 @@ function Creature({
   chewing: boolean
   flavor?: string
   evolving?: boolean
+  accessory?: Accessory | null
 }): JSX.Element {
   const dots = useMemo(() => pixelsOf(stage, form, mood, species), [stage, form, mood, species])
+  const worn = useMemo(
+    () => accessoryPixels(stage, form, species, accessory ?? null),
+    [stage, form, species, accessory]
+  )
   return (
     <svg
       className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
@@ -198,6 +217,21 @@ function Creature({
             height="1"
           />
         ))}
+        {/* What it has earned since growing up, worn on its head. */}
+        {worn.length > 0 && (
+          <g className="pet-acc">
+            {worn.map((d) => (
+              <rect
+                key={`${d.x},${d.y}`}
+                className={`pet-px pet-px-${d.ch}`}
+                x={d.x}
+                y={d.y}
+                width="1"
+                height="1"
+              />
+            ))}
+          </g>
+        )}
       </g>
       {chewing && (
         <g className="pet-crumbs">
@@ -316,6 +350,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [nowTick, setNowTick] = useState(() => Date.now())
   const justEvolved = usePet((s) => s.justEvolved)
   const ackEvolution = usePet((s) => s.ackEvolution)
+  const justLeveled = usePet((s) => s.justLeveled)
+  const ackLevel = usePet((s) => s.ackLevel)
   const [evolving, setEvolving] = useState(false)
   // Dragging never goes through React. A pointermove that re-renders the device
   // has to rebuild a hundred-odd <rect> dots before the pixel moves, which is
@@ -438,6 +474,23 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     later(() => setEvolving(false), 2600)
     later(() => setFlash(null), 2600)
   }, [justEvolved, ackEvolution, later, t])
+
+  // A grown-up's level-up: the same burst, smaller words, and a keepsake to
+  // show off when this level brought one.
+  useEffect(() => {
+    if (!justLeveled) return
+    ackLevel()
+    const gift = accessoryOf(justLeveled)
+    const fresh = gift && accessoryOf(justLeveled - 1) !== gift
+    setEvolving(true)
+    setFlash(
+      fresh
+        ? t('pet.levelGift', { n: justLeveled, item: t(`pet.acc.${gift}`) })
+        : t('pet.levelUp', { n: justLeveled })
+    )
+    later(() => setEvolving(false), 2600)
+    later(() => setFlash(null), 2600)
+  }, [justLeveled, ackLevel, later, t])
 
   // Feed from the usage totals. Ignored until the save is loaded, so the first
   // sample can't feed a pet that is about to be replaced by the stored one.
@@ -1013,9 +1066,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     ? pet.plays > 0
       ? `${t('pet.play.hint')} · ${t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays })}`
       : t('pet.play.hint')
-    : growth.toNext > 0
-      ? t('pet.toNext', { n: growth.toNext })
-      : t('pet.grown')
+    : growth.level > 0
+      ? growth.toNext > 0
+        ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
+        : t('pet.maxLevel', { lv: growth.level })
+      : growth.toNext > 0
+        ? t('pet.toNext', { n: growth.toNext })
+        : t('pet.grown')
+  // The next keepsake to work toward, once there is a level to count from.
+  const gift = growth.level > 0 ? nextAccessory(growth.level) : null
 
   // Drawn on the glass, and each segment is the button for its own function:
   // point at it to see what it is, press it to do it.
@@ -1098,6 +1157,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
+              accessory={accessoryOf(growth.level)}
             />
           </div>
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
@@ -1148,6 +1208,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dt>{t('pet.stat.next')}</dt>
             <dd>{footer}</dd>
           </div>
+          {gift && (
+            <div>
+              <dt>{t('pet.stat.gift')}</dt>
+              <dd>{t('pet.giftAt', { item: t(`pet.acc.${gift.id}`), lv: gift.level })}</dd>
+            </div>
+          )}
           <div>
             <dt>{t('pet.stat.tokens')}</dt>
             <dd>{fmtTokens(pet.totalTokens)}</dd>
@@ -1403,6 +1469,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
+              accessory={accessoryOf(growth.level)}
             />
             {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
             {(pet.sick || pet.poops > 0) && (

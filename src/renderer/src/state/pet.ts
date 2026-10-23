@@ -555,8 +555,20 @@ export function neglectRatio(s: PetSave, now: number): number {
 
 // How it grew up, not just how much: a well-fed pet that was never left starving
 // turns radiant, a gorged one turns titan, a mostly-ignored one turns wraith.
+//
+// Decided once, the day it grows up, and kept: worked out live, a pet you had
+// raised radiant turned into something else after one quiet weekend. The one
+// way out is from the ghost: care for it long enough that it would no longer
+// grow up a ghost, and it comes back as whatever it is now.
 export function formOf(s: PetSave, now: number): Form {
   if (stageIndexOf(s.xp) < STAGES.length - 1) return 'base'
+  const live = liveFormOf(s, now)
+  const kept = s.evolutions.find((e) => e.stage === 'adult')?.form
+  if (!kept || kept === 'base' || (kept === 'wraith' && live !== 'wraith')) return live
+  return kept
+}
+
+function liveFormOf(s: PetSave, now: number): Form {
   const ratio = neglectRatio(s, now)
   if (ratio > WRAITH_NEGLECT_RATIO) return 'wraith'
   const hours = Math.max(1 / 60, (now - s.bornAt) / 3_600_000)
@@ -565,21 +577,75 @@ export function formOf(s: PetSave, now: number): Form {
   return 'sturdy'
 }
 
+// ---- after it grows up ----
+// Growing up used to be the end: the bar filled, the footer said "fully grown"
+// and there was nothing left to feed it for. A grown-up now keeps levelling,
+// each level a little dearer than the last, and some levels bring a keepsake
+// it wears.
+export const MAX_LEVEL = 99
+/** Kibble from level `lvl` to the next: 100, 150, 200, ... */
+export const levelCost = (lvl: number): number => 100 + 50 * (lvl - 1)
+
+export type Accessory = 'sprout' | 'bow' | 'crown'
+/** What it wears from which level on. The newest one it has earned is worn. */
+export const ACCESSORIES: Array<{ id: Accessory; level: number }> = [
+  { id: 'sprout', level: 3 },
+  { id: 'bow', level: 6 },
+  { id: 'crown', level: 10 }
+]
+
+/** Level 1 the day it grows up, 0 before that. */
+export function levelOf(xp: number): { level: number; from: number; to: number } {
+  const start = STAGE_XP[STAGE_XP.length - 1]
+  if (xp < start) return { level: 0, from: 0, to: start }
+  let level = 1
+  let from = start
+  while (level < MAX_LEVEL && xp >= from + levelCost(level)) {
+    from += levelCost(level)
+    level++
+  }
+  return { level, from, to: level >= MAX_LEVEL ? from : from + levelCost(level) }
+}
+
+export function accessoryOf(level: number): Accessory | null {
+  let worn: Accessory | null = null
+  for (const a of ACCESSORIES) if (level >= a.level) worn = a.id
+  return worn
+}
+
+/** The next keepsake still to earn, if any. */
+export function nextAccessory(level: number): { id: Accessory; level: number } | null {
+  return ACCESSORIES.find((a) => a.level > level) ?? null
+}
+
 export interface Growth {
   index: number
   stage: Stage
   form: Form
-  // 0..1 toward the next stage; 1 at the final stage.
+  // 0..1 toward the next stage, or for a grown-up toward its next level.
   progress: number
-  // Kibble still needed for the next stage, or 0 when fully grown.
+  // Kibble still needed for the next stage (or level); 0 only at MAX_LEVEL.
   toNext: number
+  // 0 until it grows up, then 1 and climbing.
+  level: number
 }
 
 export function growthOf(s: PetSave, now: number): Growth {
   const index = stageIndexOf(s.xp)
   const stage = STAGES[index]
   const form = formOf(s, now)
-  if (index >= STAGES.length - 1) return { index, stage, form, progress: 1, toNext: 0 }
+  if (index >= STAGES.length - 1) {
+    const { level, from, to } = levelOf(s.xp)
+    if (to <= from) return { index, stage, form, progress: 1, toNext: 0, level }
+    return {
+      index,
+      stage,
+      form,
+      progress: Math.min(1, Math.max(0, (s.xp - from) / (to - from))),
+      toNext: Math.max(0, to - s.xp),
+      level
+    }
+  }
   const from = STAGE_XP[index]
   const to = STAGE_XP[index + 1]
   return {
@@ -587,7 +653,8 @@ export function growthOf(s: PetSave, now: number): Growth {
     stage,
     form,
     progress: Math.min(1, Math.max(0, (s.xp - from) / (to - from))),
-    toNext: Math.max(0, to - s.xp)
+    toNext: Math.max(0, to - s.xp),
+    level: 0
   }
 }
 
@@ -713,7 +780,9 @@ export function awardsOf(s: PetSave, now: number): Award[] {
     { id: 'keeper', done: s.album.length >= 3 },
     // Six strains are drawn at random, so meeting three of them is a record of
     // starting over rather than of raising one pet well.
-    { id: 'strains', done: strainsSeen(s) >= 3 }
+    { id: 'strains', done: strainsSeen(s) >= 3 },
+    // Kept feeding it long after it grew up: the crown is the proof.
+    { id: 'crowned', done: levelOf(s.xp).level >= 10 }
   ]
 }
 
@@ -762,6 +831,9 @@ interface PetStore {
   /** The stage it has just reached, for the device to celebrate. Cleared by ack. */
   justEvolved: Evolution | null
   ackEvolution: () => void
+  /** The grown-up level it has just reached, for the device to celebrate. */
+  justLeveled: number | null
+  ackLevel: () => void
   patHead: (now?: number) => void
   cleanUp: () => void
   giveMedicine: () => void
@@ -794,6 +866,8 @@ export const usePet = create<PetStore>((set, get) => ({
   seen: {},
   justEvolved: null,
   ackEvolution: () => set({ justEvolved: null }),
+  justLeveled: null,
+  ackLevel: () => set({ justLeveled: null }),
   load: async () => {
     if (get().loaded) return
     const raw = await window.api.config.load(FILE).catch(() => null)
@@ -823,6 +897,10 @@ export const usePet = create<PetStore>((set, get) => ({
     if (evolutions !== next.evolutions) {
       next = { ...next, evolutions }
       set({ justEvolved: evolutions[evolutions.length - 1] })
+    } else {
+      // Growing up is level 1, and already celebrated as an evolution.
+      const lvl = levelOf(next.xp).level
+      if (lvl > 1 && lvl > levelOf(before.xp).level) set({ justLeveled: lvl })
     }
     set({ pet: next })
     scheduleSave(next)

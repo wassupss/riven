@@ -1,5 +1,16 @@
 import { describe, it, expect } from 'vitest'
-import { BODIES, FACES, PALETTE, SPRITES, SPRITE_SIZE, bodyOf, pixelsOf } from './petSprites'
+import {
+  BIG_FACES,
+  BODIES,
+  FACES,
+  PALETTE,
+  SPRITES,
+  SPRITE_SIZE,
+  accessoryPixels,
+  bigFaceOf,
+  bodyOf,
+  pixelsOf
+} from './petSprites'
 import { SPECIES, STAGES, type Form } from '../state/pet'
 
 const FORMS: Form[] = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
@@ -113,22 +124,40 @@ describe('pixelsOf', () => {
   })
 
   it('keeps a coat off the face, at every size', () => {
-    // The 4×4 the face is stamped into is off limits everywhere. (A dot of
-    // clearance around it is kept too, but only on bodies wide enough to spare
-    // it — see the margin in pixelsOf.)
+    // The window the face is stamped into (4×4, or 6×4 for the big face from
+    // the teens on) is off limits everywhere. (A dot of clearance around it is
+    // kept too, but only on bodies wide enough to spare it, see pixelsOf.)
     for (const species of SPECIES)
       for (const stage of STAGES) {
-        const face = bodyOf(species, stage).face
-        if (!face) continue
-        const marks = pixelsOf(stage, 'base', 'ok', species).filter(
+        const body = bodyOf(species, stage)
+        if (!body.face) continue
+        const big = stage === 'teen' || stage === 'adult' ? bigFaceOf(body) : null
+        const face = big ?? body.face
+        const w = big ? 6 : 4
+        // Asleep, because the awake big face has its own blush ('h'), which
+        // is part of the face, not a coat on it.
+        const marks = pixelsOf(stage, 'base', 'asleep', species).filter(
           (d) => d.ch === 'h' || d.ch === 'a'
         )
         for (const d of marks) {
           const onFace =
-            d.x >= face.x && d.x <= face.x + 3 && d.y >= face.y && d.y <= face.y + 3
+            d.x >= face.x && d.x < face.x + w && d.y >= face.y && d.y <= face.y + 3
           expect(onFace).toBe(false)
         }
       }
+  })
+
+  it('gives every grown-up the big face', () => {
+    // The complaint: adults looked worse than the babies. The big eyes are
+    // most of what fixes that, so no animal may silently fall back to dots.
+    for (const species of SPECIES) expect(bigFaceOf(bodyOf(species, 'adult'))).not.toBeNull()
+  })
+
+  it('keeps every big face 6 wide and 4 tall', () => {
+    for (const rows of Object.values(BIG_FACES)) {
+      expect(rows).toHaveLength(4)
+      for (const row of rows) expect(row).toHaveLength(6)
+    }
   })
 
   it('never lights a dot outside the grid', () => {
@@ -151,5 +180,28 @@ describe('pixelsOf', () => {
         expect(d.y).toBeGreaterThanOrEqual(0)
         expect(d.y).toBeLessThan(SPRITE_SIZE)
       }
+  })
+})
+
+describe('accessoryPixels', () => {
+  it('only a grown-up wears anything', () => {
+    expect(accessoryPixels('teen', 'base', 'cat', 'crown')).toEqual([])
+    expect(accessoryPixels('adult', 'sturdy', 'cat', null)).toEqual([])
+  })
+
+  it('sits on the head, inside the grid and never over the eyes', () => {
+    for (const species of SPECIES)
+      for (const form of FORMS)
+        for (const acc of ['sprout', 'bow', 'crown'] as const) {
+          const worn = accessoryPixels('adult', form, species, acc)
+          expect(worn.length).toBeGreaterThan(0)
+          const face = bigFaceOf(bodyOf(species, 'adult'))!
+          for (const d of worn) {
+            expect(d.x).toBeGreaterThanOrEqual(0)
+            expect(d.x).toBeLessThan(SPRITE_SIZE)
+            expect(d.y).toBeGreaterThanOrEqual(0)
+            expect(d.y).toBeLessThan(face.y)
+          }
+        }
   })
 })

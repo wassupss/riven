@@ -1,4 +1,4 @@
-import type { Form, Mood, Species, Stage } from '../state/pet'
+import type { Accessory, Form, Mood, Species, Stage } from '../state/pet'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every creature is a 16×16 grid of characters, one per dot, so
@@ -25,6 +25,11 @@ export interface Sprite {
   face: { x: number; y: number } | null
   /** Top-left dot where the strain's 6×2 crown is stamped; absent for an egg. */
   crown?: Crown
+  /**
+   * Top-left of the 6×4 window the grown-up's big face goes in. Defaults to one
+   * dot left of `face`, which is where it lands centred on most bodies.
+   */
+  bigFace?: { x: number; y: number }
 }
 
 // The shell is plain on purpose: what is printed on it is the strain's coat (see
@@ -250,23 +255,23 @@ const bird: Bodies = {
     ]
   },
   grown: {
-    face: { x: 6, y: 2 },
+    face: { x: 6, y: 3 },
     rows: [
       '................',
-      '......oooo......',
-      '.....obbbbo.....',
-      '...hobbbbbbo....',
-      '..hhobbbbbbo....',
-      '....obbbbbbbo...',
+      '.....oooooo.....',
+      '....obbbbbbo....',
+      '...obbbbbbbbo...',
+      '.hhobbbbbbbbo...',
+      'hhhobbbbbbbbo...',
       '...obbbbbbbbbo..',
       '...obbbbbbbbbboo',
       '..obbbbbbbbbbboo',
       '..obbbbbbbbbbo..',
-      '..obbbbbbbbbo...',
-      '...obbbbbbbo....',
+      '...obbbbbbbbo...',
       '....oooooooo....',
       '.....o...o......',
       '....ooo.ooo.....',
+      '................',
       '................'
     ]
   }
@@ -318,6 +323,7 @@ const fish: Bodies = {
   },
   grown: {
     face: { x: 3, y: 6 },
+    bigFace: { x: 3, y: 6 },
     rows: [
       '................',
       '................',
@@ -385,22 +391,23 @@ const turtle: Bodies = {
   },
   grown: {
     face: { x: 3, y: 2 },
+    bigFace: { x: 2, y: 2 },
     rows: [
       '................',
-      '..oooo..........',
-      '.obbbbo.........',
-      '.obbbbo.........',
-      '.obbbbo.........',
-      '.obbbbooooooo...',
-      '.oobbbbbbbbbbo..',
-      'oobbbbbbbbbbbbo.',
-      'obbbbbbbbbbbbbbo',
-      'obbbbbbbbbbbbbbo',
+      '..oooooo........',
+      '.obbbbbbo.......',
+      'obbbbbbbbo......',
+      'obbbbbbbbo......',
+      'obbbbbbbbooooo..',
       '.obbbbbbbbbbbbo.',
-      '..oobbbbbbbboo..',
-      '...oooooooooo...',
-      '...o.oo..oo.o...',
-      '...o.oo..oo.o...',
+      '..oobbbbbbbbbbbo',
+      '..obbbbbbbbbbbbo',
+      '..obbbbbbbbbbbbo',
+      '...oobbbbbbbboo.',
+      '....oooooooooo..',
+      '....o.oo..oo.o..',
+      '....o.oo..oo.o..',
+      '................',
       '................'
     ]
   }
@@ -916,6 +923,19 @@ export const FACES: Record<Mood, string[]> = {
   asleep: ['....', 'm..m', '....', '.mm.']
 }
 
+// The grown-up's face: 6 wide, 4 tall. The 4×4 face was the same size on a
+// body twice as big, and a tiny face on a big body is exactly what made adults
+// read as uglier than the child they grew out of. Two-dot eyes with a glint
+// ('w') and a blush ('h') under each, the same mood vocabulary as FACES.
+export const BIG_FACES: Record<Mood, string[]> = {
+  happy: ['ew..ew', 'ee..ee', 'hm..mh', '..mm..'],
+  ok: ['ew..ew', 'ee..ee', 'h....h', '..mm..'],
+  hungry: ['ew..ew', 'ee..ee', 'h.mm.h', '..mm..'],
+  sad: ['......', 'ee..ee', 'h.mm.h', '.m..m.'],
+  sick: ['......', 'ee..ee', '..mm..', '...mm.'],
+  asleep: ['......', 'mm..mm', '......', '..mm..']
+}
+
 // Small props drawn beside the creature rather than baked into its body, so they
 // can appear over any of them.
 export const POOP = ['..p..', '.ppp.', 'ppppp']
@@ -977,9 +997,9 @@ export const COAT_RULES: Record<
   Species,
   (x: number, y: number, b: Box) => string | null
 > = {
-  // Tabby stripes. Every OTHER column, not every third: the face and its margin
-  // take the middle six dots, so a sparser stripe left nothing but edge piping.
-  cat: (x, y, b) => ((x - b.x0) % 2 === 0 ? 'h' : null),
+  // Tabby bars down both flanks. Stripes right across, every other column, were
+  // a barcode on a grown cat: the body was more stripe than cat.
+  cat: (x, y, b) => ((x - b.x0 < 2 || b.x1 - x < 2) && (y - b.y0) % 2 === 0 ? 'h' : null),
   // Pale underside — inset from the flanks, or it reads as a nappy rather than
   // as a belly.
   rabbit: (x, y, b) => (y >= b.y1 - 2 && x > b.x0 + 1 && x < b.x1 - 1 ? 'h' : null),
@@ -1011,55 +1031,107 @@ export const COAT_RULES: Record<
 // ---- the adult forms, as changes made to the grown body ----
 //
 // A form used to be its own grid, which cannot work once a strain owns the
-// silhouette: four forms × six animals is twenty-four bodies to draw and keep in
-// step. Each form is a transformation instead, so it composes with any animal.
+// silhouette: four forms × twelve animals is forty-eight bodies to draw and keep
+// in step. Each form is a transformation instead, so it composes with any animal.
+//
+// Every form has to be something worth growing into. The first versions were
+// punishments in disguise (a lumpy blob, a grey thing with red eyes), and the
+// adult was the stage players liked least.
 
 type Grid = string[][]
 const at = (g: Grid, x: number, y: number): string => g[y]?.[x] ?? '.'
-
-/** Gorged: one dot fatter all round, whatever animal it is. */
-function fatten(g: Grid): void {
-  const before = g.map((r) => [...r])
-  const solid = (x: number, y: number): boolean => at(before, x, y) !== '.'
-  for (let y = 0; y < g.length; y++)
-    for (let x = 0; x < g[y].length; x++) {
-      const here = at(before, x, y)
-      // Empty next to the shape becomes the new outline …
-      if (here === '.') {
-        if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) g[y][x] = 'o'
-        continue
-      }
-      // … and the old outline is swallowed by the body behind it.
-      if (here === 'o') {
-        const b = (dx: number, dy: number): boolean => at(before, x + dx, y + dy) === 'b'
-        if (b(-1, 0) || b(1, 0) || b(0, -1) || b(0, 1)) g[y][x] = 'b'
-      }
-    }
+const extent = (g: Grid): Box | null => {
+  let x0 = SPRITE_SIZE
+  let x1 = -1
+  let y0 = SPRITE_SIZE
+  let y1 = -1
+  g.forEach((row, y) =>
+    row.forEach((ch, x) => {
+      if (ch === '.') return
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+    })
+  )
+  return x1 < 0 ? null : { x0, x1, y0, y1 }
 }
 
 /**
- * Radiant: a dotted aura following the silhouette. An arc over the head was the
- * first attempt and it only works on animals whose head is their topmost part —
- * on a fish (a fin tip) it came out as a single dot. This traces whatever shape
- * the animal has, every other cell, so it reads as a sparkle rather than a ring.
+ * Well fed: chubby. The middle column is doubled out to each side, so it gets
+ * two dots rounder without its outline growing lumps. Fattening it all round
+ * turned every ear and leg into a blob. Bodies already touching both edges get
+ * a row taller under the face instead.
  */
-function halo(g: Grid): void {
-  const before = g.map((r) => [...r])
-  const solid = (x: number, y: number): boolean => at(before, x, y) !== '.'
-  for (let y = 0; y < g.length; y++)
-    for (let x = 0; x < g[y].length; x++) {
-      if (before[y][x] !== '.' || (x + y) % 2 !== 0) continue
-      if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) g[y][x] = 'a'
+function fatten(g: Grid, face: { y: number }): void {
+  const box = extent(g)
+  if (!box) return
+  const left = box.x0 > 0
+  const right = box.x1 < SPRITE_SIZE - 1
+  if (left || right) {
+    const cx = Math.floor((box.x0 + box.x1) / 2)
+    for (const row of g) {
+      const old = [...row]
+      for (let x = 0; x < row.length; x++) {
+        if (left && x < cx) row[x] = old[x + 1]
+        else if (right && x > cx) row[x] = old[x - 1]
+      }
     }
+    return
+  }
+  if (box.y1 >= SPRITE_SIZE - 1) return
+  const dup = face.y + 3
+  for (let y = box.y1 + 1; y > dup; y--) g[y] = [...g[y - 1]]
 }
 
-/** Raised on neglect: the hem has come apart. */
-function tatter(g: Grid): void {
-  const bottom = g.reduce((last, row, y) => (row.some((c) => c !== '.') ? y : last), -1)
-  if (bottom < 0) return
-  for (const y of [bottom, bottom - 1]) {
-    if (y < 0) continue
-    for (let x = 0; x < g[y].length; x++) if (g[y][x] !== '.' && x % 2 === 0) g[y][x] = '.'
+/**
+ * Radiant: little four-point stars in the empty air around it. A dotted aura
+ * traced round the silhouette was the first try, and at this size it read as
+ * mould. Stars go where there is room for them, up to three, apart.
+ */
+function sparkle(g: Grid): void {
+  const before = g.map((r) => [...r])
+  const roomy = (cx: number, cy: number): boolean => {
+    for (let dy = -2; dy <= 2; dy++)
+      for (let dx = -2; dx <= 2; dx++) if (at(before, cx + dx, cy + dy) !== '.') return false
+    return true
+  }
+  const spots: Array<[number, number]> = []
+  for (let y = 1; y < SPRITE_SIZE - 1; y++)
+    for (let x = 1; x < SPRITE_SIZE - 1; x++) if (roomy(x, y)) spots.push([x, y])
+  // Top corners first (a sparkle reads best up by the head), then anything.
+  const byCorner = (side: number) => (a: [number, number], b: [number, number]): number =>
+    a[1] + Math.abs(a[0] - side) - (b[1] + Math.abs(b[0] - side))
+  const picks: Array<[number, number]> = []
+  const far = (p: [number, number]): boolean =>
+    picks.every((q) => Math.abs(q[0] - p[0]) + Math.abs(q[1] - p[1]) >= 6)
+  for (const order of [byCorner(0), byCorner(SPRITE_SIZE - 1), byCorner(SPRITE_SIZE / 2)]) {
+    const p = [...spots].sort(order).find(far)
+    if (p) picks.push(p)
+  }
+  for (const [x, y] of picks)
+    for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) g[y + dy][x + dx] = 'a'
+  if (picks.length > 0) return
+  // Packed edge to edge: a single glint wherever one fits.
+  for (let y = 0; y < SPRITE_SIZE; y++)
+    for (let x = 0; x < SPRITE_SIZE; x++) if (before[y][x] === '.' && (x + y) % 7 === 0) g[y][x] = 'a'
+}
+
+/**
+ * Raised on neglect: a little ghost. Whatever it stood on is gone, and the hem
+ * hangs in scallops. (Translucent and floating, in pet.css.) It keeps its own
+ * colours and its coat: it is still the pet, just a sadder one.
+ */
+function haunt(g: Grid): void {
+  const lastBody = g.reduce((last, row, y) => (row.includes('b') ? y : last), -1)
+  if (lastBody < 0) return
+  const hem = lastBody + 1
+  for (let y = hem + 1; y < g.length; y++) g[y].fill('.')
+  // Every other lit dot, counted from the first: on a hem whose dots all sit on
+  // odd columns (a fish's tail fin) an x % 2 rule scalloped nothing.
+  if (hem < g.length) {
+    let n = 0
+    for (let x = 0; x < g[hem].length; x++) if (g[hem][x] !== '.' && n++ % 2 === 0) g[hem][x] = '.'
   }
 }
 
@@ -1091,6 +1163,15 @@ export function bodyOf(species: Species, stage: Stage): Sprite {
   return b.grown
 }
 
+/** Where the big face would go on a body, if its 6×4 window is all body. */
+export function bigFaceOf(sprite: Sprite): { x: number; y: number } | null {
+  if (!sprite.face) return null
+  const at0 = sprite.bigFace ?? { x: sprite.face.x - 1, y: sprite.face.y }
+  for (let dy = 0; dy < 4; dy++)
+    for (let dx = 0; dx < 6; dx++) if (sprite.rows[at0.y + dy]?.[at0.x + dx] !== 'b') return null
+  return at0
+}
+
 export interface Dot {
   x: number
   y: number
@@ -1102,19 +1183,25 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
   const sprite = bodyOf(species, stage)
   const grid = sprite.rows.map((r) => r.split(''))
 
+  // From the teens on it gets the big, expressive face, wherever it fits.
+  const big = stage === 'teen' || stage === 'adult' ? bigFaceOf(sprite) : null
+  const face = big
+    ? { ...big, rows: BIG_FACES[mood] ?? BIG_FACES.ok, w: 6 }
+    : sprite.face
+      ? { ...sprite.face, rows: FACES[mood] ?? FACES.ok, w: 4 }
+      : null
+
   // What its upbringing made of it, applied to whichever animal it is.
   if (stage === 'adult') {
-    if (form === 'titan') fatten(grid)
-    else if (form === 'radiant') halo(grid)
-    else if (form === 'wraith') tatter(grid)
+    if (form === 'titan') fatten(grid, face ?? { y: 0 })
+    else if (form === 'radiant') sparkle(grid)
+    else if (form === 'wraith') haunt(grid)
   }
 
-  // The coat, first. Only where there is body to mark — never over an outline,
-  // never outside the silhouette — and never within a dot of the face: a marking
+  // The coat, first. Only where there is body to mark (never over an outline,
+  // never outside the silhouette) and never within a dot of the face: a marking
   // beside an eye reads as a bruise, not as a pattern.
-  // A wraith wears no markings: what it was raised on faded them out. (It also
-  // keeps the dot count below a sturdy one, which the tests check.)
-  const rule = form === 'wraith' && stage === 'adult' ? null : COAT_RULES[species]
+  const rule = COAT_RULES[species]
   if (rule) {
     let x0 = SPRITE_SIZE
     let x1 = -1
@@ -1129,17 +1216,16 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
         if (y > y1) y1 = y
       })
     )
-    const f = sprite.face
-    // A dot of clearance around the face, so a marking never crowds an eye — but
+    // A dot of clearance around the face, so a marking never crowds an eye, but
     // only where there is room for it. A just-hatched body is barely wider than
     // its own face, and the margin left nowhere at all for its strain to show.
     const margin = x1 - x0 >= 9 ? 1 : 0
     const clear = (x: number, y: number): boolean =>
-      !f ||
-      x < f.x - margin ||
-      x > f.x + 3 + margin ||
-      y < f.y - margin ||
-      y > f.y + 3 + margin
+      !face ||
+      x < face.x - margin ||
+      x > face.x + face.w - 1 + margin ||
+      y < face.y - margin ||
+      y > face.y + 3 + margin
     if (x1 >= 0) {
       const box = { x0, x1, y0, y1 }
       let marked = 0
@@ -1154,7 +1240,7 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
       )
       // A strain has to be visible at EVERY size. On the smallest bodies the face
       // and its margin can cover the whole torso, leaving a belly or a sparse
-      // speckle with nowhere to land — so fall back to marking the flanks.
+      // speckle with nowhere to land, so fall back to marking the flanks.
       if (marked === 0)
         grid.forEach((row, y) =>
           row.forEach((ch, x) => {
@@ -1164,13 +1250,12 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
         )
     }
   }
-  if (sprite.face) {
-    const face = FACES[mood] ?? FACES.ok
-    face.forEach((row, dy) =>
+  if (face) {
+    face.rows.forEach((row, dy) =>
       row.split('').forEach((ch, dx) => {
         if (ch === '.') return // transparent: the body shows through
-        const y = sprite.face!.y + dy
-        const x = sprite.face!.x + dx
+        const y = face.y + dy
+        const x = face.x + dx
         if (grid[y]?.[x] !== undefined) grid[y][x] = ch
       })
     )
@@ -1179,6 +1264,51 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
   grid.forEach((row, y) =>
     row.forEach((ch, x) => {
       if (ch !== '.') dots.push({ x, y, ch })
+    })
+  )
+  return dots
+}
+
+/**
+ * Keepsakes a grown-up earns by levelling, worn on top of its head. Drawn as
+ * their own layer (see Creature), so a crown's gold doesn't twinkle like the
+ * stars do.
+ */
+export const ACCESSORY_ART: Record<Accessory, string[]> = {
+  sprout: ['h.h', '.s.'],
+  bow: ['mm.mm', 'mmhmm'],
+  crown: ['a.a.a', 'aaaaa']
+}
+
+/**
+ * Where a keepsake sits: centred over the face, its bottom row resting on the
+ * outline of the head (so it sits ON the head, not floating above it).
+ */
+export function accessoryPixels(
+  stage: Stage,
+  form: Form,
+  species: Species,
+  accessory: Accessory | null
+): Dot[] {
+  if (!accessory || stage !== 'adult') return []
+  const art = ACCESSORY_ART[accessory]
+  const sprite = bodyOf(species, stage)
+  const big = bigFaceOf(sprite)
+  const face = big ? { ...big, w: 6 } : sprite.face ? { ...sprite.face, w: 4 } : null
+  if (!face) return []
+  const w = art[0].length
+  const x0 = Math.max(0, Math.min(SPRITE_SIZE - w, face.x + Math.floor((face.w - w) / 2)))
+  // The top of the head under the keepsake, ignoring a radiant pet's stars.
+  const body = pixelsOf(stage, form, 'ok', species).filter((d) => d.ch !== 'a')
+  let top = SPRITE_SIZE
+  for (const d of body) if (d.x >= x0 && d.x < x0 + w && d.y < top) top = d.y
+  // Two rows tall, so it fits even over a head that touches the top of the
+  // grid; then it sinks into the head instead, but never down onto the eyes.
+  const y0 = Math.max(0, Math.min(top - art.length + 1, face.y - art.length))
+  const dots: Dot[] = []
+  art.forEach((row, dy) =>
+    row.split('').forEach((ch, dx) => {
+      if (ch !== '.') dots.push({ x: x0 + dx, y: y0 + dy, ch })
     })
   )
   return dots

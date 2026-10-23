@@ -21,6 +21,11 @@ import {
   freshTokens,
   formOf,
   growthOf,
+  accessoryOf,
+  levelCost,
+  levelOf,
+  nextAccessory,
+  MAX_LEVEL,
   initialState,
   moodOf,
   normalize,
@@ -202,11 +207,46 @@ describe('growth', () => {
     expect(g.toNext).toBe(25)
   })
 
-  it('is complete at the final stage', () => {
+  it('keeps counting levels once grown, so there is always a next goal', () => {
+    // 800 to adult, then 100, 150, 200, 250, 300 a level: 2000 is level 6.
     const g = growthOf(base({ xp: 2000, bornAt: T0 - 400 * HOUR }), T0)
     expect(g.stage).toBe('adult')
-    expect(g.progress).toBe(1)
-    expect(g.toNext).toBe(0)
+    expect(g.level).toBe(6)
+    expect(g.toNext).toBe(150)
+    expect(g.progress).toBeCloseTo(200 / 350)
+  })
+
+  it('has no level before it grows up', () => {
+    expect(growthOf(base({ xp: STAGE_XP[4] - 1 }), T0).level).toBe(0)
+  })
+})
+
+describe('levels', () => {
+  it('starts at level 1 the moment it grows up', () => {
+    expect(levelOf(STAGE_XP[4] - 1).level).toBe(0)
+    expect(levelOf(STAGE_XP[4]).level).toBe(1)
+    expect(levelOf(STAGE_XP[4] + levelCost(1) - 1).level).toBe(1)
+    expect(levelOf(STAGE_XP[4] + levelCost(1)).level).toBe(2)
+  })
+
+  it('makes each level cost a little more than the last', () => {
+    for (let l = 1; l < 20; l++) expect(levelCost(l + 1)).toBeGreaterThan(levelCost(l))
+  })
+
+  it('stops at the top level with nothing left to earn', () => {
+    const top = levelOf(1e9)
+    expect(top.level).toBe(MAX_LEVEL)
+    expect(growthOf(base({ xp: 1e9 }), T0).toNext).toBe(0)
+  })
+
+  it('wears the newest keepsake it has earned', () => {
+    expect(accessoryOf(0)).toBeNull()
+    expect(accessoryOf(2)).toBeNull()
+    expect(accessoryOf(3)).toBe('sprout')
+    expect(accessoryOf(7)).toBe('bow')
+    expect(accessoryOf(50)).toBe('crown')
+    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3 })
+    expect(nextAccessory(10)).toBeNull()
   })
 })
 
@@ -239,6 +279,19 @@ describe('formOf', () => {
   it('a starved pet is a wraith even if it was gorged early on', () => {
     // Neglect is checked first: how it was treated outranks how much it ate.
     expect(formOf(grown({ bornAt: T0 - 20 * HOUR, neglectMs: 15 * HOUR }), T0)).toBe('wraith')
+  })
+
+  const kept = (form: 'radiant' | 'wraith', over: Partial<PetSave>): PetSave =>
+    grown({ evolutions: [{ stage: 'adult', form, at: T0 - 100 * HOUR }], ...over })
+
+  it('keeps the form it grew into, even if care slips later', () => {
+    // Its numbers now say wraith, but a radiant grown-up stays radiant.
+    expect(formOf(kept('radiant', { neglectMs: 150 * HOUR }), T0)).toBe('radiant')
+  })
+
+  it('lets a ghost be cared back to life', () => {
+    expect(formOf(kept('wraith', { neglectMs: 150 * HOUR }), T0)).toBe('wraith')
+    expect(formOf(kept('wraith', { neglectMs: 6 * HOUR }), T0)).toBe('radiant')
   })
 })
 

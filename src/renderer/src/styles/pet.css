@@ -983,31 +983,9 @@
   fill: var(--warning);
 }
 
-/* Grown-up forms recolour the body. */
-.pet-f-radiant .pet-px-b {
-  fill: color-mix(in srgb, var(--accent-2) 62%, var(--accent));
-}
-.pet-f-titan .pet-px-b {
-  fill: color-mix(in srgb, var(--accent) 76%, var(--accent-2));
-}
-.pet-f-titan .pet-px-o {
-  fill: color-mix(in srgb, var(--accent) 34%, black);
-}
-.pet-f-titan .pet-px-s {
-  fill: color-mix(in srgb, var(--accent) 66%, black);
-}
-.pet-f-wraith .pet-px-b {
-  fill: color-mix(in srgb, var(--fg-dim) 66%, var(--bg));
-}
-.pet-f-wraith .pet-px-o {
-  fill: color-mix(in srgb, var(--fg-dim) 30%, black);
-}
-.pet-f-wraith .pet-px-s {
-  fill: color-mix(in srgb, var(--fg-dim) 45%, var(--bg));
-}
-.pet-f-wraith .pet-px-e {
-  fill: color-mix(in srgb, var(--danger) 80%, black);
-}
+/* Grown-up forms used to recolour the body here (grey with red eyes for the
+   neglected one), which is a lot of why adults read as a downgrade. A form is
+   now a change of shape in petSprites.ts; the pet keeps its own colours. */
 .pet-s-egg .pet-px-b {
   fill: color-mix(in srgb, var(--fg) 78%, var(--accent-2));
 }
@@ -1026,6 +1004,11 @@
 .pet-m-sad .pet-sprite {
   animation-duration: 2.8s;
 }
+/* The little ghost: see-through, and it drifts rather than hops. */
+.pet-f-wraith .pet-sprite {
+  opacity: 0.78;
+  animation: pet-float 2.4s steps(1, end) infinite;
+}
 .pet-sprite.chew {
   animation: pet-chew 0.3s steps(1, end) infinite;
 }
@@ -1038,6 +1021,10 @@
 .pet-crumbs .pet-px-a {
   animation: pet-crumb 0.7s steps(4, end) infinite;
 }
+/* A keepsake's gold is solid, not a twinkling star. */
+.pet-acc .pet-px-a {
+  animation: none;
+}
 
 /* A one-dot hop — the whole sprite moves by exactly one pixel of the grid. */
 @keyframes pet-hop {
@@ -1046,6 +1033,24 @@
     transform: translateY(0);
   }
   51%,
+  100% {
+    transform: translateY(-1px);
+  }
+}
+@keyframes pet-float {
+  0%,
+  25% {
+    transform: translateY(0);
+  }
+  26%,
+  50% {
+    transform: translateY(-1px);
+  }
+  51%,
+  75% {
+    transform: translateY(-2px);
+  }
+  76%,
   100% {
     transform: translateY(-1px);
   }
