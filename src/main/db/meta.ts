@@ -1,5 +1,6 @@
 import { pgRows } from './pg'
 import { literal, quoteIdent } from './sqlText'
+import type { EditTarget } from './edit'
 import type { ColumnDetail, ColumnInfo, ConnectionConfig, DbObject, ObjectKind, SchemaInfo, TableInfo } from './types'
 
 // PostgreSQL catalog queries.
@@ -157,7 +158,6 @@ export async function tableInfo(cfg: ConnectionConfig, db: string | undefined, s
   }
 }
 
-/** CREATE statement for a relation or routine. */
 /** A result column traced back to its table (pg field tableID / columnID). */
 export async function columnDetail(cfg: ConnectionConfig, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> {
   const [cols, cons, idx] = await Promise.all([
@@ -204,6 +204,7 @@ export async function columnDetail(cfg: ConnectionConfig, db: string | undefined
   }
 }
 
+/** CREATE statement for a relation or routine. */
 export async function objectDdl(cfg: ConnectionConfig, db: string | undefined, schema: string, name: string): Promise<string> {
   const full = `${qi(schema)}.${qi(name)}`
   const kind = await relKind(cfg, db, schema, name)
@@ -253,4 +254,40 @@ export async function objectDdl(cfg: ConnectionConfig, db: string | undefined, s
   for (const c of d.columns.filter((c) => c.comment !== null))
     out += `COMMENT ON COLUMN ${full}.${qi(c.name)} IS ${literal('postgres', c.comment)};\n`
   return out
+}
+
+/** The table behind a result, for editing its rows in the grid. */
+export async function editTarget(cfg: ConnectionConfig, db: string | undefined, table: number): Promise<EditTarget | null> {
+  const [rel, pk, cols] = await Promise.all([
+    pgRows(
+      cfg,
+      db,
+      `select n.nspname::text, c.relname::text, c.relkind::text
+       from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.oid = $1`,
+      [table]
+    ),
+    pgRows(cfg, db, `select unnest(conkey)::int from pg_constraint where conrelid = $1 and contype = 'p'`, [table]),
+    pgRows(
+      cfg,
+      db,
+      // attgenerated is read through jsonb so this also runs on servers before 12.
+      `select a.attnum::int, a.attname::text, format_type(a.atttypid, a.atttypmod),
+              coalesce(to_jsonb(a)->>'attgenerated', '') = 's' or a.attidentity = 'a'
+       from pg_attribute a where a.attrelid = $1 and a.attnum > 0 and not a.attisdropped order by a.attnum`,
+      [table]
+    )
+  ])
+  if (!rel.length) return null
+  const relkind = str(rel[0][2])
+  const keys = pk.map((r) => Number(r[0]))
+  const okKind = relkind === 'r' || relkind === 'p'
+  return {
+    table,
+    schema: str(rel[0][0]),
+    name: str(rel[0][1]),
+    editable: okKind && keys.length > 0,
+    reason: !okKind ? 'kind' : keys.length ? undefined : 'nopk',
+    pk: keys,
+    columns: cols.map((r) => ({ attnum: Number(r[0]), name: str(r[1]), type: str(r[2]), readOnly: r[3] === true }))
+  }
 }

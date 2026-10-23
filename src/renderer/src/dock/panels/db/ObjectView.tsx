@@ -138,6 +138,7 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
               patch={patchData}
               name={tab.name}
               table={qualified}
+              editable={!conn.readOnly}
             />
           ) : (
             <div className="dbx-empty">{t('db.loading')}</div>

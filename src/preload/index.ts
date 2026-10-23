@@ -6,9 +6,11 @@ import type {
   DbObject,
   QueryResult,
   SchemaInfo,
-  TableInfo
+  TableInfo,
+  TxStatus
 } from '../main/db/types'
 import type { ExportOptions } from '../main/db/mask'
+import type { EditStatement, EditTarget } from '../main/db/edit'
 
 export interface DirEntry {
   name: string
@@ -550,8 +552,24 @@ const api = {
       id: string,
       db: string | undefined,
       sql: string,
-      o: { limit?: number; queryId?: string; offset?: number }
+      o: { limit?: number; queryId?: string; offset?: number; session?: string; aux?: boolean }
     ): Promise<QueryResult> => ipcRenderer.invoke('db:query', id, db, sql, o),
+    // A manual-commit console tab's own connection and transaction.
+    session: {
+      commit: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-commit', session),
+      rollback: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-rollback', session),
+      status: (session: string): Promise<TxStatus> => ipcRenderer.invoke('db:session-status', session),
+      close: (session: string): Promise<void> => ipcRenderer.invoke('db:session-close', session)
+    },
+    editTarget: (id: string, db: string | undefined, table: number): Promise<EditTarget | null> =>
+      ipcRenderer.invoke('db:editTarget', id, db, table),
+    /** Grid edits, all or nothing. Each statement's RETURNING row. */
+    apply: (
+      id: string,
+      db: string | undefined,
+      session: string | undefined,
+      stmts: EditStatement[]
+    ): Promise<Array<Array<string | number | boolean | null> | null>> => ipcRenderer.invoke('db:apply', id, db, session, stmts),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
     column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
       ipcRenderer.invoke('db:column', id, db, table, attnum),

@@ -105,3 +105,6 @@ export interface TableInfo {
   indexes: Array<{ name: string; def: string; unique: boolean; primary: boolean }>
   constraints: Array<{ name: string; type: string; def: string }>
 }
+
+/** A manual-commit session: none (no connection), idle, in a transaction, or in a failed one. */
+export type TxStatus = 'none' | 'idle' | 'active' | 'failed'

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ArrowUpToLine, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ColumnDetail, QueryColumn } from '../../../../../main/db/types'
 import type { ViewFilter } from '../../../../../main/db/sqlText'
 import { useT } from '../../../i18n'
@@ -48,10 +48,26 @@ function initialWidths(columns: QueryColumn[], rows: Cell[][]): number[] {
 type Sort = { col: number; desc: boolean }
 type Menu = { x: number; y: number; col: number; row?: number }
 
-// A read-only, row-virtualized result table: only the rows in view are in the
+/** Editing hooks, by display row (inserted rows come first). */
+export interface GridEdit {
+  canEdit: (c: number) => boolean
+  set: (r: number, c: number, v: Cell) => void
+  revert: (r: number, c: number) => void
+  toggleDelete: (r: number) => void
+  mark: (r: number) => 'ins' | 'del' | undefined
+  dirty: (r: number, c: number) => boolean
+  /** How many inserted rows lead the list (they're numbered '+'). */
+  inserted: number
+}
+
+// Values that don't fit a one-line input are edited in the viewer instead.
+const multiLine = (v: Cell): boolean => typeof v === 'string' && (v.includes('\n') || v.length > 500)
+
+// A row-virtualized result table: only the rows in view are in the
 // DOM, so a 100k-row result scrolls like a 10-row one. `onMore` is passed while
 // the source has more rows; it fires once the view nears the bottom.
-// Sorting and filtering are the owner's (it re-queries); the grid only asks.
+// Sorting, filtering and edits are the owner's (it re-queries, keeps the
+// pending changes); the grid only asks.
 export default function ResultGrid({
   columns,
   rows,
@@ -62,7 +78,8 @@ export default function ResultGrid({
   onFilter,
   onAskFilter,
   columnInfo,
-  epoch
+  epoch,
+  edit
 }: {
   columns: QueryColumn[]
   rows: Cell[][]
@@ -78,6 +95,7 @@ export default function ResultGrid({
   columnInfo?: (c: QueryColumn) => Promise<ColumnDetail | null>
   /** Bumped when the rows were replaced under the same columns (a re-sort). */
   epoch?: number
+  edit?: GridEdit
 }): JSX.Element {
   const t = useT()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -85,7 +103,10 @@ export default function ResultGrid({
   const [height, setHeight] = useState(300)
   const [widths, setWidths] = useState(() => initialWidths(columns, rows))
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null)
-  const [viewer, setViewer] = useState<string | null>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  // The cell value viewer; with `at`, it edits that cell.
+  const [viewer, setViewer] = useState<{ text: string; at?: { r: number; c: number } } | null>(null)
+  const [editing, setEditing] = useState<{ r: number; c: number; value: string } | null>(null)
   const [menu, setMenu] = useState<Menu | null>(null)
   // Column detail per column index: undefined not asked, 'loading', null none.
   const [details, setDetails] = useState<Record<number, ColumnDetail | null | 'loading' | 'error'>>({})
@@ -104,6 +125,8 @@ export default function ResultGrid({
     setSel(null)
     setTop(0)
     setMenu(null)
+    setEditing(null)
+    setViewer(null)
     if (scrollRef.current) scrollRef.current.scrollTop = 0
   }, [columns, epoch])
 
@@ -154,6 +177,37 @@ export default function ResultGrid({
     else onSort(null)
   }
 
+  const scrollTo = (r: number): void => {
+    const el = scrollRef.current
+    if (!el) return
+    const y = r * ROW_H
+    if (y < el.scrollTop) el.scrollTop = y
+    else if (y + ROW_H + HEAD_H > el.scrollTop + el.clientHeight) el.scrollTop = y + ROW_H + HEAD_H - el.clientHeight
+  }
+
+  const canEdit = (r: number, c: number): boolean => !!edit && c >= 0 && edit.mark(r) !== 'del' && edit.canEdit(c)
+
+  // Opens the editor on a cell: inline for one-line values, else the viewer.
+  const startEdit = (r: number, c: number, initial?: string): void => {
+    if (!canEdit(r, c)) return
+    const v = rows[r]?.[c] ?? null
+    setSel({ r, c })
+    if (initial === undefined && multiLine(v)) setViewer({ text: show(v), at: { r, c } })
+    else setEditing({ r, c, value: initial ?? (v === null ? '' : String(v)) })
+  }
+
+  const commitEdit = (then?: 'down' | 'right' | 'left'): void => {
+    if (!editing || !edit) return
+    const { r, c, value } = editing
+    const old = rows[r]?.[c] ?? null
+    if (old === null ? value !== '' : value !== String(old)) edit.set(r, c, value)
+    setEditing(null)
+    const next = then === 'down' ? { r: Math.min(r + 1, rows.length - 1), c } : then === 'right' ? { r, c: Math.min(c + 1, columns.length - 1) } : then === 'left' ? { r, c: Math.max(c - 1, 0) } : { r, c }
+    setSel(next)
+    scrollTo(next.r)
+    gridRef.current?.focus()
+  }
+
   const openMenu = (e: React.MouseEvent, col: number, row?: number): void => {
     e.preventDefault()
     // Keep the window listener from closing the menu this same event opens.
@@ -193,7 +247,21 @@ export default function ResultGrid({
         sep()
       }
       items.push({ label: t('db.copyValue'), onClick: () => copy(show(v)) })
-      items.push({ label: t('db.cellValue'), onClick: () => setViewer(show(v)) })
+      items.push({ label: t('db.cellValue'), onClick: () => setViewer({ text: show(v) }) })
+      if (edit) {
+        const row = m.row
+        sep()
+        if (canEdit(row, m.col)) {
+          items.push({ label: t('db.ed.edit'), onClick: () => startEdit(row, m.col) })
+          if (v !== null) items.push({ label: t('db.ed.setNull'), onClick: () => edit.set(row, m.col, null) })
+        }
+        if (edit.dirty(row, m.col)) items.push({ label: t('db.ed.revertCell'), onClick: () => edit.revert(row, m.col) })
+        const mk = edit.mark(row)
+        items.push({
+          label: mk === 'ins' ? t('db.ed.removeNew') : mk === 'del' ? t('db.ed.undelete') : t('db.ed.deleteRow'),
+          onClick: () => edit.toggleDelete(row)
+        })
+      }
       return items
     }
     // Column header: what the column is, then sort / filter.
@@ -238,8 +306,23 @@ export default function ResultGrid({
 
   const onKey = useCallback(
     (e: React.KeyboardEvent): void => {
+      if (e.target !== e.currentTarget) return
+      const mod = e.metaKey || e.ctrlKey
+      // Jump to the first / last row (the last loaded one).
+      if ((mod && e.key === 'ArrowUp') || e.key === 'Home') {
+        e.preventDefault()
+        if (sel) setSel({ r: 0, c: sel.c })
+        if (scrollRef.current) scrollRef.current.scrollTop = 0
+        return
+      }
+      if ((mod && e.key === 'ArrowDown') || e.key === 'End') {
+        e.preventDefault()
+        if (sel && rows.length) setSel({ r: rows.length - 1, c: sel.c })
+        if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        return
+      }
       if (!sel) return
-      if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
+      if (mod && e.key === 'c') {
         e.preventDefault()
         void navigator.clipboard.writeText(sel.c < 0 ? rows[sel.r].map(show).join('\t') : show(rows[sel.r][sel.c]))
         return
@@ -249,26 +332,37 @@ export default function ResultGrid({
         const nr = Math.min(Math.max(r, 0), rows.length - 1)
         const nc = Math.min(Math.max(c, 0), columns.length - 1)
         setSel({ r: nr, c: nc })
-        const el = scrollRef.current
-        if (!el) return
-        const y = nr * ROW_H
-        if (y < el.scrollTop) el.scrollTop = y
-        else if (y + ROW_H + HEAD_H > el.scrollTop + el.clientHeight) el.scrollTop = y + ROW_H + HEAD_H - el.clientHeight
+        scrollTo(nr)
       }
       if (e.key === 'ArrowDown') move(sel.r + 1, sel.c)
       else if (e.key === 'ArrowUp') move(sel.r - 1, sel.c)
       else if (e.key === 'ArrowRight') move(sel.r, sel.c + 1)
       else if (e.key === 'ArrowLeft') move(sel.r, sel.c - 1)
-      else if (e.key === 'Enter' && sel.c >= 0) {
+      else if ((e.key === 'Enter' || e.key === 'F2') && sel.c >= 0) {
         e.preventDefault()
-        setViewer(show(rows[sel.r][sel.c]))
+        if (canEdit(sel.r, sel.c)) startEdit(sel.r, sel.c)
+        else if (e.key === 'Enter') setViewer({ text: show(rows[sel.r][sel.c]) })
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && edit) {
+        e.preventDefault()
+        if (sel.c < 0) edit.toggleDelete(sel.r)
+        else if (canEdit(sel.r, sel.c)) startEdit(sel.r, sel.c, '')
+      } else if (e.key.length === 1 && !mod && !e.altKey && sel.c >= 0 && canEdit(sel.r, sel.c)) {
+        // Typing over a cell starts editing it with that character.
+        e.preventDefault()
+        startEdit(sel.r, sel.c, e.key)
       }
     },
-    [sel, rows, columns.length]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sel, rows, columns.length, edit]
   )
 
+  const numLabel = (r: number): string => {
+    if (!edit?.inserted) return String(r + 1)
+    return r < edit.inserted ? '+' : String(r - edit.inserted + 1)
+  }
+
   return (
-    <div className="dbx-grid" tabIndex={0} onKeyDown={onKey}>
+    <div className="dbx-grid" tabIndex={0} onKeyDown={onKey} ref={gridRef}>
       <div className="dbx-grid-scroll" ref={scrollRef} onScroll={(e) => setTop(e.currentTarget.scrollTop)}>
         <div style={{ width: totalW, minWidth: '100%' }}>
           <div className="dbx-grid-head" style={{ gridTemplateColumns: template, height: HEAD_H }}>
@@ -293,28 +387,58 @@ export default function ResultGrid({
           <div style={{ height: (rows.length + (more ? 1 : 0)) * ROW_H, position: 'relative' }}>
             {rows.slice(first, last).map((row, k) => {
               const r = first + k
+              const mk = edit?.mark(r)
               return (
                 <div
                   key={r}
-                  className={`dbx-grid-row${r % 2 ? ' odd' : ''}${sel?.r === r ? ' sel-row' : ''}`}
+                  className={`dbx-grid-row${r % 2 ? ' odd' : ''}${sel?.r === r ? ' sel-row' : ''}${mk ? ` ${mk}` : ''}`}
                   style={{ top: r * ROW_H, gridTemplateColumns: template }}
                 >
-                  <div className="dbx-grid-num" onClick={() => setSel({ r, c: -1 })}>
-                    {r + 1}
+                  <div className="dbx-grid-num" onClick={() => setSel({ r, c: -1 })} onContextMenu={(e) => edit && openMenu(e, 0, r)}>
+                    {numLabel(r)}
                   </div>
-                  {row.map((v, c) => (
-                    <div
-                      key={c}
-                      className={`dbx-grid-td tone-${tones[c]}${v === null ? ' null' : ''}${
-                        typeof v === 'number' || tones[c] === 'num' ? ' num' : ''
-                      }${typeof v === 'boolean' ? (v ? ' yes' : ' no') : ''}${sel?.r === r && sel.c === c ? ' sel' : ''}`}
-                      onClick={() => setSel({ r, c })}
-                      onDoubleClick={() => setViewer(show(v))}
-                      onContextMenu={(e) => openMenu(e, c, r)}
-                    >
-                      {cellText(v)}
-                    </div>
-                  ))}
+                  {row.map((v, c) =>
+                    editing && editing.r === r && editing.c === c ? (
+                      <div key={c} className="dbx-grid-td editing">
+                        <input
+                          className="dbx-cell-input"
+                          autoFocus
+                          spellCheck={false}
+                          value={editing.value}
+                          onChange={(e) => setEditing({ ...editing, value: e.target.value })}
+                          onBlur={() => commitEdit()}
+                          onKeyDown={(e) => {
+                            e.stopPropagation()
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              commitEdit('down')
+                            } else if (e.key === 'Tab') {
+                              e.preventDefault()
+                              commitEdit(e.shiftKey ? 'left' : 'right')
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault()
+                              setEditing(null)
+                              gridRef.current?.focus()
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        key={c}
+                        className={`dbx-grid-td tone-${tones[c]}${v === null ? ' null' : ''}${
+                          typeof v === 'number' || tones[c] === 'num' ? ' num' : ''
+                        }${typeof v === 'boolean' ? (v ? ' yes' : ' no') : ''}${sel?.r === r && sel.c === c ? ' sel' : ''}${
+                          edit?.dirty(r, c) ? ' dirty' : ''
+                        }`}
+                        onClick={() => setSel({ r, c })}
+                        onDoubleClick={() => (canEdit(r, c) ? startEdit(r, c) : setViewer({ text: show(v) }))}
+                        onContextMenu={(e) => openMenu(e, c, r)}
+                      >
+                        {cellText(v)}
+                      </div>
+                    )
+                  )}
                 </div>
               )
             })}
@@ -328,19 +452,76 @@ export default function ResultGrid({
         {rows.length === 0 && <div className="dbx-empty">{t('db.noRows')}</div>}
       </div>
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={closeMenu} />}
+      {top > height && !viewer && (
+        <button
+          className="dbx-grid-top"
+          title={t('db.toTop')}
+          onClick={() => {
+            if (scrollRef.current) scrollRef.current.scrollTop = 0
+            gridRef.current?.focus()
+          }}
+        >
+          <ArrowUpToLine size={14} />
+        </button>
+      )}
       {viewer !== null && (
-        <div className="dbx-viewer">
-          <div className="dbx-viewer-bar">
-            <span>{t('db.cellValue')}</span>
-            <button className="dbx-link" onClick={() => void navigator.clipboard.writeText(viewer)}>
-              {t('db.copy')}
-            </button>
-            <button className="dbx-link" onClick={() => setViewer(null)}>
-              {t('common.close')}
-            </button>
-          </div>
-          <pre className="dbx-viewer-body">{viewer}</pre>
-        </div>
+        <CellViewer
+          key={viewer.at ? `${viewer.at.r}:${viewer.at.c}` : 'view'}
+          text={viewer.text}
+          onSave={
+            viewer.at && edit
+              ? (v) => {
+                  const at = viewer.at!
+                  if (v !== viewer.text || rows[at.r]?.[at.c] === null) edit.set(at.r, at.c, v)
+                  setViewer(null)
+                  gridRef.current?.focus()
+                }
+              : undefined
+          }
+          onClose={() => {
+            setViewer(null)
+            gridRef.current?.focus()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function CellViewer({ text, onSave, onClose }: { text: string; onSave?: (v: string) => void; onClose: () => void }): JSX.Element {
+  const t = useT()
+  const [value, setValue] = useState(text)
+  return (
+    <div className="dbx-viewer">
+      <div className="dbx-viewer-bar">
+        <span>{onSave ? t('db.ed.editValue') : t('db.cellValue')}</span>
+        <button className="dbx-link" onClick={() => void navigator.clipboard.writeText(value)}>
+          {t('db.copy')}
+        </button>
+        {onSave && (
+          <button className="dbx-link" onClick={() => onSave(value)}>
+            {t('db.ed.done')}
+          </button>
+        )}
+        <button className="dbx-link" onClick={onClose}>
+          {onSave ? t('common.cancel') : t('common.close')}
+        </button>
+      </div>
+      {onSave ? (
+        <textarea
+          className="dbx-viewer-body dbx-viewer-edit"
+          autoFocus
+          spellCheck={false}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Escape') onClose()
+            else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) onSave(value)
+          }}
+        />
+      ) : (
+        <pre className="dbx-viewer-body">{text}</pre>
       )}
     </div>
   )

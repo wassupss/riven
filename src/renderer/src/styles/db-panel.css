@@ -150,6 +150,9 @@
 .dbx-warn {
   color: var(--warning);
 }
+.dbx-count .dbx-warn {
+  margin-left: 6px;
+}
 
 /* ---- explorer tree ---- */
 .dbx-tree {
@@ -1073,4 +1076,156 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- transactions (manual commit) ---- */
+.dbx-autocommit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dbx-tx {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.dbx-tx::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.dbx-tx.failed {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.dbx-sql > .dbx-bar .ui-btn {
+  gap: 4px;
+}
+
+/* ---- grid: back to top, editing ---- */
+.dbx-grid-top {
+  position: absolute;
+  right: 18px;
+  bottom: 14px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  background: var(--glass);
+  color: var(--fg-dim);
+  box-shadow: var(--elevation-float);
+  cursor: pointer;
+}
+.dbx-grid-top:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.dbx-grid-td.dirty {
+  background: color-mix(in srgb, var(--warning) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--warning);
+}
+.dbx-grid-row.ins {
+  background: color-mix(in srgb, var(--success) 9%, transparent);
+}
+.dbx-grid-row.ins .dbx-grid-num {
+  color: var(--success);
+  opacity: 1;
+}
+.dbx-grid-row.del {
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+.dbx-grid-row.del .dbx-grid-td {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.dbx-grid-row.del .dbx-grid-num {
+  color: var(--danger);
+  opacity: 1;
+}
+.dbx-grid-td.editing {
+  padding: 0;
+  overflow: visible;
+}
+.dbx-cell-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 7px;
+  border: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.dbx-viewer-edit {
+  min-height: 160px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  background: transparent;
+  color: var(--fg);
+}
+
+/* ---- pending edits ---- */
+.dbx-edits {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+.dbx-edits-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  font-size: var(--text-xs);
+}
+.dbx-edits-bar .ui-btn {
+  height: calc(var(--ctl-h) - 6px);
+  font-size: var(--text-xs);
+}
+.dbx-edits-n {
+  color: var(--warning);
+  font-weight: 600;
+}
+.dbx-edits-sql {
+  margin: 0;
+  max-height: 140px;
+  overflow: auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre;
+  user-select: text;
+}
+.dbx-ro {
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+.dbx-status .dbx-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }

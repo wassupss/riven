@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
-import { Database, FileCode2, Lock, Play, Plus, Square, Table2, X } from 'lucide-react'
+import { Check, Database, FileCode2, Lock, Play, Plus, Square, Table2, Undo2, X } from 'lucide-react'
 import '../../styles/db-panel.css'
 import type { DbKind, QueryResult } from '../../../../main/db/types'
 import { splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
 import { editorTheme } from '../../editor/highlight'
 import { useT } from '../../i18n'
 import { dbUid, useDb, type RunResult, type RunState, type SqlTab } from '../../state/db'
-import { Button, Select } from '../../components/ui/Controls'
+import { Button, Select, Switch } from '../../components/ui/Controls'
 import ResultPane from './db/ResultPane'
 import ObjectView from './db/ObjectView'
 import { errText } from './db/ConnectionForm'
@@ -126,6 +126,10 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
   const runState = useDb((s) => (tab ? s.runs[tab.id] : undefined))
   const autoRun = useDb((s) => s.autoRun)
   const clearAutoRun = useDb((s) => s.clearAutoRun)
+  const tx = useDb((s) => (tab ? s.tx[tab.id] : undefined))
+  const setTx = useDb((s) => s.setTx)
+  const syncTx = useDb((s) => s.syncTx)
+  const [ending, setEnding] = useState(false)
   const conn = connections.find((c) => c.id === tab?.connId)
 
   const hostRef = useRef<HTMLDivElement>(null)
@@ -242,10 +246,11 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
     }
     const queryId = dbUid()
     const results: RunResult[] = []
+    const session = tab.manual ? tab.id : undefined
     setRun(tab.id, { running: true, queryId, results, shown: 0 })
     for (const sql of list) {
       try {
-        const result = await window.api.db.query(conn.id, tab.db, sql, { limit, queryId })
+        const result = await window.api.db.query(conn.id, tab.db, sql, { limit, queryId, session })
         results.push({ sql, result })
       } catch (e) {
         results.push({ sql, error: errText(e) })
@@ -265,7 +270,8 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
         }
     }
     setRun(tab.id, { running: false, queryId, results: [...results], shown })
-  }, [setRun, t])
+    if (session) void syncTx(tab.id)
+  }, [setRun, syncTx, t])
 
   const runRef = useRef(run)
   runRef.current = run
@@ -316,6 +322,28 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
       })
     }
   }, [tab?.id, runId, shownIdx, shown?.sql, setRun])
+  const inTx = tx === 'active' || tx === 'failed'
+  const endTx = (action: 'commit' | 'rollback'): void => {
+    if (!tab || ending) return
+    const id = tab.id
+    setEnding(true)
+    window.api.db.session[action](id)
+      .then((s) => setTx(id, s))
+      .catch((e) => {
+        window.alert(errText(e))
+        void syncTx(id)
+      })
+      .finally(() => setEnding(false))
+  }
+  const setManual = (manual: boolean): void => {
+    if (!tab || inTx) return
+    patchTab(tab.id, { manual })
+    // Back to auto-commit: the idle session's connection is no longer needed.
+    if (!manual) {
+      void window.api.db.session.close(tab.id)
+      setTx(tab.id, 'none')
+    }
+  }
   const dbList = conn ? dbs[conn.id] ?? [] : []
   const curDb = tab?.db ?? conn?.database ?? ''
 
@@ -324,6 +352,8 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
       <div className="dbx-bar">
         <Select
           className="dbx-conn-select"
+          disabled={inTx}
+          title={inTx ? t('db.tx.locked') : undefined}
           value={tab?.connId ?? ''}
           onChange={(e) => tab && patchTab(tab.id, { connId: e.target.value, db: undefined })}
         >
@@ -334,7 +364,11 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
             </option>
           ))}
         </Select>
-        <Select className="dbx-db-select" value={curDb} onChange={(e) => tab && patchTab(tab.id, { db: e.target.value })}>
+        <Select
+          className="dbx-db-select"
+          disabled={inTx}
+          title={inTx ? t('db.tx.locked') : undefined}
+          value={curDb} onChange={(e) => tab && patchTab(tab.id, { db: e.target.value })}>
           {!dbList.includes(curDb) && <option value={curDb}>{curDb}</option>}
           {dbList.map((d) => (
             <option key={d} value={d}>
@@ -346,6 +380,27 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
           <span className="dbx-badge" title={t('db.readOnly')}>
             <Lock size={10} /> {t('db.readOnlyShort')}
           </span>
+        )}
+        {conn && !conn.readOnly && (
+          <label className="dbx-autocommit" title={inTx ? t('db.tx.locked') : t('db.tx.autoHint')}>
+            <Switch checked={!tab?.manual} disabled={inTx} onChange={(v) => setManual(!v)} />
+            {t('db.tx.auto')}
+          </label>
+        )}
+        {tab?.manual && (
+          <>
+            {inTx && (
+              <span className={`dbx-tx${tx === 'failed' ? ' failed' : ''}`} title={tx === 'failed' ? t('db.tx.failedHint') : undefined}>
+                {tx === 'failed' ? t('db.tx.failed') : t('db.tx.active')}
+              </span>
+            )}
+            <Button disabled={!inTx || ending || tx === 'failed' || runState?.running} onClick={() => endTx('commit')} title={t('db.tx.commitHint')}>
+              <Check size={11} /> {t('db.tx.commit')}
+            </Button>
+            <Button disabled={!inTx || ending || runState?.running} onClick={() => endTx('rollback')} title={t('db.tx.rollbackHint')}>
+              <Undo2 size={11} /> {t('db.tx.rollback')}
+            </Button>
+          </>
         )}
         <span className="dbx-spacer" />
         <Select
@@ -402,6 +457,9 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
             entry={shown as RunResult & { result: QueryResult }}
             patch={patchShown}
             name={tab.title}
+            session={tab.manual ? tab.id : undefined}
+            onTx={() => void syncTx(tab.id)}
+            editable={!conn.readOnly}
             lead={runState?.running && <span className="dbx-spin">{t('db.running')}</span>}
           />
         ) : (

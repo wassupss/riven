@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { ConnectionInfo, ObjectKind, QueryResult } from '../../../main/db/types'
+import type { ConnectionInfo, ObjectKind, QueryResult, TxStatus } from '../../../main/db/types'
+import { t } from '../i18n'
 import type { ResultView } from '../../../main/db/sqlText'
 
 // Shared state of the two DB panels: the saved connections (owned by main, cached
@@ -13,6 +14,8 @@ export interface SqlTab {
   connId: string
   db?: string
   sql: string
+  /** Manual commit: runs share one connection and transaction until Commit/Rollback. */
+  manual?: boolean
 }
 
 export interface ObjectTab {
@@ -96,12 +99,18 @@ interface DbState {
   tabs: ConsoleTab[]
   active: string | null
   runs: Record<string, RunState>
+  /** Transaction state of manual-commit tabs, by tab id. */
+  tx: Record<string, TxStatus>
   /** A tab the console should run as soon as it shows it (explorer's "SELECT *"). */
   autoRun: string | null
   reload: () => Promise<void>
   openSql: (connId: string, db?: string, sql?: string, run?: boolean) => string
   openObject: (connId: string, db: string | undefined, schema: string, name: string, objKind: ObjectKind) => string
-  closeTab: (id: string) => void
+  /** False when the user kept the tab (it had an open transaction). */
+  closeTab: (id: string) => boolean
+  setTx: (id: string, tx: TxStatus) => void
+  /** Re-reads a tab's transaction state from main. */
+  syncTx: (id: string) => Promise<void>
   setActive: (id: string) => void
   patchTab: (id: string, patch: Partial<SqlTab>) => void
   setRun: (id: string, run: RunState | ((prev: RunState | undefined) => RunState)) => void
@@ -121,6 +130,7 @@ export const useDb = create<DbState>((set, get) => {
     tabs: initial.tabs,
     active: initial.active,
     runs: {},
+    tx: {},
     autoRun: null,
     reload: async () => {
       const connections = await window.api.db.list().catch(() => [] as ConnectionInfo[])
@@ -166,13 +176,27 @@ export const useDb = create<DbState>((set, get) => {
     closeTab: (id) => {
       const tabs = get().tabs
       const i = tabs.findIndex((t) => t.id === id)
-      if (i < 0) return
+      if (i < 0) return false
+      const tx = get().tx[id]
+      if ((tx === 'active' || tx === 'failed') && !window.confirm(t('db.tx.closeConfirm'))) return false
+      // Closing the session rolls back whatever it had open.
+      if (tabs[i].kind === 'sql') void window.api.db.session.close(id)
       const next = tabs.filter((t) => t.id !== id)
       const active = get().active === id ? (next[i] ?? next[i - 1])?.id ?? null : get().active
       const runs = { ...get().runs }
       delete runs[id]
-      set({ runs })
+      const txs = { ...get().tx }
+      delete txs[id]
+      set({ runs, tx: txs })
       commit(next, active)
+      return true
+    },
+    setTx: (id, tx) => {
+      if (get().tx[id] !== tx) set((s) => ({ tx: { ...s.tx, [id]: tx } }))
+    },
+    syncTx: async (id) => {
+      const tx = await window.api.db.session.status(id).catch(() => 'none' as const)
+      if (get().tabs.some((x) => x.id === id)) get().setTx(id, tx)
     },
     setActive: (id) => commit(get().tabs, id),
     patchTab: (id, patch) =>

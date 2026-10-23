@@ -1,6 +1,20 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
-import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail } from './meta'
-import { closeConnection, pgCancel, pgExecute, pgQuery, pgStream, pgTest } from './pg'
+import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget } from './meta'
+import type { EditStatement } from './edit'
+import {
+  closeConnection,
+  hasSession,
+  pgApply,
+  pgCancel,
+  pgExecute,
+  pgQuery,
+  pgSessionClose,
+  pgSessionEnd,
+  pgSessionQuery,
+  pgSessionStatus,
+  pgStream,
+  pgTest
+} from './pg'
 import { openExport, XLSX_MAX_ROWS } from './export'
 import type { ExportOptions } from './mask'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
@@ -219,7 +233,13 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:ddl', (_e, id: string, db: string | undefined, schema: string, name: string) => objectDdl(byId(id), db, schema, name))
   ipcMain.handle(
     'db:query',
-    (_e, id: string, db: string | undefined, sql: string, o: { limit?: number; queryId?: string; offset?: number }) => {
+    (
+      _e,
+      id: string,
+      db: string | undefined,
+      sql: string,
+      o: { limit?: number; queryId?: string; offset?: number; session?: string; aux?: boolean }
+    ) => {
       const cfg = byId(id)
       if (cfg.readOnly) {
         const bad = readOnlyViolation(sql, cfg.kind, false)
@@ -231,9 +251,25 @@ export function registerDbHandlers(): void {
         if (!paged) throw new Error('This query cannot be paged')
         sql = paged
       }
-      return pgQuery(cfg, db, sql, { limit: Math.min(Math.max(o?.limit ?? 1000, 1), 100_000), queryId: o?.queryId })
+      const limit = Math.min(Math.max(o?.limit ?? 1000, 1), 100_000)
+      // A manual-commit tab runs on its own connection. Paging and counts join
+      // it only while it exists (to see the open transaction's rows).
+      if (o?.session && (!o.aux || hasSession(o.session)))
+        return pgSessionQuery(cfg, db, o.session, sql, { limit, queryId: o.queryId, aux: o.aux })
+      return pgQuery(cfg, db, sql, { limit, queryId: o?.queryId })
     }
   )
+  ipcMain.handle('db:session-commit', (_e, session: string) => pgSessionEnd(session, 'commit'))
+  ipcMain.handle('db:session-rollback', (_e, session: string) => pgSessionEnd(session, 'rollback'))
+  ipcMain.handle('db:session-status', (_e, session: string) => pgSessionStatus(session))
+  ipcMain.handle('db:session-close', (_e, session: string) => pgSessionClose(session))
+  ipcMain.handle('db:editTarget', (_e, id: string, db: string | undefined, table: number) => editTarget(byId(id), db, table))
+  ipcMain.handle('db:apply', (_e, id: string, db: string | undefined, session: string | undefined, stmts: EditStatement[]) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    if (!Array.isArray(stmts) || !stmts.length) return []
+    return pgApply(cfg, db, session, stmts)
+  })
   ipcMain.handle('db:cancel', (_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)

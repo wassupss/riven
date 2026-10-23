@@ -122,6 +122,64 @@ describe.skipIf(!target)('postgres engine (live)', async () => {
     expect((await pg.pgQuery(cfg, undefined, 'select 1', { limit: 1 })).rows).toEqual([[1]])
   })
 
+  it('keeps a manual-commit session open until commit or rollback', async () => {
+    const cfg = store.getConnection(id)!
+    const count = async (): Promise<number> =>
+      Number((await pg.pgQuery(cfg, undefined, "select count(*)::int from riven_t.child where note = 'tx'", { limit: 1 })).rows[0][0])
+    await pg.pgSessionQuery(cfg, undefined, 's1', "insert into riven_t.child values (900, null, 'tx')", { limit: 10 })
+    expect(await pg.pgSessionStatus('s1')).toBe('active')
+    expect(await count()).toBe(0)
+    // A failing statement doesn't poison the transaction (statement savepoint).
+    await expect(pg.pgSessionQuery(cfg, undefined, 's1', 'select 1/0', { limit: 10 })).rejects.toThrow(/division/)
+    expect(await pg.pgSessionStatus('s1')).toBe('active')
+    // Switching database mid-transaction is refused.
+    await expect(pg.pgSessionQuery(cfg, 'template1', 's1', 'select 1', { limit: 1 })).rejects.toThrow(/Commit or roll back/)
+    expect(await pg.pgSessionEnd('s1', 'rollback')).toBe('idle')
+    expect(await count()).toBe(0)
+    await pg.pgSessionQuery(cfg, undefined, 's1', "insert into riven_t.child values (900, null, 'tx')", { limit: 10 })
+    expect(await pg.pgSessionEnd('s1', 'commit')).toBe('idle')
+    expect(await count()).toBe(1)
+    await pg.pgSessionClose('s1')
+    expect(await pg.pgSessionStatus('s1')).toBe('none')
+    await pg.pgExecute(cfg, undefined, ['delete from riven_t.child where id = 900'], 5000)
+  })
+
+  it('describes an edit target and applies row edits atomically', async () => {
+    const cfg = store.getConnection(id)!
+    const { editTarget } = await import('./meta')
+    const { buildEdits } = await import('./edit')
+    const res = await pg.pgQuery(cfg, undefined, 'select id, name, ok from riven_t.parent order by id', { limit: 3 })
+    const target = (await editTarget(cfg, undefined, res.columns[0].table!))!
+    expect(target).toMatchObject({ schema: 'riven_t', name: 'parent', editable: true })
+    const view = await pg.pgQuery(cfg, undefined, 'select * from riven_t.v_parent', { limit: 1 })
+    if (view.columns[0].table) expect((await editTarget(cfg, undefined, view.columns[0].table))?.editable).not.toBe(true)
+
+    const plan = buildEdits(target, res.columns, res.rows, { updates: { 0: { 1: 'edited' } }, deletes: [], inserts: [{ 1: 'fresh' }] })
+    const out = await pg.pgApply(cfg, undefined, undefined, plan.stmts)
+    expect(out[0]).toEqual([res.rows[0][0], 'edited', res.rows[0][2]])
+    expect(out[1]?.[1]).toBe('fresh')
+    expect(typeof out[1]?.[0]).toBe('number')
+
+    // A statement matching no row rolls back the whole batch.
+    const bad = buildEdits(target, res.columns, [res.rows[1], [-1, 'x', true]], {
+      updates: { 0: { 1: 'first' }, 1: { 1: 'nope' } },
+      deletes: [],
+      inserts: []
+    })
+    await expect(pg.pgApply(cfg, undefined, undefined, bad.stmts)).rejects.toThrow(/matched 0 rows/)
+    const after = await pg.pgQuery(cfg, undefined, `select name from riven_t.parent where id = ${res.rows[1][0]}`, { limit: 1 })
+    expect(after.rows[0][0]).toBe(res.rows[1][1])
+
+    // Inside a session the edits wait for commit.
+    const del = buildEdits(target, res.columns, res.rows, { updates: {}, deletes: [2], inserts: [] })
+    await pg.pgApply(cfg, undefined, 's2', del.stmts)
+    const gone = `select count(*)::int from riven_t.parent where id = ${res.rows[2][0]}`
+    expect((await pg.pgQuery(cfg, undefined, gone, { limit: 1 })).rows[0][0]).toBe(1)
+    await pg.pgSessionEnd('s2', 'rollback')
+    expect((await pg.pgQuery(cfg, undefined, gone, { limit: 1 })).rows[0][0]).toBe(1)
+    await pg.pgSessionClose('s2')
+  })
+
   it('honours a read-only data source', async () => {
     store.saveConnection({ ...store.getConnection(id)!, id: 'ro', name: 'ro pg', readOnly: true }, password)
     const r = await runDbTool('riven_db_execute', { connection: 'ro pg', statements: ['delete from riven_t.child'] }, async () => '실행')
