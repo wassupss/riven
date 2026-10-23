@@ -1,6 +1,6 @@
 import { pgRows } from './pg'
 import { literal, quoteIdent } from './sqlText'
-import type { ColumnInfo, ConnectionConfig, DbObject, ObjectKind, SchemaInfo, TableInfo } from './types'
+import type { ColumnDetail, ColumnInfo, ConnectionConfig, DbObject, ObjectKind, SchemaInfo, TableInfo } from './types'
 
 // PostgreSQL catalog queries.
 
@@ -158,6 +158,52 @@ export async function tableInfo(cfg: ConnectionConfig, db: string | undefined, s
 }
 
 /** CREATE statement for a relation or routine. */
+/** A result column traced back to its table (pg field tableID / columnID). */
+export async function columnDetail(cfg: ConnectionConfig, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> {
+  const [cols, cons, idx] = await Promise.all([
+    pgRows(
+      cfg,
+      db,
+      `select n.nspname::text, c.relname::text, a.attname::text, format_type(a.atttypid, a.atttypmod), not a.attnotnull,
+              pg_get_expr(d.adbin, d.adrelid), col_description(a.attrelid, a.attnum), a.attidentity::text
+       from pg_attribute a
+       join pg_class c on c.oid = a.attrelid
+       join pg_namespace n on n.oid = c.relnamespace
+       left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+       where a.attrelid = $1 and a.attnum = $2 and not a.attisdropped`,
+      [table, attnum]
+    ),
+    pgRows(
+      cfg,
+      db,
+      `select contype::text, conname::text, pg_get_constraintdef(oid) from pg_constraint
+       where conrelid = $1 and $2::int2 = any(conkey) order by contype, conname`,
+      [table, attnum]
+    ),
+    pgRows(
+      cfg,
+      db,
+      `select i.relname::text from pg_index ix join pg_class i on i.oid = ix.indexrelid
+       where ix.indrelid = $1 and $2::int2 = any(ix.indkey::int2[]) and not ix.indisprimary order by i.relname`,
+      [table, attnum]
+    )
+  ])
+  const r = cols[0]
+  if (!r) return null
+  const ident = str(r[7])
+  return {
+    table: `${str(r[0])}.${str(r[1])}`,
+    column: str(r[2]),
+    type: str(r[3]),
+    nullable: r[4] === true,
+    default: strOrNull(r[5]),
+    comment: strOrNull(r[6]),
+    identity: ident === 'a' ? 'always' : ident === 'd' ? 'by default' : null,
+    constraints: cons.map((c) => ({ type: str(c[0]) as ColumnDetail['constraints'][number]['type'], name: str(c[1]), def: str(c[2]) })),
+    indexes: idx.map((i) => str(i[0]))
+  }
+}
+
 export async function objectDdl(cfg: ConnectionConfig, db: string | undefined, schema: string, name: string): Promise<string> {
   const full = `${qi(schema)}.${qi(name)}`
   const kind = await relKind(cfg, db, schema, name)

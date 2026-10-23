@@ -6,6 +6,10 @@ export interface MenuItem {
   onClick: () => void
   danger?: boolean
   separator?: boolean
+  /** A read-only line (details shown in the menu): dim, not clickable. */
+  info?: boolean
+  /** Second column, right-aligned (info rows). */
+  detail?: string
 }
 
 export default function ContextMenu({
@@ -51,6 +55,11 @@ export default function ContextMenu({
       {items.map((it, i) =>
         it.separator ? (
           <div key={i} className="context-sep" />
+        ) : it.info ? (
+          <div key={i} className="context-info" title={it.detail ? `${it.label} ${it.detail}` : it.label}>
+            <span>{it.label}</span>
+            {it.detail && <span className="context-info-detail">{it.detail}</span>}
+          </div>
         ) : (
           <div
             key={i}

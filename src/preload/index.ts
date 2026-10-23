@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron'
 import type {
+  ColumnDetail,
   ConnectionConfig,
   ConnectionInfo,
   DbObject,
@@ -7,6 +8,7 @@ import type {
   SchemaInfo,
   TableInfo
 } from '../main/db/types'
+import type { ExportOptions } from '../main/db/mask'
 
 export interface DirEntry {
   name: string
@@ -550,7 +552,28 @@ const api = {
       sql: string,
       o: { limit?: number; queryId?: string; offset?: number }
     ): Promise<QueryResult> => ipcRenderer.invoke('db:query', id, db, sql, o),
-    cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId)
+    cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
+    column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
+      ipcRenderer.invoke('db:column', id, db, table, attnum),
+    /** Asks for a file, then writes it. null when the save dialog is cancelled. */
+    export: (
+      id: string,
+      db: string | undefined,
+      req: {
+        options: ExportOptions
+        name: string
+        rows?: Array<Array<string | number | boolean | null>>
+        sql?: string
+        offset?: number
+        max?: number
+        queryId?: string
+      }
+    ): Promise<{ path: string; rows: number } | null> => ipcRenderer.invoke('db:export', id, db, req),
+    onExportProgress: (cb: (queryId: string, rows: number) => void): (() => void) => {
+      const listener = (_e: unknown, queryId: string, rows: number): void => cb(queryId, rows)
+      ipcRenderer.on('db:export-progress', listener)
+      return () => ipcRenderer.removeListener('db:export-progress', listener)
+    }
   },
   // Scratch markdown notes (Notes panel + note_* MCP tools).
   notes: {

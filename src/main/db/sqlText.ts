@@ -287,9 +287,60 @@ export function pagedQuery(sql: string, kind: DbKind, offset: number): string | 
   const words = sc.toks.filter((t) => t.word).map((t) => t.text)
   if (!['select', 'with', 'values', 'table'].includes(words[0] ?? '')) return null
   if (words.some((w) => NOT_PAGEABLE.has(w) || SIDE_EFFECT_FUNCS.has(w))) return null
-  const body = sql.trim().replace(/;\s*$/, '')
   // Newlines, so a trailing `-- comment` can't swallow the closing paren.
-  return `select * from (\n${body}\n) as riven_page offset ${Math.max(0, Math.floor(offset))}`
+  return `select * from (\n${body(sql)}\n) as riven_page offset ${Math.max(0, Math.floor(offset))}`
+}
+
+/** A column filter of a result view (the column by name; values as text). */
+export interface ViewFilter {
+  col: string
+  op: 'eq' | 'ne' | 'null' | 'notnull' | 'like'
+  value?: string | null
+}
+
+/** Filters and sort applied on the server on top of a result's query. */
+export interface ResultView {
+  filters: ViewFilter[]
+  /** Result column index. */
+  sort?: { col: number; desc: boolean }
+}
+
+const body = (sql: string): string => sql.trim().replace(/;\s*$/, '')
+
+// Postgres only, like pagedQuery (which gates every view).
+const FILTER_SQL: Record<ViewFilter['op'], (col: string, v: string) => string> = {
+  eq: (c, v) => `${c} = ${v}`,
+  ne: (c, v) => `${c} is distinct from ${v}`,
+  null: (c) => `${c} is null`,
+  notnull: (c) => `${c} is not null`,
+  like: (c, v) => `${c}::text ilike ${v}`
+}
+
+/**
+ * The query re-read through a result view (column filters, then a sort), or
+ * null when it can't be wrapped. Same rules as pagedQuery, since the view is
+ * re-run and paged in turn. Values go in as untyped literals, so the server
+ * reads them as the column's type. Sorting is by position: result columns
+ * can share a name.
+ */
+export function viewQuery(sql: string, kind: DbKind, view: ResultView): string | null {
+  if (pagedQuery(sql, kind, 0) === null) return null
+  if (!view.filters.length && !view.sort) return body(sql)
+  const where = view.filters.map((f) => {
+    const v = f.op === 'like' ? literal(kind, `%${(f.value ?? '').replace(/[\\%_]/g, '\\$&')}%`) : literal(kind, f.value ?? null)
+    return FILTER_SQL[f.op](quoteIdent(kind, f.col), v)
+  })
+  return (
+    `select * from (\n${body(sql)}\n) as riven_view` +
+    (where.length ? ` where ${where.join(' and ')}` : '') +
+    (view.sort ? ` order by ${view.sort.col + 1} ${view.sort.desc ? 'desc' : 'asc'}` : '')
+  )
+}
+
+/** count(*) of a pageable query, or null. */
+export function countQuery(sql: string, kind: DbKind): string | null {
+  if (pagedQuery(sql, kind, 0) === null) return null
+  return `select count(*) from (\n${body(sql)}\n) as riven_count`
 }
 
 // ---- identifiers ------------------------------------------------------------

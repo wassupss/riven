@@ -186,7 +186,8 @@ export async function pgQuery(cfg: ConnectionConfig, database: string | undefine
     await columnTypes(e, client, res.fields.map((f) => f.dataTypeID))
     const columns: QueryColumn[] = res.fields.map((f) => ({
       name: f.name,
-      type: TYPE_NAMES[f.dataTypeID] ?? e.typeNames.get(f.dataTypeID) ?? ''
+      type: TYPE_NAMES[f.dataTypeID] ?? e.typeNames.get(f.dataTypeID) ?? '',
+      ...(f.tableID ? { table: f.tableID, attnum: f.columnID } : {})
     }))
     const truncated = res.rows.length > o.limit
     return {
@@ -208,6 +209,47 @@ export async function pgQuery(cfg: ConnectionConfig, database: string | undefine
       client.release()
     } catch {
       // Connection is unusable: drop it from the pool instead of reusing it.
+      client.release(true)
+    }
+  }
+}
+
+/**
+ * Stream a read through a cursor in batches (for export): at most `max` rows,
+ * never all in memory. Runs in a read-only transaction; cancellable by queryId.
+ */
+export async function pgStream(
+  cfg: ConnectionConfig,
+  database: string | undefined,
+  sql: string,
+  o: { queryId?: string; max: number; batch?: number },
+  onRows: (rows: Cell[][]) => Promise<void> | void
+): Promise<number> {
+  const { key, e } = entry(cfg, database)
+  const client = await e.pool.connect()
+  const pid = (client as unknown as { processID: number }).processID
+  if (o.queryId) running.set(o.queryId, { connKey: key, pid })
+  let n = 0
+  try {
+    await client.query('begin read only')
+    const cursor = client.query(new Cursor(sql, [], { rowMode: 'array', types: TYPES }))
+    try {
+      while (n < o.max) {
+        const { rows } = await readCursor(cursor, Math.min(o.batch ?? 2000, o.max - n))
+        if (!rows.length) break
+        n += rows.length
+        await onRows(rows)
+      }
+    } finally {
+      await cursor.close().catch(() => {})
+    }
+    return n
+  } finally {
+    if (o.queryId) running.delete(o.queryId)
+    try {
+      await client.query('rollback')
+      client.release()
+    } catch {
       client.release(true)
     }
   }

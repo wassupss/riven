@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { QueryColumn } from '../../../../../main/db/types'
+import { ChevronDown, ChevronUp } from 'lucide-react'
+import type { ColumnDetail, QueryColumn } from '../../../../../main/db/types'
+import type { ViewFilter } from '../../../../../main/db/sqlText'
 import { useT } from '../../../i18n'
+import ContextMenu, { type MenuItem } from '../../../components/ContextMenu'
 import { typeTone, type Tone } from './tone'
 
 type Cell = string | number | boolean | null
@@ -42,19 +45,39 @@ function initialWidths(columns: QueryColumn[], rows: Cell[][]): number[] {
   })
 }
 
+type Sort = { col: number; desc: boolean }
+type Menu = { x: number; y: number; col: number; row?: number }
+
 // A read-only, row-virtualized result table: only the rows in view are in the
 // DOM, so a 100k-row result scrolls like a 10-row one. `onMore` is passed while
 // the source has more rows; it fires once the view nears the bottom.
+// Sorting and filtering are the owner's (it re-queries); the grid only asks.
 export default function ResultGrid({
   columns,
   rows,
   onMore,
-  loadingMore
+  loadingMore,
+  sort,
+  onSort,
+  onFilter,
+  onAskFilter,
+  columnInfo,
+  epoch
 }: {
   columns: QueryColumn[]
   rows: Cell[][]
   onMore?: () => void
   loadingMore?: boolean
+  sort?: Sort
+  /** null clears the sort. */
+  onSort?: (s: Sort | null) => void
+  onFilter?: (f: ViewFilter) => void
+  /** Ask for a value to filter the column by (contains / equals). */
+  onAskFilter?: (col: number, op: 'like' | 'eq') => void
+  /** Source-table detail of a column, for the header menu. */
+  columnInfo?: (c: QueryColumn) => Promise<ColumnDetail | null>
+  /** Bumped when the rows were replaced under the same columns (a re-sort). */
+  epoch?: number
 }): JSX.Element {
   const t = useT()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -63,16 +86,26 @@ export default function ResultGrid({
   const [widths, setWidths] = useState(() => initialWidths(columns, rows))
   const [sel, setSel] = useState<{ r: number; c: number } | null>(null)
   const [viewer, setViewer] = useState<string | null>(null)
+  const [menu, setMenu] = useState<Menu | null>(null)
+  // Column detail per column index: undefined not asked, 'loading', null none.
+  const [details, setDetails] = useState<Record<number, ColumnDetail | null | 'loading' | 'error'>>({})
+  // Set while a column is being resized, so the release doesn't count as a click (sort).
+  const resizing = useRef(false)
+  const closeMenu = useCallback(() => setMenu(null), [])
 
   // A new result always brings new columns; appended pages keep them, so
   // scroll position, selection and widths survive a load-more.
   useEffect(() => {
     setWidths(initialWidths(columns, rows))
-    setSel(null)
-    setTop(0)
-    if (scrollRef.current) scrollRef.current.scrollTop = 0
+    setDetails({})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [columns])
+  useEffect(() => {
+    setSel(null)
+    setTop(0)
+    setMenu(null)
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [columns, epoch])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -99,6 +132,7 @@ export default function ResultGrid({
   const startResize = (i: number, e: React.MouseEvent): void => {
     e.preventDefault()
     e.stopPropagation()
+    resizing.current = true
     const x0 = e.clientX
     const w0 = widths[i]
     const move = (ev: MouseEvent): void =>
@@ -106,9 +140,100 @@ export default function ResultGrid({
     const up = (): void => {
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
+      setTimeout(() => (resizing.current = false))
     }
     window.addEventListener('mousemove', move)
     window.addEventListener('mouseup', up)
+  }
+
+  // Header click cycles the sort: ascending, descending, off.
+  const clickHead = (i: number): void => {
+    if (!onSort || resizing.current) return
+    if (sort?.col !== i) onSort({ col: i, desc: false })
+    else if (!sort.desc) onSort({ col: i, desc: true })
+    else onSort(null)
+  }
+
+  const openMenu = (e: React.MouseEvent, col: number, row?: number): void => {
+    e.preventDefault()
+    // Keep the window listener from closing the menu this same event opens.
+    e.stopPropagation()
+    if (row !== undefined) setSel({ r: row, c: col })
+    setMenu({ x: e.clientX, y: e.clientY, col, row })
+    const c = columns[col]
+    if (row === undefined && columnInfo && c.table && c.attnum && details[col] === undefined) {
+      setDetails((d) => ({ ...d, [col]: 'loading' }))
+      columnInfo(c)
+        .then((info) => setDetails((d) => ({ ...d, [col]: info })))
+        .catch(() => setDetails((d) => ({ ...d, [col]: 'error' })))
+    }
+  }
+
+  const menuItems = (m: Menu): MenuItem[] => {
+    const c = columns[m.col]
+    const items: MenuItem[] = []
+    const info = (label: string, detail?: string): void => {
+      items.push({ label, detail, info: true, onClick: () => {} })
+    }
+    const sep = (): void => {
+      if (items.length && !items[items.length - 1].separator) items.push({ label: '', separator: true, onClick: () => {} })
+    }
+    const copy = (s: string): void => void navigator.clipboard.writeText(s)
+    if (m.row !== undefined) {
+      const v = rows[m.row]?.[m.col] ?? null
+      if (onFilter) {
+        if (v === null) {
+          items.push({ label: t('db.flt.isNull'), onClick: () => onFilter({ col: c.name, op: 'null' }) })
+          items.push({ label: t('db.flt.notNull'), onClick: () => onFilter({ col: c.name, op: 'notnull' }) })
+        } else {
+          const short = cellText(v).slice(0, 40)
+          items.push({ label: t('db.flt.eqValue', { v: short }), onClick: () => onFilter({ col: c.name, op: 'eq', value: show(v) }) })
+          items.push({ label: t('db.flt.neValue', { v: short }), onClick: () => onFilter({ col: c.name, op: 'ne', value: show(v) }) })
+        }
+        sep()
+      }
+      items.push({ label: t('db.copyValue'), onClick: () => copy(show(v)) })
+      items.push({ label: t('db.cellValue'), onClick: () => setViewer(show(v)) })
+      return items
+    }
+    // Column header: what the column is, then sort / filter.
+    const d = details[m.col]
+    info(t('db.ci.type'), d && typeof d === 'object' ? d.type : c.type || '?')
+    if (d === 'loading') info(t('db.loading'))
+    else if (d === 'error') info(t('db.ci.failed'))
+    else if (d) {
+      const pk = d.constraints.find((x) => x.type === 'p')
+      if (pk) info('PRIMARY KEY', pk.name)
+      info(d.nullable ? 'NULL' : 'NOT NULL')
+      if (d.identity) info('IDENTITY', d.identity)
+      if (d.default !== null) info('DEFAULT', d.default)
+      for (const x of d.constraints) {
+        if (x.type === 'u') info('UNIQUE', x.name)
+        else if (x.type === 'f') info('FOREIGN KEY', x.def.replace(/^FOREIGN KEY \([^)]*\)\s*/i, ''))
+        else if (x.type === 'c') info('CHECK', x.def.replace(/^CHECK\s*/i, ''))
+      }
+      if (d.indexes.length) info(t('db.ci.index'), d.indexes.join(', '))
+      info(t('db.ci.table'), d.column === c.name ? d.table : `${d.table}.${d.column}`)
+      if (d.comment) info(t('db.ci.comment'), d.comment)
+    } else info(t('db.ci.computed'))
+    if (onSort) {
+      sep()
+      items.push({ label: t('db.sortAsc'), onClick: () => onSort({ col: m.col, desc: false }) })
+      items.push({ label: t('db.sortDesc'), onClick: () => onSort({ col: m.col, desc: true }) })
+      if (sort) items.push({ label: t('db.sortClear'), onClick: () => onSort(null) })
+    }
+    if (onFilter) {
+      sep()
+      if (onAskFilter) {
+        items.push({ label: t('db.flt.contains'), onClick: () => onAskFilter(m.col, 'like') })
+        items.push({ label: t('db.flt.equals'), onClick: () => onAskFilter(m.col, 'eq') })
+      }
+      items.push({ label: t('db.flt.isNull'), onClick: () => onFilter({ col: c.name, op: 'null' }) })
+      items.push({ label: t('db.flt.notNull'), onClick: () => onFilter({ col: c.name, op: 'notnull' }) })
+    }
+    sep()
+    items.push({ label: t('db.copyName'), onClick: () => copy(c.name) })
+    return items
   }
 
   const onKey = useCallback(
@@ -149,10 +274,19 @@ export default function ResultGrid({
           <div className="dbx-grid-head" style={{ gridTemplateColumns: template, height: HEAD_H }}>
             <div className="dbx-grid-num">#</div>
             {columns.map((c, i) => (
-              <div key={i} className={`dbx-grid-th tone-${tones[i]}`} title={`${c.name} ${c.type}`}>
-                <span className="dbx-grid-th-name">{c.name}</span>
+              <div
+                key={i}
+                className={`dbx-grid-th tone-${tones[i]}${onSort ? ' sortable' : ''}${sort?.col === i ? ' sorted' : ''}`}
+                title={`${c.name} ${c.type}`}
+                onClick={() => clickHead(i)}
+                onContextMenu={(e) => openMenu(e, i)}
+              >
+                <span className="dbx-grid-th-name">
+                  {sort?.col === i && (sort.desc ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
+                  {c.name}
+                </span>
                 {c.type && <span className="dbx-grid-th-type">{c.type}</span>}
-                <span className="dbx-grid-resize" onMouseDown={(e) => startResize(i, e)} />
+                <span className="dbx-grid-resize" onMouseDown={(e) => startResize(i, e)} onClick={(e) => e.stopPropagation()} />
               </div>
             ))}
           </div>
@@ -176,6 +310,7 @@ export default function ResultGrid({
                       }${typeof v === 'boolean' ? (v ? ' yes' : ' no') : ''}${sel?.r === r && sel.c === c ? ' sel' : ''}`}
                       onClick={() => setSel({ r, c })}
                       onDoubleClick={() => setViewer(show(v))}
+                      onContextMenu={(e) => openMenu(e, c, r)}
                     >
                       {cellText(v)}
                     </div>
@@ -192,6 +327,7 @@ export default function ResultGrid({
         </div>
         {rows.length === 0 && <div className="dbx-empty">{t('db.noRows')}</div>}
       </div>
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={closeMenu} />}
       {viewer !== null && (
         <div className="dbx-viewer">
           <div className="dbx-viewer-bar">

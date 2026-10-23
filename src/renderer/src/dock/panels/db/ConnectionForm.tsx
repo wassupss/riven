@@ -212,7 +212,7 @@ export default function ConnectionForm({
   )
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }): JSX.Element {
+export function Row({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }): JSX.Element {
   return (
     <div className="dbx-form-row">
       <div className="dbx-form-label">

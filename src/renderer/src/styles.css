@@ -6878,6 +6878,26 @@ select {
   color: var(--danger, #f85149);
   font-weight: 600;
 }
+.context-info {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 3px 10px;
+  max-width: 360px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  cursor: default;
+}
+.context-info > span:first-child {
+  flex-shrink: 0;
+}
+.context-info-detail {
+  color: var(--fg);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .context-sep {
   height: 1px;
   background: var(--hairline);

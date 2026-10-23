@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { literal, pagedQuery, quoteIdent, readOnlyViolation, splitStatements, statements, unsafeStatement } from './sqlText'
+import { countQuery, literal, pagedQuery, viewQuery, quoteIdent, readOnlyViolation, splitStatements, statements, unsafeStatement } from './sqlText'
 
 describe('splitStatements', () => {
   it('splits and quotes', () => {
@@ -104,5 +104,31 @@ describe('pagedQuery', () => {
     ])
       expect(pagedQuery(q, 'postgres', 10)).toBeNull()
     expect(pagedQuery('select 1', 'mysql', 10)).toBeNull()
+  })
+})
+
+describe('viewQuery', () => {
+  it('wraps with filters and sort', () => {
+    expect(viewQuery('select * from t;', 'postgres', { filters: [] })).toBe('select * from t')
+    expect(
+      viewQuery('select * from t', 'postgres', {
+        filters: [
+          { col: 'Name', op: 'eq', value: "o'k" },
+          { col: 'note', op: 'like', value: '50%_off' },
+          { col: 'x', op: 'null' }
+        ],
+        sort: { col: 2, desc: true }
+      })
+    ).toBe(
+      'select * from (\nselect * from t\n) as riven_view where "Name" = \'o\'\'k\' and note::text ilike \'%50\\%\\_off%\' and x is null order by 3 desc'
+    )
+    expect(viewQuery('delete from t', 'postgres', { filters: [], sort: { col: 0, desc: false } })).toBeNull()
+  })
+
+  it('stays pageable and countable', () => {
+    const v = viewQuery('select 1 as a', 'postgres', { filters: [{ col: 'a', op: 'ne', value: '2' }] })!
+    expect(pagedQuery(v, 'postgres', 10)).not.toBeNull()
+    expect(countQuery(v, 'postgres')).toMatch(/^select count\(\*\) from \(\n/)
+    expect(countQuery('show all', 'postgres')).toBeNull()
   })
 })

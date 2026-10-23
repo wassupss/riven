@@ -31,6 +31,22 @@ export interface ConnectionInfo extends ConnectionConfig {
 export interface QueryColumn {
   name: string
   type: string
+  /** Source table oid and column number when the column is a plain table column. */
+  table?: number
+  attnum?: number
+}
+
+/** What a result column is in its source table (for the grid's header menu). */
+export interface ColumnDetail {
+  table: string
+  column: string
+  type: string
+  nullable: boolean
+  default: string | null
+  comment: string | null
+  identity: string | null
+  constraints: Array<{ type: 'p' | 'f' | 'u' | 'c' | 'x'; name: string; def: string }>
+  indexes: string[]
 }
 
 export interface QueryResult {

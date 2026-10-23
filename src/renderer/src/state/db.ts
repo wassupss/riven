@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { ConnectionInfo, ObjectKind, QueryResult } from '../../../main/db/types'
+import type { ResultView } from '../../../main/db/sqlText'
 
 // Shared state of the two DB panels: the saved connections (owned by main, cached
 // here) and the SQL console's tabs. The explorer opens tabs; the console shows
@@ -35,6 +36,14 @@ export interface RunResult {
   loadingMore?: boolean
   /** The last page fetch failed; scrolling stops until a retry. */
   moreError?: string
+  /** Sort/filter applied on top of `sql` (re-run server-side, still paged). */
+  view?: ResultView
+  /** The view is being re-queried. */
+  viewLoading?: boolean
+  viewError?: string
+  /** Rows the (viewed) query returns in all: undefined not counted yet, null gave up. */
+  total?: number | null
+  counting?: boolean
 }
 
 export interface RunState {

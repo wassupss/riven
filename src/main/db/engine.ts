@@ -1,6 +1,8 @@
-import { ipcMain } from 'electron'
-import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema } from './meta'
-import { closeConnection, pgCancel, pgExecute, pgQuery, pgTest } from './pg'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail } from './meta'
+import { closeConnection, pgCancel, pgExecute, pgQuery, pgStream, pgTest } from './pg'
+import { openExport, XLSX_MAX_ROWS } from './export'
+import type { ExportOptions } from './mask'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
 import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
 import type { ConnectionConfig, QueryResult } from './types'
@@ -233,4 +235,80 @@ export function registerDbHandlers(): void {
     }
   )
   ipcMain.handle('db:cancel', (_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
+  ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
+    columnDetail(byId(id), db, table, attnum)
+  )
+  ipcMain.handle('db:export', async (e, id: string, db: string | undefined, req: ExportRequest) => {
+    const cfg = byId(id)
+    const o = req.options
+    if (!o.columns.length) throw new Error('No columns selected')
+    // Rows from the database are re-read through the paging wrapper: plain reads only.
+    let sql: string | null = null
+    if (req.sql !== undefined) {
+      if (cfg.readOnly) {
+        const bad = readOnlyViolation(req.sql, cfg.kind, false)
+        if (bad) throw new Error(bad)
+      }
+      sql = pagedQuery(req.sql, cfg.kind, Math.max(0, Math.floor(req.offset ?? 0)))
+      if (!sql) throw new Error('This query cannot be exported in full; export the loaded rows instead')
+    }
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const ext = o.format
+    const pick = await (win ? dialog.showSaveDialog(win, saveOpts(req.name, ext)) : dialog.showSaveDialog(saveOpts(req.name, ext)))
+    if (pick.canceled || !pick.filePath) return null
+    const path = pick.filePath
+    const w = await openExport(path, o)
+    const cap = o.format === 'xlsx' ? XLSX_MAX_ROWS : Number.MAX_SAFE_INTEGER
+    let n = 0
+    const progress = (): void => {
+      if (req.queryId && !e.sender.isDestroyed()) e.sender.send('db:export-progress', req.queryId, n)
+    }
+    try {
+      if (sql) {
+        await pgStream(cfg, db, sql, { queryId: req.queryId, max: Math.min(req.max ?? cap, cap) }, async (rows) => {
+          await w.rows(rows)
+          n += rows.length
+          progress()
+        })
+      } else {
+        const rows = req.rows ?? []
+        for (let i = 0; i < rows.length; i += 2000) {
+          await w.rows(rows.slice(i, i + 2000))
+          n = Math.min(i + 2000, rows.length)
+        }
+      }
+      return { path, rows: await w.close() }
+    } catch (err) {
+      await w.abort()
+      throw err
+    }
+  })
+}
+
+interface ExportRequest {
+  options: ExportOptions
+  /** Suggested file name, without extension. */
+  name: string
+  /** Rows the grid holds (export of the loaded rows). */
+  rows?: Array<Array<string | number | boolean | null>>
+  /** Or re-read from the database: this query, from `offset`, at most `max` rows. */
+  sql?: string
+  offset?: number
+  max?: number
+  /** Cancel handle (db:cancel) and progress events. */
+  queryId?: string
+}
+
+const FILTERS: Record<string, { name: string; extensions: string[] }> = {
+  xlsx: { name: 'Excel', extensions: ['xlsx'] },
+  csv: { name: 'CSV', extensions: ['csv'] },
+  tsv: { name: 'TSV', extensions: ['tsv'] },
+  json: { name: 'JSON', extensions: ['json'] },
+  sql: { name: 'SQL', extensions: ['sql'] }
+}
+
+function saveOpts(name: string, ext: string): Electron.SaveDialogOptions {
+  // eslint-disable-next-line no-control-regex
+  const safe = (name || 'result').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 120)
+  return { defaultPath: `${safe}.${ext}`, filters: [FILTERS[ext]] }
 }

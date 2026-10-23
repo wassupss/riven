@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { Database, FileCode2, Lock, Play, Plus, Square, Table2, X } from 'lucide-react'
 import '../../styles/db-panel.css'
-import type { DbKind } from '../../../../main/db/types'
-import { pagedQuery, splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
+import type { DbKind, QueryResult } from '../../../../main/db/types'
+import { splitStatements, statements, unsafeStatement } from '../../../../main/db/sqlText'
 import { editorTheme } from '../../editor/highlight'
 import { useT } from '../../i18n'
 import { dbUid, useDb, type RunResult, type RunState, type SqlTab } from '../../state/db'
 import { Button, Select } from '../../components/ui/Controls'
-import ResultGrid, { toDelimited } from './db/ResultGrid'
+import ResultPane from './db/ResultPane'
 import ObjectView from './db/ObjectView'
 import { errText } from './db/ConnectionForm'
 
@@ -22,8 +22,6 @@ import { errText } from './db/ConnectionForm'
 const LIMITS = [100, 500, 1000, 5000, 10000]
 const LS_LIMIT = 'db.console.limit'
 const LS_SPLIT = 'db.console.split'
-// Scrolling keeps paging in rows up to this many; past it, narrow the query.
-const MAX_ROWS = 100_000
 
 /** The statement under (or just before) the cursor. */
 function statementAt(text: string, offset: number, kind: DbKind): string[] {
@@ -269,38 +267,6 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
     setRun(tab.id, { running: false, queryId, results: [...results], shown })
   }, [setRun, t])
 
-  // Next page of the shown result: the same statement re-run with an OFFSET past
-  // the rows already here. Stateless on purpose (a held cursor keeps a
-  // transaction open). The update is dropped if a new run replaced the result.
-  const loadMore = useCallback(async (): Promise<void> => {
-    const { tab, conn, limit } = live.current
-    if (!tab || !conn) return
-    const cur = useDb.getState().runs[tab.id]
-    const i = cur?.shown ?? -1
-    const target = cur?.results[i]
-    const res = target?.result
-    if (!cur || cur.running || !target || !res?.truncated || target.loadingMore || res.rows.length >= MAX_ROWS) return
-    const runId = cur.queryId
-    const patch = (fn: (r: RunResult) => RunResult): void =>
-      setRun(tab.id, (prev) => {
-        if (!prev || prev.queryId !== runId || prev.results[i]?.sql !== target.sql) return prev as RunState
-        const results = [...prev.results]
-        results[i] = fn(results[i])
-        return { ...prev, results }
-      })
-    patch((r) => ({ ...r, loadingMore: true, moreError: undefined }))
-    try {
-      const page = await window.api.db.query(conn.id, tab.db, target.sql, { limit, offset: res.rows.length })
-      patch((r) =>
-        r.result
-          ? { ...r, loadingMore: false, result: { ...r.result, rows: r.result.rows.concat(page.rows), truncated: page.truncated } }
-          : r
-      )
-    } catch (e) {
-      patch((r) => ({ ...r, loadingMore: false, moreError: errText(e) }))
-    }
-  }, [setRun])
-
   const runRef = useRef(run)
   runRef.current = run
 
@@ -333,8 +299,23 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
   }
 
   const shown = runState?.results[runState.shown]
-  const pageable = useMemo(() => !!shown && !!conn && pagedQuery(shown.sql, conn.kind, 1) !== null, [shown?.sql, conn?.kind]) // eslint-disable-line react-hooks/exhaustive-deps
-  const canMore = !!shown?.result?.truncated && pageable && shown.result.rows.length < MAX_ROWS
+  const runId = runState?.queryId
+  const shownIdx = runState?.shown ?? -1
+  // Updates to the shown result (paging, sort, filter, count), dropped once a
+  // new run or another result replaces it.
+  const patchShown = useMemo(() => {
+    const id = tab?.id
+    const sql = shown?.sql
+    return (fn: (r: RunResult) => RunResult): void => {
+      if (!id) return
+      setRun(id, (prev) => {
+        if (!prev || prev.queryId !== runId || prev.results[shownIdx]?.sql !== sql) return prev as RunState
+        const results = [...prev.results]
+        results[shownIdx] = fn(results[shownIdx])
+        return { ...prev, results }
+      })
+    }
+  }, [tab?.id, runId, shownIdx, shown?.sql, setRun])
   const dbList = conn ? dbs[conn.id] ?? [] : []
   const curDb = tab?.db ?? conn?.database ?? ''
 
@@ -411,79 +392,50 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
             ))}
           </div>
         )}
-        <div className="dbx-result-body">
-          {!runState ? (
-            <div className="dbx-empty">{t('db.runHint')}</div>
-          ) : !shown ? (
-            <div className="dbx-empty">{t('db.running')}</div>
-          ) : shown.error ? (
-            <div className="dbx-error">
-              <pre>{shown.error}</pre>
-              <pre className="dbx-error-sql">{shown.sql}</pre>
-            </div>
-          ) : shown.result && shown.result.columns.length ? (
-            <ResultGrid
-              columns={shown.result.columns}
-              rows={shown.result.rows}
-              onMore={canMore && !shown.moreError ? () => void loadMore() : undefined}
-              loadingMore={shown.loadingMore}
-            />
-          ) : (
-            <div className="dbx-empty">
-              {shown.result?.command} {shown.result?.rowCount ?? ''}
-            </div>
-          )}
-        </div>
-        <div className="dbx-status">
-          {runState?.running && <span className="dbx-spin">{t('db.running')}</span>}
-          {shown?.result && (
-            <>
-              {shown.result.columns.length > 0 ? (
-                <span className="dbx-count">
-                  {t('db.rowsN', { n: shown.result.rows.length.toLocaleString() })}
-                  {shown.moreError ? (
-                    <span className="dbx-warn">
-                      {' '}
-                      {t('db.moreFailed')}{' '}
-                      <button className="dbx-link" title={shown.moreError} onClick={() => void loadMore()}>
-                        {t('db.retry')}
-                      </button>
-                    </span>
-                  ) : canMore ? (
-                    <span className="dbx-meta"> {t('db.scrollForMore')}</span>
-                  ) : (
-                    shown.result.truncated && (
-                      <span className="dbx-warn"> {t('db.truncated', { n: shown.result.rows.length.toLocaleString() })}</span>
-                    )
-                  )}
-                </span>
+        {shown?.result && shown.result.columns.length > 0 && conn && tab ? (
+          <ResultPane
+            key={`${runId}:${shownIdx}`}
+            connId={conn.id}
+            db={tab.db}
+            kind={conn.kind}
+            limit={limit}
+            entry={shown as RunResult & { result: QueryResult }}
+            patch={patchShown}
+            name={tab.title}
+            lead={runState?.running && <span className="dbx-spin">{t('db.running')}</span>}
+          />
+        ) : (
+          <>
+            <div className="dbx-result-body">
+              {!runState ? (
+                <div className="dbx-empty">{t('db.runHint')}</div>
+              ) : !shown ? (
+                <div className="dbx-empty">{t('db.running')}</div>
+              ) : shown.error ? (
+                <div className="dbx-error">
+                  <pre>{shown.error}</pre>
+                  <pre className="dbx-error-sql">{shown.sql}</pre>
+                </div>
               ) : (
-                <span>
-                  {shown.result.command}
-                  {shown.result.rowCount != null && ` ${shown.result.rowCount}`}
-                </span>
+                <div className="dbx-empty">
+                  {shown.result?.command} {shown.result?.rowCount ?? ''}
+                </div>
               )}
-              <span className="dbx-meta dbx-ms">{shown.result.timeMs} ms</span>
-              <span className="dbx-spacer" />
-              {shown.result.columns.length > 0 && (
+            </div>
+            <div className="dbx-status">
+              {runState?.running && <span className="dbx-spin">{t('db.running')}</span>}
+              {shown?.result && (
                 <>
-                  <button
-                    className="dbx-link"
-                    onClick={() => void navigator.clipboard.writeText(toDelimited(shown.result!.columns, shown.result!.rows, ','))}
-                  >
-                    {t('db.copyCsv')}
-                  </button>
-                  <button
-                    className="dbx-link"
-                    onClick={() => void navigator.clipboard.writeText(toDelimited(shown.result!.columns, shown.result!.rows, '\t'))}
-                  >
-                    {t('db.copyTsv')}
-                  </button>
+                  <span>
+                    {shown.result.command}
+                    {shown.result.rowCount != null && ` ${shown.result.rowCount}`}
+                  </span>
+                  <span className="dbx-meta dbx-ms">{shown.result.timeMs} ms</span>
                 </>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )

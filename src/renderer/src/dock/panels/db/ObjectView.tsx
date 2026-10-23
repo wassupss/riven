@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
 import { KeyRound } from 'lucide-react'
 import type { QueryResult, TableInfo } from '../../../../../main/db/types'
-import { pagedQuery, quoteIdent } from '../../../../../main/db/sqlText'
+import { quoteIdent } from '../../../../../main/db/sqlText'
 import { editorTheme } from '../../../editor/highlight'
 import { useT } from '../../../i18n'
-import { useDb, type ObjectTab } from '../../../state/db'
+import { useDb, type ObjectTab, type RunResult } from '../../../state/db'
 import { Segmented } from '../../../components/ui/Controls'
-import ResultGrid from './ResultGrid'
+import ResultPane from './ResultPane'
 import { errText } from './ConnectionForm'
 import { typeTone } from './tone'
 
 type Sub = 'columns' | 'indexes' | 'constraints' | 'ddl' | 'data'
 
 const DATA_LIMIT = 200
-// Scrolling pages in more rows up to this many.
-const MAX_ROWS = 100_000
 
 // One table/view/routine: structure, DDL, and its data, paged in as it scrolls.
 export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
@@ -26,13 +24,7 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
   const [sub, setSub] = useState<Sub>(relation ? 'columns' : 'ddl')
   const [info, setInfo] = useState<{ data?: TableInfo | null; error?: string }>({})
   const [ddl, setDdl] = useState<{ text?: string; error?: string }>({})
-  const [data, setData] = useState<{
-    result?: QueryResult
-    error?: string
-    loading?: boolean
-    loadingMore?: boolean
-    moreError?: string
-  }>({})
+  const [data, setData] = useState<{ run?: RunResult & { result: QueryResult }; error?: string; loading?: boolean }>({})
   // Bumped by every reload so a page still in flight can't land on a fresh result.
   const gen = useRef(0)
 
@@ -69,36 +61,19 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
     setData({ loading: true })
     window.api.db
       .query(tab.connId, tab.db, dataSql, { limit: DATA_LIMIT })
-      .then((result) => g === gen.current && setData({ result }))
+      .then((result) => g === gen.current && setData({ run: { sql: dataSql, result } }))
       .catch((e) => g === gen.current && setData({ error: errText(e) }))
   }
-
-  const canMore =
-    !!data.result?.truncated &&
-    !data.moreError &&
-    data.result.rows.length < MAX_ROWS &&
-    !!conn &&
-    pagedQuery(dataSql, conn.kind, 1) !== null
-  const loadMore = (): void => {
-    const offset = data.result?.rows.length ?? 0
-    if (!canMore || data.loadingMore) return
+  // Paging, sort and filter updates, dropped once a reload replaced the data.
+  const patchData = useMemo(() => {
     const g = gen.current
-    setData((d) => ({ ...d, loadingMore: true }))
-    window.api.db
-      .query(tab.connId, tab.db, dataSql, { limit: DATA_LIMIT, offset })
-      .then((page) => {
-        if (g !== gen.current) return
-        setData((d) =>
-          d.result && d.result.rows.length === offset
-            ? { result: { ...d.result, rows: d.result.rows.concat(page.rows), truncated: page.truncated } }
-            : { ...d, loadingMore: false }
-        )
-      })
-      .catch((e) => g === gen.current && setData((d) => ({ ...d, loadingMore: false, moreError: errText(e) })))
-  }
+    return (fn: (r: RunResult) => RunResult): void =>
+      setData((d) => (g !== gen.current || !d.run ? d : { run: fn(d.run) as RunResult & { result: QueryResult } }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gen.current])
 
   useEffect(() => {
-    if (sub === 'data' && !data.result && !data.loading && !data.error) loadData()
+    if (sub === 'data' && !data.run && !data.loading && !data.error) loadData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sub])
 
@@ -152,12 +127,17 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
         ) : sub === 'data' ? (
           data.error ? (
             <div className="dbx-error">{data.error}</div>
-          ) : data.result ? (
-            <ResultGrid
-              columns={data.result.columns}
-              rows={data.result.rows}
-              onMore={canMore ? loadMore : undefined}
-              loadingMore={data.loadingMore}
+          ) : data.run && conn ? (
+            <ResultPane
+              key={gen.current}
+              connId={tab.connId}
+              db={tab.db}
+              kind={conn.kind}
+              limit={DATA_LIMIT}
+              entry={data.run}
+              patch={patchData}
+              name={tab.name}
+              table={qualified}
             />
           ) : (
             <div className="dbx-empty">{t('db.loading')}</div>
