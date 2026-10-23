@@ -3,6 +3,7 @@ import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSche
 import type { EditStatement } from './edit'
 import { DDL_VERBS, type DdlPlan } from './ddl'
 import { defaultAcls, listRoles, objectPrivileges, rlsInfo, roleGrants } from './privMeta'
+import { indexStats, listLocks, listSessions, listSettings, reloadConf, serverOverview, signalBackend, tableStats } from './monitorMeta'
 import {
   closeConnection,
   closeDatabase,
@@ -295,6 +296,23 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:rls', (_e, id: string, db: string | undefined, schema: string, table: string) => rlsInfo(byId(id), db, schema, table))
   ipcMain.handle('db:completion-meta', (_e, id: string, db: string | undefined) => completionMeta(byId(id), db))
   ipcMain.handle('db:role-grants', (_e, id: string, db: string | undefined, role: string) => roleGrants(byId(id), db, role))
+  ipcMain.handle('db:mon-overview', (_e, id: string, db: string | undefined) => serverOverview(byId(id), db))
+  ipcMain.handle('db:mon-sessions', (_e, id: string, db: string | undefined) => listSessions(byId(id), db))
+  ipcMain.handle('db:mon-locks', (_e, id: string, db: string | undefined) => listLocks(byId(id), db))
+  ipcMain.handle('db:mon-tables', (_e, id: string, db: string | undefined) => tableStats(byId(id), db))
+  ipcMain.handle('db:mon-indexes', (_e, id: string, db: string | undefined) => indexStats(byId(id), db))
+  ipcMain.handle('db:mon-settings', (_e, id: string, db: string | undefined) => listSettings(byId(id), db))
+  ipcMain.handle('db:mon-signal', (_e, id: string, db: string | undefined, pid: number, terminate: boolean) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    if (!Number.isInteger(pid) || pid <= 0) throw new Error('Bad pid')
+    return signalBackend(cfg, db, pid, terminate === true)
+  })
+  ipcMain.handle('db:mon-reload', (_e, id: string, db: string | undefined) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    return reloadConf(cfg, db)
+  })
   ipcMain.handle('db:cancel',(_e, id: string, queryId: string) => pgCancel(byId(id), queryId))
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)

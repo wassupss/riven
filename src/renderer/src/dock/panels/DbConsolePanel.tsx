@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as monaco from "monaco-editor";
 import {
+  Activity,
   Check,
   Database,
   FileCode2,
@@ -46,6 +47,7 @@ import ObjectView from "./db/ObjectView";
 import TableDesigner from "./db/TableDesigner";
 import RolesView from "./db/RolesView";
 import PrivsView from "./db/PrivsView";
+import MonitorView from "./db/MonitorView";
 import { errText } from "./db/ConnectionForm";
 import PlanView from "./db/PlanView";
 import HistoryDrawer from "./db/HistoryDrawer";
@@ -145,6 +147,8 @@ export default function DbConsolePanel({
                 <Users size={12} className="dbx-tab-ico roles" />
               ) : x.kind === "privs" ? (
                 <ShieldCheck size={12} className="dbx-tab-ico roles" />
+              ) : x.kind === "monitor" ? (
+                <Activity size={12} className="dbx-tab-ico mon" />
               ) : (
                 <Table2 size={12} className="dbx-tab-ico obj" />
               )}
@@ -180,6 +184,7 @@ export default function DbConsolePanel({
         {tab?.kind === "design" && <TableDesigner key={tab.id} tab={tab} />}
         {tab?.kind === "roles" && <RolesView key={tab.id} tab={tab} />}
         {tab?.kind === "privs" && <PrivsView key={tab.id} tab={tab} />}
+        {tab?.kind === "monitor" && <MonitorView key={tab.id} tab={tab} />}
         {!tab && (
           <div className="dbx-empty-state">
             <Database size={28} />

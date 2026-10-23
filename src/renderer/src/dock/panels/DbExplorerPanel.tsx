@@ -92,6 +92,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const openDesign = useDb((s) => s.openDesign)
   const openRoles = useDb((s) => s.openRoles)
   const openPrivs = useDb((s) => s.openPrivs)
+  const openMonitor = useDb((s) => s.openMonitor)
   const invalidate = useDb((s) => s.invalidate)
   const changed = useDb((s) => s.changed)
 
@@ -439,7 +440,12 @@ export default function DbExplorerPanel(): JSX.Element {
           { label: t('db.newConsole'), onClick: () => openConsole(row.conn, row.conn.database) },
           { label: t('db.refresh'), onClick: () => refresh(row) },
           ...(rw ? withSep([{ label: t('db.d.newDatabase'), onClick: () => newDatabase(row.conn) }]) : []),
-          ...(pg ? withSep([{ label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.conn.database) }]) : []),
+          ...(pg
+            ? withSep([
+                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.conn.database) },
+                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.conn.database) }
+              ])
+            : []),
           { label: t('db.editConnection'), onClick: () => setForm({ initial: row.conn }), separator: true },
           { label: t('db.deleteConnection'), onClick: () => void removeConn(row.conn), danger: true }
         ]
@@ -450,7 +456,8 @@ export default function DbExplorerPanel(): JSX.Element {
           ...(pg
             ? withSep([
                 { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db) },
-                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) }
+                { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) },
+                { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) }
               ])
             : []),
           ...(rw

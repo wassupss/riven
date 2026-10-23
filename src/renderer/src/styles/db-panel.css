@@ -1965,3 +1965,300 @@ div.dbx-design-problems {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
+
+/* ---- monitor: overview cards, sessions, locks, stats, settings ---- */
+.dbx-tab-ico.mon {
+  color: var(--info);
+}
+.dbx-mon-head {
+  align-items: center;
+  flex-wrap: wrap;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-mon-status {
+  flex: 0 0 auto;
+  border-top: none;
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-mon-q {
+  width: 200px;
+  flex: 0 0 auto;
+}
+.dbx-mon-table th {
+  cursor: pointer;
+  user-select: none;
+}
+.dbx-mon-table th svg {
+  vertical-align: -1px;
+  margin-left: 3px;
+}
+.dbx-mon-table th.num,
+.dbx-mon-table td.num {
+  text-align: right;
+  white-space: nowrap;
+}
+.dbx-mon-table td {
+  white-space: nowrap;
+}
+.dbx-mon-table tr.sel {
+  background: color-mix(in srgb, var(--accent) 16%, transparent) !important;
+}
+.dbx-mon-table tr.blocked td:first-child {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.dbx-mon-table .dbx-tag {
+  margin-left: 5px;
+}
+.dbx-mon-sql {
+  display: inline-block;
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  color: var(--fg-dim);
+}
+.dbx-mon-desc {
+  display: inline-block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  font-family: var(--font-ui);
+  color: var(--fg-dim);
+}
+.dbx-mon-name {
+  display: inline-flex;
+  align-items: center;
+}
+.dbx-mon-acts {
+  display: inline-flex;
+  gap: 2px;
+}
+.dbx-icon-btn.danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+.dbx-mon-state.active {
+  color: var(--success);
+}
+.dbx-mon-state.idletx {
+  color: var(--warning);
+}
+.dbx-mon-state.idle {
+  color: var(--fg-dim);
+}
+.dbx-tag.bad {
+  --tag: var(--danger);
+}
+/* Durations ("1m 36s") read wrong in the tag's uppercase. */
+.dbx-mon .dbx-tag {
+  text-transform: none;
+}
+.dbx-tag.warn {
+  --tag: var(--warning);
+}
+.dbx-mon-bad {
+  color: var(--danger);
+}
+.dbx-mon-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+}
+.dbx-mon-version {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.dbx-mon-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+.dbx-mon-card {
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-2);
+  min-width: 0;
+}
+.dbx-mon-card.clickable {
+  cursor: pointer;
+}
+.dbx-mon-card.clickable:hover {
+  border-color: var(--edge);
+}
+.dbx-mon-card.warn {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+.dbx-mon-card.bad {
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.dbx-mon-card.warn .dbx-mon-card-value {
+  color: var(--warning);
+}
+.dbx-mon-card.bad .dbx-mon-card-value {
+  color: var(--danger);
+}
+.dbx-mon-card-label {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.dbx-mon-card-value {
+  font-size: 18px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  margin: 3px 0 2px;
+}
+.dbx-mon-card-sub {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dbx-mon-bar {
+  display: block;
+  height: 4px;
+  margin-top: 5px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+}
+.dbx-mon-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.dbx-mon-dbs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  max-width: 640px;
+}
+.dbx-mon-db {
+  display: grid;
+  grid-template-columns: 160px 1fr 80px;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-xs);
+}
+.dbx-mon-db .dbx-mon-bar {
+  margin-top: 0;
+}
+.dbx-mon-db.cur .dbx-mon-db-name {
+  font-weight: 600;
+}
+.dbx-mon-db-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dbx-mon-db-size {
+  text-align: right;
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+}
+.dbx-mon-detail {
+  flex: 0 0 auto;
+  max-height: 40%;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--edge);
+  background: var(--bg-2);
+}
+.dbx-mon-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: var(--text-xs);
+}
+.dbx-mon-detail pre {
+  margin: 0;
+  padding: 0 10px 8px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  user-select: text;
+}
+.dbx-mon-chains {
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  padding: 0 12px 8px;
+}
+.dbx-mon-chains > .dbx-form-sect {
+  border-top: none;
+}
+.dbx-mon-chain {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
+  border-radius: 6px;
+}
+.dbx-mon-chain-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+.dbx-mon-chain-row.by {
+  padding-left: 18px;
+  margin-top: 4px;
+}
+.dbx-mon-who {
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+.dbx-form-sect.inline {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.dbx-mon-foot {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-top: 1px solid var(--hairline);
+}
+.dbx-mon-setting {
+  gap: 6px;
+  padding-bottom: 8px;
+}
+.dbx-mon-setting-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.dbx-mon-setting-meta .dbx-tag {
+  margin-left: 6px;
+}
+.dbx-mon-setting-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+.dbx-mon-setting > .dbx-meta {
+  padding: 0 10px;
+}
+.dbx-mon-val {
+  width: 220px;
+}
+.dbx-mon-preview {
+  margin: 0 10px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}

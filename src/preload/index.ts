@@ -18,6 +18,7 @@ import type {
 import type { ExportOptions } from '../main/db/mask'
 import type { EditStatement, EditTarget } from '../main/db/edit'
 import type { DdlPlan } from '../main/db/ddl'
+import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
 import type { CompletionMeta } from '../main/db/complete'
 
 export interface DirEntry {
@@ -592,6 +593,19 @@ const api = {
     /** Schemas, tables with columns and functions for SQL autocomplete. */
     completionMeta: (id: string, db: string | undefined): Promise<CompletionMeta> => ipcRenderer.invoke('db:completion-meta', id, db),
     cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:cancel', id, queryId),
+    // Server monitoring (sessions, locks, stats, settings). Maintenance and ALTER SYSTEM go through ddlApply.
+    monitor: {
+      overview: (id: string, db: string | undefined): Promise<ServerOverview> => ipcRenderer.invoke('db:mon-overview', id, db),
+      sessions: (id: string, db: string | undefined): Promise<SessionInfo[]> => ipcRenderer.invoke('db:mon-sessions', id, db),
+      locks: (id: string, db: string | undefined): Promise<LockInfo[]> => ipcRenderer.invoke('db:mon-locks', id, db),
+      tables: (id: string, db: string | undefined): Promise<TableStat[]> => ipcRenderer.invoke('db:mon-tables', id, db),
+      indexes: (id: string, db: string | undefined): Promise<IndexStat[]> => ipcRenderer.invoke('db:mon-indexes', id, db),
+      settings: (id: string, db: string | undefined): Promise<SettingInfo[]> => ipcRenderer.invoke('db:mon-settings', id, db),
+      /** Cancels the backend's query, or with terminate ends its session. */
+      signal: (id: string, db: string | undefined, pid: number, terminate: boolean): Promise<boolean> =>
+        ipcRenderer.invoke('db:mon-signal', id, db, pid, terminate),
+      reload: (id: string, db: string | undefined): Promise<boolean> => ipcRenderer.invoke('db:mon-reload', id, db)
+    },
     column: (id: string, db: string | undefined, table: number, attnum: number): Promise<ColumnDetail | null> =>
       ipcRenderer.invoke('db:column', id, db, table, attnum),
     /** Asks for a file, then writes it. null when the save dialog is cancelled. */

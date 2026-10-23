@@ -64,7 +64,16 @@ export interface PrivsTab {
   name: string
 }
 
-export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab
+/** Server monitor of a connection: sessions, locks, stats and settings. `db` is the database its stats read. */
+export interface MonitorTab {
+  id: string
+  kind: 'monitor'
+  title: string
+  connId: string
+  db?: string
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab
 
 /** The schema a tab lives in, or undefined when it spans the database (or more). */
 const tabSchema = (x: ConsoleTab): string | undefined =>
@@ -162,6 +171,7 @@ interface DbState {
   openDesign: (connId: string, db: string | undefined, schema: string, name?: string) => string
   openRoles: (connId: string, db?: string) => string
   openPrivs: (connId: string, db: string | undefined, scope: PrivsTab['scope'], name: string) => string
+  openMonitor: (connId: string, db?: string) => string
   /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
   invalidate: (
     change: Omit<DbChange, 'seq'>,
@@ -272,10 +282,23 @@ export const useDb = create<DbState>((set, get) => {
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },
+    openMonitor: (connId, db) => {
+      const same = get().tabs.find((t) => t.kind === 'monitor' && t.connId === connId && t.db === db)
+      if (same) {
+        commit(get().tabs, same.id)
+        return same.id
+      }
+      const conn = get().connections.find((c) => c.id === connId)
+      const name = db && db !== conn?.database ? `${conn?.name ?? ''} / ${db}` : (conn?.name ?? '')
+      const tab: MonitorTab = { id: dbUid(), kind: 'monitor', title: t('db.mon.title', { name }), connId, db }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
     closeWithin: (connId, db, schema) => {
       const inside = (x: ConsoleTab): boolean =>
         x.kind !== 'sql' &&
         x.kind !== 'roles' &&
+        x.kind !== 'monitor' &&
         x.connId === connId &&
         x.db === db &&
         (schema === undefined || tabSchema(x) === schema)
