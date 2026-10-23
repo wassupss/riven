@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { QueryColumn } from '../../../../../main/db/types'
 import { useT } from '../../../i18n'
+import { typeTone, type Tone } from './tone'
 
 type Cell = string | number | boolean | null
 
-const ROW_H = 22
-const NUM_W = 44
+const ROW_H = 24
+// Two-line header (name over type); the sticky header covers this much of the viewport.
+const HEAD_H = 36
+const NUM_W = 48
 const OVERSCAN = 8
 
 const show = (v: Cell): string => (v === null ? 'NULL' : typeof v === 'string' ? v : String(v))
@@ -32,9 +35,10 @@ export function toDelimited(columns: QueryColumn[], rows: Cell[][], sep: string)
 
 function initialWidths(columns: QueryColumn[], rows: Cell[][]): number[] {
   return columns.map((c, i) => {
-    let len = Math.max(c.name.length, c.type.length * 0.8)
+    // Header is two lines (name over type), so it needs the wider of the two, never their sum.
+    let len = Math.max(c.name.length * 1.08, c.type.length * 0.9)
     for (let r = 0; r < Math.min(rows.length, 60); r++) len = Math.max(len, cellText(rows[r][i]).length)
-    return Math.round(Math.min(Math.max(len * 7 + 18, 64), 360))
+    return Math.round(Math.min(Math.max(len * 7.3 + 24, 72), 380))
   })
 }
 
@@ -65,6 +69,7 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
     return () => ro.disconnect()
   }, [])
 
+  const tones = useMemo<Tone[]>(() => columns.map((c) => typeTone(c.type)), [columns])
   const totalW = useMemo(() => NUM_W + widths.reduce((a, b) => a + b, 0), [widths])
   const template = useMemo(() => `${NUM_W}px ${widths.map((w) => `${w}px`).join(' ')}`, [widths])
   const first = Math.max(0, Math.floor(top / ROW_H) - OVERSCAN)
@@ -102,7 +107,7 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
         if (!el) return
         const y = nr * ROW_H
         if (y < el.scrollTop) el.scrollTop = y
-        else if (y + ROW_H * 2 > el.scrollTop + el.clientHeight) el.scrollTop = y + ROW_H * 2 - el.clientHeight
+        else if (y + ROW_H + HEAD_H > el.scrollTop + el.clientHeight) el.scrollTop = y + ROW_H + HEAD_H - el.clientHeight
       }
       if (e.key === 'ArrowDown') move(sel.r + 1, sel.c)
       else if (e.key === 'ArrowUp') move(sel.r - 1, sel.c)
@@ -120,10 +125,10 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
     <div className="dbx-grid" tabIndex={0} onKeyDown={onKey}>
       <div className="dbx-grid-scroll" ref={scrollRef} onScroll={(e) => setTop(e.currentTarget.scrollTop)}>
         <div style={{ width: totalW, minWidth: '100%' }}>
-          <div className="dbx-grid-head" style={{ gridTemplateColumns: template }}>
+          <div className="dbx-grid-head" style={{ gridTemplateColumns: template, height: HEAD_H }}>
             <div className="dbx-grid-num">#</div>
             {columns.map((c, i) => (
-              <div key={i} className="dbx-grid-th" title={`${c.name} ${c.type}`}>
+              <div key={i} className={`dbx-grid-th tone-${tones[i]}`} title={`${c.name} ${c.type}`}>
                 <span className="dbx-grid-th-name">{c.name}</span>
                 {c.type && <span className="dbx-grid-th-type">{c.type}</span>}
                 <span className="dbx-grid-resize" onMouseDown={(e) => startResize(i, e)} />
@@ -136,7 +141,7 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
               return (
                 <div
                   key={r}
-                  className={`dbx-grid-row${sel?.r === r ? ' sel-row' : ''}`}
+                  className={`dbx-grid-row${r % 2 ? ' odd' : ''}${sel?.r === r ? ' sel-row' : ''}`}
                   style={{ top: r * ROW_H, gridTemplateColumns: template }}
                 >
                   <div className="dbx-grid-num" onClick={() => setSel({ r, c: -1 })}>
@@ -145,9 +150,9 @@ export default function ResultGrid({ columns, rows }: { columns: QueryColumn[]; 
                   {row.map((v, c) => (
                     <div
                       key={c}
-                      className={`dbx-grid-td${v === null ? ' null' : ''}${typeof v === 'number' ? ' num' : ''}${
-                        sel?.r === r && sel.c === c ? ' sel' : ''
-                      }`}
+                      className={`dbx-grid-td tone-${tones[c]}${v === null ? ' null' : ''}${
+                        typeof v === 'number' || tones[c] === 'num' ? ' num' : ''
+                      }${typeof v === 'boolean' ? (v ? ' yes' : ' no') : ''}${sel?.r === r && sel.c === c ? ' sel' : ''}`}
                       onClick={() => setSel({ r, c })}
                       onDoubleClick={() => setViewer(show(v))}
                     >

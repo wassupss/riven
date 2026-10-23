@@ -184,6 +184,33 @@
   flex: 0 0 auto;
   color: var(--fg-dim);
 }
+/* Tree icons are tinted by object family so a long schema scans at a glance. */
+.dbx-ico.g-db {
+  color: color-mix(in srgb, var(--accent) 70%, var(--fg-dim));
+}
+.dbx-ico.g-schema {
+  color: color-mix(in srgb, var(--warning) 55%, var(--fg-dim));
+}
+.dbx-ico.g-tables {
+  color: var(--info);
+}
+.dbx-ico.g-views,
+.dbx-ico.g-matviews {
+  color: var(--accent-2);
+}
+.dbx-ico.g-foreign {
+  color: color-mix(in srgb, var(--info) 50%, var(--accent-2));
+}
+.dbx-ico.g-sequences {
+  color: var(--warning);
+}
+.dbx-ico.g-functions,
+.dbx-ico.g-procedures {
+  color: var(--success);
+}
+.dbx-node-group .dbx-ico {
+  opacity: 0.75;
+}
 .dbx-node-conn .dbx-ico {
   color: var(--accent);
 }
@@ -246,6 +273,15 @@
   background: var(--bg-2);
   color: var(--fg);
   box-shadow: inset 0 -2px 0 var(--accent);
+}
+.dbx-tab-ico {
+  flex: 0 0 auto;
+}
+.dbx-tab-ico.sql {
+  color: var(--accent);
+}
+.dbx-tab-ico.obj {
+  color: var(--info);
 }
 .dbx-tab-title {
   overflow: hidden;
@@ -374,30 +410,38 @@
   top: 0;
   z-index: 2;
   display: grid;
-  height: 22px;
   background: var(--bg-2);
   border-bottom: 1px solid var(--edge);
+  box-shadow: 0 1px 0 var(--hairline);
 }
+/* Name on top, type underneath: narrow columns keep the whole name readable. */
 .dbx-grid-th {
   position: relative;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
   padding: 0 8px;
   border-right: 1px solid var(--hairline);
   overflow: hidden;
   white-space: nowrap;
+  font-family: var(--font-ui);
 }
 .dbx-grid-th-name {
   font-weight: 600;
+  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .dbx-grid-th-type {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
   color: var(--fg-dim);
-  font-size: 0.9em;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.dbx-grid-th.tone-num {
+  align-items: flex-end;
 }
 .dbx-grid-resize {
   position: absolute;
@@ -413,14 +457,17 @@
   left: 0;
   right: 0;
   display: grid;
-  height: 22px;
-  border-bottom: 1px solid var(--hairline);
+  height: 24px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+}
+.dbx-grid-row.odd {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
 .dbx-grid-row:hover {
   background: var(--hover);
 }
 .dbx-grid-row.sel-row {
-  background: var(--bg-2);
+  background: var(--accent-muted);
 }
 .dbx-grid-num {
   position: sticky;
@@ -429,11 +476,18 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding: 0 6px;
+  padding: 0 8px;
   background: var(--bg-2);
   border-right: 1px solid var(--edge);
   color: var(--fg-dim);
+  opacity: 0.8;
+  font-size: 0.92em;
   cursor: pointer;
+}
+.dbx-grid-row.sel-row .dbx-grid-num {
+  color: var(--accent);
+  opacity: 1;
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .dbx-grid-td {
   display: flex;
@@ -447,19 +501,40 @@
 }
 .dbx-grid-td.num {
   justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+/* Value colours follow the column type (see db/tone.ts); plain text stays fg. */
+.dbx-grid-td.tone-num {
+  color: var(--info);
+}
+.dbx-grid-td.tone-time {
+  color: color-mix(in srgb, var(--warning) 85%, var(--fg));
+}
+.dbx-grid-td.tone-json {
+  color: var(--accent-2);
+}
+.dbx-grid-td.tone-id {
+  color: var(--fg-dim);
+}
+.dbx-grid-td.yes {
+  color: var(--success);
+}
+.dbx-grid-td.no {
+  color: var(--danger);
 }
 .dbx-grid-td.null {
   color: var(--fg-dim);
   font-style: italic;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 .dbx-grid-td.sel {
+  background: var(--accent-muted);
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
 .dbx-grid .dbx-empty {
   position: absolute;
-  top: 26px;
+  top: 40px;
 }
 .dbx-viewer {
   position: absolute;
@@ -548,20 +623,105 @@
   background: var(--bg-2);
   text-align: left;
   font-weight: 600;
-  padding: 4px 8px;
+  color: var(--fg-dim);
+  padding: 6px 10px;
   border-bottom: 1px solid var(--edge);
   white-space: nowrap;
 }
 .dbx-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--hairline);
-  vertical-align: top;
+  padding: 5px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 60%, transparent);
+  vertical-align: middle;
   font-family: var(--font-mono);
   user-select: text;
 }
+.dbx-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.dbx-table tbody tr:hover {
+  background: var(--hover);
+}
 .dbx-pk {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--warning);
   font-weight: 600;
+}
+.dbx-type {
+  color: var(--fg-dim);
+}
+.dbx-type.tone-num {
+  color: var(--info);
+}
+.dbx-type.tone-time {
+  color: color-mix(in srgb, var(--warning) 85%, var(--fg));
+}
+.dbx-type.tone-json {
+  color: var(--accent-2);
+}
+.dbx-type.tone-bool {
+  color: var(--success);
+}
+.dbx-type.tone-text {
+  color: var(--fg);
+}
+.dbx-dim {
+  color: var(--fg-dim);
+  opacity: 0.7;
+}
+.dbx-notnull {
+  color: color-mix(in srgb, var(--warning) 80%, var(--fg));
+  font-weight: 600;
+  font-size: 0.92em;
+}
+.dbx-flags {
+  display: inline-flex;
+  gap: 4px;
+}
+/* Small tinted pill; the colour comes from --tag. */
+.dbx-tag,
+.dbx-kind {
+  --tag: var(--fg-dim);
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--tag);
+  background: color-mix(in srgb, var(--tag) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag) 30%, transparent);
+}
+.dbx-tag.pk,
+.dbx-tag.c-primarykey {
+  --tag: var(--warning);
+}
+.dbx-tag.uq,
+.dbx-tag.c-unique {
+  --tag: var(--info);
+}
+.dbx-tag.c-foreignkey {
+  --tag: var(--accent-2);
+}
+.dbx-tag.c-check {
+  --tag: var(--success);
+}
+.dbx-kind {
+  --tag: var(--info);
+  align-self: center;
+}
+.dbx-kind.k-view,
+.dbx-kind.k-matview {
+  --tag: var(--accent-2);
+}
+.dbx-kind.k-foreign {
+  --tag: color-mix(in srgb, var(--info) 50%, var(--accent-2));
 }
 
 /* ---- connection form ---- */
@@ -716,4 +876,18 @@
 }
 .dbx-icon-btn.on {
   color: var(--accent);
+}
+.dbx-count {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.dbx-ms {
+  font-variant-numeric: tabular-nums;
 }

@@ -411,7 +411,7 @@ function NodeBody({ row, t }: { row: Row; t: (k: string) => string }): JSX.Eleme
     case 'db':
       return (
         <>
-          <Database size={13} className="dbx-ico" />
+          <Database size={13} className="dbx-ico g-db" />
           <span className="dbx-label">{row.db}</span>
           {row.db === row.conn.database && <span className="dbx-meta">{t('db.default')}</span>}
         </>
@@ -419,7 +419,7 @@ function NodeBody({ row, t }: { row: Row; t: (k: string) => string }): JSX.Eleme
     case 'schema':
       return (
         <>
-          <Folder size={13} className="dbx-ico" />
+          <Folder size={13} className="dbx-ico g-schema" />
           <span className="dbx-label">{row.schema}</span>
         </>
       )
@@ -427,7 +427,7 @@ function NodeBody({ row, t }: { row: Row; t: (k: string) => string }): JSX.Eleme
       const Icon = GROUP_ICON[row.group]
       return (
         <>
-          <Icon size={13} className="dbx-ico dim" />
+          <Icon size={13} className={`dbx-ico g-${row.group}`} />
           <span className="dbx-label dim">{t(`db.g.${row.group}`)}</span>
           <span className="dbx-meta">{row.count}</span>
         </>
@@ -438,7 +438,7 @@ function NodeBody({ row, t }: { row: Row; t: (k: string) => string }): JSX.Eleme
       const Icon = GROUP_ICON[g.id]
       return (
         <>
-          <Icon size={13} className="dbx-ico" />
+          <Icon size={13} className={`dbx-ico g-${g.id}`} />
           <span className="dbx-label">{row.obj.name}</span>
           {row.obj.args !== undefined && <span className="dbx-meta">({row.obj.args})</span>}
           {row.obj.comment && <span className="dbx-meta">{row.obj.comment}</span>}

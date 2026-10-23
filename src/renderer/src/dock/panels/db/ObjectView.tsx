@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as monaco from 'monaco-editor'
+import { KeyRound } from 'lucide-react'
 import type { QueryResult, TableInfo } from '../../../../../main/db/types'
 import { quoteIdent } from '../../../../../main/db/sqlText'
 import { editorTheme } from '../../../editor/highlight'
@@ -8,6 +9,7 @@ import { useDb, type ObjectTab } from '../../../state/db'
 import { Segmented } from '../../../components/ui/Controls'
 import ResultGrid from './ResultGrid'
 import { errText } from './ConnectionForm'
+import { typeTone } from './tone'
 
 type Sub = 'columns' | 'indexes' | 'constraints' | 'ddl' | 'data'
 
@@ -83,7 +85,7 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
           <span className="dbx-meta">{tab.schema}.</span>
           {tab.name}
         </span>
-        <span className="dbx-meta">{t(`db.kind.${tab.objKind}`)}</span>
+        <span className={`dbx-kind k-${tab.objKind}`}>{t(`db.kind.${tab.objKind}`)}</span>
         {ti?.comment && <span className="dbx-meta">{ti.comment}</span>}
         <span className="dbx-spacer" />
         {relation && conn && (
@@ -128,10 +130,13 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
             head={[t('db.c.name'), t('db.c.type'), t('db.c.nullable'), t('db.c.default'), t('db.c.comment')]}
             rows={ti.columns.map((c) => [
               <span key="n" className={c.primaryKey ? 'dbx-pk' : undefined}>
+                {c.primaryKey && <KeyRound size={11} />}
                 {c.name}
               </span>,
-              c.type,
-              c.nullable ? 'yes' : 'no',
+              <span key="t" className={`dbx-type tone-${typeTone(c.type)}`}>
+                {c.type}
+              </span>,
+              c.nullable ? <span key="u" className="dbx-dim">NULL</span> : <span key="u" className="dbx-notnull">NOT NULL</span>,
               c.default ?? '',
               c.comment ?? ''
             ])}
@@ -139,10 +144,23 @@ export default function ObjectView({ tab }: { tab: ObjectTab }): JSX.Element {
         ) : sub === 'indexes' ? (
           <Table
             head={[t('db.c.name'), t('db.c.flags'), t('db.c.definition')]}
-            rows={ti.indexes.map((i) => [i.name, [i.primary && 'PK', i.unique && 'UNIQUE'].filter(Boolean).join(' '), i.def])}
+            rows={ti.indexes.map((i) => [
+              i.name,
+              <span key="f" className="dbx-flags">
+                {i.primary && <span className="dbx-tag pk">PK</span>}
+                {i.unique && <span className="dbx-tag uq">UNIQUE</span>}
+              </span>,
+              i.def
+            ])}
           />
         ) : (
-          <Table head={[t('db.c.name'), t('db.c.type'), t('db.c.definition')]} rows={ti.constraints.map((c) => [c.name, c.type, c.def])} />
+          <Table head={[t('db.c.name'), t('db.c.type'), t('db.c.definition')]} rows={ti.constraints.map((c) => [
+              c.name,
+              <span key="k" className={`dbx-tag c-${c.type.toLowerCase().replace(/[^a-z]/g, '')}`}>
+                {c.type}
+              </span>,
+              c.def
+            ])} />
         )}
       </div>
     </div>

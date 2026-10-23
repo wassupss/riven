@@ -79,7 +79,7 @@ export default function DbConsolePanel({ leading }: { leading?: JSX.Element }): 
               title={conn ? `${conn.name}${x.db ? ` / ${x.db}` : ''}` : undefined}
             >
               {conn?.color && <span className="dbx-dot" style={{ background: conn.color }} />}
-              {x.kind === 'sql' ? <FileCode2 size={12} /> : <Table2 size={12} />}
+              {x.kind === 'sql' ? <FileCode2 size={12} className="dbx-tab-ico sql" /> : <Table2 size={12} className="dbx-tab-ico obj" />}
               <span className="dbx-tab-title">{x.title}</span>
               <button
                 className="dbx-tab-x"
@@ -134,7 +134,7 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
   const models = useRef(new Map<string, { model: monaco.editor.ITextModel; view: monaco.editor.ICodeEditorViewState | null; sub: monaco.IDisposable }>())
   const shownId = useRef<string | null>(null)
   const [limit, setLimit] = useState(() => Number(localStorage.getItem(LS_LIMIT)) || 1000)
-  const [split, setSplit] = useState(() => Number(localStorage.getItem(LS_SPLIT)) || 0.45)
+  const [split, setSplit] = useState(() => Number(localStorage.getItem(LS_SPLIT)) || 0.3)
   const [dbs, setDbs] = useState<Record<string, string[]>>({})
 
   // Latest values for the Monaco command closure, which is bound once.
@@ -398,7 +398,7 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
           {shown?.result && (
             <>
               {shown.result.columns.length > 0 ? (
-                <span>
+                <span className="dbx-count">
                   {t('db.rowsN', { n: shown.result.rows.length.toLocaleString() })}
                   {shown.result.truncated && <span className="dbx-warn"> {t('db.truncated', { n: String(limit) })}</span>}
                 </span>
@@ -408,7 +408,7 @@ function SqlView({ tab, hidden }: { tab: SqlTab | null; hidden: boolean }): JSX.
                   {shown.result.rowCount != null && ` ${shown.result.rowCount}`}
                 </span>
               )}
-              <span className="dbx-meta">{shown.result.timeMs} ms</span>
+              <span className="dbx-meta dbx-ms">{shown.result.timeMs} ms</span>
               <span className="dbx-spacer" />
               {shown.result.columns.length > 0 && (
                 <>
