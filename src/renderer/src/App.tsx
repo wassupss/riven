@@ -50,11 +50,12 @@ import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
 import { useUpdate } from './state/update'
-import { getEditorCloser, initFocusTracking } from './keybindings/focus'
+import { closeInnerTab, initFocusTracking } from './keybindings/focus'
 import {
   getActiveApi,
   getApiFor,
   confirmTerminalClose,
+  widForApi,
   addTerminal,
   addChat,
   bumpPaneSeq
@@ -217,20 +218,19 @@ export default function App(): JSX.Element {
     window.addEventListener('keyup', onMetaUp, true)
     window.addEventListener('blur', onBlurMeta)
     initFocusTracking()
-    // ⌘W closes whatever dockview panel is active: the editor closes its focused
-    // file tab, everything else (terminal/explorer/search/preview) closes itself.
+    // ⌘W closes the innermost thing: a panel with tabs of its own (editor files,
+    // DB consoles, browser tabs) closes its current tab, and only once it has
+    // none left does the panel go. ⌘⌥W always closes the panel.
     // Read the active panel ONCE so closing can't cascade.
-    const offClose = window.api.menu.onCloseTab(() => {
+    const closePanel = (inner: boolean): void => {
       const api = getActiveApi()
       const active = api?.activePanel
       if (!api || !active) return
-      if (active.id === 'editor') {
-        // Close the focused file tab; if the editor has no tab, close the panel.
-        if (!getEditorCloser()?.()) api.removePanel(active)
-      } else if (confirmTerminalClose(active.id)) {
-        api.removePanel(active)
-      }
-    })
+      if (inner && closeInnerTab(active.id, widForApi(api))) return
+      if (confirmTerminalClose(active.id)) api.removePanel(active)
+    }
+    const offClose = window.api.menu.onCloseTab(() => closePanel(true))
+    const offClosePanel = window.api.menu.onClosePanel(() => closePanel(false))
     // Presence for main's notification plan: is this window visible + focused,
     // which pane is on screen, and when the user last touched it. Reported on
     // every relevant transition plus a heartbeat, so main never reasons from a
@@ -275,6 +275,7 @@ export default function App(): JSX.Element {
     return () => {
       window.removeEventListener('keydown', keymap.handle, { capture: true })
       offClose()
+      offClosePanel()
       offZoom()
       offNotifyClick()
       window.removeEventListener('focus', reportPresence)

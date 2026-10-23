@@ -3,6 +3,7 @@ import { PanelLeft } from 'lucide-react'
 import '../../styles/db-panel.css'
 import { useT } from '../../i18n'
 import { useDb } from '../../state/db'
+import { registerTabCloser } from '../../keybindings/focus'
 import DbExplorerPanel from './DbExplorerPanel'
 import DbConsolePanel from './DbConsolePanel'
 
@@ -14,6 +15,14 @@ const MAX_W = 600
 const NARROW = 480
 
 const clampW = (w: number, total: number): number => Math.max(MIN_W, Math.min(MAX_W, total - 240, w))
+
+// ⌘W closes the current console tab; with none open it closes the panel.
+registerTabCloser('db', () => {
+  const { active, closeTab } = useDb.getState()
+  if (!active) return false
+  closeTab(active)
+  return true
+})
 
 // One panel: connection tree on the left, console tabs on the right.
 export default function DbPanel(): JSX.Element {

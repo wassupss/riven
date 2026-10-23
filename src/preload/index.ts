@@ -1134,6 +1134,11 @@ const api = {
       const listener = (): void => cb()
       ipcRenderer.on('menu:close-tab', listener)
       return () => ipcRenderer.removeListener('menu:close-tab', listener)
+    },
+    onClosePanel: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('menu:close-panel', listener)
+      return () => ipcRenderer.removeListener('menu:close-panel', listener)
     }
   },
   app: {
