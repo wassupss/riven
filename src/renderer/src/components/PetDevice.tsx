@@ -20,6 +20,7 @@ import {
   Settings,
   Smile,
   MessageCircle,
+  Swords,
   Trash2,
   Trophy,
   Utensils,
@@ -36,8 +37,21 @@ import { useSettings, type PetChrome } from '../state/settings'
 import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
-import { ARROW_LEFT, ARROW_RIGHT, CROSS, MIMES, POOP, ZZZ, pixelsOf, SPRITE_SIZE } from './petSprites'
 import {
+  ARROW_LEFT,
+  ARROW_RIGHT,
+  CROSS,
+  MIMES,
+  POOP,
+  ZZZ,
+  outfitPixels,
+  pixelsOf,
+  runsOf,
+  SPRITE_SIZE
+} from './petSprites'
+import {
+  accessoriesOf,
+  giftAt,
   awardsOf,
   dietOf,
   flushPetSave,
@@ -47,15 +61,31 @@ import {
   growthOf,
   isNight,
   moodOf,
+  nextAccessory,
+  outfitOf,
+  prizesOf,
   usePet,
   HUNGRY_AT,
   KIBBLE_TOKENS,
+  MAX_PETS,
   MAX_POOPS,
+  PRIZES,
+  type Accessory,
   type Form,
   type Mood,
   type Species,
   type Stage
 } from '../state/pet'
+import {
+  cardOf,
+  decodeCard,
+  encodeCard,
+  fight,
+  isUpset,
+  moodOfCard,
+  type BattleCard,
+  type Bout
+} from '../state/petBattle'
 
 // ---------------------------------------------------------------------------
 // 리븐펫 — a handheld virtual pet that floats over the workbench, or lives in its
@@ -85,7 +115,26 @@ const CHEW_MS = 1600
 const FLASH_MS = 1800
 const MARGIN = 12
 
-type ScreenMode = 'char' | 'clock' | 'stats' | 'graph' | 'awards' | 'album' | 'settings' | 'talk'
+type ScreenMode =
+  | 'char'
+  | 'clock'
+  | 'stats'
+  | 'graph'
+  | 'awards'
+  | 'album'
+  | 'settings'
+  | 'talk'
+  | 'battle'
+
+/** A friend's pet against ours, played back one blow at a time. */
+interface Duel {
+  mine: BattleCard
+  foe: BattleCard
+  bout: Bout
+}
+type DuelResult = 'win' | 'loss' | 'draw'
+// Slow enough to follow who hit whom, quick enough that 30 blows is not a wait.
+const BLOW_MS = 650
 
 /** A turn that finished somewhere, kept just long enough to be asked about. */
 interface Finished {
@@ -169,7 +218,9 @@ function Creature({
   mood,
   chewing,
   flavor,
-  evolving
+  evolving,
+  level = 0,
+  outfit: wearing
 }: {
   stage: Stage
   form: Form
@@ -178,8 +229,34 @@ function Creature({
   chewing: boolean
   flavor?: string
   evolving?: boolean
+  /** Its level, for the keepsakes it has earned by it. */
+  level?: number
+  /** What it actually has on, prizes included; defaults to its level keepsakes. */
+  outfit?: Accessory[]
 }): JSX.Element {
-  const dots = useMemo(() => pixelsOf(stage, form, mood, species), [stage, form, mood, species])
+  // Same-coloured neighbours in a row share one rect: the drawn grid is four
+  // times the dots, and this keeps the rect count near what it was.
+  const runs = useMemo(
+    () => runsOf(pixelsOf(stage, form, mood, species)),
+    [stage, form, mood, species]
+  )
+  const wearingKey = wearing?.join(',')
+  const outfit = useMemo(() => {
+    const { back, front } = outfitPixels(stage, form, species, wearing ?? accessoriesOf(level))
+    return { back: runsOf(back), front: runsOf(front) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, form, species, level, wearingKey])
+  const dots = (list: typeof runs): JSX.Element[] =>
+    list.map((d) => (
+      <rect
+        key={`${d.x},${d.y}`}
+        className={`pet-px pet-px-${d.ch}`}
+        x={d.x}
+        y={d.y}
+        width={d.w}
+        height="1"
+      />
+    ))
   return (
     <svg
       className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
@@ -188,37 +265,32 @@ function Creature({
       aria-hidden="true"
     >
       <g className={`pet-sprite${chewing ? ' chew' : ''}`}>
-        {dots.map((d) => (
-          <rect
-            key={`${d.x},${d.y}`}
-            className={`pet-px pet-px-${d.ch}`}
-            x={d.x}
-            y={d.y}
-            width="1"
-            height="1"
-          />
-        ))}
+        {/* What it has earned since growing up: its shine behind it, left to
+            twinkle, and the rest on top of it. */}
+        {outfit.back.length > 0 && <g className="pet-aura">{dots(outfit.back)}</g>}
+        {dots(runs)}
+        {outfit.front.length > 0 && <g className="pet-acc">{dots(outfit.front)}</g>}
       </g>
       {chewing && (
         <g className="pet-crumbs">
-          <rect className="pet-px pet-px-a" x="13" y="2" width="1" height="1" />
-          <rect className="pet-px pet-px-a" x="2" y="1" width="1" height="1" />
+          <rect className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />
+          <rect className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
         </g>
       )}
       {/* Growing up: a ring of dots bursts outward for a moment. */}
       {evolving && (
         <g className="pet-burst">
           {[
-            [8, 0],
-            [14, 2],
-            [15, 8],
-            [13, 14],
-            [8, 15],
-            [2, 13],
-            [0, 8],
-            [2, 2]
+            [16, 0],
+            [28, 4],
+            [30, 16],
+            [26, 28],
+            [16, 30],
+            [4, 26],
+            [0, 16],
+            [4, 4]
           ].map(([x, y]) => (
-            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="1" height="1" />
+            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
           ))}
         </g>
       )}
@@ -273,6 +345,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const playRound = usePet((s) => s.playRound)
   const rename = usePet((s) => s.rename)
   const reset = usePet((s) => s.reset)
+  const pets = usePet((s) => s.pets)
+  const active = usePet((s) => s.active)
+  const adopt = usePet((s) => s.adopt)
+  const letGo = usePet((s) => s.release)
+  const select = usePet((s) => s.select)
+  const recordBattle = usePet((s) => s.recordBattle)
+  const wear = usePet((s) => s.wear)
   // What the workspaces are doing right now. The roster is app-wide on purpose:
   // a turn running in a workspace that is not on screen is exactly the one worth
   // telling you about.
@@ -316,7 +395,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [nowTick, setNowTick] = useState(() => Date.now())
   const justEvolved = usePet((s) => s.justEvolved)
   const ackEvolution = usePet((s) => s.ackEvolution)
+  const justLeveled = usePet((s) => s.justLeveled)
+  const ackLevel = usePet((s) => s.ackLevel)
   const [evolving, setEvolving] = useState(false)
+  // A friend battle: the fight, how far through it the playback is, and once it
+  // is over, how it went and whether it went on the record (once a day a friend).
+  const [duel, setDuel] = useState<Duel | null>(null)
+  const [step, setStep] = useState(0)
+  const [outcome, setOutcome] = useState<{ result: DuelResult; counted: boolean } | null>(null)
   // Dragging never goes through React. A pointermove that re-renders the device
   // has to rebuild a hundred-odd <rect> dots before the pixel moves, which is
   // exactly the lag you feel in the hand; instead the node is moved directly and
@@ -334,6 +420,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     },
     []
   )
+
+  // Battle playback: one blow per beat, and the record written exactly once, at
+  // the end. Holds still while nobody is looking, like everything else here.
+  useEffect(() => {
+    if (!duel || outcome || !awake) return
+    if (step < duel.bout.blows.length) {
+      const id = setTimeout(() => setStep((n) => n + 1), BLOW_MS)
+      return () => clearTimeout(id)
+    }
+    const w = duel.bout.winner
+    const result: DuelResult = w === null ? 'draw' : w === 0 ? 'win' : 'loss'
+    setOutcome({ result, counted: recordBattle(duel.foe.bornAt, result, isUpset(duel.mine, duel.foe)) })
+  }, [duel, step, outcome, awake, recordBattle])
 
   useEffect(() => {
     if (!show && !detached) return
@@ -439,6 +538,38 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     later(() => setFlash(null), 2600)
   }, [justEvolved, ackEvolution, later, t])
 
+  // A grown-up's level-up: the same burst, smaller words, and a keepsake to
+  // show off when this level brought one.
+  useEffect(() => {
+    if (!justLeveled) return
+    ackLevel()
+    const gift = giftAt(justLeveled)
+    setEvolving(true)
+    setFlash(
+      gift
+        ? t('pet.levelGift', { n: justLeveled, item: t(`pet.acc.${gift}`) })
+        : t('pet.levelUp', { n: justLeveled })
+    )
+    later(() => setEvolving(false), 2600)
+    later(() => setFlash(null), 2600)
+  }, [justLeveled, ackLevel, later, t])
+
+  // A prize just unlocked (an award that comes with something to wear). The
+  // first look at each pet only takes stock, so switching pets or loading the
+  // save never announces what was already there.
+  const prizeKey = useMemo(() => prizesOf(pet, nowTick).join(','), [pet, nowTick])
+  const seenPrizes = useRef<{ pet: number; ids: string } | null>(null)
+  useEffect(() => {
+    const seen = seenPrizes.current
+    seenPrizes.current = { pet: pet.bornAt, ids: prizeKey }
+    if (!loaded || !seen || seen.pet !== pet.bornAt) return
+    const before = new Set(seen.ids.split(','))
+    const fresh = prizeKey.split(',').find((id) => id && !before.has(id))
+    if (!fresh) return
+    setFlash(t('pet.prizeNew', { item: t(`pet.acc.${fresh}`) }))
+    later(() => setFlash(null), 2600)
+  }, [prizeKey, pet.bornAt, loaded, later, t])
+
   // Feed from the usage totals. Ignored until the save is loaded, so the first
   // sample can't feed a pet that is about to be replaced by the stored one.
   useEffect(() => {
@@ -457,14 +588,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // Chew whenever a meal actually lands — true in both windows, unlike the chat
   // stream (which only reaches the window that started the turn).
   const lastMeal = useRef(0)
+  const mealOf = useRef(active)
   useEffect(() => {
     if (!pet.lastFedAt || pet.lastFedAt === lastMeal.current) return
-    const first = lastMeal.current === 0
+    // Picking another pet out of the nest shows ITS last meal, not a new one.
+    const first = lastMeal.current === 0 || mealOf.current !== active
     lastMeal.current = pet.lastFedAt
+    mealOf.current = active
     if (first) return // the meal that came out of the save file, not a fresh one
     setChewing(true)
     later(() => setChewing(false), CHEW_MS)
-  }, [pet.lastFedAt, later])
+  }, [pet.lastFedAt, active, later])
 
   // ---- reacting to the work ----
   //
@@ -678,6 +812,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const mood: Mood = sleeping ? 'asleep' : moodOf(pet)
   const diet = useMemo(() => dietOf(pet), [pet])
   const awards = useMemo(() => awardsOf(pet, nowTick), [pet, nowTick])
+  const outfit = useMemo(() => outfitOf(pet.worn, growth.level), [pet.worn, growth.level])
 
   if (!show && !detached) {
     // Put away: a shortcut must not go on feeding and cleaning a pet that is not
@@ -750,6 +885,43 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       REVEAL_MS
     )
   }
+  // ---- friend battles ----
+  // No server: you send your code, your friend sends theirs, and each side
+  // pastes the other's. The same two codes make the same fight on both machines.
+  const copyCode = async (): Promise<void> => {
+    const mine = cardOf(pet, Date.now())
+    if (!mine) return speak(t('pet.say.egg'))
+    await window.api.pet.copy(encodeCard(mine))
+    say(t('pet.battle.copied'))
+  }
+  const pasteCode = async (): Promise<void> => {
+    const mine = cardOf(pet, Date.now())
+    if (!mine) return speak(t('pet.say.egg'))
+    // The pasted code needs a keyboard, which the floating pet borrows (see doRename).
+    if (detached) await window.api.pet.focusable(true)
+    let text: string | null
+    try {
+      text = await promptInput({ title: t('pet.battle.pasteTitle'), initial: '' })
+    } finally {
+      if (detached) void window.api.pet.focusable(false)
+    }
+    if (!text?.trim()) return
+    const foe = decodeCard(text)
+    if (!foe) return speak(t('pet.battle.bad'))
+    // A friend's pet, never one of your own: a pet is known by its birthday.
+    if (pets.some((p) => Math.floor(p.bornAt) === foe.bornAt)) return speak(t('pet.battle.own'))
+    setSpeech(null)
+    setOutcome(null)
+    setStep(0)
+    setDuel({ mine, foe, bout: fight(mine, foe) })
+  }
+  /** Out of the arena, back to the battle menu. */
+  const leaveDuel = (): void => {
+    setDuel(null)
+    setOutcome(null)
+    setStep(0)
+  }
+
   // ---- the menu strip ----
   //
   // The functions live on the SCREEN, as a strip of segments along its foot, and
@@ -849,6 +1021,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('album')
     },
     {
+      id: 'battle',
+      label: t('pet.mode.battle'),
+      node: <Swords size={11} />,
+      on: mode === 'battle',
+      run: () => {
+        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
+        openScreen('battle')
+      }
+    },
+    {
       id: 'talk',
       label: t('pet.talk.label'),
       node: <MessageCircle size={11} />,
@@ -867,6 +1049,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** Open a screen. The ask field belongs to the talk screen and follows it. */
   const openScreen = (m: ScreenMode): void => {
     setTalking(m === 'talk')
+    leaveDuel()
     setMode(m)
   }
 
@@ -875,6 +1058,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setSpeech(null)
     setGuessing(false)
     setTalking(false)
+    leaveDuel()
     setMode('char')
   }
 
@@ -887,6 +1071,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pressA = (): void => {
     if (guessing) return doGuess('left')
     if (mode === 'settings') return setRow((r) => (r + 1) % settingRows.length)
+    if (mode === 'battle') return void copyCode()
     if (METER_PAGES.includes(mode)) {
       const next = METER_PAGES[(METER_PAGES.indexOf(mode) + 1) % METER_PAGES.length]
       return setMode(next)
@@ -899,6 +1084,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pressB = (): void => {
     if (guessing) return doGuess('right')
     if (mode === 'settings') return runSetting(settingRows[row]?.id ?? '')
+    if (mode === 'battle') {
+      // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
+      if (duel && !outcome) return setStep(duel.bout.blows.length)
+      return void pasteCode()
+    }
     if (sel === null) return setMode(mode === 'clock' ? 'char' : 'clock')
     icons[sel].run()
   }
@@ -907,6 +1097,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // dismissed instead of waited out.
     setSpeech(null)
     if (guessing) return setGuessing(false)
+    if (mode === 'battle' && duel) return leaveDuel()
     if (mode !== 'char') {
       setTalking(false)
       setMode('char')
@@ -946,7 +1137,35 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       : []),
     { id: 'size', label: t('pet.settings.size'), value: t(`pet.size.${chrome}`) },
     { id: 'hide', label: t('pet.settings.hide'), value: t('pet.settings.hideDo') },
-    { id: 'restart', label: t('pet.settings.restart'), value: t('pet.settings.restartDo'), danger: true }
+    // Which pet the buttons look after; one press shows the next one round.
+    ...(pets.length > 1
+      ? [
+          {
+            id: 'switch',
+            label: t('pet.settings.switch'),
+            value: `${active + 1}/${pets.length}`
+          }
+        ]
+      : []),
+    {
+      id: 'adopt',
+      label: t('pet.settings.adopt'),
+      value:
+        pets.length < MAX_PETS
+          ? t('pet.settings.adoptDo', { n: pets.length, max: MAX_PETS })
+          : t('pet.settings.nestFull', { max: MAX_PETS })
+    },
+    { id: 'restart', label: t('pet.settings.restart'), value: t('pet.settings.restartDo'), danger: true },
+    ...(pets.length > 1
+      ? [
+          {
+            id: 'release',
+            label: t('pet.settings.release'),
+            value: t('pet.settings.releaseDo'),
+            danger: true
+          }
+        ]
+      : [])
   ]
   const NEXT_SIZE: Record<PetChrome, PetChrome> = { full: 'screen', screen: 'bare', bare: 'full' }
   const runSetting = (id: string): void => {
@@ -964,6 +1183,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         return void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
       case 'restart':
         if (window.confirm(t('pet.resetConfirm'))) reset()
+        return
+      case 'switch':
+        return select()
+      case 'adopt':
+        if (pets.length >= MAX_PETS) return speak(t('pet.settings.nestFull', { max: MAX_PETS }))
+        adopt()
+        return setMode('char')
+      case 'release':
+        if (window.confirm(t('pet.releaseConfirm'))) letGo()
         return
     }
   }
@@ -1013,9 +1241,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     ? pet.plays > 0
       ? `${t('pet.play.hint')} · ${t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays })}`
       : t('pet.play.hint')
-    : growth.toNext > 0
-      ? t('pet.toNext', { n: growth.toNext })
-      : t('pet.grown')
+    : growth.level > 0
+      ? growth.toNext > 0
+        ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
+        : t('pet.maxLevel', { lv: growth.level })
+      : growth.toNext > 0
+        ? t('pet.toNext', { n: growth.toNext })
+        : t('pet.grown')
+  // The next keepsake to work toward, once there is a level to count from.
+  const gift = growth.level > 0 ? nextAccessory(growth.level) : null
 
   // Drawn on the glass, and each segment is the button for its own function:
   // point at it to see what it is, press it to do it.
@@ -1074,6 +1308,28 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'char' && (
         <div className="pet-yard">
+          {/* The bag: one dot per pet, the one out (and eating) filled. Press
+              a dot to bring that one out instead; the rest wait, paused. */}
+          {pets.length > 1 && !guessing && (
+            <div className="pet-nest">
+              {pets.map((p, i) => {
+                const who = t(i === active ? 'pet.nestOut' : 'pet.nestIn', {
+                  name: p.name || t(`pet.species.${p.species}`)
+                })
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    className={`pet-nest-dot${i === active ? ' on' : ''}`}
+                    title={who}
+                    aria-label={who}
+                    aria-pressed={i === active}
+                    onClick={() => select(i)}
+                  />
+                )
+              })}
+            </div>
+          )}
           {/* Pick a side by pressing that side (or with the A / B keys). */}
           {guessing && (
             <button
@@ -1098,6 +1354,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
+              level={growth.level}
+              outfit={outfit}
             />
           </div>
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
@@ -1148,6 +1406,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dt>{t('pet.stat.next')}</dt>
             <dd>{footer}</dd>
           </div>
+          {gift && (
+            <div>
+              <dt>{t('pet.stat.gift')}</dt>
+              <dd>{t('pet.giftAt', { item: t(`pet.acc.${gift.id}`), lv: gift.level })}</dd>
+            </div>
+          )}
           <div>
             <dt>{t('pet.stat.tokens')}</dt>
             <dd>{fmtTokens(pet.totalTokens)}</dd>
@@ -1173,6 +1437,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           <div>
             <dt>{t('pet.stat.games')}</dt>
             <dd>{pet.plays ? t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays }) : t('pet.never')}</dd>
+          </div>
+          <div>
+            <dt>{t('pet.battle.record')}</dt>
+            <dd>
+              {pet.battles
+                ? t('pet.battle.recordValue', { n: pet.battles, w: pet.battleWins })
+                : t('pet.never')}
+            </dd>
           </div>
           {limit && (
             <div>
@@ -1237,12 +1509,32 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
       {mode === 'awards' && (
         <div className="pet-awards">
-          {awards.map((a) => (
-            <div key={a.id} className={`pet-award${a.done ? ' done' : ''}`} title={t(`pet.award.${a.id}`)}>
-              <i />
-              <span>{t(`pet.award.${a.id}`)}</span>
-            </div>
-          ))}
+          {awards.map((a) => {
+            // An award with a prize: once earned, a click puts it on (or takes it off).
+            const prize = PRIZES.find((p) => p.award === a.id)
+            const item = prize ? t(`pet.acc.${prize.id}`) : ''
+            const on = !!prize && pet.worn.includes(prize.id)
+            const wearable = !!prize && a.done
+            return (
+              <div
+                key={a.id}
+                className={`pet-award${a.done ? ' done' : ''}${a.event ? ' event' : ''}${wearable ? ' prize' : ''}${on ? ' worn' : ''}`}
+                title={
+                  !prize
+                    ? t(`pet.award.${a.id}`)
+                    : wearable
+                      ? t(on ? 'pet.prizeOff' : 'pet.prizeOn', { item })
+                      : t('pet.prizeLocked', { item })
+                }
+                onClick={wearable ? () => wear(prize.id) : undefined}
+              >
+                <i />
+                <span>{t(`pet.award.${a.id}`)}</span>
+                {item && <em>{on ? `[${item}]` : item}</em>}
+              </div>
+            )
+          })}
+          {growth.stage !== 'adult' && <div className="pet-award-note">{t('pet.prizeAdultOnly')}</div>}
         </div>
       )}
 
@@ -1297,6 +1589,89 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           ))}
         </div>
       )}
+
+      {mode === 'battle' && !duel && (
+        <div className="pet-rows pet-settings">
+          <button type="button" data-row="copy" className="pet-row" onClick={() => void copyCode()}>
+            <span>{t('pet.battle.copy')}</span>
+            <b>A</b>
+          </button>
+          <button type="button" data-row="paste" className="pet-row" onClick={() => void pasteCode()}>
+            <span>{t('pet.battle.paste')}</span>
+            <b>B</b>
+          </button>
+          <div className="pet-row">
+            <span>{t('pet.battle.record')}</span>
+            <b>
+              {pet.battles
+                ? t('pet.battle.recordValue', { n: pet.battles, w: pet.battleWins })
+                : t('pet.never')}
+            </b>
+          </div>
+          <p className="pet-note">{t('pet.battle.hint')}</p>
+        </div>
+      )}
+
+      {mode === 'battle' && duel && (() => {
+        const blow = step > 0 ? duel.bout.blows[step - 1] : null
+        const hp = blow?.hp ?? [duel.bout.fighters[0].hp, duel.bout.fighters[1].hp]
+        // Faces change only once it is over: the winner beams, the loser sulks.
+        const winner = outcome && outcome.result !== 'draw' ? duel.bout.winner : null
+        const side = (i: 0 | 1, c: BattleCard): JSX.Element => {
+          const swung = blow && blow.by === i
+          const hit = blow && blow.by !== i && !blow.miss
+          const pct = Math.round((hp[i] / duel.bout.fighters[i].hp) * 100)
+          return (
+            <div className={`pet-fighter side-${i}`}>
+              <span className="pet-fighter-name">{c.name || t(`pet.species.${c.species}`)}</span>
+              <i className="pet-hp">
+                <i style={{ width: `${pct}%` }} className={pct <= 25 ? 'low' : undefined} />
+              </i>
+              <div
+                key={step}
+                className={`pet-fighter-body${swung ? ' swing' : ''}${hit ? ' hit' : ''}`}
+              >
+                <Creature
+                  stage={c.stage}
+                  form={c.form}
+                  species={c.species}
+                  mood={
+                    winner === null ? moodOfCard(c) : winner === i ? 'happy' : 'sad'
+                  }
+                  chewing={false}
+                  level={c.level}
+                  outfit={outfitOf(c.worn ?? [], c.level)}
+                />
+              </div>
+              {hit && (
+                <b key={`d${step}`} className={`pet-dmg${blow.crit ? ' crit' : ''}`}>
+                  -{blow.dmg}
+                </b>
+              )}
+              {blow && blow.miss && blow.by !== i && (
+                <b key={`m${step}`} className="pet-dmg miss">
+                  {t('pet.battle.miss')}
+                </b>
+              )}
+            </div>
+          )
+        }
+        return (
+          <div className="pet-arena">
+            <div className="pet-arena-row">
+              {side(0, duel.mine)}
+              {side(1, duel.foe)}
+            </div>
+            <div className="pet-arena-foot">
+              {outcome
+                ? `${t(`pet.battle.${outcome.result}`)}${outcome.counted ? '' : ` · ${t('pet.battle.notCounted')}`}`
+                : blow?.crit
+                  ? t('pet.battle.crit')
+                  : t('pet.battle.turn', { n: step, of: duel.bout.blows.length })}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* The menu: one strip along the foot of the screen. */}
       {iconRow(0, icons.length)}
@@ -1403,6 +1778,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               chewing={chewing && awake && !sleeping}
               flavor={diet.total > 0 ? diet.top : undefined}
               evolving={evolving}
+              level={growth.level}
+              outfit={outfit}
             />
             {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
             {(pet.sick || pet.poops > 0) && (

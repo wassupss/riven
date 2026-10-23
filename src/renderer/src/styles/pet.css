@@ -437,6 +437,29 @@
   width: 100%;
   height: 100%;
 }
+/* The nest: a dot per pet in the corner, the one on screen filled. */
+.pet-nest {
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+}
+.pet-nest-dot {
+  width: 5px;
+  height: 5px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, black);
+  background: transparent;
+  cursor: pointer;
+}
+.pet-nest-dot.on {
+  background: color-mix(in srgb, var(--accent-2) 30%, black);
+}
+.pet-nest-dot:hover:not(.on) {
+  background: var(--hover-strong);
+}
 /* What it has left lying about, and whether it needs a doctor. */
 .pet-floor {
   position: absolute;
@@ -559,7 +582,7 @@
 
 /* Growing up: the ring of dots flies outward and fades. */
 .pet-burst {
-  transform-origin: 8px 8px;
+  transform-origin: 16px 16px;
   animation: pet-burst 0.9s steps(4, end) 3;
 }
 @keyframes pet-burst {
@@ -621,6 +644,26 @@
 }
 .pet-lcd.pet-sp-crab {
   filter: hue-rotate(90deg) saturate(1.25);
+}
+.pet-lcd.pet-sp-fox {
+  filter: hue-rotate(100deg) saturate(1.4);
+}
+.pet-lcd.pet-sp-owl {
+  filter: hue-rotate(130deg) saturate(0.35) brightness(0.98);
+}
+.pet-lcd.pet-sp-bear {
+  /* Darker and browner than the dog. */
+  filter: hue-rotate(115deg) saturate(0.45) brightness(0.8);
+}
+.pet-lcd.pet-sp-octopus {
+  filter: hue-rotate(50deg) saturate(1.15);
+}
+.pet-lcd.pet-sp-axolotl {
+  /* Pale pink, a softer cousin of the octopus. */
+  filter: hue-rotate(70deg) saturate(0.6) brightness(1.12);
+}
+.pet-lcd.pet-sp-slime {
+  filter: hue-rotate(-110deg) saturate(1.2);
 }
 /* A dragon keeps riven's own violet — the one that was every pet's colour before
    strains existed, now reserved for the showiest of them. */
@@ -832,6 +875,33 @@
   background: var(--warning);
   box-shadow: 0 0 4px color-mix(in srgb, var(--warning) 60%, transparent);
 }
+/* Festival awards: a different colour of dot, so they read as limited. */
+.pet-award.event.done i {
+  background: var(--accent);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+/* The prize that comes with an award, after its name. */
+.pet-award em {
+  margin-left: auto;
+  font-style: normal;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.pet-award.prize {
+  cursor: pointer;
+}
+.pet-award.prize:hover em {
+  opacity: 1;
+}
+.pet-award.worn em {
+  color: var(--warning);
+  opacity: 1;
+}
+.pet-award-note {
+  font-size: 8px;
+  color: color-mix(in srgb, var(--fg) 40%, transparent);
+  padding-top: 2px;
+}
 
 /* ---- the stats / graph / album screens ---- */
 .pet-rows {
@@ -982,37 +1052,28 @@
 .pet-px-a {
   fill: var(--warning);
 }
+/* Shading, made at the drawn size: light from the top left. */
+.pet-px-l {
+  fill: color-mix(in srgb, var(--accent-2) 72%, white);
+}
+.pet-px-d {
+  fill: color-mix(in srgb, var(--accent-2) 82%, black);
+}
 
-/* Grown-up forms recolour the body. */
-.pet-f-radiant .pet-px-b {
-  fill: color-mix(in srgb, var(--accent-2) 62%, var(--accent));
-}
-.pet-f-titan .pet-px-b {
-  fill: color-mix(in srgb, var(--accent) 76%, var(--accent-2));
-}
-.pet-f-titan .pet-px-o {
-  fill: color-mix(in srgb, var(--accent) 34%, black);
-}
-.pet-f-titan .pet-px-s {
-  fill: color-mix(in srgb, var(--accent) 66%, black);
-}
-.pet-f-wraith .pet-px-b {
-  fill: color-mix(in srgb, var(--fg-dim) 66%, var(--bg));
-}
-.pet-f-wraith .pet-px-o {
-  fill: color-mix(in srgb, var(--fg-dim) 30%, black);
-}
-.pet-f-wraith .pet-px-s {
-  fill: color-mix(in srgb, var(--fg-dim) 45%, var(--bg));
-}
-.pet-f-wraith .pet-px-e {
-  fill: color-mix(in srgb, var(--danger) 80%, black);
-}
+/* Grown-up forms used to recolour the body here (grey with red eyes for the
+   neglected one), which is a lot of why adults read as a downgrade. A form is
+   now a change of shape in petSprites.ts; the pet keeps its own colours. */
 .pet-s-egg .pet-px-b {
   fill: color-mix(in srgb, var(--fg) 78%, var(--accent-2));
 }
 .pet-s-egg .pet-px-o {
   fill: color-mix(in srgb, var(--fg) 34%, black);
+}
+.pet-s-egg .pet-px-l {
+  fill: color-mix(in srgb, var(--fg) 92%, white);
+}
+.pet-s-egg .pet-px-d {
+  fill: color-mix(in srgb, var(--fg) 66%, var(--accent-2));
 }
 
 /* ---- animation: whole-dot steps, never a smooth slide ---- */
@@ -1026,6 +1087,11 @@
 .pet-m-sad .pet-sprite {
   animation-duration: 2.8s;
 }
+/* The little ghost: see-through, and it drifts rather than hops. */
+.pet-f-wraith .pet-sprite {
+  opacity: 0.78;
+  animation: pet-float 3.2s steps(1, end) infinite;
+}
 .pet-sprite.chew {
   animation: pet-chew 0.3s steps(1, end) infinite;
 }
@@ -1038,14 +1104,58 @@
 .pet-crumbs .pet-px-a {
   animation: pet-crumb 0.7s steps(4, end) infinite;
 }
+/* A keepsake's gold is solid, not a twinkling star. */
+.pet-acc .pet-px-a {
+  animation: none;
+}
+/* Its shine twinkles out of step, so it glitters rather than blinks. */
+.pet-aura .pet-px-a:nth-child(2n) {
+  animation-delay: -0.7s;
+}
 
-/* A one-dot hop — the whole sprite moves by exactly one pixel of the grid. */
+/* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
+   hopped by one: always whole dots. */
 @keyframes pet-hop {
   0%,
   50% {
     transform: translateY(0);
   }
   51%,
+  100% {
+    transform: translateY(-2px);
+  }
+}
+/* The ghost drifts a dot at a time, which the finer grid makes smooth. */
+@keyframes pet-float {
+  0%,
+  12% {
+    transform: translateY(0);
+  }
+  13%,
+  25% {
+    transform: translateY(-1px);
+  }
+  26%,
+  37% {
+    transform: translateY(-2px);
+  }
+  38%,
+  50% {
+    transform: translateY(-3px);
+  }
+  51%,
+  62% {
+    transform: translateY(-4px);
+  }
+  63%,
+  75% {
+    transform: translateY(-3px);
+  }
+  76%,
+  87% {
+    transform: translateY(-2px);
+  }
+  88%,
   100% {
     transform: translateY(-1px);
   }
@@ -1057,13 +1167,13 @@
   }
   51%,
   100% {
-    transform: translateY(1px);
+    transform: translateY(2px);
   }
 }
 @keyframes pet-rock {
   0%,
   33% {
-    transform: translateX(-1px);
+    transform: translateX(-2px);
   }
   34%,
   66% {
@@ -1071,7 +1181,7 @@
   }
   67%,
   100% {
-    transform: translateX(1px);
+    transform: translateX(2px);
   }
 }
 @keyframes pet-twinkle {
@@ -1091,7 +1201,7 @@
   }
   100% {
     opacity: 0;
-    transform: translate(-3px, 6px);
+    transform: translate(-6px, 12px);
   }
 }
 
@@ -1324,4 +1434,133 @@
 /* The status-bar toggle: the always-present way back to a hidden pet. */
 .status-item.pet-toggle.on {
   color: var(--accent);
+}
+
+/* ---- friend battles ----
+   Two pets face each other, the friend's turned round to look at ours. Every
+   blow re-mounts the bodies (keyed by the blow), so the swing and the flinch are
+   one-shot transform animations; nothing runs between blows. */
+.pet-arena {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pet-arena-row {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  gap: 4px;
+}
+.pet-fighter {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.pet-fighter-name {
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.pet-fighter.side-1 .pet-fighter-name {
+  text-align: right;
+}
+.pet-hp {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.08);
+  overflow: hidden;
+}
+.pet-hp > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s steps(4, end);
+}
+.pet-fighter.side-1 .pet-hp > i {
+  margin-left: auto;
+}
+.pet-hp > i.low {
+  background: var(--danger);
+}
+.pet-fighter-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pet-fighter.side-1 .pet-fighter-body {
+  transform: scaleX(-1);
+}
+.pet-fighter-body.swing .pet-lcd {
+  animation: pet-swing 0.3s steps(2, end) 1;
+}
+.pet-fighter-body.hit .pet-lcd {
+  animation: pet-flinch 0.36s steps(3, end) 1;
+}
+@keyframes pet-swing {
+  50% {
+    transform: translateX(14%);
+  }
+}
+@keyframes pet-flinch {
+  33% {
+    transform: translateX(-8%);
+    opacity: 0.35;
+  }
+  66% {
+    opacity: 1;
+  }
+}
+.pet-dmg {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--danger);
+  pointer-events: none;
+  animation: pet-dmg-up 0.6s ease-out 1 forwards;
+}
+.pet-dmg.crit {
+  font-size: 11px;
+  color: var(--accent);
+}
+.pet-dmg.miss {
+  font-size: 8px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+@keyframes pet-dmg-up {
+  to {
+    transform: translate(-50%, -60%);
+    opacity: 0;
+  }
+}
+.pet-arena-foot {
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.pet-asleep .pet-dmg {
+  animation-play-state: paused;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-dmg {
+    animation: none;
+  }
+}
+.pet-detached .pet-arena,
+.pet-detached .pet-arena * {
+  -webkit-app-region: no-drag;
 }

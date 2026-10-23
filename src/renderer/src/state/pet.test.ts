@@ -1,7 +1,19 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
 import { DEFAULT_SETTINGS } from './settings'
-import { feedFrame, drawSpecies, speciesFromBirth, strainsSeen, SPECIES } from './pet'
+import {
+  adopt,
+  feedFrame,
+  drawSpecies,
+  normalizeNest,
+  release,
+  restart,
+  show,
+  speciesFromBirth,
+  strainsSeen,
+  MAX_PETS,
+  SPECIES
+} from './pet'
 import {
   archive,
   awardsOf,
@@ -21,6 +33,13 @@ import {
   freshTokens,
   formOf,
   growthOf,
+  accessoryOf,
+  accessoriesOf,
+  giftAt,
+  levelCost,
+  levelOf,
+  nextAccessory,
+  MAX_LEVEL,
   initialState,
   moodOf,
   normalize,
@@ -202,11 +221,61 @@ describe('growth', () => {
     expect(g.toNext).toBe(25)
   })
 
-  it('is complete at the final stage', () => {
+  it('keeps counting levels once grown, so there is always a next goal', () => {
+    // 800 to adult, then 100, 150, 200, 250, 300 a level: 2000 is level 6.
     const g = growthOf(base({ xp: 2000, bornAt: T0 - 400 * HOUR }), T0)
     expect(g.stage).toBe('adult')
-    expect(g.progress).toBe(1)
-    expect(g.toNext).toBe(0)
+    expect(g.level).toBe(6)
+    expect(g.toNext).toBe(150)
+    expect(g.progress).toBeCloseTo(200 / 350)
+  })
+
+  it('has no level before it grows up', () => {
+    expect(growthOf(base({ xp: STAGE_XP[4] - 1 }), T0).level).toBe(0)
+  })
+})
+
+describe('levels', () => {
+  it('starts at level 1 the moment it grows up', () => {
+    expect(levelOf(STAGE_XP[4] - 1).level).toBe(0)
+    expect(levelOf(STAGE_XP[4]).level).toBe(1)
+    expect(levelOf(STAGE_XP[4] + levelCost(1) - 1).level).toBe(1)
+    expect(levelOf(STAGE_XP[4] + levelCost(1)).level).toBe(2)
+  })
+
+  it('makes each level cost a little more than the last', () => {
+    for (let l = 1; l < 20; l++) expect(levelCost(l + 1)).toBeGreaterThan(levelCost(l))
+  })
+
+  it('stops at the top level with nothing left to earn', () => {
+    const top = levelOf(1e9)
+    expect(top.level).toBe(MAX_LEVEL)
+    expect(growthOf(base({ xp: 1e9 }), T0).toNext).toBe(0)
+  })
+
+  it('wears the newest keepsake it has earned', () => {
+    expect(accessoryOf(0)).toBeNull()
+    expect(accessoryOf(2)).toBeNull()
+    expect(accessoryOf(3)).toBe('sprout')
+    expect(accessoryOf(7)).toBe('bow')
+    expect(accessoryOf(50)).toBe('crown')
+    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3, slot: 'head' })
+    expect(nextAccessory(MAX_LEVEL)).toBeNull()
+  })
+
+  it('wears more the higher it gets, one in each slot', () => {
+    expect(accessoriesOf(2)).toEqual([])
+    expect(accessoriesOf(5)).toEqual(['scarf', 'sprout'])
+    expect(accessoriesOf(10)).toEqual(['heart', 'scarf', 'crown'])
+    expect(accessoriesOf(MAX_LEVEL)).toEqual(['legend', 'mushrooms', 'moon', 'medal', 'crown'])
+    let worn = 0
+    for (let lvl = 1; lvl <= MAX_LEVEL; lvl++) {
+      const now = accessoriesOf(lvl).length
+      expect(now).toBeGreaterThanOrEqual(worn)
+      worn = now
+    }
+    expect(giftAt(8)).toBe('heart')
+    expect(giftAt(9)).toBeNull()
   })
 })
 
@@ -239,6 +308,19 @@ describe('formOf', () => {
   it('a starved pet is a wraith even if it was gorged early on', () => {
     // Neglect is checked first: how it was treated outranks how much it ate.
     expect(formOf(grown({ bornAt: T0 - 20 * HOUR, neglectMs: 15 * HOUR }), T0)).toBe('wraith')
+  })
+
+  const kept = (form: 'radiant' | 'wraith', over: Partial<PetSave>): PetSave =>
+    grown({ evolutions: [{ stage: 'adult', form, at: T0 - 100 * HOUR }], ...over })
+
+  it('keeps the form it grew into, even if care slips later', () => {
+    // Its numbers now say wraith, but a radiant grown-up stays radiant.
+    expect(formOf(kept('radiant', { neglectMs: 150 * HOUR }), T0)).toBe('radiant')
+  })
+
+  it('lets a ghost be cared back to life', () => {
+    expect(formOf(kept('wraith', { neglectMs: 150 * HOUR }), T0)).toBe('wraith')
+    expect(formOf(kept('wraith', { neglectMs: 6 * HOUR }), T0)).toBe('radiant')
   })
 })
 
@@ -703,7 +785,7 @@ describe('species', () => {
   it('draws evenly across the strains', () => {
     // The draw is a pure function of one number, so the whole distribution is
     // checkable without a random source.
-    const n = 600
+    const n = SPECIES.length * 50
     const drawn = Array.from({ length: n }, (_, i) => drawSpecies(i / n))
     for (const sp of SPECIES)
       expect(drawn.filter((d) => d === sp)).toHaveLength(n / SPECIES.length)
@@ -770,5 +852,76 @@ describe('species', () => {
     expect(strainsSeen(base({ species: 'cat', album: [] }))).toBe(1)
     expect(strainsSeen(base({ species: 'cat', album: [entry('cat'), entry('cat')] }))).toBe(1)
     expect(strainsSeen(base({ species: 'cat', album: [entry('rabbit'), entry('turtle')] }))).toBe(3)
+  })
+})
+
+describe('the nest', () => {
+  const now = Date.UTC(2026, 9, 1, 12)
+  const grown = (): ReturnType<typeof initialState> => ({ ...initialState(now), xp: 500 })
+
+  it('reads a save from before the nest as a nest of one', () => {
+    const old = { ...grown(), name: 'mochi' }
+    const n = normalizeNest(old, now)
+    expect(n.pets).toHaveLength(1)
+    expect(n.active).toBe(0)
+    expect(n.pets[0].name).toBe('mochi')
+    expect(n.pets[0].xp).toBe(500)
+  })
+
+  it('reads a nest back, capped and with the shown pet in range', () => {
+    const pets = Array.from({ length: MAX_PETS + 2 }, (_, i) => ({ ...grown(), name: `p${i}` }))
+    const n = normalizeNest({ version: 2, active: 99, pets }, now)
+    expect(n.pets).toHaveLength(MAX_PETS)
+    expect(n.active).toBe(MAX_PETS - 1)
+    expect(normalizeNest({ version: 2, active: 0, pets: [] }, now).pets).toHaveLength(1)
+    expect(normalizeNest(null, now).pets).toHaveLength(1)
+  })
+
+  it('pauses a pet in the bag and starts its clock again when it comes out', () => {
+    const first = normalizeNest({ ...grown(), lastTickAt: now }, now)
+    let n = adopt(first, now)
+    expect(n.active).toBe(1)
+    // Six hours with the egg out: the one in the bag is untouched.
+    expect(n.pets[0]).toBe(first.pets[0])
+    const later = now + 6 * 3600_000
+    n = show(n, 0, later)
+    expect(n.active).toBe(0)
+    expect(n.pets[0].lastTickAt).toBe(later)
+    expect(n.pets[0].fullness).toBe(first.pets[0].fullness)
+    // The egg going in was brought up to date before it was put away.
+    expect(n.pets[1].lastTickAt).toBe(later)
+    expect(show(n, 0, later)).toBe(n)
+    expect(show(n, 9, later)).toBe(n)
+  })
+
+  it('takes in eggs until it is full, showing the newest', () => {
+    let n = normalizeNest(grown(), now)
+    for (let i = 1; i < MAX_PETS; i++) {
+      n = adopt(n, now)
+      expect(n.pets).toHaveLength(i + 1)
+      expect(n.active).toBe(i)
+      expect(n.pets[i].xp).toBe(0)
+    }
+    expect(adopt(n, now)).toBe(n)
+  })
+
+  it('lets a pet go into the album, never the last one', () => {
+    let n = adopt(normalizeNest(grown(), now), now)
+    n = { ...n, active: 0 }
+    const after = release(n, now)
+    expect(after.pets).toHaveLength(1)
+    expect(after.active).toBe(0)
+    expect(after.pets[0].album).toHaveLength(1)
+    expect(release(after, now)).toBe(after)
+  })
+
+  it('keeps one album for every pet in it', () => {
+    let n = adopt(adopt(normalizeNest(grown(), now), now), now)
+    n = restart({ ...n, active: 0 }, now)
+    expect(n.pets[0].xp).toBe(0)
+    for (const p of n.pets) expect(p.album).toHaveLength(1)
+    // A save whose pets disagree is brought into step on load.
+    const odd = { version: 2, active: 0, pets: [n.pets[0], { ...n.pets[1], album: [] }] }
+    for (const p of normalizeNest(odd, now).pets) expect(p.album).toHaveLength(1)
   })
 })

@@ -1223,6 +1223,8 @@ const api = {
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
+    // Copy a friend-battle code (the pet window cannot use the page clipboard).
+    copy: (text: string): Promise<void> => ipcRenderer.invoke('pet:copy', text),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and
     // delivered to whichever window is showing the device.
     press: (key: 'a' | 'b' | 'c'): Promise<void> => ipcRenderer.invoke('pet:press', key),

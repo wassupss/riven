@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron'
 import { note } from './focusTrace'
 import { promises as fs } from 'fs'
 import { join } from 'path'
@@ -240,5 +240,11 @@ export function registerPetHandlers(): void {
     note(`pet setFocusable(${!!on})`)
     win.setFocusable(!!on)
     if (on) win.focus()
+  })
+  // A battle code onto the clipboard. The renderer's own clipboard refuses an
+  // unfocused page, and the floating pet is never focused.
+  ipcMain.handle('pet:copy', async (_e, text: unknown) => {
+    if (typeof text !== 'string') return
+    await clipboard.writeText(text.slice(0, 4096))
   })
 }
