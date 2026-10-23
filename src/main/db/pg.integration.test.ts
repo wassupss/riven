@@ -377,4 +377,46 @@ describe.skipIf(!target)('postgres engine (live)', async () => {
     expect(sd.diffSchemas(src, await snap('sd_tgt'))).toEqual([])
     await pg.pgExecute(cfg, undefined, ['drop schema sd_src cascade', 'drop schema sd_tgt cascade'], 20_000)
   })
+
+  it('searches every table for a value, with a row cap and cancel', async () => {
+    const ds = await import('./dataSearch')
+    const cfg = store.getConnection(id)!
+    const o = {
+      schemas: ['riven_t'],
+      term: 'N12',
+      mode: 'contains' as const,
+      caseSensitive: false,
+      allTypes: false,
+      includeViews: false,
+      perTable: 5,
+      timeoutMs: 10_000
+    }
+    const tables = await ds.searchTables(cfg, undefined, o)
+    // Text-like columns only: parent.name and j (jsonb), child.note; the view is opt-in.
+    const mine = (ts: { table: string }[]): string[] => ts.map((t) => t.table).filter((t) => ['parent', 'child', 'v_parent'].includes(t))
+    const cols = Object.fromEntries(tables.map((t) => [t.table, t.columns.join(',')]))
+    expect(cols).toMatchObject({ child: 'note', parent: 'name,j' })
+    expect(mine(tables)).toEqual(['child', 'parent'])
+    const hits: string[] = []
+    const sum = await ds.runSearch(cfg, undefined, o, 's1', (p) => {
+      if (p.hit) hits.push(`${p.hit.table}:${p.hit.result?.rows.length}:${p.hit.result?.truncated}`)
+    })
+    // n12, n120..n129 = 11 rows, capped at 5.
+    expect(sum).toEqual({ total: tables.length, done: tables.length, cancelled: false })
+    expect(hits).toEqual(['parent:5:true'])
+    const exact = await ds.runSearch(cfg, undefined, { ...o, mode: 'exact', term: 'N12' }, 's2', (p) => {
+      if (p.hit) hits.push(`${p.hit.table}:${p.hit.result?.rows.length}`)
+    })
+    expect(exact.done).toBe(tables.length)
+    expect(hits.at(-1)).toBe('parent:1')
+    await expect(ds.runSearch(cfg, undefined, { ...o, mode: 'regex', term: '(' }, 's3', () => {})).rejects.toThrow()
+    // Numbers are found only when every type is searched.
+    const all = await ds.searchTables(cfg, undefined, { ...o, allTypes: true, includeViews: true })
+    expect(mine(all)).toEqual(['child', 'parent', 'v_parent'])
+    expect(all.find((t) => t.table === 'parent')!.columns).toContain('big')
+    // Cancel while the table list loads: nothing is scanned.
+    const run = ds.runSearch(cfg, undefined, { ...o, schemas: [] }, 's4', () => {})
+    await ds.cancelSearch('s4')
+    expect(await run).toMatchObject({ done: 0, cancelled: true })
+  })
 })

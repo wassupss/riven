@@ -13,6 +13,7 @@ import {
   PencilRuler,
   Play,
   Plus,
+  Search,
   ShieldCheck,
   Sparkles,
   Square,
@@ -52,6 +53,7 @@ import PrivsView from "./db/PrivsView";
 import MonitorView from "./db/MonitorView";
 import ErdView from "./db/ErdView";
 import DiffView from "./db/DiffView";
+import SearchView from "./db/SearchView";
 import { errText } from "./db/ConnectionForm";
 import PlanView from "./db/PlanView";
 import HistoryDrawer from "./db/HistoryDrawer";
@@ -157,6 +159,8 @@ export default function DbConsolePanel({
                 <Network size={12} className="dbx-tab-ico erd" />
               ) : x.kind === "diff" ? (
                 <GitCompare size={12} className="dbx-tab-ico erd" />
+              ) : x.kind === "search" ? (
+                <Search size={12} className="dbx-tab-ico mon" />
               ) : (
                 <Table2 size={12} className="dbx-tab-ico obj" />
               )}
@@ -195,6 +199,7 @@ export default function DbConsolePanel({
         {tab?.kind === "monitor" && <MonitorView key={tab.id} tab={tab} />}
         {tab?.kind === "erd" && <ErdView key={tab.id} tab={tab} />}
         {tab?.kind === "diff" && <DiffView key={tab.id} tab={tab} />}
+        {tab?.kind === "search" && <SearchView key={tab.id} tab={tab} />}
         {!tab && (
           <div className="dbx-empty-state">
             <Database size={28} />

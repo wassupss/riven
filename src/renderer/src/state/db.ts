@@ -94,7 +94,17 @@ export interface DiffTab {
   target?: { connId: string; db?: string; schema: string }
 }
 
-export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab | ErdTab | DiffTab
+/** Full data search of a database; `schemas` empty means every non-system schema. */
+export interface SearchTab {
+  id: string
+  kind: 'search'
+  title: string
+  connId: string
+  db?: string
+  schemas: string[]
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab | ErdTab | DiffTab | SearchTab
 
 /** The schema a tab lives in, or undefined when it spans the database (or more). */
 const tabSchema = (x: ConsoleTab): string | undefined =>
@@ -196,6 +206,9 @@ interface DbState {
   openErd: (connId: string, db: string | undefined, schema: string) => string
   openDiff: (connId: string, db: string | undefined, schema: string) => string
   setDiffTarget: (id: string, target: DiffTab['target']) => void
+  /** Opens (or re-scopes) the data search of a database, limited to `schema` when given. */
+  openSearch: (connId: string, db: string | undefined, schema?: string) => string
+  setSearchSchemas: (id: string, schemas: string[]) => void
   /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
   invalidate: (
     change: Omit<DbChange, 'seq'>,
@@ -343,12 +356,30 @@ export const useDb = create<DbState>((set, get) => {
         get().tabs.map((x) => (x.id === id && x.kind === 'diff' ? { ...x, target } : x)),
         get().active
       ),
+    openSearch: (connId, db, schema) => {
+      const schemas = schema ? [schema] : []
+      const same = get().tabs.find((t) => t.kind === 'search' && t.connId === connId && t.db === db)
+      if (same) {
+        commit(get().tabs.map((x) => (x.id === same.id ? { ...x, schemas } : x)), same.id)
+        return same.id
+      }
+      const conn = get().connections.find((c) => c.id === connId)
+      const tab: SearchTab = { id: dbUid(), kind: 'search', title: t('db.search.title', { name: db ?? conn?.database ?? conn?.name ?? '' }), connId, db, schemas }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
+    setSearchSchemas: (id, schemas) =>
+      commit(
+        get().tabs.map((x) => (x.id === id && x.kind === 'search' ? { ...x, schemas } : x)),
+        get().active
+      ),
     closeWithin: (connId, db, schema) => {
       const inside = (x: ConsoleTab): boolean =>
         x.kind !== 'sql' &&
         x.kind !== 'roles' &&
         x.kind !== 'monitor' &&
         x.kind !== 'diff' &&
+        x.kind !== 'search' &&
         x.connId === connId &&
         x.db === db &&
         (schema === undefined || tabSchema(x) === schema)

@@ -96,6 +96,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const openPrivs = useDb((s) => s.openPrivs)
   const openMonitor = useDb((s) => s.openMonitor)
   const openErd = useDb((s) => s.openErd)
+  const openSearch = useDb((s) => s.openSearch)
   const openDiff = useDb((s) => s.openDiff)
   const invalidate = useDb((s) => s.invalidate)
   const changed = useDb((s) => s.changed)
@@ -467,7 +468,8 @@ export default function DbExplorerPanel(): JSX.Element {
           { label: t('db.refresh'), onClick: () => refresh(row) },
           ...(pg
             ? withSep([
-                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db) },
+                { label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db) },
+                { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'database', row.db), separator: true },
                 { label: t('db.r.roles'), onClick: () => openRoles(row.conn.id, row.db) },
                 { label: t('db.mon.open'), onClick: () => openMonitor(row.conn.id, row.db) },
                 { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup' }), separator: true },
@@ -493,6 +495,7 @@ export default function DbExplorerPanel(): JSX.Element {
             ? withSep([
                 { label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) },
                 { label: t('db.diff.open'), onClick: () => openDiff(row.conn.id, row.db, row.schema) },
+                { label: t('db.search.open'), onClick: () => openSearch(row.conn.id, row.db, row.schema) },
                 { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) },
                 { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup', schema: row.schema }) }
               ])

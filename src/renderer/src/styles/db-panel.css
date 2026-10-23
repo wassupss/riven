@@ -2595,3 +2595,79 @@ div.dbx-design-problems {
     border-bottom: 1px solid var(--hairline);
   }
 }
+
+/* ---- Data search ---- */
+.dbx-search {
+  container-type: inline-size;
+}
+.dbx-search .dbx-obj-head {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dbx-search .ui-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.dbx-search-term {
+  flex: 1 1 220px;
+  min-width: 140px;
+  font-family: var(--font-mono);
+}
+.dbx-search-opts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 0 10px 8px;
+  font-size: var(--text-xs);
+}
+.dbx-search-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.dbx-search-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-search-bar {
+  flex: 0 0 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+.dbx-search-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease-out;
+}
+.dbx-search-err {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+.dbx-search-hit-head {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dbx-search-hit-head .dbx-diff-name {
+  flex: 0 1 auto;
+}
+@container (max-width: 640px) {
+  .dbx-search .dbx-diff-body {
+    flex-direction: column;
+  }
+  .dbx-search .dbx-diff-list {
+    flex: 0 0 auto;
+    max-height: 30%;
+    border-right: none;
+    border-bottom: 1px solid var(--hairline);
+  }
+}

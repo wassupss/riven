@@ -28,6 +28,7 @@ import type { ImportOptions } from './csv'
 import { cancelImport, previewCsv, runImport } from './importer'
 import { erdModel } from './erdMeta'
 import { schemaSnapshot } from './schemaDiffMeta'
+import { cancelSearch, runSearch, searchTables, type SearchOptions } from './dataSearch'
 import { cancelDump, findTools, inspectArchive, runBackup, runRestore } from './dump'
 import { DUMP_EXT, serverMajor, type BackupOptions, type RestoreOptions, type ToolInfo } from './dumpArgs'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
@@ -354,6 +355,13 @@ export function registerDbHandlers(): void {
     const pick = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
     return pick.canceled || !pick.filePaths[0] ? null : pick.filePaths[0]
   })
+  ipcMain.handle('db:search-tables', (_e, id: string, db: string | undefined, o: SearchOptions) => searchTables(byId(id), db, o))
+  ipcMain.handle('db:search-run', (e, id: string, db: string | undefined, o: SearchOptions, searchId: string) =>
+    runSearch(byId(id), db, o, searchId, (p) => {
+      if (!e.sender.isDestroyed()) e.sender.send('db:search-progress', searchId, p)
+    })
+  )
+  ipcMain.handle('db:search-cancel', (_e, searchId: string) => cancelSearch(searchId))
   ipcMain.handle('db:import-preview', (_e, path: string, encoding: string, delimiter?: string) => previewCsv(path, encoding, delimiter))
   ipcMain.handle('db:import-run', (e, id: string, db: string | undefined, o: ImportOptions, queryId?: string) => {
     const cfg = byId(id)

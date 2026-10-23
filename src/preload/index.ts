@@ -23,6 +23,7 @@ import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, Tab
 import type { CompletionMeta } from '../main/db/complete'
 import type { ErdModel } from '../main/db/erd'
 import type { SchemaSnapshot } from '../main/db/schemaDiff'
+import type { SearchOptions, SearchProgress, SearchSummary, SearchTable } from '../main/db/dataSearchSql'
 import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../main/db/dumpArgs'
 
 export interface DirEntry {
@@ -644,6 +645,19 @@ const api = {
         const listener = (_e: unknown, queryId: string, rows: number, bytes: number, size: number): void => cb(queryId, rows, bytes, size)
         ipcRenderer.on('db:import-progress', listener)
         return () => ipcRenderer.removeListener('db:import-progress', listener)
+      }
+    },
+    // Full data search: scans every table of the chosen schemas for a value.
+    search: {
+      tables: (id: string, db: string | undefined, o: Pick<SearchOptions, 'schemas' | 'allTypes' | 'includeViews'>): Promise<SearchTable[]> =>
+        ipcRenderer.invoke('db:search-tables', id, db, o),
+      run: (id: string, db: string | undefined, o: SearchOptions, searchId: string): Promise<SearchSummary> =>
+        ipcRenderer.invoke('db:search-run', id, db, o, searchId),
+      cancel: (searchId: string): Promise<void> => ipcRenderer.invoke('db:search-cancel', searchId),
+      onProgress: (cb: (searchId: string, p: SearchProgress) => void): (() => void) => {
+        const listener = (_e: unknown, searchId: string, p: SearchProgress): void => cb(searchId, p)
+        ipcRenderer.on('db:search-progress', listener)
+        return () => ipcRenderer.removeListener('db:search-progress', listener)
       }
     },
     // Backup / restore through pg_dump, pg_restore and psql.
