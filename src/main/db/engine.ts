@@ -27,6 +27,7 @@ import type { ExportOptions } from './mask'
 import type { ImportOptions } from './csv'
 import { cancelImport, previewCsv, runImport } from './importer'
 import { erdModel } from './erdMeta'
+import { schemaSnapshot } from './schemaDiffMeta'
 import { cancelDump, findTools, inspectArchive, runBackup, runRestore } from './dump'
 import { DUMP_EXT, serverMajor, type BackupOptions, type RestoreOptions, type ToolInfo } from './dumpArgs'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
@@ -295,7 +296,8 @@ export function registerDbHandlers(): void {
       if (plan.release === (db || cfg.database || 'postgres')) throw new Error('Run this from another database')
       await closeDatabase(id, plan.release)
     }
-    return pgDdl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS)
+    const searchPath = typeof plan.searchPath === 'string' && plan.searchPath ? plan.searchPath : undefined
+    return pgDdl(cfg, db, stmts, plan.atomic !== false, DDL_TIMEOUT_MS, searchPath)
   })
   ipcMain.handle('db:roles', (_e, id: string) => listRoles(byId(id)))
   ipcMain.handle('db:privileges', (_e, id: string, db: string | undefined, target: PrivTarget) => objectPrivileges(byId(id), db, target))
@@ -325,6 +327,7 @@ export function registerDbHandlers(): void {
     columnDetail(byId(id), db, table, attnum)
   )
   ipcMain.handle('db:erd', (_e, id: string, db: string | undefined, schema: string) => erdModel(byId(id), db, schema))
+  ipcMain.handle('db:schema-snapshot', (_e, id: string, db: string | undefined, schema: string) => schemaSnapshot(byId(id), db, schema))
   // Saves renderer-made text (a diagram, a script) through a save dialog.
   ipcMain.handle('db:save-text', async (e, name: string, ext: string, text: string) => {
     if (typeof text !== 'string' || !SAVE_TEXT[ext]) throw new Error('Unsupported file type')

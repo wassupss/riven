@@ -5,6 +5,7 @@ import {
   Check,
   Database,
   FileCode2,
+  GitCompare,
   Gauge,
   History,
   Lock,
@@ -50,6 +51,7 @@ import RolesView from "./db/RolesView";
 import PrivsView from "./db/PrivsView";
 import MonitorView from "./db/MonitorView";
 import ErdView from "./db/ErdView";
+import DiffView from "./db/DiffView";
 import { errText } from "./db/ConnectionForm";
 import PlanView from "./db/PlanView";
 import HistoryDrawer from "./db/HistoryDrawer";
@@ -153,6 +155,8 @@ export default function DbConsolePanel({
                 <Activity size={12} className="dbx-tab-ico mon" />
               ) : x.kind === "erd" ? (
                 <Network size={12} className="dbx-tab-ico erd" />
+              ) : x.kind === "diff" ? (
+                <GitCompare size={12} className="dbx-tab-ico erd" />
               ) : (
                 <Table2 size={12} className="dbx-tab-ico obj" />
               )}
@@ -190,6 +194,7 @@ export default function DbConsolePanel({
         {tab?.kind === "privs" && <PrivsView key={tab.id} tab={tab} />}
         {tab?.kind === "monitor" && <MonitorView key={tab.id} tab={tab} />}
         {tab?.kind === "erd" && <ErdView key={tab.id} tab={tab} />}
+        {tab?.kind === "diff" && <DiffView key={tab.id} tab={tab} />}
         {!tab && (
           <div className="dbx-empty-state">
             <Database size={28} />

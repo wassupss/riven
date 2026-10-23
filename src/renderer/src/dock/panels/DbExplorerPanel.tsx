@@ -96,6 +96,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const openPrivs = useDb((s) => s.openPrivs)
   const openMonitor = useDb((s) => s.openMonitor)
   const openErd = useDb((s) => s.openErd)
+  const openDiff = useDb((s) => s.openDiff)
   const invalidate = useDb((s) => s.invalidate)
   const changed = useDb((s) => s.changed)
 
@@ -491,6 +492,7 @@ export default function DbExplorerPanel(): JSX.Element {
           ...(pg
             ? withSep([
                 { label: t('db.erd.open'), onClick: () => openErd(row.conn.id, row.db, row.schema) },
+                { label: t('db.diff.open'), onClick: () => openDiff(row.conn.id, row.db, row.schema) },
                 { label: t('db.r.privileges'), onClick: () => openPrivs(row.conn.id, row.db, 'schema', row.schema) },
                 { label: t('db.bk.menuBackup'), onClick: () => setBk({ conn: row.conn, db: row.db, mode: 'backup', schema: row.schema }) }
               ])

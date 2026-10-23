@@ -17,6 +17,8 @@ export interface DdlPlan {
   release?: string
   /** Literals (passwords) the preview masks. */
   secret?: string[]
+  /** Atomic plans: run with this schema alone on the search path and function bodies unchecked (schema migrations). */
+  searchPath?: string
 }
 
 // ---- table designer ---------------------------------------------------------

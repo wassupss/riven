@@ -3,7 +3,7 @@ import { homedir } from 'os'
 import pg from 'pg'
 import Cursor from 'pg-cursor'
 import { getPassword } from './store'
-import { statements } from './sqlText'
+import { quoteIdent, statements } from './sqlText'
 import type { EditStatement } from './edit'
 import type { ConnectionConfig, QueryColumn, QueryResult, TxStatus } from './types'
 
@@ -307,7 +307,8 @@ export async function pgDdl(
   database: string | undefined,
   stmts: string[],
   atomic: boolean,
-  timeoutMs: number
+  timeoutMs: number,
+  searchPath?: string
 ): Promise<number> {
   if (atomic) {
     const { e } = entry(cfg, database)
@@ -317,6 +318,10 @@ export async function pgDdl(
       await client.query('begin')
       await client.query(`set local statement_timeout = ${Math.floor(timeoutMs)}`)
       await client.query(`set local lock_timeout = ${DDL_LOCK_TIMEOUT_MS}`)
+      if (searchPath !== undefined) {
+        await client.query(`select set_config('search_path', $1, true)`, [quoteIdent('postgres', searchPath)])
+        await client.query('set local check_function_bodies = off')
+      }
       for (const s of stmts) await client.query(s)
       await client.query('commit')
       ok = true
@@ -543,6 +548,28 @@ export async function pgApply(
     return out
   } finally {
     if (!ok) await client.query('rollback').catch(() => {})
+    client.release()
+  }
+}
+
+/**
+ * Catalog reads in one read-only transaction with `searchPath` alone on the
+ * search path, so object references in it print unqualified (schema diff).
+ */
+export async function pgReadIn<T>(
+  cfg: ConnectionConfig,
+  database: string | undefined,
+  searchPath: string,
+  work: (q: (sql: string, params?: unknown[]) => Promise<Cell[][]>) => Promise<T>
+): Promise<T> {
+  const { e } = entry(cfg, database)
+  const client = await e.pool.connect()
+  try {
+    await client.query('begin read only')
+    await client.query(`select set_config('search_path', $1, true)`, [quoteIdent('postgres', searchPath)])
+    return await work(async (sql, params = []) => (await client.query({ text: sql, values: params, rowMode: 'array' })).rows as Cell[][])
+  } finally {
+    await client.query('rollback').catch(() => {})
     client.release()
   }
 }

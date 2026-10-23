@@ -22,6 +22,7 @@ import type { DdlPlan } from '../main/db/ddl'
 import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
 import type { CompletionMeta } from '../main/db/complete'
 import type { ErdModel } from '../main/db/erd'
+import type { SchemaSnapshot } from '../main/db/schemaDiff'
 import type { ArchiveInfo, BackupOptions, RestoreOptions, ToolInfo } from '../main/db/dumpArgs'
 
 export interface DirEntry {
@@ -611,6 +612,7 @@ const api = {
     },
     /** Tables, columns and keys of a schema for the ER diagram. */
     erd: (id: string, db: string | undefined, schema: string): Promise<ErdModel> => ipcRenderer.invoke('db:erd', id, db, schema),
+    schemaSnapshot: (id: string, db: string | undefined, schema: string): Promise<SchemaSnapshot> => ipcRenderer.invoke('db:schema-snapshot', id, db, schema),
     /** Writes text through a save dialog; the path, or null when cancelled. */
     saveText: (name: string, ext: 'svg' | 'sql' | 'mmd' | 'txt', text: string): Promise<string | null> =>
       ipcRenderer.invoke('db:save-text', name, ext, text),

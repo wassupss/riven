@@ -83,7 +83,18 @@ export interface ErdTab {
   schema: string
 }
 
-export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab | ErdTab
+/** Schema comparison: `connId`/`db`/`schema` is the source, `target` the side that gets migrated. */
+export interface DiffTab {
+  id: string
+  kind: 'diff'
+  title: string
+  connId: string
+  db?: string
+  schema: string
+  target?: { connId: string; db?: string; schema: string }
+}
+
+export type ConsoleTab = SqlTab | ObjectTab | DesignTab | RolesTab | PrivsTab | MonitorTab | ErdTab | DiffTab
 
 /** The schema a tab lives in, or undefined when it spans the database (or more). */
 const tabSchema = (x: ConsoleTab): string | undefined =>
@@ -183,6 +194,8 @@ interface DbState {
   openPrivs: (connId: string, db: string | undefined, scope: PrivsTab['scope'], name: string) => string
   openMonitor: (connId: string, db?: string) => string
   openErd: (connId: string, db: string | undefined, schema: string) => string
+  openDiff: (connId: string, db: string | undefined, schema: string) => string
+  setDiffTarget: (id: string, target: DiffTab['target']) => void
   /** After DDL: reloads what shows `connId`/`db`/`schema`, and moves or closes tabs of a renamed or dropped object. */
   invalidate: (
     change: Omit<DbChange, 'seq'>,
@@ -315,11 +328,27 @@ export const useDb = create<DbState>((set, get) => {
       commit([...get().tabs, tab], tab.id)
       return tab.id
     },
+    openDiff: (connId, db, schema) => {
+      const same = get().tabs.find((t) => t.kind === 'diff' && t.connId === connId && t.db === db && t.schema === schema)
+      if (same) {
+        commit(get().tabs, same.id)
+        return same.id
+      }
+      const tab: DiffTab = { id: dbUid(), kind: 'diff', title: t('db.diff.title', { name: schema }), connId, db, schema }
+      commit([...get().tabs, tab], tab.id)
+      return tab.id
+    },
+    setDiffTarget: (id, target) =>
+      commit(
+        get().tabs.map((x) => (x.id === id && x.kind === 'diff' ? { ...x, target } : x)),
+        get().active
+      ),
     closeWithin: (connId, db, schema) => {
       const inside = (x: ConsoleTab): boolean =>
         x.kind !== 'sql' &&
         x.kind !== 'roles' &&
         x.kind !== 'monitor' &&
+        x.kind !== 'diff' &&
         x.connId === connId &&
         x.db === db &&
         (schema === undefined || tabSchema(x) === schema)

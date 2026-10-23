@@ -308,4 +308,73 @@ describe.skipIf(!target)('postgres engine (live)', async () => {
     await run(pv.dropRoleSql('riven_ro', { dropOwned: true }))
     expect((await pm.listRoles(cfg)).map((r) => r.name)).not.toContain('riven_ro')
   })
+
+  it('diffs two schemas and migrates the target to match', async () => {
+    const cfg = store.getConnection(id)!
+    const sd = await import('./schemaDiff')
+    const { schemaSnapshot } = await import('./schemaDiffMeta')
+    const common = (s: string): string[] => [
+      `drop schema if exists ${s} cascade`,
+      `create schema ${s}`,
+      `create type ${s}.mood as enum ('sad', 'ok')`,
+      `create table ${s}.users (id serial primary key, name text not null, email text, legacy int)`,
+      `create table ${s}.gone (id int primary key)`,
+      `create view ${s}.v_names as select id, name from ${s}.users`,
+      `create function ${s}.add1(i int) returns int language sql as 'select i + 1'`,
+      `create function ${s}.gone_fn() returns int language sql as 'select 1'`
+    ]
+    await pg.pgExecute(
+      cfg,
+      undefined,
+      [
+        ...common('sd_tgt'),
+        ...common('sd_src'),
+        "alter type sd_src.mood add value 'happy'",
+        "alter type sd_src.mood add value 'meh' before 'ok'",
+        'alter table sd_src.users drop column legacy',
+        'alter table sd_src.users alter column email type varchar(200)',
+        'alter table sd_src.users alter column email set not null',
+        "alter table sd_src.users add column m sd_src.mood default 'ok'",
+        'alter table sd_src.users add constraint users_email_key unique (email)',
+        "comment on column sd_src.users.email is 'contact'",
+        'create index users_name_idx on sd_src.users (lower(name))',
+        'drop table sd_src.gone',
+        'drop function sd_src.gone_fn()',
+        'create table sd_src.posts (id bigint generated always as identity primary key, user_id int not null references sd_src.users(id), body text, n int default sd_src.add1(1))',
+        'create or replace view sd_src.v_names as select id, name, email from sd_src.users',
+        'create materialized view sd_src.mv_posts as select user_id, count(*) n from sd_src.posts group by user_id',
+        'create index mv_posts_user on sd_src.mv_posts (user_id)',
+        "create or replace function sd_src.add1(i int) returns int language sql as 'select i + 2'",
+        'create function sd_src.touch() returns trigger language plpgsql as $$begin new.body := coalesce(new.body, add1(0)::text); return new; end$$',
+        'create trigger posts_touch before insert on sd_src.posts for each row execute function sd_src.touch()',
+        'create sequence sd_src.ticket start 100 increment 5'
+      ],
+      20_000
+    )
+    const snap = (s: string): Promise<SchemaSnapshot> => schemaSnapshot(cfg, undefined, s)
+    type SchemaSnapshot = Awaited<ReturnType<typeof schemaSnapshot>>
+    const src = await snap('sd_src')
+    expect(src.tables.find((t) => t.name === 'posts')?.constraints.find((k) => k.type === 'f')?.def).toBe('FOREIGN KEY (user_id) REFERENCES users(id)')
+    const items = sd.diffSchemas(src, await snap('sd_tgt'))
+    expect(items.map((i) => `${i.status} ${i.key}`).sort()).toEqual(
+      [
+        'changed enum:mood',
+        'changed function:add1(i integer)',
+        'changed table:users',
+        'changed view:v_names',
+        'added function:touch()',
+        'added sequence:ticket',
+        'added table:posts',
+        'added view:mv_posts',
+        'removed function:gone_fn()',
+        'removed table:gone'
+      ].sort()
+    )
+    expect(items.find((i) => i.key === 'table:users')?.destructive).toBe(true)
+    const m = sd.buildMigration(src, await snap('sd_tgt'), items.map((i) => i.key))
+    expect(m.warnings).toEqual([])
+    await pg.pgDdl(cfg, undefined, m.stmts, true, 20_000, 'sd_tgt')
+    expect(sd.diffSchemas(src, await snap('sd_tgt'))).toEqual([])
+    await pg.pgExecute(cfg, undefined, ['drop schema sd_src cascade', 'drop schema sd_tgt cascade'], 20_000)
+  })
 })
