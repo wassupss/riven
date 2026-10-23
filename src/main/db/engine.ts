@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { listDatabases, listSchemas, listObjects, tableInfo, objectDdl, findSchema, columnDetail, editTarget, completionMeta } from './meta'
 import type { EditStatement } from './edit'
 import { DDL_VERBS, type DdlPlan } from './ddl'
@@ -22,6 +22,8 @@ import {
 } from './pg'
 import { openExport, XLSX_MAX_ROWS } from './export'
 import type { ExportOptions } from './mask'
+import type { ImportOptions } from './csv'
+import { cancelImport, previewCsv, runImport } from './importer'
 import { deleteConnection, getConnection, listConnections, resolveConnection, saveConnection } from './store'
 import { pagedQuery, readOnlyViolation, statements, unsafeStatement } from './sqlText'
 import type { ConnectionConfig, PrivTarget, QueryResult } from './types'
@@ -317,6 +319,36 @@ export function registerDbHandlers(): void {
   ipcMain.handle('db:column', (_e, id: string, db: string | undefined, table: number, attnum: number) =>
     columnDetail(byId(id), db, table, attnum)
   )
+  ipcMain.handle('db:import-pick', async (e) => {
+    // Dev-only hook for driving the dialog without the native picker.
+    if (!app.isPackaged && process.env.RIVEN_DEV_PICK_FILE) return process.env.RIVEN_DEV_PICK_FILE
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [
+        { name: 'CSV / TSV', extensions: ['csv', 'tsv', 'txt'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    }
+    const pick = await (win ? dialog.showOpenDialog(win, opts) : dialog.showOpenDialog(opts))
+    return pick.canceled || !pick.filePaths[0] ? null : pick.filePaths[0]
+  })
+  ipcMain.handle('db:import-preview', (_e, path: string, encoding: string, delimiter?: string) => previewCsv(path, encoding, delimiter))
+  ipcMain.handle('db:import-run', (e, id: string, db: string | undefined, o: ImportOptions, queryId?: string) => {
+    const cfg = byId(id)
+    if (cfg.readOnly) throw new Error('This connection is read-only')
+    let last = 0
+    return runImport(cfg, db, o, queryId, (rows, bytes, size) => {
+      const now = Date.now()
+      if (!queryId || e.sender.isDestroyed() || (now - last < 100 && bytes < size)) return
+      last = now
+      e.sender.send('db:import-progress', queryId, rows, bytes, size)
+    })
+  })
+  ipcMain.handle('db:import-cancel', (_e, id: string, queryId: string) => {
+    cancelImport(queryId)
+    return pgCancel(byId(id), queryId)
+  })
   ipcMain.handle('db:export', async (e, id: string, db: string | undefined, req: ExportRequest) => {
     const cfg = byId(id)
     const o = req.options

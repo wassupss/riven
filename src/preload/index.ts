@@ -16,6 +16,7 @@ import type {
   TxStatus
 } from '../main/db/types'
 import type { ExportOptions } from '../main/db/mask'
+import type { ImportOptions, ImportPreview, ImportResult } from '../main/db/csv'
 import type { EditStatement, EditTarget } from '../main/db/edit'
 import type { DdlPlan } from '../main/db/ddl'
 import type { IndexStat, LockInfo, ServerOverview, SessionInfo, SettingInfo, TableStat } from '../main/db/monitor'
@@ -622,6 +623,20 @@ const api = {
         queryId?: string
       }
     ): Promise<{ path: string; rows: number } | null> => ipcRenderer.invoke('db:export', id, db, req),
+    // CSV import: pick a file, preview it, then load it into a table in one transaction.
+    import: {
+      pick: (): Promise<string | null> => ipcRenderer.invoke('db:import-pick'),
+      preview: (path: string, encoding: string, delimiter?: string): Promise<ImportPreview> =>
+        ipcRenderer.invoke('db:import-preview', path, encoding, delimiter),
+      run: (id: string, db: string | undefined, o: ImportOptions, queryId?: string): Promise<ImportResult> =>
+        ipcRenderer.invoke('db:import-run', id, db, o, queryId),
+      cancel: (id: string, queryId: string): Promise<boolean> => ipcRenderer.invoke('db:import-cancel', id, queryId),
+      onProgress: (cb: (queryId: string, rows: number, bytes: number, size: number) => void): (() => void) => {
+        const listener = (_e: unknown, queryId: string, rows: number, bytes: number, size: number): void => cb(queryId, rows, bytes, size)
+        ipcRenderer.on('db:import-progress', listener)
+        return () => ipcRenderer.removeListener('db:import-progress', listener)
+      }
+    },
     onExportProgress: (cb: (queryId: string, rows: number) => void): (() => void) => {
       const listener = (_e: unknown, queryId: string, rows: number): void => cb(queryId, rows)
       ipcRenderer.on('db:export-progress', listener)

@@ -547,6 +547,35 @@ export async function pgApply(
   }
 }
 
+/**
+ * A write transaction on its own pooled client (bulk import): commit when
+ * `work` resolves, roll back when it throws. Cancellable by queryId.
+ */
+export async function pgTransaction<T>(
+  cfg: ConnectionConfig,
+  database: string | undefined,
+  queryId: string | undefined,
+  work: (q: (sql: string, params?: unknown[]) => Promise<number | null>) => Promise<T>
+): Promise<T> {
+  const { key, e } = entry(cfg, database)
+  const client = await e.pool.connect()
+  const pid = (client as unknown as { processID: number }).processID
+  if (queryId) running.set(queryId, { connKey: key, pid })
+  let ok = false
+  try {
+    await client.query('begin')
+    await client.query(`set local lock_timeout = ${DDL_LOCK_TIMEOUT_MS}`)
+    const out = await work(async (sql, params) => (await client.query({ text: sql, values: params })).rowCount)
+    await client.query('commit')
+    ok = true
+    return out
+  } finally {
+    if (queryId) running.delete(queryId)
+    if (!ok) await client.query('rollback').catch(() => {})
+    client.release()
+  }
+}
+
 /** Ask the server to cancel a running query (from a separate connection). */
 export async function pgCancel(cfg: ConnectionConfig, queryId: string): Promise<boolean> {
   const r = running.get(queryId)

@@ -36,6 +36,7 @@ import ContextMenu, { type MenuItem } from '../../components/ContextMenu'
 import { TextInput } from '../../components/ui/Controls'
 import ConnectionForm, { errText } from './db/ConnectionForm'
 import DdlDialog, { type DdlAction, type FieldValue } from './db/DdlDialog'
+import ImportDialog from './db/ImportDialog'
 
 // =============================================================================
 // DbExplorerPanel: the data source tree. connection > database > schema >
@@ -105,6 +106,7 @@ export default function DbExplorerPanel(): JSX.Element {
   const [form, setForm] = useState<{ initial?: ConnectionInfo } | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [ddl, setDdl] = useState<DdlAction | null>(null)
+  const [imp, setImp] = useState<{ conn: ConnectionInfo; db: string | undefined; schema: string; table?: string } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [top, setTop] = useState(0)
   const [height, setHeight] = useState(400)
@@ -479,6 +481,7 @@ export default function DbExplorerPanel(): JSX.Element {
           ...(rw
             ? withSep([
                 ...createItems(row.conn, row.db, row.schema),
+                ...(pg ? [{ label: t('db.imp.menu'), onClick: () => setImp({ conn: row.conn, db: row.db, schema: row.schema }) }] : []),
                 { label: t('db.d.rename'), onClick: () => renameIt(row.conn, 'schema', row.db, '', row.schema), separator: true },
                 { label: t('db.d.drop'), onClick: () => dropIt(row.conn, 'schema', row.db, '', row.schema), danger: true }
               ])
@@ -499,6 +502,8 @@ export default function DbExplorerPanel(): JSX.Element {
           if (obj.kind === 'view') acts.push({ label: t('db.d.editDefinition'), onClick: () => editView(conn, db, schema, obj.name) })
           if (obj.kind === 'matview') acts.push({ label: t('db.d.refreshMv'), onClick: () => refreshMatview(conn, db, schema, obj.name) })
           acts.push({ label: t('db.d.rename'), onClick: () => renameIt(conn, kind, db, schema, obj.name, obj.args) })
+          if ((obj.kind === 'table' || obj.kind === 'partitioned') && pg)
+            acts.push({ label: t('db.imp.menu'), onClick: () => setImp({ conn, db, schema, table: obj.name }) })
           if (obj.kind === 'table' || obj.kind === 'partitioned')
             acts.push({ label: t('db.d.truncate'), onClick: () => truncateIt(conn, db, schema, obj.name), danger: true })
           acts.push({ label: t('db.d.drop'), onClick: () => dropIt(conn, kind, db, schema, obj.name, obj.args), danger: true })
@@ -617,6 +622,16 @@ export default function DbExplorerPanel(): JSX.Element {
         />
       )}
       {ddl && <DdlDialog action={ddl} onClose={() => setDdl(null)} />}
+      {imp && (
+        <ImportDialog
+          connId={imp.conn.id}
+          db={imp.db}
+          schema={imp.schema}
+          table={imp.table}
+          onClose={() => setImp(null)}
+          onDone={(name, created) => created && invalidate({ connId: imp.conn.id, db: imp.db, schema: imp.schema })}
+        />
+      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   )

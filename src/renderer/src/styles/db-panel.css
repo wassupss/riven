@@ -1001,6 +1001,61 @@
   font-size: var(--text-xs);
 }
 
+/* ---- import dialog ---- */
+.dbx-imp-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dbx-imp-file .dbx-x-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+.dbx-imp-col {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) 160px;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: var(--text-xs);
+}
+.dbx-imp-col:hover {
+  background: var(--hover);
+}
+.dbx-imp-col.off .dbx-x-name,
+.dbx-imp-col.off .dbx-x-type {
+  opacity: 0.45;
+}
+.dbx-imp-col .ui-input,
+.dbx-imp-col .ui-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.dbx-imp-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hairline);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.dbx-imp-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s;
+}
+.dbx-imp-errs {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 100px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
 /* ---- export dialog ---- */
 .dbx-form.dbx-export {
   width: 700px;

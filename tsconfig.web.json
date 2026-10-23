@@ -13,5 +13,5 @@
     "baseUrl": ".",
     "paths": { "@/*": ["src/renderer/src/*"] }
   },
-  "include": ["src/renderer/**/*", "src/preload/index.ts", "src/preload/api.d.ts", "src/main/db/types.ts", "src/main/db/sqlText.ts", "src/main/db/mask.ts", "src/main/db/edit.ts", "src/main/db/ddl.ts", "src/main/db/privs.ts", "src/main/db/complete.ts", "src/main/db/explain.ts", "src/main/db/monitor.ts"]
+  "include": ["src/renderer/**/*", "src/preload/index.ts", "src/preload/api.d.ts", "src/main/db/types.ts", "src/main/db/sqlText.ts", "src/main/db/mask.ts", "src/main/db/edit.ts", "src/main/db/ddl.ts", "src/main/db/privs.ts", "src/main/db/complete.ts", "src/main/db/explain.ts", "src/main/db/monitor.ts", "src/main/db/csv.ts"]
 }
