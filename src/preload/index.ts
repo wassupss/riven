@@ -1217,6 +1217,7 @@ const api = {
     open: (): Promise<void> => ipcRenderer.invoke('pet:open'),
     close: (): Promise<void> => ipcRenderer.invoke('pet:close'),
     hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+    dock: (): Promise<void> => ipcRenderer.invoke('pet:dock'),
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),

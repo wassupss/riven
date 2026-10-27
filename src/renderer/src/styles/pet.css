@@ -417,12 +417,24 @@
   margin: 3px 2px;
   background: var(--edge);
 }
-/* Its own window has no room above the pet, so the menu sits in the flow and the
-   window grows to fit it (pet:resize measures the device's bottom edge). */
+/* In its own window the menu hangs to the right of the device, bottoms aligned,
+   and the window widens to hold it (pet:resize). The device is given the menu's
+   height (minHeight, set inline) and keeps the pet at its bottom, so the window
+   grows upward and the pet does not move. */
+.pet-detached.pet-menu-open {
+  position: relative;
+  /* .pet-device parks itself with right/bottom offsets; relative positioning
+     would turn those into a shift that pushes the pet off the window. */
+  right: auto;
+  bottom: auto;
+  justify-content: flex-end;
+}
 .pet-detached .pet-menu {
-  position: static;
+  top: auto;
+  bottom: 0;
+  left: calc(100% + 6px);
   transform: none;
-  align-self: center;
+  margin: 0;
   box-shadow: none;
 }
 .pet-detached .pet-menu,

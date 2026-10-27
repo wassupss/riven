@@ -152,6 +152,11 @@ const RECENT_KEEP = 8
 const NOTICE_MS = 4000
 // An answer is a sentence, not a mood — give it time to be read.
 const ANSWER_MS = 7000
+/** How long the line it says on opening the menu stays up. */
+const MENU_HI_MS = 4000
+const MENU_HI_COUNT = 6
+/** .pet-menu's width (pet.css). */
+const MENU_W = 172
 
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
@@ -346,9 +351,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   }
   // The bare pet's right-click menu.
   const [menu, setMenu] = useState(false)
-  // Where the right-click landed, in the app window. The sprite leaves most of its
-  // square empty above the pet, so a menu pinned to the box floated far off it.
-  const [menuAt, setMenuAt] = useState<{ x: number; y: number } | null>(null)
+  // The pet's box when the menu opened, in the app window: the menu sits beside
+  // it (right, or left when there is no room) so it never covers the pet.
+  const [menuAt, setMenuAt] = useState<DOMRect | null>(null)
+  /** The floating window's width before the menu widened it, and the device's
+   *  own width inside it (it fills the window, so it is pinned meanwhile), CSS px. */
+  const baseW = useRef<{ win: number; dev: number } | null>(null)
+  /** The menu's height there: the device grows to it so the window does too. */
+  const [menuH, setMenuH] = useState(0)
+  const menuRef = useRef<HTMLDivElement>(null)
+  /** What the pet said on opening the menu, so closing it can take that back. */
+  const menuHi = useRef<string | null>(null)
   /** When a drag last ended: the click that follows a drag is not a pat. */
   const dragEndAt = useRef(0)
   /** Hand-dragging the detached bare pet (see pet:dragStart in main). */
@@ -693,8 +706,18 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // document instead would read back the viewport we just set and creep the
     // window taller on every pass; measuring only the element's height would cut
     // the case off, which is what it used to do.
-    const send = (): void =>
-      void window.api.pet.resize(Math.ceil(el.getBoundingClientRect().bottom) + 6)
+    // With the menu open the window also widens to the right to hold it, and
+    // gives the width back once, when it closes.
+    const send = (): void => {
+      const h = Math.ceil(el.getBoundingClientRect().bottom) + 6
+      const base = baseW.current
+      if (menu && base && menuRef.current) return void window.api.pet.resize(h, base.win + menuRef.current.offsetWidth + 6)
+      if (!menu && base) {
+        baseW.current = null
+        return void window.api.pet.resize(h, base.win)
+      }
+      void window.api.pet.resize(h)
+    }
     send()
     // Measure again on the next frame as well: a chrome change is measured the
     // instant it renders, and the sprite//font work that follows can still move
@@ -713,7 +736,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       ro.disconnect()
       window.removeEventListener('resize', send)
     }
-  }, [detached, chrome, mode, guessing, talking, menu, peek])
+  }, [detached, chrome, mode, guessing, talking, menu, peek, menuH])
+
+  // In its own window the menu hangs beside the device, bottoms aligned, so the
+  // device is made at least as tall as the menu to keep it inside the window.
+  useLayoutEffect(() => {
+    setMenuH(menu && detached ? (menuRef.current?.offsetHeight ?? 0) : 0)
+  }, [menu, detached])
 
   // The menu closes on Esc, a press anywhere else, or riven losing focus. The
   // floating window never has focus (so no Esc, no blur): there it also closes
@@ -735,6 +764,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       window.removeEventListener('pointerdown', down, { capture: true })
       window.removeEventListener('blur', blur)
       if (menuLeave.current) clearTimeout(menuLeave.current)
+      const hi = menuHi.current
+      menuHi.current = null
+      if (hi) setSpeech((v) => (v === hi ? null : v))
     }
   }, [menu, detached])
 
@@ -942,6 +974,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const speak = (msg: string, ms = ANSWER_MS): void => {
     setSpeech(msg)
     later(() => setSpeech((v) => (v === msg ? null : v)), ms)
+  }
+  /** What it says when the menu opens: what it needs first, else hello. */
+  const menuLine = (): string => {
+    if (growth.stage === 'egg') return t('pet.menuHi.egg')
+    if (sleeping) return t('pet.menuHi.sleep')
+    if (pet.sick) return t('pet.menuHi.sick')
+    if (pet.poops > 0) return t('pet.menuHi.dirty')
+    if (pet.fullness < HUNGRY_AT) return t('pet.menuHi.hungry')
+    return t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
   }
   const doGuess = (guess: 'left' | 'right'): void => {
     const r = playRound(guess)
@@ -1252,7 +1293,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       case 'name':
         return void doRename()
       case 'where':
-        return void (detached ? window.api.pet.close() : setSettings({ petDetached: true }))
+        return void (detached ? window.api.pet.dock() : setSettings({ petDetached: true }))
       case 'ontop':
         // Main lifts the window and tells the app to remember it (see PetHost).
         return void window.api.pet.askOnTop(!onTop)
@@ -1886,8 +1927,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const care = icons.slice(0, 5)
   const pages = icons.slice(5)
 
-  // In the app the menu opens at the pointer, upward unless that would leave the
-  // window. Its own window has no room for that: there it sits in the flow.
+  // In the app the menu opens beside the pet, bottoms aligned: to its right, or
+  // its left when the window has no room there. Its own window widens instead
+  // (see pet:resize above and .pet-detached .pet-menu).
   const menuStyle: CSSProperties | undefined =
     detached || !menuAt
       ? undefined
@@ -1895,12 +1937,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           position: 'fixed',
           transform: 'none',
           margin: 0,
-          left: Math.max(8, Math.min(menuAt.x - 86, window.innerWidth - 180)),
-          ...(menuAt.y > 300 ? { top: 'auto', bottom: window.innerHeight - menuAt.y + 4 } : { top: menuAt.y + 4, bottom: 'auto' })
+          left:
+            menuAt.right + 6 + MENU_W <= window.innerWidth - 8 ? menuAt.right + 6 : Math.max(8, menuAt.left - 6 - MENU_W),
+          top: 'auto',
+          bottom: Math.max(8, window.innerHeight - menuAt.bottom),
+          maxHeight: Math.max(120, menuAt.bottom - 8),
+          overflowY: 'auto'
         }
   // Right-click on the pet: every function, as a plain list.
   const menuBox = menu && (
-    <div className="pet-menu" role="menu" style={menuStyle} onContextMenu={(e) => e.preventDefault()}>
+    <div ref={menuRef} className="pet-menu" role="menu" style={menuStyle} onContextMenu={(e) => e.preventDefault()}>
       <div className="pet-menu-care">
         {care.map((ic) => (
           <button
@@ -2000,15 +2046,26 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         .filter(Boolean)
         .join(' ')}
       style={
-        detached || !pos
-          ? undefined /* detached fills its window; otherwise parked bottom-right */
-          : { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+        detached
+          ? menu && baseW.current
+            ? { width: baseW.current.dev, minHeight: menuH } /* the menu hangs to its right */
+            : undefined /* detached fills its window */
+          : pos
+            ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+            : undefined /* parked bottom-right */
       }
       onPointerDown={onPointerDown}
       onContextMenu={(e) => {
         e.preventDefault()
-        setMenuAt({ x: e.clientX, y: e.clientY })
-        setMenu((m) => !m)
+        if (menu) return setMenu(false)
+        const el = ref.current
+        if (!el) return
+        setMenuAt((el.querySelector('.pet-bare, .pet-unit') ?? el).getBoundingClientRect())
+        if (detached) baseW.current = { win: window.innerWidth, dev: el.offsetWidth }
+        const hi = menuLine()
+        menuHi.current = hi
+        speak(hi, MENU_HI_MS)
+        setMenu(true)
       }}
       // The floating window never gets focus, so no Esc and no blur reach it:
       // leaving it is how the menu closes there.
@@ -2026,7 +2083,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           glass it was eight pixels tall and nobody could read it. Shown in every
           size — with the case hidden the balloon is the ONLY thing it can speak
           with, so leaving it out there made the pet mute. */}
-      {bubble && !guessing && !menu && (
+      {bubble && !guessing && (
         <div className="pet-balloon" key={bubble}>
           {bubble}
         </div>

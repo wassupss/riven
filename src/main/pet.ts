@@ -192,6 +192,13 @@ export function registerPetHandlers(): void {
     closePetWindow()
     broadcast('pet:hidden')
   })
+  // The floating pet asked to move back into riven's window. Closing it from
+  // here counts as riven's own close (no 'pet:closed'), so say it explicitly:
+  // otherwise the app still thinks the pet is on the desk and shows it nowhere.
+  ipcMain.handle('pet:dock', () => {
+    closePetWindow()
+    broadcast('pet:closed')
+  })
   // The device measures itself and asks for a window that fits — folding it down,
   // opening a screen, or speaking changes how tall it is.
   //
