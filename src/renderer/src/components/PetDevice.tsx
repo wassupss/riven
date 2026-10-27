@@ -424,7 +424,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // has to rebuild a hundred-odd <rect> dots before the pixel moves, which is
   // exactly the lag you feel in the hand; instead the node is moved directly and
   // the final position is written to settings once, on release.
-  const drag = useRef<{ dx: number; dy: number; x: number; y: number; moved: boolean } | null>(null)
+  const drag = useRef<{ dx: number; dy: number; sx: number; sy: number; x: number; y: number; moved: boolean } | null>(null)
+  // When the last real drag ended. The click that follows a drag's release must
+  // not count as a click (in bare size that click would bring the device back).
+  const dragEndAt = useRef(0)
   const timers = useRef<Array<ReturnType<typeof setTimeout>>>([])
 
   const later = useCallback((fn: () => void, ms: number): void => {
@@ -766,6 +769,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (!d) return stopDrag()
       // The button came up somewhere we never heard about.
       if (e.buttons === 0) return onWinUp()
+      // A few px of hand jitter during a click is not a drag.
+      if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 4) return
       d.moved = true
       const p = clamp(e.clientX - d.dx, e.clientY - d.dy)
       d.x = p.x
@@ -781,7 +786,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     drag.current = null
     stopDrag()
     // One settings write per drag, at the end.
-    if (d?.moved) setSettings({ petPos: { x: d.x, y: d.y } })
+    if (d?.moved) {
+      dragEndAt.current = performance.now()
+      setSettings({ petPos: { x: d.x, y: d.y } })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setSettings, stopDrag])
 
@@ -793,7 +801,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, x: r.left, y: r.top, moved: false }
+    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, moved: false }
     el.classList.add('pet-dragging')
     place(r.left, r.top)
     window.addEventListener('pointermove', onWinMove)
@@ -1321,7 +1329,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           onClick={ic.run}
         >
           {ic.node}
-          <span>{ic.label}</span>
         </button>
       ))}
     </div>
@@ -1817,7 +1824,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             className="pet-bare"
             role="button"
             title={t('pet.size.full')}
-            onClick={() => setChrome('full')}
+            onClick={() => {
+              if (performance.now() - dragEndAt.current < 400) return
+              setChrome('full')
+            }}
           >
             <Creature
               stage={growth.stage}

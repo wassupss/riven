@@ -1477,19 +1477,19 @@
 }
 
 /* ---- the card ('full' size) ----
-   A plain, readable panel: name and level, the two gauges as bars with numbers,
-   the screen, and every action as a labelled button. The screen keeps the same
-   insides as the smaller sizes, drawn larger (zoom) so its text is legible. */
+   A plain panel the same footprint as the old handheld (202px): name and level,
+   the two gauges as bars, the screen, and the actions as icon buttons big
+   enough to hit (names on hover). */
 .pet-chrome-full {
-  width: 312px;
+  width: 202px;
 }
 .pet-card {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 14px;
+  gap: 6px;
+  padding: 7px;
+  border-radius: 12px;
   background: var(--bg-2);
   border: 1px solid var(--edge-strong);
   box-shadow: 0 10px 24px rgb(0 0 0 / 0.45);
@@ -1497,7 +1497,7 @@
 .pet-card-head {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 .pet-card-id {
@@ -1505,17 +1505,17 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  padding-left: 2px;
 }
 .pet-card-id b {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .pet-card-id span {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fg-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1523,31 +1523,31 @@
 }
 .pet-card .pet-clock-btn {
   margin-left: 0;
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: 1px 4px;
+  font-size: 10px;
 }
 .pet-card .pet-icon {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 .pet-card-meters {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .pet-meter {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: 6px;
+  font-size: 10px;
 }
 .pet-meter-label {
-  flex: 0 0 34px;
+  flex: 0 0 26px;
   color: var(--fg-dim);
 }
 .pet-meter-track {
   flex: 1 1 auto;
-  height: 6px;
+  height: 5px;
   border-radius: 3px;
   background: var(--hover-strong);
   overflow: hidden;
@@ -1568,19 +1568,18 @@
   background: var(--warning);
 }
 .pet-meter-value {
-  flex: 0 0 24px;
+  flex: 0 0 20px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--fg-dim);
 }
 .pet-card-screen .pet-screen {
   aspect-ratio: 6 / 5;
-  zoom: 1.4;
   border-radius: 5px;
 }
 .pet-card-foot {
   margin-top: -2px;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--fg-dim);
   text-align: center;
   overflow: hidden;
@@ -1588,49 +1587,40 @@
   white-space: nowrap;
 }
 .pet-card .pet-ask {
-  gap: 4px;
+  gap: 3px;
   padding: 0;
 }
 .pet-card .pet-ask input {
-  height: 28px;
-  padding: 0 9px;
+  height: 24px;
+  padding: 0 7px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
 }
 .pet-card .pet-ask-x {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 .pet-actions {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 .pet-act {
   min-width: 0;
+  height: 26px;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  padding: 6px 2px 5px;
+  padding: 0;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--hover);
   color: var(--fg-dim);
   font: inherit;
   cursor: pointer;
 }
 .pet-act svg {
-  width: 16px;
-  height: 16px;
-}
-.pet-act span {
-  max-width: 100%;
-  font-size: 10.5px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 14px;
+  height: 14px;
 }
 .pet-act:hover {
   background: var(--accent-muted);
@@ -1652,7 +1642,4 @@
   border-color: var(--accent);
   background: var(--accent-muted);
   color: var(--accent);
-}
-.pet-chrome-full .pet-balloon {
-  font-size: 12px;
 }
