@@ -221,11 +221,11 @@
    smudge around the device, because there is nothing behind it to fall on.
    (Measured: alpha 5–71 over the whole margin.) Keep the crisp inner lighting,
    drop everything that blurs outward. */
-.pet-detached .pet-case,
-.pet-detached .pet-mini {
+.pet-detached .pet-case {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 .pet-detached .pet-stand i,
+.pet-detached .pet-card,
 .pet-detached .pet-balloon {
   box-shadow: none;
 }
@@ -256,21 +256,52 @@
 }
 
 /* ---- chrome levels ---- */
-/* Screen only: the case is gone; the glass and its three buttons stay, so every
-   function is still reachable without the printed icons. */
-.pet-chrome-screen {
-  width: 150px;
+/* A screen of the bare pet's (stats, dex, a question...) opens in a card beside
+   it, made like the right-click menu: a plain panel, no glass, no bezel and no
+   icon strip, so nothing about it looks like the device. The screen's type is
+   sized for the device's little LCD, so the card's content is drawn at 1.4x,
+   which brings its 8-9px lines to the menu's reading size. */
+.pet-card {
+  position: absolute;
+  bottom: 0;
+  left: calc(100% + 6px);
+  z-index: 3;
+  width: 236px;
+  padding: 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-2) 94%, black);
+  border: 1px solid var(--edge-strong);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.45);
+  cursor: default;
 }
-.pet-mini {
-  width: 100%;
+.pet-card.left {
+  left: auto;
+  right: calc(100% + 6px);
+}
+.pet-card.down {
+  bottom: auto;
+  top: 0;
+}
+.pet-card-body {
+  zoom: 1.4;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-2) 92%, black);
-  border: 1px solid var(--edge-strong);
-  box-shadow: 0 10px 22px rgb(0 0 0 / 0.45);
+  gap: 4px;
+}
+.pet-card .pet-screen {
+  aspect-ratio: auto;
+  height: 170px;
+  padding: 2px 3px;
+  border-radius: 0;
+  background: none;
+}
+/* Only the title line (the break's countdown): no room to hold open. */
+.pet-card .pet-screen.pet-screen-short {
+  height: auto;
+}
+.pet-detached .pet-card,
+.pet-detached .pet-card * {
+  -webkit-app-region: no-drag;
 }
 /* Creature only: no case, no glass, no gauges — just the pet, on nothing. */
 .pet-chrome-bare {
@@ -366,7 +397,7 @@
    and the window widens to hold it (pet:resize). The device is given the menu's
    height (minHeight, set inline) and keeps the pet at its bottom, so the window
    grows upward and the pet does not move. */
-.pet-detached.pet-menu-open {
+.pet-detached.pet-side-open {
   position: relative;
   /* .pet-device parks itself with right/bottom offsets; relative positioning
      would turn those into a shift that pushes the pet off the window. */

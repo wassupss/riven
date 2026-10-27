@@ -372,6 +372,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** The menu's height there: the device grows to it so the window does too. */
   const [menuH, setMenuH] = useState(0)
   const menuRef = useRef<HTMLDivElement>(null)
+  /** The card a screen of the bare pet's opens in, beside it like the menu. */
+  const cardRef = useRef<HTMLDivElement>(null)
+  /** Where that card hangs in the app: left of the pet when the right has no
+   *  room, and below its top edge when there is no room above. */
+  const [cardSide, setCardSide] = useState<{ left: boolean; down: boolean }>({ left: false, down: false })
   /** What the pet said on opening the menu, so closing it can take that back. */
   const menuHi = useRef<string | null>(null)
   /** When a drag last ended: the click that follows a drag is not a pat. */
@@ -761,10 +766,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // With the menu open the window also widens to the right to hold it, and
     // gives the width back once, when it closes.
     const send = (): void => {
+      // The question field focuses itself before the window has grown, and the
+      // page scrolls to it: that crops the top and reads the bottom short.
+      // Nothing in this window is meant to scroll, so undo it before measuring.
+      for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollTop || p.scrollLeft) p.scrollTo(0, 0)
       const h = Math.ceil(el.getBoundingClientRect().bottom) + 6
       const base = baseW.current
-      if (menu && base && menuRef.current) return void window.api.pet.resize(h, base.win + menuRef.current.offsetWidth + 6)
-      if (!menu && base) {
+      const beside = menu ? menuRef.current : peek ? cardRef.current : null
+      if (beside && base) return void window.api.pet.resize(h, base.win + beside.offsetWidth + 6)
+      if (!beside && base) {
         baseW.current = null
         return void window.api.pet.resize(h, base.win)
       }
@@ -790,11 +800,29 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
   }, [detached, chrome, mode, resting, talking, menu, peek, menuH])
 
-  // In its own window the menu hangs beside the device, bottoms aligned, so the
-  // device is made at least as tall as the menu to keep it inside the window.
+  // In its own window the menu (or a screen's card) hangs beside the device,
+  // bottoms aligned, so the device is made at least as tall as it to keep it
+  // inside the window. The window's own width is noted first, to give back.
   useLayoutEffect(() => {
-    setMenuH(menu && detached ? (menuRef.current?.offsetHeight ?? 0) : 0)
-  }, [menu, detached])
+    const beside = menu ? menuRef.current : peek ? cardRef.current : null
+    if (detached && beside && !baseW.current && ref.current) {
+      baseW.current = { win: window.innerWidth, dev: ref.current.offsetWidth }
+    }
+    setMenuH(detached && beside ? beside.offsetHeight : 0)
+  }, [menu, peek, detached, mode, talking, resting])
+
+  // In the app the card opens to the pet's right, or its left when the window has
+  // no room there; bottoms aligned, or tops when there is no room above.
+  useLayoutEffect(() => {
+    if (detached || !peek || menu) return
+    const el = ref.current
+    const card = cardRef.current
+    if (!el || !card) return
+    const r = el.getBoundingClientRect()
+    const left = r.right + 6 + card.offsetWidth > window.innerWidth - 8
+    const down = r.bottom - card.offsetHeight < 8
+    setCardSide((v) => (v.left === left && v.down === down ? v : { left, down }))
+  }, [detached, peek, menu, pos, mode, talking])
 
   // The menu closes on Esc, a press anywhere else, or riven losing focus. The
   // floating window never has focus (so no Esc, no blur): there it also closes
@@ -917,7 +945,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // Buttons and the text field act; everything else is a drag handle. (Detached,
     // the OS drags the window for us — see -webkit-app-region in the stylesheet.)
     if (detached || e.button !== 0) return
-    if ((e.target as HTMLElement).closest('button, input, form, .pet-menu')) return
+    if ((e.target as HTMLElement).closest('button, input, form, .pet-menu, .pet-card')) return
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
@@ -1447,8 +1475,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
+  // Without the case, a screen opens in a plain card beside the pet (cardBox):
+  // no glass, no icon strip and no second pet drawn in it.
+  const flat = chrome !== 'device'
   const screen = (
-    <div className="pet-screen">
+    <div className={`pet-screen${flat && mode === 'char' ? ' pet-screen-short' : ''}`}>
       {/* Nothing is printed over the picture but a single line, and only when
           there is something to say. */}
       {(mode !== 'char' || flash || resting) && (
@@ -1479,7 +1510,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         </div>
       )}
 
-      {mode === 'char' && (
+      {mode === 'char' && !flat && (
         <div className="pet-yard">
           {/* The bag: one dot per pet, the one out (and eating) filled. Press
               a dot to bring that one out instead; the rest wait, paused. */}
@@ -1864,7 +1895,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       })()}
 
       {/* The menu: one strip along the foot of the screen. */}
-      {iconRow(0, icons.length)}
+      {!flat && iconRow(0, icons.length)}
     </div>
   )
 
@@ -1938,9 +1969,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </form>
   )
 
-  // What is drawn: the handheld if the user asked for it, else just the pet, and
-  // the bare glass while a screen of the bare pet's is open.
-  const view = chrome === 'device' ? 'device' : peek ? 'screen' : 'bare'
+  // What is drawn: the handheld if the user asked for it, else just the pet. A
+  // screen of the bare pet's opens in a card beside it (see cardBox), so the pet
+  // stays where it is instead of turning into a little device.
+  const view = chrome === 'device' ? 'device' : 'bare'
 
   /** A menu entry does its thing and the menu goes away. */
   const pick = (run: () => void) => (): void => {
@@ -2025,6 +2057,20 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
+  // A screen of the bare pet's, in a card beside it styled like the menu; folded
+  // away again with its ✕ (or C). The menu takes its place while it is open.
+  const cardBox = peek && !menu && (
+    <div
+      ref={cardRef}
+      className={`pet-card${!detached && cardSide.left ? ' left' : ''}${!detached && cardSide.down ? ' down' : ''}`}
+    >
+      <div className="pet-card-body">
+        {screen}
+        {askForm}
+      </div>
+    </div>
+  )
+
   // Dragging the floating bare pet by hand (see pet:dragStart in main): it is not
   // an OS drag region, so it can still be clicked and right-clicked.
   const onBareDown = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -2064,14 +2110,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         `pet-chrome-${view}`,
         awake ? '' : 'pet-asleep',
         detached ? 'pet-detached' : '',
-        menu ? 'pet-menu-open' : ''
+        menu || cardBox ? 'pet-side-open' : ''
       ]
         .filter(Boolean)
         .join(' ')}
       style={
         detached
-          ? menu && baseW.current
-            ? { width: baseW.current.dev, minHeight: menuH } /* the menu hangs to its right */
+          ? (menu || cardBox) && baseW.current
+            ? { width: baseW.current.dev, minHeight: menuH } /* the menu or card hangs to its right */
             : undefined /* detached fills its window */
           : pos
             ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
@@ -2084,7 +2130,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         const el = ref.current
         if (!el) return
         setMenuAt((el.querySelector('.pet-bare, .pet-unit') ?? el).getBoundingClientRect())
-        if (detached) baseW.current = { win: window.innerWidth, dev: el.offsetWidth }
+        if (detached && !baseW.current) baseW.current = { win: window.innerWidth, dev: el.offsetWidth }
         const hi = menuLine()
         menuHi.current = hi
         speak(hi, MENU_HI_MS)
@@ -2102,6 +2148,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       }}
     >
       {menuBox}
+      {cardBox}
       {/* What it is saying, above the device and in readable type. Inside the
           glass it was eight pixels tall and nobody could read it. Shown in every
           size — with the case hidden the balloon is the ONLY thing it can speak
@@ -2148,13 +2195,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               ))}
             </div>
           )}
-        </div>
-      ) : view === 'screen' ? (
-        // A screen of the bare pet's is open: the glass alone, folded away again
-        // with its ✕ (or C).
-        <div className="pet-mini">
-          <div className="pet-bezel">{screen}</div>
-          {askForm}
         </div>
       ) : (
         // The whole unit: a little desk terminal — screen, and a deck with the
