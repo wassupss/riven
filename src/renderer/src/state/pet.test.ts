@@ -424,11 +424,11 @@ describe('break time', () => {
   }
 
   it('counts a streak from the first meal, and restarts it after a long enough gap', () => {
-    const s = workFor(base(), atHour(10), 55 * MIN)
-    expect(workStreakMs(s, atHour(10) + 55 * MIN)).toBe(55 * MIN)
-    expect(wantsBreak(s, atHour(10) + 55 * MIN)).toBe(true)
+    const s = workFor(base(), atHour(10), 65 * MIN)
+    expect(workStreakMs(s, atHour(10) + 65 * MIN)).toBe(65 * MIN)
+    expect(wantsBreak(s, atHour(10) + 65 * MIN)).toBe(true)
     // Gone quiet: no streak, nothing to ask for.
-    expect(workStreakMs(s, atHour(10) + 55 * MIN + WORK_IDLE_RESET_MS)).toBe(0)
+    expect(workStreakMs(s, atHour(10) + 65 * MIN + WORK_IDLE_RESET_MS)).toBe(0)
     // Back after the gap: a new streak starts at the new meal.
     const back = feed(s, KIBBLE_TOKENS, atHour(12))
     expect(workStreakMs(back, atHour(12) + MIN)).toBe(MIN)
@@ -439,6 +439,17 @@ describe('break time', () => {
     expect(wantsBreak(s, atHour(10) + BREAK_NAG_MS - 10 * MIN)).toBe(false)
     const late = workFor(base(), atHour(1), 60 * MIN)
     expect(wantsBreak(late, atHour(2))).toBe(false)
+  })
+
+  it('asks on the interval the user picked, or never when it is off', () => {
+    const s = workFor(base(), atHour(10), 35 * MIN)
+    const now = atHour(10) + 35 * MIN
+    expect(wantsBreak(s, now)).toBe(false)
+    expect(wantsBreak(s, now, 30 * MIN)).toBe(true)
+    expect(wantsBreak(s, now, 0)).toBe(false)
+    // An overdue break counts as one the pet asked for under that interval too.
+    expect(rest(base(), 30 * MIN, BREAK_MS, T0, 30 * MIN).wins).toBe(1)
+    expect(rest(base(), 30 * MIN, BREAK_MS, T0, 0).wins).toBe(0)
   })
 
   it('lifts the mood more after a longer streak, and ends it', () => {

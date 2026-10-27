@@ -18,6 +18,7 @@ export default function PetHost(): JSX.Element | null {
   const show = useSettings((s) => s.settings.petShow)
   const detached = useSettings((s) => s.settings.petDetached)
   const onTop = useSettings((s) => s.settings.petOnTop)
+  const breakMin = useSettings((s) => s.settings.petBreakMin)
   const ready = useSettings((s) => s.ready)
   const set = useSettings((s) => s.set)
 
@@ -31,6 +32,11 @@ export default function PetHost(): JSX.Element | null {
       void window.api.pet.open().then(() => window.api.pet.setOnTop(onTop))
     } else void window.api.pet.close()
   }, [ready, show, detached, onTop])
+
+  // The floating pet read its settings once at boot; tell it about a new break interval.
+  useEffect(() => {
+    if (ready && show && detached) void window.api.pet.setBreak(breakMin)
+  }, [ready, show, detached, breakMin])
 
   useEffect(() => {
     // The floating pet's own setup row asked to be lifted (or let down). Main has

@@ -1867,6 +1867,13 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'Off keeps it inside the riven window.'
   },
   'settings.petOnTop': { ko: '항상 위에 두기', en: 'Keep on top' },
+  'settings.petBreak': { ko: '쉬는 시간 알림', en: 'Break reminder' },
+  'settings.petBreakDesc': {
+    ko: '이만큼 쉬지 않고 코딩하면 펫이 쉬자고 조릅니다.',
+    en: 'After this long coding without a pause, the pet asks you to take a break.'
+  },
+  'settings.petBreakMin': { ko: '{n}분', en: '{n} min' },
+  'settings.petBreakOff': { ko: '안 함', en: 'Off' },
   'settings.petOnTopDesc': {
     ko: '다른 앱 위로 항상 올라옵니다. 끄면 보통 창처럼 뒤로 갑니다.',
     en: 'Floats above other apps. Off lets it fall behind them like any window.'

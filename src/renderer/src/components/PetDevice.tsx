@@ -341,6 +341,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pos = useSettings((s) => s.settings.petPos)
   const savedChrome = useSettings((s) => s.settings.petChrome)
   const savedOnTop = useSettings((s) => s.settings.petOnTop)
+  // Same story for the break interval: the app relays changes to the pet window.
+  const savedBreakMin = useSettings((s) => s.settings.petBreakMin)
+  const [breakMin, setBreakMin] = useState(savedBreakMin)
+  useEffect(() => setBreakMin(savedBreakMin), [savedBreakMin])
+  useEffect(() => window.api.pet.onBreak(setBreakMin), [])
+  const nagMs = breakMin * 60_000
   // In its own window the live answer comes from main, not from this window's
   // settings snapshot — same reason as winChrome below: the pet window is not
   // allowed to write settings.json.
@@ -707,7 +713,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // Long enough at it and the pet asks you to step away, again every
   // BREAK_NAG_EVERY_MS until you do. The streak lives in the save (see feed), so
   // both windows agree on it; this only decides when to say so.
-  const needBreak = loaded && !resting && pet.xp >= STAGE_XP[1] && wantsBreak(pet, nowTick)
+  const needBreak = loaded && !resting && pet.xp >= STAGE_XP[1] && wantsBreak(pet, nowTick, nagMs)
   useEffect(() => {
     if (!needBreak || (!show && !detached)) return
     const now = Date.now()
@@ -727,7 +733,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       const now = Date.now()
       setRestNow(now)
       if (now - resting.from >= BREAK_MS) {
-        takeBreak(resting.worked, now - resting.from)
+        takeBreak(resting.worked, now - resting.from, nagMs)
         setResting(null)
         lastNag.current = now
         setSpeech(t('pet.break.done'))
@@ -740,7 +746,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     step()
     const id = setInterval(step, 1000)
     return () => clearInterval(id)
-  }, [resting, takeBreak, later, t])
+  }, [resting, takeBreak, nagMs, later, t])
 
   // ---- the floating window: keep it sized to the device ----
   useLayoutEffect(() => {
@@ -1044,7 +1050,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const endBreak = (): void => {
     if (!resting) return
     const rested = Date.now() - resting.from
-    takeBreak(resting.worked, rested)
+    takeBreak(resting.worked, rested, nagMs)
     setResting(null)
     if (rested >= BREAK_MIN_MS) lastNag.current = Date.now()
     speak(t(rested >= BREAK_MIN_MS ? 'pet.break.short' : 'pet.break.cancel'))

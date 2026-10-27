@@ -44,8 +44,9 @@ export const SICK_MOOD_DROP_PER_HOUR = 8
 // spending tokens is the signal) and asks for a break once it has been a while.
 // A gap this long between meals means you already stepped away: the streak restarts.
 export const WORK_IDLE_RESET_MS = 15 * 60_000
-// How long a streak runs before the pet starts asking, and how often it asks again.
-export const BREAK_NAG_MS = 50 * 60_000
+// How long a streak runs before the pet starts asking (the default; the user picks
+// it in settings, 0 = never), and how often it asks again.
+export const BREAK_NAG_MS = 60 * 60_000
 export const BREAK_NAG_EVERY_MS = 10 * 60_000
 // A proper break, and the shortest one that counts as stepping away at all.
 export const BREAK_MS = 5 * 60_000
@@ -555,9 +556,9 @@ export function workStreakMs(s: PetSave, now: number): number {
   return Math.max(0, now - s.workFrom)
 }
 
-/** Whether the pet should be asking for a break. Asleep at night, it does not. */
-export function wantsBreak(s: PetSave, now: number): boolean {
-  return !isNight(now) && workStreakMs(s, now) >= BREAK_NAG_MS
+/** Whether the pet should be asking for a break. Asleep at night, or told never to, it does not. */
+export function wantsBreak(s: PetSave, now: number, nagMs = BREAK_NAG_MS): boolean {
+  return nagMs > 0 && !isNight(now) && workStreakMs(s, now) >= nagMs
 }
 
 /**
@@ -566,16 +567,17 @@ export function wantsBreak(s: PetSave, now: number): boolean {
  * its share of the mood and ends the streak, and only a full one goes on the
  * record (and on the "you listened" record when the pet had asked for it).
  */
-export function rest(s: PetSave, worked: number, rested: number, now: number): PetSave {
+export function rest(s: PetSave, worked: number, rested: number, now: number, nagMs = BREAK_NAG_MS): PetSave {
   if (rested < BREAK_MIN_MS) return s
   const full = rested >= BREAK_MS
-  const lift = (BREAK_MOOD + BREAK_MOOD_STREAK * Math.min(1, worked / BREAK_NAG_MS)) * Math.min(1, rested / BREAK_MS)
+  const asked = nagMs > 0 && worked >= nagMs
+  const lift = (BREAK_MOOD + BREAK_MOOD_STREAK * Math.min(1, worked / (nagMs || BREAK_NAG_MS))) * Math.min(1, rested / BREAK_MS)
   return {
     ...s,
     mood: clamp(s.mood + Math.round(lift)),
     workFrom: 0,
     plays: full ? s.plays + 1 : s.plays,
-    wins: full && worked >= BREAK_NAG_MS ? s.wins + 1 : s.wins,
+    wins: full && asked ? s.wins + 1 : s.wins,
     lastPlayAt: now
   }
 }
@@ -1290,7 +1292,7 @@ interface PetStore {
   cleanUp: () => void
   giveMedicine: () => void
   /** Back from a break of `rested` ms that interrupted a `worked` ms streak. */
-  takeBreak: (worked: number, rested: number) => void
+  takeBreak: (worked: number, rested: number, nagMs?: number) => void
   rename: (name: string) => void
   /** Put a friend battle on the shown pet's record; false when it already counted today. */
   recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw', upset?: boolean) => boolean
@@ -1397,7 +1399,7 @@ export const usePet = create<PetStore>((set, get) => {
     patHead: (now = Date.now()) => onActive((p) => pet(p, now)),
     cleanUp: () => onActive(clean),
     giveMedicine: () => onActive(cure),
-    takeBreak: (worked, rested) => onActive((p) => rest(p, worked, rested, Date.now())),
+    takeBreak: (worked, rested, nagMs) => onActive((p) => rest(p, worked, rested, Date.now(), nagMs)),
     rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
     recordBattle: (foeBornAt, result, upset) => {
       const before = get().pet

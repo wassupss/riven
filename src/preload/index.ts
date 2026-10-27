@@ -1244,6 +1244,13 @@ const api = {
     setOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:setOnTop', on),
     askOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:askOnTop', on),
     isOnTop: (): Promise<boolean> => ipcRenderer.invoke('pet:isOnTop'),
+    // Minutes before the pet asks for a break (0 = never), pushed by the app.
+    setBreak: (min: number): Promise<void> => ipcRenderer.invoke('pet:setBreak', min),
+    onBreak: (cb: (min: number) => void): (() => void) => {
+      const l = (_e: unknown, min: number): void => cb(min)
+      ipcRenderer.on('pet:break', l)
+      return () => ipcRenderer.removeListener('pet:break', l)
+    },
     onOnTop: (cb: (on: boolean) => void): (() => void) => {
       const l = (_e: unknown, on: boolean): void => cb(on)
       ipcRenderer.on('pet:onTop', l)

@@ -247,6 +247,13 @@ export function registerPetHandlers(): void {
       if (!w.isDestroyed()) w.webContents.send('pet:press', key)
   })
 
+  // The break interval (settings.petBreakMin), relayed so the pet's own window,
+  // which reads settings.json only at boot, hears a change right away.
+  ipcMain.handle('pet:setBreak', (_e, min: number) => {
+    for (const w of BrowserWindow.getAllWindows())
+      if (!w.isDestroyed()) w.webContents.send('pet:break', Number(min) || 0)
+  })
+
   // Floating above other apps is the user's call (settings.petOnTop).
   //
   // Two channels because only ONE window may write settings.json (they each keep

@@ -45,6 +45,8 @@ export interface Settings {
   // Keep that window above other apps. Off by default — a pet that covers your
   // work is a pet you close — but it is yours to turn on.
   petOnTop: boolean
+  // Minutes of coding in a row before the pet asks for a break; 0 = never ask.
+  petBreakMin: number
   // Run the language formatter on ⌘S before writing to disk.
   formatOnSave: boolean
   // Named "new terminal" presets: each runs `command` in a fresh terminal.
@@ -154,6 +156,7 @@ export const DEFAULT_SETTINGS: Settings = {
   petChrome: 'bare',
   petDetached: true,
   petOnTop: false,
+  petBreakMin: 60,
   formatOnSave: false,
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
