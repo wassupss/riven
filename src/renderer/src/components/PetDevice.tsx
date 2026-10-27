@@ -10,7 +10,7 @@ import {
   CornerDownLeft,
   ExternalLink,
   EyeOff,
-  Gamepad2,
+  Coffee,
   GitBranch,
   Heart,
   ListTree,
@@ -39,8 +39,6 @@ import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
 import {
-  ARROW_LEFT,
-  ARROW_RIGHT,
   CROSS,
   MIMES,
   POOP,
@@ -61,6 +59,12 @@ import {
   growthOf,
   isNight,
   moodOf,
+  wantsBreak,
+  workStreakMs,
+  BREAK_MIN_MS,
+  BREAK_MS,
+  BREAK_NAG_EVERY_MS,
+  STAGE_XP,
   outfitOf,
   prizesOf,
   usePet,
@@ -161,8 +165,10 @@ const MENU_W = 172
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
 const PICK_MS = 1600
-// The guessing game's reveal: long enough to see which way the pet went.
-const REVEAL_MS = 1800
+// On a break the pet suggests something to do with it, a new one this often.
+const TIP_MS = 60_000
+const TIP_COUNT = 5
+const NAG_COUNT = 4
 const NOOP = (): void => {}
 // A mime is held this long and never queued: one turn fires dozens of tools.
 const MIME_MS = 1400
@@ -376,7 +382,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const patHead = usePet((s) => s.patHead)
   const cleanUp = usePet((s) => s.cleanUp)
   const giveMedicine = usePet((s) => s.giveMedicine)
-  const playRound = usePet((s) => s.playRound)
+  const takeBreak = usePet((s) => s.takeBreak)
   const rename = usePet((s) => s.rename)
   const reset = usePet((s) => s.reset)
   const pets = usePet((s) => s.pets)
@@ -411,10 +417,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // clickable; the highlight is only for working it from the keys.)
   const [sel, setSel] = useState<number | null>(null)
   const [row, setRow] = useState(0)
-  const [guessing, setGuessing] = useState(false)
-  // Which way the pet actually went, shown for a beat after you guess: without
-  // the reveal the game is an invisible coin toss.
-  const [revealed, setRevealed] = useState<'left' | 'right' | null>(null)
+  // A break in progress: when it began and the work streak it interrupted. Its
+  // clock ticks once a second, and only while there is a break.
+  const [resting, setResting] = useState<{ from: number; worked: number } | null>(null)
+  const [restNow, setRestNow] = useState(0)
+  const lastNag = useRef(0)
   // The ask field stays open across answers. Answering sends the screen back to
   // the pet — that is the point, you watch it answer — and closing the field with
   // it meant every follow-up question needed the menu again.
@@ -694,7 +701,46 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // The bare pet has no screen of its own, so anything that needs one (a menu
   // screen, the game, a question) lends it one; once that is done with, the
   // screen folds away and it is just the pet again.
-  const peek = chrome === 'bare' && (mode !== 'char' || guessing || talking || !!revealed)
+  const peek = chrome === 'bare' && (mode !== 'char' || !!resting || talking)
+
+  // ---- break time ----
+  // Long enough at it and the pet asks you to step away, again every
+  // BREAK_NAG_EVERY_MS until you do. The streak lives in the save (see feed), so
+  // both windows agree on it; this only decides when to say so.
+  const needBreak = loaded && !resting && pet.xp >= STAGE_XP[1] && wantsBreak(pet, nowTick)
+  useEffect(() => {
+    if (!needBreak || (!show && !detached)) return
+    const now = Date.now()
+    if (now - lastNag.current < BREAK_NAG_EVERY_MS) return
+    lastNag.current = now
+    const msg = t(`pet.break.nag.${Math.floor(Math.random() * NAG_COUNT)}`, {
+      n: Math.floor(workStreakMs(pet, now) / 60_000)
+    })
+    setSpeech(msg)
+    later(() => setSpeech((v) => (v === msg ? null : v)), ANSWER_MS)
+  }, [needBreak, nowTick, show, detached, pet, later, t])
+
+  // The break's clock: a tip a minute, and the end when the time is up.
+  useEffect(() => {
+    if (!resting) return
+    const step = (): void => {
+      const now = Date.now()
+      setRestNow(now)
+      if (now - resting.from >= BREAK_MS) {
+        takeBreak(resting.worked, now - resting.from)
+        setResting(null)
+        lastNag.current = now
+        setSpeech(t('pet.break.done'))
+        later(() => setSpeech((v) => (v === t('pet.break.done') ? null : v)), ANSWER_MS * 2)
+        return
+      }
+      const tip = Math.floor((now - resting.from) / TIP_MS)
+      setSpeech(t(`pet.break.tip.${tip % TIP_COUNT}`))
+    }
+    step()
+    const id = setInterval(step, 1000)
+    return () => clearInterval(id)
+  }, [resting, takeBreak, later, t])
 
   // ---- the floating window: keep it sized to the device ----
   useLayoutEffect(() => {
@@ -736,7 +782,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       ro.disconnect()
       window.removeEventListener('resize', send)
     }
-  }, [detached, chrome, mode, guessing, talking, menu, peek, menuH])
+  }, [detached, chrome, mode, resting, talking, menu, peek, menuH])
 
   // In its own window the menu hangs beside the device, bottoms aligned, so the
   // device is made at least as tall as the menu to keep it inside the window.
@@ -943,6 +989,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       ? t('pet.say.sick')
       : limit && limit.usedPct >= 90
         ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
+        : needBreak
+          ? t('pet.say.break')
         : busy.length >= 4
           ? t('pet.say.swamped', { n: busy.length })
           : chewing
@@ -984,20 +1032,22 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (pet.fullness < HUNGRY_AT) return t('pet.menuHi.hungry')
     return t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
   }
-  const doGuess = (guess: 'left' | 'right'): void => {
-    const r = playRound(guess)
-    setGuessing(false)
-    if (!r) return speak(t('pet.play.declined'))
-    // The pet picks a side and you guess it — so SHOW the side it picked. Without
-    // this the game was "press either arrow, read win or lose", which is a coin
-    // toss with extra steps. The pet leans that way, the arrow it chose lights
-    // up, and only then does the result land.
-    setRevealed(r.petPick)
-    later(() => setRevealed(null), REVEAL_MS)
-    say(
-      `${t(`pet.play.went.${r.petPick}`)} · ${r.win ? t('pet.play.win') : t('pet.play.lose')}`,
-      REVEAL_MS
-    )
+  const startBreak = (): void => {
+    const now = Date.now()
+    leaveDuel()
+    setTalking(false)
+    setMode('char')
+    setResting({ from: now, worked: workStreakMs(pet, now) })
+    setRestNow(now)
+  }
+  /** Cut a break short: a minute or more still counts for something. */
+  const endBreak = (): void => {
+    if (!resting) return
+    const rested = Date.now() - resting.from
+    takeBreak(resting.worked, rested)
+    setResting(null)
+    if (rested >= BREAK_MIN_MS) lastNag.current = Date.now()
+    speak(t(rested >= BREAK_MIN_MS ? 'pet.break.short' : 'pet.break.cancel'))
   }
   // ---- friend battles ----
   // No server: you send your code, your friend sends theirs, and each side
@@ -1068,16 +1118,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('graph')
     },
     {
-      id: 'play',
-      label: t('pet.play'),
-      node: <Gamepad2 size={11} />,
-      on: guessing,
+      id: 'rest',
+      label: t('pet.break'),
+      node: <Coffee size={11} />,
+      alert: needBreak,
+      on: !!resting,
       run: () => {
+        if (resting) return endBreak()
         if (growth.stage === 'egg') return speak(t('pet.say.egg'))
-        if (sleeping) return speak(t('pet.say.sleep'))
-        setMode('char')
-        setRevealed(null)
-        setGuessing(true)
+        startBreak()
       }
     },
     {
@@ -1177,7 +1226,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** Out of whatever screen is up, and nothing left being said. */
   const backHome = (): void => {
     setSpeech(null)
-    setGuessing(false)
+    if (resting) endBreak()
     setTalking(false)
     leaveDuel()
     setMode('char')
@@ -1190,7 +1239,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // same thing in one press; both are here on purpose.
   const METER_PAGES: ScreenMode[] = ['stats', 'awards']
   const pressA = (): void => {
-    if (guessing) return doGuess('left')
     if (mode === 'settings') return setRow((r) => (r + 1) % settingRows.length)
     if (mode === 'battle') return void copyCode()
     if (METER_PAGES.includes(mode)) {
@@ -1203,7 +1251,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     say(icons[next].label, PICK_MS)
   }
   const pressB = (): void => {
-    if (guessing) return doGuess('right')
     if (mode === 'settings') return runSetting(settingRows[row]?.id ?? '')
     if (mode === 'battle') {
       // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
@@ -1217,7 +1264,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // C is "never mind": it also shuts the pet up, so a long answer can be
     // dismissed instead of waited out.
     setSpeech(null)
-    if (guessing) return setGuessing(false)
+    if (resting) return endBreak()
     if (mode === 'battle' && duel) return leaveDuel()
     if (mode !== 'char') {
       setTalking(false)
@@ -1354,13 +1401,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // The screen carries the readout: a real handheld prints nothing outside the
   // glass but its maker's name.
-  // While the game is up, the foot carries your record with it: the pick itself is
-  // an even fifty-fifty (that is the game), so what makes it a game rather than a
-  // coin toss is seeing the pet commit to a side and watching the tally move.
-  const footer = guessing
-    ? pet.plays > 0
-      ? `${t('pet.play.hint')} · ${t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays })}`
-      : t('pet.play.hint')
+  // On a break the foot says how to cut it short, and the count so far.
+  const restLeft = resting ? Math.max(0, BREAK_MS - (restNow - resting.from)) : 0
+  const footer = resting
+    ? t('pet.break.hint', { n: pet.plays })
     : growth.level > 0
       ? growth.toNext > 0
         ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
@@ -1401,15 +1445,20 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     <div className="pet-screen">
       {/* Nothing is printed over the picture but a single line, and only when
           there is something to say. */}
-      {(mode !== 'char' || flash || guessing) && (
+      {(mode !== 'char' || flash || resting) && (
         <div className="pet-screen-top">
           <span>{mode === 'char' ? '' : t(`pet.mode.${mode}`)}</span>
           <span className={`pet-screen-mood mood-${mood}`}>
-            {flash ?? (guessing ? t('pet.play.pick') : '')}
+            {flash ??
+              (resting
+                ? t('pet.break.left', {
+                    t: `${Math.floor(restLeft / 60_000)}:${String(Math.floor((restLeft % 60_000) / 1000)).padStart(2, '0')}`
+                  })
+                : '')}
           </span>
           {/* The way out of whatever is up — on the title of the thing itself,
               where you are already looking. */}
-          {(mode !== 'char' || guessing) && (
+          {(mode !== 'char' || resting) && (
             <button
               type="button"
               className="pet-back"
@@ -1428,7 +1477,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         <div className="pet-yard">
           {/* The bag: one dot per pet, the one out (and eating) filled. Press
               a dot to bring that one out instead; the rest wait, paused. */}
-          {pets.length > 1 && !guessing && (
+          {pets.length > 1 && !resting && (
             <div className="pet-nest">
               {pets.map((p, i) => {
                 const who = t(i === active ? 'pet.nestOut' : 'pet.nestIn', {
@@ -1448,22 +1497,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               })}
             </div>
           )}
-          {/* Pick a side by pressing that side (or with the A / B keys). */}
-          {guessing && (
-            <button
-              type="button"
-              className="pet-guess left"
-              data-guess="left"
-              title={t('pet.play.left')}
-              aria-label={t('pet.play.left')}
-              onClick={() => doGuess('left')}
-            >
-              <Glyph rows={ARROW_LEFT} className="pet-arrow left" />
-            </button>
-          )}
-          {/* The reveal: the side the pet actually went. */}
-          {revealed === 'left' && <Glyph rows={ARROW_LEFT} className="pet-arrow left went" />}
-          <div className={`pet-actor${revealed ? ` went-${revealed}` : ''}`}>
+          <div className="pet-actor">
             <Creature
               stage={growth.stage}
               form={growth.form}
@@ -1481,19 +1515,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
           {/* What the pane you are watching is doing, acted out. */}
           {mime && !sleeping && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
-          {guessing && (
-            <button
-              type="button"
-              className="pet-guess right"
-              data-guess="right"
-              title={t('pet.play.right')}
-              aria-label={t('pet.play.right')}
-              onClick={() => doGuess('right')}
-            >
-              <Glyph rows={ARROW_RIGHT} className="pet-arrow right" />
-            </button>
-          )}
-          {revealed === 'right' && <Glyph rows={ARROW_RIGHT} className="pet-arrow right went" />}
           {/* The floor: what it has left lying around, and whether it needs a doctor. */}
           <div className="pet-floor">
             {pet.sick && <Glyph rows={CROSS} className="pet-cross" />}
@@ -1549,8 +1570,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dd>{pet.lastFedAt ? dur(t, Date.now() - pet.lastFedAt) : t('pet.never')}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.games')}</dt>
-            <dd>{pet.plays ? t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays }) : t('pet.never')}</dd>
+            <dt>{t('pet.stat.breaks')}</dt>
+            <dd>{pet.plays ? t('pet.stat.breaksValue', { n: pet.plays, asked: pet.wins }) : t('pet.never')}</dd>
           </div>
           <div>
             <dt>{t('pet.battle.record')}</dt>
@@ -1841,7 +1862,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
-  // A, B, C. While the guessing game is up, A and B are the two sides.
+  // A, B, C.
   const keys = (
     <div className="pet-pad">
       <button
@@ -1849,7 +1870,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         className="pet-key"
         data-key="a"
         onClick={pressA}
-        title={guessing ? t('pet.play.left') : t('pet.key.select')}
+        title={t('pet.key.select')}
       >
         <span className="pet-key-cap">A</span>
       </button>
@@ -1859,11 +1880,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         data-key="b"
         onClick={pressB}
         title={
-          guessing
-            ? t('pet.play.right')
-            : sel === null
-              ? t('pet.key.clock')
-              : `${t('pet.key.confirm')} · ${icons[sel].label}`
+          sel === null ? t('pet.key.clock') : `${t('pet.key.confirm')} · ${icons[sel].label}`
         }
       >
         <span className="pet-key-cap">B</span>
@@ -2083,7 +2100,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           glass it was eight pixels tall and nobody could read it. Shown in every
           size — with the case hidden the balloon is the ONLY thing it can speak
           with, so leaving it out there made the pet mute. */}
-      {bubble && !guessing && (
+      {bubble && (
         <div className="pet-balloon" key={bubble}>
           {bubble}
         </div>

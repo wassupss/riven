@@ -40,7 +40,9 @@ import {
   moodOf,
   normalize,
   pet,
-  play,
+  rest,
+  wantsBreak,
+  workStreakMs,
   sampleAccounts,
   stageIndexOf,
   tokenDelta,
@@ -54,10 +56,12 @@ import {
   KIBBLE_PER_POOP,
   MAX_POOPS,
   MOOD_DROP_PER_POOP_HOUR,
-  PLAY_COOLDOWN_MS,
-  PLAY_FULLNESS_COST,
-  PLAY_LOSE_MOOD,
-  PLAY_WIN_MOOD,
+  BREAK_MIN_MS,
+  BREAK_MOOD,
+  BREAK_MOOD_STREAK,
+  BREAK_MS,
+  BREAK_NAG_MS,
+  WORK_IDLE_RESET_MS,
   SICK_AFTER_HOURS,
   SLEEP_RATE,
   STAGE_XP,
@@ -411,30 +415,55 @@ describe('illness', () => {
   })
 })
 
-describe('play', () => {
-  it('lifts the mood more for a win than a loss, and costs appetite', () => {
-    const won = play(base({ mood: 50, fullness: 50 }), 'left', 'left', T0)
-    expect(won.win).toBe(true)
-    expect(won.state.mood).toBe(50 + PLAY_WIN_MOOD)
-    expect(won.state.fullness).toBe(50 - PLAY_FULLNESS_COST)
-    expect(won.state.wins).toBe(1)
+describe('break time', () => {
+  const MIN = 60_000
+  // Feeding every few minutes from `from` for `ms`: what an afternoon of agents looks like.
+  const workFor = (s: PetSave, from: number, ms: number): PetSave => {
+    for (let at = from; at <= from + ms; at += 5 * MIN) s = feed(s, KIBBLE_TOKENS, at)
+    return s
+  }
 
-    const lost = play(base({ mood: 50, fullness: 50 }), 'left', 'right', T0)
-    expect(lost.win).toBe(false)
-    expect(lost.state.mood).toBe(50 + PLAY_LOSE_MOOD)
-    expect(lost.state.wins).toBe(0)
-    expect(lost.state.plays).toBe(1)
+  it('counts a streak from the first meal, and restarts it after a long enough gap', () => {
+    const s = workFor(base(), atHour(10), 55 * MIN)
+    expect(workStreakMs(s, atHour(10) + 55 * MIN)).toBe(55 * MIN)
+    expect(wantsBreak(s, atHour(10) + 55 * MIN)).toBe(true)
+    // Gone quiet: no streak, nothing to ask for.
+    expect(workStreakMs(s, atHour(10) + 55 * MIN + WORK_IDLE_RESET_MS)).toBe(0)
+    // Back after the gap: a new streak starts at the new meal.
+    const back = feed(s, KIBBLE_TOKENS, atHour(12))
+    expect(workStreakMs(back, atHour(12) + MIN)).toBe(MIN)
   })
 
-  it('is rate-limited', () => {
-    const first = play(base({ fullness: 50 }), 'left', 'left', T0).state
-    expect(play(first, 'left', 'left', T0 + PLAY_COOLDOWN_MS - 1).played).toBe(false)
-    expect(play(first, 'left', 'left', T0 + PLAY_COOLDOWN_MS).played).toBe(true)
+  it('does not ask before the threshold, or at night', () => {
+    const s = workFor(base(), atHour(10), BREAK_NAG_MS - 10 * MIN)
+    expect(wantsBreak(s, atHour(10) + BREAK_NAG_MS - 10 * MIN)).toBe(false)
+    const late = workFor(base(), atHour(1), 60 * MIN)
+    expect(wantsBreak(late, atHour(2))).toBe(false)
   })
 
-  it('is declined by a pet that is ill or starving', () => {
-    expect(play(base({ sick: true, fullness: 90 }), 'left', 'left', T0).played).toBe(false)
-    expect(play(base({ fullness: 1 }), 'left', 'left', T0).played).toBe(false)
+  it('lifts the mood more after a longer streak, and ends it', () => {
+    const now = atHour(15)
+    const s = base({ mood: 40, workFrom: now - 30 * MIN, lastFedAt: now - MIN })
+    const tired = rest(s, BREAK_NAG_MS, BREAK_MS, now)
+    expect(tired.mood).toBe(40 + BREAK_MOOD + BREAK_MOOD_STREAK)
+    expect(rest(s, 0, BREAK_MS, now).mood).toBe(40 + BREAK_MOOD)
+    expect(tired.workFrom).toBe(0)
+    expect(workStreakMs(tired, now)).toBe(0)
+  })
+
+  it('records full breaks, and the ones the pet asked for', () => {
+    const s = base()
+    expect(rest(s, BREAK_NAG_MS, BREAK_MS, T0)).toMatchObject({ plays: 1, wins: 1 })
+    expect(rest(s, MIN, BREAK_MS, T0)).toMatchObject({ plays: 1, wins: 0 })
+  })
+
+  it('gives a short break its share, and ignores one that never happened', () => {
+    const s = base({ mood: 40, workFrom: T0 })
+    const short = rest(s, 0, BREAK_MS / 2, T0)
+    expect(short.mood).toBe(40 + Math.round(BREAK_MOOD / 2))
+    expect(short.plays).toBe(0)
+    expect(short.workFrom).toBe(0)
+    expect(rest(s, BREAK_NAG_MS, BREAK_MIN_MS - 1, T0)).toBe(s)
   })
 })
 
@@ -519,10 +548,6 @@ describe('night', () => {
     expect(night.fullness).toBeCloseTo(100 - 8 * SLEEP_RATE * HUNGER_PER_HOUR)
   })
 
-  it('will not play in the middle of the night', () => {
-    expect(play(base({ fullness: 80 }), 'left', 'left', atHour(3)).played).toBe(false)
-    expect(play(base({ fullness: 80 }), 'left', 'left', atHour(15)).played).toBe(true)
-  })
 })
 
 describe('diet', () => {
@@ -807,11 +832,11 @@ describe('species', () => {
     expect(seen.size).toBe(SPECIES.length)
   })
 
-  it('survives being fed, starved and played with', () => {
+  it('survives being fed, starved and rested', () => {
     let s = base({ species: 'fish' })
     s = feed(s, 100 * KIBBLE_TOKENS, T0)
     s = decay(s, T0 + 30 * HOUR)
-    s = play(s, 'left', 'left', T0 + 31 * HOUR).state
+    s = rest(s, HOUR, BREAK_MS, T0 + 31 * HOUR)
     s = pet(s, T0 + 32 * HOUR)
     expect(s.species).toBe('fish')
   })

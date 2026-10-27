@@ -40,11 +40,19 @@ export const MOOD_DROP_PER_POOP_HOUR = 2.5
 export const SICK_AFTER_HOURS = 6
 // Illness doubles the mood bleed and stops growth from feeling like progress.
 export const SICK_MOOD_DROP_PER_HOUR = 8
-// Playing: a bigger lift than a pat, and it costs a little appetite.
-export const PLAY_WIN_MOOD = 14
-export const PLAY_LOSE_MOOD = 4
-export const PLAY_FULLNESS_COST = 3
-export const PLAY_COOLDOWN_MS = 20_000
+// Break time. The pet keeps an eye on how long you have been at it (agents
+// spending tokens is the signal) and asks for a break once it has been a while.
+// A gap this long between meals means you already stepped away: the streak restarts.
+export const WORK_IDLE_RESET_MS = 15 * 60_000
+// How long a streak runs before the pet starts asking, and how often it asks again.
+export const BREAK_NAG_MS = 50 * 60_000
+export const BREAK_NAG_EVERY_MS = 10 * 60_000
+// A proper break, and the shortest one that counts as stepping away at all.
+export const BREAK_MS = 5 * 60_000
+export const BREAK_MIN_MS = 60_000
+// Mood from a full break: a base, plus more the longer you had been going.
+export const BREAK_MOOD = 10
+export const BREAK_MOOD_STREAK = 15
 // How many days of feeding the device graphs, and how many past pets it keeps.
 export const HISTORY_DAYS = 14
 /** How many days the feed log draws at a time. */
@@ -191,7 +199,11 @@ export interface PetSave {
   // cleaning, feeding and medicine bring it back down.
   illHours: number
   sick: boolean
-  // ---- play ----
+  // ---- breaks ----
+  // When the current work streak began (0 = none running). `plays` counts full
+  // breaks and `wins` the ones taken when the pet asked; the names are from the
+  // guessing game this replaced, kept so old saves carry their counts over.
+  workFrom: number
   plays: number
   wins: number
   lastPlayAt: number
@@ -280,6 +292,7 @@ export function initialState(now: number): PetSave {
     poopCarry: 0,
     illHours: 0,
     sick: false,
+    workFrom: 0,
     plays: 0,
     wins: 0,
     lastPlayAt: 0,
@@ -338,6 +351,7 @@ export function normalize(raw: unknown, now: number): PetSave {
     poopCarry: Math.max(0, Math.min(KIBBLE_PER_POOP, Math.floor(num(o.poopCarry, 0)))),
     illHours: Math.max(0, num(o.illHours, 0)),
     sick: o.sick === true,
+    workFrom: Math.max(0, num(o.workFrom, 0)),
     plays: Math.max(0, Math.floor(num(o.plays, 0))),
     wins: Math.max(0, Math.floor(num(o.wins, 0))),
     lastPlayAt: Math.max(0, num(o.lastPlayAt, 0)),
@@ -491,6 +505,7 @@ export function feed(
     mood: clamp(s.mood + kibble * MOOD_PER_KIBBLE),
     feedCount: kibble > 0 ? s.feedCount + 1 : s.feedCount,
     lastFedAt: kibble > 0 ? now : s.lastFedAt,
+    workFrom: kibble > 0 ? nextWorkFrom(s, now) : s.workFrom,
     poops: Math.min(MAX_POOPS, s.poops + droppings),
     poopCarry: carried % KIBBLE_PER_POOP,
     diet: { ...s.diet, [flavor]: (s.diet[flavor] ?? 0) + kibble },
@@ -528,33 +543,40 @@ export function cure(s: PetSave): PetSave {
   return { ...s, sick: false, illHours: 0, mood: clamp(s.mood + 5) }
 }
 
+/** A meal keeps the streak going, unless the last one was long enough ago to count as a break. */
+function nextWorkFrom(s: PetSave, now: number): number {
+  if (!s.workFrom || now - s.lastFedAt >= WORK_IDLE_RESET_MS) return now
+  return s.workFrom
+}
+
+/** How long you have been at it without a break; 0 once the work has gone quiet. */
+export function workStreakMs(s: PetSave, now: number): number {
+  if (!s.workFrom || now - s.lastFedAt >= WORK_IDLE_RESET_MS) return 0
+  return Math.max(0, now - s.workFrom)
+}
+
+/** Whether the pet should be asking for a break. Asleep at night, it does not. */
+export function wantsBreak(s: PetSave, now: number): boolean {
+  return !isNight(now) && workStreakMs(s, now) >= BREAK_NAG_MS
+}
+
 /**
- * The guessing game: the pet leans left or right, you call it. Winning is a real
- * mood lift, losing is a small one — playing at all is the point. Costs a little
- * appetite, and is rate-limited so it can't replace feeding.
+ * Back from a break. `worked` is the streak it interrupted, `rested` how long it
+ * lasted. Anything under BREAK_MIN_MS was not a break; a short one counts for
+ * its share of the mood and ends the streak, and only a full one goes on the
+ * record (and on the "you listened" record when the pet had asked for it).
  */
-export function play(
-  s: PetSave,
-  guess: 'left' | 'right',
-  petPick: 'left' | 'right',
-  now: number
-): { state: PetSave; win: boolean; played: boolean } {
-  if (now - s.lastPlayAt < PLAY_COOLDOWN_MS) return { state: s, win: false, played: false }
-  // Asleep, too hungry, or too ill to play along.
-  if (isNight(now) || s.sick || s.fullness < PLAY_FULLNESS_COST)
-    return { state: s, win: false, played: false }
-  const win = guess === petPick
+export function rest(s: PetSave, worked: number, rested: number, now: number): PetSave {
+  if (rested < BREAK_MIN_MS) return s
+  const full = rested >= BREAK_MS
+  const lift = (BREAK_MOOD + BREAK_MOOD_STREAK * Math.min(1, worked / BREAK_NAG_MS)) * Math.min(1, rested / BREAK_MS)
   return {
-    state: {
-      ...s,
-      mood: clamp(s.mood + (win ? PLAY_WIN_MOOD : PLAY_LOSE_MOOD)),
-      fullness: clamp(s.fullness - PLAY_FULLNESS_COST),
-      plays: s.plays + 1,
-      wins: s.wins + (win ? 1 : 0),
-      lastPlayAt: now
-    },
-    win,
-    played: true
+    ...s,
+    mood: clamp(s.mood + Math.round(lift)),
+    workFrom: 0,
+    plays: full ? s.plays + 1 : s.plays,
+    wins: full && worked >= BREAK_NAG_MS ? s.wins + 1 : s.wins,
+    lastPlayAt: now
   }
 }
 
@@ -1267,8 +1289,8 @@ interface PetStore {
   patHead: (now?: number) => void
   cleanUp: () => void
   giveMedicine: () => void
-  /** Play a round; returns null when it declined (cooldown, ill, too hungry). */
-  playRound: (guess: 'left' | 'right') => { win: boolean; petPick: 'left' | 'right' } | null
+  /** Back from a break of `rested` ms that interrupted a `worked` ms streak. */
+  takeBreak: (worked: number, rested: number) => void
   rename: (name: string) => void
   /** Put a friend battle on the shown pet's record; false when it already counted today. */
   recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw', upset?: boolean) => boolean
@@ -1375,15 +1397,7 @@ export const usePet = create<PetStore>((set, get) => {
     patHead: (now = Date.now()) => onActive((p) => pet(p, now)),
     cleanUp: () => onActive(clean),
     giveMedicine: () => onActive(cure),
-    playRound: (guess) => {
-      // The pet's pick is drawn here, not in the pure function, so the game stays
-      // testable with a fixed opponent.
-      const petPick = Math.random() < 0.5 ? 'left' : 'right'
-      const { state, win, played } = play(get().pet, guess, petPick, Date.now())
-      if (!played) return null
-      onActive(() => state)
-      return { win, petPick }
-    },
+    takeBreak: (worked, rested) => onActive((p) => rest(p, worked, rested, Date.now())),
     rename: (name) => onActive((p) => ({ ...p, name: name.slice(0, 24) })),
     recordBattle: (foeBornAt, result, upset) => {
       const before = get().pet

@@ -198,64 +198,9 @@
   color: var(--fg);
 }
 
-/* The reveal, after a guess: the pet leans the way it actually went and that
-   arrow flashes. Transform only — a window nobody is looking at paints no frames,
-   and anything else would be stuck at the first one. */
+/* The pet's place in the yard. */
 .pet-actor {
   display: contents;
-}
-.pet-actor.went-left .pet-lcd {
-  animation: pet-lean-left 0.45s steps(2, end) 3;
-}
-.pet-actor.went-right .pet-lcd {
-  animation: pet-lean-right 0.45s steps(2, end) 3;
-}
-@keyframes pet-lean-left {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(-9%) rotate(-6deg);
-  }
-}
-@keyframes pet-lean-right {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(9%) rotate(6deg);
-  }
-}
-.pet-arrow.went {
-  color: var(--accent);
-  animation: pet-twinkle 0.35s steps(1, end) 5;
-}
-
-/* Guessing which side: the two sides are the two buttons. */
-.pet-guess {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 34%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.pet-guess.left {
-  left: 0;
-}
-.pet-guess.right {
-  right: 0;
-}
-.pet-guess:hover {
-  background: var(--accent-muted);
 }
 
 /* ---- in its own window: fill it, and let the OS do the dragging ----
@@ -539,10 +484,6 @@
   width: 7px;
   height: 7px;
 }
-.pet-arrow {
-  width: 8px;
-  height: 10px;
-}
 .pet-poop {
   animation: pet-stink 2.2s steps(1, end) infinite;
 }
@@ -555,16 +496,6 @@
 }
 .pet-cross .pet-px-p {
   fill: var(--danger);
-}
-.pet-arrow {
-  position: absolute;
-  animation: pet-twinkle 0.5s steps(1, end) infinite;
-}
-.pet-arrow.left {
-  left: 2px;
-}
-.pet-arrow.right {
-  right: 2px;
 }
 @keyframes pet-stink {
   0%,
