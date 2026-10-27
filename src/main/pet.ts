@@ -125,12 +125,7 @@ async function open(): Promise<void> {
   // desktops is not much of a desk pet.
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
-  const save = (): void => {
-    if (!win || win.isDestroyed()) return
-    const [bx, by] = win.getPosition()
-    void atomicWriteJson(boundsPath(), { x: bx, y: by })
-  }
-  win.on('moved', save)
+  win.on('moved', savePosition)
   win.on('ready-to-show', () => {
     note('pet ready-to-show → showInactive')
     win?.showInactive()
@@ -155,6 +150,15 @@ async function open(): Promise<void> {
     void win.loadFile(join(__dirname, '../renderer/pet.html'))
   }
 }
+
+function savePosition(): void {
+  if (!win || win.isDestroyed()) return
+  const [bx, by] = win.getPosition()
+  void atomicWriteJson(boundsPath(), { x: bx, y: by })
+}
+
+/** Where the pointer and the window were when a hand drag began. */
+let grab: { cx: number; cy: number; wx: number; wy: number } | null = null
 
 /** Set while riven closes the pet window itself — see the 'closed' handler. */
 let selfClose = false
@@ -209,6 +213,26 @@ export function registerPetHandlers(): void {
     win.setBounds({ x: b.x, y: b.y + (b.height - h), width: w, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
+  // Dragging the bare pet by hand. An OS drag region (-webkit-app-region) eats
+  // every mouse event, so the pet could not be clicked or right-clicked while it
+  // was one. Instead the renderer reports the drag and main follows the cursor,
+  // read here in screen DIP so the page zoom never skews it.
+  ipcMain.on('pet:dragStart', () => {
+    if (!win || win.isDestroyed()) return
+    const c = screen.getCursorScreenPoint()
+    const [wx, wy] = win.getPosition()
+    grab = { cx: c.x, cy: c.y, wx, wy }
+  })
+  ipcMain.on('pet:dragMove', () => {
+    if (!grab || !win || win.isDestroyed()) return
+    const c = screen.getCursorScreenPoint()
+    win.setPosition(grab.wx + c.x - grab.cx, grab.wy + c.y - grab.cy, false)
+  })
+  ipcMain.on('pet:dragEnd', () => {
+    if (!grab) return
+    grab = null
+    savePosition()
+  })
   // A / B / C from a keyboard shortcut. Relayed to every window because the
   // device lives in one of two of them and only that one listens.
   ipcMain.handle('pet:press', (_e, key: string) => {

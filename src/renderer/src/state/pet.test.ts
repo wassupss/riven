@@ -724,7 +724,7 @@ describe('how it ships', () => {
   it('is out on the desk by default, and not in the way', () => {
     expect(DEFAULT_SETTINGS.petShow).toBe(true)
     expect(DEFAULT_SETTINGS.petDetached).toBe(true)
-    expect(DEFAULT_SETTINGS.petChrome).toBe('full')
+    expect(DEFAULT_SETTINGS.petChrome).toBe('bare')
     // Floating above everything is offered, not assumed.
     expect(DEFAULT_SETTINGS.petOnTop).toBe(false)
   })

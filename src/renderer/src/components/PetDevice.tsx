@@ -344,9 +344,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const setSettings = useSettings((s) => s.set)
   // The floating window keeps its own chrome level in memory: it must not write
   // settings.json behind the app's back (two writers, last one wins).
-  const [winChrome, setWinChrome] = useState<PetChrome>('full')
-  const chrome = detached ? winChrome : savedChrome
+  const [winChrome, setWinChrome] = useState<PetChrome>('bare')
+  const baseChrome = detached ? winChrome : savedChrome
+  // A right-click on the bare pet opens the card for a moment without changing
+  // the saved size: it folds back to the pet once the user is done with it.
+  const [peek, setPeek] = useState(false)
+  const chrome: PetChrome = peek && baseChrome === 'bare' ? 'full' : baseChrome
   const setChrome = (c: PetChrome): void => {
+    setPeek(false)
     if (detached) setWinChrome(c)
     else setSettings({ petChrome: c })
   }
@@ -490,6 +495,38 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (detached) window.removeEventListener('keydown', local, { capture: true })
     }
   }, [detached])
+
+  // A peeked card folds back on Esc or a click outside it. The floating window
+  // never has focus (no Esc, no outside clicks to hear), so there it folds once
+  // the pointer has been away from the window for a while.
+  useEffect(() => {
+    if (!peek) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setPeek(false)
+    }
+    const onDown = (e: PointerEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) setPeek(false)
+    }
+    let timer = 0
+    const onLeave = (): void => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => setPeek(false), 2500)
+    }
+    const onEnter = (): void => window.clearTimeout(timer)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('pointerdown', onDown, true)
+    if (detached) {
+      document.documentElement.addEventListener('mouseleave', onLeave)
+      document.documentElement.addEventListener('mouseenter', onEnter)
+    }
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('pointerdown', onDown, true)
+      document.documentElement.removeEventListener('mouseleave', onLeave)
+      document.documentElement.removeEventListener('mouseenter', onEnter)
+    }
+  }, [peek, detached])
 
   // Keep the setup row honest about whether the window is actually floating.
   useEffect(() => {
@@ -793,10 +830,50 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setSettings, stopDrag])
 
+  // The bare pet in its own window is dragged by hand rather than as an OS drag
+  // region, which would swallow its clicks and right-clicks. Main moves the
+  // window after the cursor; a press that never travels stays a click.
+  const onBareDown = (e: React.PointerEvent): void => {
+    if (e.button !== 0) return
+    const el = e.currentTarget as HTMLElement
+    const sx = e.screenX
+    const sy = e.screenY
+    let moved = false
+    let frame = 0
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent): void => {
+      if (!moved && Math.hypot(ev.screenX - sx, ev.screenY - sy) < 4) return
+      if (!moved) window.api.pet.dragStart()
+      moved = true
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          window.api.pet.dragMove()
+        })
+    }
+    const up = (): void => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      cancelAnimationFrame(frame)
+      if (!moved) return
+      window.api.pet.dragMove()
+      window.api.pet.dragEnd()
+      dragEndAt.current = performance.now()
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+  }
+
   const onPointerDown = (e: React.PointerEvent): void => {
     // Buttons and the text field act; everything else is a drag handle. (Detached,
     // the OS drags the window for us — see -webkit-app-region in the stylesheet.)
-    if (detached || e.button !== 0) return
+    if (e.button !== 0) return
+    if (detached) {
+      if ((e.target as HTMLElement).closest('.pet-bare')) onBareDown(e)
+      return
+    }
     if ((e.target as HTMLElement).closest('button, input, form')) return
     const el = ref.current
     if (!el) return
@@ -1790,6 +1867,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           : { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
       }
       onPointerDown={onPointerDown}
+      onContextMenu={(e) => {
+        // Right-click toggles the card over the bare pet. Inside text fields the
+        // usual menu still belongs to the user.
+        if ((e.target as HTMLElement).closest('input, textarea')) return
+        if (baseChrome !== 'bare') return
+        e.preventDefault()
+        setPeek((p) => !p)
+      }}
     >
       {/* What it is saying, above the device and in readable type. Inside the
           glass it was eight pixels tall and nobody could read it. Shown in every
@@ -1818,15 +1903,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               <X size={12} />
             </button>
           </div>
-          {/* With the case hidden there are no buttons to press, so the pet
-              itself is the way back — click it and the device returns. */}
+          {/* The pet alone: a click pats it, a right-click brings up the card. */}
           <div
             className="pet-bare"
             role="button"
-            title={t('pet.size.full')}
+            title={t('pet.bare.hint')}
             onClick={() => {
               if (performance.now() - dragEndAt.current < 400) return
-              setChrome('full')
+              icons.find((ic) => ic.id === 'pet')?.run()
             }}
           >
             <Creature
@@ -1880,7 +1964,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             >
               {clockTime}
             </button>
-            <button type="button" className="pet-icon" title={t('pet.size.screen')} onClick={() => setChrome('screen')}>
+            <button
+              type="button"
+              className="pet-icon"
+              title={peek ? t('pet.size.bare') : t('pet.size.screen')}
+              onClick={() => (peek ? setPeek(false) : setChrome('screen'))}
+            >
               <Minimize2 size={13} />
             </button>
             <button

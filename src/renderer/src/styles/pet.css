@@ -213,7 +213,8 @@
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
-.pet-detached .pet-bare {
+.pet-detached .pet-bare,
+.pet-detached .pet-bare * {
   -webkit-app-region: no-drag;
 }
 

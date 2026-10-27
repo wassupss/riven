@@ -150,7 +150,7 @@ export const DEFAULT_SETTINGS: Settings = {
   usagePinned: false,
   petShow: true,
   petPos: null,
-  petChrome: 'full',
+  petChrome: 'bare',
   petDetached: true,
   petOnTop: false,
   formatOnSave: false,

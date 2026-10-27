@@ -2043,6 +2043,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.size.full': { ko: '카드', en: 'Card' },
   'pet.size.screen': { ko: '화면', en: 'Screen' },
   'pet.size.bare': { ko: '캐릭터', en: 'Pet' },
+  'pet.bare.hint': { ko: '클릭: 쓰다듬기 · 우클릭: 메뉴', en: 'Click to pat · Right-click for the menu' },
   'pet.settings.hide': { ko: '보이기', en: 'Visible' },
   'pet.settings.hideDo': { ko: '숨기기', en: 'hide' },
   'pet.settings.restart': { ko: '처음부터', en: 'Start over' },

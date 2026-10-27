@@ -1220,6 +1220,10 @@ const api = {
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
+    // A hand drag of the bare pet: main follows the cursor between start and end.
+    dragStart: (): void => ipcRenderer.send('pet:dragStart'),
+    dragMove: (): void => ipcRenderer.send('pet:dragMove'),
+    dragEnd: (): void => ipcRenderer.send('pet:dragEnd'),
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
