@@ -1,6 +1,6 @@
 import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Award,
   BarChart3,
@@ -10,16 +10,17 @@ import {
   CornerDownLeft,
   ExternalLink,
   EyeOff,
-  Gamepad2,
+  Coffee,
+  GitBranch,
   Heart,
   ListTree,
-  Maximize2,
-  Minimize2,
+  MessageCircle,
+  Monitor,
   Pencil,
   Pill,
+  Pin,
   Settings,
   Smile,
-  MessageCircle,
   Swords,
   Trash2,
   Trophy,
@@ -38,8 +39,6 @@ import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
 import {
-  ARROW_LEFT,
-  ARROW_RIGHT,
   CROSS,
   MIMES,
   POOP,
@@ -50,9 +49,8 @@ import {
   SPRITE_SIZE
 } from './petSprites'
 import {
-  accessoriesOf,
-  giftAt,
   awardsOf,
+  discoveredBranches,
   dietOf,
   flushPetSave,
   freshByFlavor,
@@ -61,7 +59,12 @@ import {
   growthOf,
   isNight,
   moodOf,
-  nextAccessory,
+  wantsBreak,
+  workStreakMs,
+  BREAK_MIN_MS,
+  BREAK_MS,
+  BREAK_NAG_EVERY_MS,
+  STAGE_XP,
   outfitOf,
   prizesOf,
   usePet,
@@ -70,7 +73,11 @@ import {
   MAX_PETS,
   MAX_POOPS,
   PRIZES,
+  BRANCH_BY_ID,
+  LINES,
+  TIER_LEVELS,
   type Accessory,
+  type BranchId,
   type Form,
   type Mood,
   type Species,
@@ -122,6 +129,7 @@ type ScreenMode =
   | 'graph'
   | 'awards'
   | 'album'
+  | 'dex'
   | 'settings'
   | 'talk'
   | 'battle'
@@ -148,12 +156,19 @@ const RECENT_KEEP = 8
 const NOTICE_MS = 4000
 // An answer is a sentence, not a mood — give it time to be read.
 const ANSWER_MS = 7000
+/** How long the line it says on opening the menu stays up. */
+const MENU_HI_MS = 4000
+const MENU_HI_COUNT = 6
+/** .pet-menu's width (pet.css). */
+const MENU_W = 172
 
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
 const PICK_MS = 1600
-// The guessing game's reveal: long enough to see which way the pet went.
-const REVEAL_MS = 1800
+// On a break the pet suggests something to do with it, a new one this often.
+const TIP_MS = 60_000
+const TIP_COUNT = 5
+const NAG_COUNT = 4
 const NOOP = (): void => {}
 // A mime is held this long and never queued: one turn fires dozens of tools.
 const MIME_MS = 1400
@@ -220,7 +235,9 @@ function Creature({
   flavor,
   evolving,
   level = 0,
-  outfit: wearing
+  outfit: wearing,
+  branch,
+  whiteout
 }: {
   stage: Stage
   form: Form
@@ -233,16 +250,21 @@ function Creature({
   level?: number
   /** What it actually has on, prizes included; defaults to its level keepsakes. */
   outfit?: Accessory[]
+  /** The way it grew up, which marks the adult it became. */
+  branch?: BranchId | null
+  /** A branch evolution: its shape goes dark and flickers before it shows. */
+  whiteout?: boolean
 }): JSX.Element {
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
   const runs = useMemo(
-    () => runsOf(pixelsOf(stage, form, mood, species)),
-    [stage, form, mood, species]
+    () => runsOf(pixelsOf(stage, form, mood, species, branch)),
+    [stage, form, mood, species, branch]
   )
+  const br = branch ? BRANCH_BY_ID.get(branch) : undefined
   const wearingKey = wearing?.join(',')
   const outfit = useMemo(() => {
-    const { back, front } = outfitPixels(stage, form, species, wearing ?? accessoriesOf(level))
+    const { back, front } = outfitPixels(stage, form, species, wearing ?? [])
     return { back: runsOf(back), front: runsOf(front) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, form, species, level, wearingKey])
@@ -259,7 +281,7 @@ function Creature({
     ))
   return (
     <svg
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
       viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
@@ -319,6 +341,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const pos = useSettings((s) => s.settings.petPos)
   const savedChrome = useSettings((s) => s.settings.petChrome)
   const savedOnTop = useSettings((s) => s.settings.petOnTop)
+  // Same story for the break interval: the app relays changes to the pet window.
+  const savedBreakMin = useSettings((s) => s.settings.petBreakMin)
+  const [breakMin, setBreakMin] = useState(savedBreakMin)
+  useEffect(() => setBreakMin(savedBreakMin), [savedBreakMin])
+  useEffect(() => window.api.pet.onBreak(setBreakMin), [])
+  const nagMs = breakMin * 60_000
   // In its own window the live answer comes from main, not from this window's
   // settings snapshot — same reason as winChrome below: the pet window is not
   // allowed to write settings.json.
@@ -327,12 +355,35 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const setSettings = useSettings((s) => s.set)
   // The floating window keeps its own chrome level in memory: it must not write
   // settings.json behind the app's back (two writers, last one wins).
-  const [winChrome, setWinChrome] = useState<PetChrome>('full')
+  const [winChrome, setWinChrome] = useState<PetChrome>('bare')
   const chrome = detached ? winChrome : savedChrome
   const setChrome = (c: PetChrome): void => {
     if (detached) setWinChrome(c)
     else setSettings({ petChrome: c })
   }
+  // The bare pet's right-click menu.
+  const [menu, setMenu] = useState(false)
+  // The pet's box when the menu opened, in the app window: the menu sits beside
+  // it (right, or left when there is no room) so it never covers the pet.
+  const [menuAt, setMenuAt] = useState<DOMRect | null>(null)
+  /** The floating window's width before the menu widened it, and the device's
+   *  own width inside it (it fills the window, so it is pinned meanwhile), CSS px. */
+  const baseW = useRef<{ win: number; dev: number } | null>(null)
+  /** The menu's height there: the device grows to it so the window does too. */
+  const [menuH, setMenuH] = useState(0)
+  const menuRef = useRef<HTMLDivElement>(null)
+  /** The card a screen of the bare pet's opens in, beside it like the menu. */
+  const cardRef = useRef<HTMLDivElement>(null)
+  /** Where that card hangs in the app: left of the pet when the right has no
+   *  room, and below its top edge when there is no room above. */
+  const [cardSide, setCardSide] = useState<{ left: boolean; down: boolean }>({ left: false, down: false })
+  /** What the pet said on opening the menu, so closing it can take that back. */
+  const menuHi = useRef<string | null>(null)
+  /** When a drag last ended: the click that follows a drag is not a pat. */
+  const dragEndAt = useRef(0)
+  /** Hand-dragging the detached bare pet (see pet:dragStart in main). */
+  const hand = useRef<{ sx: number; sy: number; on: boolean; raf: number } | null>(null)
+  const menuLeave = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const pet = usePet((s) => s.pet)
   const loaded = usePet((s) => s.loaded)
@@ -342,7 +393,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const patHead = usePet((s) => s.patHead)
   const cleanUp = usePet((s) => s.cleanUp)
   const giveMedicine = usePet((s) => s.giveMedicine)
-  const playRound = usePet((s) => s.playRound)
+  const takeBreak = usePet((s) => s.takeBreak)
   const rename = usePet((s) => s.rename)
   const reset = usePet((s) => s.reset)
   const pets = usePet((s) => s.pets)
@@ -377,10 +428,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // clickable; the highlight is only for working it from the keys.)
   const [sel, setSel] = useState<number | null>(null)
   const [row, setRow] = useState(0)
-  const [guessing, setGuessing] = useState(false)
-  // Which way the pet actually went, shown for a beat after you guess: without
-  // the reveal the game is an invisible coin toss.
-  const [revealed, setRevealed] = useState<'left' | 'right' | null>(null)
+  // A break in progress: when it began and the work streak it interrupted. Its
+  // clock ticks once a second, and only while there is a break.
+  const [resting, setResting] = useState<{ from: number; worked: number } | null>(null)
+  const [restNow, setRestNow] = useState(0)
+  const lastNag = useRef(0)
   // The ask field stays open across answers. Answering sends the screen back to
   // the pet — that is the point, you watch it answer — and closing the field with
   // it meant every follow-up question needed the menu again.
@@ -398,6 +450,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const justLeveled = usePet((s) => s.justLeveled)
   const ackLevel = usePet((s) => s.ackLevel)
   const [evolving, setEvolving] = useState(false)
+  const [whiteout, setWhiteout] = useState(false)
+  const [dexHint, setDexHint] = useState<string | null>(null)
   // A friend battle: the fight, how far through it the playback is, and once it
   // is over, how it went and whether it went on the record (once a day a friend).
   const [duel, setDuel] = useState<Duel | null>(null)
@@ -407,7 +461,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // has to rebuild a hundred-odd <rect> dots before the pixel moves, which is
   // exactly the lag you feel in the hand; instead the node is moved directly and
   // the final position is written to settings once, on release.
-  const drag = useRef<{ dx: number; dy: number; x: number; y: number; moved: boolean } | null>(null)
+  const drag = useRef<{ dx: number; dy: number; sx: number; sy: number; x: number; y: number; moved: boolean } | null>(
+    null
+  )
   const timers = useRef<Array<ReturnType<typeof setTimeout>>>([])
 
   const later = useCallback((fn: () => void, ms: number): void => {
@@ -533,23 +589,30 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // The egg it was born as is bookkeeping, not an event.
     if (justEvolved.stage === 'egg') return
     setEvolving(true)
-    setFlash(t('pet.evolved', { stage: subject(t(`pet.stage.${justEvolved.stage}`)) }))
-    later(() => setEvolving(false), 2600)
-    later(() => setFlash(null), 2600)
+    // A branch is the bigger moment: the shape goes dark and flickers first,
+    // and the name comes with the reveal rather than before it.
+    const branch = justEvolved.branch
+    if (!branch) {
+      setFlash(t('pet.evolved', { stage: subject(t(`pet.stage.${justEvolved.stage}`)) }))
+      later(() => setEvolving(false), 2600)
+      later(() => setFlash(null), 2600)
+      return
+    }
+    setWhiteout(true)
+    setFlash('...')
+    later(() => setWhiteout(false), 1800)
+    later(() => setFlash(t('pet.evolvedBranch', { name: t(`pet.branch.${branch}`) })), 1800)
+    later(() => setEvolving(false), 3600)
+    later(() => setFlash(null), 4400)
   }, [justEvolved, ackEvolution, later, t])
 
-  // A grown-up's level-up: the same burst, smaller words, and a keepsake to
-  // show off when this level brought one.
+  // A grown-up's level-up: the same burst, smaller words. Keepsakes come with
+  // awards now, and the prize effect below announces those.
   useEffect(() => {
     if (!justLeveled) return
     ackLevel()
-    const gift = giftAt(justLeveled)
     setEvolving(true)
-    setFlash(
-      gift
-        ? t('pet.levelGift', { n: justLeveled, item: t(`pet.acc.${gift}`) })
-        : t('pet.levelUp', { n: justLeveled })
-    )
+    setFlash(t('pet.levelUp', { n: justLeveled }))
     later(() => setEvolving(false), 2600)
     later(() => setFlash(null), 2600)
   }, [justLeveled, ackLevel, later, t])
@@ -646,6 +709,50 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     })
   }, [detached, later, t])
 
+  // The bare pet has no screen of its own, so anything that needs one (a menu
+  // screen, the game, a question) lends it one; once that is done with, the
+  // screen folds away and it is just the pet again.
+  const peek = chrome === 'bare' && (mode !== 'char' || !!resting || talking)
+
+  // ---- break time ----
+  // Long enough at it and the pet asks you to step away, again every
+  // BREAK_NAG_EVERY_MS until you do. The streak lives in the save (see feed), so
+  // both windows agree on it; this only decides when to say so.
+  const needBreak = loaded && !resting && pet.xp >= STAGE_XP[1] && wantsBreak(pet, nowTick, nagMs)
+  useEffect(() => {
+    if (!needBreak || (!show && !detached)) return
+    const now = Date.now()
+    if (now - lastNag.current < BREAK_NAG_EVERY_MS) return
+    lastNag.current = now
+    const msg = t(`pet.break.nag.${Math.floor(Math.random() * NAG_COUNT)}`, {
+      n: Math.floor(workStreakMs(pet, now) / 60_000)
+    })
+    setSpeech(msg)
+    later(() => setSpeech((v) => (v === msg ? null : v)), ANSWER_MS)
+  }, [needBreak, nowTick, show, detached, pet, later, t])
+
+  // The break's clock: a tip a minute, and the end when the time is up.
+  useEffect(() => {
+    if (!resting) return
+    const step = (): void => {
+      const now = Date.now()
+      setRestNow(now)
+      if (now - resting.from >= BREAK_MS) {
+        takeBreak(resting.worked, now - resting.from, nagMs)
+        setResting(null)
+        lastNag.current = now
+        setSpeech(t('pet.break.done'))
+        later(() => setSpeech((v) => (v === t('pet.break.done') ? null : v)), ANSWER_MS * 2)
+        return
+      }
+      const tip = Math.floor((now - resting.from) / TIP_MS)
+      setSpeech(t(`pet.break.tip.${tip % TIP_COUNT}`))
+    }
+    step()
+    const id = setInterval(step, 1000)
+    return () => clearInterval(id)
+  }, [resting, takeBreak, nagMs, later, t])
+
   // ---- the floating window: keep it sized to the device ----
   useLayoutEffect(() => {
     if (!detached) return
@@ -656,8 +763,23 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // document instead would read back the viewport we just set and creep the
     // window taller on every pass; measuring only the element's height would cut
     // the case off, which is what it used to do.
-    const send = (): void =>
-      void window.api.pet.resize(Math.ceil(el.getBoundingClientRect().bottom) + 6)
+    // With the menu open the window also widens to the right to hold it, and
+    // gives the width back once, when it closes.
+    const send = (): void => {
+      // The question field focuses itself before the window has grown, and the
+      // page scrolls to it: that crops the top and reads the bottom short.
+      // Nothing in this window is meant to scroll, so undo it before measuring.
+      for (let p = el.parentElement; p; p = p.parentElement) if (p.scrollTop || p.scrollLeft) p.scrollTo(0, 0)
+      const h = Math.ceil(el.getBoundingClientRect().bottom) + 6
+      const base = baseW.current
+      const beside = menu ? menuRef.current : peek ? cardRef.current : null
+      if (beside && base) return void window.api.pet.resize(h, base.win + beside.offsetWidth + 6)
+      if (!beside && base) {
+        baseW.current = null
+        return void window.api.pet.resize(h, base.win)
+      }
+      void window.api.pet.resize(h)
+    }
     send()
     // Measure again on the next frame as well: a chrome change is measured the
     // instant it renders, and the sprite//font work that follows can still move
@@ -676,7 +798,64 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       ro.disconnect()
       window.removeEventListener('resize', send)
     }
-  }, [detached, chrome, mode, guessing])
+  }, [detached, chrome, mode, resting, talking, menu, peek, menuH])
+
+  // In its own window the menu (or a screen's card) hangs beside the device,
+  // bottoms aligned, so the device is made at least as tall as it to keep it
+  // inside the window. The window's own width is noted first, to give back.
+  useLayoutEffect(() => {
+    const beside = menu ? menuRef.current : peek ? cardRef.current : null
+    if (detached && beside && !baseW.current && ref.current) {
+      baseW.current = { win: window.innerWidth, dev: ref.current.offsetWidth }
+    }
+    setMenuH(detached && beside ? beside.offsetHeight : 0)
+    if (!detached || !beside) return
+    // The card is as tall as its page, so it changes with the page and with what
+    // the page holds (a chat growing): follow it, or the window crops it.
+    const ro = new ResizeObserver(() => setMenuH(beside.offsetHeight))
+    ro.observe(beside)
+    return () => ro.disconnect()
+  }, [menu, peek, detached, mode, talking, resting])
+
+  // In the app the card opens to the pet's right, or its left when the window has
+  // no room there; bottoms aligned, or tops when there is no room above.
+  useLayoutEffect(() => {
+    if (detached || !peek || menu) return
+    const el = ref.current
+    const card = cardRef.current
+    if (!el || !card) return
+    const r = el.getBoundingClientRect()
+    const left = r.right + 6 + card.offsetWidth > window.innerWidth - 8
+    const down = r.bottom - card.offsetHeight < 8
+    setCardSide((v) => (v.left === left && v.down === down ? v : { left, down }))
+  }, [detached, peek, menu, pos, mode, talking])
+
+  // The menu closes on Esc, a press anywhere else, or riven losing focus. The
+  // floating window never has focus (so no Esc, no blur): there it also closes
+  // when the pointer leaves the pet (see onPointerLeave below).
+  useEffect(() => {
+    if (!menu) return
+    const key = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenu(false)
+    }
+    const down = (e: PointerEvent): void => {
+      if (!ref.current?.contains(e.target as Node)) setMenu(false)
+    }
+    const blur = (): void => setMenu(false)
+    window.addEventListener('keydown', key)
+    window.addEventListener('pointerdown', down, { capture: true })
+    if (!detached) window.addEventListener('blur', blur)
+    return () => {
+      window.removeEventListener('keydown', key)
+      window.removeEventListener('pointerdown', down, { capture: true })
+      window.removeEventListener('blur', blur)
+      if (menuLeave.current) clearInterval(menuLeave.current)
+      menuLeave.current = null
+      const hi = menuHi.current
+      menuHi.current = null
+      if (hi) setSpeech((v) => (v === hi ? null : v))
+    }
+  }, [menu, detached])
 
   // ---- in-app dragging ----
   const clamp = useCallback((x: number, y: number): { x: number; y: number } => {
@@ -745,6 +924,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (!d) return stopDrag()
       // The button came up somewhere we never heard about.
       if (e.buttons === 0) return onWinUp()
+      // A few pixels of wobble is still a click (a pat), not a drag.
+      if (!d.moved && Math.abs(e.clientX - d.sx) < 4 && Math.abs(e.clientY - d.sy) < 4) return
       d.moved = true
       const p = clamp(e.clientX - d.dx, e.clientY - d.dy)
       d.x = p.x
@@ -760,7 +941,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     drag.current = null
     stopDrag()
     // One settings write per drag, at the end.
-    if (d?.moved) setSettings({ petPos: { x: d.x, y: d.y } })
+    if (d?.moved) {
+      dragEndAt.current = Date.now()
+      setSettings({ petPos: { x: d.x, y: d.y } })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setSettings, stopDrag])
 
@@ -768,11 +952,19 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // Buttons and the text field act; everything else is a drag handle. (Detached,
     // the OS drags the window for us — see -webkit-app-region in the stylesheet.)
     if (detached || e.button !== 0) return
-    if ((e.target as HTMLElement).closest('button, input, form')) return
+    if ((e.target as HTMLElement).closest('button, input, form, .pet-menu, .pet-card')) return
     const el = ref.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    drag.current = { dx: e.clientX - r.left, dy: e.clientY - r.top, x: r.left, y: r.top, moved: false }
+    drag.current = {
+      dx: e.clientX - r.left,
+      dy: e.clientY - r.top,
+      sx: e.clientX,
+      sy: e.clientY,
+      x: r.left,
+      y: r.top,
+      moved: false
+    }
     el.classList.add('pet-dragging')
     place(r.left, r.top)
     window.addEventListener('pointermove', onWinMove)
@@ -812,7 +1004,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const mood: Mood = sleeping ? 'asleep' : moodOf(pet)
   const diet = useMemo(() => dietOf(pet), [pet])
   const awards = useMemo(() => awardsOf(pet, nowTick), [pet, nowTick])
-  const outfit = useMemo(() => outfitOf(pet.worn, growth.level), [pet.worn, growth.level])
+  const outfit = useMemo(() => outfitOf(pet.worn), [pet.worn])
+  const found = useMemo(() => discoveredBranches(pets), [pets])
 
   if (!show && !detached) {
     // Put away: a shortcut must not go on feeding and cleaning a pet that is not
@@ -823,10 +1016,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
-  const stageLabel =
-    growth.form === 'base'
-      ? t(`pet.stage.${growth.stage}`)
-      : `${t(`pet.stage.${growth.stage}`)} · ${t(`pet.form.${growth.form}`)}`
+  // A branch is its name from then on; the form still shows beside it.
+  const stageName = growth.branch ? t(`pet.branch.${growth.branch.id}`) : t(`pet.stage.${growth.stage}`)
+  const stageLabel = growth.form === 'base' ? stageName : `${stageName} · ${t(`pet.form.${growth.form}`)}`
 
   // One short line, the most pressing thing first. Deliberately absent in 'bare'
   // (that mode is the creature and nothing else).
@@ -838,6 +1030,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       ? t('pet.say.sick')
       : limit && limit.usedPct >= 90
         ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
+        : needBreak
+          ? t('pet.say.break')
         : busy.length >= 4
           ? t('pet.say.swamped', { n: busy.length })
           : chewing
@@ -870,20 +1064,31 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setSpeech(msg)
     later(() => setSpeech((v) => (v === msg ? null : v)), ms)
   }
-  const doGuess = (guess: 'left' | 'right'): void => {
-    const r = playRound(guess)
-    setGuessing(false)
-    if (!r) return speak(t('pet.play.declined'))
-    // The pet picks a side and you guess it — so SHOW the side it picked. Without
-    // this the game was "press either arrow, read win or lose", which is a coin
-    // toss with extra steps. The pet leans that way, the arrow it chose lights
-    // up, and only then does the result land.
-    setRevealed(r.petPick)
-    later(() => setRevealed(null), REVEAL_MS)
-    say(
-      `${t(`pet.play.went.${r.petPick}`)} · ${r.win ? t('pet.play.win') : t('pet.play.lose')}`,
-      REVEAL_MS
-    )
+  /** What it says when the menu opens: what it needs first, else hello. */
+  const menuLine = (): string => {
+    if (growth.stage === 'egg') return t('pet.menuHi.egg')
+    if (sleeping) return t('pet.menuHi.sleep')
+    if (pet.sick) return t('pet.menuHi.sick')
+    if (pet.poops > 0) return t('pet.menuHi.dirty')
+    if (pet.fullness < HUNGRY_AT) return t('pet.menuHi.hungry')
+    return t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
+  }
+  const startBreak = (): void => {
+    const now = Date.now()
+    leaveDuel()
+    setTalking(false)
+    setMode('char')
+    setResting({ from: now, worked: workStreakMs(pet, now) })
+    setRestNow(now)
+  }
+  /** Cut a break short: a minute or more still counts for something. */
+  const endBreak = (): void => {
+    if (!resting) return
+    const rested = Date.now() - resting.from
+    takeBreak(resting.worked, rested, nagMs)
+    setResting(null)
+    if (rested >= BREAK_MIN_MS) lastNag.current = Date.now()
+    speak(t(rested >= BREAK_MIN_MS ? 'pet.break.short' : 'pet.break.cancel'))
   }
   // ---- friend battles ----
   // No server: you send your code, your friend sends theirs, and each side
@@ -954,16 +1159,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('graph')
     },
     {
-      id: 'play',
-      label: t('pet.play'),
-      node: <Gamepad2 size={11} />,
-      on: guessing,
+      id: 'rest',
+      label: t('pet.break'),
+      node: <Coffee size={11} />,
+      alert: needBreak,
+      on: !!resting,
       run: () => {
+        if (resting) return endBreak()
         if (growth.stage === 'egg') return speak(t('pet.say.egg'))
-        if (sleeping) return speak(t('pet.say.sleep'))
-        setMode('char')
-        setRevealed(null)
-        setGuessing(true)
+        startBreak()
       }
     },
     {
@@ -1021,6 +1225,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('album')
     },
     {
+      id: 'dex',
+      label: t('pet.mode.dex'),
+      node: <GitBranch size={11} />,
+      on: mode === 'dex',
+      run: () => openScreen('dex')
+    },
+    {
       id: 'battle',
       label: t('pet.mode.battle'),
       node: <Swords size={11} />,
@@ -1056,7 +1267,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   /** Out of whatever screen is up, and nothing left being said. */
   const backHome = (): void => {
     setSpeech(null)
-    setGuessing(false)
+    if (resting) endBreak()
     setTalking(false)
     leaveDuel()
     setMode('char')
@@ -1069,7 +1280,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // same thing in one press; both are here on purpose.
   const METER_PAGES: ScreenMode[] = ['stats', 'awards']
   const pressA = (): void => {
-    if (guessing) return doGuess('left')
     if (mode === 'settings') return setRow((r) => (r + 1) % settingRows.length)
     if (mode === 'battle') return void copyCode()
     if (METER_PAGES.includes(mode)) {
@@ -1082,7 +1292,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     say(icons[next].label, PICK_MS)
   }
   const pressB = (): void => {
-    if (guessing) return doGuess('right')
     if (mode === 'settings') return runSetting(settingRows[row]?.id ?? '')
     if (mode === 'battle') {
       // Mid-fight, B skips to the end; otherwise it takes the next friend's code.
@@ -1096,7 +1305,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // C is "never mind": it also shuts the pet up, so a long answer can be
     // dismissed instead of waited out.
     setSpeech(null)
-    if (guessing) return setGuessing(false)
+    if (resting) return endBreak()
     if (mode === 'battle' && duel) return leaveDuel()
     if (mode !== 'char') {
       setTalking(false)
@@ -1108,8 +1317,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   }
   keysRef.current = { a: pressA, b: pressB, c: pressC }
 
-  // The setup list: one row, one press. The size row steps through the three
-  // levels instead of offering three targets — it is 200 pixels wide.
+  // The setup list: one row, one press. The size row flips between the bare pet
+  // and the device.
   const settingRows: Array<{
     id: string
     label: string
@@ -1167,18 +1376,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         ]
       : [])
   ]
-  const NEXT_SIZE: Record<PetChrome, PetChrome> = { full: 'screen', screen: 'bare', bare: 'full' }
   const runSetting = (id: string): void => {
     switch (id) {
       case 'name':
         return void doRename()
       case 'where':
-        return void (detached ? window.api.pet.close() : setSettings({ petDetached: true }))
+        return void (detached ? window.api.pet.dock() : setSettings({ petDetached: true }))
       case 'ontop':
         // Main lifts the window and tells the app to remember it (see PetHost).
         return void window.api.pet.askOnTop(!onTop)
       case 'size':
-        return setChrome(NEXT_SIZE[chrome])
+        return setChrome(chrome === 'bare' ? 'device' : 'bare')
       case 'hide':
         return void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
       case 'restart':
@@ -1234,13 +1442,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // The screen carries the readout: a real handheld prints nothing outside the
   // glass but its maker's name.
-  // While the game is up, the foot carries your record with it: the pick itself is
-  // an even fifty-fifty (that is the game), so what makes it a game rather than a
-  // coin toss is seeing the pet commit to a side and watching the tally move.
-  const footer = guessing
-    ? pet.plays > 0
-      ? `${t('pet.play.hint')} · ${t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays })}`
-      : t('pet.play.hint')
+  // On a break the foot says how to cut it short, and the count so far.
+  const restLeft = resting ? Math.max(0, BREAK_MS - (restNow - resting.from)) : 0
+  const footer = resting
+    ? t('pet.break.hint', { n: pet.plays })
     : growth.level > 0
       ? growth.toNext > 0
         ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
@@ -1248,8 +1453,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       : growth.toNext > 0
         ? t('pet.toNext', { n: growth.toNext })
         : t('pet.grown')
-  // The next keepsake to work toward, once there is a level to count from.
-  const gift = growth.level > 0 ? nextAccessory(growth.level) : null
 
   // Drawn on the glass, and each segment is the button for its own function:
   // point at it to see what it is, press it to do it.
@@ -1279,19 +1482,30 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
+  // Without the case, a screen opens in a plain card beside the pet (cardBox):
+  // no glass, no icon strip and no second pet drawn in it.
+  const flat = chrome !== 'device'
+  // Asking puts the screen back on the pet (the reply is a balloon), but the chat
+  // card stays up for the next question: keep its title, and the X on it.
+  const chatCard = flat && talking
   const screen = (
     <div className="pet-screen">
       {/* Nothing is printed over the picture but a single line, and only when
           there is something to say. */}
-      {(mode !== 'char' || flash || guessing) && (
+      {(mode !== 'char' || flash || resting || chatCard) && (
         <div className="pet-screen-top">
-          <span>{mode === 'char' ? '' : t(`pet.mode.${mode}`)}</span>
+          <span>{mode !== 'char' ? t(`pet.mode.${mode}`) : chatCard ? t('pet.mode.talk') : ''}</span>
           <span className={`pet-screen-mood mood-${mood}`}>
-            {flash ?? (guessing ? t('pet.play.pick') : '')}
+            {flash ??
+              (resting
+                ? t('pet.break.left', {
+                    t: `${Math.floor(restLeft / 60_000)}:${String(Math.floor((restLeft % 60_000) / 1000)).padStart(2, '0')}`
+                  })
+                : '')}
           </span>
           {/* The way out of whatever is up — on the title of the thing itself,
               where you are already looking. */}
-          {(mode !== 'char' || guessing) && (
+          {(mode !== 'char' || resting || chatCard) && (
             <button
               type="button"
               className="pet-back"
@@ -1306,11 +1520,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         </div>
       )}
 
-      {mode === 'char' && (
+      {mode === 'char' && !flat && (
         <div className="pet-yard">
           {/* The bag: one dot per pet, the one out (and eating) filled. Press
               a dot to bring that one out instead; the rest wait, paused. */}
-          {pets.length > 1 && !guessing && (
+          {pets.length > 1 && !resting && (
             <div className="pet-nest">
               {pets.map((p, i) => {
                 const who = t(i === active ? 'pet.nestOut' : 'pet.nestIn', {
@@ -1330,22 +1544,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               })}
             </div>
           )}
-          {/* Pick a side by pressing that side (or with the A / B keys). */}
-          {guessing && (
-            <button
-              type="button"
-              className="pet-guess left"
-              data-guess="left"
-              title={t('pet.play.left')}
-              aria-label={t('pet.play.left')}
-              onClick={() => doGuess('left')}
-            >
-              <Glyph rows={ARROW_LEFT} className="pet-arrow left" />
-            </button>
-          )}
-          {/* The reveal: the side the pet actually went. */}
-          {revealed === 'left' && <Glyph rows={ARROW_LEFT} className="pet-arrow left went" />}
-          <div className={`pet-actor${revealed ? ` went-${revealed}` : ''}`}>
+          <div className="pet-actor">
             <Creature
               stage={growth.stage}
               form={growth.form}
@@ -1356,24 +1555,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               evolving={evolving}
               level={growth.level}
               outfit={outfit}
+              branch={growth.branch?.id}
+              whiteout={whiteout}
             />
           </div>
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
           {/* What the pane you are watching is doing, acted out. */}
           {mime && !sleeping && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
-          {guessing && (
-            <button
-              type="button"
-              className="pet-guess right"
-              data-guess="right"
-              title={t('pet.play.right')}
-              aria-label={t('pet.play.right')}
-              onClick={() => doGuess('right')}
-            >
-              <Glyph rows={ARROW_RIGHT} className="pet-arrow right" />
-            </button>
-          )}
-          {revealed === 'right' && <Glyph rows={ARROW_RIGHT} className="pet-arrow right went" />}
           {/* The floor: what it has left lying around, and whether it needs a doctor. */}
           <div className="pet-floor">
             {pet.sick && <Glyph rows={CROSS} className="pet-cross" />}
@@ -1406,12 +1594,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dt>{t('pet.stat.next')}</dt>
             <dd>{footer}</dd>
           </div>
-          {gift && (
-            <div>
-              <dt>{t('pet.stat.gift')}</dt>
-              <dd>{t('pet.giftAt', { item: t(`pet.acc.${gift.id}`), lv: gift.level })}</dd>
-            </div>
-          )}
           <div>
             <dt>{t('pet.stat.tokens')}</dt>
             <dd>{fmtTokens(pet.totalTokens)}</dd>
@@ -1435,8 +1617,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dd>{pet.lastFedAt ? dur(t, Date.now() - pet.lastFedAt) : t('pet.never')}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.games')}</dt>
-            <dd>{pet.plays ? t('pet.stat.gamesValue', { w: pet.wins, n: pet.plays }) : t('pet.never')}</dd>
+            <dt>{t('pet.stat.breaks')}</dt>
+            <dd>{pet.plays ? t('pet.stat.breaksValue', { n: pet.plays, asked: pet.wins }) : t('pet.never')}</dd>
           </div>
           <div>
             <dt>{t('pet.battle.record')}</dt>
@@ -1471,7 +1653,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           {pet.evolutions.length > 0 && (
             <div>
               <dt>{t('pet.stat.story')}</dt>
-              <dd>{pet.evolutions.map((e) => t(`pet.stage.${e.stage}`)).join(' → ')}</dd>
+              <dd>
+                {pet.evolutions
+                  .map((e) => (e.branch ? t(`pet.branch.${e.branch}`) : t(`pet.stage.${e.stage}`)))
+                  .join(' → ')}
+              </dd>
             </div>
           )}
         </dl>
@@ -1582,11 +1768,56 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               <b>{a.name || t('pet.default.name')}</b>
               <span>
                 {t(`pet.species.${a.species}`)} ·{' '}
-                {a.form === 'base' ? t(`pet.stage.${a.stage}`) : t(`pet.form.${a.form}`)} · {a.xp}
+                {a.branches?.length
+                  ? t(`pet.branch.${a.branches[a.branches.length - 1]}`)
+                  : a.form === 'base'
+                    ? t(`pet.stage.${a.stage}`)
+                    : t(`pet.form.${a.form}`)}{' '}
+                · {a.xp}
                 {t('pet.album.kibble')} · {dur(t, a.ageMs)}
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {mode === 'dex' && (
+        <div className="pet-dex">
+          <p className="pet-dex-head">{t('pet.dex.found', { n: found.size, total: BRANCH_BY_ID.size })}</p>
+          {[...LINES.map((line) => ({ line, ids: ['1', '2a', '3a', '2b', '3b'].map((k) => `${line}${k}`) })), { line: null, ids: ['omega', 'apex'] }].map(
+            ({ line, ids }) => (
+              <div key={line ?? 'hidden'} className="pet-dex-line">
+                <span className="pet-dex-name">{line ? t(`pet.line.${line}`) : t('pet.dex.hidden')}</span>
+                {ids.map((id) => {
+                  const b = BRANCH_BY_ID.get(id)!
+                  const seen = found.has(id)
+                  // Unmet branches keep their shape as a shadow and say how to get
+                  // there; the hidden ones keep even that to themselves.
+                  const hint = seen
+                    ? t(`pet.branch.${id}`)
+                    : b.hidden
+                      ? t(`pet.dex.hint.${id}`)
+                      : `Lv${TIER_LEVELS[b.tier - 1]} · ${t(`pet.dex.hint.${line}`)}${b.tier > 1 ? ` · ${t(`pet.dex.hint.${id.endsWith('a') ? 'a' : 'b'}`)}` : ''}`
+                  return (
+                    <button
+                      type="button"
+                      key={id}
+                      className={`pet-dex-cell${seen ? ' seen' : ''}${dexHint === hint ? ' on' : ''}`}
+                      title={hint}
+                      onClick={() => setDexHint(hint)}
+                    >
+                      {seen || !b.hidden ? (
+                        <Creature stage="adult" form="base" species={pet.species} mood="happy" chewing={false} branch={id} />
+                      ) : (
+                        <b>?</b>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          )}
+          <p className="pet-note">{dexHint ?? t('pet.dex.note')}</p>
         </div>
       )}
 
@@ -1640,7 +1871,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
                   }
                   chewing={false}
                   level={c.level}
-                  outfit={outfitOf(c.worn ?? [], c.level)}
+                  outfit={outfitOf(c.worn ?? [])}
                 />
               </div>
               {hit && (
@@ -1674,11 +1905,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       })()}
 
       {/* The menu: one strip along the foot of the screen. */}
-      {iconRow(0, icons.length)}
+      {!flat && iconRow(0, icons.length)}
     </div>
   )
 
-  // A, B, C. While the guessing game is up, A and B are the two sides.
+  // A, B, C.
   const keys = (
     <div className="pet-pad">
       <button
@@ -1686,7 +1917,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         className="pet-key"
         data-key="a"
         onClick={pressA}
-        title={guessing ? t('pet.play.left') : t('pet.key.select')}
+        title={t('pet.key.select')}
       >
         <span className="pet-key-cap">A</span>
       </button>
@@ -1696,11 +1927,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         data-key="b"
         onClick={pressB}
         title={
-          guessing
-            ? t('pet.play.right')
-            : sel === null
-              ? t('pet.key.clock')
-              : `${t('pet.key.confirm')} · ${icons[sel].label}`
+          sel === null ? t('pet.key.clock') : `${t('pet.key.confirm')} · ${icons[sel].label}`
         }
       >
         <span className="pet-key-cap">B</span>
@@ -1717,87 +1944,280 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
+  // The ask field, under whichever glass is up.
+  const askForm = talking && (
+    <form
+      className="pet-ask"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const el = e.currentTarget.elements.namedItem('q') as HTMLInputElement
+        ask(el.value)
+        el.value = ''
+      }}
+    >
+      <input
+        name="q"
+        autoFocus
+        autoComplete="off"
+        placeholder={t('pet.talk.placeholder')}
+        // The device is a drag handle; the field must not be one.
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+      {/* The field outlives the answer on purpose (you watch the pet
+          reply on its own screen), so it needs a way out of its own —
+          by then there is no screen title to carry one. The card keeps its
+          title (chatCard), and the X on it already closes the chat. */}
+      {!flat && (
+        <button
+          type="button"
+          className="pet-ask-x"
+          data-key="ask-close"
+          title={t('pet.back')}
+          aria-label={t('pet.back')}
+          onClick={() => setTalking(false)}
+        >
+          <X size={9} />
+        </button>
+      )}
+    </form>
+  )
+
+  // What is drawn: the handheld if the user asked for it, else just the pet. A
+  // screen of the bare pet's opens in a card beside it (see cardBox), so the pet
+  // stays where it is instead of turning into a little device.
+  const view = chrome === 'device' ? 'device' : 'bare'
+
+  /** A menu entry does its thing and the menu goes away. */
+  const pick = (run: () => void) => (): void => {
+    setMenu(false)
+    run()
+  }
+  const care = icons.slice(0, 5)
+  const pages = icons.slice(5)
+
+  // In the app the menu opens beside the pet, bottoms aligned: to its right, or
+  // its left when the window has no room there. Its own window widens instead
+  // (see pet:resize above and .pet-detached .pet-menu).
+  const menuStyle: CSSProperties | undefined =
+    detached || !menuAt
+      ? undefined
+      : {
+          position: 'fixed',
+          transform: 'none',
+          margin: 0,
+          left:
+            menuAt.right + 6 + MENU_W <= window.innerWidth - 8 ? menuAt.right + 6 : Math.max(8, menuAt.left - 6 - MENU_W),
+          top: 'auto',
+          bottom: Math.max(8, window.innerHeight - menuAt.bottom),
+          maxHeight: Math.max(120, menuAt.bottom - 8),
+          overflowY: 'auto'
+        }
+  // Right-click on the pet: every function, as a plain list.
+  const menuBox = menu && (
+    <div ref={menuRef} className="pet-menu" role="menu" style={menuStyle} onContextMenu={(e) => e.preventDefault()}>
+      <div className="pet-menu-care">
+        {care.map((ic) => (
+          <button
+            key={ic.id}
+            type="button"
+            data-ic={ic.id}
+            className={`pet-ic${ic.alert ? ' alert' : ''}`}
+            title={ic.label}
+            aria-label={ic.label}
+            onClick={pick(ic.run)}
+          >
+            {ic.node}
+          </button>
+        ))}
+      </div>
+      {pages.map((ic) => (
+        <button key={ic.id} type="button" role="menuitem" className="pet-menu-item" onClick={pick(ic.run)}>
+          {ic.node}
+          <span>{ic.label}</span>
+        </button>
+      ))}
+      <div className="pet-menu-sep" />
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={chrome === 'device'}
+        className={`pet-menu-item${chrome === 'device' ? ' on' : ''}`}
+        onClick={pick(() => setChrome(chrome === 'device' ? 'bare' : 'device'))}
+      >
+        <Monitor size={11} />
+        <span>{t('pet.menu.device')}</span>
+      </button>
+      {detached && (
+        <button
+          type="button"
+          role="menuitemcheckbox"
+          aria-checked={onTop}
+          className={`pet-menu-item${onTop ? ' on' : ''}`}
+          onClick={pick(() => runSetting('ontop'))}
+        >
+          <Pin size={11} />
+          <span>{t('pet.settings.onTop')}</span>
+        </button>
+      )}
+      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(() => runSetting('where'))}>
+        <ExternalLink size={11} />
+        <span>{detached ? t('pet.menu.putBack') : t('pet.menu.popOut')}</span>
+      </button>
+      <button type="button" role="menuitem" className="pet-menu-item" onClick={pick(() => runSetting('hide'))}>
+        <EyeOff size={11} />
+        <span>{t('pet.settings.hideDo')}</span>
+      </button>
+    </div>
+  )
+
+  // A screen of the bare pet's, in a card beside it styled like the menu; folded
+  // away again with its ✕ (or C). The menu takes its place while it is open.
+  const cardBox = peek && !menu && (
+    <div
+      ref={cardRef}
+      className={`pet-card${!detached && cardSide.left ? ' left' : ''}${!detached && cardSide.down ? ' down' : ''}`}
+    >
+      <div className="pet-card-body">
+        {screen}
+        {askForm}
+      </div>
+    </div>
+  )
+
+  // Dragging the floating bare pet by hand (see pet:dragStart in main): it is not
+  // an OS drag region, so it can still be clicked and right-clicked.
+  const onBareDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!detached || e.button !== 0) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    hand.current = { sx: e.screenX, sy: e.screenY, on: false, raf: 0 }
+  }
+  const onBareMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const h = hand.current
+    if (!h) return
+    if (!h.on) {
+      if (Math.abs(e.screenX - h.sx) < 4 && Math.abs(e.screenY - h.sy) < 4) return
+      h.on = true
+      window.api.pet.dragStart()
+    }
+    if (h.raf) return
+    h.raf = requestAnimationFrame(() => {
+      h.raf = 0
+      window.api.pet.dragMove()
+    })
+  }
+  const onBareUp = (): void => {
+    const h = hand.current
+    hand.current = null
+    if (!h?.on) return
+    if (h.raf) cancelAnimationFrame(h.raf)
+    window.api.pet.dragMove()
+    window.api.pet.dragEnd()
+    dragEndAt.current = Date.now()
+  }
+
   return (
     <div
       ref={ref}
       className={[
         'pet-device',
-        `pet-chrome-${chrome}`,
+        `pet-chrome-${view}`,
         awake ? '' : 'pet-asleep',
-        detached ? 'pet-detached' : ''
+        detached ? 'pet-detached' : '',
+        menu || cardBox ? 'pet-side-open' : ''
       ]
         .filter(Boolean)
         .join(' ')}
       style={
-        detached || !pos
-          ? undefined /* detached fills its window; otherwise parked bottom-right */
-          : { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+        detached
+          ? (menu || cardBox) && baseW.current
+            ? { width: baseW.current.dev, minHeight: menuH } /* the menu or card hangs to its right */
+            : undefined /* detached fills its window */
+          : pos
+            ? { left: pos.x, top: pos.y, right: 'auto', bottom: 'auto' }
+            : undefined /* parked bottom-right */
       }
       onPointerDown={onPointerDown}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        if (menu) return setMenu(false)
+        const el = ref.current
+        if (!el) return
+        setMenuAt((el.querySelector('.pet-bare, .pet-unit') ?? el).getBoundingClientRect())
+        if (detached && !baseW.current) baseW.current = { win: window.innerWidth, dev: el.offsetWidth }
+        const hi = menuLine()
+        menuHi.current = hi
+        speak(hi, MENU_HI_MS)
+        setMenu(true)
+      }}
+      // The floating window never gets focus, so no Esc and no blur reach it:
+      // leaving it is how the menu closes there. A pointerleave alone is not
+      // proof: macOS sends them while the pointer is still on the menu, and
+      // closing on those made the menu vanish under the cursor. So the leave
+      // only starts asking main where the pointer is, and the menu closes once
+      // it has been outside the window for two checks in a row.
+      onPointerEnter={() => {
+        if (menuLeave.current) clearInterval(menuLeave.current)
+        menuLeave.current = null
+      }}
+      onPointerLeave={() => {
+        if (!detached || !menu || menuLeave.current) return
+        let out = 0
+        menuLeave.current = setInterval(() => {
+          void window.api.pet.cursorInside().then((inside) => {
+            out = inside ? 0 : out + 1
+            if (out >= 2) setMenu(false)
+          })
+        }, 200)
+      }}
     >
+      {menuBox}
+      {cardBox}
       {/* What it is saying, above the device and in readable type. Inside the
           glass it was eight pixels tall and nobody could read it. Shown in every
           size — with the case hidden the balloon is the ONLY thing it can speak
           with, so leaving it out there made the pet mute. */}
-      {bubble && !guessing && (
+      {bubble && (
         <div className="pet-balloon" key={bubble}>
           {bubble}
         </div>
       )}
-      {chrome === 'bare' ? (
-        <>
-          {/* With every scrap of UI hidden there is nothing left to press, so
-              this one control — and only this one — waits under the pointer. */}
-          <div className="pet-tools">
-            <button className="pet-icon" title={t('pet.size.full')} onClick={() => setChrome('full')}>
-              <Maximize2 size={12} />
-            </button>
-            <button
-              className="pet-icon"
-              title={t('pet.settings.hideDo')}
-              onClick={() =>
-                detached ? void window.api.pet.hide() : setSettings({ petShow: false })
-              }
-            >
-              <X size={12} />
-            </button>
-          </div>
-          {/* With the case hidden there are no buttons to press, so the pet
-              itself is the way back — click it and the device returns. */}
-          <div
-            className="pet-bare"
-            role="button"
-            title={t('pet.size.full')}
-            onClick={() => setChrome('full')}
-          >
-            <Creature
-              stage={growth.stage}
-              form={growth.form}
-              species={pet.species}
-              mood={mood}
-              chewing={chewing && awake && !sleeping}
-              flavor={diet.total > 0 ? diet.top : undefined}
-              evolving={evolving}
-              level={growth.level}
-              outfit={outfit}
-            />
-            {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
-            {(pet.sick || pet.poops > 0) && (
-              <div className="pet-floor">
-                {pet.sick && <Glyph rows={CROSS} className="pet-cross" />}
-                {Array.from({ length: Math.min(MAX_POOPS, pet.poops) }, (_, i) => (
-                  <Glyph key={i} rows={POOP} className="pet-poop" />
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-      ) : chrome === 'screen' ? (
-        // The glass alone: no case, but every function is still on it — the strip
-        // along its foot is the menu.
-        <div className="pet-mini">
-          <div className="pet-bezel">{screen}</div>
-          {keys}
+      {view === 'bare' ? (
+        // Just the pet. Click it to pat it; right-click for everything else.
+        <div
+          className="pet-bare"
+          role="button"
+          title={t('pet.bare.hint')}
+          onClick={() => {
+            if (Date.now() - dragEndAt.current < 300) return
+            icons.find((ic) => ic.id === 'pet')?.run()
+          }}
+          onPointerDown={onBareDown}
+          onPointerMove={onBareMove}
+          onPointerUp={onBareUp}
+          onPointerCancel={onBareUp}
+        >
+          <Creature
+            stage={growth.stage}
+            form={growth.form}
+            species={pet.species}
+            mood={mood}
+            chewing={chewing && awake && !sleeping}
+            flavor={diet.total > 0 ? diet.top : undefined}
+            evolving={evolving}
+            level={growth.level}
+            outfit={outfit}
+            branch={growth.branch?.id}
+            whiteout={whiteout}
+          />
+          {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
+          {(pet.sick || pet.poops > 0) && (
+            <div className="pet-floor">
+              {pet.sick && <Glyph rows={CROSS} className="pet-cross" />}
+              {Array.from({ length: Math.min(MAX_POOPS, pet.poops) }, (_, i) => (
+                <Glyph key={i} rows={POOP} className="pet-poop" />
+              ))}
+            </div>
+          )}
         </div>
       ) : (
         // The whole unit: a little desk terminal — screen, and a deck with the
@@ -1805,39 +2225,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         <div className="pet-unit">
           <div className="pet-case">
             <div className="pet-bezel">{screen}</div>
-            {talking && (
-              <form
-                className="pet-ask"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const el = e.currentTarget.elements.namedItem('q') as HTMLInputElement
-                  ask(el.value)
-                  el.value = ''
-                }}
-              >
-                <input
-                  name="q"
-                  autoFocus
-                  autoComplete="off"
-                  placeholder={t('pet.talk.placeholder')}
-                  // The device is a drag handle; the field must not be one.
-                  onPointerDown={(e) => e.stopPropagation()}
-                />
-                {/* The field outlives the answer on purpose (you watch the pet
-                    reply on its own screen), so it needs a way out of its own —
-                    by then there is no screen title to carry one. */}
-                <button
-                  type="button"
-                  className="pet-ask-x"
-                  data-key="ask-close"
-                  title={t('pet.back')}
-                  aria-label={t('pet.back')}
-                  onClick={() => setTalking(false)}
-                >
-                  <X size={9} />
-                </button>
-              </form>
-            )}
+            {askForm}
             {/* The deck: name, power lamp, and a clock — which a desk terminal
                 has on its face anyway, and pressing it opens the one screen with
                 no icon of its own. The keys sit under it, centred. */}

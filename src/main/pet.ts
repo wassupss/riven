@@ -125,12 +125,7 @@ async function open(): Promise<void> {
   // desktops is not much of a desk pet.
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
-  const save = (): void => {
-    if (!win || win.isDestroyed()) return
-    const [bx, by] = win.getPosition()
-    void atomicWriteJson(boundsPath(), { x: bx, y: by })
-  }
-  win.on('moved', save)
+  win.on('moved', savePosition)
   win.on('ready-to-show', () => {
     note('pet ready-to-show → showInactive')
     win?.showInactive()
@@ -155,6 +150,15 @@ async function open(): Promise<void> {
     void win.loadFile(join(__dirname, '../renderer/pet.html'))
   }
 }
+
+function savePosition(): void {
+  if (!win || win.isDestroyed()) return
+  const [bx, by] = win.getPosition()
+  void atomicWriteJson(boundsPath(), { x: bx, y: by })
+}
+
+/** Where the pointer and the window were when a hand drag began. */
+let grab: { cx: number; cy: number; wx: number; wy: number } | null = null
 
 /** Set while riven closes the pet window itself — see the 'closed' handler. */
 let selfClose = false
@@ -188,25 +192,75 @@ export function registerPetHandlers(): void {
     closePetWindow()
     broadcast('pet:hidden')
   })
+  // The floating pet asked to move back into riven's window. Closing it from
+  // here counts as riven's own close (no 'pet:closed'), so say it explicitly:
+  // otherwise the app still thinks the pet is on the desk and shows it nowhere.
+  ipcMain.handle('pet:dock', () => {
+    closePetWindow()
+    broadcast('pet:closed')
+  })
   // The device measures itself and asks for a window that fits — folding it down,
   // opening a screen, or speaking changes how tall it is.
   //
   // The window grows from its BOTTOM edge: the device sits at the bottom of the
   // glass, so anchoring there keeps the pet still while a speech balloon opens
   // above it. Growing downward made the pet slide down the screen mid-sentence.
-  ipcMain.handle('pet:resize', (_e, height: number) => {
+  //
+  // The width follows the device too (each size has its own), keeping the left
+  // edge where it is.
+  ipcMain.handle('pet:resize', (_e, height: number, width?: number) => {
     if (!win || win.isDestroyed()) return
-    const h = Math.max(120, Math.min(900, Math.round(height)))
+    // The renderer measures CSS px; bounds are DIP. The app-wide UI zoom (shared by
+    // origin) scales one into the other, so a 1.2x zoom would otherwise crop the card.
+    const z = win.webContents.getZoomFactor() || 1
+    const h = Math.max(120, Math.min(1000, Math.round(height * z)))
     const b = win.getBounds()
-    if (b.height === h) return
-    win.setBounds({ x: b.x, y: b.y + (b.height - h), width: b.width, height: h }, false)
+    const w = typeof width === 'number' && width > 0 ? Math.max(100, Math.min(700, Math.round(width * z))) : b.width
+    if (b.height === h && b.width === w) return
+    win.setBounds({ x: b.x, y: b.y + (b.height - h), width: w, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
+  // Whether the pointer is really over the pet's window. The page's own
+  // pointerleave is not trustworthy in a frameless, never-focused window: macOS
+  // reports leaving it while the pointer is still on the menu.
+  ipcMain.handle('pet:cursorInside', () => {
+    if (!win || win.isDestroyed()) return false
+    const c = screen.getCursorScreenPoint()
+    const b = win.getBounds()
+    return c.x >= b.x && c.x < b.x + b.width && c.y >= b.y && c.y < b.y + b.height
+  })
+  // Dragging the bare pet by hand. An OS drag region (-webkit-app-region) eats
+  // every mouse event, so the pet could not be clicked or right-clicked while it
+  // was one. Instead the renderer reports the drag and main follows the cursor,
+  // read here in screen DIP so the page zoom never skews it.
+  ipcMain.on('pet:dragStart', () => {
+    if (!win || win.isDestroyed()) return
+    const c = screen.getCursorScreenPoint()
+    const [wx, wy] = win.getPosition()
+    grab = { cx: c.x, cy: c.y, wx, wy }
+  })
+  ipcMain.on('pet:dragMove', () => {
+    if (!grab || !win || win.isDestroyed()) return
+    const c = screen.getCursorScreenPoint()
+    win.setPosition(grab.wx + c.x - grab.cx, grab.wy + c.y - grab.cy, false)
+  })
+  ipcMain.on('pet:dragEnd', () => {
+    if (!grab) return
+    grab = null
+    savePosition()
+  })
   // A / B / C from a keyboard shortcut. Relayed to every window because the
   // device lives in one of two of them and only that one listens.
   ipcMain.handle('pet:press', (_e, key: string) => {
     for (const w of BrowserWindow.getAllWindows())
       if (!w.isDestroyed()) w.webContents.send('pet:press', key)
+  })
+
+  // The break interval (settings.petBreakMin), relayed so the pet's own window,
+  // which reads settings.json only at boot, hears a change right away.
+  ipcMain.handle('pet:setBreak', (_e, min: number) => {
+    for (const w of BrowserWindow.getAllWindows())
+      if (!w.isDestroyed()) w.webContents.send('pet:break', Number(min) || 0)
   })
 
   // Floating above other apps is the user's call (settings.petOnTop).

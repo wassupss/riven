@@ -1217,9 +1217,16 @@ const api = {
     open: (): Promise<void> => ipcRenderer.invoke('pet:open'),
     close: (): Promise<void> => ipcRenderer.invoke('pet:close'),
     hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
+    dock: (): Promise<void> => ipcRenderer.invoke('pet:dock'),
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
+    // Whether the pointer is over the pet's own window (screen coordinates).
+    cursorInside: (): Promise<boolean> => ipcRenderer.invoke('pet:cursorInside'),
     // The device measures itself; main resizes the window to match.
-    resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
+    // A hand drag of the bare pet: main follows the cursor between start and end.
+    dragStart: (): void => ipcRenderer.send('pet:dragStart'),
+    dragMove: (): void => ipcRenderer.send('pet:dragMove'),
+    dragEnd: (): void => ipcRenderer.send('pet:dragEnd'),
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
@@ -1239,6 +1246,13 @@ const api = {
     setOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:setOnTop', on),
     askOnTop: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:askOnTop', on),
     isOnTop: (): Promise<boolean> => ipcRenderer.invoke('pet:isOnTop'),
+    // Minutes before the pet asks for a break (0 = never), pushed by the app.
+    setBreak: (min: number): Promise<void> => ipcRenderer.invoke('pet:setBreak', min),
+    onBreak: (cb: (min: number) => void): (() => void) => {
+      const l = (_e: unknown, min: number): void => cb(min)
+      ipcRenderer.on('pet:break', l)
+      return () => ipcRenderer.removeListener('pet:break', l)
+    },
     onOnTop: (cb: (on: boolean) => void): (() => void) => {
       const l = (_e: unknown, on: boolean): void => cb(on)
       ipcRenderer.on('pet:onTop', l)

@@ -33,18 +33,16 @@ import {
   freshTokens,
   formOf,
   growthOf,
-  accessoryOf,
-  accessoriesOf,
-  giftAt,
   levelCost,
   levelOf,
-  nextAccessory,
   MAX_LEVEL,
   initialState,
   moodOf,
   normalize,
   pet,
-  play,
+  rest,
+  wantsBreak,
+  workStreakMs,
   sampleAccounts,
   stageIndexOf,
   tokenDelta,
@@ -58,13 +56,20 @@ import {
   KIBBLE_PER_POOP,
   MAX_POOPS,
   MOOD_DROP_PER_POOP_HOUR,
-  PLAY_COOLDOWN_MS,
-  PLAY_FULLNESS_COST,
-  PLAY_LOSE_MOOD,
-  PLAY_WIN_MOOD,
+  BREAK_MIN_MS,
+  BREAK_MOOD,
+  BREAK_MOOD_STREAK,
+  BREAK_MS,
+  BREAK_NAG_MS,
+  WORK_IDLE_RESET_MS,
   SICK_AFTER_HOURS,
   SLEEP_RATE,
   STAGE_XP,
+  BRANCHES,
+  OMEGA_TOKENS,
+  discoveredBranches,
+  lineOf,
+  settleBranches,
   type PetSave
 } from './pet'
 
@@ -252,31 +257,6 @@ describe('levels', () => {
     expect(top.level).toBe(MAX_LEVEL)
     expect(growthOf(base({ xp: 1e9 }), T0).toNext).toBe(0)
   })
-
-  it('wears the newest keepsake it has earned', () => {
-    expect(accessoryOf(0)).toBeNull()
-    expect(accessoryOf(2)).toBeNull()
-    expect(accessoryOf(3)).toBe('sprout')
-    expect(accessoryOf(7)).toBe('bow')
-    expect(accessoryOf(50)).toBe('crown')
-    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3, slot: 'head' })
-    expect(nextAccessory(MAX_LEVEL)).toBeNull()
-  })
-
-  it('wears more the higher it gets, one in each slot', () => {
-    expect(accessoriesOf(2)).toEqual([])
-    expect(accessoriesOf(5)).toEqual(['scarf', 'sprout'])
-    expect(accessoriesOf(10)).toEqual(['heart', 'scarf', 'crown'])
-    expect(accessoriesOf(MAX_LEVEL)).toEqual(['legend', 'mushrooms', 'moon', 'medal', 'crown'])
-    let worn = 0
-    for (let lvl = 1; lvl <= MAX_LEVEL; lvl++) {
-      const now = accessoriesOf(lvl).length
-      expect(now).toBeGreaterThanOrEqual(worn)
-      worn = now
-    }
-    expect(giftAt(8)).toBe('heart')
-    expect(giftAt(9)).toBeNull()
-  })
 })
 
 describe('formOf', () => {
@@ -435,30 +415,66 @@ describe('illness', () => {
   })
 })
 
-describe('play', () => {
-  it('lifts the mood more for a win than a loss, and costs appetite', () => {
-    const won = play(base({ mood: 50, fullness: 50 }), 'left', 'left', T0)
-    expect(won.win).toBe(true)
-    expect(won.state.mood).toBe(50 + PLAY_WIN_MOOD)
-    expect(won.state.fullness).toBe(50 - PLAY_FULLNESS_COST)
-    expect(won.state.wins).toBe(1)
+describe('break time', () => {
+  const MIN = 60_000
+  // Feeding every few minutes from `from` for `ms`: what an afternoon of agents looks like.
+  const workFor = (s: PetSave, from: number, ms: number): PetSave => {
+    for (let at = from; at <= from + ms; at += 5 * MIN) s = feed(s, KIBBLE_TOKENS, at)
+    return s
+  }
 
-    const lost = play(base({ mood: 50, fullness: 50 }), 'left', 'right', T0)
-    expect(lost.win).toBe(false)
-    expect(lost.state.mood).toBe(50 + PLAY_LOSE_MOOD)
-    expect(lost.state.wins).toBe(0)
-    expect(lost.state.plays).toBe(1)
+  it('counts a streak from the first meal, and restarts it after a long enough gap', () => {
+    const s = workFor(base(), atHour(10), 65 * MIN)
+    expect(workStreakMs(s, atHour(10) + 65 * MIN)).toBe(65 * MIN)
+    expect(wantsBreak(s, atHour(10) + 65 * MIN)).toBe(true)
+    // Gone quiet: no streak, nothing to ask for.
+    expect(workStreakMs(s, atHour(10) + 65 * MIN + WORK_IDLE_RESET_MS)).toBe(0)
+    // Back after the gap: a new streak starts at the new meal.
+    const back = feed(s, KIBBLE_TOKENS, atHour(12))
+    expect(workStreakMs(back, atHour(12) + MIN)).toBe(MIN)
   })
 
-  it('is rate-limited', () => {
-    const first = play(base({ fullness: 50 }), 'left', 'left', T0).state
-    expect(play(first, 'left', 'left', T0 + PLAY_COOLDOWN_MS - 1).played).toBe(false)
-    expect(play(first, 'left', 'left', T0 + PLAY_COOLDOWN_MS).played).toBe(true)
+  it('does not ask before the threshold, or at night', () => {
+    const s = workFor(base(), atHour(10), BREAK_NAG_MS - 10 * MIN)
+    expect(wantsBreak(s, atHour(10) + BREAK_NAG_MS - 10 * MIN)).toBe(false)
+    const late = workFor(base(), atHour(1), 60 * MIN)
+    expect(wantsBreak(late, atHour(2))).toBe(false)
   })
 
-  it('is declined by a pet that is ill or starving', () => {
-    expect(play(base({ sick: true, fullness: 90 }), 'left', 'left', T0).played).toBe(false)
-    expect(play(base({ fullness: 1 }), 'left', 'left', T0).played).toBe(false)
+  it('asks on the interval the user picked, or never when it is off', () => {
+    const s = workFor(base(), atHour(10), 35 * MIN)
+    const now = atHour(10) + 35 * MIN
+    expect(wantsBreak(s, now)).toBe(false)
+    expect(wantsBreak(s, now, 30 * MIN)).toBe(true)
+    expect(wantsBreak(s, now, 0)).toBe(false)
+    // An overdue break counts as one the pet asked for under that interval too.
+    expect(rest(base(), 30 * MIN, BREAK_MS, T0, 30 * MIN).wins).toBe(1)
+    expect(rest(base(), 30 * MIN, BREAK_MS, T0, 0).wins).toBe(0)
+  })
+
+  it('lifts the mood more after a longer streak, and ends it', () => {
+    const now = atHour(15)
+    const s = base({ mood: 40, workFrom: now - 30 * MIN, lastFedAt: now - MIN })
+    const tired = rest(s, BREAK_NAG_MS, BREAK_MS, now)
+    expect(tired.mood).toBe(40 + BREAK_MOOD + BREAK_MOOD_STREAK)
+    expect(rest(s, 0, BREAK_MS, now).mood).toBe(40 + BREAK_MOOD)
+    expect(tired.workFrom).toBe(0)
+    expect(workStreakMs(tired, now)).toBe(0)
+  })
+
+  it('records full breaks, and the ones the pet asked for', () => {
+    const s = base()
+    expect(rest(s, BREAK_NAG_MS, BREAK_MS, T0)).toMatchObject({ plays: 1, wins: 1 })
+    expect(rest(s, MIN, BREAK_MS, T0)).toMatchObject({ plays: 1, wins: 0 })
+  })
+
+  it('gives a short break its share, and ignores one that never happened', () => {
+    const s = base({ mood: 40, workFrom: T0 })
+    const short = rest(s, 0, BREAK_MS / 2, T0)
+    expect(short.mood).toBe(40 + Math.round(BREAK_MOOD / 2))
+    expect(short.plays).toBe(0)
+    expect(short.workFrom).toBe(0)
+    expect(rest(s, BREAK_NAG_MS, BREAK_MIN_MS - 1, T0)).toBe(s)
   })
 })
 
@@ -543,10 +559,6 @@ describe('night', () => {
     expect(night.fullness).toBeCloseTo(100 - 8 * SLEEP_RATE * HUNGER_PER_HOUR)
   })
 
-  it('will not play in the middle of the night', () => {
-    expect(play(base({ fullness: 80 }), 'left', 'left', atHour(3)).played).toBe(false)
-    expect(play(base({ fullness: 80 }), 'left', 'left', atHour(15)).played).toBe(true)
-  })
 })
 
 describe('diet', () => {
@@ -724,7 +736,7 @@ describe('how it ships', () => {
   it('is out on the desk by default, and not in the way', () => {
     expect(DEFAULT_SETTINGS.petShow).toBe(true)
     expect(DEFAULT_SETTINGS.petDetached).toBe(true)
-    expect(DEFAULT_SETTINGS.petChrome).toBe('full')
+    expect(DEFAULT_SETTINGS.petChrome).toBe('bare')
     // Floating above everything is offered, not assumed.
     expect(DEFAULT_SETTINGS.petOnTop).toBe(false)
   })
@@ -831,11 +843,11 @@ describe('species', () => {
     expect(seen.size).toBe(SPECIES.length)
   })
 
-  it('survives being fed, starved and played with', () => {
+  it('survives being fed, starved and rested', () => {
     let s = base({ species: 'fish' })
     s = feed(s, 100 * KIBBLE_TOKENS, T0)
     s = decay(s, T0 + 30 * HOUR)
-    s = play(s, 'left', 'left', T0 + 31 * HOUR).state
+    s = rest(s, HOUR, BREAK_MS, T0 + 31 * HOUR)
     s = pet(s, T0 + 32 * HOUR)
     expect(s.species).toBe('fish')
   })
@@ -923,5 +935,107 @@ describe('the nest', () => {
     // A save whose pets disagree is brought into step on load.
     const odd = { version: 2, active: 0, pets: [n.pets[0], { ...n.pets[1], album: [] }] }
     for (const p of normalizeNest(odd, now).pets) expect(p.album).toHaveLength(1)
+  })
+})
+
+describe('branches', () => {
+  const NOW = T0 + 24 * HOUR
+  /** The xp that lands exactly on a level. */
+  const diet = (d: Partial<PetSave['diet']>): PetSave['diet'] => ({ haiku: 0, sonnet: 0, opus: 0, codex: 0, other: 0, ...d })
+  const xpAt = (lvl: number): number => {
+    let xp = STAGE_XP[4]
+    for (let l = 1; l < lvl; l++) xp += levelCost(l)
+    return xp
+  }
+  const ids = (s: PetSave): string[] => settleBranches(s, NOW).flatMap((e) => (e.branch ? [e.branch] : []))
+
+  it('has six lines of five and two hidden ends', () => {
+    expect(BRANCHES).toHaveLength(32)
+    expect(new Set(BRANCHES.map((b) => b.id)).size).toBe(32)
+    expect(BRANCHES.filter((b) => b.hidden).map((b) => b.id)).toEqual(['omega', 'apex'])
+  })
+
+  it('picks the line from how it was raised, worst news first', () => {
+    expect(lineOf(base(), NOW)).toBe('balance')
+    expect(lineOf(base({ diet: diet({ opus: 60, sonnet: 40 }) }), NOW)).toBe('sage')
+    expect(lineOf(base({ diet: diet({ haiku: 45, sonnet: 30, opus: 25 }) }), NOW)).toBe('swift')
+    expect(lineOf(base({ xp: 100, nightKibble: 40 }), NOW)).toBe('night')
+    expect(lineOf(base({ battleWins: 5, xp: 100, nightKibble: 90 }), NOW)).toBe('battle')
+    expect(lineOf(base({ sickCount: 3, battleWins: 9 }), NOW)).toBe('dark')
+    expect(lineOf(base({ neglectMs: 12 * HOUR }), NOW)).toBe('dark')
+  })
+
+  it('takes nothing before level 10, then one turn per tier', () => {
+    const nine = base({ xp: xpAt(9) })
+    expect(settleBranches(nine, NOW)).toBe(nine.evolutions)
+    expect(ids(base({ xp: xpAt(10) }))).toEqual(['balance1'])
+    expect(ids(base({ xp: xpAt(30) }))).toEqual(['balance1', 'balance2a'])
+    expect(ids(base({ xp: xpAt(50) }))).toEqual(['balance1', 'balance2a', 'balance3a'])
+  })
+
+  it('splits on care at the second turn and keeps that side', () => {
+    expect(ids(base({ xp: xpAt(50), sick: true }))).toEqual(['balance1', 'balance2b', 'balance3b'])
+    // Once on a side, it stays there even if things got better since.
+    const turned = { ...base({ xp: xpAt(30), sick: true }) }
+    const after = { ...turned, evolutions: settleBranches(turned, NOW), sick: false, xp: xpAt(50) }
+    expect(ids(after).slice(-1)).toEqual(['balance3b'])
+  })
+
+  it('keeps a branch once taken, whatever it eats later', () => {
+    const s = base({ xp: xpAt(10), diet: diet({ opus: 90, sonnet: 10 }) })
+    const later = { ...s, evolutions: settleBranches(s, NOW), diet: diet({ haiku: 90, sonnet: 10 }), xp: xpAt(30) }
+    expect(ids(later)).toEqual(['sage1', 'sage2a'])
+  })
+
+  it('returns the same array when there is nothing to take', () => {
+    const s = base({ xp: xpAt(10) })
+    const settled = { ...s, evolutions: settleBranches(s, NOW) }
+    expect(settleBranches(settled, NOW)).toBe(settled.evolutions)
+  })
+
+  it('reaches omega on a huge appetite and apex at the cap', () => {
+    expect(ids(base({ xp: xpAt(50), totalTokens: OMEGA_TOKENS }))).toEqual(['balance1', 'balance2a', 'omega'])
+    // A third-tier pet that eats its way there later still turns.
+    const s = base({ xp: xpAt(50) })
+    const fed = { ...s, evolutions: settleBranches(s, NOW), totalTokens: OMEGA_TOKENS }
+    expect(ids(fed).slice(-1)).toEqual(['omega'])
+    expect(ids(base({ xp: xpAt(MAX_LEVEL) })).slice(-1)).toEqual(['apex'])
+  })
+
+  it('shows the branch it is on in its growth', () => {
+    const s = base({ xp: xpAt(30) })
+    expect(growthOf({ ...s, evolutions: settleBranches(s, NOW) }, NOW).branch?.id).toBe('balance2a')
+    expect(growthOf(s, NOW).branch).toBeNull()
+  })
+
+  it('counts what was eaten at night and each time it fell ill', () => {
+    const night = new Date(T0)
+    night.setHours(2, 0, 0, 0)
+    const at = night.getTime()
+    const fed = feed(base({ lastTickAt: at }), 3 * KIBBLE_TOKENS, at)
+    expect(fed.nightKibble).toBeGreaterThan(0)
+    const ill = decay(base({ fullness: 0, mood: 50, lastTickAt: T0 }), T0 + SICK_AFTER_HOURS * HOUR)
+    expect(ill.sick).toBe(true)
+    expect(ill.sickCount).toBe(1)
+    // Staying ill is the same illness, not another one.
+    expect(decay(ill, T0 + (SICK_AFTER_HOURS + 2) * HOUR).sickCount).toBe(1)
+  })
+
+  it('lists every branch reached, album included', () => {
+    const a = base({ evolutions: [{ stage: 'adult', form: 'base', at: T0, branch: 'night1' }] })
+    const b = base({
+      album: [{ name: '', species: 'cat', stage: 'adult', form: 'base', xp: 1, tokens: 1, ageMs: 1, neglectMs: 0, endedAt: T0, branches: ['dark1', 'dark2b'] }]
+    })
+    expect([...discoveredBranches([a, b])].sort()).toEqual(['dark1', 'dark2b', 'night1'])
+  })
+
+  it('migrates old saves and drops branches it does not know', () => {
+    const s = normalize(
+      { ...base(), everSick: true, sickCount: undefined, nightKibble: undefined, evolutions: [{ stage: 'adult', form: 'base', at: T0, branch: 'nope' }] },
+      T0
+    )
+    expect(s.sickCount).toBe(1)
+    expect(s.nightKibble).toBe(0)
+    expect(s.evolutions[0].branch).toBeUndefined()
   })
 })

@@ -590,6 +590,16 @@ export default function SettingsModal(): JSX.Element | null {
                     onChange={(v) => upd('petOnTop', v)}
                   />
                 )}
+                <Row title={t('settings.petBreak')} desc={t('settings.petBreakDesc')}>
+                  <Select value={String(settings.petBreakMin)} onChange={(e) => upd('petBreakMin', Number(e.target.value))}>
+                    {[30, 45, 60, 90, 120].map((n) => (
+                      <option key={n} value={n}>
+                        {t('settings.petBreakMin', { n })}
+                      </option>
+                    ))}
+                    <option value={0}>{t('settings.petBreakOff')}</option>
+                  </Select>
+                </Row>
 
               </>
             )}

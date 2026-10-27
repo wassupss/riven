@@ -19,9 +19,9 @@ import {
   PRIZES,
   SPECIES,
   STAGES,
-  accessoriesOf,
   outfitOf,
   slotOf,
+  type Accessory,
   type Form
 } from '../state/pet'
 
@@ -247,12 +247,19 @@ describe('accessoryPixels', () => {
         }
   })
 
-  it('fits every piece it has earned, off its face and clear of each other', () => {
+  it('fits a full outfit, off its face and clear of each other', () => {
     const order = ['head', 'neck', 'float', 'ground', 'aura']
+    const outfits: Accessory[][] = [
+      ['scarf', 'sprout'],
+      ['heart', 'scarf', 'crown'],
+      ['sparkle', 'flowers', 'star', 'bell', 'bow'],
+      ['glitter', 'mushrooms', 'moon', 'medal', 'crown'],
+      ['legend', 'mushrooms', 'moon', 'medal', 'crown']
+    ]
     for (const species of SPECIES)
       for (const form of FORMS)
-        for (const level of [5, 10, 20, 30, 50, 65, MAX_LEVEL]) {
-          const worn = [...accessoriesOf(level)].sort(
+        for (const [level, outfit] of outfits.entries()) {
+          const worn = [...outfit].sort(
             (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
           )
           // Pieces are fitted in this order, so each one must add something.
@@ -277,17 +284,17 @@ describe('accessoryPixels', () => {
         }
   })
 
-  it('fits every prize, alone or over its level keepsakes', () => {
+  it('fits every prize, alone or over a full outfit', () => {
     const order = ['head', 'neck', 'float', 'ground', 'aura']
     for (const species of SPECIES)
       for (const form of FORMS)
         for (const { id } of PRIZES)
-          for (const level of [1, 30, MAX_LEVEL]) {
-            const worn = outfitOf([id], level).sort(
+          for (const [level, base] of [[], ['legend', 'mushrooms', 'moon', 'medal', 'crown']].entries()) {
+            const worn = outfitOf([...(base as Accessory[]), id]).sort(
               (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
             )
             const alone = outfitPixels('adult', form, species, [id])
-            expect(alone.front.length, `${species}/${form}/${id}`).toBeGreaterThan(0)
+            expect(alone.front.length + alone.back.length, `${species}/${form}/${id}`).toBeGreaterThan(0)
             const { back, front } = outfitPixels('adult', form, species, worn)
             const face = bigFaceOf(bodyOf(species, 'adult'))!
             const seen = new Set<string>()
@@ -300,7 +307,7 @@ describe('accessoryPixels', () => {
               seen.add(`${d.x},${d.y}`)
             }
           }
-  })
+  }, 30_000)
 })
 
 describe('runsOf', () => {

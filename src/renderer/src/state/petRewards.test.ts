@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
-  ACCESSORIES,
   PRIZES,
   STAGE_XP,
-  accessoriesOf,
   claimEvents,
   eventsOn,
   initialState,
@@ -23,7 +21,7 @@ const hatched = (now: number, over: Partial<PetSave> = {}): PetSave => ({
   ...over
 })
 const slotOf = (id: string): string | undefined =>
-  [...ACCESSORIES, ...PRIZES].find((p) => p.id === id)?.slot
+  PRIZES.find((p) => p.id === id)?.slot
 
 describe('festivals', () => {
   it('knows its windows, Halloween across the month end included', () => {
@@ -71,14 +69,20 @@ describe('prizes', () => {
     expect(b.worn).toEqual(['pumpkin'])
   })
 
-  it('a worn prize takes its slot over the level keepsake', () => {
-    const level = 60
-    const base = accessoriesOf(level)
-    const out = outfitOf(['pumpkin'], level)
-    expect(out).toContain('pumpkin')
+  it('wears only what was put on, one per slot, drawn back to front', () => {
+    expect(outfitOf([])).toEqual([])
+    const out = outfitOf(['crown', 'legend', 'pumpkin'])
+    expect(out).toEqual(['legend', 'pumpkin'])
     expect(out.filter((a) => slotOf(a) === 'head')).toEqual(['pumpkin'])
-    expect(out.length).toBe(base.length + (base.some((a) => slotOf(a) === 'head') ? 0 : 1))
-    expect(outfitOf([], level)).toEqual(base)
+  })
+
+  it('every keepsake comes with an award, the old level ones included', () => {
+    const now = day(10, 23)
+    expect(prizesOf(hatched(now), now)).toContain('sprout')
+    const fed = hatched(now, { diet: { opus: 1, sonnet: 1, haiku: 1, codex: 0, other: 0 } })
+    expect(prizesOf(fed, now)).toContain('medal')
+    const award = new Set(PRIZES.map((p) => p.award))
+    expect(award.size).toBe(PRIZES.length)
   })
 
   it('old and junk saves come out clean', () => {

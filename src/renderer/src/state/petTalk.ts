@@ -158,15 +158,14 @@ export function answer(question: string, f: TalkFacts): { topic: TalkTopic; text
 
     case 'self': {
       const g = growthOf(f.pet, f.now)
-      return {
-        topic,
-        text: t('pet.talk.self', {
-          species: t(`pet.species.${f.pet.species}`),
-          stage: t(`pet.stage.${g.stage}`),
-          age: f.dur(f.now - f.pet.bornAt),
-          mood: t(`pet.mood.${f.pet.sick ? 'sick' : f.pet.fullness < HUNGRY_AT ? 'hungry' : 'ok'}`)
-        })
-      }
+      const text = t('pet.talk.self', {
+        species: t(`pet.species.${f.pet.species}`),
+        stage: g.branch ? t(`pet.branch.${g.branch.id}`) : t(`pet.stage.${g.stage}`),
+        age: f.dur(f.now - f.pet.bornAt),
+        mood: t(`pet.mood.${f.pet.sick ? 'sick' : f.pet.fullness < HUNGRY_AT ? 'hungry' : 'ok'}`)
+      })
+      // The way it grew up colours how it talks about itself.
+      return { topic, text: g.branch ? `${text} ${t(`pet.talk.line.${g.branch.line ?? g.branch.id}`)}` : text }
     }
 
     case 'help':

@@ -198,64 +198,9 @@
   color: var(--fg);
 }
 
-/* The reveal, after a guess: the pet leans the way it actually went and that
-   arrow flashes. Transform only — a window nobody is looking at paints no frames,
-   and anything else would be stuck at the first one. */
+/* The pet's place in the yard. */
 .pet-actor {
   display: contents;
-}
-.pet-actor.went-left .pet-lcd {
-  animation: pet-lean-left 0.45s steps(2, end) 3;
-}
-.pet-actor.went-right .pet-lcd {
-  animation: pet-lean-right 0.45s steps(2, end) 3;
-}
-@keyframes pet-lean-left {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(-9%) rotate(-6deg);
-  }
-}
-@keyframes pet-lean-right {
-  0%,
-  100% {
-    transform: translateX(0);
-  }
-  50% {
-    transform: translateX(9%) rotate(6deg);
-  }
-}
-.pet-arrow.went {
-  color: var(--accent);
-  animation: pet-twinkle 0.35s steps(1, end) 5;
-}
-
-/* Guessing which side: the two sides are the two buttons. */
-.pet-guess {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 34%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  cursor: pointer;
-}
-.pet-guess.left {
-  left: 0;
-}
-.pet-guess.right {
-  right: 0;
-}
-.pet-guess:hover {
-  background: var(--accent-muted);
 }
 
 /* ---- in its own window: fill it, and let the OS do the dragging ----
@@ -276,17 +221,19 @@
    smudge around the device, because there is nothing behind it to fall on.
    (Measured: alpha 5–71 over the whole margin.) Keep the crisp inner lighting,
    drop everything that blurs outward. */
-.pet-detached .pet-case,
-.pet-detached .pet-mini {
+.pet-detached .pet-case {
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
 }
 .pet-detached .pet-stand i,
-.pet-detached .pet-balloon,
-.pet-detached .pet-tools {
+.pet-detached .pet-card,
+.pet-detached .pet-balloon {
   box-shadow: none;
 }
 .pet-detached .pet-bare {
   filter: none;
+}
+.pet-detached.pet-chrome-bare {
+  width: 100%;
 }
 
 /* What you press, type in or scroll must stay clickable. */
@@ -299,6 +246,8 @@
 .pet-detached .pet-graph *,
 .pet-detached .pet-album,
 .pet-detached .pet-album *,
+.pet-detached .pet-dex,
+.pet-detached .pet-dex *,
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
@@ -307,21 +256,59 @@
 }
 
 /* ---- chrome levels ---- */
-/* Screen only: the case is gone; the glass and its three buttons stay, so every
-   function is still reachable without the printed icons. */
-.pet-chrome-screen {
-  width: 150px;
+/* A screen of the bare pet's (stats, dex, a question...) opens in a card beside
+   it, made like the right-click menu: a plain panel, no glass, no bezel and no
+   icon strip, so nothing about it looks like the device. The screen's type is
+   sized for the device's little LCD, so the card's content is drawn at 1.4x,
+   which brings its 8-9px lines to the menu's reading size. */
+.pet-card {
+  position: absolute;
+  bottom: 0;
+  left: calc(100% + 6px);
+  z-index: 3;
+  width: 236px;
+  padding: 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-2) 94%, black);
+  border: 1px solid var(--edge-strong);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.45);
+  cursor: default;
 }
-.pet-mini {
-  width: 100%;
+.pet-card.left {
+  left: auto;
+  right: calc(100% + 6px);
+}
+.pet-card.down {
+  bottom: auto;
+  top: 0;
+}
+.pet-card-body {
+  zoom: 1.4;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 6px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-2) 92%, black);
-  border: 1px solid var(--edge-strong);
-  box-shadow: 0 10px 22px rgb(0 0 0 / 0.45);
+  gap: 4px;
+}
+/* As tall as what it shows, up to a cap; past that the list inside scrolls.
+   A fixed height cut the status and settings pages off mid-row and left the
+   album and the chat a big empty box. */
+.pet-card .pet-screen {
+  aspect-ratio: auto;
+  height: auto;
+  max-height: 280px;
+  padding: 2px 3px;
+  border-radius: 0;
+  background: none;
+}
+.pet-card .pet-screen ::-webkit-scrollbar {
+  width: 3px;
+}
+.pet-card .pet-screen ::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--edge-strong);
+}
+.pet-detached .pet-card,
+.pet-detached .pet-card * {
+  -webkit-app-region: no-drag;
 }
 /* Creature only: no case, no glass, no gauges — just the pet, on nothing. */
 .pet-chrome-bare {
@@ -342,48 +329,105 @@
   height: auto;
 }
 
-/* ---- the one hover control ----
-   Only in 'bare', where the device has deliberately drawn nothing you could
-   press. Every other level keeps its controls on the device itself. */
-.pet-tools {
+/* ---- the right-click menu ----
+   The bare pet draws nothing you could press, so everything lives here: the
+   care row first, then the pages, then how the pet is shown. Styled like the
+   screen-only glass so it reads as part of the same object. */
+.pet-menu {
   position: absolute;
-  top: 0;
+  bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 2;
+  z-index: 3;
+  width: 172px;
+  margin-bottom: 4px;
   display: flex;
+  flex-direction: column;
   gap: 1px;
-  padding: 2px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
+  padding: 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-2) 94%, black);
   border: 1px solid var(--edge-strong);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.45);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s ease;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.45);
+  cursor: default;
 }
-.pet-device:hover .pet-tools,
-.pet-device:focus-within .pet-tools {
-  opacity: 1;
-  pointer-events: auto;
+.pet-menu-care {
+  display: flex;
+  gap: 2px;
+  padding-bottom: 4px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--edge);
 }
-.pet-icon {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
+.pet-menu-care .pet-ic {
+  position: relative;
+  height: 22px;
   color: var(--fg-dim);
+}
+.pet-menu-care .pet-ic.alert {
+  color: var(--warning);
+}
+.pet-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 22px;
+  padding: 0 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  text-align: left;
   cursor: pointer;
 }
-.pet-icon:hover {
+.pet-menu-item span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pet-menu-item:hover {
   background: var(--hover-strong);
   color: var(--fg);
+}
+.pet-menu-item.on {
+  color: var(--accent);
+}
+.pet-menu-sep {
+  height: 1px;
+  margin: 3px 2px;
+  background: var(--edge);
+}
+/* In its own window the menu hangs to the right of the device, bottoms aligned,
+   and the window widens to hold it (pet:resize). The device is given the menu's
+   height (minHeight, set inline) and keeps the pet at its bottom, so the window
+   grows upward and the pet does not move. */
+.pet-detached.pet-side-open {
+  position: relative;
+  /* .pet-device parks itself with right/bottom offsets; relative positioning
+     would turn those into a shift that pushes the pet off the window. */
+  right: auto;
+  bottom: auto;
+  justify-content: flex-end;
+}
+.pet-detached .pet-menu {
+  top: auto;
+  bottom: 0;
+  left: calc(100% + 6px);
+  transform: none;
+  margin: 0;
+  box-shadow: none;
+}
+.pet-detached .pet-menu,
+.pet-detached .pet-menu *,
+/* No drag regions at all while the menu or a card is open. Moving over one
+   reads as leaving the page, and the menu flickered and closed under the
+   pointer on its way from the pet to an item. */
+.pet-detached.pet-side-open,
+.pet-detached.pet-side-open * {
+  -webkit-app-region: no-drag;
 }
 
 /* ---- the LCD, sunk into a bezel ---- */
@@ -483,10 +527,6 @@
   width: 7px;
   height: 7px;
 }
-.pet-arrow {
-  width: 8px;
-  height: 10px;
-}
 .pet-poop {
   animation: pet-stink 2.2s steps(1, end) infinite;
 }
@@ -499,16 +539,6 @@
 }
 .pet-cross .pet-px-p {
   fill: var(--danger);
-}
-.pet-arrow {
-  position: absolute;
-  animation: pet-twinkle 0.5s steps(1, end) infinite;
-}
-.pet-arrow.left {
-  left: 2px;
-}
-.pet-arrow.right {
-  right: 2px;
 }
 @keyframes pet-stink {
   0%,
@@ -597,6 +627,27 @@
 }
 .pet-lcd.evolving .pet-sprite {
   animation: pet-hop 0.25s steps(1, end) infinite;
+}
+/* A branch evolution: the new shape shows only as a flat silhouette that
+   flickers, faster as it goes, and then the class drops and it is revealed.
+   Fill rather than filter, so the species and diet tints are left alone. */
+.pet-lcd.whiteout .pet-px {
+  fill: var(--fg);
+  animation: none;
+}
+.pet-lcd.whiteout .pet-sprite {
+  animation: pet-whiteout 1.8s linear forwards;
+}
+@keyframes pet-whiteout {
+  0%, 12%, 30%, 44%, 56%, 66%, 74%, 80%, 86%, 90%, 94%, 97% {
+    opacity: 1;
+  }
+  6%, 21%, 37%, 50%, 61%, 70%, 77%, 83%, 88%, 92%, 95%, 99% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 /* ---- species colour ----
@@ -922,6 +973,9 @@
 .pet-rows dt {
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   font-size: 9px;
+  /* A long value ellipsizes; the label never gives way and breaks mid-word. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .pet-rows dd {
   margin: 0;
@@ -1018,6 +1072,70 @@
 .pet-album-row span {
   font-size: 8px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ---- the evolution tree ----
+   One row per line, read left to right: its first form, then the cared-for
+   pair (2a, 3a), then the neglected pair (2b, 3b). */
+.pet-dex {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+.pet-dex-head {
+  margin: 0 0 1px;
+  font-size: 8.5px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.pet-dex-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+/* Name on its own line so the five cells always fit the 110px device screen. */
+.pet-dex-name {
+  flex: 0 0 100%;
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.pet-dex-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 26px;
+  aspect-ratio: 1;
+  padding: 1px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.15);
+  cursor: pointer;
+}
+.pet-dex-cell .pet-lcd {
+  width: 100%;
+  height: 100%;
+}
+.pet-dex-cell.on {
+  border-color: var(--accent);
+}
+.pet-dex-cell b {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* Not met yet: the shape, and nothing else. */
+.pet-dex-cell:not(.seen) .pet-px {
+  fill: color-mix(in srgb, var(--fg) 16%, transparent);
+  animation: none;
+}
+.pet-dex-cell:not(.seen) .pet-lcd {
+  filter: none;
 }
 .pet-empty {
   margin: auto;
