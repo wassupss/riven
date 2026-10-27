@@ -16,7 +16,7 @@ import { atomicWriteJson } from './atomicWrite'
 // ---------------------------------------------------------------------------
 
 const BOUNDS_FILE = 'pet-window.json'
-const DEFAULT_SIZE = { width: 212, height: 380 }
+const DEFAULT_SIZE = { width: 212, height: 330 }
 
 let win: BrowserWindow | null = null
 

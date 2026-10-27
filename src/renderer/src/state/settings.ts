@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-export type PetChrome = 'full' | 'screen' | 'bare'
+// Just the pet (right-click for its menu), or the little handheld it lives in.
+export type PetChrome = 'bare' | 'device'
 
 /** A phone the user approved for remote control (state/remote). */
 export interface RemoteDevice {
@@ -35,8 +36,8 @@ export interface Settings {
   // eaten, how it grew — lives in pet.json, not here.)
   petShow: boolean
   petPos: { x: number; y: number } | null
-  // How much of the device is drawn: the whole handheld, just its screen, or
-  // nothing but the creature itself on a transparent background.
+  // Nothing but the creature on a transparent background (its menu is a right
+  // click away), or the small handheld for those who asked for one.
   petChrome: PetChrome
   // Living in its own window on the desktop instead of inside riven's. On by
   // default: a desk pet belongs on the desk.
@@ -256,6 +257,8 @@ export const useSettings = create<SettingsState>((set) => ({
     // terminal 11) for users who never customized them.
     if (partial.editorFontSize === 13) merged.editorFontSize = 12
     if (partial.terminalFontSize === 11) merged.terminalFontSize = 12
+    // The pet's old card and screen-only sizes became the bare pet with a menu.
+    if (merged.petChrome !== 'bare' && merged.petChrome !== 'device') merged.petChrome = 'bare'
     set({ settings: merged, ready: true })
   },
   set: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),

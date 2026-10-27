@@ -33,12 +33,8 @@ import {
   freshTokens,
   formOf,
   growthOf,
-  accessoryOf,
-  accessoriesOf,
-  giftAt,
   levelCost,
   levelOf,
-  nextAccessory,
   MAX_LEVEL,
   initialState,
   moodOf,
@@ -251,31 +247,6 @@ describe('levels', () => {
     const top = levelOf(1e9)
     expect(top.level).toBe(MAX_LEVEL)
     expect(growthOf(base({ xp: 1e9 }), T0).toNext).toBe(0)
-  })
-
-  it('wears the newest keepsake it has earned', () => {
-    expect(accessoryOf(0)).toBeNull()
-    expect(accessoryOf(2)).toBeNull()
-    expect(accessoryOf(3)).toBe('sprout')
-    expect(accessoryOf(7)).toBe('bow')
-    expect(accessoryOf(50)).toBe('crown')
-    expect(nextAccessory(1)).toEqual({ id: 'sprout', level: 3, slot: 'head' })
-    expect(nextAccessory(MAX_LEVEL)).toBeNull()
-  })
-
-  it('wears more the higher it gets, one in each slot', () => {
-    expect(accessoriesOf(2)).toEqual([])
-    expect(accessoriesOf(5)).toEqual(['scarf', 'sprout'])
-    expect(accessoriesOf(10)).toEqual(['heart', 'scarf', 'crown'])
-    expect(accessoriesOf(MAX_LEVEL)).toEqual(['legend', 'mushrooms', 'moon', 'medal', 'crown'])
-    let worn = 0
-    for (let lvl = 1; lvl <= MAX_LEVEL; lvl++) {
-      const now = accessoriesOf(lvl).length
-      expect(now).toBeGreaterThanOrEqual(worn)
-      worn = now
-    }
-    expect(giftAt(8)).toBe('heart')
-    expect(giftAt(9)).toBeNull()
   })
 })
 

@@ -206,7 +206,7 @@ export interface PetSave {
   // ---- rewards ----
   // Seasonal events it was around for (see EVENTS); each one leaves a prize.
   events: string[]
-  // Prizes it has chosen to wear, at most one per slot, over its level keepsakes.
+  // Prizes it has chosen to wear, at most one per slot.
   worn: Accessory[]
   // Kibble eaten per model — what it has grown up on.
   diet: Record<Flavor, number>
@@ -702,7 +702,6 @@ export type Accessory =
   | 'sparkle'
   | 'glitter'
   | 'legend'
-  // Prizes: won through awards and events rather than levels (see PRIZES).
   | 'bandana'
   | 'laurel'
   | 'sword'
@@ -713,30 +712,12 @@ export type Accessory =
   | 'santa'
   | 'blossom'
 /**
- * Where a keepsake goes. One of each is worn at once, so the higher it gets the
- * more it has on: a hat, then something round its neck, a little friend
- * floating by, things growing at its feet, and at last a shine all round it.
+ * Where a keepsake goes. One of each can be worn at once: a hat, something round
+ * its neck, a little friend floating by, things growing at its feet, and a shine
+ * all round it.
  */
 export type AccessorySlot = 'head' | 'neck' | 'float' | 'ground' | 'aura'
 export const ACCESSORY_SLOTS: AccessorySlot[] = ['aura', 'ground', 'float', 'neck', 'head']
-/** What it earns at which level. In each slot the newest one earned is worn. */
-export const ACCESSORIES: Array<{ id: Accessory; level: number; slot: AccessorySlot }> = [
-  { id: 'sprout', level: 3, slot: 'head' },
-  { id: 'scarf', level: 5, slot: 'neck' },
-  { id: 'bow', level: 6, slot: 'head' },
-  { id: 'heart', level: 8, slot: 'float' },
-  { id: 'crown', level: 10, slot: 'head' },
-  { id: 'flowers', level: 13, slot: 'ground' },
-  { id: 'bell', level: 16, slot: 'neck' },
-  { id: 'star', level: 20, slot: 'float' },
-  { id: 'sparkle', level: 25, slot: 'aura' },
-  { id: 'medal', level: 30, slot: 'neck' },
-  { id: 'moon', level: 40, slot: 'float' },
-  { id: 'mushrooms', level: 50, slot: 'ground' },
-  { id: 'glitter', level: 65, slot: 'aura' },
-  { id: 'legend', level: 99, slot: 'aura' }
-]
-
 /** Level 1 the day it grows up, 0 before that. */
 export function levelOf(xp: number): { level: number; from: number; to: number } {
   const start = STAGE_XP[STAGE_XP.length - 1]
@@ -750,20 +731,29 @@ export function levelOf(xp: number): { level: number; from: number; to: number }
   return { level, from, to: level >= MAX_LEVEL ? from : from + levelCost(level) }
 }
 
-/** The hat it wears at `level`, the newest one earned; null before the first. */
-export function accessoryOf(level: number): Accessory | null {
-  return accessoriesOf(level).find((a) => slotOf(a) === 'head') ?? null
-}
-
-export const slotOf = (a: Accessory): AccessorySlot =>
-  ACCESSORIES.find((x) => x.id === a)?.slot ?? PRIZES.find((x) => x.id === a)?.slot ?? 'head'
+export const slotOf = (a: Accessory): AccessorySlot => PRIZES.find((x) => x.id === a)?.slot ?? 'head'
 
 /**
- * Keepsakes that are won rather than grown into: each one comes with an award
- * (and the seasonal ones with an event). The keeper puts them on by hand, one
- * per slot, in place of whatever its level would have it wear there.
+ * Every keepsake is won: each one comes with an award (and the seasonal ones
+ * with an event), and the keeper puts it on by hand, one per slot. Levels used
+ * to hand some out on their own; those are awards now too, so a keepsake always
+ * says what the pet did to earn it.
  */
 export const PRIZES: Array<{ id: Accessory; slot: AccessorySlot; award: string }> = [
+  { id: 'sprout', slot: 'head', award: 'hatch' },
+  { id: 'bow', slot: 'head', award: 'playful' },
+  { id: 'scarf', slot: 'neck', award: 'streak' },
+  { id: 'heart', slot: 'float', award: 'devoted' },
+  { id: 'crown', slot: 'head', award: 'crowned' },
+  { id: 'flowers', slot: 'ground', award: 'keeper' },
+  { id: 'bell', slot: 'neck', award: 'lucky' },
+  { id: 'star', slot: 'float', award: 'strains' },
+  { id: 'sparkle', slot: 'aura', award: 'tidy' },
+  { id: 'medal', slot: 'neck', award: 'gourmet' },
+  { id: 'moon', slot: 'float', award: 'level30' },
+  { id: 'mushrooms', slot: 'ground', award: 'level50' },
+  { id: 'glitter', slot: 'aura', award: 'hundredMillion' },
+  { id: 'legend', slot: 'aura', award: 'legend' },
   { id: 'bandana', slot: 'head', award: 'challenger' },
   { id: 'laurel', slot: 'head', award: 'champion' },
   { id: 'sword', slot: 'float', award: 'gladiator' },
@@ -802,43 +792,14 @@ export function toggleWear(s: PetSave, id: Accessory, now: number): PetSave {
   return { ...s, worn: [...s.worn.filter((w) => slotOf(w) !== slot), id] }
 }
 
-/**
- * What it actually has on at `level`: its level keepsakes, with each worn prize
- * taking over its slot. Back to front, like accessoriesOf.
- */
-export function outfitOf(worn: readonly Accessory[], level: number): Accessory[] {
+/** What it has on, back to front (the shine behind it first, its hat last), so it can be drawn in order. */
+export function outfitOf(worn: readonly Accessory[]): Accessory[] {
   const bySlot = new Map<AccessorySlot, Accessory>()
-  for (const a of accessoriesOf(level)) bySlot.set(slotOf(a), a)
   for (const a of worn) bySlot.set(slotOf(a), a)
   return ACCESSORY_SLOTS.flatMap((slot) => {
     const a = bySlot.get(slot)
     return a ? [a] : []
   })
-}
-
-/**
- * Everything it wears at `level`: the newest keepsake in each slot, back to
- * front (the shine behind it first, its hat last), so they can be drawn in order.
- */
-export function accessoriesOf(level: number): Accessory[] {
-  const worn = new Map<AccessorySlot, Accessory>()
-  for (const a of ACCESSORIES) if (level >= a.level) worn.set(a.slot, a.id)
-  return ACCESSORY_SLOTS.flatMap((slot) => {
-    const a = worn.get(slot)
-    return a ? [a] : []
-  })
-}
-
-/** The keepsake earned exactly at `level`, if that level brings one. */
-export function giftAt(level: number): Accessory | null {
-  return ACCESSORIES.find((a) => a.level === level)?.id ?? null
-}
-
-/** The next keepsake still to earn, if any. */
-export function nextAccessory(
-  level: number
-): { id: Accessory; level: number; slot: AccessorySlot } | null {
-  return ACCESSORIES.find((a) => a.level > level) ?? null
 }
 
 export interface Growth {
@@ -1014,6 +975,12 @@ export function awardsOf(s: PetSave, now: number): Award[] {
     { id: 'gladiator', done: s.battleWins >= 20 },
     // Beat a friend's pet a stage or ten levels ahead of it.
     { id: 'giantSlayer', done: s.upsets >= 1 },
+    // Ate the work of three different models.
+    { id: 'gourmet', done: FLAVORS.filter((f) => (s.diet[f] ?? 0) > 0).length >= 3 },
+    { id: 'level30', done: levelOf(s.xp).level >= 30 },
+    { id: 'level50', done: levelOf(s.xp).level >= 50 },
+    { id: 'hundredMillion', done: s.totalTokens >= 100_000_000 },
+    { id: 'legend', done: levelOf(s.xp).level >= MAX_LEVEL },
     ...EVENTS.map((e) => ({ id: e.id, done: s.events.includes(e.id), event: true }))
   ]
 }
