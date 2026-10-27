@@ -16,7 +16,7 @@ import { atomicWriteJson } from './atomicWrite'
 // ---------------------------------------------------------------------------
 
 const BOUNDS_FILE = 'pet-window.json'
-const DEFAULT_SIZE = { width: 212, height: 330 }
+const DEFAULT_SIZE = { width: 320, height: 560 }
 
 let win: BrowserWindow | null = null
 
@@ -194,12 +194,19 @@ export function registerPetHandlers(): void {
   // The window grows from its BOTTOM edge: the device sits at the bottom of the
   // glass, so anchoring there keeps the pet still while a speech balloon opens
   // above it. Growing downward made the pet slide down the screen mid-sentence.
-  ipcMain.handle('pet:resize', (_e, height: number) => {
+  //
+  // The width follows the device too (each size has its own), keeping the left
+  // edge where it is.
+  ipcMain.handle('pet:resize', (_e, height: number, width?: number) => {
     if (!win || win.isDestroyed()) return
-    const h = Math.max(120, Math.min(900, Math.round(height)))
+    // The renderer measures CSS px; bounds are DIP. The app-wide UI zoom (shared by
+    // origin) scales one into the other, so a 1.2x zoom would otherwise crop the card.
+    const z = win.webContents.getZoomFactor() || 1
+    const h = Math.max(120, Math.min(1000, Math.round(height * z)))
     const b = win.getBounds()
-    if (b.height === h) return
-    win.setBounds({ x: b.x, y: b.y + (b.height - h), width: b.width, height: h }, false)
+    const w = typeof width === 'number' && width > 0 ? Math.max(100, Math.min(700, Math.round(width * z))) : b.width
+    if (b.height === h && b.width === w) return
+    win.setBounds({ x: b.x, y: b.y + (b.height - h), width: w, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
   // A / B / C from a keyboard shortcut. Relayed to every window because the

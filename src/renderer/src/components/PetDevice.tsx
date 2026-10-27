@@ -152,6 +152,9 @@ const ANSWER_MS = 7000
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
 const PICK_MS = 1600
+// The first entries of the menu are looking after the pet (feed log, play, clean,
+// medicine, pat); the card puts them on their own row above the screens.
+const CARE_COUNT = 5
 // The guessing game's reveal: long enough to see which way the pet went.
 const REVEAL_MS = 1800
 const NOOP = (): void => {}
@@ -309,6 +312,20 @@ function Gauge({ label, value, tone }: { label: string; value: number; tone: str
           <i key={i} className={`pet-cell tone-${tone}${i < lit ? ' on' : ''}`} />
         ))}
       </span>
+    </div>
+  )
+}
+
+// The card's gauge: a plain bar with the number beside it, readable at a glance.
+function Meter({ label, value, tone }: { label: string; value: number; tone: string }): JSX.Element {
+  const v = Math.round(Math.min(100, Math.max(0, value)))
+  return (
+    <div className="pet-meter">
+      <span className="pet-meter-label">{label}</span>
+      <span className="pet-meter-track">
+        <i className={`tone-${tone}${v <= 25 ? ' low' : ''}`} style={{ width: `${v}%` }} />
+      </span>
+      <span className="pet-meter-value">{v}</span>
     </div>
   )
 }
@@ -656,8 +673,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // document instead would read back the viewport we just set and creep the
     // window taller on every pass; measuring only the element's height would cut
     // the case off, which is what it used to do.
-    const send = (): void =>
-      void window.api.pet.resize(Math.ceil(el.getBoundingClientRect().bottom) + 6)
+    // The width the same way: the device keeps its own width per size, and the
+    // window follows it, so the card is never squeezed into a narrow window.
+    const send = (): void => {
+      const r = el.getBoundingClientRect()
+      void window.api.pet.resize(Math.ceil(r.bottom) + 6, Math.ceil(r.right) + 4)
+    }
     send()
     // Measure again on the next frame as well: a chrome change is measured the
     // instant it renders, and the sprite//font work that follows can still move
@@ -1279,6 +1300,33 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     </div>
   )
 
+  // The card's buttons: the same entries as the strip, with their names printed
+  // under them so nothing has to be learned by hovering.
+  const actionGrid = (from: number, to: number): JSX.Element => (
+    <div className="pet-actions" style={{ gridTemplateColumns: `repeat(${to - from}, 1fr)` }}>
+      {icons.slice(from, to).map((ic, i) => (
+        <button
+          key={ic.id}
+          type="button"
+          data-ic={ic.id}
+          className={[
+            'pet-act',
+            ic.alert ? 'alert' : '',
+            ic.on ? 'on' : '',
+            sel === from + i ? 'picked' : ''
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          title={ic.label}
+          onClick={ic.run}
+        >
+          {ic.node}
+          <span>{ic.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+
   const screen = (
     <div className="pet-screen">
       {/* Nothing is printed over the picture but a single line, and only when
@@ -1673,8 +1721,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         )
       })()}
 
-      {/* The menu: one strip along the foot of the screen. */}
-      {iconRow(0, icons.length)}
+      {/* The menu: one strip along the foot of the screen. The card carries its
+          own labelled buttons instead. */}
+      {chrome !== 'full' && iconRow(0, icons.length)}
     </div>
   )
 
@@ -1800,65 +1849,82 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           {keys}
         </div>
       ) : (
-        // The whole unit: a little desk terminal — screen, and a deck with the
-        // name, a power lamp and the clock.
-        <div className="pet-unit">
-          <div className="pet-case">
-            <div className="pet-bezel">{screen}</div>
-            {talking && (
-              <form
-                className="pet-ask"
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  const el = e.currentTarget.elements.namedItem('q') as HTMLInputElement
-                  ask(el.value)
-                  el.value = ''
-                }}
-              >
-                <input
-                  name="q"
-                  autoFocus
-                  autoComplete="off"
-                  placeholder={t('pet.talk.placeholder')}
-                  // The device is a drag handle; the field must not be one.
-                  onPointerDown={(e) => e.stopPropagation()}
-                />
-                {/* The field outlives the answer on purpose (you watch the pet
-                    reply on its own screen), so it needs a way out of its own —
-                    by then there is no screen title to carry one. */}
-                <button
-                  type="button"
-                  className="pet-ask-x"
-                  data-key="ask-close"
-                  title={t('pet.back')}
-                  aria-label={t('pet.back')}
-                  onClick={() => setTalking(false)}
-                >
-                  <X size={9} />
-                </button>
-              </form>
-            )}
-            {/* The deck: name, power lamp, and a clock — which a desk terminal
-                has on its face anyway, and pressing it opens the one screen with
-                no icon of its own. The keys sit under it, centred. */}
-            <div className="pet-deck">
-              <span className="pet-logo">{t('pet.title')}</span>
-              <span className="pet-led" aria-hidden="true" />
+        // The card: who it is and how it is doing up top, the screen, then every
+        // action as a labelled button.
+        <div className="pet-card">
+          <div className="pet-card-head">
+            <div className="pet-card-id">
+              <b>{name ?? t(`pet.species.${pet.species}`)}</b>
+              <span>
+                {name ? `${t(`pet.species.${pet.species}`)} · ` : ''}
+                {stageLabel}
+                {growth.level > 0 ? ` · Lv ${growth.level}` : ''}
+              </span>
+            </div>
+            <button
+              type="button"
+              className={`pet-clock-btn${mode === 'clock' ? ' on' : ''}`}
+              data-ic="clock"
+              title={t('pet.mode.clock')}
+              onClick={() => setMode(mode === 'clock' ? 'char' : 'clock')}
+            >
+              {clockTime}
+            </button>
+            <button type="button" className="pet-icon" title={t('pet.size.screen')} onClick={() => setChrome('screen')}>
+              <Minimize2 size={13} />
+            </button>
+            <button
+              type="button"
+              className="pet-icon"
+              title={t('pet.settings.hideDo')}
+              onClick={() => (detached ? void window.api.pet.hide() : setSettings({ petShow: false }))}
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div className="pet-card-meters">
+            <Meter label={t('pet.gauge.fullness')} value={pet.fullness} tone="food" />
+            <Meter label={t('pet.gauge.mood')} value={pet.mood} tone="mood" />
+          </div>
+          <div className="pet-card-screen">{screen}</div>
+          <div className="pet-card-foot" title={footer}>
+            {footer}
+          </div>
+          {talking && (
+            <form
+              className="pet-ask"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const el = e.currentTarget.elements.namedItem('q') as HTMLInputElement
+                ask(el.value)
+                el.value = ''
+              }}
+            >
+              <input
+                name="q"
+                autoFocus
+                autoComplete="off"
+                placeholder={t('pet.talk.placeholder')}
+                // The card is a drag handle; the field must not be one.
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+              {/* The field outlives the answer on purpose (you watch the pet
+                  reply on its own screen), so it needs a way out of its own. */}
               <button
                 type="button"
-                className={`pet-clock-btn${mode === 'clock' ? ' on' : ''}`}
-                data-ic="clock"
-                title={t('pet.mode.clock')}
-                onClick={() => setMode(mode === 'clock' ? 'char' : 'clock')}
+                className="pet-ask-x"
+                data-key="ask-close"
+                title={t('pet.back')}
+                aria-label={t('pet.back')}
+                onClick={() => setTalking(false)}
               >
-                {clockTime}
+                <X size={11} />
               </button>
-            </div>
-            {keys}
-          </div>
-          <div className="pet-stand" aria-hidden="true">
-            <i />
-          </div>
+            </form>
+          )}
+          {/* Care first, then the screens. */}
+          {actionGrid(0, CARE_COUNT)}
+          {actionGrid(CARE_COUNT, icons.length)}
         </div>
       )}
     </div>

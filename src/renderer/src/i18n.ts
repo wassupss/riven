@@ -2040,7 +2040,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.settings.onTopOn': { ko: '켬', en: 'on' },
   'pet.settings.onTopOff': { ko: '끔', en: 'off' },
   'pet.settings.size': { ko: '크기', en: 'Size' },
-  'pet.size.full': { ko: '게임기', en: 'Device' },
+  'pet.size.full': { ko: '카드', en: 'Card' },
   'pet.size.screen': { ko: '화면', en: 'Screen' },
   'pet.size.bare': { ko: '캐릭터', en: 'Pet' },
   'pet.settings.hide': { ko: '보이기', en: 'Visible' },

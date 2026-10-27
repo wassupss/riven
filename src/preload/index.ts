@@ -1219,7 +1219,7 @@ const api = {
     hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
     // The device measures itself; main resizes the window to match.
-    resize: (height: number): Promise<void> => ipcRenderer.invoke('pet:resize', height),
+    resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
