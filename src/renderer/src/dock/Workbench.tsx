@@ -31,6 +31,7 @@ import {
   bumpPaneSeq
 } from './registry'
 import { useT } from '../i18n'
+import { HostScope } from '../lib/hostWindow'
 
 type SavedLayout = Parameters<DockviewApi['fromJSON']>[0]
 
@@ -159,8 +160,12 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
   const components = useMemo(() => {
     // Wrap every panel in its own ErrorBoundary so a single panel's render/mount
     // crash shows an inline error INSTEAD of blanking the whole workspace dock.
+    // HostScope: popups a panel opens render in the window the panel is drawn in
+    // (a popped-out group is a separate window; see lib/hostWindow).
     const boxed = (label: string, node: JSX.Element): JSX.Element => (
-      <ErrorBoundary label={label}>{node}</ErrorBoundary>
+      <HostScope>
+        <ErrorBoundary label={label}>{node}</ErrorBoundary>
+      </HostScope>
     )
     return {
       editor: () => boxed('editor', <EditorPanel workspace={workspace} />),

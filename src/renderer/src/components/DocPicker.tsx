@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../lib/hostWindow'
 import { Check } from 'lucide-react'
 import { FileIcon } from './FileIcon'
 import { score } from '../lib/fuzzy'
@@ -24,6 +25,7 @@ export default function DocPicker({
   onPick: (paths: string[]) => void
 }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [files, setFiles] = useState<string[] | null>(null)
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState(0)
@@ -142,6 +144,6 @@ export default function DocPicker({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }

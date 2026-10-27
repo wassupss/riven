@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../../../lib/hostWindow'
 import { columnNames, ENCODINGS, guessType, type CsvEncoding, type ImportOptions, type ImportPreview, type ImportResult } from '../../../../../main/db/csv'
 import type { ColumnInfo } from '../../../../../main/db/types'
 import { useT } from '../../../i18n'
@@ -50,6 +51,7 @@ export default function ImportDialog({
   onDone: (table: string, created: boolean) => void
 }): JSX.Element | null {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [path, setPath] = useState<string | null>(null)
   const [encoding, setEncoding] = useState<CsvEncoding>(() => {
     const e = localStorage.getItem(LS_ENC)
@@ -140,9 +142,9 @@ export default function ImportDialog({
     const esc = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !busy) onClose()
     }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [busy, onClose])
+    host.win.addEventListener('keydown', esc)
+    return () => host.win.removeEventListener('keydown', esc)
+  }, [busy, onClose, host])
 
   const width = useMemo(() => Math.max(0, ...(preview?.rows.slice(0, 50).map((r) => r.length) ?? [0])), [preview])
   const fields = useMemo(() => columnNames(header ? preview?.rows[0] ?? null : null, width), [preview, header, width])
@@ -420,7 +422,7 @@ export default function ImportDialog({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }
 

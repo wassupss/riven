@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import InputModal from './InputModal'
+import { activeDoc } from '../lib/hostWindow'
 
 // Electron implements neither window.prompt nor a replacement, so every
 // `const name = window.prompt(...)` in the app was dead: the button appeared to
@@ -15,8 +16,11 @@ export function promptInput(opts: {
   placeholder?: string
 }): Promise<string | null> {
   return new Promise((resolve) => {
-    const host = document.createElement('div')
-    document.body.appendChild(host)
+    // Into the window the user is in: a popped-out panel's prompt must not open
+    // over the parent window.
+    const doc = activeDoc()
+    const host = doc.createElement('div')
+    doc.body.appendChild(host)
     const root = createRoot(host)
     let settled = false
     const close = (value: string | null): void => {

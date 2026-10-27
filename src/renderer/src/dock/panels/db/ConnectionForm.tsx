@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../../../lib/hostWindow'
 import type { ConnectionConfig, ConnectionInfo, DbKind, SslMode } from '../../../../../main/db/types'
 import { ENGINE_KINDS, caps } from '../../../../../main/db/engines'
 import { useT } from '../../../i18n'
@@ -25,6 +26,7 @@ export default function ConnectionForm({
   onSaved: (c: ConnectionInfo) => void
 }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [cfg, setCfg] = useState<ConnectionConfig>(() => {
     if (!initial) return blank()
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -265,7 +267,7 @@ export default function ConnectionForm({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }
 

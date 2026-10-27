@@ -9,6 +9,7 @@ import { loadPaneState, useSession } from '../state/session'
 import { tintStyle, hueColor, encodeAvatar, AVATAR_COLOR_COUNT, AVATAR_NONE } from '../lib/avatar'
 import { useT } from '../i18n'
 import { X } from 'lucide-react'
+import { hostFor, type Host } from '../lib/hostWindow'
 
 // Custom dockview tab: double-click the title to rename the panel. The name is
 // persisted with the layout (dockview serializes the title). Chat panes also show
@@ -23,7 +24,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const [title, setTitle] = useState(api.title ?? '')
   const [editing, setEditing] = useState(false)
   const [avatarRev, setAvatarRev] = useState(0) // bump to re-read the override
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; host: Host } | null>(null)
   const isChat = api.id.startsWith('chat-')
   // Re-read the pane's agent status on every roster change so the tab title can
   // shimmer while it's running (native dock-tab parity).
@@ -99,7 +100,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
       onContextMenu={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        setMenu({ x: e.clientX, y: e.clientY })
+        setMenu({ x: e.clientX, y: e.clientY, host: hostFor(e.currentTarget) }) // a popped-out tab's own window
       }}
       title="더블클릭하여 이름 변경"
     >
@@ -143,7 +144,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
           >
             <div
               className="context-menu"
-              style={{ left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 160) }}
+              style={{ left: Math.min(menu.x, menu.host.win.innerWidth - 200), top: Math.min(menu.y, menu.host.win.innerHeight - 160) }}
               onClick={(e) => e.stopPropagation()}
             >
               <div
@@ -191,7 +192,7 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
               </div>
             </div>
           </div>,
-          document.body
+          menu.host.doc.body
         )}
     </div>
   )

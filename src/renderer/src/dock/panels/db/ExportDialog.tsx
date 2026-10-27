@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../../../lib/hostWindow'
 import type { QueryColumn } from '../../../../../main/db/types'
 import {
   projectRow,
@@ -57,6 +58,7 @@ export default function ExportDialog({
   onClose: () => void
 }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const server = sql !== null && truncated
   const [format, setFormat] = useState<ExportFormat>(() => {
     const f = localStorage.getItem(LS_FORMAT)
@@ -83,9 +85,9 @@ export default function ExportDialog({
     const esc = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !busy) onClose()
     }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [busy, onClose])
+    host.win.addEventListener('keydown', esc)
+    return () => host.win.removeEventListener('keydown', esc)
+  }, [busy, onClose, host])
 
   const picked = useMemo<ExportColumn[]>(() => cols.filter((c) => c.on).map(({ on: _on, ...c }) => c), [cols])
   const start = Math.max(0, Math.floor(from) - 1)
@@ -283,6 +285,6 @@ export default function ExportDialog({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }
