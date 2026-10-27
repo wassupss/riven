@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../lib/hostWindow'
 import { useT } from '../i18n'
 
 export default function InputModal({
@@ -16,6 +17,7 @@ export default function InputModal({
   onCancel: () => void
 }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [value, setValue] = useState(initial)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -58,6 +60,6 @@ export default function InputModal({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }

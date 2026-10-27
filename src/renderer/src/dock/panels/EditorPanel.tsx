@@ -19,6 +19,7 @@ import { X, Bot, Eye, Code2 } from 'lucide-react'
 import MediaViewer from '../../components/MediaViewer'
 import Markdown from '../../components/Markdown'
 import { mediaKind, isMarkdown, isTextEditable } from '../../lib/mediaKind'
+import { hostFor, type Host } from '../../lib/hostWindow'
 import '../../styles/editor-bottom.css'
 import '../../styles/media.css'
 
@@ -86,7 +87,7 @@ function EditorGroupView({
   const [file, setFile] = useState<OpenFile | null>(null)
   const [dirty, setDirty] = useState(false)
   const [showDiff, setShowDiff] = useState(false)
-  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string; host: Host } | null>(null)
   const [dragTab, setDragTab] = useState<number | null>(null)
   const [overTab, setOverTab] = useState<number | null>(null)
   const revisions = useRef(new Map<string, number>())
@@ -231,10 +232,13 @@ function EditorGroupView({
 
   const openTabMenu = (e: React.MouseEvent, path: string): void => {
     e.preventDefault()
+    // A popped-out editor's menu belongs in (and is clamped to) its own window.
+    const host = hostFor(e.currentTarget as Element)
     setTabMenu({
-      x: Math.min(e.clientX, window.innerWidth - 210),
-      y: Math.min(e.clientY, window.innerHeight - 250),
-      path
+      x: Math.min(e.clientX, host.win.innerWidth - 210),
+      y: Math.min(e.clientY, host.win.innerHeight - 250),
+      path,
+      host
     })
   }
 
@@ -533,7 +537,7 @@ function EditorGroupView({
             </button>
           </div>
         </div>,
-          document.body
+          tabMenu.host.doc.body
         )}
     </div>
   )

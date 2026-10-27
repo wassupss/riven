@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { activeDoc } from '../lib/hostWindow'
 
 // Full-size view of an image in the app: a thumbnail in a chat is 180px wide,
 // which is enough to recognise a screenshot and not enough to read one.
@@ -10,9 +11,11 @@ import { X } from 'lucide-react'
 export interface ViewImage {
   src: string
   name?: string
+  /** The window to show it in (a popped-out chat's); set by viewImage. */
+  doc?: Document
 }
 export function viewImage(img: ViewImage): void {
-  window.dispatchEvent(new CustomEvent('riven:viewimage', { detail: img }))
+  window.dispatchEvent(new CustomEvent('riven:viewimage', { detail: { ...img, doc: img.doc ?? activeDoc() } }))
 }
 
 export default function ImageLightbox(): JSX.Element | null {
@@ -34,8 +37,9 @@ export default function ImageLightbox(): JSX.Element | null {
     }
     // Capture: a chat pane's own Escape handling (closing menus, blurring the
     // composer) must not swallow the one that closes this.
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
+    const win = img.doc?.defaultView ?? window
+    win.addEventListener('keydown', onKey, true)
+    return () => win.removeEventListener('keydown', onKey, true)
   }, [img])
 
   if (!img) return null
@@ -49,6 +53,6 @@ export default function ImageLightbox(): JSX.Element | null {
       <img src={img.src} alt={img.name ?? ''} onClick={(e) => e.stopPropagation()} />
       {img.name && <div className="img-view-name">{img.name}</div>}
     </div>,
-    document.body
+    (img.doc ?? document).body
   )
 }

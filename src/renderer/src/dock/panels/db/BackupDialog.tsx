@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../../../lib/hostWindow'
 import type { ArchiveInfo, BackupOptions, DumpContent, DumpFormat, RestoreOptions, ToolInfo } from '../../../../../main/db/dumpArgs'
 import { useT } from '../../../i18n'
 import { dbUid } from '../../../state/db'
@@ -34,6 +35,7 @@ export default function BackupDialog({
   onRestored?: () => void
 }): JSX.Element | null {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [tools, setTools] = useState<ToolInfo[] | null>(null)
   const [toolDir, setToolDir] = useState(() => localStorage.getItem(LS_TOOL) ?? '')
   const [extra, setExtra] = useState(() => localStorage.getItem(LS_DIR) ?? '')
@@ -107,9 +109,9 @@ export default function BackupDialog({
     const esc = (e: KeyboardEvent): void => {
       if (e.key === 'Escape' && !busy) onClose()
     }
-    window.addEventListener('keydown', esc)
-    return () => window.removeEventListener('keydown', esc)
-  }, [busy, onClose])
+    host.win.addEventListener('keydown', esc)
+    return () => host.win.removeEventListener('keydown', esc)
+  }, [busy, onClose, host])
 
   const tool = useMemo(() => tools?.find((x) => x.dir === toolDir) ?? tools?.[0], [tools, toolDir])
   // pg_dump refuses servers newer than itself.
@@ -425,7 +427,7 @@ export default function BackupDialog({
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }
 

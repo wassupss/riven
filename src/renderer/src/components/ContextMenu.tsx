@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../lib/hostWindow'
 
 export interface MenuItem {
   label: string
@@ -23,26 +24,28 @@ export default function ContextMenu({
   items: MenuItem[]
   onClose: () => void
 }): JSX.Element {
+  // The window this menu belongs to: a popped-out panel's, not always main's.
+  const { doc, win } = useHost()
   useEffect(() => {
     const close = (): void => onClose()
-    window.addEventListener('click', close)
-    window.addEventListener('contextmenu', close)
-    window.addEventListener('resize', close)
+    win.addEventListener('click', close)
+    win.addEventListener('contextmenu', close)
+    win.addEventListener('resize', close)
     const onEsc = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
-    window.addEventListener('keydown', onEsc, true)
+    win.addEventListener('keydown', onEsc, true)
     return () => {
-      window.removeEventListener('click', close)
-      window.removeEventListener('contextmenu', close)
-      window.removeEventListener('resize', close)
-      window.removeEventListener('keydown', onEsc, true)
+      win.removeEventListener('click', close)
+      win.removeEventListener('contextmenu', close)
+      win.removeEventListener('resize', close)
+      win.removeEventListener('keydown', onEsc, true)
     }
-  }, [onClose])
+  }, [onClose, win])
 
   // Clamp within the viewport so the menu never overflows off-screen.
-  const left = Math.min(x, window.innerWidth - 190)
-  const top = Math.min(y, window.innerHeight - items.length * 26 - 12)
+  const left = Math.min(x, win.innerWidth - 190)
+  const top = Math.min(y, win.innerHeight - items.length * 26 - 12)
 
   // Portal to body: dockview transforms panels, which would otherwise offset a
   // position:fixed menu placed inside a panel.
@@ -74,6 +77,6 @@ export default function ContextMenu({
         )
       )}
     </div>,
-    document.body
+    doc.body
   )
 }

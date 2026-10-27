@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../lib/hostWindow'
 import * as monaco from 'monaco-editor'
 import { languageForPath } from '../editor/EditorPane'
 import { editorTheme } from '../editor/highlight'
@@ -17,6 +18,7 @@ export default function DiffModal({
   onClose: () => void
 }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -51,6 +53,6 @@ export default function DiffModal({
         <div className="diff-body" ref={ref} />
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }

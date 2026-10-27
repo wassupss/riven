@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useHost } from '../../../lib/hostWindow'
 import { planText, type DdlPlan } from '../../../../../main/db/ddl'
 import { useT } from '../../../i18n'
 import { Button, Select, Switch, TextArea, TextInput } from '../../../components/ui/Controls'
@@ -39,6 +40,7 @@ export interface DdlAction {
 // SQL they make, and Apply. Drops ask for the object's name to be typed.
 export default function DdlDialog({ action, onClose }: { action: DdlAction; onClose: () => void }): JSX.Element {
   const t = useT()
+  const host = useHost() // a popped-out panel's window, not always main's
   const [v, setV] = useState<Record<string, FieldValue>>(() => {
     const init: Record<string, FieldValue> = {}
     for (const f of action.fields) init[f.key] = f.kind === 'switch' ? false : f.kind === 'select' ? (f.options?.[0]?.value ?? '') : ''
@@ -153,6 +155,6 @@ export default function DdlDialog({ action, onClose }: { action: DdlAction; onCl
         </div>
       </div>
     </div>,
-    document.body
+    host.doc.body
   )
 }
