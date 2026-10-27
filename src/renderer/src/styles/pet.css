@@ -288,16 +288,23 @@
   flex-direction: column;
   gap: 4px;
 }
+/* As tall as what it shows, up to a cap; past that the list inside scrolls.
+   A fixed height cut the status and settings pages off mid-row and left the
+   album and the chat a big empty box. */
 .pet-card .pet-screen {
   aspect-ratio: auto;
-  height: 170px;
+  height: auto;
+  max-height: 280px;
   padding: 2px 3px;
   border-radius: 0;
   background: none;
 }
-/* Only the title line (the break's countdown): no room to hold open. */
-.pet-card .pet-screen.pet-screen-short {
-  height: auto;
+.pet-card .pet-screen ::-webkit-scrollbar {
+  width: 3px;
+}
+.pet-card .pet-screen ::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: var(--edge-strong);
 }
 .pet-detached .pet-card,
 .pet-detached .pet-card * {
@@ -966,6 +973,9 @@
 .pet-rows dt {
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   font-size: 9px;
+  /* A long value ellipsizes; the label never gives way and breaks mid-word. */
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .pet-rows dd {
   margin: 0;

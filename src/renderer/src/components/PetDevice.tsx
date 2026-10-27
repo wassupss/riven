@@ -809,6 +809,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       baseW.current = { win: window.innerWidth, dev: ref.current.offsetWidth }
     }
     setMenuH(detached && beside ? beside.offsetHeight : 0)
+    if (!detached || !beside) return
+    // The card is as tall as its page, so it changes with the page and with what
+    // the page holds (a chat growing): follow it, or the window crops it.
+    const ro = new ResizeObserver(() => setMenuH(beside.offsetHeight))
+    ro.observe(beside)
+    return () => ro.disconnect()
   }, [menu, peek, detached, mode, talking, resting])
 
   // In the app the card opens to the pet's right, or its left when the window has
@@ -1479,13 +1485,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // Without the case, a screen opens in a plain card beside the pet (cardBox):
   // no glass, no icon strip and no second pet drawn in it.
   const flat = chrome !== 'device'
+  // Asking puts the screen back on the pet (the reply is a balloon), but the chat
+  // card stays up for the next question: keep its title, and the X on it.
+  const chatCard = flat && talking
   const screen = (
-    <div className={`pet-screen${flat && mode === 'char' ? ' pet-screen-short' : ''}`}>
+    <div className="pet-screen">
       {/* Nothing is printed over the picture but a single line, and only when
           there is something to say. */}
-      {(mode !== 'char' || flash || resting) && (
+      {(mode !== 'char' || flash || resting || chatCard) && (
         <div className="pet-screen-top">
-          <span>{mode === 'char' ? '' : t(`pet.mode.${mode}`)}</span>
+          <span>{mode !== 'char' ? t(`pet.mode.${mode}`) : chatCard ? t('pet.mode.talk') : ''}</span>
           <span className={`pet-screen-mood mood-${mood}`}>
             {flash ??
               (resting
@@ -1496,7 +1505,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           </span>
           {/* The way out of whatever is up — on the title of the thing itself,
               where you are already looking. */}
-          {(mode !== 'char' || resting) && (
+          {(mode !== 'char' || resting || chatCard) && (
             <button
               type="button"
               className="pet-back"
@@ -1956,17 +1965,20 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       />
       {/* The field outlives the answer on purpose (you watch the pet
           reply on its own screen), so it needs a way out of its own —
-          by then there is no screen title to carry one. */}
-      <button
-        type="button"
-        className="pet-ask-x"
-        data-key="ask-close"
-        title={t('pet.back')}
-        aria-label={t('pet.back')}
-        onClick={() => setTalking(false)}
-      >
-        <X size={9} />
-      </button>
+          by then there is no screen title to carry one. The card keeps its
+          title (chatCard), and the X on it already closes the chat. */}
+      {!flat && (
+        <button
+          type="button"
+          className="pet-ask-x"
+          data-key="ask-close"
+          title={t('pet.back')}
+          aria-label={t('pet.back')}
+          onClick={() => setTalking(false)}
+        >
+          <X size={9} />
+        </button>
+      )}
     </form>
   )
 
