@@ -414,7 +414,12 @@
   box-shadow: none;
 }
 .pet-detached .pet-menu,
-.pet-detached .pet-menu * {
+.pet-detached .pet-menu *,
+/* No drag regions at all while the menu or a card is open. Moving over one
+   reads as leaving the page, and the menu flickered and closed under the
+   pointer on its way from the pet to an item. */
+.pet-detached.pet-side-open,
+.pet-detached.pet-side-open * {
   -webkit-app-region: no-drag;
 }
 

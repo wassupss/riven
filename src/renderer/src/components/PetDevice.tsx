@@ -383,7 +383,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const dragEndAt = useRef(0)
   /** Hand-dragging the detached bare pet (see pet:dragStart in main). */
   const hand = useRef<{ sx: number; sy: number; on: boolean; raf: number } | null>(null)
-  const menuLeave = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const menuLeave = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const pet = usePet((s) => s.pet)
   const loaded = usePet((s) => s.loaded)
@@ -843,7 +843,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       window.removeEventListener('keydown', key)
       window.removeEventListener('pointerdown', down, { capture: true })
       window.removeEventListener('blur', blur)
-      if (menuLeave.current) clearTimeout(menuLeave.current)
+      if (menuLeave.current) clearInterval(menuLeave.current)
+      menuLeave.current = null
       const hi = menuHi.current
       menuHi.current = null
       if (hi) setSpeech((v) => (v === hi ? null : v))
@@ -2137,14 +2138,24 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         setMenu(true)
       }}
       // The floating window never gets focus, so no Esc and no blur reach it:
-      // leaving it is how the menu closes there.
+      // leaving it is how the menu closes there. A pointerleave alone is not
+      // proof: macOS sends them while the pointer is still on the menu, and
+      // closing on those made the menu vanish under the cursor. So the leave
+      // only starts asking main where the pointer is, and the menu closes once
+      // it has been outside the window for two checks in a row.
       onPointerEnter={() => {
-        if (menuLeave.current) clearTimeout(menuLeave.current)
+        if (menuLeave.current) clearInterval(menuLeave.current)
+        menuLeave.current = null
       }}
       onPointerLeave={() => {
-        if (!detached || !menu) return
-        if (menuLeave.current) clearTimeout(menuLeave.current)
-        menuLeave.current = setTimeout(() => setMenu(false), 400)
+        if (!detached || !menu || menuLeave.current) return
+        let out = 0
+        menuLeave.current = setInterval(() => {
+          void window.api.pet.cursorInside().then((inside) => {
+            out = inside ? 0 : out + 1
+            if (out >= 2) setMenu(false)
+          })
+        }, 200)
       }}
     >
       {menuBox}

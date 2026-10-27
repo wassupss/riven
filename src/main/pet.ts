@@ -220,6 +220,15 @@ export function registerPetHandlers(): void {
     win.setBounds({ x: b.x, y: b.y + (b.height - h), width: w, height: h }, false)
   })
   ipcMain.handle('pet:isOpen', () => isPetWindowOpen())
+  // Whether the pointer is really over the pet's window. The page's own
+  // pointerleave is not trustworthy in a frameless, never-focused window: macOS
+  // reports leaving it while the pointer is still on the menu.
+  ipcMain.handle('pet:cursorInside', () => {
+    if (!win || win.isDestroyed()) return false
+    const c = screen.getCursorScreenPoint()
+    const b = win.getBounds()
+    return c.x >= b.x && c.x < b.x + b.width && c.y >= b.y && c.y < b.y + b.height
+  })
   // Dragging the bare pet by hand. An OS drag region (-webkit-app-region) eats
   // every mouse event, so the pet could not be clicked or right-clicked while it
   // was one. Instead the renderer reports the drag and main follows the cursor,

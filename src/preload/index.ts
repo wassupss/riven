@@ -1219,6 +1219,8 @@ const api = {
     hide: (): Promise<void> => ipcRenderer.invoke('pet:hide'),
     dock: (): Promise<void> => ipcRenderer.invoke('pet:dock'),
     isOpen: (): Promise<boolean> => ipcRenderer.invoke('pet:isOpen'),
+    // Whether the pointer is over the pet's own window (screen coordinates).
+    cursorInside: (): Promise<boolean> => ipcRenderer.invoke('pet:cursorInside'),
     // The device measures itself; main resizes the window to match.
     resize: (height: number, width?: number): Promise<void> => ipcRenderer.invoke('pet:resize', height, width),
     // A hand drag of the bare pet: main follows the cursor between start and end.
