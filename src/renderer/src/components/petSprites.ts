@@ -1,5 +1,5 @@
-import { slotOf } from '../state/pet'
-import type { Accessory, AccessorySlot, Form, Mood, Species, Stage } from '../state/pet'
+import { BRANCH_BY_ID, slotOf } from '../state/pet'
+import type { Accessory, AccessorySlot, BranchId, Form, Mood, Species, Stage } from '../state/pet'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every creature is authored as a 16×16 grid of characters, one
@@ -1556,6 +1556,137 @@ function sparkle(g: Grid): void {
 }
 
 /**
+ * A branch shows on the body: horns for the fighters and the dark line, a halo
+ * for the sage, speed lines for the swift, a moon for the night owl, glints for
+ * the steady one. Each tier makes the mark bigger, the third adds the stars,
+ * and the hidden ends wear several at once. Runs on the drawn grid and only
+ * ever paints empty air, so it never eats into the body or the face.
+ */
+function branchMarks(g: Grid, branch: BranchId): void {
+  const b = BRANCH_BY_ID.get(branch)
+  if (!b) return
+  let x0 = SPRITE_SIZE
+  let x1 = -1
+  let y0 = SPRITE_SIZE
+  let y1 = -1
+  g.forEach((row, y) =>
+    row.forEach((ch, x) => {
+      if (ch === '.') return
+      if (x < x0) x0 = x
+      if (x > x1) x1 = x
+      if (y < y0) y0 = y
+      if (y > y1) y1 = y
+    })
+  )
+  if (x1 < 0) return
+  const put = (x: number, y: number, ch: string): void => {
+    if (g[y]?.[x] === '.') g[y][x] = ch
+  }
+  const tier = Math.min(3, b.tier)
+  // The top edge of the head, column by column: where horns and a halo sit.
+  const topAt = (x: number): number => {
+    for (let y = 0; y < SPRITE_SIZE; y++) if (g[y][x] !== '.') return y
+    return SPRITE_SIZE
+  }
+  const cx = Math.round((x0 + x1) / 2)
+  const span = x1 - x0
+  const horns = (ch: string): void => {
+    const len = tier + 1
+    for (const side of [-1, 1]) {
+      const hx = cx + side * Math.max(2, Math.round(span / 4))
+      const base = topAt(hx)
+      for (let i = 1; i <= len; i++) {
+        // Curved outwards as they climb, so they read as horns, not antennae.
+        const x = hx + side * Math.floor((i - 1) / 2)
+        put(x, base - i, ch)
+        if (i < len) put(x - side, base - i, ch === 'w' ? 'w' : 'o')
+      }
+    }
+  }
+  const halo = (): void => {
+    // Ears often reach the top row, so the halo floats over the middle of the
+    // head where there is air, as high as it can go.
+    const y = Math.max(0, topAt(cx) - 3)
+    const r = 2 + tier
+    for (let x = cx - r; x <= cx + r; x++) put(x, y + (Math.abs(x - cx) === r ? 1 : 0), 'a')
+  }
+  const speed = (): void => {
+    // Trailing behind it, on whichever side has the room.
+    const len = 2 + tier
+    const left = x0 >= SPRITE_SIZE - 1 - x1
+    const room = left ? x0 - 1 : SPRITE_SIZE - 2 - x1
+    const mid = Math.round((y0 + y1) / 2)
+    // A body wall to wall has no side to trail from: the streaks go overhead.
+    if (room < 3) {
+      for (const [i, y] of [0, 1].entries())
+        for (let k = 0; k < len + 1; k++) put(1 + i * 2 + k, y, 'l')
+      return
+    }
+    for (const [i, y] of [mid - 3, mid, mid + 3].entries()) {
+      const near = left ? x0 - 2 : x1 + 2
+      const n = len - (i === 1 ? 0 : 1)
+      for (let k = 0; k < n; k++) put(near + (left ? -k : k), y, 'l')
+    }
+  }
+  const moon = (): void => {
+    // A crescent up in the corner opposite the speed lines.
+    const r = 1 + tier
+    const mx = Math.min(SPRITE_SIZE - 2 - r, x1 + 2 + r)
+    const my = Math.max(r + 1, y0 - 1)
+    for (let y = -r; y <= r; y++)
+      for (let x = -r; x <= r; x++) {
+        const inDisc = x * x + y * y <= r * r
+        const inBite = (x - 1) * (x - 1) + (y + 1) * (y + 1) <= r * r
+        if (inDisc && !inBite) put(mx + x, my + y, 'a')
+      }
+  }
+  const glints = (): void => {
+    for (const x of [x0 - 2, x1 + 2]) {
+      const y = y0 + Math.round((y1 - y0) / 3)
+      put(x, y, 'w')
+      for (let d = 1; d < tier + 1; d++) {
+        put(x - d, y, 'l')
+        put(x + d, y, 'l')
+        put(x, y - d, 'l')
+        put(x, y + d, 'l')
+      }
+    }
+  }
+  switch (b.line ?? b.id) {
+    case 'battle':
+      horns('o')
+      break
+    case 'dark':
+      horns('m')
+      break
+    case 'sage':
+      halo()
+      break
+    case 'swift':
+      speed()
+      break
+    case 'night':
+      moon()
+      break
+    case 'balance':
+      glints()
+      break
+    case 'omega':
+      halo()
+      horns('m')
+      speed()
+      break
+    case 'apex':
+      halo()
+      horns('a')
+      moon()
+      glints()
+      break
+  }
+  if (b.tier >= 3) sparkle(g)
+}
+
+/**
  * Raised on neglect: a little ghost. Whatever it stood on is gone, and the hem
  * hangs in scallops. (Translucent and floating, in pet.css.) It keeps its own
  * colours and its coat: it is still the pet, just a sadder one.
@@ -1746,7 +1877,13 @@ function faceOf(
 }
 
 /** The lit dots of a pet: its body, wearing its strain, with its mood on top. */
-export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species = 'cat'): Dot[] {
+export function pixelsOf(
+  stage: Stage,
+  form: Form,
+  mood: Mood,
+  species: Species = 'cat',
+  branch?: BranchId | null
+): Dot[] {
   const sprite = bodyOf(species, stage)
   const grid = sprite.rows.map((r) => r.split(''))
 
@@ -1831,7 +1968,9 @@ export function pixelsOf(stage: Stage, form: Form, mood: Mood, species: Species 
       for (let x = face.x; x < face.x + face.w; x++)
         if (fine[y]?.[x] === 'h' || fine[y]?.[x] === 'a') fine[y][x] = 'b'
   shade(fine)
-  if (stage === 'adult' && form === 'radiant') sparkle(fine)
+  if (stage === 'adult' && branch) branchMarks(fine, branch)
+  // A third-tier branch already wears the stars; twice over is clutter.
+  if (stage === 'adult' && form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(fine)
 
   if (face) {
     face.rows.forEach((row, dy) =>

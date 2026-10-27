@@ -61,6 +61,11 @@ import {
   SICK_AFTER_HOURS,
   SLEEP_RATE,
   STAGE_XP,
+  BRANCHES,
+  OMEGA_TOKENS,
+  discoveredBranches,
+  lineOf,
+  settleBranches,
   type PetSave
 } from './pet'
 
@@ -894,5 +899,107 @@ describe('the nest', () => {
     // A save whose pets disagree is brought into step on load.
     const odd = { version: 2, active: 0, pets: [n.pets[0], { ...n.pets[1], album: [] }] }
     for (const p of normalizeNest(odd, now).pets) expect(p.album).toHaveLength(1)
+  })
+})
+
+describe('branches', () => {
+  const NOW = T0 + 24 * HOUR
+  /** The xp that lands exactly on a level. */
+  const diet = (d: Partial<PetSave['diet']>): PetSave['diet'] => ({ haiku: 0, sonnet: 0, opus: 0, codex: 0, other: 0, ...d })
+  const xpAt = (lvl: number): number => {
+    let xp = STAGE_XP[4]
+    for (let l = 1; l < lvl; l++) xp += levelCost(l)
+    return xp
+  }
+  const ids = (s: PetSave): string[] => settleBranches(s, NOW).flatMap((e) => (e.branch ? [e.branch] : []))
+
+  it('has six lines of five and two hidden ends', () => {
+    expect(BRANCHES).toHaveLength(32)
+    expect(new Set(BRANCHES.map((b) => b.id)).size).toBe(32)
+    expect(BRANCHES.filter((b) => b.hidden).map((b) => b.id)).toEqual(['omega', 'apex'])
+  })
+
+  it('picks the line from how it was raised, worst news first', () => {
+    expect(lineOf(base(), NOW)).toBe('balance')
+    expect(lineOf(base({ diet: diet({ opus: 60, sonnet: 40 }) }), NOW)).toBe('sage')
+    expect(lineOf(base({ diet: diet({ haiku: 45, sonnet: 30, opus: 25 }) }), NOW)).toBe('swift')
+    expect(lineOf(base({ xp: 100, nightKibble: 40 }), NOW)).toBe('night')
+    expect(lineOf(base({ battleWins: 5, xp: 100, nightKibble: 90 }), NOW)).toBe('battle')
+    expect(lineOf(base({ sickCount: 3, battleWins: 9 }), NOW)).toBe('dark')
+    expect(lineOf(base({ neglectMs: 12 * HOUR }), NOW)).toBe('dark')
+  })
+
+  it('takes nothing before level 10, then one turn per tier', () => {
+    const nine = base({ xp: xpAt(9) })
+    expect(settleBranches(nine, NOW)).toBe(nine.evolutions)
+    expect(ids(base({ xp: xpAt(10) }))).toEqual(['balance1'])
+    expect(ids(base({ xp: xpAt(30) }))).toEqual(['balance1', 'balance2a'])
+    expect(ids(base({ xp: xpAt(50) }))).toEqual(['balance1', 'balance2a', 'balance3a'])
+  })
+
+  it('splits on care at the second turn and keeps that side', () => {
+    expect(ids(base({ xp: xpAt(50), sick: true }))).toEqual(['balance1', 'balance2b', 'balance3b'])
+    // Once on a side, it stays there even if things got better since.
+    const turned = { ...base({ xp: xpAt(30), sick: true }) }
+    const after = { ...turned, evolutions: settleBranches(turned, NOW), sick: false, xp: xpAt(50) }
+    expect(ids(after).slice(-1)).toEqual(['balance3b'])
+  })
+
+  it('keeps a branch once taken, whatever it eats later', () => {
+    const s = base({ xp: xpAt(10), diet: diet({ opus: 90, sonnet: 10 }) })
+    const later = { ...s, evolutions: settleBranches(s, NOW), diet: diet({ haiku: 90, sonnet: 10 }), xp: xpAt(30) }
+    expect(ids(later)).toEqual(['sage1', 'sage2a'])
+  })
+
+  it('returns the same array when there is nothing to take', () => {
+    const s = base({ xp: xpAt(10) })
+    const settled = { ...s, evolutions: settleBranches(s, NOW) }
+    expect(settleBranches(settled, NOW)).toBe(settled.evolutions)
+  })
+
+  it('reaches omega on a huge appetite and apex at the cap', () => {
+    expect(ids(base({ xp: xpAt(50), totalTokens: OMEGA_TOKENS }))).toEqual(['balance1', 'balance2a', 'omega'])
+    // A third-tier pet that eats its way there later still turns.
+    const s = base({ xp: xpAt(50) })
+    const fed = { ...s, evolutions: settleBranches(s, NOW), totalTokens: OMEGA_TOKENS }
+    expect(ids(fed).slice(-1)).toEqual(['omega'])
+    expect(ids(base({ xp: xpAt(MAX_LEVEL) })).slice(-1)).toEqual(['apex'])
+  })
+
+  it('shows the branch it is on in its growth', () => {
+    const s = base({ xp: xpAt(30) })
+    expect(growthOf({ ...s, evolutions: settleBranches(s, NOW) }, NOW).branch?.id).toBe('balance2a')
+    expect(growthOf(s, NOW).branch).toBeNull()
+  })
+
+  it('counts what was eaten at night and each time it fell ill', () => {
+    const night = new Date(T0)
+    night.setHours(2, 0, 0, 0)
+    const at = night.getTime()
+    const fed = feed(base({ lastTickAt: at }), 3 * KIBBLE_TOKENS, at)
+    expect(fed.nightKibble).toBeGreaterThan(0)
+    const ill = decay(base({ fullness: 0, mood: 50, lastTickAt: T0 }), T0 + SICK_AFTER_HOURS * HOUR)
+    expect(ill.sick).toBe(true)
+    expect(ill.sickCount).toBe(1)
+    // Staying ill is the same illness, not another one.
+    expect(decay(ill, T0 + (SICK_AFTER_HOURS + 2) * HOUR).sickCount).toBe(1)
+  })
+
+  it('lists every branch reached, album included', () => {
+    const a = base({ evolutions: [{ stage: 'adult', form: 'base', at: T0, branch: 'night1' }] })
+    const b = base({
+      album: [{ name: '', species: 'cat', stage: 'adult', form: 'base', xp: 1, tokens: 1, ageMs: 1, neglectMs: 0, endedAt: T0, branches: ['dark1', 'dark2b'] }]
+    })
+    expect([...discoveredBranches([a, b])].sort()).toEqual(['dark1', 'dark2b', 'night1'])
+  })
+
+  it('migrates old saves and drops branches it does not know', () => {
+    const s = normalize(
+      { ...base(), everSick: true, sickCount: undefined, nightKibble: undefined, evolutions: [{ stage: 'adult', form: 'base', at: T0, branch: 'nope' }] },
+      T0
+    )
+    expect(s.sickCount).toBe(1)
+    expect(s.nightKibble).toBe(0)
+    expect(s.evolutions[0].branch).toBeUndefined()
   })
 })

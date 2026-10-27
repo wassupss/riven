@@ -301,6 +301,8 @@
 .pet-detached .pet-graph *,
 .pet-detached .pet-album,
 .pet-detached .pet-album *,
+.pet-detached .pet-dex,
+.pet-detached .pet-dex *,
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
@@ -639,6 +641,27 @@
 }
 .pet-lcd.evolving .pet-sprite {
   animation: pet-hop 0.25s steps(1, end) infinite;
+}
+/* A branch evolution: the new shape shows only as a flat silhouette that
+   flickers, faster as it goes, and then the class drops and it is revealed.
+   Fill rather than filter, so the species and diet tints are left alone. */
+.pet-lcd.whiteout .pet-px {
+  fill: var(--fg);
+  animation: none;
+}
+.pet-lcd.whiteout .pet-sprite {
+  animation: pet-whiteout 1.8s linear forwards;
+}
+@keyframes pet-whiteout {
+  0%, 12%, 30%, 44%, 56%, 66%, 74%, 80%, 86%, 90%, 94%, 97% {
+    opacity: 1;
+  }
+  6%, 21%, 37%, 50%, 61%, 70%, 77%, 83%, 88%, 92%, 95%, 99% {
+    opacity: 0.15;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 /* ---- species colour ----
@@ -1060,6 +1083,70 @@
 .pet-album-row span {
   font-size: 8px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+/* ---- the evolution tree ----
+   One row per line, read left to right: its first form, then the cared-for
+   pair (2a, 3a), then the neglected pair (2b, 3b). */
+.pet-dex {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0;
+}
+.pet-dex-head {
+  margin: 0 0 1px;
+  font-size: 8.5px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+.pet-dex-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+}
+/* Name on its own line so the five cells always fit the 110px device screen. */
+.pet-dex-name {
+  flex: 0 0 100%;
+  font-size: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+}
+.pet-dex-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 26px;
+  aspect-ratio: 1;
+  padding: 1px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 3px;
+  background: rgb(0 0 0 / 0.15);
+  cursor: pointer;
+}
+.pet-dex-cell .pet-lcd {
+  width: 100%;
+  height: 100%;
+}
+.pet-dex-cell.on {
+  border-color: var(--accent);
+}
+.pet-dex-cell b {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+/* Not met yet: the shape, and nothing else. */
+.pet-dex-cell:not(.seen) .pet-px {
+  fill: color-mix(in srgb, var(--fg) 16%, transparent);
+  animation: none;
+}
+.pet-dex-cell:not(.seen) .pet-lcd {
+  filter: none;
 }
 .pet-empty {
   margin: auto;

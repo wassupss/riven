@@ -11,6 +11,7 @@ import {
   ExternalLink,
   EyeOff,
   Gamepad2,
+  GitBranch,
   Heart,
   ListTree,
   MessageCircle,
@@ -51,6 +52,7 @@ import {
 } from './petSprites'
 import {
   awardsOf,
+  discoveredBranches,
   dietOf,
   flushPetSave,
   freshByFlavor,
@@ -67,7 +69,11 @@ import {
   MAX_PETS,
   MAX_POOPS,
   PRIZES,
+  BRANCH_BY_ID,
+  LINES,
+  TIER_LEVELS,
   type Accessory,
+  type BranchId,
   type Form,
   type Mood,
   type Species,
@@ -119,6 +125,7 @@ type ScreenMode =
   | 'graph'
   | 'awards'
   | 'album'
+  | 'dex'
   | 'settings'
   | 'talk'
   | 'battle'
@@ -217,7 +224,9 @@ function Creature({
   flavor,
   evolving,
   level = 0,
-  outfit: wearing
+  outfit: wearing,
+  branch,
+  whiteout
 }: {
   stage: Stage
   form: Form
@@ -230,13 +239,18 @@ function Creature({
   level?: number
   /** What it actually has on, prizes included; defaults to its level keepsakes. */
   outfit?: Accessory[]
+  /** The way it grew up, which marks the adult it became. */
+  branch?: BranchId | null
+  /** A branch evolution: its shape goes dark and flickers before it shows. */
+  whiteout?: boolean
 }): JSX.Element {
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
   const runs = useMemo(
-    () => runsOf(pixelsOf(stage, form, mood, species)),
-    [stage, form, mood, species]
+    () => runsOf(pixelsOf(stage, form, mood, species, branch)),
+    [stage, form, mood, species, branch]
   )
+  const br = branch ? BRANCH_BY_ID.get(branch) : undefined
   const wearingKey = wearing?.join(',')
   const outfit = useMemo(() => {
     const { back, front } = outfitPixels(stage, form, species, wearing ?? [])
@@ -256,7 +270,7 @@ function Creature({
     ))
   return (
     <svg
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}`}
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
       viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
@@ -405,6 +419,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const justLeveled = usePet((s) => s.justLeveled)
   const ackLevel = usePet((s) => s.ackLevel)
   const [evolving, setEvolving] = useState(false)
+  const [whiteout, setWhiteout] = useState(false)
+  const [dexHint, setDexHint] = useState<string | null>(null)
   // A friend battle: the fight, how far through it the playback is, and once it
   // is over, how it went and whether it went on the record (once a day a friend).
   const [duel, setDuel] = useState<Duel | null>(null)
@@ -542,9 +558,21 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     // The egg it was born as is bookkeeping, not an event.
     if (justEvolved.stage === 'egg') return
     setEvolving(true)
-    setFlash(t('pet.evolved', { stage: subject(t(`pet.stage.${justEvolved.stage}`)) }))
-    later(() => setEvolving(false), 2600)
-    later(() => setFlash(null), 2600)
+    // A branch is the bigger moment: the shape goes dark and flickers first,
+    // and the name comes with the reveal rather than before it.
+    const branch = justEvolved.branch
+    if (!branch) {
+      setFlash(t('pet.evolved', { stage: subject(t(`pet.stage.${justEvolved.stage}`)) }))
+      later(() => setEvolving(false), 2600)
+      later(() => setFlash(null), 2600)
+      return
+    }
+    setWhiteout(true)
+    setFlash('...')
+    later(() => setWhiteout(false), 1800)
+    later(() => setFlash(t('pet.evolvedBranch', { name: t(`pet.branch.${branch}`) })), 1800)
+    later(() => setEvolving(false), 3600)
+    later(() => setFlash(null), 4400)
   }, [justEvolved, ackEvolution, later, t])
 
   // A grown-up's level-up: the same burst, smaller words. Keepsakes come with
@@ -858,6 +886,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const diet = useMemo(() => dietOf(pet), [pet])
   const awards = useMemo(() => awardsOf(pet, nowTick), [pet, nowTick])
   const outfit = useMemo(() => outfitOf(pet.worn), [pet.worn])
+  const found = useMemo(() => discoveredBranches(pets), [pets])
 
   if (!show && !detached) {
     // Put away: a shortcut must not go on feeding and cleaning a pet that is not
@@ -868,10 +897,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
-  const stageLabel =
-    growth.form === 'base'
-      ? t(`pet.stage.${growth.stage}`)
-      : `${t(`pet.stage.${growth.stage}`)} · ${t(`pet.form.${growth.form}`)}`
+  // A branch is its name from then on; the form still shows beside it.
+  const stageName = growth.branch ? t(`pet.branch.${growth.branch.id}`) : t(`pet.stage.${growth.stage}`)
+  const stageLabel = growth.form === 'base' ? stageName : `${stageName} · ${t(`pet.form.${growth.form}`)}`
 
   // One short line, the most pressing thing first. Deliberately absent in 'bare'
   // (that mode is the creature and nothing else).
@@ -1064,6 +1092,13 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       node: <BookOpen size={11} />,
       on: mode === 'album',
       run: () => openScreen('album')
+    },
+    {
+      id: 'dex',
+      label: t('pet.mode.dex'),
+      node: <GitBranch size={11} />,
+      on: mode === 'dex',
+      run: () => openScreen('dex')
     },
     {
       id: 'battle',
@@ -1398,6 +1433,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               evolving={evolving}
               level={growth.level}
               outfit={outfit}
+              branch={growth.branch?.id}
+              whiteout={whiteout}
             />
           </div>
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
@@ -1507,7 +1544,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           {pet.evolutions.length > 0 && (
             <div>
               <dt>{t('pet.stat.story')}</dt>
-              <dd>{pet.evolutions.map((e) => t(`pet.stage.${e.stage}`)).join(' → ')}</dd>
+              <dd>
+                {pet.evolutions
+                  .map((e) => (e.branch ? t(`pet.branch.${e.branch}`) : t(`pet.stage.${e.stage}`)))
+                  .join(' → ')}
+              </dd>
             </div>
           )}
         </dl>
@@ -1618,11 +1659,56 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               <b>{a.name || t('pet.default.name')}</b>
               <span>
                 {t(`pet.species.${a.species}`)} ·{' '}
-                {a.form === 'base' ? t(`pet.stage.${a.stage}`) : t(`pet.form.${a.form}`)} · {a.xp}
+                {a.branches?.length
+                  ? t(`pet.branch.${a.branches[a.branches.length - 1]}`)
+                  : a.form === 'base'
+                    ? t(`pet.stage.${a.stage}`)
+                    : t(`pet.form.${a.form}`)}{' '}
+                · {a.xp}
                 {t('pet.album.kibble')} · {dur(t, a.ageMs)}
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {mode === 'dex' && (
+        <div className="pet-dex">
+          <p className="pet-dex-head">{t('pet.dex.found', { n: found.size, total: BRANCH_BY_ID.size })}</p>
+          {[...LINES.map((line) => ({ line, ids: ['1', '2a', '3a', '2b', '3b'].map((k) => `${line}${k}`) })), { line: null, ids: ['omega', 'apex'] }].map(
+            ({ line, ids }) => (
+              <div key={line ?? 'hidden'} className="pet-dex-line">
+                <span className="pet-dex-name">{line ? t(`pet.line.${line}`) : t('pet.dex.hidden')}</span>
+                {ids.map((id) => {
+                  const b = BRANCH_BY_ID.get(id)!
+                  const seen = found.has(id)
+                  // Unmet branches keep their shape as a shadow and say how to get
+                  // there; the hidden ones keep even that to themselves.
+                  const hint = seen
+                    ? t(`pet.branch.${id}`)
+                    : b.hidden
+                      ? t(`pet.dex.hint.${id}`)
+                      : `Lv${TIER_LEVELS[b.tier - 1]} · ${t(`pet.dex.hint.${line}`)}${b.tier > 1 ? ` · ${t(`pet.dex.hint.${id.endsWith('a') ? 'a' : 'b'}`)}` : ''}`
+                  return (
+                    <button
+                      type="button"
+                      key={id}
+                      className={`pet-dex-cell${seen ? ' seen' : ''}${dexHint === hint ? ' on' : ''}`}
+                      title={hint}
+                      onClick={() => setDexHint(hint)}
+                    >
+                      {seen || !b.hidden ? (
+                        <Creature stage="adult" form="base" species={pet.species} mood="happy" chewing={false} branch={id} />
+                      ) : (
+                        <b>?</b>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          )}
+          <p className="pet-note">{dexHint ?? t('pet.dex.note')}</p>
         </div>
       )}
 
@@ -1970,6 +2056,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             evolving={evolving}
             level={growth.level}
             outfit={outfit}
+            branch={growth.branch?.id}
+            whiteout={whiteout}
           />
           {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
           {(pet.sick || pet.poops > 0) && (

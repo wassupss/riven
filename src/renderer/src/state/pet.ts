@@ -215,6 +215,10 @@ export interface PetSave {
   evolutions: Evolution[]
   // Has it EVER been ill? An award turns on being able to say "never".
   everSick: boolean
+  // How many times it has fallen ill, and how much it ate between midnight and
+  // morning: two of the things that decide which way it branches (see BRANCHES).
+  sickCount: number
+  nightKibble: number
   // ---- keepsakes ----
   // Kibble eaten per day, oldest first, at most HISTORY_DAYS entries.
   history: DayFeed[]
@@ -227,6 +231,8 @@ export interface Evolution {
   stage: Stage
   form: Form
   at: number
+  /** Set on the entries a grown-up adds as it branches (see BRANCHES). */
+  branch?: BranchId
 }
 
 export interface DayFeed {
@@ -245,6 +251,8 @@ export interface AlbumEntry {
   ageMs: number
   neglectMs: number
   endedAt: number
+  /** Every branch it reached, so the dex remembers pets that are gone. */
+  branches?: BranchId[]
 }
 
 const clamp = (n: number, lo = 0, hi = 100): number => Math.min(hi, Math.max(lo, n))
@@ -286,6 +294,8 @@ export function initialState(now: number): PetSave {
     // stages in one big meal still has a beginning.
     evolutions: [{ stage: 'egg', form: 'base', at: now }],
     everSick: false,
+    sickCount: 0,
+    nightKibble: 0,
     history: [],
     album: []
   }
@@ -345,8 +355,15 @@ export function normalize(raw: unknown, now: number): PetSave {
       (d, f) => ({ ...d, [f]: Math.max(0, Math.floor(num((o.diet as Record<string, unknown>)?.[f], 0))) }),
       {} as Record<Flavor, number>
     ),
-    evolutions: Array.isArray(o.evolutions) ? (o.evolutions as Evolution[]).slice(-8) : [],
+    evolutions: Array.isArray(o.evolutions)
+      ? (o.evolutions as Evolution[])
+          .filter((e) => !!e && STAGES.includes(e.stage))
+          .map((e) => (e.branch && !BRANCH_BY_ID.has(e.branch) ? { ...e, branch: undefined } : e))
+          .slice(-EVOLUTIONS_KEEP)
+      : [],
     everSick: o.everSick === true,
+    sickCount: Math.max(0, Math.floor(num(o.sickCount, o.everSick === true ? 1 : 0))),
+    nightKibble: Math.max(0, Math.floor(num(o.nightKibble, 0))),
     history: Array.isArray(o.history)
       ? o.history
           .filter((h): h is DayFeed => !!h && typeof (h as DayFeed).day === 'string')
@@ -477,6 +494,7 @@ export function feed(
     poops: Math.min(MAX_POOPS, s.poops + droppings),
     poopCarry: carried % KIBBLE_PER_POOP,
     diet: { ...s.diet, [flavor]: (s.diet[flavor] ?? 0) + kibble },
+    nightKibble: isNight(now) ? s.nightKibble + kibble : s.nightKibble,
     history: noteFeed(s.history, kibble, now)
   }
 }
@@ -489,12 +507,13 @@ export function feed(
 export function noteEvolution(prev: PetSave, next: PetSave, now: number): Evolution[] {
   const before = stageIndexOf(prev.xp)
   const after = stageIndexOf(next.xp)
-  if (after <= before && next.evolutions.length > 0) return next.evolutions
+  if (after <= before && next.evolutions.length > 0) return settleBranches(next, now)
   const entry: Evolution = { stage: STAGES[after], form: formOf(next, now), at: now }
   // The egg it was born as counts as the first page of the story.
   if (next.evolutions.length === 0 && after === 0) return [entry]
   if (after <= before) return next.evolutions
-  return [...next.evolutions, entry].slice(-8)
+  const grown = [...next.evolutions, entry].slice(-EVOLUTIONS_KEEP)
+  return settleBranches({ ...next, evolutions: grown }, now)
 }
 
 /** Clean up after it. Nothing else changes — a clean floor is its own reward. */
@@ -633,6 +652,7 @@ export function decay(s: PetSave, now: number): PetSave {
     neglectMs: s.neglectMs + emptyMs,
     illHours,
     sick: s.sick || illHours >= SICK_AFTER_HOURS,
+    sickCount: !s.sick && illHours >= SICK_AFTER_HOURS ? s.sickCount + 1 : s.sickCount,
     everSick: s.everSick || s.sick || illHours >= SICK_AFTER_HOURS
   }
 }
@@ -676,6 +696,125 @@ function liveFormOf(s: PetSave, now: number): Form {
   if (s.xp / hours >= TITAN_KIBBLE_PER_HOUR) return 'titan'
   if (ratio < RADIANT_NEGLECT_RATIO) return 'radiant'
   return 'sturdy'
+}
+
+// ---- branching ----
+// Growing up is no longer one road. At levels 10, 30 and 50 a grown-up takes a
+// turn, the way a monster in the old handheld games did, and which turn depends
+// on how it was raised: what it ate, how it was cared for, whether it fought,
+// whether it was fed at night. Each line splits once more on care (a: looked
+// after, b: left to itself), and two hidden ends wait for the truly devoted.
+//
+// Like the adult form, a branch is decided the moment it is reached and kept.
+export type Line = 'sage' | 'swift' | 'balance' | 'battle' | 'night' | 'dark'
+export const LINES: Line[] = ['sage', 'swift', 'balance', 'battle', 'night', 'dark']
+export type BranchId = string
+export interface Branch {
+  id: BranchId
+  /** 1, 2, 3 for the levelled turns, 4 for the end past all of them. */
+  tier: number
+  /** Which line it belongs to; the hidden ends have none. */
+  line: Line | null
+  parent: BranchId | null
+  hidden: boolean
+}
+/** The level each tier opens at. Tier 4 is the hidden end at the level cap (MAX_LEVEL). */
+export const TIER_LEVELS = [10, 30, 50, 99]
+/** Tokens eaten that turn a third-tier pet into the hidden omega. */
+export const OMEGA_TOKENS = 100_000_000
+export const DARK_NEGLECT_RATIO = 0.25
+export const DARK_SICK_COUNT = 3
+export const BATTLE_LINE_WINS = 5
+export const NIGHT_LINE_SHARE = 0.35
+export const SAGE_OPUS_SHARE = 0.5
+export const SWIFT_HAIKU_SHARE = 0.4
+/** Below this neglect ratio and not ill, a branch takes its cared-for (a) side. */
+export const CARED_NEGLECT_RATIO = 0.15
+const EVOLUTIONS_KEEP = 12
+
+export const BRANCHES: Branch[] = [
+  ...LINES.flatMap((line): Branch[] => [
+    { id: `${line}1`, tier: 1, line, parent: null, hidden: false },
+    { id: `${line}2a`, tier: 2, line, parent: `${line}1`, hidden: false },
+    { id: `${line}2b`, tier: 2, line, parent: `${line}1`, hidden: false },
+    { id: `${line}3a`, tier: 3, line, parent: `${line}2a`, hidden: false },
+    { id: `${line}3b`, tier: 3, line, parent: `${line}2b`, hidden: false }
+  ]),
+  { id: 'omega', tier: 3, line: null, parent: null, hidden: true },
+  { id: 'apex', tier: 4, line: null, parent: null, hidden: true }
+]
+export const BRANCH_BY_ID = new Map(BRANCHES.map((b) => [b.id, b]))
+
+/** The branch it is on now, or null before its first turn. */
+export function branchOf(s: PetSave): Branch | null {
+  for (let i = s.evolutions.length - 1; i >= 0; i--) {
+    const b = s.evolutions[i].branch
+    if (b) return BRANCH_BY_ID.get(b) ?? null
+  }
+  return null
+}
+
+/** Which line its upbringing points at: the first turn. */
+export function lineOf(s: PetSave, now: number): Line {
+  const kept = s.evolutions.find((e) => e.stage === 'adult')?.form
+  if (kept === 'wraith' || neglectRatio(s, now) >= DARK_NEGLECT_RATIO || s.sickCount >= DARK_SICK_COUNT)
+    return 'dark'
+  if (s.battleWins >= BATTLE_LINE_WINS) return 'battle'
+  if (s.xp > 0 && s.nightKibble / s.xp >= NIGHT_LINE_SHARE) return 'night'
+  const total = FLAVORS.reduce((n, f) => n + (s.diet[f] ?? 0), 0)
+  if (total > 0) {
+    const top = FLAVORS.reduce((a, f) => ((s.diet[f] ?? 0) > (s.diet[a] ?? 0) ? f : a), FLAVORS[0])
+    const share = (s.diet[top] ?? 0) / total
+    if (top === 'opus' && share >= SAGE_OPUS_SHARE) return 'sage'
+    if (top === 'haiku' && share >= SWIFT_HAIKU_SHARE) return 'swift'
+  }
+  return 'balance'
+}
+
+/** The branch it would take next from `from`, or null if there is none to take. */
+export function nextBranch(s: PetSave, from: Branch | null, now: number): Branch | null {
+  const level = levelOf(s.xp).level
+  const tier = from?.tier ?? 0
+  // Omega is the one turn not tied to a level: any third-tier pet that has eaten
+  // enough becomes it, even long after its last turn.
+  if (from && tier === 3 && from.id !== 'omega' && s.totalTokens >= OMEGA_TOKENS)
+    return BRANCH_BY_ID.get('omega')!
+  if (tier >= TIER_LEVELS.length || level < TIER_LEVELS[tier]) return null
+  if (tier === 0) return BRANCH_BY_ID.get(`${lineOf(s, now)}1`)!
+  if (tier === 3) return BRANCH_BY_ID.get('apex')!
+  if (tier === 2 && s.totalTokens >= OMEGA_TOKENS) return BRANCH_BY_ID.get('omega')!
+  if (tier === 1) {
+    const cared = !s.sick && neglectRatio(s, now) < CARED_NEGLECT_RATIO
+    return BRANCH_BY_ID.get(`${from!.line}2${cared ? 'a' : 'b'}`)!
+  }
+  // Tier 3 follows the side the second turn took.
+  return BRANCH_BY_ID.get(`${from!.line}3${from!.id.slice(-1)}`)!
+}
+
+/**
+ * The story with every turn it is due added. Returns the same array when there
+ * is nothing to add, so callers can compare by reference like noteEvolution.
+ * A pet that was already high level before branching existed takes all its
+ * turns at once, judged on how it was raised up to now.
+ */
+export function settleBranches(s: PetSave, now: number): Evolution[] {
+  let cur = branchOf(s)
+  let evolutions = s.evolutions
+  for (let next = nextBranch(s, cur, now); next; next = nextBranch(s, cur, now)) {
+    evolutions = [...evolutions, { stage: 'adult' as Stage, form: formOf(s, now), at: now, branch: next.id }]
+    cur = next
+  }
+  return evolutions === s.evolutions ? evolutions : evolutions.slice(-EVOLUTIONS_KEEP)
+}
+
+/** Every branch any pet in the nest or the album has reached. */
+export function discoveredBranches(pets: PetSave[]): Set<BranchId> {
+  const seen = new Set<BranchId>()
+  for (const p of pets) {
+    for (const e of p.evolutions) if (e.branch) seen.add(e.branch)
+    for (const a of p.album) for (const b of a.branches ?? []) seen.add(b)
+  }
+  return seen
 }
 
 // ---- after it grows up ----
@@ -812,6 +951,8 @@ export interface Growth {
   toNext: number
   // 0 until it grows up, then 1 and climbing.
   level: number
+  /** The branch it is on, once it has taken its first turn at level 10. */
+  branch: Branch | null
 }
 
 export function growthOf(s: PetSave, now: number): Growth {
@@ -820,14 +961,16 @@ export function growthOf(s: PetSave, now: number): Growth {
   const form = formOf(s, now)
   if (index >= STAGES.length - 1) {
     const { level, from, to } = levelOf(s.xp)
-    if (to <= from) return { index, stage, form, progress: 1, toNext: 0, level }
+    const branch = branchOf(s)
+    if (to <= from) return { index, stage, form, progress: 1, toNext: 0, level, branch }
     return {
       index,
       stage,
       form,
       progress: Math.min(1, Math.max(0, (s.xp - from) / (to - from))),
       toNext: Math.max(0, to - s.xp),
-      level
+      level,
+      branch
     }
   }
   const from = STAGE_XP[index]
@@ -838,7 +981,8 @@ export function growthOf(s: PetSave, now: number): Growth {
     form,
     progress: Math.min(1, Math.max(0, (s.xp - from) / (to - from))),
     toNext: Math.max(0, to - s.xp),
-    level: 0
+    level: 0,
+    branch: null
   }
 }
 
@@ -1001,7 +1145,8 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
     tokens: s.totalTokens,
     ageMs: Math.max(0, now - s.bornAt),
     neglectMs: s.neglectMs,
-    endedAt: now
+    endedAt: now,
+    branches: s.evolutions.flatMap((e) => (e.branch ? [e.branch] : []))
   }
   return [...s.album, entry].slice(-ALBUM_SIZE)
 }
@@ -1193,7 +1338,12 @@ export const usePet = create<PetStore>((set, get) => {
       // Charge for the time the app was closed right away, so reopening after two
       // days shows a starving pet instead of the one we left. The ones in the
       // bag were paused all along, and start again when they come out.
-      const pets = n.pets.map((p, i) => (i === n.active ? decay(p, now) : p))
+      // A pet that was already past level 10 before branching existed takes its
+      // turns quietly here rather than with a fanfare on the next meal.
+      const pets = n.pets.map((p) => {
+        const evolutions = settleBranches(p, now)
+        return evolutions === p.evolutions ? p : { ...p, evolutions }
+      }).map((p, i) => (i === n.active ? decay(p, now) : p))
       set({ pets, active: n.active, pet: pets[n.active], loaded: true })
     },
     // Seasonal prizes are handed out here, so a pet that is only being looked at
