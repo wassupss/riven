@@ -245,6 +245,14 @@ const LEGACY_TERMINAL_FONTS = new Set([
   '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace'
 ])
 
+// Values an older build may still hold, read from settings.json at boot or
+// pulled from the cloud row (settingsSync), which an older build keeps writing.
+export function migrateLegacy(s: Settings): Settings {
+  // The pet's old card and screen-only sizes became the bare pet with a menu.
+  if (s.petChrome !== 'bare' && s.petChrome !== 'device') return { ...s, petChrome: 'bare' }
+  return s
+}
+
 export const useSettings = create<SettingsState>((set) => ({
   settings: DEFAULT_SETTINGS,
   ready: false,
@@ -260,9 +268,7 @@ export const useSettings = create<SettingsState>((set) => ({
     // terminal 11) for users who never customized them.
     if (partial.editorFontSize === 13) merged.editorFontSize = 12
     if (partial.terminalFontSize === 11) merged.terminalFontSize = 12
-    // The pet's old card and screen-only sizes became the bare pet with a menu.
-    if (merged.petChrome !== 'bare' && merged.petChrome !== 'device') merged.petChrome = 'bare'
-    set({ settings: merged, ready: true })
+    set({ settings: migrateLegacy(merged), ready: true })
   },
   set: (partial) => set((s) => ({ settings: { ...s.settings, ...partial } })),
   reset: () => set({ settings: DEFAULT_SETTINGS })

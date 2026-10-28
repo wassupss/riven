@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { ModelUsage, UsageToday } from './usage'
-import { DEFAULT_SETTINGS } from './settings'
+import { DEFAULT_SETTINGS, migrateLegacy, type Settings } from './settings'
 import {
   adopt,
   feedFrame,
@@ -739,6 +739,15 @@ describe('how it ships', () => {
     expect(DEFAULT_SETTINGS.petChrome).toBe('bare')
     // Floating above everything is offered, not assumed.
     expect(DEFAULT_SETTINGS.petOnTop).toBe(false)
+  })
+
+  // An older build still writes its size names ('full', 'screen') to the synced
+  // settings row. Taken as is, the pet showed none of its screens: the menu
+  // closed and nothing opened.
+  it('turns an old size name into the bare pet', () => {
+    for (const old of ['full', 'screen'])
+      expect(migrateLegacy({ ...DEFAULT_SETTINGS, petChrome: old } as unknown as Settings).petChrome).toBe('bare')
+    expect(migrateLegacy({ ...DEFAULT_SETTINGS, petChrome: 'device' }).petChrome).toBe('device')
   })
 })
 
