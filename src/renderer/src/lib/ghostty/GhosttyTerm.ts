@@ -747,9 +747,12 @@ export class GhosttyTerm {
     const m = ctx.measureText('MMMMMMMMMM')
     ctx.restore()
     const w = Math.round((m.width / 10) * this.dpr) / this.dpr
-    const h = Math.round(fontSize * 1.25 * this.dpr) / this.dpr
     const asc = m.fontBoundingBoxAscent || fontSize * 0.8
     const desc = m.fontBoundingBoxDescent || fontSize * 0.2
+    // Same rule as xterm's lineHeight: 1.25, which scales the font's natural
+    // line height (ascent + descent), not the font size. Otherwise rows come
+    // out ~25% denser than the xterm engine.
+    const h = Math.round((asc + desc) * 1.25 * this.dpr) / this.dpr
     const changed = w !== this.cellW || h !== this.cellH
     this.cellW = w || 8
     this.cellH = h || 16
