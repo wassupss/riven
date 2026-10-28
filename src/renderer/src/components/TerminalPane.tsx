@@ -4,6 +4,9 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { SearchAddon } from '@xterm/addon-search'
+import { GhosttyTerm } from '../lib/ghostty/GhosttyTerm'
+import type { Vt } from '../lib/ghostty/vt'
+import { loadGhostty } from '../lib/ghosttyEngine'
 import { ChevronUp, ChevronDown, X, Loader2 } from 'lucide-react'
 import {
   registerPaneFocuser,
@@ -124,9 +127,24 @@ export default function TerminalPane({
     let savedViewportY: number | null = null
     let savedAtBottom = false
 
+    // Experimental ghostty engine (settings.terminalEngine). Chosen when the pane
+    // mounts; a pane keeps its engine until it is closed. GhosttyTerm mirrors the
+    // subset of xterm's API this pane uses, so it is driven through the same
+    // `Terminal` type and every difference is branched on `ghostty` below.
+    let ghostty: Vt | null = null
+
     const mountTerminal = (): (() => void) => {
       const cfg = getSettings()
-      const term = new Terminal({
+      const term: Terminal = ghostty
+        ? (new GhosttyTerm(ghostty, {
+            fontFamily: cfg.terminalFontFamily,
+            fontSize: cfg.terminalFontSize,
+            cursorBlink: cfg.terminalCursorBlink,
+            cursorStyle: cfg.terminalCursorStyle,
+            scrollback: Math.max(200, cfg.terminalScrollback),
+            theme: terminalTheme()
+          }) as unknown as Terminal)
+        : new Terminal({
         fontFamily: cfg.terminalFontFamily,
         fontSize: cfg.terminalFontSize,
         // Regular/bold (400/700), NOT the old 300/500: the system Korean fallback
@@ -153,7 +171,7 @@ export default function TerminalPane({
         scrollSensitivity: 1.15,
         fastScrollSensitivity: 5,
         theme: terminalTheme()
-      })
+          })
       liveTerm = term
       // Dev/e2e only: the smoke harness (scripts/e2e-terminal-smoke.mjs) reads the
       // xterm buffer through here, since the WebGL renderer leaves no text in the DOM.
@@ -161,15 +179,23 @@ export default function TerminalPane({
         const w = window as unknown as { __rivenTerms?: Record<string, Terminal> }
         ;(w.__rivenTerms ??= {})[sessionKey] = term
       }
-      const fit = new FitAddon()
-      const unicode11 = new Unicode11Addon()
-      const search = new SearchAddon()
-      term.loadAddon(fit)
-      term.loadAddon(unicode11)
-      term.loadAddon(search)
-      searchRef.current = search
+      let fit: { proposeDimensions(): { cols: number; rows: number } | undefined }
+      if (ghostty) {
+        // No unicode11 (Ghostty does its own widths), WebGL (it draws to its own
+        // canvas) or search addon (none exists yet). It sizes itself.
+        fit = term as unknown as GhosttyTerm
+      } else {
+        const xfit = new FitAddon()
+        const unicode11 = new Unicode11Addon()
+        const search = new SearchAddon()
+        term.loadAddon(xfit)
+        term.loadAddon(unicode11)
+        term.loadAddon(search)
+        searchRef.current = search
+        term.unicode.activeVersion = '11'
+        fit = xfit
+      }
       refocusRef.current = () => term.focus()
-      term.unicode.activeVersion = '11'
 
       // Defer term.open() until the pane actually has size. Opening into a 0-size
       // container (a stacked/background dock panel, or before dockview lays it out)
@@ -222,13 +248,15 @@ export default function TerminalPane({
       }
 
       // ⌘F opens the in-terminal find box (don't forward the key to the shell).
-      term.attachCustomKeyEventHandler((e) => {
-        if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-          setSearchOpen(true)
-          return false
-        }
-        return true
-      })
+      // The ghostty engine has no search yet, so it gets none.
+      if (!ghostty)
+        term.attachCustomKeyEventHandler((e) => {
+          if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+            setSearchOpen(true)
+            return false
+          }
+          return true
+        })
 
       let ptyId: string | null = null
       let torn = false
@@ -262,7 +290,7 @@ export default function TerminalPane({
       let webgl: WebglAddon | null = null
       let webglTried = false
       const tryAttachWebgl = (): void => {
-        if (webglTried || torn) return
+        if (webglTried || torn || ghostty) return
         // DIAGNOSTIC: skip WebGL to isolate whether the "blank rows on fast scroll"
         // artifact is the WebGL renderer. Toggle in devtools:
         //   localStorage.setItem('riven.noWebgl','1')  → DOM renderer, then ⌘R
@@ -655,7 +683,22 @@ export default function TerminalPane({
     let busy = false
     let hideTimer: ReturnType<typeof setTimeout> | null = null
 
+    // The ghostty engine needs its wasm before the first mount. Until it has
+    // loaded nothing mounts; if it can't load, the pane falls back to xterm
+    // rather than staying blank.
+    let engineReady = getSettings().terminalEngine !== 'ghostty'
+    let unmounted = false
+    if (!engineReady)
+      loadGhostty()
+        .then((g) => (ghostty = g))
+        .catch((e) => console.warn('[terminal] ghostty engine failed to load, using xterm', e))
+        .finally(() => {
+          engineReady = true
+          if (!unmounted) reconcile()
+        })
+
     const reconcile = (): void => {
+      if (!engineReady) return
       // A hidden-but-retained pane (agent still working) must not keep blinking its
       // cursor: the blink timer repaints the cursor row through the WebGL renderer
       // ~2x/sec forever, which is pure GPU + renderer CPU nobody can see. Park it
@@ -691,7 +734,11 @@ export default function TerminalPane({
       const e = entries[entries.length - 1]
       const nowVisible = e.isIntersecting && e.intersectionRatio > 0
       if (nowVisible !== visible) {
-        if (!nowVisible && liveTerm) {
+        // The ghostty engine draws to a canvas whose scroll position lives in
+        // the wasm terminal, so display:none can't lose it.
+        if (ghostty) {
+          // nothing to save or restore
+        } else if (!nowVisible && liveTerm) {
           // About to be hidden (display:none) → capture scroll before the browser
           // zeroes the viewport scrollTop.
           const buf = liveTerm.buffer.active
@@ -732,6 +779,7 @@ export default function TerminalPane({
     })
 
     return () => {
+      unmounted = true
       io.disconnect()
       offStatus()
       offAgent()

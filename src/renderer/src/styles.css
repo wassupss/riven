@@ -3321,6 +3321,40 @@ select {
 .xterm .composition-view {
   z-index: var(--z-float);
 }
+/* Ghostty engine (lib/ghostty/GhosttyTerm): one canvas for the grid, a hidden
+   textarea that takes keys and IME, and a composition overlay at the cursor.
+   Font and line height of the overlay are set from JS to match the cell. */
+.ghostty-term {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
+  cursor: text;
+}
+.ghostty-term-canvas {
+  display: block;
+}
+.ghostty-term-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  overflow: hidden;
+  pointer-events: none;
+  caret-color: transparent;
+}
+.ghostty-term-composition {
+  position: absolute;
+  display: none;
+  white-space: pre;
+  pointer-events: none;
+  text-decoration: underline;
+  z-index: var(--z-float);
+}
 .terminal-pane-outer {
   position: relative;
   width: 100%;
