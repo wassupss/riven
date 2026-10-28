@@ -356,7 +356,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // The floating window keeps its own chrome level in memory: it must not write
   // settings.json behind the app's back (two writers, last one wins).
   const [winChrome, setWinChrome] = useState<PetChrome>('bare')
-  const chrome = detached ? winChrome : savedChrome
+  // Anything but 'device' is the bare pet: an old size name ('full', 'screen')
+  // can still arrive from settings sync, and left as is it hid every screen.
+  const chrome: PetChrome = (detached ? winChrome : savedChrome) === 'device' ? 'device' : 'bare'
   const setChrome = (c: PetChrome): void => {
     if (detached) setWinChrome(c)
     else setSettings({ petChrome: c })
