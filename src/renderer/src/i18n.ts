@@ -623,6 +623,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     ko: '메뉴 대신 클립보드 내용을 바로 붙여넣습니다.',
     en: 'Pastes the clipboard instead of opening a menu.'
   },
+  'settings.termGhostty': { ko: 'Ghostty 엔진 (실험)', en: 'Ghostty engine (experimental)' },
+  'settings.termGhosttyDesc': {
+    ko: 'xterm 대신 Ghostty 파서(wasm)로 그립니다. 새로 연 터미널부터 적용되고, 찾기(⌘F)는 아직 안 됩니다.',
+    en: "Renders with Ghostty's parser (wasm) instead of xterm. Applies to new terminals; find (⌘F) is not supported yet."
+  },
   'settings.notifyDesc': { ko: '백그라운드에서 턴이 끝나면 알림', en: 'Notify when a background turn finishes' },
   'settings.crashDesc': { ko: '익명 크래시 리포트 전송', en: 'Send anonymous crash reports' },
   'settings.agentChatUIDesc': { ko: 'AI 에이전트를 터미널 CLI 대신 네이티브 챗으로 실행', en: 'Run agents in the native chat instead of a terminal CLI' },
