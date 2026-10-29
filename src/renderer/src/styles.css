@@ -507,7 +507,7 @@ select {
   background: var(--accent) !important;
 }
 /* Focused group: a faint ember frame, drawn as an overlay so the panel content
-   (xterm/editor fill their group) can't hide it. Kept subtle on purpose. */
+   (terminal/editor fill their group) can't hide it. Kept subtle on purpose. */
 .workbench .dv-groupview {
   position: relative;
 }
@@ -3287,41 +3287,16 @@ select {
   width: 100%;
   height: 100%;
 }
-/* xterm renders text as DOM spans (no webgl), so the body's negative
-   letter-spacing would drift the monospace grid and clip the right edge.
-   Reset it so the cell metrics stay exact. */
-.xterm,
-.xterm .xterm-rows,
+/* The body's negative letter-spacing must not reach the IME overlays. */
 .terminal-pane {
   letter-spacing: normal;
 }
-/* IME composition is drawn in a separate overlay (.composition-view.active) that
-   xterm doesn't font-style; give it the terminal font so composing Korean matches
-   the grid instead of flashing a fallback font until it commits. The fallback is
-   the full D2Coding stack (NOT bare `monospace`, which resolves to Menlo) so it's
-   correct even on panes where --term-font wasn't set yet. */
-/* The grid is a canvas (its font comes from JS, not CSS), but every IME/overlay
-   DOM element inside .xterm otherwise inherits the app UI font (Inter) → Korean
-   composing text rendered in a thin fallback. Set the terminal font-family on the
-   root so ALL descendants (composition overlay, hidden textarea, any IME element)
-   inherit it. Only font-family on the root — size/spacing stay on the overlays so
-   the grid metrics are untouched. */
-.xterm {
-  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
+.terminal-engine-error {
+  padding: 12px;
+  color: var(--danger, #e5534b);
+  font-size: 12px;
 }
-.xterm .composition-view,
-.xterm .xterm-helper-textarea {
-  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
-  font-size: var(--term-font-size, 12px);
-  font-weight: 300;
-  letter-spacing: 1px;
-}
-/* The composition overlay must sit ABOVE the text canvas (z-index 2) or it's
-   occluded during composition. */
-.xterm .composition-view {
-  z-index: var(--z-float);
-}
-/* Ghostty engine (lib/ghostty/GhosttyTerm): one canvas for the grid, a hidden
+/* Terminal engine (lib/ghostty/GhosttyTerm): one canvas for the grid, a hidden
    textarea that takes keys and IME, and a composition overlay at the cursor.
    Font and line height of the overlay are set from JS to match the cell. */
 .ghostty-term {
@@ -3329,11 +3304,13 @@ select {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: var(--term-font, 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
+  font-family: var(--term-font, 'JetBrains Mono', 'JetBrains Mono Web', 'Apple SD Gothic Neo', 'Malgun Gothic', 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
   cursor: text;
 }
 .ghostty-term-canvas {
   display: block;
+  /* Skip macOS stem darkening, matching native ghostty (font-thicken = false). */
+  -webkit-font-smoothing: antialiased;
 }
 .ghostty-term-input {
   position: absolute;

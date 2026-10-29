@@ -12,9 +12,9 @@ test.describe('the app shell', () => {
   test('⌘T opens terminals, and each is its own tab', async () => {
     const r = await launchRiven({ files: { 'README.md': '# s\n' } })
     await r.page.keyboard.press('Meta+t')
-    await expect(r.page.locator('.xterm')).toHaveCount(1, { timeout: 20_000 })
+    await expect(r.page.locator('.ghostty-term')).toHaveCount(1, { timeout: 20_000 })
     await r.page.keyboard.press('Meta+t')
-    await expect(r.page.locator('.xterm')).toHaveCount(2, { timeout: 20_000 })
+    await expect(r.page.locator('.ghostty-term')).toHaveCount(2, { timeout: 20_000 })
     await r.app.close()
   })
 
@@ -24,7 +24,7 @@ test.describe('the app shell', () => {
     await r.page.locator('.palette-input').fill('a.ts')
     await r.page.locator('.palette-list .palette-label').filter({ hasText: 'a.ts' }).first().click()
     await r.page.keyboard.press('Meta+t')
-    await expect(r.page.locator('.xterm')).toHaveCount(1, { timeout: 20_000 })
+    await expect(r.page.locator('.ghostty-term')).toHaveCount(1, { timeout: 20_000 })
 
     // The terminal opened as a tab over the editor, which is the case ⌘E is for:
     // it has to bring the editor forward before it can hand it the caret.
@@ -34,7 +34,7 @@ test.describe('the app shell', () => {
       .toBe(true)
     await r.page.keyboard.press('Meta+j') // and back to the terminal
     await expect
-      .poll(() => r.page.evaluate(() => !!document.querySelector('.xterm')?.contains(document.activeElement)))
+      .poll(() => r.page.evaluate(() => !!document.querySelector('.ghostty-term')?.contains(document.activeElement)))
       .toBe(true)
     await r.app.close()
   })

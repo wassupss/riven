@@ -83,7 +83,8 @@ export interface PtyChunk {
   epoch: number
 }
 export interface PtySnapshot {
-  data: string
+  // libghostty snapshot bytes of the worker's model.
+  data: Uint8Array
   rev: number
   epoch: number
   cols: number
@@ -242,7 +243,7 @@ const api = {
     // becomes permanent in-flight debt).
     ack: (id: string, epoch: number, processed: number): void =>
       ipcRenderer.send('pty:ack', id, epoch, processed),
-    // Whether a live, sized xterm wants bytes. Hidden panes receive nothing and
+    // Whether a live, sized terminal wants bytes. Hidden panes receive nothing and
     // are restored from main's model on reveal.
     visible: (id: string, visible: boolean): void => ipcRenderer.send('pty:visible', id, visible),
     // The user looked at this terminal: clear its attention flag.

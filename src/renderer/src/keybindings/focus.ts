@@ -24,7 +24,7 @@ export function initFocusTracking(): void {
     (e) => {
       const el = e.target as HTMLElement | null
       if (!el || typeof el.closest !== 'function') return
-      if (el.closest('.xterm')) return // TerminalPane's focusin sets 'terminal'
+      if (el.closest('.ghostty-term')) return // TerminalPane's focusin sets 'terminal'
       if (el.closest('.monaco-editor')) return // Monaco sets 'editor'
       setFocusRegion({ kind: 'none' })
     },
@@ -98,11 +98,11 @@ export function focusPane(id: number): void {
   paneFocusers.get(id)?.()
 }
 
-// A terminal the user just opened should take the caret, but it can't yet: xterm
+// A terminal the user just opened should take the caret, but it can't yet: the terminal
 // opens only once its pane has a size, a frame or two after addPanel, and
 // focus() before that is a no-op. So the opener records the wish and the pane
 // claims it the moment it opens. Session restores and agent-driven opens never
-// ask, so they don't steal focus. The wish outlives a pane's first xterm (the
+// ask, so they don't steal focus. The wish outlives a pane's first terminal (the
 // pane may be torn down and remounted while dockview settles) but not by long:
 // a pane that only opens much later must not grab the caret out of nowhere.
 const PANE_FOCUS_TTL_MS = 3000

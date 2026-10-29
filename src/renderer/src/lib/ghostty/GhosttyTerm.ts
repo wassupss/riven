@@ -1,8 +1,7 @@
 // A terminal built on our own build of libghostty-vt (see ./vt.ts): Ghostty
 // parses the byte stream and owns the screen, scrollback, selection and input
 // encoding; this file draws its render state onto a canvas and exposes the
-// slice of xterm's API that TerminalPane drives, so the pane can treat both
-// engines as `Terminal`.
+// small, xterm-shaped API that TerminalPane drives.
 //
 // Drawing is on demand only: a write, a resize or an input change schedules
 // one animation frame, and a frame repaints just the rows Ghostty marks dirty
@@ -33,7 +32,7 @@ import {
   TERM_DATA,
   TERM_OPT,
   type Vt
-} from './vt'
+} from '../../../../shared/ghostty/vt'
 
 export interface GhosttyTheme {
   background?: string
@@ -233,6 +232,13 @@ const BOX: Record<number, [number, number, number, number]> = {
   0x255a: [3, 3, 0, 0], 0x255d: [3, 0, 0, 3], 0x2560: [3, 3, 3, 0], 0x2563: [3, 0, 3, 3],
   0x2566: [0, 3, 3, 3], 0x2569: [3, 3, 0, 3], 0x256c: [3, 3, 3, 3]
 }
+// dashed lines -> [dashes per cell, horizontal, heavy]
+const DASHED: Record<number, [number, boolean, boolean]> = {
+  0x2504: [3, true, false], 0x2505: [3, true, true], 0x2506: [3, false, false], 0x2507: [3, false, true],
+  0x2508: [4, true, false], 0x2509: [4, true, true], 0x250a: [4, false, false], 0x250b: [4, false, true],
+  0x254c: [2, true, false], 0x254d: [2, true, true], 0x254e: [2, false, false], 0x254f: [2, false, true]
+}
+
 const ROUNDED: Record<number, [number, number]> = {
   // corner -> [horizontal direction, vertical direction] (+1 right/down)
   0x256d: [1, 1], 0x256e: [-1, 1], 0x256f: [-1, -1], 0x2570: [1, -1]
@@ -263,7 +269,7 @@ export class GhosttyTerm {
   private readonly vt: Vt
   private readonly sh: Shared
   private readonly ud: number
-  private readonly t: number
+  private t: number
   private readonly rs: number
   private readonly it: number
   private readonly cells: number
@@ -307,6 +313,9 @@ export class GhosttyTerm {
   private cellH = 16
   private baseline = 12
   private fonts = ['', '', '', '']
+  private wideFonts = ['', '', '', '']
+  // Whether the last refChar() cell spans two columns.
+  private refWide = false
 
   // frame state
   private raf = 0
@@ -344,16 +353,10 @@ export class GhosttyTerm {
     this.vt = vt
     this.sh = sharedFor(vt)
     this.opts = { ...options, theme: { ...options.theme } }
-    const x = vt.x
     this.t = vt.create('ghostty_terminal_new', this.cols, this.rows)
     this.ud = this.sh.nextUd++
     this.sh.terms.set(this.ud, this)
-    x.ghostty_terminal_set(this.t, TERM_OPT.USERDATA, this.ud)
-    x.ghostty_terminal_set(this.t, TERM_OPT.WRITE_PTY, this.sh.write)
-    x.ghostty_terminal_set(this.t, TERM_OPT.SIZE, this.sh.size)
-    x.ghostty_terminal_set(this.t, TERM_OPT.DEVICE_ATTRIBUTES, this.sh.da)
-    x.ghostty_terminal_set(this.t, TERM_OPT.RENDER_HOLD, this.sh.hold)
-    x.ghostty_terminal_set(this.t, TERM_OPT.BELL, this.sh.bell)
+    this.bindCallbacks()
 
     this.mem = vt.alloc(S.SIZE)
     vt.u8().fill(0, this.mem, this.mem + S.SIZE)
@@ -517,6 +520,63 @@ export class GhosttyTerm {
     this.invalidate()
   }
 
+  // Replaces the whole terminal with a libghostty snapshot (the worker model's
+  // state: both screens, scrollback, modes, cursor). False if the bytes do not
+  // decode; the current terminal is then left untouched.
+  restore(bytes: Uint8Array): boolean {
+    if (this.disposed || !bytes.length) return false
+    const vt = this.vt
+    const x = vt.x
+    const buf = vt.alloc(bytes.length)
+    let next = 0
+    try {
+      vt.u8().set(bytes, buf)
+      const dec = vt.create('ghostty_snapshot_decoder_new_buf', buf, bytes.length)
+      const slot = x.ghostty_wasm_alloc_opaque() as number
+      try {
+        if (x.ghostty_snapshot_decoder_decode(dec, slot) === 0) next = x.ghostty_wasm_take_opaque(slot) as number
+      } finally {
+        x.ghostty_wasm_free_opaque(slot)
+        x.ghostty_snapshot_decoder_free(dec)
+      }
+    } catch (e) {
+      console.warn('[ghostty] snapshot decode failed', e)
+    } finally {
+      vt.free(buf, bytes.length)
+    }
+    if (!next) return false
+
+    x.ghostty_selection_gesture_reset(this.gesture, this.t)
+    x.ghostty_terminal_free(this.t)
+    this.t = next
+    this.bindCallbacks()
+    this.applyTheme()
+    this.applyCursor()
+    this.applyScrollback()
+    // The snapshot carries the model's size; the pane's own size wins.
+    x.ghostty_terminal_get(this.t, TERM_DATA.COLS, this.mem + S.TMP)
+    const cols = this.vt.dv().getUint16(this.mem + S.TMP, true)
+    x.ghostty_terminal_get(this.t, TERM_DATA.ROWS, this.mem + S.TMP)
+    const rows = this.vt.dv().getUint16(this.mem + S.TMP, true)
+    if (cols !== this.cols || rows !== this.rows) {
+      x.ghostty_terminal_resize(
+        this.t,
+        this.cols,
+        this.rows,
+        Math.round(this.cellW * this.dpr),
+        Math.round(this.cellH * this.dpr)
+      )
+    }
+    this.ptyOut = []
+    this.findRows = null
+    this.lastFind = null
+    this.full = true
+    this.flushPty()
+    this.invalidate()
+    this.scrollToBottom()
+    return true
+  }
+
   clear(): void {
     if (this.disposed) return
     // Push the screen into scrollback, home the cursor on the current line's
@@ -676,6 +736,7 @@ export class GhosttyTerm {
 
   get buffer(): {
     active: {
+      type: 'normal' | 'alternate'
       viewportY: number
       baseY: number
       length: number
@@ -688,6 +749,7 @@ export class GhosttyTerm {
     const term = this
     return {
       active: {
+        type: this.flag(TERM_DATA.ACTIVE_SCREEN) ? 'alternate' : 'normal',
         viewportY: sb.offset,
         baseY: Math.max(0, sb.total - sb.len),
         length: sb.total,
@@ -785,6 +847,18 @@ export class GhosttyTerm {
     }
   }
 
+  // Per-terminal callbacks: set on construction and again on the terminal a
+  // snapshot decodes into.
+  private bindCallbacks(): void {
+    const x = this.vt.x
+    x.ghostty_terminal_set(this.t, TERM_OPT.USERDATA, this.ud)
+    x.ghostty_terminal_set(this.t, TERM_OPT.WRITE_PTY, this.sh.write)
+    x.ghostty_terminal_set(this.t, TERM_OPT.SIZE, this.sh.size)
+    x.ghostty_terminal_set(this.t, TERM_OPT.DEVICE_ATTRIBUTES, this.sh.da)
+    x.ghostty_terminal_set(this.t, TERM_OPT.RENDER_HOLD, this.sh.hold)
+    x.ghostty_terminal_set(this.t, TERM_OPT.BELL, this.sh.bell)
+  }
+
   private applyTheme(): void {
     const vt = this.vt
     const x = vt.x
@@ -847,20 +921,31 @@ export class GhosttyTerm {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.font = this.fonts[0]
     const m = ctx.measureText('MMMMMMMMMM')
+    // Grow the CJK fallback face toward its two-cell slot (Apple SD Gothic
+    // Neo's 가 is 0.87em, which left 한 글 gaps), capped so Hangul stays near
+    // the Latin size: filling the slot fully meant 16.6px glyphs next to 12px.
+    const ic = ctx.measureText('가').width
     ctx.restore()
-    const w = Math.round((m.width / 10) * this.dpr) / this.dpr
+    const icScale = ic > 0 ? Math.max(1, Math.min((2 * (m.width / 10)) / ic, 1.15)) : 1
+    const wideSize = Math.round(fontSize * icScale * 10) / 10
+    this.wideFonts = this.fonts.map((f) => f.replace(`${fontSize}px`, `${wideSize}px`))
+    // Fractional advance like xterm.js: rounding to whole device pixels made
+    // cells ~4% wider (7.5 vs 7.2 css at dpr 1.2), so lines wrapped at other
+    // columns than the xterm engine. Fills snap to device pixels in px().
+    const w = m.width / 10
     const asc = m.fontBoundingBoxAscent || fontSize * 0.8
     const desc = m.fontBoundingBoxDescent || fontSize * 0.2
-    // Same rule as xterm's lineHeight: 1.25, which scales the font's natural
-    // line height (ascent + descent), not the font size. Otherwise rows come
-    // out ~25% denser than the xterm engine.
-    const h = Math.round((asc + desc) * 1.25 * this.dpr) / this.dpr
+    // Native ghostty's rule (adjust-cell-height unset): the cell is the font's
+    // natural line height, so powerline/box glyphs hug the text like cmux.
+    // xterm's lineHeight 1.25 left prompt segments visibly taller than glyphs.
+    const h = Math.ceil((asc + desc) * this.dpr) / this.dpr
     const changed = w !== this.cellW || h !== this.cellH
     this.cellW = w || 8
     this.cellH = h || 16
     this.baseline = Math.round(((this.cellH - (asc + desc)) / 2 + asc) * this.dpr) / this.dpr
     if (this.compo) {
-      this.compo.style.font = this.fonts[0]
+      // IME preedit is Hangul, so it uses the CJK size the committed text gets.
+      this.compo.style.font = this.wideFonts[0]
       this.compo.style.lineHeight = `${this.cellH}px`
     }
     if (changed && this.root) this.sizeCanvas()
@@ -1072,10 +1157,11 @@ export class GhosttyTerm {
     const cache = new Map<number, CellStyle>()
     let runBg: string | null = null
     let runStart = 0
+    const px = (col: number): number => Math.round(col * cw * this.dpr) / this.dpr
     const flushBg = (end: number): void => {
       if (runBg) {
         ctx.fillStyle = runBg
-        ctx.fillRect(runStart * cw, top, (end - runStart) * cw, ch)
+        ctx.fillRect(px(runStart), top, px(end) - px(runStart), ch)
       }
     }
     for (let i = 0; i < n; i++) {
@@ -1114,7 +1200,7 @@ export class GhosttyTerm {
 
     if (selA >= 0 && selB >= selA) {
       ctx.fillStyle = this.opts.theme.selectionBackground || 'rgba(255,255,255,0.2)'
-      ctx.fillRect(selA * cw, top, (selB - selA + 1) * cw, ch)
+      ctx.fillRect(px(selA), top, px(selB + 1) - px(selA), ch)
     }
 
     // pass 2: text + decorations
@@ -1138,15 +1224,23 @@ export class GhosttyTerm {
       if (fg !== fill) ctx.fillStyle = fill = fg
 
       if (cp > 32) {
-        if (!this.drawSpecial(ctx, cp, i * cw, top, cells * cw, ch, fg)) {
+        if (!this.drawSpecial(ctx, cp, px(i), top, px(i + cells) - px(i), ch, fg)) {
           const f = (st.bold ? 1 : 0) | (st.italic ? 2 : 0)
           if (f !== font) ctx.font = this.fonts[(font = f)]
           const text = tag === 1 ? this.cellGraphemes(i) : String.fromCodePoint(cp)
           if (cells === 2) {
-            // CJK/emoji glyphs are usually narrower than two monospace cells;
-            // left-aligned they read as "한 글". Center them in their slot.
+            // Center in the two-cell slot. CJK uses the scaled face, centered
+            // vertically since it is taller than the primary font.
             ctx.textAlign = 'center'
-            ctx.fillText(text, (i + 1) * cw, base)
+            if (isCJK(cp)) {
+              ctx.font = this.wideFonts[f]
+              font = -1
+              ctx.textBaseline = 'middle'
+              ctx.fillText(text, (i + 1) * cw, top + ch / 2)
+              ctx.textBaseline = 'alphabetic'
+            } else {
+              ctx.fillText(text, (i + 1) * cw, base)
+            }
             ctx.textAlign = 'left'
           } else {
             ctx.fillText(text, i * cw, base)
@@ -1314,6 +1408,20 @@ export class GhosttyTerm {
       ctx.stroke()
       return true
     }
+    const dash = DASHED[cp]
+    if (dash) {
+      // n dashes per cell, each half a segment and centered in it, so the
+      // gaps stay even across neighbouring cells (claude's ╌ divider).
+      const [n, horiz, isHeavy] = dash
+      const t = isHeavy ? heavy : light
+      const seg = (horiz ? w : h) / n
+      for (let k = 0; k < n; k++) {
+        const s = (horiz ? x0 : y0) + k * seg + seg / 4
+        if (horiz) ctx.fillRect(s, cy - t / 2, seg / 2, t)
+        else ctx.fillRect(cx - t / 2, s, t, seg / 2)
+      }
+      return true
+    }
     const b = BOX[cp]
     if (!b) return false
     const [up, right, down, left] = b
@@ -1377,9 +1485,10 @@ export class GhosttyTerm {
   }
 
   private drawCursor(ctx: CanvasRenderingContext2D, col: number, row: number, style: number): void {
-    const cw = this.cellW
     const ch = this.cellH
-    const x0 = col * cw
+    // Same device-pixel snap as the cell backgrounds in drawRow.
+    const x0 = Math.round(col * this.cellW * this.dpr) / this.dpr
+    const cw = Math.round((col + 1) * this.cellW * this.dpr) / this.dpr - x0
     const y0 = row * ch
     const lw = Math.max(1, Math.round(this.dpr)) / this.dpr
     ctx.save()
@@ -1392,23 +1501,45 @@ export class GhosttyTerm {
       case CURSOR_STYLE.UNDERLINE:
         ctx.fillRect(x0, y0 + ch - Math.max(lw, 2 / this.dpr), cw, Math.max(lw, 2 / this.dpr))
         break
-      case CURSOR_STYLE.BLOCK_HOLLOW:
+      case CURSOR_STYLE.BLOCK_HOLLOW: {
+        const bw = this.charAt(col) && this.refWide ? this.wideCursorW(col, x0) : cw
         ctx.lineWidth = lw
-        ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, cw - lw, ch - lw)
+        ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, bw - lw, ch - lw)
         break
+      }
       default: {
-        ctx.fillRect(x0, y0, cw, ch)
-        // Redraw the character under the block in the accent color.
+        // Redraw the character under the block in the accent color, with the
+        // same layout drawRow uses: wide glyphs get a two-cell block, centered,
+        // and CJK the scaled face.
         const ch0 = this.charAt(col)
+        const wide = !!ch0 && this.refWide
+        ctx.fillRect(x0, y0, wide ? this.wideCursorW(col, x0) : cw, ch)
         if (ch0) {
           ctx.fillStyle = this.opts.theme.cursorAccent || this.defBg
-          ctx.font = this.fonts[0]
-          ctx.textBaseline = 'alphabetic'
-          ctx.fillText(ch0, x0, y0 + this.baseline)
+          if (wide) {
+            ctx.textAlign = 'center'
+            if (isCJK(ch0.codePointAt(0) ?? 0)) {
+              ctx.font = this.wideFonts[0]
+              ctx.textBaseline = 'middle'
+              ctx.fillText(ch0, (col + 1) * this.cellW, y0 + ch / 2)
+            } else {
+              ctx.font = this.fonts[0]
+              ctx.textBaseline = 'alphabetic'
+              ctx.fillText(ch0, (col + 1) * this.cellW, y0 + this.baseline)
+            }
+          } else {
+            ctx.font = this.fonts[0]
+            ctx.textBaseline = 'alphabetic'
+            ctx.fillText(ch0, x0, y0 + this.baseline)
+          }
         }
       }
     }
     ctx.restore()
+  }
+
+  private wideCursorW(col: number, x0: number): number {
+    return Math.round((col + 2) * this.cellW * this.dpr) / this.dpr - x0
   }
 
   // The character at a column of the cursor's row, read from the grid.
@@ -1427,6 +1558,7 @@ export class GhosttyTerm {
   private refChar(point: number): string {
     const vt = this.vt
     const x = vt.x
+    this.refWide = false
     const r = this.mem + S.REF
     vt.dv().setUint32(r, SIZEOF.GRID_REF, true)
     if (x.ghostty_terminal_grid_ref(this.t, point, r) !== RESULT.SUCCESS) return ''
@@ -1436,6 +1568,7 @@ export class GhosttyTerm {
     const hi = d.getUint32(this.mem + S.CELL + 4, true)
     const tag = lo & 3
     if (tag >= 2 || ((hi >>> 10) & 3) >= 2) return ''
+    this.refWide = ((hi >>> 10) & 3) === 1
     const cp = (lo >>> 2) & 0xffffff
     if (!cp) return ''
     if (tag === 1) {
@@ -1708,7 +1841,7 @@ export class GhosttyTerm {
     this.forceCursorRow()
   }
 
-  private paste(text: string): void {
+  paste(text: string): void {
     const vt = this.vt
     const x = vt.x
     const [ptr, len] = vt.string(text.replace(/\r?\n/g, '\r'))
@@ -2022,9 +2155,9 @@ export class GhosttyTerm {
     if (!lines) return
     this.wheelAcc -= lines
     if (this.tracking(e)) {
-      const p = this.local(e)
-      const btn = lines < 0 ? MOUSE_BUTTON.FOUR : MOUSE_BUTTON.FIVE
-      for (let i = 0; i < Math.abs(lines); i++) this.sendMouse(MOUSE_ACTION.PRESS, btn, p, this.mods(e))
+      // One report per wheel event like xterm.js: apps (vim, claude) already
+      // scroll several lines per report, so a notch must not send five.
+      this.sendMouse(MOUSE_ACTION.PRESS, lines < 0 ? MOUSE_BUTTON.FOUR : MOUSE_BUTTON.FIVE, this.local(e), this.mods(e))
       return
     }
     if (this.flag(TERM_DATA.ACTIVE_SCREEN)) {
@@ -2036,6 +2169,19 @@ export class GhosttyTerm {
     }
     this.scrollViewport(SCROLL.DELTA, lines)
   }
+}
+
+// Hangul, CJK ideographs/kana/punctuation and fullwidth forms: the glyphs the
+// scaled CJK face draws. Emoji and other wide symbols keep the primary size.
+function isCJK(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x11ff) ||
+    (cp >= 0x2e80 && cp <= 0x9fff) ||
+    (cp >= 0xa960 && cp <= 0xa97f) ||
+    (cp >= 0xac00 && cp <= 0xd7ff) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xff00 && cp <= 0xffef)
+  )
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

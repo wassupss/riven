@@ -94,7 +94,7 @@ async function main() {
   // Count mounted heavy components across ALL (hidden) workspaces — the real cost.
   const mounted = await cdp.evalJs(`JSON.stringify({
     domNodes: document.querySelectorAll('*').length,
-    xterm: document.querySelectorAll('.xterm').length,
+    terminals: document.querySelectorAll('.ghostty-term').length,
     monaco: document.querySelectorAll('.monaco-editor').length,
     dockviews: document.querySelectorAll('.dv-dockview').length,
     canvases: document.querySelectorAll('canvas').length,

@@ -1,7 +1,7 @@
 // Terminal smoke test against a running dev app (electron-vite dev started with
 // `-- --remote-debugging-port=9333`). Drives the real renderer over CDP: opens a
-// terminal, types a command, and asserts the echo lands in the xterm buffer —
-// the whole path pty → main model → IPC → renderer scheduler → xterm. Also
+// terminal, types a command, and asserts the echo lands in the terminal buffer,
+// the whole path pty → main model → IPC → renderer scheduler → GhosttyTerm. Also
 // measures keystroke echo latency, the number the user actually feels.
 //
 //   npm run dev -- -- --remote-debugging-port=9333   (in one shell)

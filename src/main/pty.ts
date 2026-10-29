@@ -28,7 +28,7 @@ const pexec = promisify(execFile)
 // lifetime (they survive reloads; they die only on explicit kill).
 //
 // The PTYs themselves, and the terminal MODEL, live in a separate
-// `utilityProcess` worker (src/main/terminal/worker-entry.ts). A headless xterm
+// `utilityProcess` worker (src/main/terminal/worker-entry.ts). A libghostty-vt model
 // there ingests every byte the PTY produces, so the authoritative screen +
 // scrollback exist whether or not a renderer is looking. That is what makes
 // hidden panes free (their bytes are simply not delivered), reattach exact (the
@@ -507,7 +507,7 @@ export function registerPtyHandlers(): void {
       const key = opts.sessionKey
       const existing = sessions.get(key)
       if (existing) {
-        // Reattach after a reload / remount: the renderer's xterm is fresh, so
+        // Reattach after a reload / remount: the renderer's terminal is fresh, so
         // the next time it says it is visible it gets the model. Telling the
         // worker it is hidden is what arms that snapshot.
         existing.sender = event.sender
@@ -646,7 +646,7 @@ export function registerPtyHandlers(): void {
     worker.post({ type: 'ack', key, epoch, processed })
   })
 
-  // The renderer says whether a live, sized xterm wants this terminal's bytes.
+  // The renderer says whether a live, sized terminal wants this terminal's bytes.
   // Hidden: the worker stops delivering and stops counting — a hidden pane must
   // never be the reason a shell blocks on write, and its model keeps ingesting.
   // Visible: the worker restores from the model if anything was dropped.
