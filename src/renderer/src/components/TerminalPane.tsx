@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal, type ITheme } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { Unicode11Addon } from '@xterm/addon-unicode11'
-import { WebglAddon } from '@xterm/addon-webgl'
-import { SearchAddon } from '@xterm/addon-search'
-import { GhosttyTerm } from '../lib/ghostty/GhosttyTerm'
-import type { Vt } from '../lib/ghostty/vt'
+import { GhosttyTerm, type GhosttyTheme } from '../lib/ghostty/GhosttyTerm'
+import type { Vt } from '../../../shared/ghostty/vt'
 import { loadGhostty } from '../lib/ghosttyEngine'
 import { ChevronUp, ChevronDown, X, Loader2 } from 'lucide-react'
 import {
@@ -21,7 +16,7 @@ import { useSettings, getSettings } from '../state/settings'
 // The terminal palette derives from the active app theme (CSS vars) so the
 // terminal is part of the same visual system and recolors on theme switch —
 // instead of a stale saved color floating on a mismatched panel background.
-function terminalTheme(): ITheme {
+function terminalTheme(): GhosttyTheme {
   const s = getComputedStyle(document.documentElement)
   const v = (n: string, f: string): string => s.getPropertyValue(n).trim() || f
   const bg = v('--bg', '#101113')
@@ -68,12 +63,12 @@ export interface TerminalPaneProps {
   onFocus?: () => void
 }
 
-// Delay before a hidden+idle terminal releases its xterm renderer.
+// Delay before a hidden+idle terminal releases its renderer.
 const VIRTUALIZE_DELAY_MS = 4000
 
 // Cooperative write scheduler budget. Writing every PTY chunk straight into
-// xterm lets a flood (build logs, `yes`, a runaway agent) pin the renderer
-// thread: xterm's parser + DOM work share it with input and paint. Chunks are
+// the terminal lets a flood (build logs, `yes`, a runaway agent) pin the
+// renderer thread: parsing and painting share it with input. Chunks are
 // drained in slices bounded by time and yield between slices via
 // MessageChannel — a posted macrotask isn't clamped like a nested setTimeout(0)
 // (~4ms) yet still lets input/paint run first.
@@ -98,7 +93,7 @@ export default function TerminalPane({
   onReadyRef.current = onReady
   const onFocusRef = useRef(onFocus)
   onFocusRef.current = onFocus
-  const searchRef = useRef<SearchAddon | null>(null)
+  const searchRef = useRef<Pick<GhosttyTerm, 'findNext' | 'findPrevious' | 'clearDecorations'> | null>(null)
   const refocusRef = useRef<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   // Until main hands back this session's model, the pane is an empty rectangle.
@@ -111,104 +106,50 @@ export default function TerminalPane({
     const container = containerRef.current
     if (!container) return
 
-    // --- xterm lifecycle (creatable/disposable independently of the PTY) -------
+    // --- terminal lifecycle (creatable/disposable independently of the PTY) ----
     // The PTY and the authoritative screen live in main and survive; only the
-    // renderer-side xterm (WebGL context + scrollback) is virtualized. Returns a
+    // renderer-side terminal (canvas + scrollback) is virtualized. Returns a
     // teardown that disposes the renderer but leaves the PTY running. Remounting
     // asks main for a snapshot of its model, so nothing here is ever persisted.
+    // The scroll position lives in the wasm terminal, so a display:none hide
+    // cannot lose it.
     let teardown: (() => void) | null = null
-    // Scroll preservation across workspace switches. Hiding a workspace with
-    // display:none zeroes the .xterm-viewport scrollTop, so returning strands the
-    // terminal at the top of its scrollback. Remember the scroll on hide and
-    // restore it on show (only for a still-mounted term; a torn-down/remounted one
-    // restores via the snapshot scrollToBottom).
-    let liveTerm: Terminal | null = null
-    let hiddenTerm: Terminal | null = null
-    let savedViewportY: number | null = null
-    let savedAtBottom = false
+    let liveTerm: GhosttyTerm | null = null
 
-    // Experimental ghostty engine (settings.terminalEngine). Chosen when the pane
-    // mounts; a pane keeps its engine until it is closed. GhosttyTerm mirrors the
-    // subset of xterm's API this pane uses, so it is driven through the same
-    // `Terminal` type and every difference is branched on `ghostty` below.
+    // The libghostty-vt wasm, loaded once per window before the first mount.
     let ghostty: Vt | null = null
 
-    const mountTerminal = (): (() => void) => {
+    const mountTerminal = (vt: Vt): (() => void) => {
       const cfg = getSettings()
-      const term: Terminal = ghostty
-        ? (new GhosttyTerm(ghostty, {
-            fontFamily: cfg.terminalFontFamily,
-            fontSize: cfg.terminalFontSize,
-            cursorBlink: cfg.terminalCursorBlink,
-            cursorStyle: cfg.terminalCursorStyle,
-            scrollback: Math.max(200, cfg.terminalScrollback),
-            theme: terminalTheme()
-          }) as unknown as Terminal)
-        : new Terminal({
+      const term = new GhosttyTerm(vt, {
         fontFamily: cfg.terminalFontFamily,
         fontSize: cfg.terminalFontSize,
-        // Regular/bold (400/700), NOT the old 300/500: the system Korean fallback
-        // (Apple SD Gothic Neo) has no 300 weight, so forcing 300 made Korean
-        // render at 400 and look much bolder than the light Latin — the mismatch.
-        // Matching both at 400 mirrors Ghostty/cmux.
-        fontWeight: '400',
-        fontWeightBold: '700',
-        // No extra letter spacing (Ghostty adds none); a touch of line height.
-        letterSpacing: 0,
-        lineHeight: 1.25,
         cursorBlink: cfg.terminalCursorBlink,
         cursorStyle: cfg.terminalCursorStyle,
-        cursorInactiveStyle: 'outline',
-        allowProposedApi: true,
         scrollback: Math.max(200, cfg.terminalScrollback),
-        // minimumContrastRatio > 1 makes xterm recompute a contrast-adjusted color
-        // for every cell on every render (documented CPU/memory cost) — it was the
-        // cause of the lag on a busy prompt redraw. Ghostty does no runtime contrast
-        // adjustment either, so 1 (disabled) matches native and renders far faster.
-        minimumContrastRatio: 1,
-        drawBoldTextInBrightColors: true,
-        macOptionClickForcesSelection: true,
-        scrollSensitivity: 1.15,
-        fastScrollSensitivity: 5,
         theme: terminalTheme()
-          })
+      })
       liveTerm = term
       // Dev/e2e only: the smoke harness (scripts/e2e-terminal-smoke.mjs) reads the
-      // xterm buffer through here, since the WebGL renderer leaves no text in the DOM.
+      // terminal through here, since the canvas leaves no text in the DOM.
       if (import.meta.env.DEV) {
-        const w = window as unknown as { __rivenTerms?: Record<string, Terminal> }
+        const w = window as unknown as { __rivenTerms?: Record<string, GhosttyTerm> }
         ;(w.__rivenTerms ??= {})[sessionKey] = term
       }
-      let fit: { proposeDimensions(): { cols: number; rows: number } | undefined }
-      if (ghostty) {
-        // No unicode11 (Ghostty does its own widths), WebGL (it draws to its own
-        // canvas) or search addon (none exists yet). It sizes itself.
-        fit = term as unknown as GhosttyTerm
-      } else {
-        const xfit = new FitAddon()
-        const unicode11 = new Unicode11Addon()
-        const search = new SearchAddon()
-        term.loadAddon(xfit)
-        term.loadAddon(unicode11)
-        term.loadAddon(search)
-        searchRef.current = search
-        term.unicode.activeVersion = '11'
-        fit = xfit
-      }
+      searchRef.current = term
       refocusRef.current = () => term.focus()
 
-      // Defer term.open() until the pane actually has size. Opening into a 0-size
-      // container (a stacked/background dock panel, or before dockview lays it out)
-      // makes xterm's renderer schedule a paint with no measured dimensions and
-      // throw in its viewport sync. We open on the first non-zero size instead;
-      // until then main holds the bytes (see reportVisible).
+      // Defer term.open() until the pane actually has size. A 0-size container (a
+      // stacked/background dock panel, or before dockview lays it out) has no
+      // grid to measure. We open on the first non-zero size instead; until then
+      // main holds the bytes (see reportVisible).
       let opened = false
       // Focus a freshly opened pane. Not a plain term.focus(): dockview keeps a
       // new panel's overlay at visibility:hidden for a frame or two after it is
       // laid out, and focus given to a hidden element is dropped on the spot.
-// So keep trying each frame until the caret is really in here, and give
+      // So keep trying each frame until the caret is really in here, and give
       // up if the user has put it somewhere else in the meantime. The request is
-      // only cleared once settled: if this xterm is torn down before then, the
+      // only cleared once settled: if this terminal is torn down before then, the
       // remounted one picks the request up again.
       let focusRaf = 0
       const claimFocus = (): void => {
@@ -224,8 +165,7 @@ export default function TerminalPane({
         clearPaneFocusRequest(paneId)
       }
       // Returns true only on the call that actually opens, so the caller can defer
-      // the first resize by a frame — xterm measures its render dimensions on the
-      // first paint (async), and resizing before that throws in syncScrollArea.
+      // the first resize by a frame, after the opening paint has measured the cell.
       const ensureOpened = (): boolean => {
         if (opened || !container.isConnected || !container.clientWidth || !container.clientHeight)
           return false
@@ -233,7 +173,7 @@ export default function TerminalPane({
         term.open(container)
         claimFocus()
         // Expose the terminal font to CSS so the IME composition overlay (a separate
-        // DOM element xterm doesn't font-style) matches the grid — otherwise Korean
+        // DOM element outside the canvas) matches the grid, otherwise Korean
         // shows a fallback font while composing and only snaps to D2Coding on commit.
         container.style.setProperty('--term-font', cfg.terminalFontFamily)
         container.style.setProperty('--term-font-size', `${cfg.terminalFontSize}px`)
@@ -248,15 +188,13 @@ export default function TerminalPane({
       }
 
       // ⌘F opens the in-terminal find box (don't forward the key to the shell).
-      // The ghostty engine has no search yet, so it gets none.
-      if (!ghostty)
-        term.attachCustomKeyEventHandler((e) => {
-          if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-            setSearchOpen(true)
-            return false
-          }
-          return true
-        })
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+          setSearchOpen(true)
+          return false
+        }
+        return true
+      })
 
       let ptyId: string | null = null
       let torn = false
@@ -287,57 +225,6 @@ export default function TerminalPane({
         disposers.push(() => container.removeEventListener('contextmenu', paste))
       }
 
-      let webgl: WebglAddon | null = null
-      let webglTried = false
-      const tryAttachWebgl = (): void => {
-        if (webglTried || torn || ghostty) return
-        // DIAGNOSTIC: skip WebGL to isolate whether the "blank rows on fast scroll"
-        // artifact is the WebGL renderer. Toggle in devtools:
-        //   localStorage.setItem('riven.noWebgl','1')  → DOM renderer, then ⌘R
-        //   localStorage.removeItem('riven.noWebgl')   → WebGL again, then ⌘R
-        if (localStorage.getItem('riven.noWebgl') === '1') {
-          webglTried = true
-          return
-        }
-        if (!container.clientWidth || !container.clientHeight) return
-        webglTried = true
-        try {
-          const addon = new WebglAddon()
-          addon.onContextLoss(() => {
-            addon.dispose()
-            webgl = null
-            if (import.meta.env.DEV) {
-              const w = window as unknown as { __rivenTermWebgl?: Record<string, boolean> }
-              ;(w.__rivenTermWebgl ??= {})[sessionKey] = false
-            }
-            // Disposing the WebGL addon reverts xterm to its DOM renderer, but an
-            // idle full-screen TUI (no new output) won't trigger a redraw and would
-            // stay blank. Force a full repaint so the screen comes back without a
-            // ⌘R. We deliberately do NOT re-attach WebGL here (webglTried stays
-            // true): once the GPU context is unstable, the DOM renderer is the
-            // reliable fallback for the rest of the session. The ONE exception is
-            // a wake from sleep — see the system:resumed handler below, where the
-            // cause is known not to be an unstable GPU.
-            try {
-              term.refresh(0, term.rows - 1)
-            } catch {
-              /* term may be mid-dispose */
-            }
-          })
-          term.loadAddon(addon)
-          webgl = addon
-        } catch {
-          webgl = null
-        }
-        // Dev/e2e: which renderer this terminal ended up on. The WebGL fallback
-        // is permanent by design, so a test that cares whether a recovery
-        // re-attached it has no other way to tell.
-        if (import.meta.env.DEV) {
-          const w = window as unknown as { __rivenTermWebgl?: Record<string, boolean> }
-          ;(w.__rivenTermWebgl ??= {})[sessionKey] = webgl !== null
-        }
-      }
-
       // Only a real geometry change reaches the PTY (main drops same-size resizes
       // too). A refit after a font load, a tab switch or a reveal must not make
       // every TUI redraw itself.
@@ -353,7 +240,8 @@ export default function TerminalPane({
 
       // --- the data path --------------------------------------------------------
       // main owns the model. Live chunks arrive as {data, rev, epoch}; a snapshot
-      // as {data, rev, epoch}. `synced` means this xterm reflects the model up to
+      // as {data (libghostty snapshot bytes), rev, epoch}. `synced` means this
+      // terminal reflects the model up to
       // some revision: a fresh spawn is synced from byte zero, a remount/reveal
       // is synced by the first snapshot. Until then live chunks wait, and once the
       // snapshot lands any chunk at or below its revision is already inside it
@@ -421,7 +309,7 @@ export default function TerminalPane({
       const isRenderable = (): boolean =>
         opened && container.isConnected && container.clientWidth > 0 && container.clientHeight > 0
 
-      // Tell main whether this xterm wants bytes. Going hidden discards what is
+      // Tell main whether this terminal wants bytes. Going hidden discards what is
       // queued: main restores from the model on reveal, so nothing is lost and
       // a hidden pane never stalls its shell.
       let reportedVisible = false
@@ -439,18 +327,16 @@ export default function TerminalPane({
         window.api.pty.visible(ptyId, v)
       }
 
-      const applySnapshot = (snap: { data: string; rev: number; epoch: number }): void => {
+      const applySnapshot = (snap: { data: Uint8Array; rev: number; epoch: number }): void => {
         generation++
         epoch = snap.epoch
         processedTotal = 0
         queue.length = 0
         queuedChars = 0
-        const gen = generation
         try {
-          term.reset()
-          term.write(snap.data, () => {
-            if (gen === generation) term.scrollToBottom()
-          })
+          // The snapshot IS the model's terminal (both screens, scrollback,
+          // modes), decoded in place. An empty or undecodable one starts clean.
+          if (!term.restore(snap.data)) term.reset()
         } catch {
           /* not measured yet — the next reveal asks again */
         }
@@ -467,9 +353,9 @@ export default function TerminalPane({
           reportVisible()
           return
         }
-        // Now sized — open if we deferred it. On the opening frame, let xterm paint
-        // once (so its render dimensions exist) before resizing, else syncScrollArea
-        // throws. The rAF/timers/ResizeObserver below re-run this to finish the fit.
+        // Now sized, so open if we deferred it. On the opening frame, let it paint
+        // once (so the cell is measured) before resizing. The rAF/timers/
+        // ResizeObserver below re-run this to finish the fit.
         if (ensureOpened()) {
           requestAnimationFrame(safeFit)
           return
@@ -477,7 +363,7 @@ export default function TerminalPane({
         if (!opened) return
         let dims: { cols: number; rows: number } | undefined
         try {
-          dims = fit.proposeDimensions()
+          dims = term.proposeDimensions()
         } catch {
           return
         }
@@ -492,11 +378,10 @@ export default function TerminalPane({
           }
         }
         syncPtySize()
-        tryAttachWebgl()
         reportVisible()
       }
 
-      // xterm measures its cell when it opens and otherwise almost never again.
+      // The cell is measured when the terminal opens and otherwise almost never again.
       // The bundled faces (JetBrains Mono Web, D2Coding Web) are font-display:
       // swap, so a terminal that opens before they load is sized for the
       // fallback: at 12px D2Coding measures 6px a cell where JetBrains Mono
@@ -538,18 +423,11 @@ export default function TerminalPane({
       document.fonts?.addEventListener('loadingdone', onFontsLoaded)
       disposers.push(() => document.fonts?.removeEventListener('loadingdone', onFontsLoaded))
 
-      // Waking the machine can take the GPU context with it, which would
-      // otherwise strand this terminal on the DOM renderer for good. That policy
-      // exists to avoid thrashing an unstable context; a sleep is not that. Allow
-      // exactly one re-attach per wake, and repaint either way so an idle
+      // Waking the machine can drop the canvas backing store. Repaint so an idle
       // full-screen TUI comes back without a keystroke.
       disposers.push(
         window.api.onSystemResumed(() => {
           if (torn) return
-          if (!webgl) {
-            webglTried = false
-            tryAttachWebgl()
-          }
           try {
             term.refresh(0, term.rows - 1)
           } catch {
@@ -581,7 +459,7 @@ export default function TerminalPane({
         // A brand-new terminal has nothing to restore: it is ready as soon as
         // main has spawned it.
         if (!existed) setRestoring(false)
-        // A fresh PTY has produced nothing yet, so this xterm IS in sync with the
+        // A fresh PTY has produced nothing yet, so this terminal IS in sync with the
         // model. A reattach waits for main's snapshot.
         synced = !existed
         onReadyRef.current?.(id)
@@ -615,7 +493,7 @@ export default function TerminalPane({
           const s = getSettings()
           term.options.fontFamily = s.terminalFontFamily
           term.options.fontSize = s.terminalFontSize
-          // Everything xterm can change in place, changed in place: a setting
+          // Everything that can change in place, changed in place: a setting
           // that only applies to terminals opened afterwards reads as one that
           // does not work.
           term.options.cursorStyle = s.terminalCursorStyle
@@ -672,7 +550,10 @@ export default function TerminalPane({
         searchRef.current = null
         refocusRef.current = null
         if (liveTerm === term) liveTerm = null
-        webgl?.dispose()
+        if (import.meta.env.DEV) {
+          const w = window as unknown as { __rivenTerms?: Record<string, GhosttyTerm> }
+          if (w.__rivenTerms?.[sessionKey] === term) delete w.__rivenTerms[sessionKey]
+        }
         term.dispose()
       }
     }
@@ -683,32 +564,37 @@ export default function TerminalPane({
     let busy = false
     let hideTimer: ReturnType<typeof setTimeout> | null = null
 
-    // The ghostty engine needs its wasm before the first mount. Until it has
-    // loaded nothing mounts; if it can't load, the pane falls back to xterm
-    // rather than staying blank.
-    let engineReady = getSettings().terminalEngine !== 'ghostty'
+    // The engine needs its wasm before the first mount (cached per window, so
+    // only the first pane waits). Until it has loaded nothing mounts; if it
+    // can't load at all, say so in the pane instead of staying blank.
     let unmounted = false
-    if (!engineReady)
-      loadGhostty()
-        .then((g) => (ghostty = g))
-        .catch((e) => console.warn('[terminal] ghostty engine failed to load, using xterm', e))
-        .finally(() => {
-          engineReady = true
-          if (!unmounted) reconcile()
-        })
+    loadGhostty().then(
+      (g) => {
+        ghostty = g
+        if (!unmounted) reconcile()
+      },
+      (e) => {
+        console.error('[terminal] ghostty engine failed to load', e)
+        if (unmounted) return
+        const msg = document.createElement('div')
+        msg.className = 'terminal-engine-error'
+        msg.textContent = t('term.engineFailed', { err: e instanceof Error ? e.message : String(e) })
+        container.appendChild(msg)
+      }
+    )
 
     const reconcile = (): void => {
-      if (!engineReady) return
+      const vt = ghostty
+      if (!vt) return
       // A hidden-but-retained pane (agent still working) must not keep blinking its
-      // cursor: the blink timer repaints the cursor row through the WebGL renderer
-      // ~2x/sec forever, which is pure GPU + renderer CPU nobody can see. Park it
-      // while hidden, restore on show.
+      // cursor: the blink timer repaints the cursor row ~2x/sec forever, which is
+      // renderer CPU nobody can see. Park it while hidden, restore on show.
       if (liveTerm) {
         const wantBlink = visible
         if (liveTerm.options.cursorBlink !== wantBlink) liveTerm.options.cursorBlink = wantBlink
       }
       // Keep the renderer alive while visible OR while an agent is working (its
-      // output stays in main's model either way; keeping xterm avoids a full
+      // output stays in main's model either way; keeping the renderer avoids a full
       // snapshot repaint on every quick tab flip). Release it only when hidden
       // AND idle, after a short grace period.
       const shouldMount = visible || agent || busy
@@ -717,7 +603,7 @@ export default function TerminalPane({
           clearTimeout(hideTimer)
           hideTimer = null
         }
-        if (!teardown) teardown = mountTerminal()
+        if (!teardown) teardown = mountTerminal(vt)
       } else {
         if (hideTimer || !teardown) return
         hideTimer = setTimeout(() => {
@@ -733,29 +619,6 @@ export default function TerminalPane({
     const io = new IntersectionObserver((entries) => {
       const e = entries[entries.length - 1]
       const nowVisible = e.isIntersecting && e.intersectionRatio > 0
-      if (nowVisible !== visible) {
-        // The ghostty engine draws to a canvas whose scroll position lives in
-        // the wasm terminal, so display:none can't lose it.
-        if (ghostty) {
-          // nothing to save or restore
-        } else if (!nowVisible && liveTerm) {
-          // About to be hidden (display:none) → capture scroll before the browser
-          // zeroes the viewport scrollTop.
-          const buf = liveTerm.buffer.active
-          hiddenTerm = liveTerm
-          savedViewportY = buf.viewportY
-          savedAtBottom = buf.viewportY >= buf.baseY
-        } else if (nowVisible && liveTerm && liveTerm === hiddenTerm && savedViewportY != null) {
-          // Shown again without a teardown → restore the pre-hide scroll (a
-          // remounted term instead restores via the snapshot scrollToBottom).
-          const term = liveTerm
-          const y = savedViewportY
-          const bottom = savedAtBottom
-          requestAnimationFrame(() => (bottom ? term.scrollToBottom() : term.scrollToLine(y)))
-          hiddenTerm = null
-          savedViewportY = null
-        }
-      }
       visible = nowVisible
       reconcile()
     })

@@ -84,7 +84,7 @@ export default function App(): JSX.Element {
   // real size. Already-open terminals still persist across switches.
   // Keep only the N most-recently-active workspaces mounted. Previously EVERY
   // visited workspace stayed mounted forever (hidden), so its panels — chats,
-  // xterm terminals, Monaco editors — all stayed live. With several heavy
+  // terminals, Monaco editors: all stayed live. With several heavy
   // workspaces this ballooned the renderer heap (measured 2.5GB) and thrashed the
   // GC, making the whole app lag on every action. An LRU bounds the live set.
   //

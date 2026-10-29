@@ -83,7 +83,7 @@ test.describe('settings reach the app', () => {
   test('the terminal font size set here reaches a terminal already open', async () => {
     const r = await launchRiven({ files: { 'README.md': '# s\n' } })
     await openPanel(r.page, '터미널')
-    await expect(r.page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 })
+    await expect(r.page.locator('.ghostty-term').first()).toBeVisible({ timeout: 20_000 })
     await settings(r.page, '터미널')
     const row = r.page.locator('.set-row').filter({ hasText: '글꼴 크기' }).first()
     await row.locator('input[type="number"], input[type="range"]').first().fill('17')
@@ -91,7 +91,7 @@ test.describe('settings reach the app', () => {
     await expect
       .poll(
         () =>
-          r.page.locator('.terminal-pane, .xterm').first().evaluate((el) =>
+          r.page.locator('.terminal-pane').first().evaluate((el) =>
             getComputedStyle(el).getPropertyValue('--term-font-size').trim()
           ),
         { timeout: 10_000 }

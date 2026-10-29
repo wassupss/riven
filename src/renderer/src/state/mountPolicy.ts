@@ -2,7 +2,7 @@
 // dockview or a renderer — App.tsx only supplies the inputs.
 //
 // Bounding the live set is what keeps the renderer heap flat (every mounted
-// workspace holds its chats, xterms and Monaco models). But unmounting costs the
+// workspace holds its chats, terminals and Monaco models). But unmounting costs the
 // panel's React state, and for a chat mid-turn that state is not recoverable:
 // main keeps streaming, while the on-disk CLI transcript only gains the answer
 // once the turn ENDS. So busy workspaces are held past the cap and released as

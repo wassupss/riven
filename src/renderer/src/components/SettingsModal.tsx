@@ -493,12 +493,6 @@ export default function SettingsModal(): JSX.Element | null {
                   checked={settings.terminalRightClickPaste}
                   onChange={(v) => upd('terminalRightClickPaste', v)}
                 />
-                <ToggleRow
-                  title={t('settings.termGhostty')}
-                  desc={t('settings.termGhosttyDesc')}
-                  checked={settings.terminalEngine === 'ghostty'}
-                  onChange={(v) => upd('terminalEngine', v ? 'ghostty' : 'xterm')}
-                />
                 <Row title={t('settings.termColors')}>
                   <label className="ui-colorwell" title={t('settings.termBg')}>
                     <input

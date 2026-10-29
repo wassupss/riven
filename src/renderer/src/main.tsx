@@ -6,7 +6,6 @@ import { initHighlighting } from './editor/highlight'
 import { initOutputCapture } from './state/outputLog'
 import { installDialogRouting } from './lib/hostWindow'
 import './styles.css'
-import '@xterm/xterm/css/xterm.css'
 
 // VSCode-grade syntax highlighting (async; colors swap in once ready).
 initHighlighting()

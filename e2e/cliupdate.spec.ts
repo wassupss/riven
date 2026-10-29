@@ -42,7 +42,7 @@ test('a CLI update runs in the background and says how it went', async () => {
   const row = r.page.locator('.set-row').filter({ hasText: 'Claude Code' }).first()
   await expect(row.locator('.cli-chip')).toHaveText('v2.1.280', { timeout: 20_000 })
 
-  const terminalsBefore = await r.page.locator('.xterm').count()
+  const terminalsBefore = await r.page.locator('.ghostty-term').count()
   await row.getByRole('button', { name: '업데이트' }).click()
   await expect(row.getByRole('button', { name: /업데이트 중/ })).toBeDisabled()
 
@@ -50,7 +50,7 @@ test('a CLI update runs in the background and says how it went', async () => {
   await expect(row.locator('.cli-chip')).toHaveText('v2.1.290')
   expect(readFileSync(fake.versionFile, 'utf8').trim()).toBe('2.1.290')
   // No terminal panel was opened to do it.
-  expect(await r.page.locator('.xterm').count()).toBe(terminalsBefore)
+  expect(await r.page.locator('.ghostty-term').count()).toBe(terminalsBefore)
   await r.app.close()
 })
 

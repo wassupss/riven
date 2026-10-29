@@ -121,7 +121,7 @@ export interface Settings {
   // The account the identity above belongs to. Signing in as someone else
   // starts over: another account's phones must not reach this machine.
   remoteOwner: string
-  // Terminal behaviour, all of it things xterm exposes directly.
+  // Terminal behaviour, all of it things the terminal engine exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
   terminalScrollback: number
@@ -129,8 +129,6 @@ export interface Settings {
   terminalCopyOnSelect: boolean
   /** Right-click pastes instead of opening a menu. */
   terminalRightClickPaste: boolean
-  /** Experimental: render terminals with libghostty-vt (our own wasm build, src/renderer/src/lib/ghostty) instead of xterm. New terminals only. */
-  terminalEngine: 'xterm' | 'ghostty'
   // Built-in CLI tools an agent may NOT use without being asked. Empty means
   // the default set, which is what riven has always passed; a name here is
   // dropped from --allowedTools, so the CLI has to ask before using it.
@@ -194,16 +192,15 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalScrollback: 5000,
   terminalCopyOnSelect: false,
   terminalRightClickPaste: false,
-  terminalEngine: 'xterm',
   deniedTools: [],
   confirmCloseBusy: true,
   confirmDeleteSession: true,
-  // JetBrains Mono for Latin (matches Ghostty/cmux — the native terminal look),
-  // with D2Coding picking up Korean glyphs JetBrains Mono lacks. System name first
-  // (instant if installed), then the bundled web copy, so it resolves even with no
-  // system install.
+  // JetBrains Mono for Latin, with the system Korean face (Apple SD Gothic Neo /
+  // Malgun Gothic) for Hangul, which is what Ghostty/cmux fall back to. D2Coding
+  // drew Korean noticeably heavier. System names first (instant if installed),
+  // then the bundled web copies, so it resolves even with no system install.
   terminalFontFamily:
-    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
+    '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -245,7 +242,9 @@ const LEGACY_TERMINAL_FONTS = new Set([
   '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding Web", Menlo, Monaco, monospace',
   // The interim unified Nanum Gothic Coding default — migrate back to the
   // JetBrains Mono + D2Coding (Ghostty/native) look.
-  '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace'
+  '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace',
+  // The JetBrains + D2Coding default, whose Korean looked heavier than cmux.
+  '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace'
 ])
 
 // Values an older build may still hold, read from settings.json at boot or

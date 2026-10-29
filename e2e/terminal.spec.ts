@@ -1,9 +1,16 @@
 import { test, expect } from '@playwright/test'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { launchRiven, openPanel, type Launched } from './app'
 
 // The terminal is the one part of riven that runs through a NATIVE module
 // (node-pty), so it is the one that an Electron upgrade breaks. These drive a
-// real shell: if the ABI is wrong, nothing echoes and this fails loudly.
+// real shell: if the ABI is wrong, nothing runs and this fails loudly.
+//
+// The terminal draws to a canvas, so there is no text in the DOM to read and
+// the built app exposes no dev hook into it. The shell writes what it would
+// have echoed to a file in the workspace instead, which still proves the keys
+// reached a live shell through the pty.
 
 let riven: Launched
 
@@ -15,8 +22,13 @@ test.afterAll(async () => {
   await riven.app.close()
 })
 
+function shellOutput(name: string): string {
+  const file = join(riven.workspace, name)
+  return existsSync(file) ? readFileSync(file, 'utf8').trim() : ''
+}
+
 async function type(page: Launched['page'], text: string): Promise<void> {
-  await page.locator('.xterm-helper-textarea').last().focus()
+  await page.locator('.ghostty-term-input').last().focus()
   await page.keyboard.type(text)
   await page.keyboard.press('Enter')
 }
@@ -24,26 +36,26 @@ async function type(page: Launched['page'], text: string): Promise<void> {
 test('a shell runs and its output comes back', async () => {
   const { page } = riven
   await openPanel(page, '새 터미널')
-  await expect(page.locator('.xterm')).toHaveCount(1)
-  await type(page, 'echo RIVEN_PTY_OK')
-  await expect(page.locator('.xterm-rows').last()).toContainText('RIVEN_PTY_OK', { timeout: 20_000 })
+  await expect(page.locator('.ghostty-term')).toHaveCount(1)
+  await type(page, `echo RIVEN_PTY_OK > '${join(riven.workspace, 'pty-ok.txt')}'`)
+  await expect.poll(() => shellOutput('pty-ok.txt'), { timeout: 20_000 }).toBe('RIVEN_PTY_OK')
 })
 
 test('the shell keeps its own state between commands', async () => {
   const { page } = riven
   await type(page, 'FOO=bar')
-  await type(page, 'echo value:$FOO')
+  await type(page, `echo value:$FOO > '${join(riven.workspace, 'pty-state.txt')}'`)
   // One process, not one per command: the variable survives.
-  await expect(page.locator('.xterm-rows').last()).toContainText('value:bar', { timeout: 20_000 })
+  await expect.poll(() => shellOutput('pty-state.txt'), { timeout: 20_000 }).toBe('value:bar')
 })
 
 test('terminal settings reach a terminal that is already open', async () => {
   const { page } = riven
-  // Asserted on what riven itself renders — the font size it publishes to the
-  // pane for the IME overlay to match — rather than on xterm's private state.
+  // Asserted on what riven itself renders (the font size it publishes to the
+  // pane for the IME overlay to match) rather than on the terminal's private state.
   // A setting that needs a NEW terminal to take effect is a setting that looks
   // broken, and that is the regression worth catching.
-  const before = await page.locator('.term-pane, .xterm').first().evaluate((el) =>
+  const before = await page.locator('.terminal-pane').first().evaluate((el) =>
     getComputedStyle(el.closest('[style*="--term-font-size"]') ?? el).getPropertyValue('--term-font-size').trim()
   )
 
@@ -56,7 +68,7 @@ test('terminal settings reach a terminal that is already open', async () => {
 
   await expect
     .poll(async () =>
-      page.locator('.term-pane, .xterm').first().evaluate((el) =>
+      page.locator('.terminal-pane').first().evaluate((el) =>
         getComputedStyle(el.closest('[style*="--term-font-size"]') ?? el).getPropertyValue('--term-font-size').trim()
       )
     )
