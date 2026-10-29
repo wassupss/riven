@@ -438,6 +438,14 @@ export default function TerminalPane({
 
       safeFit()
 
+      // Keys typed before main has spawned the PTY are held, not dropped: a
+      // command typed the moment the pane appears should still run.
+      const earlyInput: string[] = []
+      term.onData((data) => {
+        if (ptyId) window.api.pty.write(ptyId, data)
+        else earlyInput.push(data)
+      })
+
       ;(async () => {
         const { id, existed, error } = await window.api.pty.open({
           sessionKey,
@@ -483,7 +491,7 @@ export default function TerminalPane({
         disposers.push(
           window.api.pty.onExit(id, () => term.write('\r\n\x1b[90m[process exited]\x1b[0m\r\n'))
         )
-        term.onData((data) => window.api.pty.write(id, data))
+        if (earlyInput.length) window.api.pty.write(id, earlyInput.splice(0).join(''))
         safeFit()
         if (existed) setTimeout(safeFit, 60)
       })()

@@ -43,7 +43,11 @@ test('a schedule is created from the rail, without opening a panel', async () =>
   // Six rules, chosen as chips — the form's whole point.
   await expect(form.locator('.sf-chip')).toHaveCount(6)
   await form.getByRole('button', { name: '평일' }).click()
-  await form.locator('.sf-time').fill('08:30')
+  // 오전/오후 · 시 · 분, three selects (TimeField).
+  const time = form.locator('.tf select')
+  await time.nth(0).selectOption('am')
+  await time.nth(1).selectOption('8')
+  await time.nth(2).selectOption('30')
   await expect(form.locator('.sf-preview')).toContainText('평일 08:30')
 
   await form.getByRole('button', { name: '저장' }).click()
@@ -68,8 +72,12 @@ test('an existing schedule is edited, not rebuilt', async () => {
   const form = page.locator('.sched-formwrap .sf')
   // Prefilled: editing means changing what is there, not typing it again.
   await expect(form.locator('.sf-prompt')).toHaveValue('어제 바뀐 것 요약해줘')
-  await expect(form.locator('.sf-time')).toHaveValue('08:30')
-  await form.locator('.sf-time').fill('07:15')
+  const time = form.locator('.tf select')
+  await expect(time.nth(0)).toHaveValue('am')
+  await expect(time.nth(1)).toHaveValue('8')
+  await expect(time.nth(2)).toHaveValue('30')
+  await time.nth(1).selectOption('7')
+  await time.nth(2).selectOption('15')
   await form.getByRole('button', { name: '수정 저장' }).click()
 
   await expect(page.locator('.sched-item')).toContainText('평일 07:15')
