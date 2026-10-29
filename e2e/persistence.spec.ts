@@ -26,7 +26,11 @@ test('layout, schedules and settings all come back', async () => {
   const form = page.locator('.sched-menu .sf')
   await form.locator('.sf-prompt').fill('재시작 후에도 남아야 함')
   await form.getByRole('button', { name: '매일' }).click()
-  await form.locator('.sf-time').fill('06:45')
+  // 오전/오후 · 시 · 분, three selects (TimeField).
+  const time = form.locator('.tf select')
+  await time.nth(0).selectOption('am')
+  await time.nth(1).selectOption('6')
+  await time.nth(2).selectOption('45')
   await form.getByRole('button', { name: '저장' }).click()
   await expect(page.locator('.sched-menu')).toHaveCount(0)
 
