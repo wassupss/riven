@@ -198,12 +198,12 @@ export const DEFAULT_SETTINGS: Settings = {
   deniedTools: [],
   confirmCloseBusy: true,
   confirmDeleteSession: true,
-  // JetBrains Mono for Latin (matches Ghostty/cmux — the native terminal look),
-  // with D2Coding picking up Korean glyphs JetBrains Mono lacks. System name first
-  // (instant if installed), then the bundled web copy, so it resolves even with no
-  // system install.
+  // JetBrains Mono for Latin, with the system Korean face (Apple SD Gothic Neo /
+  // Malgun Gothic) for Hangul, which is what Ghostty/cmux fall back to. D2Coding
+  // drew Korean noticeably heavier. System names first (instant if installed),
+  // then the bundled web copies, so it resolves even with no system install.
   terminalFontFamily:
-    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
+    '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -245,7 +245,9 @@ const LEGACY_TERMINAL_FONTS = new Set([
   '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding Web", Menlo, Monaco, monospace',
   // The interim unified Nanum Gothic Coding default — migrate back to the
   // JetBrains Mono + D2Coding (Ghostty/native) look.
-  '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace'
+  '"Nanum Gothic Coding", "Nanum Gothic Coding Web", "D2Coding Web", Menlo, Monaco, monospace',
+  // The JetBrains + D2Coding default, whose Korean looked heavier than cmux.
+  '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace'
 ])
 
 // Values an older build may still hold, read from settings.json at boot or

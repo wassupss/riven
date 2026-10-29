@@ -314,6 +314,9 @@ export class GhosttyTerm {
   private cellH = 16
   private baseline = 12
   private fonts = ['', '', '', '']
+  private wideFonts = ['', '', '', '']
+  // Whether the last refChar() cell spans two columns.
+  private refWide = false
 
   // frame state
   private raf = 0
@@ -856,22 +859,31 @@ export class GhosttyTerm {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.font = this.fonts[0]
     const m = ctx.measureText('MMMMMMMMMM')
+    // Grow the CJK fallback face toward its two-cell slot (Apple SD Gothic
+    // Neo's 가 is 0.87em, which left 한 글 gaps), capped so Hangul stays near
+    // the Latin size: filling the slot fully meant 16.6px glyphs next to 12px.
+    const ic = ctx.measureText('가').width
     ctx.restore()
+    const icScale = ic > 0 ? Math.max(1, Math.min((2 * (m.width / 10)) / ic, 1.15)) : 1
+    const wideSize = Math.round(fontSize * icScale * 10) / 10
+    this.wideFonts = this.fonts.map((f) => f.replace(`${fontSize}px`, `${wideSize}px`))
     // Fractional advance like xterm.js: rounding to whole device pixels made
     // cells ~4% wider (7.5 vs 7.2 css at dpr 1.2), so lines wrapped at other
     // columns than the xterm engine. Fills snap to device pixels in px().
     const w = m.width / 10
     const asc = m.fontBoundingBoxAscent || fontSize * 0.8
     const desc = m.fontBoundingBoxDescent || fontSize * 0.2
-    // Same rule as xterm's lineHeight: 1.25 (floor(ceil(charH * dpr) * 1.25)
-    // device px), which scales the font's natural line height, not the size.
-    const h = Math.floor(Math.ceil((asc + desc) * this.dpr) * 1.25) / this.dpr
+    // Native ghostty's rule (adjust-cell-height unset): the cell is the font's
+    // natural line height, so powerline/box glyphs hug the text like cmux.
+    // xterm's lineHeight 1.25 left prompt segments visibly taller than glyphs.
+    const h = Math.ceil((asc + desc) * this.dpr) / this.dpr
     const changed = w !== this.cellW || h !== this.cellH
     this.cellW = w || 8
     this.cellH = h || 16
     this.baseline = Math.round(((this.cellH - (asc + desc)) / 2 + asc) * this.dpr) / this.dpr
     if (this.compo) {
-      this.compo.style.font = this.fonts[0]
+      // IME preedit is Hangul, so it uses the CJK size the committed text gets.
+      this.compo.style.font = this.wideFonts[0]
       this.compo.style.lineHeight = `${this.cellH}px`
     }
     if (changed && this.root) this.sizeCanvas()
@@ -1155,10 +1167,18 @@ export class GhosttyTerm {
           if (f !== font) ctx.font = this.fonts[(font = f)]
           const text = tag === 1 ? this.cellGraphemes(i) : String.fromCodePoint(cp)
           if (cells === 2) {
-            // CJK/emoji glyphs are usually narrower than two monospace cells;
-            // left-aligned they read as "한 글". Center them in their slot.
+            // Center in the two-cell slot. CJK uses the scaled face, centered
+            // vertically since it is taller than the primary font.
             ctx.textAlign = 'center'
-            ctx.fillText(text, (i + 1) * cw, base)
+            if (isCJK(cp)) {
+              ctx.font = this.wideFonts[f]
+              font = -1
+              ctx.textBaseline = 'middle'
+              ctx.fillText(text, (i + 1) * cw, top + ch / 2)
+              ctx.textBaseline = 'alphabetic'
+            } else {
+              ctx.fillText(text, (i + 1) * cw, base)
+            }
             ctx.textAlign = 'left'
           } else {
             ctx.fillText(text, i * cw, base)
@@ -1419,23 +1439,45 @@ export class GhosttyTerm {
       case CURSOR_STYLE.UNDERLINE:
         ctx.fillRect(x0, y0 + ch - Math.max(lw, 2 / this.dpr), cw, Math.max(lw, 2 / this.dpr))
         break
-      case CURSOR_STYLE.BLOCK_HOLLOW:
+      case CURSOR_STYLE.BLOCK_HOLLOW: {
+        const bw = this.charAt(col) && this.refWide ? this.wideCursorW(col, x0) : cw
         ctx.lineWidth = lw
-        ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, cw - lw, ch - lw)
+        ctx.strokeRect(x0 + lw / 2, y0 + lw / 2, bw - lw, ch - lw)
         break
+      }
       default: {
-        ctx.fillRect(x0, y0, cw, ch)
-        // Redraw the character under the block in the accent color.
+        // Redraw the character under the block in the accent color, with the
+        // same layout drawRow uses: wide glyphs get a two-cell block, centered,
+        // and CJK the scaled face.
         const ch0 = this.charAt(col)
+        const wide = !!ch0 && this.refWide
+        ctx.fillRect(x0, y0, wide ? this.wideCursorW(col, x0) : cw, ch)
         if (ch0) {
           ctx.fillStyle = this.opts.theme.cursorAccent || this.defBg
-          ctx.font = this.fonts[0]
-          ctx.textBaseline = 'alphabetic'
-          ctx.fillText(ch0, x0, y0 + this.baseline)
+          if (wide) {
+            ctx.textAlign = 'center'
+            if (isCJK(ch0.codePointAt(0) ?? 0)) {
+              ctx.font = this.wideFonts[0]
+              ctx.textBaseline = 'middle'
+              ctx.fillText(ch0, (col + 1) * this.cellW, y0 + ch / 2)
+            } else {
+              ctx.font = this.fonts[0]
+              ctx.textBaseline = 'alphabetic'
+              ctx.fillText(ch0, (col + 1) * this.cellW, y0 + this.baseline)
+            }
+          } else {
+            ctx.font = this.fonts[0]
+            ctx.textBaseline = 'alphabetic'
+            ctx.fillText(ch0, x0, y0 + this.baseline)
+          }
         }
       }
     }
     ctx.restore()
+  }
+
+  private wideCursorW(col: number, x0: number): number {
+    return Math.round((col + 2) * this.cellW * this.dpr) / this.dpr - x0
   }
 
   // The character at a column of the cursor's row, read from the grid.
@@ -1454,6 +1496,7 @@ export class GhosttyTerm {
   private refChar(point: number): string {
     const vt = this.vt
     const x = vt.x
+    this.refWide = false
     const r = this.mem + S.REF
     vt.dv().setUint32(r, SIZEOF.GRID_REF, true)
     if (x.ghostty_terminal_grid_ref(this.t, point, r) !== RESULT.SUCCESS) return ''
@@ -1463,6 +1506,7 @@ export class GhosttyTerm {
     const hi = d.getUint32(this.mem + S.CELL + 4, true)
     const tag = lo & 3
     if (tag >= 2 || ((hi >>> 10) & 3) >= 2) return ''
+    this.refWide = ((hi >>> 10) & 3) === 1
     const cp = (lo >>> 2) & 0xffffff
     if (!cp) return ''
     if (tag === 1) {
@@ -2063,6 +2107,19 @@ export class GhosttyTerm {
     }
     this.scrollViewport(SCROLL.DELTA, lines)
   }
+}
+
+// Hangul, CJK ideographs/kana/punctuation and fullwidth forms: the glyphs the
+// scaled CJK face draws. Emoji and other wide symbols keep the primary size.
+function isCJK(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x11ff) ||
+    (cp >= 0x2e80 && cp <= 0x9fff) ||
+    (cp >= 0xa960 && cp <= 0xa97f) ||
+    (cp >= 0xac00 && cp <= 0xd7ff) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0xff00 && cp <= 0xffef)
+  )
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
