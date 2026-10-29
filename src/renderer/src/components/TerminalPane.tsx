@@ -674,6 +674,10 @@ export default function TerminalPane({
         searchRef.current = null
         refocusRef.current = null
         if (liveTerm === term) liveTerm = null
+        if (import.meta.env.DEV) {
+          const w = window as unknown as { __rivenTerms?: Record<string, Terminal> }
+          if (w.__rivenTerms?.[sessionKey] === term) delete w.__rivenTerms[sessionKey]
+        }
         webgl?.dispose()
         term.dispose()
       }

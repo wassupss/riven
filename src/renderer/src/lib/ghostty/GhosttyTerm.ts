@@ -233,6 +233,13 @@ const BOX: Record<number, [number, number, number, number]> = {
   0x255a: [3, 3, 0, 0], 0x255d: [3, 0, 0, 3], 0x2560: [3, 3, 3, 0], 0x2563: [3, 0, 3, 3],
   0x2566: [0, 3, 3, 3], 0x2569: [3, 3, 0, 3], 0x256c: [3, 3, 3, 3]
 }
+// dashed lines -> [dashes per cell, horizontal, heavy]
+const DASHED: Record<number, [number, boolean, boolean]> = {
+  0x2504: [3, true, false], 0x2505: [3, true, true], 0x2506: [3, false, false], 0x2507: [3, false, true],
+  0x2508: [4, true, false], 0x2509: [4, true, true], 0x250a: [4, false, false], 0x250b: [4, false, true],
+  0x254c: [2, true, false], 0x254d: [2, true, true], 0x254e: [2, false, false], 0x254f: [2, false, true]
+}
+
 const ROUNDED: Record<number, [number, number]> = {
   // corner -> [horizontal direction, vertical direction] (+1 right/down)
   0x256d: [1, 1], 0x256e: [-1, 1], 0x256f: [-1, -1], 0x2570: [1, -1]
@@ -676,6 +683,7 @@ export class GhosttyTerm {
 
   get buffer(): {
     active: {
+      type: 'normal' | 'alternate'
       viewportY: number
       baseY: number
       length: number
@@ -688,6 +696,7 @@ export class GhosttyTerm {
     const term = this
     return {
       active: {
+        type: this.flag(TERM_DATA.ACTIVE_SCREEN) ? 'alternate' : 'normal',
         viewportY: sb.offset,
         baseY: Math.max(0, sb.total - sb.len),
         length: sb.total,
@@ -848,13 +857,15 @@ export class GhosttyTerm {
     ctx.font = this.fonts[0]
     const m = ctx.measureText('MMMMMMMMMM')
     ctx.restore()
-    const w = Math.round((m.width / 10) * this.dpr) / this.dpr
+    // Fractional advance like xterm.js: rounding to whole device pixels made
+    // cells ~4% wider (7.5 vs 7.2 css at dpr 1.2), so lines wrapped at other
+    // columns than the xterm engine. Fills snap to device pixels in px().
+    const w = m.width / 10
     const asc = m.fontBoundingBoxAscent || fontSize * 0.8
     const desc = m.fontBoundingBoxDescent || fontSize * 0.2
-    // Same rule as xterm's lineHeight: 1.25, which scales the font's natural
-    // line height (ascent + descent), not the font size. Otherwise rows come
-    // out ~25% denser than the xterm engine.
-    const h = Math.round((asc + desc) * 1.25 * this.dpr) / this.dpr
+    // Same rule as xterm's lineHeight: 1.25 (floor(ceil(charH * dpr) * 1.25)
+    // device px), which scales the font's natural line height, not the size.
+    const h = Math.floor(Math.ceil((asc + desc) * this.dpr) * 1.25) / this.dpr
     const changed = w !== this.cellW || h !== this.cellH
     this.cellW = w || 8
     this.cellH = h || 16
@@ -1072,10 +1083,11 @@ export class GhosttyTerm {
     const cache = new Map<number, CellStyle>()
     let runBg: string | null = null
     let runStart = 0
+    const px = (col: number): number => Math.round(col * cw * this.dpr) / this.dpr
     const flushBg = (end: number): void => {
       if (runBg) {
         ctx.fillStyle = runBg
-        ctx.fillRect(runStart * cw, top, (end - runStart) * cw, ch)
+        ctx.fillRect(px(runStart), top, px(end) - px(runStart), ch)
       }
     }
     for (let i = 0; i < n; i++) {
@@ -1114,7 +1126,7 @@ export class GhosttyTerm {
 
     if (selA >= 0 && selB >= selA) {
       ctx.fillStyle = this.opts.theme.selectionBackground || 'rgba(255,255,255,0.2)'
-      ctx.fillRect(selA * cw, top, (selB - selA + 1) * cw, ch)
+      ctx.fillRect(px(selA), top, px(selB + 1) - px(selA), ch)
     }
 
     // pass 2: text + decorations
@@ -1138,7 +1150,7 @@ export class GhosttyTerm {
       if (fg !== fill) ctx.fillStyle = fill = fg
 
       if (cp > 32) {
-        if (!this.drawSpecial(ctx, cp, i * cw, top, cells * cw, ch, fg)) {
+        if (!this.drawSpecial(ctx, cp, px(i), top, px(i + cells) - px(i), ch, fg)) {
           const f = (st.bold ? 1 : 0) | (st.italic ? 2 : 0)
           if (f !== font) ctx.font = this.fonts[(font = f)]
           const text = tag === 1 ? this.cellGraphemes(i) : String.fromCodePoint(cp)
@@ -1314,6 +1326,20 @@ export class GhosttyTerm {
       ctx.stroke()
       return true
     }
+    const dash = DASHED[cp]
+    if (dash) {
+      // n dashes per cell, each half a segment and centered in it, so the
+      // gaps stay even across neighbouring cells (claude's ╌ divider).
+      const [n, horiz, isHeavy] = dash
+      const t = isHeavy ? heavy : light
+      const seg = (horiz ? w : h) / n
+      for (let k = 0; k < n; k++) {
+        const s = (horiz ? x0 : y0) + k * seg + seg / 4
+        if (horiz) ctx.fillRect(s, cy - t / 2, seg / 2, t)
+        else ctx.fillRect(cx - t / 2, s, t, seg / 2)
+      }
+      return true
+    }
     const b = BOX[cp]
     if (!b) return false
     const [up, right, down, left] = b
@@ -1377,9 +1403,10 @@ export class GhosttyTerm {
   }
 
   private drawCursor(ctx: CanvasRenderingContext2D, col: number, row: number, style: number): void {
-    const cw = this.cellW
     const ch = this.cellH
-    const x0 = col * cw
+    // Same device-pixel snap as the cell backgrounds in drawRow.
+    const x0 = Math.round(col * this.cellW * this.dpr) / this.dpr
+    const cw = Math.round((col + 1) * this.cellW * this.dpr) / this.dpr - x0
     const y0 = row * ch
     const lw = Math.max(1, Math.round(this.dpr)) / this.dpr
     ctx.save()
@@ -1708,7 +1735,7 @@ export class GhosttyTerm {
     this.forceCursorRow()
   }
 
-  private paste(text: string): void {
+  paste(text: string): void {
     const vt = this.vt
     const x = vt.x
     const [ptr, len] = vt.string(text.replace(/\r?\n/g, '\r'))
@@ -2022,9 +2049,9 @@ export class GhosttyTerm {
     if (!lines) return
     this.wheelAcc -= lines
     if (this.tracking(e)) {
-      const p = this.local(e)
-      const btn = lines < 0 ? MOUSE_BUTTON.FOUR : MOUSE_BUTTON.FIVE
-      for (let i = 0; i < Math.abs(lines); i++) this.sendMouse(MOUSE_ACTION.PRESS, btn, p, this.mods(e))
+      // One report per wheel event like xterm.js: apps (vim, claude) already
+      // scroll several lines per report, so a notch must not send five.
+      this.sendMouse(MOUSE_ACTION.PRESS, lines < 0 ? MOUSE_BUTTON.FOUR : MOUSE_BUTTON.FIVE, this.local(e), this.mods(e))
       return
     }
     if (this.flag(TERM_DATA.ACTIVE_SCREEN)) {
