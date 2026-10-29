@@ -6,7 +6,7 @@ An AI-first desktop IDE built around agent orchestration. Left explorer · a cen
 
 - **Electron** + electron-vite + React + TypeScript
 - **Monaco** editor with direct model management (one editor, many models keyed by file URI)
-- **xterm.js** + **node-pty** — real PTYs, kept alive in the main process so terminals survive renderer reloads
+- **libghostty-vt** (wasm, own Canvas renderer) + **node-pty**: real PTYs, kept alive in the main process so terminals survive renderer reloads
 - **dockview** — VSCode-style fluid docking; every area (explorer / editor / preview / terminal) is a draggable panel, poppable into its own window
 - **Shiki** for TextMate-grade syntax highlighting (tsx/jsx as first-class languages)
 - **Multi-language LSP** over vscode-jsonrpc (completion, hover, go-to-definition, diagnostics). TypeScript/JS, Python (Pyright), YAML, and Bash servers are bundled and work with zero setup; C/C++ (clangd), Go (gopls), and Rust (rust-analyzer) light up automatically when installed on PATH. JSON/CSS/HTML use Monaco's built-in workers.

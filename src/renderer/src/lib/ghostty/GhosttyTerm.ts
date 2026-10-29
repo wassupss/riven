@@ -1,8 +1,7 @@
 // A terminal built on our own build of libghostty-vt (see ./vt.ts): Ghostty
 // parses the byte stream and owns the screen, scrollback, selection and input
 // encoding; this file draws its render state onto a canvas and exposes the
-// slice of xterm's API that TerminalPane drives, so the pane can treat both
-// engines as `Terminal`.
+// small, xterm-shaped API that TerminalPane drives.
 //
 // Drawing is on demand only: a write, a resize or an input change schedules
 // one animation frame, and a frame repaints just the rows Ghostty marks dirty
@@ -33,7 +32,7 @@ import {
   TERM_DATA,
   TERM_OPT,
   type Vt
-} from './vt'
+} from '../../../../shared/ghostty/vt'
 
 export interface GhosttyTheme {
   background?: string
@@ -270,7 +269,7 @@ export class GhosttyTerm {
   private readonly vt: Vt
   private readonly sh: Shared
   private readonly ud: number
-  private readonly t: number
+  private t: number
   private readonly rs: number
   private readonly it: number
   private readonly cells: number
@@ -354,16 +353,10 @@ export class GhosttyTerm {
     this.vt = vt
     this.sh = sharedFor(vt)
     this.opts = { ...options, theme: { ...options.theme } }
-    const x = vt.x
     this.t = vt.create('ghostty_terminal_new', this.cols, this.rows)
     this.ud = this.sh.nextUd++
     this.sh.terms.set(this.ud, this)
-    x.ghostty_terminal_set(this.t, TERM_OPT.USERDATA, this.ud)
-    x.ghostty_terminal_set(this.t, TERM_OPT.WRITE_PTY, this.sh.write)
-    x.ghostty_terminal_set(this.t, TERM_OPT.SIZE, this.sh.size)
-    x.ghostty_terminal_set(this.t, TERM_OPT.DEVICE_ATTRIBUTES, this.sh.da)
-    x.ghostty_terminal_set(this.t, TERM_OPT.RENDER_HOLD, this.sh.hold)
-    x.ghostty_terminal_set(this.t, TERM_OPT.BELL, this.sh.bell)
+    this.bindCallbacks()
 
     this.mem = vt.alloc(S.SIZE)
     vt.u8().fill(0, this.mem, this.mem + S.SIZE)
@@ -525,6 +518,63 @@ export class GhosttyTerm {
     this.ptyOut = []
     this.findRows = null
     this.invalidate()
+  }
+
+  // Replaces the whole terminal with a libghostty snapshot (the worker model's
+  // state: both screens, scrollback, modes, cursor). False if the bytes do not
+  // decode; the current terminal is then left untouched.
+  restore(bytes: Uint8Array): boolean {
+    if (this.disposed || !bytes.length) return false
+    const vt = this.vt
+    const x = vt.x
+    const buf = vt.alloc(bytes.length)
+    let next = 0
+    try {
+      vt.u8().set(bytes, buf)
+      const dec = vt.create('ghostty_snapshot_decoder_new_buf', buf, bytes.length)
+      const slot = x.ghostty_wasm_alloc_opaque() as number
+      try {
+        if (x.ghostty_snapshot_decoder_decode(dec, slot) === 0) next = x.ghostty_wasm_take_opaque(slot) as number
+      } finally {
+        x.ghostty_wasm_free_opaque(slot)
+        x.ghostty_snapshot_decoder_free(dec)
+      }
+    } catch (e) {
+      console.warn('[ghostty] snapshot decode failed', e)
+    } finally {
+      vt.free(buf, bytes.length)
+    }
+    if (!next) return false
+
+    x.ghostty_selection_gesture_reset(this.gesture, this.t)
+    x.ghostty_terminal_free(this.t)
+    this.t = next
+    this.bindCallbacks()
+    this.applyTheme()
+    this.applyCursor()
+    this.applyScrollback()
+    // The snapshot carries the model's size; the pane's own size wins.
+    x.ghostty_terminal_get(this.t, TERM_DATA.COLS, this.mem + S.TMP)
+    const cols = this.vt.dv().getUint16(this.mem + S.TMP, true)
+    x.ghostty_terminal_get(this.t, TERM_DATA.ROWS, this.mem + S.TMP)
+    const rows = this.vt.dv().getUint16(this.mem + S.TMP, true)
+    if (cols !== this.cols || rows !== this.rows) {
+      x.ghostty_terminal_resize(
+        this.t,
+        this.cols,
+        this.rows,
+        Math.round(this.cellW * this.dpr),
+        Math.round(this.cellH * this.dpr)
+      )
+    }
+    this.ptyOut = []
+    this.findRows = null
+    this.lastFind = null
+    this.full = true
+    this.flushPty()
+    this.invalidate()
+    this.scrollToBottom()
+    return true
   }
 
   clear(): void {
@@ -795,6 +845,18 @@ export class GhosttyTerm {
         this.applyScrollback()
         break
     }
+  }
+
+  // Per-terminal callbacks: set on construction and again on the terminal a
+  // snapshot decodes into.
+  private bindCallbacks(): void {
+    const x = this.vt.x
+    x.ghostty_terminal_set(this.t, TERM_OPT.USERDATA, this.ud)
+    x.ghostty_terminal_set(this.t, TERM_OPT.WRITE_PTY, this.sh.write)
+    x.ghostty_terminal_set(this.t, TERM_OPT.SIZE, this.sh.size)
+    x.ghostty_terminal_set(this.t, TERM_OPT.DEVICE_ATTRIBUTES, this.sh.da)
+    x.ghostty_terminal_set(this.t, TERM_OPT.RENDER_HOLD, this.sh.hold)
+    x.ghostty_terminal_set(this.t, TERM_OPT.BELL, this.sh.bell)
   }
 
   private applyTheme(): void {

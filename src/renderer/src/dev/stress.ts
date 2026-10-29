@@ -176,7 +176,7 @@ async function run(): Promise<void> {
 
   await phase('terminals-flood', async () => {
     for (let i = 0; i < N_TERM; i++) {
-      // Unbounded flood: maxes PTY throughput + xterm render/scrollback churn.
+      // Unbounded flood: maxes PTY throughput + terminal render/scrollback churn.
       addTerminal(`yes "RIVEN-STRESS-${i}-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"`)
       await frame()
     }

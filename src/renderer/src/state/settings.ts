@@ -121,7 +121,7 @@ export interface Settings {
   // The account the identity above belongs to. Signing in as someone else
   // starts over: another account's phones must not reach this machine.
   remoteOwner: string
-  // Terminal behaviour, all of it things xterm exposes directly.
+  // Terminal behaviour, all of it things the terminal engine exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
   terminalScrollback: number
@@ -129,8 +129,6 @@ export interface Settings {
   terminalCopyOnSelect: boolean
   /** Right-click pastes instead of opening a menu. */
   terminalRightClickPaste: boolean
-  /** Experimental: render terminals with libghostty-vt (our own wasm build, src/renderer/src/lib/ghostty) instead of xterm. New terminals only. */
-  terminalEngine: 'xterm' | 'ghostty'
   // Built-in CLI tools an agent may NOT use without being asked. Empty means
   // the default set, which is what riven has always passed; a name here is
   // dropped from --allowedTools, so the CLI has to ask before using it.
@@ -194,7 +192,6 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalScrollback: 5000,
   terminalCopyOnSelect: false,
   terminalRightClickPaste: false,
-  terminalEngine: 'xterm',
   deniedTools: [],
   confirmCloseBusy: true,
   confirmDeleteSession: true,

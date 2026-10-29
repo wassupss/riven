@@ -164,11 +164,11 @@ class Keymap {
     const chord = chordFromEvent(e)
     if (!chord) return
     // Don't fire app/terminal shortcuts while typing in a plain text field
-    // (search box, tab-rename input, modal fields …). The terminal (xterm) and
-    // Monaco both host editable elements but own their region/keybindings, so
-    // they're exempt.
+    // (search box, tab-rename input, modal fields …). The terminal and Monaco
+    // both host editable elements but own their region/keybindings, so they're
+    // exempt.
     const ae = document.activeElement as HTMLElement | null
-    if (ae && !ae.closest?.('.monaco-editor') && !ae.closest?.('.xterm')) {
+    if (ae && !ae.closest?.('.monaco-editor') && !ae.closest?.('.ghostty-term')) {
       if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) {
         // Reserve ONLY the text-editing combos for the field (so ⌘A/C/V/X/Z and
         // caret motion still work). Every other app shortcut — ⌘1-9 workspace

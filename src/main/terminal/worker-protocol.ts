@@ -3,10 +3,10 @@
 // what riven actually needs.
 //
 // The split:
-//   worker — pty spawn/write/resize/kill, the headless xterm MODEL, revision
+//   worker: pty spawn/write/resize/kill, the libghostty-vt MODEL, revision
 //            assignment, the output coalescer, flow control (pty pause/resume),
 //            snapshot generation, the hidden gate, bell/title parsing.
-//   main   — session registry, renderer IPC, agent-hook routing, the activity
+//   main:   session registry, renderer IPC, agent-hook routing, the activity
 //            state machine, notifications, and building the pty env (which needs
 //            the MCP server + hook config that only main has).
 //
@@ -33,7 +33,7 @@ export type MainToWorker =
   | { type: 'write'; key: string; data: string }
   | { type: 'resize'; key: string; cols: number; rows: number }
   | { type: 'kill'; key: string }
-  // Renderer has (or no longer has) a live, sized xterm that wants bytes.
+  // Renderer has (or no longer has) a live, sized terminal that wants bytes.
   // Turning visible off also arms needsSnapshot, so the next reveal restores
   // from the model — that is what makes a reattach after a reload exact.
   | { type: 'visible'; key: string; visible: boolean }
@@ -53,7 +53,8 @@ export type WorkerToMain =
   // heuristic still needs to know something flowed. Data-less and throttled, so
   // a flooding background pane stays close to free.
   | { type: 'outputActivity'; key: string }
-  | { type: 'snapshot'; key: string; data: string; rev: number; epoch: number; cols: number; rows: number }
+  // data: libghostty snapshot bytes (GhosttyTerm.restore decodes them).
+  | { type: 'snapshot'; key: string; data: Uint8Array; rev: number; epoch: number; cols: number; rows: number }
   | { type: 'exit'; key: string; exitCode: number }
   | { type: 'bell'; key: string }
   | { type: 'title'; key: string; title: string }

@@ -11,10 +11,8 @@
 // point (see electron.vite.config.ts) and only shares the protocol types.
 
 import * as pty from 'node-pty'
-import { Terminal as HeadlessTerminal } from '@xterm/headless'
-import { SerializeAddon } from '@xterm/addon-serialize'
-import type { ITerminalAddon } from '@xterm/headless'
 import { OutputCoalescer, realTimers } from './coalescer'
+import { loadVtModel, VtModel } from './vt-model'
 import {
   HIDDEN_ACTIVITY_PING_MS,
   type MainToWorker,
@@ -25,9 +23,8 @@ import {
 // Model scrollback: what a reattach/reveal can restore. The renderer keeps its
 // own (larger) scrollback for what it has already seen.
 const MODEL_SCROLLBACK = 2000
-const SNAPSHOT_SCROLLBACK = 2000
 // Flow-control water marks (chars in flight to the renderer, per terminal).
-// xterm parses ~100MB/s, so 2MB is ~20ms of backlog — enough to stream, small
+// The renderer parses ~100MB/s, so 2MB is ~20ms of backlog, enough to stream, small
 // enough that a flood cannot balloon this process. Wide hysteresis so a draining
 // queue does not flap pause/resume on every batch.
 const HIGH_WATER = 2 * 1024 * 1024
@@ -36,12 +33,10 @@ const LOW_WATER = 256 * 1024
 interface WorkerSession {
   key: string
   proc: pty.IPty
-  term: HeadlessTerminal
-  serialize: SerializeAddon
+  model: VtModel
   coalescer: OutputCoalescer
-  // Chunks handed to the model (assigned on write) vs. chunks it has parsed
-  // (assigned in the write callback, in order). A snapshot reflects `parsed`.
-  written: number
+  // Chunks the model has parsed. Writes are synchronous, so a snapshot always
+  // reflects exactly this revision.
   parsed: number
   visible: boolean
   needsSnapshot: boolean
@@ -97,20 +92,6 @@ function resumeIfPaused(s: WorkerSession): void {
   }
 }
 
-// The last few content lines of the model. Reading the parsed grid beats
-// scraping ANSI out of the raw stream: box drawing and cursor games are already
-// resolved.
-function bufferTail(term: HeadlessTerminal, lines: number): string {
-  const buf = term.buffer.active
-  const out: string[] = []
-  for (let y = buf.length - 1; y >= 0 && out.length < lines; y--) {
-    const line = buf.getLine(y)?.translateToString(true).trim()
-    if (line) out.unshift(line.replace(/[─-╿▀-▟]/g, '').replace(/\s+/g, ' ').trim())
-  }
-  const tail = out.filter(Boolean).join('\n')
-  return tail.length > 240 ? '…' + tail.slice(-240) : tail
-}
-
 // Deliver a model snapshot and start a fresh flow-control epoch. Anything the
 // coalescer still holds is flushed FIRST so it precedes the snapshot on the wire
 // (the renderer drops it by revision anyway) — order here is what keeps dedup
@@ -121,11 +102,11 @@ function sendSnapshot(s: WorkerSession): void {
   s.sentChars = 0
   s.ackedChars = 0
   resumeIfPaused(s)
-  let data = ''
+  let data: Uint8Array = new Uint8Array(0)
   try {
-    data = s.serialize.serialize({ scrollback: SNAPSHOT_SCROLLBACK })
+    data = s.model.snapshot()
   } catch (e) {
-    console.error('[terminal-worker] serialize failed', e)
+    console.error('[terminal-worker] snapshot failed', e)
   }
   s.needsSnapshot = false
   send({
@@ -142,17 +123,34 @@ function sendSnapshot(s: WorkerSession): void {
 
 function disposeSession(s: WorkerSession): void {
   s.coalescer.dispose()
-  try {
-    s.term.dispose()
-  } catch {
-    /* already disposed */
-  }
+  s.model.dispose()
   sessions.delete(s.key)
 }
 
 function spawnSession(opts: WorkerSpawnOptions): void {
   const { key } = opts
   if (sessions.has(key)) return
+
+  // The model reports what the parser resolved: a real BEL (never an OSC
+  // terminator, the parser knows the difference) and title changes. Both flush
+  // first so they cannot overtake output already sitting in the coalescer.
+  // Built before the pty so a model failure cannot leak a running shell.
+  let model: VtModel
+  try {
+    model = new VtModel(opts.cols, opts.rows, MODEL_SCROLLBACK, {
+      bell: () => {
+        s.coalescer.flush()
+        send({ type: 'bell', key })
+      },
+      title: (title) => {
+        s.coalescer.flush()
+        send({ type: 'title', key, title })
+      }
+    })
+  } catch (e) {
+    send({ type: 'spawnError', key, error: e instanceof Error ? e.message : String(e) })
+    return
+  }
 
   let proc: pty.IPty
   inFlightSpawnKey = key
@@ -166,27 +164,17 @@ function spawnSession(opts: WorkerSpawnOptions): void {
     })
   } catch (e) {
     inFlightSpawnKey = null
+    model.dispose()
     send({ type: 'spawnError', key, error: e instanceof Error ? e.message : String(e) })
     return
   }
   inFlightSpawnKey = null
 
-  const term = new HeadlessTerminal({
-    cols: opts.cols,
-    rows: opts.rows,
-    scrollback: MODEL_SCROLLBACK,
-    allowProposedApi: true
-  })
-  const serialize = new SerializeAddon()
-  term.loadAddon(serialize as unknown as ITerminalAddon)
-
   const s: WorkerSession = {
     key,
     proc,
-    term,
-    serialize,
+    model,
     coalescer: null as unknown as OutputCoalescer,
-    written: 0,
     parsed: 0,
     visible: false,
     needsSnapshot: false,
@@ -227,27 +215,13 @@ function spawnSession(opts: WorkerSpawnOptions): void {
   })
   sessions.set(key, s)
 
-  // The model reports what the parser resolved: a real BEL (never an OSC
-  // terminator — the parser knows the difference) and title changes. Both flush
-  // first so they cannot overtake output already sitting in the coalescer.
-  term.onBell(() => {
-    s.coalescer.flush()
-    send({ type: 'bell', key })
-  })
-  term.onTitleChange((title) => {
-    s.coalescer.flush()
-    send({ type: 'title', key, title })
-  })
-
   proc.onData((data) => {
-    // Revision is assigned on write and confirmed (in order) on parse: a
-    // snapshot taken between the two reflects exactly the confirmed ones, so a
-    // chunk delivered with a higher revision is never inside it.
-    const rev = ++s.written
-    term.write(data, () => {
-      s.parsed = rev
-    })
+    // Queue the chunk before parsing it, so a bell/title it contains is sent
+    // after the chunk's own output, never ahead of it.
+    const rev = s.parsed + 1
     s.coalescer.handle(data, rev)
+    s.model.write(data)
+    s.parsed = rev
   })
 
   proc.onExit(({ exitCode }) => {
@@ -292,7 +266,7 @@ function handle(msg: MainToWorker): void {
       s.cols = msg.cols
       s.rows = msg.rows
       try {
-        s.term.resize(msg.cols, msg.rows)
+        s.model.resize(msg.cols, msg.rows)
         s.proc.resize(msg.cols, msg.rows)
       } catch {
         /* pty may have exited */
@@ -333,7 +307,7 @@ function handle(msg: MainToWorker): void {
       send({
         type: 'tailResult',
         requestId: msg.requestId,
-        text: s ? bufferTail(s.term, msg.lines) : ''
+        text: s ? s.model.tail(msg.lines) : ''
       })
       return
     }
@@ -345,10 +319,34 @@ function handle(msg: MainToWorker): void {
   }
 }
 
-process.parentPort.on('message', (e) => {
+function safeHandle(msg: MainToWorker): void {
   try {
-    handle(e.data as MainToWorker)
+    handle(msg)
   } catch (err) {
     console.error('[terminal-worker] message handler failed', err)
   }
+}
+
+// The wasm model loads asynchronously (a few ms). Messages that arrive first
+// wait, in order: a spawn cannot run without its model.
+let early: MainToWorker[] | null = []
+loadVtModel().then(
+  () => {
+    const q = early ?? []
+    early = null
+    for (const m of q) safeHandle(m)
+  },
+  (err) => {
+    console.error('[terminal-worker] ghostty-vt failed to load', err)
+    for (const m of early ?? []) {
+      if (m.type === 'spawn') send({ type: 'spawnError', key: m.options.key, error: 'terminal engine failed to load' })
+    }
+    early = null
+  }
+)
+
+process.parentPort.on('message', (e) => {
+  const msg = e.data as MainToWorker
+  if (early) early.push(msg)
+  else safeHandle(msg)
 })

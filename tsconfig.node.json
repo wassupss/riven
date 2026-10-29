@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "electron.vite.config.ts", "vite/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/shared/**/*", "electron.vite.config.ts", "vite/**/*"]
 }
