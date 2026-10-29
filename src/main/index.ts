@@ -52,9 +52,15 @@ import { buildMenu } from './menu'
 //     (much slower) DOM renderer once you have many terminals open.
 //   disable-skia-graphite (macOS): Graphite can strand corrupt Metal tiles after
 //     idle; Ganesh still composites on the GPU.
+//   use-angle=metal (macOS): without Graphite, Electron 44 picks an ANGLE GL
+//     backend that no longer exists on macOS, so GPU init fails and the whole
+//     app (compositing, WebGL terminals) silently drops to software.
 app.commandLine.appendSwitch('disable-features', 'IntensiveWakeUpThrottling')
 app.commandLine.appendSwitch('max-active-webgl-contexts', '128')
-if (process.platform === 'darwin') app.commandLine.appendSwitch('disable-skia-graphite')
+if (process.platform === 'darwin') {
+  app.commandLine.appendSwitch('disable-skia-graphite')
+  app.commandLine.appendSwitch('use-angle', 'metal')
+}
 
 // Product name for the app menu / About panel / dock (in dev it'd be "Electron").
 // In dev, use a SEPARATE app name so its userData (sessions.json, config, caches)
