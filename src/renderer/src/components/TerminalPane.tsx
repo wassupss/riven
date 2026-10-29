@@ -98,7 +98,10 @@ export default function TerminalPane({
   onReadyRef.current = onReady
   const onFocusRef = useRef(onFocus)
   onFocusRef.current = onFocus
-  const searchRef = useRef<SearchAddon | null>(null)
+  const searchRef = useRef<Pick<
+    SearchAddon,
+    'findNext' | 'findPrevious' | 'clearDecorations'
+  > | null>(null)
   const refocusRef = useRef<(() => void) | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   // Until main hands back this session's model, the pane is an empty rectangle.
@@ -182,8 +185,9 @@ export default function TerminalPane({
       let fit: { proposeDimensions(): { cols: number; rows: number } | undefined }
       if (ghostty) {
         // No unicode11 (Ghostty does its own widths), WebGL (it draws to its own
-        // canvas) or search addon (none exists yet). It sizes itself.
+        // canvas) or search addon (GhosttyTerm finds itself). It sizes itself.
         fit = term as unknown as GhosttyTerm
+        searchRef.current = term as unknown as GhosttyTerm
       } else {
         const xfit = new FitAddon()
         const unicode11 = new Unicode11Addon()
@@ -248,15 +252,13 @@ export default function TerminalPane({
       }
 
       // ⌘F opens the in-terminal find box (don't forward the key to the shell).
-      // The ghostty engine has no search yet, so it gets none.
-      if (!ghostty)
-        term.attachCustomKeyEventHandler((e) => {
-          if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
-            setSearchOpen(true)
-            return false
-          }
-          return true
-        })
+      term.attachCustomKeyEventHandler((e) => {
+        if (e.type === 'keydown' && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+          setSearchOpen(true)
+          return false
+        }
+        return true
+      })
 
       let ptyId: string | null = null
       let torn = false

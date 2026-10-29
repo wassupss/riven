@@ -279,6 +279,11 @@ export class GhosttyTerm {
   private writeBuf = 0
   private writeCap = 0
   private disposed = false
+  // current find match: lowercased query, screen row, string index in row
+  private lastFind: { q: string; y: number; i: number } | null = null
+  // Rows read for find, kept until the content changes: reading a row costs
+  // a wasm call per cell, too slow to repeat over the scrollback per keystroke.
+  private findRows: ({ text: string; hay: string; cols: Uint16Array } | undefined)[] | null = null
 
   private readonly opts: GhosttyTermOptions
   private readonly dataListeners = new Set<Listener<string>>()
@@ -448,7 +453,10 @@ export class GhosttyTerm {
       vt.u8().set(data, this.writeBuf)
       len = data.length
     }
-    if (len) vt.x.ghostty_terminal_vt_write(this.t, this.writeBuf, len)
+    if (len) {
+      vt.x.ghostty_terminal_vt_write(this.t, this.writeBuf, len)
+      this.findRows = null
+    }
     this.flushPty()
     this.schedule()
     if (cb) queueMicrotask(cb)
@@ -493,6 +501,7 @@ export class GhosttyTerm {
     )
     this.cols = cols
     this.rows = rows
+    this.findRows = null
     this.flushPty()
     this.invalidate()
   }
@@ -504,6 +513,7 @@ export class GhosttyTerm {
     this.applyTheme()
     this.applyCursor()
     this.ptyOut = []
+    this.findRows = null
     this.invalidate()
   }
 
@@ -571,6 +581,95 @@ export class GhosttyTerm {
   clearSelection(): void {
     if (!this.hasSelection()) return
     this.vt.x.ghostty_terminal_set(this.t, TERM_OPT.SELECTION, 0)
+    this.invalidate()
+    this.selListeners.forEach((f) => f())
+  }
+
+  // ---- find (the slice of xterm's SearchAddon that TerminalPane uses) -------
+  // A match is shown as the selection, like SearchAddon without decorations.
+  // Case-insensitive; matches don't span soft-wrapped rows.
+
+  findNext(query: string): boolean {
+    return this.find(query, false)
+  }
+
+  findPrevious(query: string): boolean {
+    return this.find(query, true)
+  }
+
+  clearDecorations(): void {
+    this.lastFind = null
+    this.findRows = null
+    this.clearSelection()
+  }
+
+  private findRow(y: number): { text: string; hay: string; cols: Uint16Array } {
+    const rows = (this.findRows ??= [])
+    let r = rows[y]
+    if (!r) {
+      const { text, cols } = this.lineCells(y)
+      r = rows[y] = { text, hay: text.toLowerCase(), cols: Uint16Array.from(cols) }
+    }
+    return r
+  }
+
+  private find(query: string, back: boolean): boolean {
+    if (this.disposed || !query) return false
+    const q = query.toLowerCase()
+    const sb = this.scrollbar()
+    const total = sb.total
+    const last = this.lastFind && this.lastFind.y < total ? this.lastFind : null
+    // Typing more of the same query keeps the current match if it still fits
+    // (SearchAddon's incremental behaviour); otherwise step past it.
+    const extend = !back && last != null && q !== last.q && q.startsWith(last.q)
+    let y = last ? last.y : back ? sb.offset + sb.len - 1 : sb.offset
+    let from = last ? (extend ? last.i : back ? last.i - 1 : last.i + 1) : back ? Infinity : 0
+    for (let n = 0; n <= total; n++) {
+      const { text, hay, cols } = this.findRow(y)
+      const lower = hay.length === text.length
+      const h = lower ? hay : text
+      const needle = lower ? q : query
+      const i = back
+        ? from < 0
+          ? -1
+          : h.lastIndexOf(needle, from)
+        : h.indexOf(needle, from)
+      if (i >= 0) {
+        const end = i + needle.length
+        this.selectCells(y, cols[i], end < cols.length ? cols[end] - 1 : this.cols - 1)
+        this.lastFind = { q, y, i }
+        if (y < sb.offset || y >= sb.offset + sb.len) this.scrollToLine(y - (sb.len >> 1))
+        return true
+      }
+      y = back ? (y - 1 + total) % total : (y + 1) % total
+      from = back ? Infinity : 0
+    }
+    this.lastFind = null
+    this.clearSelection()
+    return false
+  }
+
+  // Selects screen row `y` from column a to b inclusive.
+  private selectCells(y: number, a: number, b: number): void {
+    const vt = this.vt
+    const sel = this.mem + S.SEL
+    const p = this.mem + S.POINT
+    const d = vt.dv()
+    for (let i = 0; i < SIZEOF.SELECTION; i++) d.setUint8(sel + i, 0)
+    d.setUint32(sel, SIZEOF.SELECTION, true)
+    for (const [off, col] of [
+      [4, a],
+      [16, b]
+    ]) {
+      const dv = vt.dv()
+      for (let i = 0; i < SIZEOF.POINT; i++) dv.setUint8(p + i, 0)
+      dv.setInt32(p, POINT.SCREEN, true)
+      dv.setUint16(p + 8, col, true)
+      dv.setUint32(p + 12, y, true)
+      dv.setUint32(sel + off, SIZEOF.GRID_REF, true)
+      if (vt.x.ghostty_terminal_grid_ref(this.t, p, sel + off) !== RESULT.SUCCESS) return
+    }
+    vt.x.ghostty_terminal_set(this.t, TERM_OPT.SELECTION, sel)
     this.invalidate()
     this.selListeners.forEach((f) => f())
   }
@@ -724,6 +823,9 @@ export class GhosttyTerm {
   }
 
   private applyScrollback(): void {
+    // Like xterm, the limit is lines only. Ghostty also starts with a default
+    // byte cap that kept just a few hundred lines; NULL removes it.
+    this.vt.x.ghostty_terminal_set(this.t, TERM_OPT.SCROLLBACK_MAX_BYTES, 0)
     this.vt.dv().setUint32(this.mem + S.TMP, Math.max(0, this.opts.scrollback | 0), true)
     this.vt.x.ghostty_terminal_set(this.t, TERM_OPT.SCROLLBACK_MAX_LINES, this.mem + S.TMP)
   }
@@ -1352,9 +1454,16 @@ export class GhosttyTerm {
   }
 
   private lineText(y: number, trim: boolean): string {
+    const s = this.lineCells(y).text
+    return trim ? s.replace(/\s+$/, '') : s
+  }
+
+  // Row text plus, per UTF-16 unit, the column its character starts in.
+  private lineCells(y: number): { text: string; cols: number[] } {
     const vt = this.vt
     const p = this.mem + S.POINT
     let s = ''
+    const cols: number[] = []
     for (let col = 0; col < this.cols; col++) {
       const d = vt.dv()
       for (let i = 0; i < SIZEOF.POINT; i++) d.setUint8(p + i, 0)
@@ -1362,15 +1471,20 @@ export class GhosttyTerm {
       d.setUint16(p + 8, col, true)
       d.setUint32(p + 12, y, true)
       const c = this.refChar(p)
-      if (c) s += c
-      else {
+      if (c) {
+        s += c
+        for (let i = 0; i < c.length; i++) cols.push(col)
+      } else {
         // wide-char spacer cells contribute nothing; blanks are spaces
         const lo = vt.dv().getUint32(this.mem + S.CELL, true)
         const hi = vt.dv().getUint32(this.mem + S.CELL + 4, true)
-        if (((hi >>> 10) & 3) < 2 || (lo & 3) >= 2) s += ' '
+        if (((hi >>> 10) & 3) < 2 || (lo & 3) >= 2) {
+          s += ' '
+          cols.push(col)
+        }
       }
     }
-    return trim ? s.replace(/\s+$/, '') : s
+    return { text: s, cols }
   }
 
   private drawScrollbar(ctx: CanvasRenderingContext2D, sb: { total: number; offset: number; len: number }): void {
