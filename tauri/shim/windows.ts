@@ -8,6 +8,8 @@ import { EventEmitter } from 'events'
 import * as path from 'path'
 import { call, callSync, fire, onEvent } from './rust'
 import { serverOrigin, rendererDir } from './server-info'
+// Cyclic (electron-main imports this file), but only touched at call time.
+import { nativeImage, type NativeImage } from './electron-main'
 
 export type Rect = { x: number; y: number; width: number; height: number }
 
@@ -105,8 +107,11 @@ export class WebContents extends EventEmitter {
     if (!s) throw new Error('no page')
     return s.evalJs(code)
   }
-  capturePage(): Promise<never> {
-    return Promise.reject(new Error('capturePage is not available in the Tauri build'))
+  // The whole visible page; a rect is ignored (only the browser panel, which
+  // this build lacks, asked for one).
+  async capturePage(): Promise<NativeImage> {
+    const b64 = await call<string>('win.capture', { label: this.owner.label })
+    return nativeImage.createFromBuffer(Buffer.from(b64, 'base64'))
   }
   sendInputEvent(): void {}
   setBackgroundThrottling(): void {}

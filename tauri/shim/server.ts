@@ -81,9 +81,10 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const { label, ch, args } = decode(body.toString('utf8')) as { label: string; ch: string; args: unknown[] }
     const wc = windowByLabel(label)?.webContents
     if (!wc) return void res.writeHead(404).end()
-    const ev = ipcMain._send(wc, ch, args ?? [])
+    // The preload's drop hook: file paths off the drag pasteboard.
+    const v = ch === '__riven:dragPaths' ? await call('drag.paths').catch(() => []) : ipcMain._send(wc, ch, args ?? []).returnValue
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(encode({ v: ev.returnValue }))
+    res.end(encode({ v }))
     return
   }
   if (u.pathname.startsWith('/__riven/media/')) {
@@ -91,9 +92,39 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     await media(u, req, res)
     return
   }
+  if (u.pathname === '/__riven/test' && TEST_KEY) return void (await testHook(u, req, res))
   if (u.pathname.startsWith('/__riven/')) return void res.writeHead(404).end()
 
   await serveStatic(u, req, res)
+}
+
+// Dev-only driving hook, off unless RIVEN_TAURI_TEST_KEY is set when launching:
+//   POST /__riven/test?k=KEY&w=w1&op=eval   body = JS, answers JSON {ok, val|err}
+//   GET  /__riven/test?k=KEY&w=w1&op=shot   answers the window as PNG
+//   GET  /__riven/test?k=KEY&w=w1&op=front  shows and focuses the window
+const TEST_KEY = process.env.RIVEN_TAURI_TEST_KEY ?? ''
+async function testHook(u: URL, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const k = u.searchParams.get('k') ?? ''
+  if (k.length !== TEST_KEY.length || !crypto.timingSafeEqual(Buffer.from(k), Buffer.from(TEST_KEY)))
+    return void res.writeHead(403).end()
+  const win = windowByLabel(u.searchParams.get('w') ?? 'w1')
+  const wc = win?.webContents
+  if (!win || !wc) return void res.writeHead(404).end()
+  try {
+    if (u.searchParams.get('op') === 'front') {
+      win.show()
+      win.focus()
+      res.writeHead(204).end()
+    } else if (u.searchParams.get('op') === 'shot') {
+      const png = (await wc.capturePage()).toPNG()
+      res.writeHead(200, { 'content-type': 'image/png' }).end(png)
+    } else {
+      const val = await wc.executeJavaScript((await readBody(req)).toString('utf8'))
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, val }))
+    }
+  } catch (e) {
+    res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, err: String(e) }))
+  }
 }
 
 function readBody(req: http.IncomingMessage): Promise<Buffer> {

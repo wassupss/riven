@@ -154,11 +154,32 @@ export const webFrame = {
   }
 }
 
-// WebKit gives a dropped File no path. Known gap: drops from Finder don't
-// resolve to a path in this build.
+// WebKit gives a dropped File no path. At drop time the paths are still on the
+// macOS drag pasteboard, so main reads them (one sync call per file drop) and
+// we pair them with the Files: by order when the names line up, else by name.
+const dropPaths = new WeakMap<File, string>()
+let dropByName = new Map<string, string>()
+const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1).normalize('NFC')
+
+w.addEventListener(
+  'drop',
+  (e) => {
+    const files = [...(e.dataTransfer?.files ?? [])]
+    if (!files.length) return
+    const paths = (ipcRenderer.sendSync('__riven:dragPaths') as string[] | undefined) ?? []
+    dropByName = new Map(paths.map((p) => [baseName(p), p]))
+    const inOrder = paths.length === files.length && files.every((f, i) => baseName(paths[i]) === f.name.normalize('NFC'))
+    files.forEach((f, i) => {
+      const p = inOrder ? paths[i] : dropByName.get(f.name.normalize('NFC'))
+      if (p) dropPaths.set(f, p)
+    })
+  },
+  true
+)
+
 export const webUtils = {
-  getPathForFile(_f: File): string {
-    return ''
+  getPathForFile(f: File): string {
+    return dropPaths.get(f) ?? dropByName.get(f.name.normalize('NFC')) ?? ''
   }
 }
 
@@ -196,23 +217,28 @@ let dragSel = ''
 let noDragSel = ''
 const INTERACTIVE = 'button, input, textarea, select, a[href], [contenteditable=""], [contenteditable="true"]'
 
-async function loadRegions(): Promise<void> {
-  const texts: string[] = []
-  for (const el of document.querySelectorAll('link[rel="stylesheet"][href], style')) {
-    if (el instanceof HTMLStyleElement) texts.push(el.textContent ?? '')
-    else {
-      try {
-        const r = await fetch((el as HTMLLinkElement).href)
-        texts.push(await r.text())
-      } catch {
-        /* not ours */
-      }
-    }
+// Parsed once per <style>/<link>; lazily loaded chunks add theirs later.
+const drag: string[] = []
+const noDrag: string[] = []
+const scanned = new WeakSet<Node>()
+
+async function cssOf(el: Element): Promise<string> {
+  if (el instanceof HTMLStyleElement) return el.textContent ?? ''
+  try {
+    return await (await fetch((el as HTMLLinkElement).href)).text()
+  } catch {
+    return '' // not ours
   }
-  const drag: string[] = []
-  const noDrag: string[] = []
+}
+
+async function loadRegions(els: Iterable<Element>): Promise<void> {
+  const fresh = [...els].filter((el) => !scanned.has(el) && (el instanceof HTMLStyleElement || el.matches('link[rel="stylesheet"][href]')))
+  if (!fresh.length) return
+  for (const el of fresh) scanned.add(el)
   const rule = /([^{}]+)\{([^{}]*)\}/g
-  for (const t of texts) {
+  let changed = false
+  for (const t of await Promise.all(fresh.map(cssOf))) {
+    if (!t.includes('-webkit-app-region')) continue
     const css = t.replace(/\/\*[\s\S]*?\*\//g, '')
     let m: RegExpExecArray | null
     while ((m = rule.exec(css))) {
@@ -221,10 +247,21 @@ async function loadRegions(): Promise<void> {
       const sel = m[1].trim()
       if (!sel || sel.startsWith('@')) continue
       ;(v[1] === 'drag' ? drag : noDrag).push(sel)
+      changed = true
     }
   }
+  if (!changed) return
   dragSel = validSelectors(drag)
   noDragSel = validSelectors(noDrag)
+}
+
+function watchRegions(): void {
+  void loadRegions(document.querySelectorAll('link[rel="stylesheet"][href], style'))
+  new MutationObserver((recs) => {
+    const added: Element[] = []
+    for (const r of recs) for (const n of r.addedNodes) if (n instanceof Element) added.push(n)
+    if (added.length) void loadRegions(added)
+  }).observe(document.head, { childList: true })
 }
 
 function validSelectors(list: string[]): string {
@@ -266,7 +303,7 @@ document.addEventListener(
 )
 
 // The stylesheets are linked in <head> after this script; wait for them.
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => void loadRegions())
-else void loadRegions()
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchRegions)
+else watchRegions()
 
 connect()

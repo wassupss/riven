@@ -125,6 +125,18 @@ fn base64_decode(input: &str) -> Vec<u8> {
   out
 }
 
+fn base64_encode(data: &[u8]) -> String {
+  const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+  for c in data.chunks(3) {
+    let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+    for i in 0..4 {
+      out.push(if i <= c.len() { T[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+    }
+  }
+  out
+}
+
 fn image(a: &Value) -> Result<Image<'static>, String> {
   let png = base64_decode(s(a, "png").unwrap_or(""));
   Image::from_bytes(&png).map(|i| i.to_owned()).map_err(|e| e.to_string())
@@ -261,6 +273,126 @@ fn navigate(app: &AppHandle, a: &Value) -> Res {
   // finishes should not hold the caller forever.
   let _ = rx.recv_timeout(Duration::from_secs(30));
   Ok(Value::Null)
+}
+
+// webContents.capturePage: WKWebView draws the page into an image itself, so
+// no screen-recording permission is involved (as with Electron's).
+#[cfg(target_os = "macos")]
+fn capture(app: &AppHandle, a: &Value) -> Res {
+  use block2::RcBlock;
+  use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
+  use objc2_foundation::{NSDictionary, NSError};
+  use objc2_web_kit::WKWebView;
+  let w = win(app, a)?;
+  let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
+  w.with_webview(move |pv| {
+    let tx = tx.clone();
+    let done = RcBlock::new(move |img: *mut NSImage, _err: *mut NSError| {
+      // Runs on the main thread, once.
+      let png = unsafe { img.as_ref() }.and_then(|img| {
+        let tiff = img.TIFFRepresentation()?;
+        let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
+        unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }
+      });
+      let _ = tx.send(png.map(|d| d.to_vec()));
+    });
+    unsafe {
+      let wk = &*(pv.inner() as *const WKWebView);
+      wk.takeSnapshotWithConfiguration_completionHandler(None, &done);
+    }
+  })
+  .map_err(|e| e.to_string())?;
+  match rx.recv_timeout(Duration::from_secs(10)) {
+    Ok(Some(png)) => Ok(Value::String(base64_encode(&png))),
+    Ok(None) => Err("snapshot failed".into()),
+    Err(_) => Err("snapshot timed out".into()),
+  }
+}
+
+// app.dock.setIcon.
+#[cfg(target_os = "macos")]
+fn dock_icon(app: &AppHandle, a: &Value) -> Res {
+  let png = base64_decode(s(a, "png").unwrap_or(""));
+  app
+    .run_on_main_thread(move || {
+      use objc2::{AllocAnyThread, MainThreadMarker};
+      use objc2_app_kit::{NSApplication, NSImage};
+      use objc2_foundation::NSData;
+      let Some(mtm) = MainThreadMarker::new() else { return };
+      let img = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&png));
+      unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(img.as_deref()) };
+    })
+    .map(|_| Value::Null)
+    .map_err(|e| e.to_string())
+}
+
+// webUtils.getPathForFile: WKWebView hides the paths of dropped files, but
+// the drag pasteboard still holds them while the drop event runs.
+#[cfg(target_os = "macos")]
+fn drag_paths(app: &AppHandle) -> Res {
+  let (tx, rx) = mpsc::channel::<Vec<String>>();
+  app
+    .run_on_main_thread(move || {
+      use objc2_app_kit::{NSPasteboard, NSPasteboardNameDrag, NSPasteboardTypeFileURL};
+      use objc2_foundation::NSURL;
+      let mut out = Vec::new();
+      unsafe {
+        let pb = NSPasteboard::pasteboardWithName(NSPasteboardNameDrag);
+        for item in pb.pasteboardItems().map(|a| a.to_vec()).unwrap_or_default() {
+          let Some(s) = item.stringForType(NSPasteboardTypeFileURL) else { continue };
+          let Some(url) = NSURL::URLWithString(&s) else { continue };
+          // Finder hands out file reference URLs (file:///.file/id=...).
+          let url = url.filePathURL().unwrap_or(url);
+          if let Some(p) = url.path() {
+            out.push(p.to_string());
+          }
+        }
+      }
+      let _ = tx.send(out);
+    })
+    .map_err(|e| e.to_string())?;
+  rx.recv_timeout(Duration::from_secs(2)).map(|v| json!(v)).map_err(|_| "drag.paths timed out".into())
+}
+
+// powerMonitor / screen events. Observers live for the whole process.
+#[cfg(target_os = "macos")]
+fn observe_system() {
+  use block2::RcBlock;
+  use objc2::MainThreadMarker;
+  use objc2_app_kit::{
+    NSApplicationDidChangeScreenParametersNotification, NSScreen, NSWorkspace, NSWorkspaceDidWakeNotification,
+    NSWorkspaceWillSleepNotification,
+  };
+  use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSString};
+  use std::ptr::NonNull;
+  use std::sync::atomic::{AtomicUsize, Ordering};
+  let Some(mtm) = MainThreadMarker::new() else { return };
+  fn on(center: &NSNotificationCenter, name: &NSString, f: impl Fn() + 'static) {
+    let block = RcBlock::new(move |_n: NonNull<NSNotification>| f());
+    let token = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) };
+    std::mem::forget(token);
+  }
+  let power = |kind: &'static str| move || emit(json!({ "ev": "power", "kind": kind }));
+  let ws = NSWorkspace::sharedWorkspace().notificationCenter();
+  unsafe {
+    on(&ws, NSWorkspaceDidWakeNotification, power("resume"));
+    on(&ws, NSWorkspaceWillSleepNotification, power("suspend"));
+  }
+  let dist = NSDistributedNotificationCenter::defaultCenter();
+  on(&dist, &NSString::from_str("com.apple.screenIsUnlocked"), power("unlock-screen"));
+  on(&dist, &NSString::from_str("com.apple.screenIsLocked"), power("lock-screen"));
+  static SCREENS: AtomicUsize = AtomicUsize::new(0);
+  SCREENS.store(NSScreen::screens(mtm).count(), Ordering::Relaxed);
+  on(&NSNotificationCenter::defaultCenter(), unsafe { NSApplicationDidChangeScreenParametersNotification }, move || {
+    let n = NSScreen::screens(mtm).count();
+    let prev = SCREENS.swap(n, Ordering::Relaxed);
+    let kind = match n.cmp(&prev) {
+      std::cmp::Ordering::Greater => "display-added",
+      std::cmp::Ordering::Less => "display-removed",
+      std::cmp::Ordering::Equal => "display-metrics-changed",
+    };
+    emit(json!({ "ev": "display", "kind": kind }));
+  });
 }
 
 fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
@@ -577,8 +709,8 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)
     }
-    // Dev builds run from a bare binary; the Dock shows its default icon.
-    "app.dockIcon" => Ok(Value::Null),
+    #[cfg(target_os = "macos")]
+    "app.dockIcon" => dock_icon(app, a),
     "app.activationPolicy" => {
       #[cfg(target_os = "macos")]
       {
@@ -639,6 +771,10 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     }
     "win.create" => create_window(app, a),
     "win.navigate" => navigate(app, a),
+    #[cfg(target_os = "macos")]
+    "win.capture" => capture(app, a),
+    #[cfg(target_os = "macos")]
+    "drag.paths" => drag_paths(app),
     c if c.starts_with("win.") => win_cmd(app, c, a),
     _ => Err(format!("unknown command {cmd}")),
   }
@@ -647,7 +783,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
 // Calls that wait on a person or a page load: off the async reader thread so
 // they do not hold up the commands behind them.
 fn is_slow(cmd: &str) -> bool {
-  matches!(cmd, "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate")
+  matches!(cmd, "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture")
 }
 
 fn reply(out: &Arc<Mutex<TcpStream>>, id: &Value, r: Res) {
@@ -798,6 +934,8 @@ fn main() {
       }
     })
     .setup(|app| {
+      #[cfg(target_os = "macos")]
+      observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
       Ok(())
     })
