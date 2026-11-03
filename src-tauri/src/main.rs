@@ -211,8 +211,9 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
       win_event(&nav_label, "navigate", json!({ "url": url }));
       external
     })
-    .on_page_load(move |_wv, p| {
+    .on_page_load(move |wv, p| {
       if p.event() == PageLoadEvent::Finished {
+        sync_frame(&wv);
         if let Some(waiters) = shared().loading.lock().unwrap().remove(&load_label) {
           for w in waiters {
             let _ = w.send(());
@@ -303,12 +304,65 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
     .on_page_load(|wv, p| {
       if p.event() == PageLoadEvent::Finished {
         let _ = wv.eval(POPOUT_THEME);
+        sync_frame(&wv);
       }
     })
     .build();
   match built {
-    Ok(window) => NewWindowResponse::Create { window },
+    Ok(window) => {
+      keep_on_screen(app, &window, id.rsplit_once('-').map_or(id, |(o, _)| o));
+      NewWindowResponse::Create { window }
+    }
     Err(_) => NewWindowResponse::Deny,
+  }
+}
+
+// A layout saved while screenY was wrong (or on a display since unplugged)
+// asks for a spot no screen shows. If no screen's work area shows the top of
+// it, center the window on its opener's screen.
+fn keep_on_screen(app: &AppHandle, w: &WebviewWindow, opener: &str) {
+  let (Ok(p), Ok(sz)) = (w.outer_position(), w.outer_size()) else { return };
+  let Ok(mons) = w.available_monitors() else { return };
+  // Enough of it to read and grab, not just a sliver of title bar.
+  let k = w.scale_factor().unwrap_or(1.0);
+  let (x, y, wd) = (p.x as f64, p.y as f64, sz.width as f64);
+  let (side, bar) = ((wd / 2.0).min(200.0 * k), (sz.height as f64 / 2.0).min(200.0 * k));
+  let seen = mons.iter().any(|m| {
+    let a = m.work_area();
+    let (ax, ay) = (a.position.x as f64, a.position.y as f64);
+    let (aw, ah) = (a.size.width as f64, a.size.height as f64);
+    x + wd >= ax + side && x + side <= ax + aw && y >= ay - 1.0 && y + bar <= ay + ah
+  });
+  if seen {
+    return;
+  }
+  let main = app.get_webview_window(opener).and_then(|m| m.current_monitor().ok().flatten());
+  let Some(m) = main.or_else(|| w.primary_monitor().ok().flatten()) else { return };
+  let a = m.work_area();
+  let nw = sz.width.min(a.size.width);
+  let nh = sz.height.min(a.size.height);
+  let _ = w.set_size(tauri::PhysicalSize::new(nw, nh));
+  let _ = w.set_position(tauri::PhysicalPosition::new(
+    a.position.x + (a.size.width - nw) as i32 / 2,
+    a.position.y + (a.size.height - nh) as i32 / 2,
+  ));
+}
+
+// WKWebView answers screenX 0, screenY the screen's height and outerWidth 0,
+// and dockview places a popout (and saves where it was) from those, which put
+// it off the bottom of the screen. Keep them true for every page we show.
+fn sync_frame(wv: &WebviewWindow) {
+  let (Ok(p), Ok(sz), Ok(k)) = (wv.outer_position(), wv.outer_size(), wv.scale_factor()) else { return };
+  let (p, sz) = (p.to_logical::<f64>(k), sz.to_logical::<f64>(k));
+  let _ = wv.eval(format!(
+    "(f=>{{if(!window.__rivenFrame)for(const[k,v]of[['screenX','x'],['screenLeft','x'],['screenY','y'],['screenTop','y'],['outerWidth','w'],['outerHeight','h']])Object.defineProperty(window,k,{{get:()=>window.__rivenFrame[v],configurable:true}});window.__rivenFrame=f}})({{x:{},y:{},w:{},h:{}}})",
+    p.x, p.y, sz.width, sz.height
+  ));
+}
+
+fn frame_changed(w: &tauri::Window<Wry>) {
+  if let Some(wv) = w.app_handle().get_webview_window(w.label()) {
+    sync_frame(&wv);
   }
 }
 
@@ -332,6 +386,7 @@ fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
         let _ = wv.destroy();
       });
     }
+    WindowEvent::Moved(_) | WindowEvent::Resized(_) => frame_changed(w),
     WindowEvent::Destroyed => {
       shared().closing.lock().unwrap().remove(&label);
     }
@@ -994,8 +1049,12 @@ fn main() {
       match ev {
         WindowEvent::Focused(true) => win_event(label, "focus", Value::Null),
         WindowEvent::Focused(false) => win_event(label, "blur", Value::Null),
-        WindowEvent::Moved(_) => win_event(label, "moved", Value::Null),
+        WindowEvent::Moved(_) => {
+          frame_changed(w);
+          win_event(label, "moved", Value::Null)
+        }
         WindowEvent::Resized(_) => {
+          frame_changed(w);
           let now = w.is_minimized().unwrap_or(false);
           let was = {
             let mut m = shared().minimized.lock().unwrap();

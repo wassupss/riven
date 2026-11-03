@@ -196,6 +196,9 @@ export default { ipcRenderer, contextBridge, webFrame, webUtils }
 // label, and close() is routed to the shell by that id.
 const nativeOpen = w.open.bind(w)
 let popSeq = 0
+// Popout pages get no preload; the test hook reaches them through these.
+const pops = new Map<string, Window>()
+;(w as W & { __rivenPops?: typeof pops }).__rivenPops = pops
 w.open = ((url?: string | URL, target?: string, features?: string): Window | null => {
   const s = String(url ?? '')
   let u: URL | null = null
@@ -208,12 +211,152 @@ w.open = ((url?: string | URL, target?: string, features?: string): Window | nul
     ipcRenderer.send('__riven:open', s)
     return null
   }
+  for (const [k, c] of pops) if (c.closed) pops.delete(k) // closed by the shell
   const id = `${LABEL}-${++popSeq}`
   u.hash = `riven-pop=${id}`
   const child = nativeOpen(u.href, target, features)
-  if (child) child.close = () => ipcRenderer.send('__riven:closePopout', id)
+  if (child) {
+    pops.set(id, child)
+    child.close = (): void => {
+      pops.delete(id)
+      ipcRenderer.send('__riven:closePopout', id)
+    }
+  }
   return child
 }) as typeof window.open
+
+// ---- Observers across windows -------------------------------------------------
+
+// dockview moves a popped-out group's DOM into the popout's document, but a
+// WebKit IntersectionObserver or ResizeObserver only sees targets in its own
+// document: one made here reports a moved terminal as never visible and never
+// sized, so it never opens. Watch each target with an observer from the window
+// it lives in, and follow it when it moves (the old observer reports it gone
+// first).
+type Entry = { target: Element }
+type Obs<E> = { observe(el: Element, o?: unknown): void; unobserve(el: Element): void; disconnect(): void } & {
+  takeRecords?(): E[]
+}
+type Ctor<E> = new (cb: (es: E[]) => void, opts?: unknown) => Obs<E>
+class CrossWindow<E extends Entry> {
+  private inner = new Map<Window, Obs<E>>()
+  private where = new Map<Element, [Window, unknown]>()
+  constructor(
+    private native: Ctor<E>,
+    private name: 'IntersectionObserver' | 'ResizeObserver',
+    private cb: (es: E[], o: unknown) => void,
+    private opts?: unknown
+  ) {}
+  realm(win: Window): Obs<E> {
+    let o = this.inner.get(win)
+    if (!o) {
+      // This window's own constructor is the wrapper below; popouts have no preload.
+      const C = win === w ? this.native : (((win as unknown as Record<string, Ctor<E>>)[this.name]) ?? this.native)
+      o = new C((es) => this.fire(es), this.opts)
+      this.inner.set(win, o)
+    }
+    return o
+  }
+  private fire(es: E[]): void {
+    const out: E[] = []
+    for (const e of es) {
+      const now = e.target.ownerDocument.defaultView
+      const was = this.where.get(e.target)
+      if (!was) continue // unobserved since
+      if (now && now !== was[0]) {
+        this.inner.get(was[0])?.unobserve(e.target)
+        if (was[0].closed) this.inner.delete(was[0])
+        this.where.set(e.target, [now, was[1]])
+        this.realm(now).observe(e.target, was[1]) // reports from where it is now
+      } else out.push(e)
+    }
+    if (out.length) this.cb(out, this)
+  }
+  observe(el: Element, o?: unknown): void {
+    const win = el.ownerDocument.defaultView ?? w
+    const was = this.where.get(el)
+    if (was && was[0] !== win) this.inner.get(was[0])?.unobserve(el)
+    this.where.set(el, [win, o])
+    this.realm(win).observe(el, o)
+  }
+  unobserve(el: Element): void {
+    const was = this.where.get(el)
+    if (was) this.inner.get(was[0])?.unobserve(el)
+    this.where.delete(el)
+  }
+  disconnect(): void {
+    for (const o of this.inner.values()) o.disconnect()
+    this.inner.clear()
+    this.where.clear()
+  }
+  takeRecords(): E[] {
+    return [...this.inner.values()].flatMap((o) => o.takeRecords?.() ?? [])
+  }
+}
+
+const NativeIO = window.IntersectionObserver
+class CrossWindowIO extends CrossWindow<IntersectionObserverEntry> {
+  readonly root = null
+  readonly rootMargin: string
+  readonly thresholds: ReadonlyArray<number>
+  constructor(cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+    super(NativeIO as unknown as Ctor<IntersectionObserverEntry>, 'IntersectionObserver', cb as never, opts)
+    const probe = this.realm(w) as unknown as IntersectionObserver
+    this.rootMargin = probe.rootMargin
+    this.thresholds = probe.thresholds
+  }
+}
+window.IntersectionObserver = function (cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+  // An explicit root pins the observer to that root's document anyway.
+  return opts?.root ? new NativeIO(cb, opts) : new CrossWindowIO(cb, opts)
+} as unknown as typeof IntersectionObserver
+window.IntersectionObserver.prototype = NativeIO.prototype
+
+const NativeRO = window.ResizeObserver
+window.ResizeObserver = function (cb: ResizeObserverCallback) {
+  return new CrossWindow(NativeRO as unknown as Ctor<ResizeObserverEntry>, 'ResizeObserver', cb as never)
+} as unknown as typeof ResizeObserver
+window.ResizeObserver.prototype = NativeRO.prototype
+
+// ---- requestAnimationFrame while hidden ---------------------------------------
+
+// Code running here schedules frames on this window, and WebKit stops this
+// window's frames while it is hidden (covered, minimized), even when the work is
+// for a popout on screen: a terminal popped out over a covered main window then
+// never finishes opening. While hidden, take the frame from a popout that shows.
+const nativeRaf = window.requestAnimationFrame.bind(window)
+const nativeCaf = window.cancelAnimationFrame.bind(window)
+let rafSeq = 0
+const rafs = new Map<number, [Window, number]>()
+window.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+  let host: Window = w
+  if (document.hidden) {
+    for (const p of pops.values()) {
+      if (!p.closed && !p.document.hidden) {
+        host = p
+        break
+      }
+    }
+  }
+  if (host === w) return nativeRaf(cb)
+  const id = --rafSeq // negative, never a native id
+  // A popout's frame time counts from that popout's own time origin.
+  const shift = host.performance.timeOrigin - performance.timeOrigin
+  rafs.set(id, [
+    host,
+    host.requestAnimationFrame((t) => {
+      rafs.delete(id)
+      cb(t + shift)
+    })
+  ])
+  return id
+}
+window.cancelAnimationFrame = (id: number): void => {
+  const r = rafs.get(id)
+  if (!r) return nativeCaf(id)
+  rafs.delete(id)
+  if (!r[0].closed) r[0].cancelAnimationFrame(r[1])
+}
 
 document.addEventListener(
   'click',

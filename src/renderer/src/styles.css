@@ -4761,6 +4761,9 @@ select {
   font-family: inherit;
   line-height: 1.5;
   max-height: 168px;
+  /* Text wraps, so there is nothing to scroll sideways; WebKit counts the
+     placeholder as horizontal overflow and its scrollbar eats the line. */
+  overflow-x: hidden;
 }
 .chat-input:focus,
 .chat-input:focus-visible {
