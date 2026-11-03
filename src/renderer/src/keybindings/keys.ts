@@ -166,8 +166,11 @@ class Keymap {
     // Don't fire app/terminal shortcuts while typing in a plain text field
     // (search box, tab-rename input, modal fields …). The terminal and Monaco
     // both host editable elements but own their region/keybindings, so they're
-    // exempt.
-    const ae = document.activeElement as HTMLElement | null
+    // exempt. A popped-out group's keys arrive here too, so read focus from the
+    // window the key was pressed in.
+    const t = e.target as Node | null
+    const doc = (t?.nodeType === 9 ? (t as Document) : t?.ownerDocument) ?? document
+    const ae = doc.activeElement as HTMLElement | null
     if (ae && !ae.closest?.('.monaco-editor') && !ae.closest?.('.ghostty-term')) {
       if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable) {
         // Reserve ONLY the text-editing combos for the field (so ⌘A/C/V/X/Z and
