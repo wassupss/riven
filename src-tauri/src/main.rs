@@ -51,6 +51,8 @@ struct Shared {
   minimized: Mutex<HashSet<String>>,
   // Popouts whose page has been told it is closing; their next close goes through.
   closing: Mutex<HashSet<String>>,
+  // The opener's theme (background, light/dark), worn by popout title bars.
+  pop_theme: Mutex<Option<(Color, Option<tauri::Theme>)>>,
   events: Mutex<Option<TcpStream>>,
 }
 
@@ -296,11 +298,17 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
     _ => "riven".to_string(),
   };
   let blank = WebviewUrl::External("about:blank".parse().unwrap());
-  let built = WebviewWindowBuilder::new(app, &label, blank)
+  let (bg, theme) = shared().pop_theme.lock().unwrap().unwrap_or((Color(0x1e, 0x1e, 0x1e, 0xff), None));
+  let bld = WebviewWindowBuilder::new(app, &label, blank)
     .window_features(features)
     .title(title)
     .disable_drag_drop_handler()
-    .background_color(Color(0x1e, 0x1e, 0x1e, 0xff))
+    .theme(theme)
+    .background_color(bg);
+  // A transparent title bar shows the window's background, i.e. the theme.
+  #[cfg(target_os = "macos")]
+  let bld = bld.title_bar_style(tauri::TitleBarStyle::Transparent);
+  let built = bld
     .on_page_load(|wv, p| {
       if p.event() == PageLoadEvent::Finished {
         let _ = wv.eval(POPOUT_THEME);
@@ -908,6 +916,22 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     }
     "tray.destroy" => {
       app.remove_tray_by_id(&tray_id(a));
+      Ok(Value::Null)
+    }
+    "pop.theme" => {
+      let Some(bg) = s(a, "color").and_then(color) else { return Ok(Value::Null) };
+      let theme = match s(a, "mode") {
+        Some("light") => Some(tauri::Theme::Light),
+        Some("dark") => Some(tauri::Theme::Dark),
+        _ => None,
+      };
+      *shared().pop_theme.lock().unwrap() = Some((bg, theme));
+      for (label, w) in app.webview_windows() {
+        if label.starts_with("pop-") {
+          let _ = w.set_theme(theme);
+          let _ = w.set_background_color(Some(bg));
+        }
+      }
       Ok(Value::Null)
     }
     "win.create" => create_window(app, a),

@@ -361,6 +361,11 @@ class Peer implements Sock {
         if (/^[\w-]+$/.test(id)) void call('win.destroy', { label: `pop-${id}` }).catch(() => {})
         return
       }
+      if (m.ch === '__riven:popTheme') {
+        const [color, mode] = (m.args ?? []).map(String)
+        void call('pop.theme', { color, mode }).catch(() => {})
+        return
+      }
       try {
         ipcMain._send(this.wc, m.ch, m.args ?? [])
       } catch (e) {

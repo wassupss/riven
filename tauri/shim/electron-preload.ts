@@ -217,6 +217,7 @@ w.open = ((url?: string | URL, target?: string, features?: string): Window | nul
   const child = nativeOpen(u.href, target, features)
   if (child) {
     pops.set(id, child)
+    sendPopTheme()
     child.close = (): void => {
       pops.delete(id)
       ipcRenderer.send('__riven:closePopout', id)
@@ -224,6 +225,52 @@ w.open = ((url?: string | URL, target?: string, features?: string): Window | nul
   }
   return child
 }) as typeof window.open
+
+// A popout's title bar is native and shows the window's background, so the
+// shell is told the opener's theme: on open, and on every theme change while
+// a popout is up (applyTheme restyles <html> inline and stamps the mode).
+let themeQueued = false
+function sendPopTheme(): void {
+  if (themeQueued) return
+  themeQueued = true
+  queueMicrotask(() => {
+    themeQueued = false
+    const probe = document.createElement('i')
+    probe.style.cssText = 'position:absolute;display:none;color:var(--bg)'
+    document.documentElement.appendChild(probe)
+    const rgb = getComputedStyle(probe).color.match(/[\d.]+/g)?.map(Number) ?? []
+    probe.remove()
+    if (rgb.length < 3) return
+    const hex = `#${rgb
+      .slice(0, 3)
+      .map((v) => Math.round(v).toString(16).padStart(2, '0'))
+      .join('')}`
+    const mode = document.documentElement.getAttribute('data-theme-mode') ?? 'dark'
+    ipcRenderer.send('__riven:popTheme', hex, mode)
+  })
+}
+new MutationObserver(() => {
+  const o = document.documentElement
+  for (const [k, c] of pops) {
+    if (c.closed) {
+      pops.delete(k)
+      continue
+    }
+    // The popout copied the theme once when it loaded (the shell's
+    // POPOUT_THEME); keep it in step.
+    try {
+      const d = c.document.documentElement
+      d.style.cssText = o.style.cssText
+      d.style.background = 'var(--bg)'
+      const m = o.getAttribute('data-theme-mode')
+      if (m) d.setAttribute('data-theme-mode', m)
+      else d.removeAttribute('data-theme-mode')
+    } catch {
+      /* not loaded yet */
+    }
+  }
+  if (pops.size) sendPopTheme()
+}).observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme-mode'] })
 
 // ---- Observers across windows -------------------------------------------------
 
