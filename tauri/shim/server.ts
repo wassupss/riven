@@ -100,13 +100,23 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 
 // Dev-only driving hook, off unless RIVEN_TAURI_TEST_KEY is set when launching:
 //   POST /__riven/test?k=KEY&w=w1&op=eval   body = JS, answers JSON {ok, val|err}
-//   GET  /__riven/test?k=KEY&w=w1&op=shot   answers the window as PNG
+//   GET  /__riven/test?k=KEY&w=w1&op=shot   answers the window (or a pop-* popout) as PNG
 //   GET  /__riven/test?k=KEY&w=w1&op=front  shows and focuses the window
+//   GET  /__riven/test?k=KEY&w=LABEL&op=close  asks any window to close, as its close button does
 const TEST_KEY = process.env.RIVEN_TAURI_TEST_KEY ?? ''
 async function testHook(u: URL, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const k = u.searchParams.get('k') ?? ''
   if (k.length !== TEST_KEY.length || !crypto.timingSafeEqual(Buffer.from(k), Buffer.from(TEST_KEY)))
     return void res.writeHead(403).end()
+  const label = u.searchParams.get('w') ?? ''
+  if (u.searchParams.get('op') === 'close') {
+    await call('win.close', { label }).catch(() => {})
+    return void res.writeHead(204).end()
+  }
+  if (u.searchParams.get('op') === 'shot' && label.startsWith('pop-')) {
+    const b64 = await call<string>('win.capture', { label }).catch(() => '')
+    return void res.writeHead(b64 ? 200 : 404, { 'content-type': 'image/png' }).end(Buffer.from(b64, 'base64'))
+  }
   const win = windowByLabel(u.searchParams.get('w') ?? 'w1')
   const wc = win?.webContents
   if (!win || !wc) return void res.writeHead(404).end()
@@ -176,7 +186,10 @@ async function serveStatic(u: URL, req: http.IncomingMessage, res: http.ServerRe
   const type = mimeOf(file)
   if (type.startsWith('text/html')) {
     // The preload has to run before the page's own scripts, as Electron's did.
-    const html = (await fs.promises.readFile(file, 'utf8')).replace(/<head>/i, (h) => h + HEAD_INJECT())
+    // popout.html is only a host for DOM dockview moves in from the opener; a
+    // preload there would open a second bridge for nothing.
+    let html = await fs.promises.readFile(file, 'utf8')
+    if (rel !== '/popout.html') html = html.replace(/<head>/i, (h) => h + HEAD_INJECT())
     res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
     res.end(html)
     return
@@ -343,6 +356,11 @@ class Peer implements Sock {
       )
     } else if (m.t === 'send') {
       if (m.ch === '__riven:open') return this.windowOpen(String((m.args ?? [])[0] ?? ''))
+      if (m.ch === '__riven:closePopout') {
+        const id = String((m.args ?? [])[0] ?? '')
+        if (/^[\w-]+$/.test(id)) void call('win.destroy', { label: `pop-${id}` }).catch(() => {})
+        return
+      }
       try {
         ipcMain._send(this.wc, m.ch, m.args ?? [])
       } catch (e) {

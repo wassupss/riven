@@ -187,11 +187,32 @@ export default { ipcRenderer, contextBridge, webFrame, webUtils }
 
 // ---- window.open / target=_blank -------------------------------------------
 
-// WKWebView opens no new windows on its own. Hand the URL to main, whose
-// setWindowOpenHandler sends real links to the browser.
-w.open = ((url?: string | URL): null => {
-  ipcRenderer.send('__riven:open', String(url ?? ''))
-  return null
+// Hand foreign URLs to main, whose setWindowOpenHandler sends real links to the
+// browser. Our own pages (dockview's popout.html) go through the real
+// window.open: the shell's on_new_window makes them opener-linked siblings, and
+// dockview needs the Window it returns to move the group's DOM into.
+// WKWebView ignores window.close() from script (wry has no webViewDidClose), so
+// the window is tagged with an id in the fragment, which the shell uses as its
+// label, and close() is routed to the shell by that id.
+const nativeOpen = w.open.bind(w)
+let popSeq = 0
+w.open = ((url?: string | URL, target?: string, features?: string): Window | null => {
+  const s = String(url ?? '')
+  let u: URL | null = null
+  try {
+    u = new URL(s, location.href)
+  } catch {
+    /* not a url */
+  }
+  if (u?.origin !== location.origin) {
+    ipcRenderer.send('__riven:open', s)
+    return null
+  }
+  const id = `${LABEL}-${++popSeq}`
+  u.hash = `riven-pop=${id}`
+  const child = nativeOpen(u.href, target, features)
+  if (child) child.close = () => ipcRenderer.send('__riven:closePopout', id)
+  return child
 }) as typeof window.open
 
 document.addEventListener(

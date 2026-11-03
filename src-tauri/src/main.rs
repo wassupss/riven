@@ -49,6 +49,8 @@ struct Shared {
   // win.navigate callers waiting for the page to finish loading.
   loading: Mutex<HashMap<String, Vec<mpsc::Sender<()>>>>,
   minimized: Mutex<HashSet<String>>,
+  // Popouts whose page has been told it is closing; their next close goes through.
+  closing: Mutex<HashSet<String>>,
   events: Mutex<Option<TcpStream>>,
 }
 
@@ -217,6 +219,10 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
           }
         }
       }
+    })
+    .on_new_window({
+      let app = app.clone();
+      move |url, features| popout(&app, url, features)
     });
   if let (Some(x), Some(y)) = (f(&o, "x"), f(&o, "y")) {
     bld = bld.position(x, y);
@@ -252,6 +258,85 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
   }
   bld.build().map_err(|e| e.to_string())?;
   Ok(Value::Null)
+}
+
+// dockview pops a group out with window.open(popout.html) and then moves the
+// group's live DOM into the returned Window, so the new webview has to be the
+// opener's WebKit sibling (window_features shares its configuration and
+// process) rather than an independent window. Only our own popout page gets
+// one; anything else window.open asks for is refused (the preload already
+// routes external links to the default browser).
+const POPOUT_THEME: &str = r#"(() => { try {
+  const o = window.opener && window.opener.document.documentElement
+  if (!o) return
+  document.documentElement.style.cssText = o.style.cssText
+  const m = o.getAttribute('data-theme-mode')
+  if (m) document.documentElement.setAttribute('data-theme-mode', m)
+  document.documentElement.style.background = 'var(--bg)'
+  document.body && (document.body.style.background = 'var(--bg)')
+} catch {} })()"#;
+
+fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFeatures) -> tauri::webview::NewWindowResponse<Wry> {
+  use tauri::webview::NewWindowResponse;
+  if !allowed_url(url.as_str()) || !url.path().ends_with("/popout.html") {
+    return NewWindowResponse::Deny;
+  }
+  // The preload tags the url with the id it will close the window by.
+  let id = match url.fragment().and_then(|f| f.strip_prefix("riven-pop=")) {
+    Some(id) if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') => id,
+    _ => return NewWindowResponse::Deny,
+  };
+  let label = format!("pop-{id}");
+  if app.get_webview_window(&label).is_some() {
+    return NewWindowResponse::Deny;
+  }
+  let title = match url.query_pairs().find(|(k, _)| k == "ws") {
+    Some((_, ws)) if !ws.is_empty() => format!("{ws} - riven"),
+    _ => "riven".to_string(),
+  };
+  let blank = WebviewUrl::External("about:blank".parse().unwrap());
+  let built = WebviewWindowBuilder::new(app, &label, blank)
+    .window_features(features)
+    .title(title)
+    .disable_drag_drop_handler()
+    .background_color(Color(0x1e, 0x1e, 0x1e, 0xff))
+    .on_page_load(|wv, p| {
+      if p.event() == PageLoadEvent::Finished {
+        let _ = wv.eval(POPOUT_THEME);
+      }
+    })
+    .build();
+  match built {
+    Ok(window) => NewWindowResponse::Create { window },
+    Err(_) => NewWindowResponse::Deny,
+  }
+}
+
+// dockview docks the group back on the popout's beforeunload, which WebKit
+// never fires when the window is simply torn down. So the first close (the red
+// button) is held and the page gets the event; dockview then closes the window
+// itself (the preload sends that to win.destroy). If the page doesn't answer,
+// the window goes anyway.
+fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
+  let label = w.label().to_string();
+  match ev {
+    WindowEvent::CloseRequested { api, .. } => {
+      if !shared().closing.lock().unwrap().insert(label.clone()) {
+        return;
+      }
+      let Some(wv) = w.app_handle().get_webview_window(&label) else { return };
+      api.prevent_close();
+      let _ = wv.eval("dispatchEvent(new Event('beforeunload'))");
+      std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        let _ = wv.destroy();
+      });
+    }
+    WindowEvent::Destroyed => {
+      shared().closing.lock().unwrap().remove(&label);
+    }
+    _ => {}
+  }
 }
 
 fn navigate(app: &AppHandle, a: &Value) -> Res {
@@ -408,6 +493,7 @@ fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     }
     "win.hide" => e(w.hide()),
     "win.close" => e(w.close()),
+    "win.destroy" => e(w.destroy()),
     "win.focus" => e(w.set_focus()),
     "win.minimize" => e(w.minimize()),
     "win.restore" => e(w.unminimize()),
@@ -900,6 +986,11 @@ fn main() {
     .on_menu_event(|_app, ev| emit(json!({ "ev": "menu", "id": ev.id().0 })))
     .on_window_event(|w, ev| {
       let label = w.label();
+      // Popouts are dockview's, owned by the opener's page; node never made them.
+      if label.starts_with("pop-") {
+        popout_event(w, ev);
+        return;
+      }
       match ev {
         WindowEvent::Focused(true) => win_event(label, "focus", Value::Null),
         WindowEvent::Focused(false) => win_event(label, "blur", Value::Null),
