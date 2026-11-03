@@ -23,3 +23,8 @@ landing/*.dmg
 /test-results/
 /playwright-report/
 supabase/.temp/
+
+# tauri port
+out-tauri
+src-tauri/target
+src-tauri/gen
