@@ -35,20 +35,39 @@ import {
   Plus
 } from 'lucide-react'
 
+// Fonts riven bundles as web copies (styles.css @font-face), used when the
+// system has no install.
+const BUNDLED_WEB: Record<string, string> = {
+  'JetBrains Mono': 'JetBrains Mono Web',
+  D2Coding: 'D2Coding Web'
+}
+// The stack saved for a picked font: its bundled web copy, then Menlo/Consolas
+// so a missing Latin font never falls through to the Korean face's Latin, then
+// the system Korean face (Apple SD Gothic Neo / Malgun Gothic) for Hangul.
+const withKorean = (family: string): string => {
+  const web = BUNDLED_WEB[family] ? `, "${BUNDLED_WEB[family]}"` : ''
+  return `"${family}"${web}, Menlo, Consolas, "Apple SD Gothic Neo", "Malgun Gothic", monospace`
+}
+
 // A monospace-font picker (curated list + import) sharing the standard controls.
 function FontField({ value, onChange }: { value: string; onChange: (v: string) => void }): JSX.Element {
   const t = useT()
   const imported = useSettings((s) => s.settings.importedFonts)
   const set = useSettings((s) => s.set)
   const options = [...CURATED_FONTS, ...imported.map((f) => f.family)]
-  const current = options.find((o) => value.includes(o))
+  const matched = options.find((o) => value.includes(o))
+  // "Custom" must reveal the text field even while the value still matches a
+  // listed font; otherwise picking it did nothing.
+  const [custom, setCustom] = useState(false)
+  const current = custom ? undefined : matched
 
   const doImport = async (): Promise<void> => {
     const r = await window.api.workspace.importFont()
     if (!r) return
     injectFont(r.family, r.dataUrl)
     set({ importedFonts: [...imported.filter((f) => f.family !== r.family), r] })
-    onChange(`"${r.family}", monospace`)
+    setCustom(false)
+    onChange(withKorean(r.family))
   }
 
   return (
@@ -56,7 +75,9 @@ function FontField({ value, onChange }: { value: string; onChange: (v: string) =
       <Select
         value={current ?? '__custom'}
         onChange={(e) => {
-          if (e.target.value !== '__custom') onChange(`"${e.target.value}", monospace`)
+          if (e.target.value === '__custom') return setCustom(true)
+          setCustom(false)
+          onChange(withKorean(e.target.value))
         }}
       >
         {options.map((o) => (

@@ -114,6 +114,9 @@ const S = {
 // for fractional cell widths (its fields are integers).
 const K = 16
 
+// Every printable ASCII char, for the primary face's ASCII bounding-box height.
+const ASCII_PRINTABLE = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('')
+
 // ---- shared per-wasm callbacks ----------------------------------------------
 
 interface Shared {
@@ -312,6 +315,9 @@ export class GhosttyTerm {
   private cellW = 8
   private cellH = 16
   private baseline = 12
+  // Offset from the cell's vertical center to the baseline that centers CJK
+  // ink (Hangul has no descender, so on the Latin baseline it rode high).
+  private cjkMid = 0
   private fonts = ['', '', '', '']
   private wideFonts = ['', '', '', '']
   // Whether the last refChar() cell spans two columns.
@@ -921,14 +927,25 @@ export class GhosttyTerm {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.font = this.fonts[0]
     const m = ctx.measureText('MMMMMMMMMM')
-    // Grow the CJK fallback face toward its two-cell slot (Apple SD Gothic
-    // Neo's 가 is 0.87em, which left 한 글 gaps), capped so Hangul stays near
-    // the Latin size: filling the slot fully meant 16.6px glyphs next to 12px.
-    const ic = ctx.measureText('가').width
+    // Size the CJK fallback face the way Ghostty does (font.default_fallback_
+    // adjustment = .ic_width, Collection.scaleFactor): scale it so its ideograph
+    // width ('水' advance) matches the primary face's estimated ideograph width,
+    // min(ASCII bounding-box height, 2 cells), since a Latin-only primary has no
+    // '水'. JetBrains Mono + Apple SD Gothic Neo gives 1.05 / 0.865 = ~1.21x.
+    const ascii = ctx.measureText(ASCII_PRINTABLE)
+    const asciiH = ascii.actualBoundingBoxAscent + ascii.actualBoundingBoxDescent
+    const ic = ctx.measureText('水').width
     ctx.restore()
-    const icScale = ic > 0 ? Math.max(1, Math.min((2 * (m.width / 10)) / ic, 1.15)) : 1
+    const primaryIc = Math.min(asciiH > 0 ? asciiH : Infinity, 2 * (m.width / 10))
+    const icScale = ic > 0 && Number.isFinite(primaryIc) ? primaryIc / ic : 1
     const wideSize = Math.round(fontSize * icScale * 10) / 10
     this.wideFonts = this.fonts.map((f) => f.replace(`${fontSize}px`, `${wideSize}px`))
+    ctx.save()
+    ctx.font = this.wideFonts[0]
+    ctx.textBaseline = 'alphabetic'
+    const hk = ctx.measureText('가나다라마바사아자차카타파하')
+    ctx.restore()
+    this.cjkMid = (hk.actualBoundingBoxAscent - hk.actualBoundingBoxDescent) / 2
     // Fractional advance like xterm.js: rounding to whole device pixels made
     // cells ~4% wider (7.5 vs 7.2 css at dpr 1.2), so lines wrapped at other
     // columns than the xterm engine. Fills snap to device pixels in px().
@@ -1229,15 +1246,18 @@ export class GhosttyTerm {
           if (f !== font) ctx.font = this.fonts[(font = f)]
           const text = tag === 1 ? this.cellGraphemes(i) : String.fromCodePoint(cp)
           if (cells === 2) {
-            // Center in the two-cell slot. CJK uses the scaled face, centered
-            // vertically since it is taller than the primary font.
+            // Non-CJK wide glyphs center in the two-cell slot.
             ctx.textAlign = 'center'
             if (isCJK(cp)) {
-              ctx.font = this.wideFonts[f]
+              // Always the regular face: Ghostty resolves a styled codepoint
+              // the primary font lacks to the regular fallback (CodepointResolver),
+              // so bold/italic Hangul draws regular, as in Ghostty/cmux.
+              // Starts at the cell's left edge like Ghostty; vertically its ink
+              // is centered in the row so it lines up with prompt segments.
+              ctx.font = this.wideFonts[0]
               font = -1
-              ctx.textBaseline = 'middle'
-              ctx.fillText(text, (i + 1) * cw, top + ch / 2)
-              ctx.textBaseline = 'alphabetic'
+              ctx.textAlign = 'left'
+              ctx.fillText(text, i * cw, top + ch / 2 + this.cjkMid)
             } else {
               ctx.fillText(text, (i + 1) * cw, base)
             }
@@ -1376,8 +1396,105 @@ export class GhosttyTerm {
     ctx.setLineDash([])
   }
 
-  // Box drawing and block elements as geometry. Returns false for anything
-  // the font should draw.
+  // Powerline separators (U+E0B0..E0BF), drawn as shapes filling the whole
+  // cell like Ghostty's sprite font does. The bundled JetBrains Mono has no
+  // such glyphs (they showed as tofu boxes), and font glyphs would not span the
+  // cell height, leaving gaps beside the colored prompt segments.
+  private drawPowerline(
+    ctx: CanvasRenderingContext2D,
+    cp: number,
+    x0: number,
+    y0: number,
+    w: number,
+    h: number,
+    color: string
+  ): boolean {
+    const x1 = x0 + w
+    const y1 = y0 + h
+    const ym = y0 + h / 2
+    const thin = Math.max(1, Math.round(this.opts.fontSize / 12)) / this.dpr
+    ctx.fillStyle = color
+    ctx.strokeStyle = color
+    ctx.lineWidth = thin
+    ctx.beginPath()
+    switch (cp) {
+      case 0xe0b0: // solid right-pointing triangle
+        ctx.moveTo(x0, y0)
+        ctx.lineTo(x1, ym)
+        ctx.lineTo(x0, y1)
+        ctx.closePath()
+        ctx.fill()
+        return true
+      case 0xe0b2: // solid left-pointing triangle
+        ctx.moveTo(x1, y0)
+        ctx.lineTo(x0, ym)
+        ctx.lineTo(x1, y1)
+        ctx.closePath()
+        ctx.fill()
+        return true
+      case 0xe0b1: // thin right chevron
+        ctx.moveTo(x0, y0)
+        ctx.lineTo(x1, ym)
+        ctx.lineTo(x0, y1)
+        ctx.stroke()
+        return true
+      case 0xe0b3: // thin left chevron
+        ctx.moveTo(x1, y0)
+        ctx.lineTo(x0, ym)
+        ctx.lineTo(x1, y1)
+        ctx.stroke()
+        return true
+      case 0xe0b4: // solid right half-circle
+      case 0xe0b5: // thin right half-circle
+        ctx.moveTo(x0, y0)
+        ctx.ellipse(x0, ym, w, h / 2, 0, -Math.PI / 2, Math.PI / 2)
+        if (cp === 0xe0b4) {
+          ctx.closePath()
+          ctx.fill()
+        } else ctx.stroke()
+        return true
+      case 0xe0b6: // solid left half-circle
+      case 0xe0b7: // thin left half-circle
+        ctx.moveTo(x1, y0)
+        ctx.ellipse(x1, ym, w, h / 2, 0, -Math.PI / 2, Math.PI / 2, true)
+        if (cp === 0xe0b6) {
+          ctx.closePath()
+          ctx.fill()
+        } else ctx.stroke()
+        return true
+    }
+    // Corner triangles: solid on even codepoints, the thin diagonal on odd.
+    const corner: Record<number, [number, number, number, number, number, number]> = {
+      0xe0b8: [x0, y0, x0, y1, x1, y1], // lower-left
+      0xe0ba: [x1, y0, x1, y1, x0, y1], // lower-right
+      0xe0bc: [x0, y0, x1, y0, x0, y1], // upper-left
+      0xe0be: [x0, y0, x1, y0, x1, y1] // upper-right
+    }
+    const solid = corner[cp]
+    if (solid) {
+      ctx.moveTo(solid[0], solid[1])
+      ctx.lineTo(solid[2], solid[3])
+      ctx.lineTo(solid[4], solid[5])
+      ctx.closePath()
+      ctx.fill()
+      return true
+    }
+    const diag: Record<number, [number, number, number, number]> = {
+      0xe0b9: [x0, y0, x1, y1],
+      0xe0bb: [x1, y0, x0, y1],
+      0xe0bd: [x1, y0, x0, y1],
+      0xe0bf: [x0, y0, x1, y1]
+    }
+    const d = diag[cp]
+    if (!d) return false
+    ctx.moveTo(d[0], d[1])
+    ctx.lineTo(d[2], d[3])
+    ctx.stroke()
+    return true
+  }
+
+  // Box drawing, block elements and powerline separators as geometry. Returns
+  // false for anything the font should draw.
   private drawSpecial(
     ctx: CanvasRenderingContext2D,
     cp: number,
@@ -1387,6 +1504,7 @@ export class GhosttyTerm {
     h: number,
     color: string
   ): boolean {
+    if (cp >= 0xe0b0 && cp <= 0xe0bf) return this.drawPowerline(ctx, cp, x0, y0, w, h, color)
     if (cp < 0x2500 || cp > 0x259f) return false
     ctx.fillStyle = color
     if (cp >= 0x2580) return this.drawBlock(ctx, cp, x0, y0, w, h)
@@ -1520,8 +1638,9 @@ export class GhosttyTerm {
             ctx.textAlign = 'center'
             if (isCJK(ch0.codePointAt(0) ?? 0)) {
               ctx.font = this.wideFonts[0]
-              ctx.textBaseline = 'middle'
-              ctx.fillText(ch0, (col + 1) * this.cellW, y0 + ch / 2)
+              ctx.textAlign = 'left'
+              ctx.textBaseline = 'alphabetic'
+              ctx.fillText(ch0, x0, y0 + ch / 2 + this.cjkMid)
             } else {
               ctx.font = this.fonts[0]
               ctx.textBaseline = 'alphabetic'

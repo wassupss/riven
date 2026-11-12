@@ -24,6 +24,35 @@ function terminalTheme(): GhosttyTheme {
   const dim = v('--fg-dim', '#868d98')
   const accent = v('--accent', '#ff7847')
   const light = document.documentElement.dataset.themeMode === 'light'
+  // Dark mode uses cmux's terminal colors: with no Ghostty theme configured
+  // cmux applies Ghostty's "Apple System Colors" palette in dark mode, so text
+  // reads the same as in cmux. The background stays the app's --bg. Light mode
+  // keeps the app-derived palette, since these colors assume a dark background.
+  if (!light) {
+    return {
+      background: bg,
+      foreground: '#ffffff',
+      cursor: accent,
+      cursorAccent: bg,
+      selectionBackground: '#3f638b',
+      black: '#1a1a1a',
+      red: '#cc372e',
+      green: '#26a439',
+      yellow: '#cdac08',
+      blue: '#0869cb',
+      magenta: '#9647bf',
+      cyan: '#479ec2',
+      white: '#98989d',
+      brightBlack: '#464646',
+      brightRed: '#ff453a',
+      brightGreen: '#32d74b',
+      brightYellow: '#ffd60a',
+      brightBlue: '#0a84ff',
+      brightMagenta: '#bf5af2',
+      brightCyan: '#76d6ff',
+      brightWhite: '#ffffff'
+    }
+  }
   return {
     background: bg,
     foreground: fg,
