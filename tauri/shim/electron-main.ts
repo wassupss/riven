@@ -38,7 +38,9 @@ class App extends EventEmitter {
       const png = img.toPNG()
       if (png.length) fire('app.dockIcon', { png: png.toString('base64') })
     },
-    setBadge: (): void => {},
+    setBadge: (text: string): void => {
+      if (process.platform === 'darwin') fire('app.dockBadge', { text: String(text ?? '') })
+    },
     bounce: (): number => 0,
     show: (): Promise<void> => Promise.resolve(),
     hide: (): void => {}
@@ -799,13 +801,20 @@ export class Tray extends EventEmitter {
 
 // ---- systemPreferences ---------------------------------------------------------
 
-// A Node child of an unbundled shell has no TCC identity of its own to ask with.
+// The shell asks macOS (AVCaptureDevice / CGPreflightScreenCaptureAccess); this
+// Node process is its child, so TCC answers for the app.
 export const systemPreferences = {
-  getMediaAccessStatus(): string {
-    return 'not-determined'
+  getMediaAccessStatus(kind: string): string {
+    if (process.platform !== 'darwin') return 'unknown'
+    try {
+      return callSync<string>('perm.status', { kind })
+    } catch {
+      return 'unknown'
+    }
   },
-  askForMediaAccess(): Promise<boolean> {
-    return Promise.resolve(false)
+  askForMediaAccess(kind: string): Promise<boolean> {
+    if (process.platform !== 'darwin') return Promise.resolve(true)
+    return call<boolean>('perm.ask', { kind }).catch(() => false)
   },
   isTrustedAccessibilityClient(): boolean {
     return false

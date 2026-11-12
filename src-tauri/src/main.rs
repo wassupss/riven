@@ -16,6 +16,8 @@
 
 #[cfg(target_os = "macos")]
 mod browser;
+#[cfg(target_os = "macos")]
+mod perm;
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -859,6 +861,12 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     }
     #[cfg(target_os = "macos")]
     "app.dockIcon" => dock_icon(app, a),
+    #[cfg(target_os = "macos")]
+    "app.dockBadge" => perm::set_badge(app, s(a, "text").unwrap_or("").to_string()),
+    #[cfg(target_os = "macos")]
+    "perm.status" => perm::status(s(a, "kind").unwrap_or("")),
+    #[cfg(target_os = "macos")]
+    "perm.ask" => perm::ask(s(a, "kind").unwrap_or("")),
     "app.activationPolicy" => {
       #[cfg(target_os = "macos")]
       {
