@@ -1018,6 +1018,14 @@ fn repo_root() -> PathBuf {
   PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
+// A bundled app (tauri/package.mjs + `tauri build`) carries its own Node and
+// app tree in Resources; the dev build runs from the repo with a local Node.
+fn bundled(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+  let res = app.path().resource_dir().ok()?;
+  let (root, node) = (res.join("app"), res.join("node"));
+  (root.join("out-tauri/main/index.js").exists() && node.exists()).then_some((root, node))
+}
+
 fn node_bin() -> PathBuf {
   if let Ok(p) = std::env::var("RIVEN_NODE") {
     return PathBuf::from(p);
@@ -1048,12 +1056,13 @@ fn start_node(app: &AppHandle) -> Result<(), String> {
       }
     });
   }
+  let (root, node) = bundled(app).unwrap_or_else(|| (repo_root(), node_bin()));
   let script = std::env::var("RIVEN_TAURI_MAIN")
     .map(PathBuf::from)
-    .unwrap_or_else(|_| repo_root().join("out-tauri/main/index.js"));
-  let mut child = std::process::Command::new(node_bin())
+    .unwrap_or_else(|_| root.join("out-tauri/main/index.js"));
+  let mut child = std::process::Command::new(node)
     .arg(&script)
-    .current_dir(repo_root())
+    .current_dir(&root)
     .env("RIVEN_TAURI_CTL_PORT", port.to_string())
     .env("RIVEN_TAURI_CTL_TOKEN", &token)
     .spawn()

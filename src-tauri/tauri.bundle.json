@@ -1,0 +1,16 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": [
+      "app"
+    ],
+    "resources": {
+      "target/stage/app/": "app/",
+      "target/stage/node": "node"
+    },
+    "icon": [
+      "../build/icon.icns",
+      "icons/icon.png"
+    ]
+  }
+}
