@@ -11,6 +11,7 @@ import * as path from 'path'
 import { call, callSync, connect, fire, onEvent } from './rust'
 import { BrowserWindow, WebContents, setAppEmitter, type Rect } from './windows'
 import { serverReady } from './server'
+import { session, WebContentsView } from './views'
 
 export { ipcMain } from './ipc'
 export { BrowserWindow, WebContents }
@@ -735,11 +736,20 @@ export class Menu {
     this.clicks.get(id)?.()
   }
 
-  // Context menus are the browser panel's, which this build does not have.
-  popup(): void {}
+  // At the cursor, over the given (or focused) window. Clicks come back as
+  // 'menu' events like the app menu's; the newest popup stays live for them.
+  popup(o: { window?: BrowserWindow } = {}): void {
+    const w = o.window ?? BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    if (!w || w.isDestroyed()) return
+    if (popupMenu && popupMenu !== appMenu) liveMenus.delete(popupMenu.id)
+    popupMenu = this
+    liveMenus.set(this.id, this)
+    fire('menu.popup', { label: w.label, items: this.wire })
+  }
   closePopup(): void {}
 }
 let appMenu: Menu | null = null
+let popupMenu: Menu | null = null
 
 function menuClick(id: string): void {
   const m = liveMenus.get(Number(id.split(':')[0]))
@@ -806,41 +816,9 @@ export const systemPreferences = {
   on(): void {}
 }
 
-// ---- session / WebContentsView: the browser panel's, absent in this build ------
+// ---- session / WebContentsView: the browser panel (views.ts) -----------------
 
-class StubSession extends EventEmitter {
-  setPermissionRequestHandler(): void {}
-  setPermissionCheckHandler(): void {}
-  setUserAgent(): void {}
-  getUserAgent(): string {
-    return ''
-  }
-  clearCache(): Promise<void> {
-    return Promise.resolve()
-  }
-  clearStorageData(): Promise<void> {
-    return Promise.resolve()
-  }
-  readonly cookies = { get: async (): Promise<unknown[]> => [], set: async (): Promise<void> => {}, remove: async (): Promise<void> => {} }
-  readonly webRequest = { onBeforeSendHeaders: (): void => {}, onHeadersReceived: (): void => {} }
-}
-const sessions = new Map<string, StubSession>()
-export const session = {
-  fromPartition(p: string): StubSession {
-    let s = sessions.get(p)
-    if (!s) sessions.set(p, (s = new StubSession()))
-    return s
-  },
-  get defaultSession(): StubSession {
-    return session.fromPartition('')
-  }
-}
-
-export class WebContentsView {
-  constructor() {
-    throw new Error('The browser panel is not available in the Tauri build')
-  }
-}
+export { session, WebContentsView } from './views'
 
 export const webContents = {
   getAllWebContents(): WebContents[] {

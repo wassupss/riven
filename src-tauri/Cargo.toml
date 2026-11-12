@@ -8,7 +8,7 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.12", features = ["tray-icon", "image-png", "devtools", "macos-private-api"] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "devtools", "macos-private-api", "unstable"] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -18,9 +18,10 @@ url = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSOperation", "NSString", "NSURL"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSJSONSerialization", "NSNotification", "NSOperation", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSScreen", "NSWorkspace"] }
-objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKContentWorld", "WKFrameInfo", "WKNavigation", "WKScriptMessage", "WKScriptMessageHandler", "WKUserContentController", "WKUserScript", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
 
 [profile.release]
 codegen-units = 1

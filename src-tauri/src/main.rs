@@ -14,6 +14,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "macos")]
+mod browser;
+
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
@@ -31,8 +34,8 @@ use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
-  AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-  WindowEvent, Wry,
+  AppHandle, LogicalPosition, LogicalSize, Manager, RunEvent, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+  Window, WindowEvent, Wry,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 
@@ -101,9 +104,19 @@ fn tray_id(a: &Value) -> String {
   }
 }
 
-fn win(app: &AppHandle, a: &Value) -> Result<WebviewWindow, String> {
+// A window and its own (full-size) webview. Not a WebviewWindow: once the
+// browser panel adds child webviews to a window, Tauri no longer hands that
+// window out as one (get_webview_window / webview_windows skip it).
+struct Wv {
+  w: Window<Wry>,
+  v: Webview<Wry>,
+}
+
+fn win(app: &AppHandle, a: &Value) -> Result<Wv, String> {
   let label = s(a, "label").ok_or("no label")?;
-  app.get_webview_window(label).ok_or_else(|| format!("no window {label}"))
+  let w = app.get_window(label).ok_or_else(|| format!("no window {label}"))?;
+  let v = app.get_webview(label).ok_or_else(|| format!("no webview {label}"))?;
+  Ok(Wv { w, v })
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {
@@ -160,11 +173,21 @@ fn color(hex: &str) -> Option<Color> {
   }
 }
 
-fn bounds(w: &WebviewWindow) -> Result<Value, String> {
+fn bounds(w: &Window<Wry>) -> Result<Value, String> {
   let sf = w.scale_factor().map_err(|e| e.to_string())?;
   let p = w.outer_position().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
   let z = w.outer_size().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
   Ok(json!({ "x": p.x.round(), "y": p.y.round(), "width": z.width.round(), "height": z.height.round() }))
+}
+
+// The content area (Electron's getContentBounds), in the same logical points
+// child webviews are positioned in. With the hidden title bar this is the
+// whole window, but say so rather than assume it.
+fn content_bounds(w: &Window<Wry>) -> Result<Value, String> {
+  let sf = w.scale_factor().map_err(|e| e.to_string())?;
+  let p = w.inner_position().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
+  let z = w.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
+  Ok(json!({ "x": p.x, "y": p.y, "width": z.width, "height": z.height }))
 }
 
 fn allowed_url(url: &str) -> bool {
@@ -183,6 +206,7 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
   let blank = WebviewUrl::External("about:blank".parse().unwrap());
   let nav_label = label.clone();
   let load_label = label.clone();
+  let title_label = label.clone();
   let mut bld = WebviewWindowBuilder::new(app, &label, blank)
     .initialization_script(format!("window.__RIVEN_WIN__={};", Value::String(label.clone())))
     .disable_drag_drop_handler()
@@ -223,6 +247,7 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
         }
       }
     })
+    .on_document_title_changed(move |_wv, title| win_event(&title_label, "title", json!({ "title": title })))
     .on_new_window({
       let app = app.clone();
       move |url, features| popout(&app, url, features)
@@ -256,8 +281,11 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
   if let Some(c) = s(&o, "backgroundColor").and_then(color) {
     bld = bld.background_color(c);
   }
-  if let Some(p) = s(&o, "parent").and_then(|p| app.get_webview_window(p)) {
-    bld = bld.parent(&p).map_err(|e| e.to_string())?;
+  if let Some(p) = s(&o, "parent").and_then(|p| app.get_window(p)) {
+    #[cfg(target_os = "macos")]
+    {
+      bld = bld.parent_raw(p.ns_window().map_err(|e| e.to_string())?);
+    }
   }
   bld.build().map_err(|e| e.to_string())?;
   Ok(Value::Null)
@@ -290,7 +318,7 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
     _ => return NewWindowResponse::Deny,
   };
   let label = format!("pop-{id}");
-  if app.get_webview_window(&label).is_some() {
+  if app.get_window(&label).is_some() {
     return NewWindowResponse::Deny;
   }
   let title = match url.query_pairs().find(|(k, _)| k == "ws") {
@@ -344,7 +372,7 @@ fn keep_on_screen(app: &AppHandle, w: &WebviewWindow, opener: &str) {
   if seen {
     return;
   }
-  let main = app.get_webview_window(opener).and_then(|m| m.current_monitor().ok().flatten());
+  let main = app.get_window(opener).and_then(|m| m.current_monitor().ok().flatten());
   let Some(m) = main.or_else(|| w.primary_monitor().ok().flatten()) else { return };
   let a = m.work_area();
   let nw = sz.width.min(a.size.width);
@@ -360,17 +388,21 @@ fn keep_on_screen(app: &AppHandle, w: &WebviewWindow, opener: &str) {
 // and dockview places a popout (and saves where it was) from those, which put
 // it off the bottom of the screen. Keep them true for every page we show.
 fn sync_frame(wv: &WebviewWindow) {
-  let (Ok(p), Ok(sz), Ok(k)) = (wv.outer_position(), wv.outer_size(), wv.scale_factor()) else { return };
+  sync_frame_of(&wv.as_ref().window(), wv.as_ref());
+}
+
+fn sync_frame_of(w: &Window<Wry>, v: &Webview<Wry>) {
+  let (Ok(p), Ok(sz), Ok(k)) = (w.outer_position(), w.outer_size(), w.scale_factor()) else { return };
   let (p, sz) = (p.to_logical::<f64>(k), sz.to_logical::<f64>(k));
-  let _ = wv.eval(format!(
+  let _ = v.eval(format!(
     "(f=>{{if(!window.__rivenFrame)for(const[k,v]of[['screenX','x'],['screenLeft','x'],['screenY','y'],['screenTop','y'],['outerWidth','w'],['outerHeight','h']])Object.defineProperty(window,k,{{get:()=>window.__rivenFrame[v],configurable:true}});window.__rivenFrame=f}})({{x:{},y:{},w:{},h:{}}})",
     p.x, p.y, sz.width, sz.height
   ));
 }
 
 fn frame_changed(w: &tauri::Window<Wry>) {
-  if let Some(wv) = w.app_handle().get_webview_window(w.label()) {
-    sync_frame(&wv);
+  if let Some(v) = w.app_handle().get_webview(w.label()) {
+    sync_frame_of(w, &v);
   }
 }
 
@@ -404,7 +436,7 @@ fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
 
 fn navigate(app: &AppHandle, a: &Value) -> Res {
   let w = win(app, a)?;
-  let label = w.label().to_string();
+  let label = w.w.label().to_string();
   let url = s(a, "url").ok_or("no url")?.to_string();
   let parsed: url::Url = url.parse().map_err(|e: url::ParseError| e.to_string())?;
   let sh = shared();
@@ -416,45 +448,11 @@ fn navigate(app: &AppHandle, a: &Value) -> Res {
   sh.expected.lock().unwrap().insert(label.clone(), parsed.to_string());
   let (tx, rx) = mpsc::channel();
   sh.loading.lock().unwrap().entry(label).or_default().push(tx);
-  w.navigate(parsed).map_err(|e| e.to_string())?;
+  w.v.navigate(parsed).map_err(|e| e.to_string())?;
   // Electron's loadURL resolves when the page has loaded; a page that never
   // finishes should not hold the caller forever.
   let _ = rx.recv_timeout(Duration::from_secs(30));
   Ok(Value::Null)
-}
-
-// webContents.capturePage: WKWebView draws the page into an image itself, so
-// no screen-recording permission is involved (as with Electron's).
-#[cfg(target_os = "macos")]
-fn capture(app: &AppHandle, a: &Value) -> Res {
-  use block2::RcBlock;
-  use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
-  use objc2_foundation::{NSDictionary, NSError};
-  use objc2_web_kit::WKWebView;
-  let w = win(app, a)?;
-  let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
-  w.with_webview(move |pv| {
-    let tx = tx.clone();
-    let done = RcBlock::new(move |img: *mut NSImage, _err: *mut NSError| {
-      // Runs on the main thread, once.
-      let png = unsafe { img.as_ref() }.and_then(|img| {
-        let tiff = img.TIFFRepresentation()?;
-        let rep = NSBitmapImageRep::imageRepWithData(&tiff)?;
-        unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }
-      });
-      let _ = tx.send(png.map(|d| d.to_vec()));
-    });
-    unsafe {
-      let wk = &*(pv.inner() as *const WKWebView);
-      wk.takeSnapshotWithConfiguration_completionHandler(None, &done);
-    }
-  })
-  .map_err(|e| e.to_string())?;
-  match rx.recv_timeout(Duration::from_secs(10)) {
-    Ok(Some(png)) => Ok(Value::String(base64_encode(&png))),
-    Ok(None) => Err("snapshot failed".into()),
-    Err(_) => Err("snapshot timed out".into()),
-  }
 }
 
 // app.dock.setIcon.
@@ -544,7 +542,7 @@ fn observe_system() {
 }
 
 fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
-  let w = win(app, a)?;
+  let Wv { w, v } = win(app, a)?;
   let e = |r: tauri::Result<()>| r.map(|_| Value::Null).map_err(|e| e.to_string());
   match cmd {
     "win.show" => {
@@ -573,6 +571,7 @@ fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "win.setShadow" => e(w.set_shadow(b(a, "on").unwrap_or(true))),
     "win.setBackgroundColor" => e(w.set_background_color(s(a, "color").and_then(color))),
     "win.getBounds" => bounds(&w),
+    "win.getContentBounds" => content_bounds(&w),
     "win.setBounds" => {
       let cur = bounds(&w)?;
       let nb = a.get("bounds").cloned().unwrap_or(Value::Null);
@@ -585,10 +584,10 @@ fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
       }
       Ok(Value::Null)
     }
-    "win.zoom" => e(w.set_zoom(f(a, "factor").unwrap_or(1.0))),
-    "win.reload" => e(w.eval("location.reload()")),
+    "win.zoom" => e(v.set_zoom(f(a, "factor").unwrap_or(1.0))),
+    "win.reload" => e(v.eval("location.reload()")),
     "win.devtools" => {
-      w.open_devtools();
+      v.open_devtools();
       Ok(Value::Null)
     }
     _ => Err(format!("unknown command {cmd}")),
@@ -676,8 +675,8 @@ fn build_menu(app: &AppHandle, a: &Value) -> Result<Menu<Wry>, String> {
 
 // ---- dialogs -----------------------------------------------------------------
 
-fn parent_of(app: &AppHandle, a: &Value) -> Option<WebviewWindow> {
-  s(a, "label").and_then(|l| app.get_webview_window(l))
+fn parent_of(app: &AppHandle, a: &Value) -> Option<Window<Wry>> {
+  s(a, "label").and_then(|l| app.get_window(l))
 }
 
 fn file_dialog(app: &AppHandle, a: &Value) -> tauri_plugin_dialog::FileDialogBuilder<Wry> {
@@ -875,7 +874,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "app.focus" => {
       #[cfg(target_os = "macos")]
       let _ = app.show();
-      if let Some(w) = app.webview_windows().values().find(|w| w.is_visible().unwrap_or(false)) {
+      if let Some(w) = app.windows().values().find(|w| w.is_visible().unwrap_or(false)) {
         let _ = w.set_focus();
       }
       Ok(Value::Null)
@@ -890,6 +889,11 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "dialog.message" => dialog_message(app, a),
     "screen.displays" => displays(app),
     "screen.cursor" => cursor(app),
+    "menu.popup" => {
+      let m = build_menu(app, a)?;
+      let w = app.get_window(s(a, "label").unwrap_or("")).ok_or("no window")?;
+      w.popup_menu(&m).map(|_| Value::Null).map_err(|e| e.to_string())
+    }
     "menu.setApp" => {
       let m = build_menu(app, a)?;
       app.set_menu(m).map(|_| Value::Null).map_err(|e| e.to_string())
@@ -937,9 +941,11 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "win.create" => create_window(app, a),
     "win.navigate" => navigate(app, a),
     #[cfg(target_os = "macos")]
-    "win.capture" => capture(app, a),
+    "win.capture" => browser::capture(app, a),
     #[cfg(target_os = "macos")]
     "drag.paths" => drag_paths(app),
+    #[cfg(target_os = "macos")]
+    c if c.starts_with("bv.") || c.starts_with("wv.") => browser::dispatch(app, c, a),
     c if c.starts_with("win.") => win_cmd(app, c, a),
     _ => Err(format!("unknown command {cmd}")),
   }
@@ -948,7 +954,10 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
 // Calls that wait on a person or a page load: off the async reader thread so
 // they do not hold up the commands behind them.
 fn is_slow(cmd: &str) -> bool {
-  matches!(cmd, "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture")
+  matches!(
+    cmd,
+    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
+  )
 }
 
 fn reply(out: &Arc<Mutex<TcpStream>>, id: &Value, r: Res) {
@@ -1122,7 +1131,7 @@ fn main() {
     // carries a code and is let through.
     RunEvent::ExitRequested { code: None, api, .. } => {
       api.prevent_exit();
-      if !app.webview_windows().is_empty() {
+      if !app.windows().is_empty() {
         emit(json!({ "ev": "quit-requested" }));
       }
     }

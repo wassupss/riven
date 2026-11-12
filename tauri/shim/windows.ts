@@ -10,6 +10,7 @@ import { call, callSync, fire, onEvent } from './rust'
 import { serverOrigin, rendererDir } from './server-info'
 // Cyclic (electron-main imports this file), but only touched at call time.
 import { nativeImage, type NativeImage } from './electron-main'
+import { hostClosed, type WebContentsView } from './views'
 
 export type Rect = { x: number; y: number; width: number; height: number }
 
@@ -78,6 +79,8 @@ export class WebContents extends EventEmitter {
     this.url = mapUrl(url)
     this.loading = true
     await call('win.navigate', { label: this.owner.label, url: this.url })
+    // A page without our preload never attaches a socket to say it loaded.
+    if (this.url.startsWith('data:')) this.loading = false
   }
   loadFile(file: string): Promise<void> {
     return this.loadURL(file)
@@ -104,13 +107,19 @@ export class WebContents extends EventEmitter {
   }
   async executeJavaScript(code: string): Promise<unknown> {
     const s = [...this.socks][0]
-    if (!s) throw new Error('no page')
-    return s.evalJs(code)
+    if (s) return s.evalJs(code)
+    // A page of ours without the preload (the address bar's suggestion list
+    // is a data: URL): WebKit runs it.
+    if (this.destroyed || this.loading) throw new Error('no page')
+    const text = await call<string>('wv.exec', { label: this.owner.label, code, expr: false })
+    const r = JSON.parse(text) as { v?: unknown; u?: 1 }
+    return 'u' in r ? undefined : r.v
   }
-  // The whole visible page; a rect is ignored (only the browser panel, which
-  // this build lacks, asked for one).
-  async capturePage(): Promise<NativeImage> {
-    const b64 = await call<string>('win.capture', { label: this.owner.label })
+  // rect: in the page's CSS px.
+  async capturePage(rect?: Rect): Promise<NativeImage> {
+    const z = this.zoom
+    const r = rect && { x: rect.x * z, y: rect.y * z, width: rect.width * z, height: rect.height * z }
+    const b64 = await call<string>('win.capture', { label: this.owner.label, rect: r ?? null })
     return nativeImage.createFromBuffer(Buffer.from(b64, 'base64'))
   }
   sendInputEvent(): void {}
@@ -153,7 +162,7 @@ export class WebContents extends EventEmitter {
 // A renderer path (…/out-tauri/renderer/x.html) or an electron-vite dev URL
 // becomes a page on our server; anything else (an OAuth page) is left alone.
 function mapUrl(u: string): string {
-  if (/^https?:\/\//.test(u) || u.startsWith('about:')) return u
+  if (/^https?:\/\//.test(u) || /^(about|data):/.test(u)) return u
   const rel = path.relative(rendererDir(), u.replace(/^file:\/\//, ''))
   return `${serverOrigin()}/${rel.split(path.sep).join('/')}`
 }
@@ -193,8 +202,21 @@ export class BrowserWindow extends EventEmitter {
   private title: string
   private parent: BrowserWindow | null
   private minimized = false
-  // browser.ts floats WebContentsViews here; there are none in this build.
-  readonly contentView = { addChildView: (): void => {}, removeChildView: (): void => {}, children: [] as unknown[] }
+  // browser.ts floats the browser panel's WebContentsViews here (child
+  // webviews of this window, see views.ts).
+  readonly contentView = {
+    children: [] as WebContentsView[],
+    addChildView: (v: WebContentsView): void => {
+      if (this.destroyed) return
+      if (!this.contentView.children.includes(v)) this.contentView.children.push(v)
+      v._attachTo(this)
+    },
+    // The view moves when it is added to another window (attach() in
+    // browser.ts removes it first); there is nothing to undo natively.
+    removeChildView: (v: WebContentsView): void => {
+      this.contentView.children = this.contentView.children.filter((c) => c !== v)
+    }
+  }
 
   static getAllWindows(): BrowserWindow[] {
     // Electron lists the newest first.
@@ -267,6 +289,9 @@ export class BrowserWindow extends EventEmitter {
       case 'closed':
         this._closed()
         break
+      case 'title':
+        this.webContents.emit('page-title-updated', { preventDefault: () => {} }, String(m.title ?? ''), true)
+        break
       // Rust's navigation guard: a top-level load leaving our origin (app
       // windows, already blocked) or any load in an external window (auth,
       // allowed). Electron's handlers decide what to do with the URL.
@@ -288,6 +313,7 @@ export class BrowserWindow extends EventEmitter {
     windows.delete(this.id)
     byLabel.delete(this.label)
     this.emit('close', { preventDefault: () => {} })
+    hostClosed(this)
     this.webContents._destroy()
     this.emit('closed')
     if (windows.size === 0) app_emit('window-all-closed')
@@ -393,7 +419,7 @@ export class BrowserWindow extends EventEmitter {
     return this.sync<Rect>('win.getBounds') ?? { x: 0, y: 0, width: 0, height: 0 }
   }
   getContentBounds(): Rect {
-    return this.getBounds()
+    return this.sync<Rect>('win.getContentBounds') ?? this.getBounds()
   }
   getNormalBounds(): Rect {
     return this.getBounds()
@@ -416,7 +442,8 @@ export class BrowserWindow extends EventEmitter {
     this.sync('win.setBounds', { bounds: { width, height } })
   }
   getContentSize(): [number, number] {
-    return this.getSize()
+    const b = this.getContentBounds()
+    return [Math.round(b.width), Math.round(b.height)]
   }
   center(): void {
     this.cmd('win.center')
