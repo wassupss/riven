@@ -300,17 +300,36 @@ struct FileCache {
 static FILES: OnceLock<Mutex<(String, HashMap<PathBuf, FileCache>)>> = OnceLock::new();
 
 /// readLinesFrom: complete lines from `start`; the offset past the last one.
+/// Streamed in 64KB reads (as Node's createReadStream): today's transcripts
+/// can be hundreds of MB, and only one line is ever held at a time.
 fn read_lines_from(file: &Path, start: u64, mut on_line: impl FnMut(&str)) -> std::io::Result<u64> {
   let mut f = std::fs::File::open(file)?;
   f.seek(SeekFrom::Start(start))?;
-  let mut data = Vec::new();
-  f.read_to_end(&mut data)?;
-  let mut from = 0;
-  while let Some(nl) = data[from..].iter().position(|&b| b == b'\n') {
-    on_line(&String::from_utf8_lossy(&data[from..from + nl]));
-    from += nl + 1;
+  let mut buf = vec![0u8; 64 * 1024];
+  let mut carry: Vec<u8> = Vec::new();
+  let mut base = start; // file offset of buf[0]
+  let mut offset = start; // just past the last complete line
+  loop {
+    let n = f.read(&mut buf)?;
+    if n == 0 {
+      return Ok(offset);
+    }
+    let mut from = 0;
+    while let Some(nl) = buf[from..n].iter().position(|&b| b == b'\n') {
+      let end = from + nl;
+      if carry.is_empty() {
+        on_line(&String::from_utf8_lossy(&buf[from..end]));
+      } else {
+        carry.extend_from_slice(&buf[from..end]);
+        on_line(&String::from_utf8_lossy(&carry));
+        carry = Vec::new();
+      }
+      offset = base + end as u64 + 1;
+      from = end + 1;
+    }
+    carry.extend_from_slice(&buf[from..n]);
+    base += n as u64;
   }
-  Ok(start + from as u64)
 }
 
 fn todays_entries(cache: &mut HashMap<PathBuf, FileCache>, file: &Path, size: u64, mtime: f64, today: &str) -> std::io::Result<Vec<Entry>> {
@@ -424,12 +443,33 @@ pub fn usage_codex() -> Value {
   let mut total = 0.0f64;
   let mut newest = 0.0f64;
   for file in &files {
-    let Ok(bytes) = std::fs::read(file) else { continue };
-    let text = String::from_utf8_lossy(&bytes);
-    for line in text.split('\n') {
-      if !line.contains("token_count") {
-        continue;
+    let mut lines = Vec::new();
+    // Streamed; only the token_count lines are kept (a trailing line without
+    // a newline counts too, as in the whole-file read the Node module does).
+    let Ok(end) = read_lines_from(file, 0, |l| {
+      if l.contains("token_count") {
+        lines.push(l.to_string())
       }
+    }) else {
+      continue;
+    };
+    if let Ok(meta) = std::fs::metadata(file) {
+      if meta.len() > end {
+        let _ = (|| -> std::io::Result<()> {
+          let mut f = std::fs::File::open(file)?;
+          f.seek(SeekFrom::Start(end))?;
+          let mut tail = Vec::new();
+          f.read_to_end(&mut tail)?;
+          let t = String::from_utf8_lossy(&tail);
+          if t.contains("token_count") {
+            lines.push(t.into_owned());
+          }
+          Ok(())
+        })();
+      }
+    }
+    for line in &lines {
+      let line = line.as_str();
       let Ok(obj) = serde_json::from_str::<Value>(line) else { continue };
       let Some(payload) = obj.get("payload") else { continue };
       if payload.get("type").and_then(Value::as_str) != Some("token_count") {

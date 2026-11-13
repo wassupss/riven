@@ -558,6 +558,8 @@ Node 판과 다른 점:
 - **HTTP 32가지 x 2 (api:request, riven_api_request 문자열):** 로컬 시험 서버로 GET/POST/PUT/PATCH/DELETE/HEAD, 사용자 헤더와 대소문자, 리디렉션 3단계, 무한 리디렉션, 301/302/303/307, 다른 출처 리디렉션(Authorization, Cookie 제거), gzip, deflate, 청크, set-cookie와 중복 헤더, BOM, 사용자 정의 상태 문구(418), 2만 자 본문 자르기, 204, 잘못된 UTF-8, 404, 잘못된 URL, 빈 URL, ftp, 연결 거부, 그리고 https://example.com 읽기 하나. 64건 모두 같았다(date 헤더와 example.com의 캐시 헤더는 빼고 비교). 처음에는 HEAD의 `connection` 헤더 하나가 달랐다.
 - **실앱:** `window.api.api.request`로 307 POST(본문 유지)와 연결 거부(`fetch failed`)를 확인했다.
 
+시험 뒤 발견해서 고친 것: 처음 `usage:today`는 파일을 통째로 읽었다(`read_to_end`). 사용자의 실제 대화 기록(36시간 안, 1GB)을 앱 시작 때 읽고 나서 riven-tauri footprint가 809MB로 남았다. Node처럼 64KB씩 읽고 한 줄만 들고 있게 바꾼 뒤 시작 45초 뒤 68MB, 1GB 사본을 한 번 더 읽은 뒤 71MB였다. 결과는 다시 비교해 3건 모두 같았다. usage:codex도 같은 방식으로 읽는다(token_count 줄만 보관).
+
 추론만 한 것: MCP를 거친 riven_api_request 왕복(시험 앱의 MCP 토큰을 얻으려고 터미널 환경을 읽으려 했는데 권한 확인에서 거부되어 하지 않음. 같은 `api_request_text`를 위 비교에서 확인했고, 연결은 DB 도구와 같은 `wait`/`page_result` 길), usage:today의 하루가 바뀔 때 캐시 비우기, ports:kill의 SIGKILL 경로(시험 서버가 SIGTERM에 바로 끝남).
 
 #### 7-4. 창 닫기 저장 누락, 디스플레이 목록이 빌 때
