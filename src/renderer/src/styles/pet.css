@@ -481,6 +481,35 @@
   width: 100%;
   height: 100%;
 }
+/* The sprite's box. It used to be one <svg>; it is now an HTML box holding
+   stacked full-box svgs, so every animation runs on an HTML element (animating
+   the insides of an svg kept WebKit's GPU process at ~130MB while the pet was
+   on screen; ~11MB this way, measured). It keeps what the <svg> did for layout:
+   square when only its width is known (aspect-ratio = the viewBox's), and
+   whatever it draws is clipped to its box (an inline svg's overflow).
+   container-type gives the layers cqmin, so a dot is 100cqmin / 32 = 3.125cqmin:
+   exactly one viewBox unit, letterboxed the same way (xMidYMid meet). */
+.pet-lcd {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  overflow: hidden;
+  container-type: size;
+}
+.pet-sprite,
+.pet-crumbs,
+.pet-burst,
+.pet-tw,
+.pet-layer {
+  position: absolute;
+  inset: 0;
+}
+.pet-layer {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
 /* The nest: a dot per pet in the corner, the one on screen filled. */
 .pet-nest {
   position: absolute;
@@ -610,9 +639,10 @@
   fill: color-mix(in srgb, var(--info) 80%, white);
 }
 
-/* Growing up: the ring of dots flies outward and fades. */
+/* Growing up: the ring of dots flies outward and fades. It scales about the
+   box's centre, which is the viewBox's (16, 16) under xMidYMid meet. */
 .pet-burst {
-  transform-origin: 16px 16px;
+  transform-origin: 50% 50%;
   animation: pet-burst 0.9s steps(4, end) 3;
 }
 @keyframes pet-burst {
@@ -633,6 +663,9 @@
    Fill rather than filter, so the species and diet tints are left alone. */
 .pet-lcd.whiteout .pet-px {
   fill: var(--fg);
+}
+.pet-lcd.whiteout .pet-tw-reel,
+.pet-lcd.whiteout .pet-crumbs {
   animation: none;
 }
 .pet-lcd.whiteout .pet-sprite {
@@ -1132,6 +1165,9 @@
 /* Not met yet: the shape, and nothing else. */
 .pet-dex-cell:not(.seen) .pet-px {
   fill: color-mix(in srgb, var(--fg) 16%, transparent);
+}
+.pet-dex-cell:not(.seen) .pet-tw-reel,
+.pet-dex-cell:not(.seen) .pet-crumbs {
   animation: none;
 }
 .pet-dex-cell:not(.seen) .pet-lcd {
@@ -1216,23 +1252,39 @@
 .pet-s-egg .pet-sprite {
   animation: pet-rock 2.4s steps(1, end) infinite;
 }
-.pet-px-a {
-  animation: pet-twinkle 1.4s steps(1, end) infinite;
+/* The accent dots twinkle: same beat as pet-twinkle (lit, then 15% from 51%),
+   but as a two-frame reel. .pet-tw is the window; the reel holds the lit dots
+   and, one window-height below, the same dots at fill-opacity 0.15, and slides
+   up a frame and back. Opacity (or scaling the dots away) on a box holding an
+   svg kept WebKit's GPU process at ~130MB while it ran; a translate of a layer
+   that stays on screen costs nothing. A keepsake's gold is drawn on a still
+   layer, solid rather than a twinkling star. */
+.pet-tw {
+  overflow: hidden;
 }
-.pet-crumbs .pet-px-a {
-  animation: pet-crumb 0.7s steps(4, end) infinite;
+.pet-tw-reel {
+  position: absolute;
+  inset: 0;
+  animation: pet-twinkle-reel 1.4s steps(1, end) infinite;
 }
-/* A keepsake's gold is solid, not a twinkling star. */
-.pet-acc .pet-px-a {
-  animation: none;
+.pet-layer.pet-tw-dim {
+  top: 100%;
+  bottom: auto;
+}
+.pet-tw-dim .pet-px {
+  fill-opacity: 0.15;
 }
 /* Its shine twinkles out of step, so it glitters rather than blinks. */
-.pet-aura .pet-px-a:nth-child(2n) {
+.pet-tw.alt .pet-tw-reel {
   animation-delay: -0.7s;
+}
+.pet-crumbs {
+  animation: pet-crumb 0.7s steps(4, end) infinite;
 }
 
 /* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
-   hopped by one: always whole dots. */
+   hopped by one: always whole dots. These move HTML boxes, so a dot is
+   3.125cqmin (one viewBox unit; see .pet-lcd), not 1px as it was inside the svg. */
 @keyframes pet-hop {
   0%,
   50% {
@@ -1240,7 +1292,7 @@
   }
   51%,
   100% {
-    transform: translateY(-2px);
+    transform: translateY(-6.25cqmin);
   }
 }
 /* The ghost drifts a dot at a time, which the finer grid makes smooth. */
@@ -1251,31 +1303,31 @@
   }
   13%,
   25% {
-    transform: translateY(-1px);
+    transform: translateY(-3.125cqmin);
   }
   26%,
   37% {
-    transform: translateY(-2px);
+    transform: translateY(-6.25cqmin);
   }
   38%,
   50% {
-    transform: translateY(-3px);
+    transform: translateY(-9.375cqmin);
   }
   51%,
   62% {
-    transform: translateY(-4px);
+    transform: translateY(-12.5cqmin);
   }
   63%,
   75% {
-    transform: translateY(-3px);
+    transform: translateY(-9.375cqmin);
   }
   76%,
   87% {
-    transform: translateY(-2px);
+    transform: translateY(-6.25cqmin);
   }
   88%,
   100% {
-    transform: translateY(-1px);
+    transform: translateY(-3.125cqmin);
   }
 }
 @keyframes pet-chew {
@@ -1285,13 +1337,13 @@
   }
   51%,
   100% {
-    transform: translateY(2px);
+    transform: translateY(6.25cqmin);
   }
 }
 @keyframes pet-rock {
   0%,
   33% {
-    transform: translateX(-2px);
+    transform: translateX(-6.25cqmin);
   }
   34%,
   66% {
@@ -1299,7 +1351,17 @@
   }
   67%,
   100% {
-    transform: translateX(2px);
+    transform: translateX(6.25cqmin);
+  }
+}
+@keyframes pet-twinkle-reel {
+  0%,
+  50% {
+    transform: translateY(0);
+  }
+  51%,
+  100% {
+    transform: translateY(-100%);
   }
 }
 @keyframes pet-twinkle {
@@ -1319,7 +1381,7 @@
   }
   100% {
     opacity: 0;
-    transform: translate(-6px, 12px);
+    transform: translate(-18.75cqmin, 37.5cqmin);
   }
 }
 

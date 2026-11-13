@@ -268,6 +268,23 @@ function Creature({
     return { back: runsOf(back), front: runsOf(front) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, form, species, level, wearingKey])
+  // Every animation here runs on an HTML box, never on something inside an
+  // <svg>: animating the insides of an svg kept WebKit's GPU process at ~130MB
+  // for as long as the pet was on screen (~11MB this way, measured). So the
+  // twinkling accent dots ('a') are drawn on layers of their own. The shine
+  // behind it twinkles out of step, every second dot half a beat behind, so it
+  // glitters rather than blinks.
+  const layers = useMemo(() => {
+    const still = (list: typeof runs): typeof runs => list.filter((d) => d.ch !== 'a')
+    const lit = (list: typeof runs): typeof runs => list.filter((d) => d.ch === 'a')
+    return {
+      auraStill: still(outfit.back),
+      auraLitA: outfit.back.filter((d, i) => d.ch === 'a' && i % 2 === 0),
+      auraLitB: outfit.back.filter((d, i) => d.ch === 'a' && i % 2 === 1),
+      bodyStill: still(runs),
+      bodyLit: lit(runs)
+    }
+  }, [runs, outfit])
   const dots = (list: typeof runs): JSX.Element[] =>
     list.map((d) => (
       <rect
@@ -279,44 +296,75 @@ function Creature({
         height="1"
       />
     ))
-  return (
+  // One full-box svg on the shared 32-dot grid; every layer letterboxes the same
+  // way, so stacked layers line up dot for dot.
+  const plate = (children: JSX.Element | JSX.Element[], extra?: string): JSX.Element => (
     <svg
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
+      className={`pet-layer${extra ? ` ${extra}` : ''}`}
       viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
     >
-      <g className={`pet-sprite${chewing ? ' chew' : ''}`}>
+      {children}
+    </svg>
+  )
+  // A twinkle is a two-frame reel: the dots, and below them the same dots at
+  // 15% (fill-opacity), slid up into view and back with a translate. Fading the
+  // layer with opacity instead (or scaling it away) kept WebKit's GPU process at
+  // ~130MB the whole time it ran; a translate of a layer that stays on screen is
+  // composited for free (measured ~11MB).
+  const twinkle = (rects: JSX.Element[], alt?: boolean): JSX.Element | null =>
+    rects.length > 0 ? (
+      <div className={`pet-tw${alt ? ' alt' : ''}`}>
+        <div className="pet-tw-reel">
+          {plate(rects)}
+          {plate(rects, 'pet-tw-dim')}
+        </div>
+      </div>
+    ) : null
+  return (
+    <div
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
+      aria-hidden="true"
+    >
+      <div className={`pet-sprite${chewing ? ' chew' : ''}`}>
         {/* What it has earned since growing up: its shine behind it, left to
             twinkle, and the rest on top of it. */}
-        {outfit.back.length > 0 && <g className="pet-aura">{dots(outfit.back)}</g>}
-        {dots(runs)}
-        {outfit.front.length > 0 && <g className="pet-acc">{dots(outfit.front)}</g>}
-      </g>
+        {layers.auraStill.length > 0 && plate(dots(layers.auraStill))}
+        {twinkle(dots(layers.auraLitA))}
+        {twinkle(dots(layers.auraLitB), true)}
+        {plate(dots(layers.bodyStill))}
+        {twinkle(dots(layers.bodyLit))}
+        {outfit.front.length > 0 && plate(dots(outfit.front))}
+      </div>
       {chewing && (
-        <g className="pet-crumbs">
-          <rect className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />
-          <rect className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
-        </g>
+        <div className="pet-crumbs">
+          {plate([
+            <rect key="a" className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />,
+            <rect key="b" className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
+          ])}
+        </div>
       )}
       {/* Growing up: a ring of dots bursts outward for a moment. */}
       {evolving && (
-        <g className="pet-burst">
-          {[
-            [16, 0],
-            [28, 4],
-            [30, 16],
-            [26, 28],
-            [16, 30],
-            [4, 26],
-            [0, 16],
-            [4, 4]
-          ].map(([x, y]) => (
-            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
-          ))}
-        </g>
+        <div className="pet-burst">
+          {twinkle(
+            [
+              [16, 0],
+              [28, 4],
+              [30, 16],
+              [26, 28],
+              [16, 30],
+              [4, 26],
+              [0, 16],
+              [4, 4]
+            ].map(([x, y]) => (
+              <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
+            ))
+          )}
+        </div>
       )}
-    </svg>
+    </div>
   )
 }
 
