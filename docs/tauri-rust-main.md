@@ -577,3 +577,35 @@ Node 판과 다른 점:
 - `perf:metrics`는 Chromium 프로세스 목록이 없으니 메인(Rust) 프로세스 하나의 CPU(직전 표본 이후 getrusage 차이, 코어 하나 기준 %)를 준다. 셰임은 Node 프로세스를 'Browser'로 보고했었다. WebKit 프로세스는 시스템 XPC 서비스라서 넣지 않았다.
 - 확인 (실앱, `window.api.power`): busy(2,true) -> caffeinate 1개(`-i -w <riven-tauri pid>`), busy(1,true) 유지, busy(0,true) 해제, remote(true) 잡음, busy(3,false) 유지(remote 때문), remote(false) 해제, busy(3,false) 없음, busy(2.7,true) 잡음("2 pane(s)" 로그). 각 단계마다 시험 앱의 자식 프로세스만 확인했다. `perf:metrics`는 두 번째 표본에서 0.17%.
 - 추론만 한 것: 실제로 잠자기가 막히는지(`pmset -g assertions`는 다른 프로세스의 정보까지 보여 줘서 읽지 않음. caffeinate 자체의 동작).
+
+#### 7단계 정리
+
+Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnostics 5, usage 2, api:request 1, power 2, perf 1 = invoke/send 25개, 이벤트 3개(`lsp:notify`, `lsp:stopped`, `debug:event`). MCP의 마지막 Node 다리(`riven_api_request`)를 지웠다. `MOVED`에 `lsp`, `debugger`, `cli`, `ports`, `modelCatalog`, `diagnostics`, `usage`(`usage:limits`만 남김), `apiclient`, `keepAwake`, `perf`를 더했다.
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 6단계 후 | 4,461 (소스맵 기준 4,491, 30개 파일) |
+| 7단계 후 | 3,033 (소스맵 기준 3,051, 18개 파일) |
+
+남은 18개 파일: browser 722, usage 470(그중 `usageLimits`만 쓰임), index 448, pet 305, notify 200, tray 133, demo 101, auth 87, media 86, permissions 72, update 72, systemResume 69, menu 66, bridge 64, remoteKey 63, atomicWrite 40, focusTrace 28, appWindow 25. 이와 별도로 `tauri/shim`(Electron 대역, 서버, 창) 3,080줄이 번들에 있다. Rust 쪽은 `services/lsp.rs`, `debug.rs`, `tools.rs`, `usage.rs`, `http.rs`, `power.rs`와 명령 파일이 늘었다.
+
+메모리 (개발 빌드, 빈 상태, 시작 45초 뒤, footprint): riven-tauri 68MB, Node 39MB. 4단계 때 Node는 175MB였다(그 차이 대부분은 사용량 위젯이 Node에서 대화 기록을 읽던 몫이 Rust로 온 것과 DB, 언어 서버 등이 빠진 것). 큰 응답 반복에서 riven-tauri가 늘지 않는 것은 7-1 참고.
+
+이번 단계에서 옮기지 않은 것 (이유):
+
+- **usage:limits:** Claude Code의 OAuth 토큰을 사용자 키체인에서 읽는다. 이번 시험은 키체인을 건드리지 않기로 해서 옮기지 않았다. Rust로 옮길 때는 같은 `security find-generic-password` 호출(서비스 이름 규칙은 `usage.ts`의 `keychainService`)과 https 요청(이제 `services/http.rs`로 가능)이면 된다.
+- **notify (`notify:show`, `presence`, `diag`), permissions (`perm:report`, `ask`, `open`), auth (`auth:oauth`), update (`update:*`, `app:version`), remoteKey (`remoteKey:*`, 키체인):** 알림 배너, 권한 창, 로그인 창, 업데이트 내려받기, 키체인처럼 시험할 때 화면에 뜨거나 실제 서비스/사용자 데이터를 건드리는 것들이다. 코드만 옮기고 검증 없이 넣지 않으려고 남겼다. 8단계에서 tauri-plugin-notification, tauri-plugin-updater, 딥링크와 함께 옮긴다.
+- **pet (17개 채널), tray (`tray:feed`, `diag`):** 화면 위에 떠 있는 창과 메뉴 막대 아이콘이라 시험 중 사용자 화면에 보인다. 창/트레이 원시 기능은 이미 Rust(제어 회선의 `win.*`, `tray.*`)이고 남은 것은 그 위의 로직이다.
+- **browser (19개 채널):** 브라우저 패널의 TS 쪽 로직(즐겨찾기, 기록, 찾기, 요소 선택 등). 네이티브 부분은 이미 `browser.rs`다. 722줄로 크고 페이지 로드 시험이 필요해 다음으로 미뤘다.
+- **index, menu, bridge(`capture:save`, `shell:openExternal`, `ui:setZoom`), media(riven-media 프로토콜), systemResume, focusTrace, demo, appWindow, atomicWrite, `env:defaults`:** 앱 생명주기와 창, 메뉴, 페이지 제공에 붙어 있어서 Node를 지우는 8단계와 같이 옮긴다.
+
+### 8단계가 해야 할 것 (7단계에서 정리)
+
+- **페이지를 Tauri가 직접 준다:** 지금은 Node(`tauri/shim/server.ts`)가 `http://127.0.0.1:47391`로 렌더러를 준다. Tauri 커스텀 프로토콜(또는 `frontendDist`)로 바꾸면 Node HTTP 서버, 페이지 소켓(`/__riven/ws`), 미디어 경로(`/__riven/media`)가 없어진다. 이때 7-1의 CSP 고침(`connect-src`에 `ipc:`)을 페이지를 주는 쪽으로 옮기고, localStorage가 출처(origin)별이라 기존 `http://127.0.0.1:47391`의 저장값을 옮기는 방법을 정해야 한다. pty 스트림(WebSocket)을 raw Channel로 바꿀지 그때 다시 잰다(2단계 메모).
+- **sendSync 중계 없애기:** `config:save-sync`, `sessions:save-sync`는 창 닫기에서는 이제 `flush_page`(7-4)가 페이지의 beforeunload를 미리 돌려서 해결된다. 앱 종료(Cmd+Q, Dock 메뉴, 로그아웃)도 RunEvent::ExitRequested에서 모든 앱 창에 `flush_page`를 돌린 뒤 끝내면 동기 XHR이 필요 없다. `__riven:dragPaths`(드롭한 파일 경로)는 Rust가 드래그 시작/드롭 때 경로를 페이지에 미리 보내는 방식으로 바꿔야 한다.
+- **종료 확인:** index.ts의 before-quit 대화상자와 그 수(`pty.working`, `chat.running` 동기 호출)를 Rust로.
+- **시험 훅:** `server.ts`의 `/__riven/test`(`op=eval`, `wv`, `shot`, `close`, `busy`, `displays`, `front`)를 Rust 쪽 루프백 엔드포인트로 옮긴다(`RIVEN_TAURI_TEST_KEY`가 있을 때만). 백그라운드 모드(`RIVEN_TAURI_BACKGROUND=1`, 7-1의 가림 감지 끄기 포함)는 이미 Rust다.
+- **위 "옮기지 않은 것" 전부:** usage:limits, notify, permissions, auth, update, remoteKey, pet, tray, browser, menu, bridge, media, systemResume, focusTrace, demo.
+- **패키징:** `tauri/package.mjs`에서 Node 바이너리와 node_modules 동봉을 빼고, 서명/공증, tauri-plugin-updater 피드. 언어 서버는 이미 설치된 것만 쓰므로(7-2) 앱에 넣을 것이 없다. 묶인 서버가 빠지면 Electron에서 넘어온 사용자에게 상태줄 안내가 처음 보일 수 있다.
