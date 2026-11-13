@@ -567,3 +567,11 @@ Node 판과 다른 점:
   - 앱 종료(Cmd+Q, Node의 app.quit)는 이 경로가 아니다. 그때의 저장은 아직 Node의 동기 XHR 중계(`ipc.sync`)가 맡는다. 8단계에서 Node를 지울 때 종료 경로도 같은 `flush_page`로 바꿔야 한다.
 - **`screen.displays`가 비면 펫 창 오류:** macOS가 잠깐 디스플레이를 0개로 알려 주면(디스플레이 잠자기, 덮개 닫힘, 구성 변경 중) Node 셰임의 `getPrimaryDisplay()`가 undefined를 주고 펫 위치 계산의 `.workArea`가 터졌다. Electron은 항상 디스플레이를 하나 이상 준다. Rust `displays`가 빈 목록 대신 마지막으로 본 목록, 없으면 메인 창의 모니터, 그것도 없으면 0,0의 1440x900 하나를 준다.
   - 확인: 개발용 `RIVEN_DEV_NO_DISPLAYS=1`(앱 환경에 줌)로 빈 목록을 흉내 내고 새 시험 훅 `op=displays`로 Node가 보는 값을 읽었다. 디스플레이 1개(메인 창 모니터 3440x1440)를 받았고 앱이 정상으로 떴다. 평소에는 2개(작업 영역 3440x1410). 펫 창은 화면 위에 뜨는 창이라 이번 시험에서 열지 않았다.
+
+#### 7-5. 잠자기 방지, CPU 표본
+
+- `power:busy`, `power:remote`(send), `perf:metrics`를 `services/power.rs`로 옮겼다. `MOVED`에 `keepAwake`, `perf`를 더했다.
+- 잠자기 방지는 셰임이 Electron `powerSaveBlocker`를 흉내 내던 방식 그대로 `/usr/bin/caffeinate -i -w <pid>`다. 다만 pid가 Node가 아니라 Rust 프로세스라서 Rust가 죽으면 caffeinate도 스스로 끝난다. 조건(`(enabled && count > 0) || remote`, count는 `Math.max(0, Math.floor(count))`)과 로그 문구도 같다. 앱이 끝날 때(RunEvent::Exit) 놓는다.
+- `perf:metrics`는 Chromium 프로세스 목록이 없으니 메인(Rust) 프로세스 하나의 CPU(직전 표본 이후 getrusage 차이, 코어 하나 기준 %)를 준다. 셰임은 Node 프로세스를 'Browser'로 보고했었다. WebKit 프로세스는 시스템 XPC 서비스라서 넣지 않았다.
+- 확인 (실앱, `window.api.power`): busy(2,true) -> caffeinate 1개(`-i -w <riven-tauri pid>`), busy(1,true) 유지, busy(0,true) 해제, remote(true) 잡음, busy(3,false) 유지(remote 때문), remote(false) 해제, busy(3,false) 없음, busy(2.7,true) 잡음("2 pane(s)" 로그). 각 단계마다 시험 앱의 자식 프로세스만 확인했다. `perf:metrics`는 두 번째 표본에서 0.17%.
+- 추론만 한 것: 실제로 잠자기가 막히는지(`pmset -g assertions`는 다른 프로세스의 정보까지 보여 줘서 읽지 않음. caffeinate 자체의 동작).

@@ -141,6 +141,9 @@ permissions = [
   "allow-notes-delete",
   "allow-notes-write-file",
   "allow-notes-save-to-file",
+  "allow-power-busy",
+  "allow-power-remote",
+  "allow-perf-metrics",
   "allow-pty-open",
   "allow-pty-stream",
   "allow-pty-write",
@@ -866,6 +869,21 @@ commands.allow = ["notes_write_file"]
 identifier = "allow-notes-save-to-file"
 description = "Allows notes_save_to_file."
 commands.allow = ["notes_save_to_file"]
+
+[[permission]]
+identifier = "allow-power-busy"
+description = "Allows power_busy."
+commands.allow = ["power_busy"]
+
+[[permission]]
+identifier = "allow-power-remote"
+description = "Allows power_remote."
+commands.allow = ["power_remote"]
+
+[[permission]]
+identifier = "allow-perf-metrics"
+description = "Allows perf_metrics."
+commands.allow = ["perf_metrics"]
 
 [[permission]]
 identifier = "allow-pty-open"

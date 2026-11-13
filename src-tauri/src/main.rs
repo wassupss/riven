@@ -1389,6 +1389,7 @@ fn main() {
       services::chat::shutdown();
       services::lsp::shutdown();
       services::debug::shutdown();
+      services::power::release();
       // Say goodbye to the database servers (bounded: quitting never waits on a network).
       tauri::async_runtime::block_on(async {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), services::db::close_all()).await;

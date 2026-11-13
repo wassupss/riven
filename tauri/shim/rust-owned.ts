@@ -200,7 +200,11 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'usage:today': ['configDir'],
   'usage:codex': [],
   // the API client panel's requests (services/http)
-  'api:request': ['opts']
+  'api:request': ['opts'],
+  // keep-awake (sends) and the CPU sample (services/power)
+  'power:busy': ['count', 'on'],
+  'power:remote': ['on'],
+  'perf:metrics': []
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri

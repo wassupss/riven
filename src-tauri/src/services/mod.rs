@@ -14,6 +14,7 @@ pub mod lsp;
 pub mod mcp;
 pub mod notes;
 pub mod paths;
+pub mod power;
 pub mod pty;
 pub mod search;
 pub mod shell_env;
