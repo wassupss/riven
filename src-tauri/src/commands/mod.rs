@@ -13,6 +13,7 @@
 
 pub mod chat;
 pub mod config;
+pub mod git;
 pub mod mcp;
 pub mod notes;
 pub mod pty;
@@ -116,6 +117,37 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     chat::accounts_list,
     mcp::mcp_attach,
     mcp::mcp_result,
+    git::git_info,
+    git::git_repos,
+    git::git_log,
+    git::git_show_file,
+    git::git_blame,
+    git::git_status,
+    git::git_push,
+    git::git_pull,
+    git::git_discard,
+    git::git_stage,
+    git::git_unstage,
+    git::git_stage_all,
+    git::git_commit,
+    git::git_branches,
+    git::git_checkout,
+    git::git_create_branch,
+    git::git_fetch,
+    git::git_stash,
+    git::git_stash_pop,
+    git::git_stash_list,
+    git::git_watch,
+    git::gh_prs,
+    git::gh_new_pr_draft,
+    git::gh_create_pr,
+    git::gh_push_branch,
+    git::gh_create_web,
+    git::gh_pr_detail,
+    git::gh_pr_file,
+    git::gh_submit_review,
+    git::gh_reply_thread,
+    git::gh_resolve_thread,
   ]);
   move |invoke: Invoke<Wry>| {
     let label = invoke.message.webview_ref().label().to_string();

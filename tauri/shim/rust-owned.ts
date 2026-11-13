@@ -87,6 +87,39 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'accounts:profileDir': ['id'],
   'accounts:logout': ['configDir'],
   'accounts:list': ['configDir'],
+  // git (services/git/repo.rs). 'git:changed' comes back as an event.
+  'git:info': ['folder'],
+  'git:repos': ['folder'],
+  'git:log': ['folder', 'limit'],
+  'git:showFile': ['folder', 'relPath'],
+  'git:blame': ['folder', 'filePath'],
+  'git:status': ['folder'],
+  'git:push': ['folder'],
+  'git:pull': ['folder'],
+  'git:discard': ['folder', 'relPath', 'untracked'],
+  'git:stage': ['folder', 'relPath'],
+  'git:unstage': ['folder', 'relPath'],
+  'git:stageAll': ['folder'],
+  'git:commit': ['folder', 'message'],
+  'git:branches': ['folder'],
+  'git:checkout': ['folder', 'branch'],
+  'git:createBranch': ['folder', 'name'],
+  'git:fetch': ['folder'],
+  'git:stash': ['folder', 'message'],
+  'git:stashPop': ['folder'],
+  'git:stashList': ['folder'],
+  'git:watch': ['folder'],
+  // GitHub pull requests through the gh CLI (services/git/github.rs)
+  'gh:prs': ['repoDir', 'state'],
+  'gh:newPrDraft': ['repoDir'],
+  'gh:createPr': ['repoDir', 'input'],
+  'gh:pushBranch': ['repoDir', 'branch'],
+  'gh:createWeb': ['repoDir'],
+  'gh:prDetail': ['repoDir', 'number'],
+  'gh:prFile': ['repoDir', 'number', 'filePath'],
+  'gh:submitReview': ['repoDir', 'number', 'event', 'body', 'comments', 'commitId'],
+  'gh:replyThread': ['repoDir', 'threadId', 'body'],
+  'gh:resolveThread': ['repoDir', 'threadId', 'resolved'],
   // riven's MCP tools (services/mcp): the page's answer to an 'mcp:invoke'.
   'mcp:result': ['payload']
 }
@@ -116,7 +149,8 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'cli:update-changed',
   'mcp:invoke',
   'mcp:cancel',
-  'agent:fileEdit'
+  'agent:fileEdit',
+  'git:changed'
 ])
 
 export function rustCommand(channel: string): string {

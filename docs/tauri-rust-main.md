@@ -228,6 +228,7 @@ Tauri Channel이나 `webview.eval`을 쓰지 않은 이유 (측정):
 - 창(메인, 펫, dockview 팝아웃)은 포커스 없이 만들고 앞에 띄우는 대신 `orderBack`으로 모든 창 뒤에 놓는다. `win.show`도 같다(시험 훅의 `op=front` 포함).
 - 창은 화면에 있는 상태라 WebKit이 페이지를 숨김으로 보지 않는다(`document.visibilityState`가 `visible`).
 - Node에는 `RIVEN_TEST_BACKGROUND=1`을 넘긴다(index.ts: `showInactive`, 알림 센터 등록 생략).
+- 앱이 뜰 때 tao가 `activateIgnoringOtherApps:YES`로 앱을 활성화한다. Accessory여도 다른 앱이 바쁘지 않으면 시험 앱이 맨 앞으로 왔다(5단계 시험 중 한 번 발생). 백그라운드 모드에서는 `activate_ignoring_other_apps(false)`(다른 앱이 활성이면 활성화하지 않음)로 빌드하고, 활성화 정책도 `setup` 전, 띄우기 직전에 Accessory로 둔다. 이후 시험에서는 50ms 간격 감시(맨 앞이 되면 바로 종료)로 한 번도 앞에 오지 않았다.
 - 확인 방법: 실행 전후로 맨 앞 앱(`lsappinfo info -only name $(lsappinfo front)`)이 바뀌지 않고, `CGWindowListCopyWindowInfo` 순서에서 riven-tauri 창이 맨 뒤에 있어야 한다. `osascript`로 System Events에 묻는 방법은 이 환경에서 Apple 이벤트 권한이 없어 쓰지 못했다.
 
 ### 3단계 (2026-11-13): 에이전트 채팅
@@ -346,3 +347,58 @@ MCP 서버는 원래 작아서 메모리 차이는 측정 오차 수준이다. �
 - **6단계(DB)와 7단계(API 클라이언트):** 엔진을 Rust로 옮기면 `call_tool`의 `node_call` 분기와 `mcp.ask`, `mcp.toolResult`, `tauri/shim/moved/mcpServer.ts`를 지운다. DB 확인은 `page_call("ask_user", ...)`에 부모 호출 id를 넘기면 취소가 같이 된다.
 - **8단계:** 종료 확인(index.ts의 before-quit)을 Rust로 옮기면 `pty.working`, `chat.running` 동기 호출도 없어진다. `mcp_attach`는 페이지를 Tauri가 직접 주게 돼도 그대로 쓸 수 있다.
 - **시험할 때:** 이 환경의 셸에는 사용자의 실제 riven이 넣은 `RIVEN_*`, `MCP_TOOL_TIMEOUT`, `ZDOTDIR`, `CLAUDE_CODE_*`가 있다. 그대로 시험 앱을 띄우면 그 값이 자식에게 새어 들어가 훅이 사용자의 riven으로 갈 수 있으니, 띄우기 전에 지운다.
+
+### 5단계 (2026-11-13): git, GitHub PR
+
+`src/main/git.ts`, `githubPr.ts`, `githubPrDetail.ts`, `githubPrReview.ts`를 Rust `services/git`(`mod.rs` 실행 도우미와 `git:watch`, `repo.rs` git, `github.rs` gh)으로 옮겼다. 명령은 `commands/git.rs`. 1단계에서 bridge.ts에 남아 번들에 들어가던 작업 공간 감시(`watch:start`, `watch:stop`)는 `src/main/watch.ts`로 떼어 내고(Electron 동작 그대로, bridge.ts가 등록) Tauri 빌드에서 뺐다. `tauri/build.mjs`의 `MOVED`에 `git`, `githubPr`, `githubPrDetail`, `githubPrReview`, `watch`를 더했다.
+
+Rust로 옮긴 채널 (invoke 31개, 이벤트 1개):
+
+- git: `git:info`, `repos`, `log`, `showFile`, `blame`, `status`, `push`, `pull`, `discard`, `stage`, `unstage`, `stageAll`, `commit`, `branches`, `checkout`, `createBranch`, `fetch`, `stash`, `stashPop`, `stashList`, `watch`, 이벤트 `git:changed`(마지막으로 `git:watch`를 부른 페이지로)
+- gh: `gh:prs`, `newPrDraft`, `createPr`, `pushBranch`, `createWeb`, `prDetail`, `prFile`, `submitReview`, `replyThread`, `resolveThread`
+
+구조:
+
+- **같은 명령줄:** git과 gh의 인자, 순서, 시간 제한(gh 목록 20초, 상세 30초, PR 만들기 60초, push 120초, 초안의 git 10초), 출력 한도(Node `execFile` 기본 1MB, status 10MB, showFile 20MB, blame 50MB, gh 16MB/64MB)가 Node 판과 같다. `services/git::exec`가 `execFile`의 실패 규칙(0이 아닌 종료, 시간 초과 SIGTERM, 한도 초과)과 메시지(`Command failed: <cmd>\n<stderr>`, `spawn git ENOENT`, `stdout maxBuffer length exceeded`)를 그대로 만든다. 화면에 가는 오류 문자열이 이 메시지이기 때문이다. 본문을 stdin으로 주는 gh 호출(PR 만들기, 리뷰, 답글, 해결)은 `spawn_io`(SIGKILL, `\ntimed out`)로 Node의 spawn 도우미와 같다.
+- **인증:** 예전과 같이 gh CLI의 로그인을 쓴다. riven은 토큰을 갖지 않는다. gh는 로그인 셸 PATH에서 찾고(`resolveBin`과 같은 X_OK 검사), 자식 환경도 로그인 PATH다. 사용자의 gh 래퍼(`~/.local/bin/gh`, PWD로 계정 선택)가 그대로 적용된다: 모든 gh 호출의 cwd가 그 저장소다. 시험에서 hs-playground 아래 저장소의 `api user`가 `wassupss`로 답했다. 뷰어 로그인은 Node처럼 처음 물은 저장소의 답을 앱이 끝날 때까지 캐시한다(래퍼가 디렉터리마다 다른 계정을 주는 환경에서는 원래부터 부정확한 동작, 그대로 둠).
+- **git:status 공유:** 같은 폴더에 대한 요청은 진행 중이거나 300ms 안에 끝난 결과 하나를 같이 받고, riven이 저장소를 바꾸면(stage, commit, checkout 등, 시작과 끝에 세대 증가) 그 전 결과는 쓰지 않는다(Node와 같은 규칙, `tokio::sync::OnceCell`).
+- **git:watch:** `.git` 폴더를 재귀 없이 감시하고 `HEAD`, `ORIG_HEAD`, `index`가 바뀌면 `git:changed`를 보낸다. 앱에 하나, 새 호출이 이전 감시를 대신한다. `.git`이 파일인 워크트리는 Node(`fs.watch`가 파일 이름만 알려 줘서 이벤트가 오지 않음)처럼 감시하지 않는다.
+- **느슨한 인자:** 화면 인자는 JSON 값으로 받아 Node 처리기처럼 읽는다(`??`, 참거짓, `String()`, `Number.isInteger`). 예: `gh:prDetail`에 문자열 `'5'`를 주면 거부가 아니라 `bad pr number`.
+
+Node 판과 다른 점:
+
+- git 자식의 PATH가 로그인 셸 PATH다(Node는 Node 자신의 PATH로 `git`을 찾았다). 이 컴퓨터에서는 둘 다 `/opt/homebrew/bin/git`.
+- `execFile`의 stdin은 열린 채 아무것도 쓰지 않는 파이프였고, Rust는 `/dev/null`이다. stdin을 읽는 git/gh 명령은 Node에서 시간 초과까지 멈췄고 Rust에서는 바로 EOF를 받는다(실제 호출하는 명령 중 stdin을 읽는 것은 없다).
+- `git:log`의 `limit`에 `null`을 주면 Node는 `-nnull`(실패, 빈 목록), Rust는 200이다(Tauri가 null을 없는 값으로 읽는다). 화면은 항상 숫자를 준다.
+
+원래부터 있던 문제 (같게 옮김, 고치지 않음):
+
+- `git:stashList`의 `--format=%gd%00%s`에서 `git stash list`는 `%00`을 NUL로 바꾸지 않는다(`%x00`이어야 함). 그래서 `ref`가 `stash@{0}%00On main: ...` 전체이고 `subject`가 없다. 시험에서 Node와 Rust 모두 이렇게 나왔다.
+- 추적하지 않는 폴더(`git status`가 `dir/`로 보여 줌)의 `git:discard`는 아무것도 지우지 않고 `{ok:true}`다(Node `fs.rm`이 recursive 없이 폴더를 거부).
+
+같은 입력으로 비교 (원래 모듈 4개를 electron 대역으로 묶어 Node로 실행한 결과 vs 실앱 화면의 `window.api` -> preload 셰임 -> Rust, 백그라운드 모드 개발 빌드, 시험 훅 eval):
+
+- **읽기 59건** (riven-tauri 워크트리, riven, hs-playground 컨테이너, 저장소 아닌 폴더, 없는 경로, 공개 저장소 cli/cli를 origin으로 둔 빈 저장소): info 7, repos 4, log 4, status 5, branches/stashList 5, showFile 4, blame 5(수정 중인 파일, 추적 안 된 파일의 오류, 다른 저장소의 파일, 없는 경로), gh:prs 8(open/closed/all, 저장소 아님 -> `no-remote`, 공개 저장소, 잘못된 state), newPrDraft 4, prDetail 8(riven #244/#241, 잘못된 번호 2, 없는 PR, cli/cli #14717/#14952의 리뷰 스레드 7개와 대화), prFile 5(한글 경로 인코딩 포함). 56건이 JSON 바이트 단위로 같고, 3건은 `git log`의 상대 시간("50 minutes ago"/"51 minutes ago")만 달랐다(두 실행 사이에 분이 넘어감). 두 실행이 부른 gh 명령(인자, cwd) 41건도 같았다(PR 파일 양쪽을 동시에 받는 두 호출의 순서와 Rust 쪽의 캐시된 `api user`만 다름).
+- **쓰기 63건** (스크래치 저장소, 원격은 로컬 bare 저장소): stage/unstage/stageAll/commit(한글, 따옴표, 백틱, 여러 줄)/빈 커밋 오류, 브랜치 만들기(중복 오류)/checkout(없는 브랜치 오류), stash(메시지 있음/없음)/stashList/stashPop, discard(추적 파일, 추적 안 된 파일, 추적 안 된 폴더, untracked=null), upstream 없는 push 오류, `gh:pushBranch`(로컬 bare로, 잘못된 이름 2가지), 다른 클론이 push한 뒤 fetch/status(behind 1)/pull. 매 단계 `git:status`로 상태 공유가 변경 직후 옛 결과를 주지 않는 것도 확인. 결과는 해시와 시각(blame time, 상대 시간)을 가리면 모두 같고, 끝난 뒤 저장소 상태(커밋, 브랜치, upstream, stash, 작업 트리 파일 내용)도 같았다.
+- **gh 쓰기:** 실제 GitHub에 쓰지 않으려고 시험용 `$SHELL`이 로그인 PATH 앞에 기록용 `gh`를 두었다. 읽기는 사용자의 gh 래퍼로 넘기고, 쓰기(`pr create`, `api --method POST`, `api graphql --input -`)는 인자, cwd, stdin을 기록하고 정해진 답을 준다. 대상 저장소도 쓰기 권한이 없는 cli/cli다. createPr 4가지(공백 정리, base, draft, 제목 없음, push 필요 오류 -> `needsPush:true`), createWeb, submitReview 7가지(여러 줄 코멘트의 `start_line`/`start_side`, APPROVE 빈 본문, 보낼 것 없음, 잘못된 event/번호, GitHub 오류, GitHub 아닌 원격), replyThread 3가지, resolveThread 3가지. 결과와 gh에 간 stdin(JSON 페이로드)이 바이트 단위로 같았다.
+- **git:watch:** 같은 단계(stage, 브랜치 전환, 작업 파일만 수정, 워크트리로 감시 교체 후 이전 저장소 변경)에서 `git:changed` 수가 Node 2/6/6/0, Rust 2/6/6/0으로 같았다.
+- **화면:** 상태 줄의 브랜치(`feat/tauri-port`), 워크스페이스 카드의 브랜치와 변경 수(`±15`), 탐색기의 `git-modified` 표시가 Rust 결과로 그려졌다. 실제 로그인 셸(기록용 gh 없이)로 다시 띄워 `gh:prs`가 사용자의 gh 래퍼로 동작하는 것도 확인(login `wassupss`).
+
+추론만 한 것: 실제 GitHub로 가는 쓰기(PR 만들기, 리뷰, 답글, 해결. 기록용 gh에서 멈춤), `gh pr create --web`이 브라우저를 여는 것(창을 띄우면 안 돼서 기록만), 시간 초과와 출력 한도 초과 경로(코드만 맞춤), 50개 넘는 리뷰 스레드나 100개 넘는 파일의 페이지 나눔(해당 PR을 찾지 못함. `parse_graphql_pages`, `flatten_pages`는 단위 시험), 원격이 있는 실제 저장소로의 push/pull(로컬 bare로만), Electron 빌드의 `watch.ts` 분리(타입 검사와 기존 테스트만).
+
+측정 (개발 빌드, 시험 뒤 유휴): riven-tauri footprint 63MB, CPU 0.0%. 읽기 59건 전체가 Rust 29.6초, Node 28.1초로 같은 수준이다(대부분 gh의 네트워크 시간). 첫 실행에서 3분이 걸린 적이 있는데 gh의 cli/cli GraphQL 호출이 네트워크에서 늦었던 것으로, 같은 호출을 다시 재면 2.7초였다.
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 4단계 후 | 15,477 (소스맵 기준 13,178) |
+| 5단계 후 | 13,962 (git 418 + githubPr 457 + githubPrDetail 408 + githubPrReview 173 + bridge.ts에서 뺀 감시 59 제외). 소스맵 기준 11,720 |
+
+소스맵 기준은 이번에 같은 방법으로 4단계 커밋을 다시 묶어 세면 13,239였다(문서의 13,178과 세는 방법이 조금 다름). 그 기준으로 1,519줄이 줄었다. Rust 쪽은 `services/git` 1,649줄(단위 시험 포함) + `commands/git.rs` 180줄이 늘었다. `tauri/shim/moved`에 4줄짜리 빈 모듈 5개가 늘었다.
+
+다음 단계가 알아야 할 것:
+
+- **gh를 시험할 때:** 실제 GitHub에 쓰지 말 것. 이번처럼 시험용 `$SHELL`로 로그인 PATH 앞에 기록용 gh를 두면 앱과 Node 대역 둘 다 같은 gh를 쓴다(앱은 시작할 때 `$SHELL -lic`로 PATH를 읽는다). `execFile`처럼 stdin을 열어 두는 쪽과 닫는 쪽이 있으니 기록용 gh는 쓰기 명령에서만 stdin을 읽어야 한다(`--web`에서 읽으면 Node 쪽이 30초 시간 초과로 멈춘다).
+- **`services/git::exec`:** 다른 그룹이 CLI를 `execFile`처럼 부를 때 그대로 쓸 수 있다(오류 메시지, 시간 제한, 출력 한도가 Node와 같음).
+- **원래부터 있던 문제 두 가지**(위)를 고칠 때는 Electron 쪽 `git.ts`도 같이 고친다.

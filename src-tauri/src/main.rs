@@ -1174,7 +1174,16 @@ fn start_node(app: &AppHandle) -> Result<(), String> {
 }
 
 fn main() {
-  let app = tauri::Builder::default()
+  let mut builder = tauri::Builder::default();
+  // tao activates the app when it finishes launching (activateIgnoringOtherApps
+  // YES), which can bring a background test run in front of the user's work
+  // even as an Accessory app. NO only activates when no other app is active.
+  #[cfg(target_os = "macos")]
+  if background() {
+    builder = builder.activate_ignoring_other_apps(false);
+  }
+  #[allow(unused_mut)]
+  let mut app = builder
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(commands::handler())
     .on_menu_event(|_app, ev| emit(json!({ "ev": "menu", "id": ev.id().0 })))
@@ -1238,6 +1247,11 @@ fn main() {
     })
     .build(tauri::generate_context!())
     .expect("riven-tauri: failed to build the app");
+  // Accessory from the start (setup runs after the launch activation).
+  #[cfg(target_os = "macos")]
+  if background() {
+    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+  }
 
   app.run(|app, ev| match ev {
     // The last window closing, or Cmd+Q / the Dock's Quit. Only Node may

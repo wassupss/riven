@@ -35,6 +35,37 @@ permissions = [
   "allow-config-load",
   "allow-config-save",
   "allow-config-reveal",
+  "allow-git-info",
+  "allow-git-repos",
+  "allow-git-log",
+  "allow-git-show-file",
+  "allow-git-blame",
+  "allow-git-status",
+  "allow-git-push",
+  "allow-git-pull",
+  "allow-git-discard",
+  "allow-git-stage",
+  "allow-git-unstage",
+  "allow-git-stage-all",
+  "allow-git-commit",
+  "allow-git-branches",
+  "allow-git-checkout",
+  "allow-git-create-branch",
+  "allow-git-fetch",
+  "allow-git-stash",
+  "allow-git-stash-pop",
+  "allow-git-stash-list",
+  "allow-git-watch",
+  "allow-gh-prs",
+  "allow-gh-new-pr-draft",
+  "allow-gh-create-pr",
+  "allow-gh-push-branch",
+  "allow-gh-create-web",
+  "allow-gh-pr-detail",
+  "allow-gh-pr-file",
+  "allow-gh-submit-review",
+  "allow-gh-reply-thread",
+  "allow-gh-resolve-thread",
   "allow-mcp-attach",
   "allow-mcp-result",
   "allow-notes-list",
@@ -231,6 +262,161 @@ commands.allow = ["config_save"]
 identifier = "allow-config-reveal"
 description = "Allows config_reveal."
 commands.allow = ["config_reveal"]
+
+[[permission]]
+identifier = "allow-git-info"
+description = "Allows git_info."
+commands.allow = ["git_info"]
+
+[[permission]]
+identifier = "allow-git-repos"
+description = "Allows git_repos."
+commands.allow = ["git_repos"]
+
+[[permission]]
+identifier = "allow-git-log"
+description = "Allows git_log."
+commands.allow = ["git_log"]
+
+[[permission]]
+identifier = "allow-git-show-file"
+description = "Allows git_show_file."
+commands.allow = ["git_show_file"]
+
+[[permission]]
+identifier = "allow-git-blame"
+description = "Allows git_blame."
+commands.allow = ["git_blame"]
+
+[[permission]]
+identifier = "allow-git-status"
+description = "Allows git_status."
+commands.allow = ["git_status"]
+
+[[permission]]
+identifier = "allow-git-push"
+description = "Allows git_push."
+commands.allow = ["git_push"]
+
+[[permission]]
+identifier = "allow-git-pull"
+description = "Allows git_pull."
+commands.allow = ["git_pull"]
+
+[[permission]]
+identifier = "allow-git-discard"
+description = "Allows git_discard."
+commands.allow = ["git_discard"]
+
+[[permission]]
+identifier = "allow-git-stage"
+description = "Allows git_stage."
+commands.allow = ["git_stage"]
+
+[[permission]]
+identifier = "allow-git-unstage"
+description = "Allows git_unstage."
+commands.allow = ["git_unstage"]
+
+[[permission]]
+identifier = "allow-git-stage-all"
+description = "Allows git_stage_all."
+commands.allow = ["git_stage_all"]
+
+[[permission]]
+identifier = "allow-git-commit"
+description = "Allows git_commit."
+commands.allow = ["git_commit"]
+
+[[permission]]
+identifier = "allow-git-branches"
+description = "Allows git_branches."
+commands.allow = ["git_branches"]
+
+[[permission]]
+identifier = "allow-git-checkout"
+description = "Allows git_checkout."
+commands.allow = ["git_checkout"]
+
+[[permission]]
+identifier = "allow-git-create-branch"
+description = "Allows git_create_branch."
+commands.allow = ["git_create_branch"]
+
+[[permission]]
+identifier = "allow-git-fetch"
+description = "Allows git_fetch."
+commands.allow = ["git_fetch"]
+
+[[permission]]
+identifier = "allow-git-stash"
+description = "Allows git_stash."
+commands.allow = ["git_stash"]
+
+[[permission]]
+identifier = "allow-git-stash-pop"
+description = "Allows git_stash_pop."
+commands.allow = ["git_stash_pop"]
+
+[[permission]]
+identifier = "allow-git-stash-list"
+description = "Allows git_stash_list."
+commands.allow = ["git_stash_list"]
+
+[[permission]]
+identifier = "allow-git-watch"
+description = "Allows git_watch."
+commands.allow = ["git_watch"]
+
+[[permission]]
+identifier = "allow-gh-prs"
+description = "Allows gh_prs."
+commands.allow = ["gh_prs"]
+
+[[permission]]
+identifier = "allow-gh-new-pr-draft"
+description = "Allows gh_new_pr_draft."
+commands.allow = ["gh_new_pr_draft"]
+
+[[permission]]
+identifier = "allow-gh-create-pr"
+description = "Allows gh_create_pr."
+commands.allow = ["gh_create_pr"]
+
+[[permission]]
+identifier = "allow-gh-push-branch"
+description = "Allows gh_push_branch."
+commands.allow = ["gh_push_branch"]
+
+[[permission]]
+identifier = "allow-gh-create-web"
+description = "Allows gh_create_web."
+commands.allow = ["gh_create_web"]
+
+[[permission]]
+identifier = "allow-gh-pr-detail"
+description = "Allows gh_pr_detail."
+commands.allow = ["gh_pr_detail"]
+
+[[permission]]
+identifier = "allow-gh-pr-file"
+description = "Allows gh_pr_file."
+commands.allow = ["gh_pr_file"]
+
+[[permission]]
+identifier = "allow-gh-submit-review"
+description = "Allows gh_submit_review."
+commands.allow = ["gh_submit_review"]
+
+[[permission]]
+identifier = "allow-gh-reply-thread"
+description = "Allows gh_reply_thread."
+commands.allow = ["gh_reply_thread"]
+
+[[permission]]
+identifier = "allow-gh-resolve-thread"
+description = "Allows gh_resolve_thread."
+commands.allow = ["gh_resolve_thread"]
 
 [[permission]]
 identifier = "allow-mcp-attach"
