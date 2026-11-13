@@ -14,7 +14,9 @@
 pub mod chat;
 pub mod config;
 pub mod db;
+pub mod debug;
 pub mod git;
+pub mod lsp;
 pub mod mcp;
 pub mod notes;
 pub mod pty;
@@ -48,6 +50,20 @@ pub(crate) fn app_page(label: &str) -> bool {
 pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
   let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
     config::config_load,
+    debug::debug_start,
+    debug::debug_stop,
+    debug::debug_continue,
+    debug::debug_step_over,
+    debug::debug_step_into,
+    debug::debug_step_out,
+    debug::debug_set_breakpoints,
+    debug::debug_get_properties,
+    debug::debug_evaluate,
+    lsp::lsp_servers,
+    lsp::lsp_start,
+    lsp::lsp_request,
+    lsp::lsp_notify,
+    lsp::lsp_stop_root,
     config::config_save,
     config::config_reveal,
     sessions::sessions_load,

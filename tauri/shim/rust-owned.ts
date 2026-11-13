@@ -174,7 +174,23 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'db:restore-inspect': ['path', 'toolDir', 'extra'],
   'db:restore-run': ['id', 'db', 'toolDir', 'extra', 'o', 'jobId'],
   'db:backup-cancel': ['jobId'],
-  'db:export': ['id', 'db', 'req']
+  'db:export': ['id', 'db', 'req'],
+  // language servers (services/lsp). lsp:notify is a send.
+  'lsp:servers': ['rootPath'],
+  'lsp:start': ['serverKey', 'rootPath'],
+  'lsp:request': ['serverKey', 'method', 'params'],
+  'lsp:notify': ['serverKey', 'method', 'params'],
+  'lsp:stopRoot': ['rootPath'],
+  // the Node.js debugger (services/debug)
+  'debug:start': ['cfg'],
+  'debug:stop': [],
+  'debug:continue': [],
+  'debug:stepOver': [],
+  'debug:stepInto': [],
+  'debug:stepOut': [],
+  'debug:setBreakpoints': ['file', 'lines'],
+  'debug:getProperties': ['objectId'],
+  'debug:evaluate': ['callFrameId', 'expression']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -207,7 +223,10 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'db:backup-progress',
   'db:export-progress',
   'agent:fileEdit',
-  'git:changed'
+  'git:changed',
+  'lsp:notify',
+  'lsp:stopped',
+  'debug:event'
 ])
 
 export function rustCommand(channel: string): string {

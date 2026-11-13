@@ -769,6 +769,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'title.git': { ko: 'Git', en: 'Git' },
   'title.problems': { ko: '문제', en: 'Problems' },
   'title.output': { ko: '출력', en: 'Output' },
+  'lsp.missing': { ko: '{name} 언어 서버 없음', en: 'No {name} language server' },
+  'lsp.installHint': {
+    ko: '설치하면 자동 완성, 정의로 이동, 오류 표시가 켜집니다: {cmd}',
+    en: 'Install it for completion, go to definition and diagnostics: {cmd}'
+  },
   'title.debug': { ko: '디버그', en: 'Debug' },
   'debug.start': { ko: '디버그 시작', en: 'Start Debugging' },
   'debug.continue': { ko: '계속', en: 'Continue' },

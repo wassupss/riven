@@ -496,3 +496,30 @@ Rust 쪽은 `services/db` 10,985줄(단위 시험 포함) + `commands/db.rs` 328
 - 시험 훅에 `op=wv`를 더했다. 페이지 소켓을 거치지 않고 WKWebView `callAsyncJavaScript`로 바로 eval한다. 식 하나를 받는다(async 함수는 IIFE로 감쌀 것).
 
 추론만 한 것: DB 10만 행 결과(같은 직렬화와 같은 응답 경로라 같다고 본다. 시험 DB 연결 저장이 키체인을 건드릴 수 있어서 이번에는 돌리지 않음). WebContent 프로세스 쪽 메모리(시험 앱의 프로세스 트리에 없어서 PID로 좁힐 수 없어 재지 않음).
+
+#### 7-2. 언어 서버, 디버거
+
+`src/main/lsp.ts`, `debugger.ts`를 Rust `services/lsp.rs`, `services/debug.rs`로 옮겼다. 명령은 `commands/lsp.rs`, `commands/debug.rs`. `MOVED`에 `lsp`, `debugger`를 더했다.
+
+Rust로 옮긴 채널 (invoke/send 14개, 이벤트 3개): `lsp:servers`, `start`, `request`, `notify`(send), `stopRoot`, 이벤트 `lsp:notify`, `lsp:stopped`. `debug:start`, `stop`, `continue`, `stepOver`, `stepInto`, `stepOut`, `setBreakpoints`, `getProperties`, `evaluate`, 이벤트 `debug:event`.
+
+언어 서버:
+
+- **설치된 것만 (4장 결정):** 서버마다 (1) 워크스페이스의 node_modules(위로 올라가며 찾음, Node `require`와 같은 방식)에 있으면 로그인 PATH의 `node`로 실행, (2) 없으면 서버 자체 명령을 로그인 PATH에서 찾는다. 둘 다 없으면 그 키는 `lsp:servers`에서 빠진다. 앱에 넣거나 내려받지 않는다. Electron은 지금처럼 앱에 묶인 서버를 쓴다(`src/main/lsp.ts` 그대로).
+- **상태줄 안내:** 편집기에 연 파일의 언어 서버가 없으면 편집기 상태줄에 "gopls 언어 서버 없음"을 보이고, 마우스를 올리면 설치 명령을 보여 준다(`lsp/client.ts`의 `useLspMissing`, `LSP_INSTALL`, `EditorStatusBar.tsx`, i18n `lsp.missing`/`lsp.installHint`). 화면 공통 코드라 Electron에도 있다(Electron은 묶인 서버가 있어 PATH 전용 서버가 없을 때만 보임). 워크스페이스를 바꾸면 쓸 수 있는 서버 목록을 다시 받는다(워크스페이스 node_modules에 따라 달라지므로).
+- **같은 동작:** initialize의 capabilities, 서버 요청 답(workspace/configuration은 항목마다 `{}`, applyEdit는 적용 안 함, 나머지 null), 초기화 전의 notify는 초기화 뒤 순서대로, 같은 키를 동시에 start하면 하나만 띄움(키마다 잠금), 다른 루트로 start하면 이전 서버를 끄고 새로 띄움, 마지막 문서를 닫고 10분 뒤 정지(`RIVEN_LSP_IDLE_STOP_MS`) + `lsp:stopped`, `stopRoot`, 앱 종료 시 shutdown/exit/kill.
+
+디버거:
+
+- 사용자의 `node`(로그인 PATH)를 `--inspect-brk=127.0.0.1:0`으로 띄우고(TypeScript는 `--experimental-strip-types`), stderr에서 `ws://` 주소를 읽어 CDP에 붙는다. WebSocket 클라이언트는 직접 구현했다(마스크한 텍스트 프레임, 조각 합치기). 이벤트 모양(started, paused {reason, frames, scopes}, resumed, output, terminated)과 값 문자열(`description`, 없으면 `String(value)`, JS 숫자 표기)이 Node 판과 같다.
+- Node 판과 다른 점: (1) 디버그 중에 새로 시작하면 Node 판은 이전 자식의 exit 처리기가 늦게 와서 새 세션까지 지웠다(새 start가 영원히 답하지 않음, 비교 시험에서 재현). Rust는 세션 세대를 확인해서 이전 자식의 종료가 새 세션을 건드리지 않는다. (2) stop 때 Node 판은 `terminated`를 두 번 보냈고(stop + 죽은 자식의 exit) Rust는 한 번이다. (3) node가 주소를 출력하기 전에 끝나면 Node 판은 start가 답하지 않았고 Rust는 `{ok:false}`다. (4) node가 PATH에 없으면 `{ok:false, error}`로 알린다.
+
+같은 입력으로 비교 (원래 모듈을 electron 대역으로 묶어 Node로 실행 vs 실앱 화면의 `window.api` -> preload 셰임 -> Rust, 백그라운드 모드 개발 빌드, `op=wv` eval):
+
+- **언어 서버 15건:** servers, typescript start(capabilities 키 23개), hover, definition, documentSymbol, completion(`p.`), 없는 메서드 오류, 시작 안 한 서버 오류, pyright start, bash start와 hover, 없는 서버 start 오류, stopRoot(3), 파일별 마지막 진단(ts, pyright, bash), `lsp:stopped` 3건. 14건이 같았다. 다른 1건은 servers 목록에 Rust가 `rust`를 더 넣은 것으로, 시험 앱의 로그인 PATH에 `~/.cargo/bin/rust-analyzer`(rustup)가 있어서다(Node 대역은 다른 PATH로 실행). 처음엔 bash hover가 Node에서 null이었는데, 서버가 파일을 분석하기 전에 물은 시간 차이였다(1초 기다리면 같음).
+- **워크스페이스에 node_modules가 없을 때:** `lsp:servers`가 `["clangd","rust"]`(PATH에 있는 것만), pyright start는 "LSP server pyright is not installed".
+- **상태줄:** 워크트리에 임시 `.go` 파일을 만들어 탐색기에서 열자 편집기 상태줄에 "gopls 언어 서버 없음"과 설치 명령 툴팁이 떴고, `.ts` 파일로 바꾸자 사라졌다(화면 캡처로 확인).
+- **디버거 30건:** 중단점 설정, start, Break on start, continue -> 중단점(add, 3행), 지역 변수 속성, evaluate(숫자, 객체, ReferenceError), stepOver/stepOut/stepInto 뒤 프레임, 중단점 비우기, 두 번째 반복, stop, 출력(console.log, stdout, stderr, console.error), 이벤트 순서, TypeScript 파일(strip types) 중단과 출력, 세션 없을 때 stop과 step. 출력은 stdout 조각 경계가 실행마다 달라 수준별로 이어 붙여 비교했고, 이벤트 순서에서 Node의 중복 terminated 하나는 뺐다. 30건 모두 같았다.
+- **정리:** 시험 뒤 디버그 대상 node, 언어 서버 자식이 남지 않았다. 앱을 SIGTERM으로 끝낸 경우(Exit 이벤트 없음)도 typescript-language-server가 stdin EOF로 스스로 끝났다.
+
+추론만 한 것: 10분 유휴 정지(같은 타이머 코드, 시간을 줄여 돌리지 않음), clangd/gopls/rust-analyzer/svelte 서버로 실제 편집(목록과 경로 찾기만), 서버가 죽었을 때 다음 요청이 "not started"인 것, 디버거 화면 패널(`DebugPanel`)을 눌러서 쓰는 흐름(같은 `window.api.debug`를 직접 불러 확인).

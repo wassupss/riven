@@ -1311,6 +1311,8 @@ fn main() {
       services::mcp::init(app.handle());
       services::pty::init(app.handle());
       services::chat::init(app.handle());
+      services::lsp::init(app.handle());
+      services::debug::init(app.handle());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
@@ -1338,6 +1340,8 @@ fn main() {
       services::mcp::shutdown();
       services::pty::shutdown();
       services::chat::shutdown();
+      services::lsp::shutdown();
+      services::debug::shutdown();
       // Say goodbye to the database servers (bounded: quitting never waits on a network).
       tauri::async_runtime::block_on(async {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), services::db::close_all()).await;

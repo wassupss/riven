@@ -87,6 +87,15 @@ permissions = [
   "allow-db-restore-run",
   "allow-db-backup-cancel",
   "allow-db-export",
+  "allow-debug-start",
+  "allow-debug-stop",
+  "allow-debug-continue",
+  "allow-debug-step-over",
+  "allow-debug-step-into",
+  "allow-debug-step-out",
+  "allow-debug-set-breakpoints",
+  "allow-debug-get-properties",
+  "allow-debug-evaluate",
   "allow-git-info",
   "allow-git-repos",
   "allow-git-log",
@@ -118,6 +127,11 @@ permissions = [
   "allow-gh-submit-review",
   "allow-gh-reply-thread",
   "allow-gh-resolve-thread",
+  "allow-lsp-servers",
+  "allow-lsp-start",
+  "allow-lsp-request",
+  "allow-lsp-notify",
+  "allow-lsp-stop-root",
   "allow-mcp-attach",
   "allow-mcp-result",
   "allow-notes-list",
@@ -576,6 +590,51 @@ description = "Allows db_export."
 commands.allow = ["db_export"]
 
 [[permission]]
+identifier = "allow-debug-start"
+description = "Allows debug_start."
+commands.allow = ["debug_start"]
+
+[[permission]]
+identifier = "allow-debug-stop"
+description = "Allows debug_stop."
+commands.allow = ["debug_stop"]
+
+[[permission]]
+identifier = "allow-debug-continue"
+description = "Allows debug_continue."
+commands.allow = ["debug_continue"]
+
+[[permission]]
+identifier = "allow-debug-step-over"
+description = "Allows debug_step_over."
+commands.allow = ["debug_step_over"]
+
+[[permission]]
+identifier = "allow-debug-step-into"
+description = "Allows debug_step_into."
+commands.allow = ["debug_step_into"]
+
+[[permission]]
+identifier = "allow-debug-step-out"
+description = "Allows debug_step_out."
+commands.allow = ["debug_step_out"]
+
+[[permission]]
+identifier = "allow-debug-set-breakpoints"
+description = "Allows debug_set_breakpoints."
+commands.allow = ["debug_set_breakpoints"]
+
+[[permission]]
+identifier = "allow-debug-get-properties"
+description = "Allows debug_get_properties."
+commands.allow = ["debug_get_properties"]
+
+[[permission]]
+identifier = "allow-debug-evaluate"
+description = "Allows debug_evaluate."
+commands.allow = ["debug_evaluate"]
+
+[[permission]]
 identifier = "allow-git-info"
 description = "Allows git_info."
 commands.allow = ["git_info"]
@@ -729,6 +788,31 @@ commands.allow = ["gh_reply_thread"]
 identifier = "allow-gh-resolve-thread"
 description = "Allows gh_resolve_thread."
 commands.allow = ["gh_resolve_thread"]
+
+[[permission]]
+identifier = "allow-lsp-servers"
+description = "Allows lsp_servers."
+commands.allow = ["lsp_servers"]
+
+[[permission]]
+identifier = "allow-lsp-start"
+description = "Allows lsp_start."
+commands.allow = ["lsp_start"]
+
+[[permission]]
+identifier = "allow-lsp-request"
+description = "Allows lsp_request."
+commands.allow = ["lsp_request"]
+
+[[permission]]
+identifier = "allow-lsp-notify"
+description = "Allows lsp_notify."
+commands.allow = ["lsp_notify"]
+
+[[permission]]
+identifier = "allow-lsp-stop-root"
+description = "Allows lsp_stop_root."
+commands.allow = ["lsp_stop_root"]
 
 [[permission]]
 identifier = "allow-mcp-attach"

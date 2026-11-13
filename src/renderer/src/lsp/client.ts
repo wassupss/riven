@@ -1,4 +1,5 @@
 import * as monaco from 'monaco-editor'
+import { create } from 'zustand'
 import { releaseModel } from '../editor/modelStore'
 
 // A small hand-rolled LSP client: bridges Monaco's provider APIs + document
@@ -35,6 +36,39 @@ const LSP_FORMAT_LANGS = ALL_LANGS.filter((l) => LANG_SPECS[l].server !== 'types
 
 // Populated at init from the main process — only servers that are installed.
 let availableServers = new Set<string>()
+let serversKnown = false
+
+// What to install for a server that is missing (the Tauri build uses only
+// servers already on the machine: the workspace's node_modules, then PATH).
+export const LSP_INSTALL: Record<string, string> = {
+  typescript: 'npm i -D typescript typescript-language-server',
+  pyright: 'npm i -D pyright  (or: pip install pyright)',
+  gopls: 'go install golang.org/x/tools/gopls@latest',
+  rust: 'rustup component add rust-analyzer',
+  clangd: 'xcode-select --install  (or: brew install llvm)',
+  bash: 'npm i -g bash-language-server',
+  yaml: 'npm i -g yaml-language-server',
+  svelte: 'npm i -D svelte-language-server'
+}
+
+// The language server the focused editor's file would need but that is not
+// installed (null when it has one, or its language has none). The editor's
+// status bar shows it with what to install.
+export const useLspMissing = create<{ server: string | null }>(() => ({ server: null }))
+let focusedLang: string | null = null
+function updateMissing(): void {
+  const spec = focusedLang ? LANG_SPECS[focusedLang] : undefined
+  const server = serversKnown && spec && !availableServers.has(spec.server) ? spec.server : null
+  if (useLspMissing.getState().server !== server) useLspMissing.setState({ server })
+}
+function loadServers(workspaceRoot: string): Promise<void> {
+  return window.api.lsp.servers(workspaceRoot).then((keys) => {
+    if (root !== workspaceRoot) return
+    availableServers = new Set(keys)
+    serversKnown = true
+    updateMissing()
+  })
+}
 
 function langSpecFor(languageId: string): LangSpec | null {
   const spec = LANG_SPECS[languageId]
@@ -532,6 +566,10 @@ export function ensureLspInitialized(workspaceRoot: string): void {
     monaco.editor.getModels().forEach((m) => {
       if (isManaged(m)) didOpen(m)
     })
+    // Which servers exist can depend on the workspace (its node_modules).
+    void loadServers(workspaceRoot)
+      .then(() => monaco.editor.getModels().forEach((m) => manage(m)))
+      .catch(() => {})
     return
   }
   root = workspaceRoot
@@ -548,10 +586,23 @@ export function ensureLspInitialized(workspaceRoot: string): void {
     if (isManaged(m)) didClose(m)
   })
 
-  window.api.lsp
-    .servers(workspaceRoot)
-    .then((keys) => {
-      availableServers = new Set(keys)
+  // The focused editor's language, for the missing-server hint.
+  // The editor that called us was created first, so take the ones that exist too.
+  const watchEditor = (ed: monaco.editor.ICodeEditor): void => {
+    const upd = (): void => {
+      focusedLang = ed.getModel()?.getLanguageId() ?? null
+      updateMissing()
+    }
+    ed.onDidFocusEditorText(upd)
+    ed.onDidChangeModel(upd)
+    ed.onDidChangeModelLanguage(upd)
+    if (ed.getModel()) upd()
+  }
+  monaco.editor.getEditors().forEach(watchEditor)
+  monaco.editor.onDidCreateEditor(watchEditor)
+
+  loadServers(workspaceRoot)
+    .then(() => {
       // Retroactively open any models created before availability was known.
       monaco.editor.getModels().forEach((m) => manage(m))
     })
