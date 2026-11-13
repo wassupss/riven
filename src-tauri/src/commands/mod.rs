@@ -11,6 +11,7 @@
 // 'riven:ipc' to one window; the preload shim hands it to ipcRenderer.on
 // listeners exactly like a webContents.send from Node.
 
+pub mod chat;
 pub mod config;
 pub mod notes;
 pub mod pty;
@@ -37,7 +38,7 @@ pub fn emit_ipc(app: &AppHandle, label: &str, ch: &str, args: serde_json::Value)
   );
 }
 
-fn app_page(label: &str) -> bool {
+pub(crate) fn app_page(label: &str) -> bool {
   (label.starts_with('w') && label[1..].chars().all(|c| c.is_ascii_digit())) || label.starts_with("pop-")
 }
 
@@ -83,6 +84,34 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     pty::pty_seen,
     pty::pty_resize,
     pty::pty_kill,
+    chat::chat_start,
+    chat::chat_send,
+    chat::chat_alive,
+    chat::chat_interrupt,
+    chat::chat_restart,
+    chat::chat_set_model,
+    chat::chat_set_mode,
+    chat::chat_stop,
+    chat::chat_title,
+    chat::chat_detect_clis,
+    chat::chat_session_info,
+    chat::chat_sessions,
+    chat::chat_session_rename,
+    chat::chat_session_delete,
+    chat::chat_agents,
+    chat::chat_session_transcript,
+    chat::chat_session_title,
+    chat::chat_mcp_list,
+    chat::chat_mcp_session,
+    chat::chat_mcp_logout,
+    chat::chat_mcp_approve,
+    chat::cli_update,
+    chat::cli_update_status,
+    chat::cli_apply_update,
+    chat::cli_defer_update,
+    chat::accounts_profile_dir,
+    chat::accounts_logout,
+    chat::accounts_list,
   ]);
   move |invoke: Invoke<Wry>| {
     let label = invoke.message.webview_ref().label().to_string();

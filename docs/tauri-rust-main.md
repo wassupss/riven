@@ -229,3 +229,57 @@ Tauri Channel이나 `webview.eval`을 쓰지 않은 이유 (측정):
 - 창은 화면에 있는 상태라 WebKit이 페이지를 숨김으로 보지 않는다(`document.visibilityState`가 `visible`).
 - Node에는 `RIVEN_TEST_BACKGROUND=1`을 넘긴다(index.ts: `showInactive`, 알림 센터 등록 생략).
 - 확인 방법: 실행 전후로 맨 앞 앱(`lsappinfo info -only name $(lsappinfo front)`)이 바뀌지 않고, `CGWindowListCopyWindowInfo` 순서에서 riven-tauri 창이 맨 뒤에 있어야 한다. `osascript`로 System Events에 묻는 방법은 이 환경에서 Apple 이벤트 권한이 없어 쓰지 못했다.
+
+### 3단계 (2026-11-13): 에이전트 채팅
+
+`src/main/agentChat.ts`, `codexChat.ts`와 채팅만 쓰던 도우미(mcpServers, mcpRepair, sessionProbe, sessionScan, sessionTitle, turnClaim, resultError, cliArgs, chatContent)를 Rust `services/chat`으로 옮겼다. 명령은 `commands/chat.rs`.
+
+Rust로 옮긴 채널 (invoke/send 28개, 이벤트 2개):
+
+- 채팅: `chat:start`, `send`, `alive`, `interrupt`, `restart`, `setModel`, `setMode`, `stop`, `title`, `detectClis`
+- 지난 세션: `chat:sessions`, `sessionRename`, `sessionDelete`, `sessionTitle`, `sessionTranscript`(Claude, 없으면 Codex rollout), `agents`
+- MCP: `chat:sessionInfo`, `mcpSession`, `mcpList`, `mcpLogout`, `mcpApprove`
+- 계정, CLI 업데이트: `accounts:list`, `profileDir`, `logout`, `cli:update`, `updateStatus`, `applyUpdate`, `deferUpdate`
+- 이벤트: `chat:event`(그 패널을 시작하거나 다시 붙은 페이지로), `cli:update-changed`(모든 앱 창)
+
+구조:
+
+- 패널마다 CLI 자식 하나(`claude -p --input-format stream-json ...` 또는 `codex app-server`). 인자, 환경, 이벤트 내용은 Node 판과 같다. stdin은 쓰기 태스크 하나가 순서대로 쓰고, stdout은 줄 단위로 읽어 `claude.rs`/`codex.rs`가 ChatEvent로 바꾼다. CLI는 로그인 셸 PATH(`shell_env::login_path`)로 찾고 띄운다. 구독 로그인을 쓰도록 API 키나 `--bare`를 넣지 않는 것도 같다.
+- 스트림은 1단계와 같은 `riven:ipc` 이벤트로 보낸다. 2단계의 WebSocket은 쓰지 않았다. 측정: 600줄 답(텍스트 이벤트 151개, 3초) 동안 riven-tauri CPU 최대 5.5%, 평균 0.6%(디버그 빌드), footprint 58MB 그대로. Node CPU는 0~0.1%. 채팅은 한 턴이 수 KB라 pty의 메모리 문제(eval이 쌓임)가 생길 양이 아니다.
+- 유휴 park(15분, `RIVEN_CHAT_IDLE_PARK_MS`), 파킹된 패널에 메시지가 오면 `--resume`으로 되살리기, 오래된 resume 대상이면 새로 시작하고 못 보낸 메시지 다시 보내기, CLI가 바뀌면 그 자리에서 교체(턴이나 백그라운드 작업이 끝날 때까지 미룸), 턴 id 대기열과 백그라운드 보고 턴 처리(turnClaim)를 그대로 옮겼다.
+- 디스크 형식은 바꾸지 않았다. 지난 세션은 CLI의 `.jsonl`을 그대로 읽고, 이름 바꾸기는 CLI의 `custom-title` 줄을 덧붙이며, `userData/mcp-servers.json`은 같은 키(`configDir\0cwd`)와 모양이다.
+- JSON 읽기: JS가 쓴 외톨이 서로게이트 이스케이프(`\ud83d`)를 `JSON.parse`는 받고 serde는 거부한다. 그 줄을 버리면 세션의 메시지 수가 하나 모자라서(실제 데이터에서 발견), 실패한 줄은 그 이스케이프를 U+FFFD로 바꿔 다시 읽는다(`util::parse`).
+- 종료: 셸이 끝날 때 `services::chat::shutdown()`이 모든 자식을 끈다(RunEvent::Exit). 셸이 SIGTERM으로 바로 죽으면 Exit이 오지 않지만 stdin이 닫혀 claude와 codex 모두 스스로 끝났다(확인).
+
+Node에 남은 것 (`tauri/shim/moved/agentChat.ts`, 4단계 MCP와 같이 지운다):
+
+- `chatEnv` -> `chat.env`: 패널을 띄울 때 Rust가 riven MCP 설정(`--mcp-config` JSON, 도구 안내 프롬프트, 허용 접두사), 훅 환경(`RIVEN_HOOK_*`, `--settings` 파일), `MCP_TOOL_TIMEOUT`, Codex용 URL/토큰을 묻는다. Node는 `mcpReady()`를 기다린 뒤 답한다(8초 제한, 없으면 riven 도구 없이 띄움). 환경 탐침(`chat:sessionInfo`)은 기다리지 않는다(원래 동작).
+- `chatEdit`: Codex 패널의 파일 변경을 변경 타임라인으로(`agentHooks.reportAgentEdit`).
+- `chatRunning`: 턴 중인 패널 수. 종료 확인 대화상자가 쓴다(`runningChatCount`).
+- MCP 도구(`riven_ask_agent`, `riven_open_panel kind=chat` 등)는 전부 화면을 거쳐 `window.api.chat.*`를 부르므로 Node가 채팅 함수를 직접 부르는 곳은 없었다. 4단계에서는 위 세 메시지를 없애고 `services/mcp`가 설정과 훅 환경을 직접 주면 된다.
+
+Node 판과 다른 점:
+
+- 존재하지 않는 cwd 등으로 spawn이 실패하면 Node는 `{ok:true}`를 준 뒤 조용히 세션을 지웠다. Rust는 그 자리에서 `{ok:false, error}`를 준다.
+- 자식 환경에 Node의 제어 회선 토큰(`RIVEN_TAURI_CTL_*`)이 더는 들어가지 않는다(2단계 pty와 같음).
+- stdout 끝의 줄바꿈 없는 마지막 조각은 Node처럼 버린다. 자식이 끝난 뒤 남은 출력은 최대 2초까지 다 읽고 exit을 보낸다(Node는 exit이 먼저 올 수 있었다).
+
+실앱에서 확인한 것(백그라운드 모드, 개발 빌드): Claude 한 턴 왕복과 스트리밍(첫 글자 0.9초), AI 제목(`chat:title`), `ask_user` 질문이 패널에 뜨고 화면에서 "Yes"를 눌러 답이 에이전트에게 돌아감, 턴 중 중단(버튼 누르고 10ms 뒤 turnDone, 프로세스는 유지), 앱 재시작 뒤 대화 복원(화면 기록 + `--resume`), 유휴 park(90초로 줄여서 확인, 자식 종료, `alive`는 true) 뒤 메시지로 되살아나 앞 대화 기억, Codex 한 턴(init/text/usage/turnDone, turn id 일치), Codex 대화 기록 복원, Codex stop 시 프로세스 종료와 exit 이벤트, `riven_open_panel kind=chat agent=codex` + `riven_ask_agent` 왕복(Codex 쪽 오류가 그대로 돌아옴, 시험용으로 기본 모델을 haiku로 둔 탓), `chat:sessionInfo` 탐침(명령 97개, MCP 상태)과 자식 정리, `chat:mcpList`, 셸 종료 시 claude/codex 자식 정리.
+
+같은 입력으로 Node 판(원래 agentChat.ts를 electron 대역으로 묶어 실행)과 Rust 판 결과를 바이트 단위로 비교: `chat:sessions`(8개 cwd), `agents`, `sessionTranscript`/`sessionTitle`(세션 파일 약 35개, Codex rollout 포함), `accounts:list`, `detectClis` 88건 중 87건 같음(나머지 1건은 대역의 userData 경로 차이). 처음엔 위 서로게이트 문제로 1건이 달랐다.
+
+추론만 한 것: 내장 도구 거부(`permission_denied` -> `denied`), `chat:restart`/CLI 업데이트 적용, `chat:mcpApprove`(사용자의 `~/.claude.json`을 건드려서 실행하지 않음), `chat:mcpLogout`, `accounts:logout`, 프로필(`CLAUDE_CONFIG_DIR`) 패널과 플러그인 링크, 이미지 첨부, 백그라운드 작업 보고 턴, 종료 확인 대화상자의 채팅 수(`chatRunning`은 보내지만 Node 값을 직접 읽지는 않음), 정상 종료 경로(Node의 app.quit -> 셸 Exit -> shutdown)로 자식이 꺼지는 것(SIGTERM으로 셸을 죽인 경우만 확인).
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 2단계 후 | 20,512 |
+| 3단계 후 | 17,126 (agentChat 2,088 + codexChat 622 + 도우미 676 제외) |
+
+`lineStream.ts`와 `codexSessions.ts`는 다른 모듈이 써서 남는다. 이와 별도로 `tauri/shim/moved/agentChat.ts` 85줄이 4단계까지 Node에 남는다. 번들의 소스맵으로 센 실제 `src/main` 줄 수는 14,827이다(전에도 이 방법으로 세지 않아 비교용으로만 적는다).
+
+다음 단계가 알아야 할 것:
+
+- `usage.ts`(usage:today 등), `modelCatalog.ts`, `cli.ts`(cli:list)는 채팅 그룹이 아니라서 Node에 남겼다(7단계 작은 기능).
+- 시험 중 채팅 패널 입력은 `.chat-panel` 안의 textarea에 값을 넣고 Enter keydown을 보내면 된다. 새 패널이 열리면 보이는 textarea가 바뀌니 대상 패널을 골라서 넣을 것.

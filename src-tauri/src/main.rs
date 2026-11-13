@@ -931,6 +931,12 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
       services::pty::env_reply(a);
       Ok(Value::Null)
     }
+    // Agent chat (services/chat): riven's MCP config and hook env for a pane,
+    // built by Node's MCP server until stage 4.
+    "chat.env" => {
+      services::chat::env_reply(a);
+      Ok(Value::Null)
+    }
     "pty.hook" => {
       services::pty::hook(a);
       Ok(Value::Null)
@@ -1225,6 +1231,7 @@ fn main() {
       }
       services::shell_env::start();
       services::pty::init(app.handle());
+      services::chat::init(app.handle());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
@@ -1243,7 +1250,10 @@ fn main() {
         emit(json!({ "ev": "quit-requested" }));
       }
     }
-    RunEvent::Exit => services::pty::shutdown(),
+    RunEvent::Exit => {
+      services::pty::shutdown();
+      services::chat::shutdown();
+    }
     #[cfg(target_os = "macos")]
     RunEvent::Reopen { has_visible_windows, .. } => {
       emit(json!({ "ev": "activate", "hasVisibleWindows": has_visible_windows }))

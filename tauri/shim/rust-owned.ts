@@ -56,7 +56,36 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pty:visible': ['id', 'visible'],
   'pty:seen': ['id'],
   'pty:resize': ['id', 'cols', 'rows'],
-  'pty:kill': ['id']
+  'pty:kill': ['id'],
+  // agent chat (services/chat). Stream events come back as 'chat:event'.
+  'chat:start': ['key', 'opts'],
+  'chat:send': ['key', 'text', 'images', 'turn'],
+  'chat:alive': ['key'],
+  'chat:interrupt': ['key'],
+  'chat:restart': ['key'],
+  'chat:setModel': ['key', 'model'],
+  'chat:setMode': ['key', 'mode'],
+  'chat:stop': ['key'],
+  'chat:title': ['message'],
+  'chat:detectClis': [],
+  'chat:sessionInfo': ['cwd', 'configDir'],
+  'chat:sessions': ['cwd', 'configDir'],
+  'chat:sessionRename': ['cwd', 'id', 'title', 'configDir'],
+  'chat:sessionDelete': ['cwd', 'id', 'configDir'],
+  'chat:agents': ['cwd'],
+  'chat:sessionTranscript': ['cwd', 'id', 'configDir'],
+  'chat:sessionTitle': ['cwd', 'id', 'configDir'],
+  'chat:mcpList': ['cwd', 'configDir'],
+  'chat:mcpSession': ['cwd', 'configDir', 'fresh'],
+  'chat:mcpLogout': ['cwd', 'name', 'configDir'],
+  'chat:mcpApprove': ['cwd', 'name', 'configDir'],
+  'cli:update': ['cmd'],
+  'cli:updateStatus': [],
+  'cli:applyUpdate': ['cmd'],
+  'cli:deferUpdate': ['cmd'],
+  'accounts:profileDir': ['id'],
+  'accounts:logout': ['configDir'],
+  'accounts:list': ['configDir']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -79,7 +108,9 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'pty:reply',
   'pty:done',
   'pty:bell',
-  'pty:title'
+  'pty:title',
+  'chat:event',
+  'cli:update-changed'
 ])
 
 export function rustCommand(channel: string): string {

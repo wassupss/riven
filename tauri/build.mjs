@@ -28,7 +28,7 @@ function alias(map) {
 // src/main modules whose group moved to Rust (src-tauri/src/commands): the
 // Tauri build gets the stub in tauri/shim/moved instead, so the Node bundle
 // no longer carries them. Add a name here when its group moves.
-const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty']
+const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty', 'agentChat']
 const movedPlugin = {
   name: 'moved',
   setup(b) {
