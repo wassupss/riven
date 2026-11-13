@@ -82,6 +82,19 @@ fn emit(v: Value) {
   }
 }
 
+/// emit() that says whether Node's line was there to take it.
+pub(crate) fn try_emit(v: Value) -> bool {
+  let mut g = shared().events.lock().unwrap();
+  let Some(s) = g.as_mut() else { return false };
+  let mut line = v.to_string();
+  line.push('\n');
+  if s.write_all(line.as_bytes()).is_err() {
+    *g = None;
+    return false;
+  }
+  true
+}
+
 fn win_event(label: &str, kind: &str, extra: Value) {
   let mut v = json!({ "ev": "win", "label": label, "kind": kind });
   if let (Some(o), Value::Object(e)) = (v.as_object_mut(), extra) {
@@ -865,6 +878,16 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
       let args = a.get("args").and_then(Value::as_array).cloned().unwrap_or_default();
       commands::sync_relay(s(a, "ch").unwrap_or(""), &args)
     }
+    // Terminals (services/pty): the shell environment Node builds, and the
+    // agent hooks its loopback route receives.
+    "pty.env" => {
+      services::pty::env_reply(a);
+      Ok(Value::Null)
+    }
+    "pty.hook" => {
+      services::pty::hook(a);
+      Ok(Value::Null)
+    }
     "app.setOrigin" => {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)
@@ -1146,6 +1169,7 @@ fn main() {
     })
     .setup(|app| {
       services::shell_env::start();
+      services::pty::init(app.handle());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
@@ -1164,6 +1188,7 @@ fn main() {
         emit(json!({ "ev": "quit-requested" }));
       }
     }
+    RunEvent::Exit => services::pty::shutdown(),
     #[cfg(target_os = "macos")]
     RunEvent::Reopen { has_visible_windows, .. } => {
       emit(json!({ "ev": "activate", "hasVisibleWindows": has_visible_windows }))

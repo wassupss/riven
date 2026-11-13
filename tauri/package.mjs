@@ -25,20 +25,15 @@ fs.cpSync(path.join(root, 'out-tauri'), path.join(app, 'out-tauri'), { recursive
 for (const f of ['package.json', 'package-lock.json']) fs.copyFileSync(path.join(root, f), path.join(app, f))
 
 // Production dependencies only, with npm 10 like CI (newer npm rejects this
-// lockfile). Scripts are skipped: the root postinstall is electron-builder's,
-// and node-pty ships N-API prebuilds that plain Node loads.
+// lockfile). Scripts are skipped: the root postinstall is electron-builder's.
 execFileSync('npx', ['-y', 'npm@10', 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
   cwd: app,
   stdio: 'inherit'
 })
 fs.rmSync(path.join(app, 'package-lock.json'))
-// node-pty's install script is what marks spawn-helper executable; without it
-// every pty spawn fails with posix_spawnp.
-const prebuilds = path.join(app, 'node_modules/node-pty/prebuilds')
-for (const d of fs.readdirSync(prebuilds)) {
-  const helper = path.join(prebuilds, d, 'spawn-helper')
-  if (fs.existsSync(helper)) fs.chmodSync(helper, 0o755)
-}
+// Terminals run in Rust now (src-tauri/src/services/pty); nothing in the Node
+// bundle loads node-pty any more.
+fs.rmSync(path.join(app, 'node_modules/node-pty'), { recursive: true, force: true })
 
 // The Node that runs this script runs the app: same ABI the dev build was tested on.
 fs.copyFileSync(process.execPath, path.join(stage, 'node'))

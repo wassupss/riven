@@ -7,6 +7,7 @@ pub mod collate;
 pub mod fsx;
 pub mod notes;
 pub mod paths;
+pub mod pty;
 pub mod search;
 pub mod shell_env;
 pub mod watcher;

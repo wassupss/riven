@@ -47,7 +47,16 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'notes:saveToFile': ['ws', 'note', 'relPath', 'overwrite'],
   // the workspace watcher (bridge.ts)
   'watch:start': ['folder'],
-  'watch:stop': []
+  'watch:stop': [],
+  // terminals (services/pty). Output, snapshots, exit, bell and title come
+  // back on the page's binary stream (pty-stream.ts), not as events.
+  'pty:open': ['opts'],
+  'pty:write': ['id', 'data'],
+  'pty:ack': ['id', 'epoch', 'processed'],
+  'pty:visible': ['id', 'visible'],
+  'pty:seen': ['id'],
+  'pty:resize': ['id', 'cols', 'rows'],
+  'pty:kill': ['id']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -62,7 +71,16 @@ export const RUST_SYNC: Readonly<Record<string, string>> = {
 }
 
 // webContents.send channels Rust emits (as the Tauri event 'riven:ipc').
-export const RUST_EVENTS: ReadonlySet<string> = new Set(['fs:changed'])
+export const RUST_EVENTS: ReadonlySet<string> = new Set([
+  'fs:changed',
+  'pty:status',
+  'pty:agent',
+  'pty:agentSession',
+  'pty:reply',
+  'pty:done',
+  'pty:bell',
+  'pty:title'
+])
 
 export function rustCommand(channel: string): string {
   return channel

@@ -14,6 +14,14 @@ permissions = [
   "allow-notes-delete",
   "allow-notes-write-file",
   "allow-notes-save-to-file",
+  "allow-pty-open",
+  "allow-pty-stream",
+  "allow-pty-write",
+  "allow-pty-ack",
+  "allow-pty-visible",
+  "allow-pty-seen",
+  "allow-pty-resize",
+  "allow-pty-kill",
   "allow-search-in-files",
   "allow-search-replace-in-files",
   "allow-sessions-load",
@@ -87,6 +95,46 @@ commands.allow = ["notes_write_file"]
 identifier = "allow-notes-save-to-file"
 description = "Allows notes_save_to_file."
 commands.allow = ["notes_save_to_file"]
+
+[[permission]]
+identifier = "allow-pty-open"
+description = "Allows pty_open."
+commands.allow = ["pty_open"]
+
+[[permission]]
+identifier = "allow-pty-stream"
+description = "Allows pty_stream."
+commands.allow = ["pty_stream"]
+
+[[permission]]
+identifier = "allow-pty-write"
+description = "Allows pty_write."
+commands.allow = ["pty_write"]
+
+[[permission]]
+identifier = "allow-pty-ack"
+description = "Allows pty_ack."
+commands.allow = ["pty_ack"]
+
+[[permission]]
+identifier = "allow-pty-visible"
+description = "Allows pty_visible."
+commands.allow = ["pty_visible"]
+
+[[permission]]
+identifier = "allow-pty-seen"
+description = "Allows pty_seen."
+commands.allow = ["pty_seen"]
+
+[[permission]]
+identifier = "allow-pty-resize"
+description = "Allows pty_resize."
+commands.allow = ["pty_resize"]
+
+[[permission]]
+identifier = "allow-pty-kill"
+description = "Allows pty_kill."
+commands.allow = ["pty_kill"]
 
 [[permission]]
 identifier = "allow-search-in-files"

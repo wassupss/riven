@@ -49,5 +49,20 @@ fn main() {
   if std::fs::read_to_string(path).ok().as_deref() != Some(toml.as_str()) {
     std::fs::write(path, toml).unwrap();
   }
+  link_ghostty_vt();
   tauri_build::build()
+}
+
+// libghostty-vt, the terminal model of services/pty (scripts/build-ghostty-vt-native.sh
+// builds it from the same upstream commit as the renderer's wasm).
+fn link_ghostty_vt() {
+  let target = std::env::var("TARGET").unwrap();
+  let dir = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("vendor/ghostty-vt").join(&target);
+  println!("cargo:rerun-if-changed={}", dir.display());
+  println!("cargo:rustc-link-search=native={}", dir.display());
+  println!("cargo:rustc-link-lib=static=ghostty-vt");
+  // simdutf and highway inside the archive are C++.
+  if target.contains("apple") {
+    println!("cargo:rustc-link-lib=c++");
+  }
 }

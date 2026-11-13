@@ -13,6 +13,7 @@
 
 pub mod config;
 pub mod notes;
+pub mod pty;
 pub mod search;
 pub mod sessions;
 pub mod watch;
@@ -74,6 +75,14 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     notes::notes_save_to_file,
     watch::watch_start,
     watch::watch_stop,
+    pty::pty_open,
+    pty::pty_stream,
+    pty::pty_write,
+    pty::pty_ack,
+    pty::pty_visible,
+    pty::pty_seen,
+    pty::pty_resize,
+    pty::pty_kill,
   ]);
   move |invoke: Invoke<Wry>| {
     let label = invoke.message.webview_ref().label().to_string();

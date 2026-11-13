@@ -28,7 +28,7 @@ function alias(map) {
 // src/main modules whose group moved to Rust (src-tauri/src/commands): the
 // Tauri build gets the stub in tauri/shim/moved instead, so the Node bundle
 // no longer carries them. Add a name here when its group moves.
-const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes']
+const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty']
 const movedPlugin = {
   name: 'moved',
   setup(b) {
@@ -57,15 +57,6 @@ const assetPlugin = {
   }
 }
 
-// utilityProcess children get process.parentPort; a fork()ed child has
-// process.send/on('message'). Same messages, Electron's shape.
-const PARENT_PORT = `if (!process.parentPort && process.send) {
-  process.parentPort = {
-    on(ev, fn) { if (ev === 'message') process.on('message', (m) => fn({ data: m })) },
-    postMessage(m) { process.send(m) }
-  }
-}`
-
 const mainOpts = {
   bundle: true,
   platform: 'node',
@@ -90,13 +81,6 @@ await Promise.all([
     entryPoints: { index: 'src/main/index.ts', 'sqlite-worker': 'src/main/db/sqlite-worker.ts' },
     outdir: path.join(out, 'main'),
     absWorkingDir: root
-  }),
-  esbuild.build({
-    ...mainOpts,
-    entryPoints: { 'terminal-worker': 'src/main/terminal/worker-entry.ts' },
-    outdir: path.join(out, 'main'),
-    absWorkingDir: root,
-    banner: { js: PARENT_PORT }
   }),
   esbuild.build({
     bundle: true,

@@ -167,3 +167,55 @@ Rust로 옮긴 채널 (invoke/send/sendSync 34개, 이벤트 1개):
 - **이름 정렬:** `readDir`의 `localeCompare`는 ICU 없이 `services/collate.rs`로 흉내 낸다(실제 파일 이름 7,745개로 Node와 같은 순서 확인). Node `fs.readdir`는 이름 바이트 순으로 정렬해서 돌려주므로 Rust 쪽 디렉터리 순회도 정렬한다(`fsx::read_dir_sorted`). 검색 결과 순서와 개수 제한이 여기에 달려 있다.
 - **검색 정규식:** JS RegExp 대신 Rust `regex`를 쓴다. 전후방 탐색과 역참조는 지원하지 않아 결과 없음으로 처리된다(잘못된 정규식과 같음).
 - **감시 이벤트:** FSEvents 기반이라 원자적 저장(임시 파일 + rename)은 chokidar의 `change` 대신 `add`로 온다. 받는 쪽(탐색기, git)은 둘을 같게 처리한다.
+
+### 2단계 (2026-11-13): 터미널
+
+`src/main/pty.ts`와 `src/main/terminal/*`(Node 워커, wasm 모델, 흐름 제어)를 Rust `services/pty`로 옮겼다. Tauri 빌드에는 터미널 워커(`terminal-worker.js`)와 node-pty가 더는 없다.
+
+구조:
+
+- **pty:** portable-pty. 셸은 로그인+인터랙티브(`-l -i`)로 띄우고, 환경은 Rust 자신의 환경에 로그인 셸 PATH(`shell_env::login_path()`), `TERM`, `CLAUDE_CONFIG_DIR`, UTF-8 로캘을 더한다. 예전엔 Node의 `process.env`를 그대로 넘겨 제어 회선 토큰(`RIVEN_TAURI_CTL_*`)까지 셸에 들어갔는데, 이제 들어가지 않는다.
+- **터미널마다 스레드 2개:** 읽기(poll + read, 모델에 넣고, 묶어서 보내고, 화면이 밀리면 스스로 멈춤)와 쓰기(키 입력, 붙여넣기. pty가 가득 차면 막힐 수 있어서 따로). 화면이 보내는 write/ack/visible/resize/seen/kill은 제어 스레드 하나의 큐로 들어가 순서가 지켜진다. 메인 스레드는 큐에 넣기만 한다.
+- **모델:** libghostty-vt를 네이티브 정적 라이브러리로 링크했다(`src-tauri/vendor/ghostty-vt/<target>/libghostty-vt.a`, `scripts/build-ghostty-vt-native.sh`로 화면 wasm과 같은 커밋에서 빌드, zig 0.17.0 필요, 빌드 42초, strip 후 3MB). 같은 엔진이라 Rust가 만든 스냅샷을 화면 wasm이 그대로 푼다(실앱 재접속에서 색, 한글, vim 대체 화면까지 확인). wasmtime으로 같은 wasm을 돌리거나 alacritty_terminal로 바꿀 이유가 없어졌다. 연속 바이트 추적(`CONTINUATION_MAX_BYTES`)을 켜서 이스케이프 중간에서도 스냅샷이 실패하지 않는다(Node 워커는 이때 빈 스냅샷을 보냈다).
+- **흐름 제어:** 워커와 같은 값과 방식이다(UTF-16 단위로 보낸 양 - 화면이 처리했다고 알린 양, 2MB에서 멈추고 256KB에서 재개, 숨은 터미널은 보내지 않고 모델만 갱신). 멈춤은 읽기를 멈추는 것이라 셸의 쓰기가 커널 버퍼에서 막힌다. UTF-8 글자가 읽기 경계에서 잘리면 다음 읽기까지 들고 있어서 모델과 화면이 항상 같은 글자를 받는다.
+- **화면으로 가는 출력: 루프백 WebSocket (바이너리).** 페이지(창 라벨)마다 연결 하나로 출력, 스냅샷, 종료, 벨, 제목을 순서대로 보낸다(`services/pty/stream.rs`, `tauri/shim/pty-stream.ts`). 토큰은 `pty_stream` 명령으로만 받는다. 상태 이벤트(`pty:status`, `pty:agent`, `pty:agentSession`, `pty:reply`, `pty:done`)는 1단계와 같은 `riven:ipc` 이벤트다. 화면 코드는 바꾸지 않았다.
+- **Node에 남은 것 (`tauri/shim/moved/pty.ts`, 186줄):** MCP 서버와 훅 경로가 아직 Node라서, 셸에 넣을 riven 환경(zsh shim, `RIVEN_*`)은 Rust가 새 터미널마다 제어 회선으로 물어보고(`ptyEnv` -> `pty.env`), 에이전트 훅은 Node가 받아 Rust로 넘긴다(`pty.hook`). 종료 확인에 쓰는 "일하는 터미널 에이전트 수"는 Rust가 바뀔 때마다 알려준다(`ptyAgents`). `pty:codexSessionTitle`은 Node 그대로다. 4단계(MCP)에서 같이 옮긴다.
+
+Tauri Channel이나 `webview.eval`을 쓰지 않은 이유 (측정):
+
+- 지금 페이지는 Node가 `http://127.0.0.1`로 주므로 WebKit이 Tauri의 `ipc://` fetch를 막는다. 그러면 Tauri가 postMessage + eval로 대신 보내고, 1KB 넘는 raw Channel 메시지는 숫자 JSON 배열로 온다(4배 크기, ArrayBuffer가 아니라 배열). 실제로 이 경로에서 프레임 해석이 깨졌다.
+- 문자열을 `webview.eval`로 바로 넣는 방식은 동작은 했지만 300MB 출력 뒤 riven-tauri 메모리가 202MB에서 500MB로 늘고 돌아오지 않았다(footprint의 "Owned physical footprint (unmapped)" 441MB, 영역 4498개. eval 스크립트가 WebKit 쪽에서 풀릴 때까지 이 프로세스 몫으로 남는다).
+- WebSocket으로 바꾼 뒤 같은 300MB에서 66MB -> 69MB. 8단계에서 페이지를 Tauri가 직접 주면 raw Channel이 진짜 바이너리 경로가 되므로 그때 다시 비교한다.
+
+측정 (릴리스 빌드, 같은 바이너리에 1단계 Node 번들을 `RIVEN_TAURI_MAIN`으로 붙여 비교, 터미널 167x50, footprint 기준):
+
+| | Node 워커 (1단계) | Rust (2단계) |
+|---|---|---|
+| 프로세스 | 셸 + Node 메인 + 터미널 워커 | 셸 + Node 메인 |
+| `yes \| head -c 200MB` (커널 pty 한계 약 3.7MB/s, `script`로 따로 잰 값도 3.8MB/s) | 3.7MB/s, 워커 CPU 101%, 워커 메모리 19 -> 163MB (끝나도 163MB) | 3.5MB/s, Rust CPU 102% (78%가 커널 시간: pty read와 ghostty가 스크롤백 페이지를 재사용할 때 하는 madvise), Rust 메모리 69MB 이하 유지, 끝난 뒤 55MB |
+| 줄바꿈 없는 300MB (`head -c /dev/zero \| tr`) | 25.7MB/s, 워커 18% + Node 메인 8%(중계), 워커 19 -> 67MB | 24.4~26.9MB/s, Rust 20%, Rust 66 -> 69MB |
+| 숨은 터미널 100MB | | 4초, Rust 메모리 63 -> 64MB |
+| 출력 중 화면 반응 (페이지에 eval 왕복) | 중앙값 4ms, 최대 7ms | 중앙값 1~3ms, 최대 4~6ms |
+| 키 입력 왕복 (write -> 셸 에코 -> 화면 도착) | | 중앙값 2ms, 최대 4ms |
+
+`yes`류 홍수에서 CPU는 비슷하다(둘 다 커널이 병목). 차이는 메모리(워커는 늘어난 채로 남음)와 프로세스 하나가 줄어든 것, Node 메인이 터미널 바이트를 중계하지 않게 된 것이다. 화면 쪽(WebContent) CPU와 메모리는 두 경우가 같았다. 측정 중 창이 가려져 `document.hidden`이었던 구간이 있다(그리기는 안 하고 해석은 함). 마지막 줄바꿈 없는 측정(26.9MB/s)과 키 입력 측정은 창을 앞에 둔 상태다.
+
+실앱에서 확인한 것: 셸 PATH(로그인 PATH 25개 항목), 입력 에코, 창 크기 변경(`stty size`가 30 100 -> 41 132, 화면 크기 50 167), 한글/이모지/넓은 글자 줄바꿈, 벨, 제목, `exit 7` 종료 코드 전달, kill(프로세스 사라짐, exit 이벤트 없음은 Electron과 같음), 터미널 두 개 동시 출력, 새로고침 후 재접속 스냅샷(색, 한글, vim 대체 화면), 앱 종료 시 셸 정리, 에이전트 감지(pgrep, `pty:agent`), 훅 왕복(`UserPromptSubmit`/`Stop` -> `pty:status`, `pty:agentSession`, `pty:done` 요약, `pty:reply`), MCP `riven_agents`와 `riven_ask_agent`(터미널에 입력하고 Stop 훅의 답을 돌려받음), 터미널에서 띄운 MCP `riven_open_panel kind=terminal`.
+
+추론만 한 것: 종료 확인 대화상자의 터미널 에이전트 수(`ptyAgents` 이벤트는 보내지만 Node 쪽 값을 직접 읽어 보지는 않았다), 셸이 SIGHUP을 무시할 때의 kill, 백그라운드 작업이 pty를 쥐고 있어 셸이 끝나도 EOF가 오지 않는 경우(그 작업이 끝날 때까지 터미널이 살아 있다), x86_64 정적 라이브러리(빌드만 하고 링크/실행은 안 해 봄), `tauri/package.mjs`의 `tauri build` 전체(스테이징만 확인: node-pty 제거로 app 246MB -> 183MB).
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 1단계 후 | 22,026 |
+| 2단계 후 | 20,512 (pty.ts 682 + terminal 워커/모델/흐름 제어 832 제외) |
+
+`src/main/terminal/activity.ts`(139줄)는 agents.ts가 훅 이름 해석에 써서 번들에 남는다. 이와 별도로 `tauri/shim/moved/pty.ts` 186줄이 4단계까지 Node에 남는다.
+
+다음 단계가 알아야 할 것:
+
+- **`cargo build --release` 함정:** `tauri build`를 한 번 하면 `target/release/app`과 `target/release/node`가 남고, `main.rs`의 `bundled()`가 그걸 리소스로 보고 옛 앱 트리를 띄운다. 릴리스 바이너리로 시험할 때는 `RIVEN_TAURI_MAIN=$PWD/out-tauri/main/index.js`를 준다.
+- **WebSocket 경로는 채팅 스트림(3단계)에도 쓸 수 있다.** `stream::send(label, frame)`에 종류만 더하면 된다. 큰 데이터를 `emit`/`eval`로 보내면 위의 메모리 문제가 난다.
+- **MCP를 옮길 때(4단계):** `ptyEnv`/`pty.hook`/`ptyAgents` 왕복을 없애고 `services/pty::open`에서 직접 환경을 만들면 된다. zsh shim 파일 내용은 `tauri/shim/moved/pty.ts`에 있다.
+- **ghostty 메모리 압축:** libghostty-vt에 `ghostty_terminal_compress`가 있다. 숨은 터미널의 스크롤백을 줄이는 데 쓸 수 있다(아직 안 씀).

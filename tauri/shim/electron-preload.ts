@@ -7,6 +7,7 @@
 // Channels Rust owns (rust-owned.ts) go to Tauri instead: invoke/send become
 // Tauri commands, and Rust's events arrive as the Tauri event 'riven:ipc'.
 import { decode, encode } from './codec'
+import { ptyStream } from './pty-stream'
 import { RUST_EVENTS, RUST_INVOKE, RUST_SYNC, rustCommand } from './rust-owned'
 
 type W = Window & {
@@ -104,7 +105,11 @@ function rustInvoke(channel: string, names: readonly string[], args: unknown[]):
   names.forEach((n, i) => {
     if (args[i] !== undefined) named[n] = args[i]
   })
-  return t.invoke(rustCommand(channel), named).catch((e: unknown) => {
+  // A terminal's output comes back on the page's stream (pty-stream.ts); it
+  // must be up before the terminal is.
+  const call = (): Promise<unknown> => t.invoke(rustCommand(channel), named)
+  const sent = channel === 'pty:open' ? ptyStream((c, a) => t.invoke(c, a), LABEL, deliver).then(call) : call()
+  return sent.catch((e: unknown) => {
     throw new Error(`Error invoking remote method '${channel}': Error: ${e instanceof Error ? e.message : String(e)}`)
   })
 }

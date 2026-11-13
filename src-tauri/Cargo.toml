@@ -18,6 +18,8 @@ notify = { version = "8", default-features = false, features = ["macos_fsevent"]
 regex = "1"
 sha1 = "0.10"
 base64 = "0.22"
+portable-pty = "0.9"
+libc = "0.2"
 
 # Already in the tree through wry; same versions, a few more features.
 [target.'cfg(target_os = "macos")'.dependencies]
