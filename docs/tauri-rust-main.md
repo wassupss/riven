@@ -469,3 +469,30 @@ Rust 쪽은 `services/db` 10,985줄(단위 시험 포함) + `commands/db.rs` 328
 - **eval 훅이 멈출 때:** 백그라운드 모드에서 한동안 아무것도 안 하면 페이지 소켓 eval(`op=eval`)이 답하지 않는 일이 있었다(`document.visibilityState`가 hidden). 시험 중에만 빌드된 번들의 `executeJavaScript`가 `wv.exec`(WKWebView 직접 실행)를 쓰게 바꿔서 피했다. 다시 빌드하면 원래대로 돌아간다.
 - **값 변환을 바꿀 때:** 화면과 MCP 결과가 Node 드라이버의 텍스트 변환에 맞춰져 있으니 `pg.rs`/`my.rs`/`js.rs`의 변환을 바꾸면 하네스 비교를 다시 돌릴 것.
 - **IPC 메모리**(위)는 DB만의 일이 아니라 큰 invoke 결과 전부에 해당한다.
+
+### 7단계 (2026-11-13): 큰 응답 메모리, 언어 서버, 디버거, 나머지 작은 기능
+
+#### 7-1. 큰 invoke 응답 뒤 메모리가 돌아오지 않던 문제
+
+6단계에서 본 현상(큰 결과를 받을 때마다 riven-tauri footprint가 약 12MB씩 늘어 남음)의 원인은 두 가지였다. 둘 다 고쳤다.
+
+1. **invoke가 postMessage + eval로 돌고 있었다.** 페이지는 Node가 `http://127.0.0.1`로 주는데, 렌더러의 CSP(`src/renderer/index.html`, Electron용)의 `connect-src`에 `ipc:`가 없어서 WebKit이 Tauri의 `ipc://localhost/<명령>` fetch를 막았다. 그러면 Tauri는 postMessage로 바꾸고 결과를 스크립트 문자열로 페이지에 eval한다. 그 문자열이 "Owned physical footprint (unmapped)"로 이 프로세스 몫에 남았다(2단계 pty에서 본 것과 같은 현상). 고침: Tauri 빌드에서만 Node가 HTML을 줄 때 CSP에 `ipc: http://ipc.localhost`를 더한다(`tauri/shim/server.ts`). 실앱에서 fetch를 가로채 세어 보니 invoke 2건이 모두 `ipc://`로 갔고 postMessage는 0건이었다.
+2. **macOS libmalloc의 큰 블록 realloc.** 1을 고친 뒤에도 같은 양이 이번에는 `MALLOC_LARGE`로 남았다. 응답을 WebSocket(2단계 pty 스트림)으로 보내 봐도 같았다. 그래서 IPC가 아니라 Rust 쪽 할당 문제로 좁혔다. 시험 명령으로 순수 Rust `Vec`을 12MB까지 늘렸다가 버리기만 해도 12번에 63MB -> 219MB가 됐다. 같은 크기를 한 번에 할당하면(늘리지 않음) 63MB -> 87MB에서 멈췄다. libmalloc은 큰 블록을 늘릴 때 페이지를 복사하지 않고 다시 매핑하는데(copy-on-write), 그 뒤 버린 옛 블록의 페이지가 몇 분 동안 footprint에 남는다(90초 뒤에야 일부가 돌아옴). JSON 결과를 `Vec`에 써 가는 직렬화, 파일을 `String`으로 읽기 등 커지는 버퍼는 모두 이 길을 탄다. 고침: `main.rs`의 전역 할당자가 시스템 할당자를 그대로 쓰되, 512KB 이상 realloc만 새로 할당 + 복사 + 해제로 한다. `malloc_zone_pressure_relief`로는 돌아오지 않았다(0바이트).
+
+측정 (개발 빌드, 백그라운드 모드, 12MB 파일 `workspace:readFile`, riven-tauri footprint, `footprint`만 사용):
+
+| | 1회 전 | 6회 | 12회 | 24회 | 유휴 뒤 |
+|---|---|---|---|---|---|
+| 고치기 전 (eval 경로) | 62MB | 152MB | 212MB(16회) | | 30초 뒤 188MB |
+| CSP만 고침 (ipc:// 경로) | 63MB | 138MB | 223MB | | 26회 354MB, 90초 뒤 179MB |
+| CSP + 할당자 | 64MB | 101MB | 102MB | 102MB | 20초 뒤 102MB |
+| 할당자만 (eval 경로 그대로) | 63MB | 183MB | 211MB | | 211MB ("owned unmapped" 85MB) |
+
+읽기 시간은 한 번에 330ms에서 278ms로 줄었다(eval 대신 fetch 본문). 큰 결과를 WebSocket으로 보내는 경로도 만들어 재 봤다. CSP와 할당자를 고친 상태에서 12회 102MB로 fetch 경로(111MB)와 거의 같아서, 경로를 하나 더 두지 않으려고 넣지 않았다.
+
+시험 환경 고침:
+
+- 백그라운드 모드 창은 모든 창 뒤에 있어서 WebKit이 가려진 페이지로 보고 타이머와 소켓 메시지를 늦췄다. 6단계에서 eval 훅이 답하지 않던 원인이 이것이다. 백그라운드 모드(`RIVEN_TAURI_BACKGROUND=1`)에서만 WKWebView의 `_windowOcclusionDetectionEnabled`를 끈다(`main.rs`의 `no_occlusion`). 이제 페이지가 보이는 창처럼 돌고(`visibilityState` visible), 위 측정도 보이는 창 기준이다. 평소 실행에는 영향이 없다.
+- 시험 훅에 `op=wv`를 더했다. 페이지 소켓을 거치지 않고 WKWebView `callAsyncJavaScript`로 바로 eval한다. 식 하나를 받는다(async 함수는 IIFE로 감쌀 것).
+
+추론만 한 것: DB 10만 행 결과(같은 직렬화와 같은 응답 경로라 같다고 본다. 시험 DB 연결 저장이 키체인을 건드릴 수 있어서 이번에는 돌리지 않음). WebContent 프로세스 쪽 메모리(시험 앱의 프로세스 트리에 없어서 PID로 좁힐 수 없어 재지 않음).

@@ -137,6 +137,20 @@ async function testHook(u: URL, req: http.IncomingMessage, res: http.ServerRespo
   const win = windowByLabel(u.searchParams.get('w') ?? 'w1')
   const wc = win?.webContents
   if (!win || !wc) return void res.writeHead(404).end()
+  // op=wv: the same eval run by WKWebView itself (callAsyncJavaScript), not
+  // over the page's socket. A background test window WebKit sees as occluded
+  // can leave socket messages unanswered for a long time; this always runs.
+  if (u.searchParams.get('op') === 'wv') {
+    try {
+      const code = (await readBody(req)).toString('utf8')
+      const text = await call<string>('wv.exec', { label: label || 'w1', code, expr: true })
+      const r = JSON.parse(text) as { v?: unknown; u?: 1 }
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: true, val: 'u' in r ? undefined : r.v }))
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ ok: false, err: String(e) }))
+    }
+    return
+  }
   try {
     if (u.searchParams.get('op') === 'front') {
       win.show()
@@ -207,6 +221,14 @@ async function serveStatic(u: URL, req: http.IncomingMessage, res: http.ServerRe
     // preload there would open a second bridge for nothing.
     let html = await fs.promises.readFile(file, 'utf8')
     if (rel !== '/popout.html') html = html.replace(/<head>/i, (h) => h + HEAD_INJECT())
+    // Tauri's invoke fetches ipc://localhost/<cmd> (http://ipc.localhost on
+    // Windows). The renderer's CSP (written for Electron) does not list it, so
+    // WebKit refused the fetch and Tauri fell back to postMessage, which hands
+    // every result back as a script string the shell evaluates in the page.
+    // Those strings stayed charged to the shell process (owned, unmapped) and
+    // a 12MB result grew it by about 12MB per call. Over the custom protocol a
+    // result is a plain response body.
+    html = html.replace(/connect-src 'self'/, "connect-src 'self' ipc: http://ipc.localhost")
     res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
     res.end(html)
     return

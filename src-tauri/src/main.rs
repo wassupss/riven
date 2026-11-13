@@ -313,6 +313,9 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
     }
   }
   let built = bld.build().map_err(|e| e.to_string())?;
+  if background() {
+    no_occlusion(built.as_ref());
+  }
   if background() && b(&o, "show").unwrap_or(true) {
     order_back(app, built.as_ref().window());
   }
@@ -377,6 +380,7 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
   match built {
     Ok(window) => {
       if background() {
+        no_occlusion(window.as_ref());
         order_back(app, window.as_ref().window());
       }
       keep_on_screen(app, &window, id.rsplit_once('-').map_or(id, |(o, _)| o));
@@ -887,6 +891,48 @@ fn cursor(app: &AppHandle) -> Res {
 }
 
 
+// ---- allocator ------------------------------------------------------------------
+//
+// The system allocator, except that a large realloc is a fresh allocation +
+// copy + free. macOS libmalloc grows a large block by remapping its pages
+// (vm_copy, copy-on-write) into the new one; the old block then sits in
+// malloc's large-free cache with pages it can neither reuse nor hand back
+// while they are COW-shared, and they stay in this process's footprint for
+// minutes. Every growing buffer (a JSON result written into a Vec, a file read
+// into a String) did that: one 12MB result left about 13MB behind each time
+// (63MB -> 308MB after 12 file reads, the same with a pure Rust Vec grown to
+// 12MB and dropped; 63MB -> 87MB flat when the copy is made by hand).
+struct Alloc;
+
+const REMAP_MIN: usize = 512 * 1024;
+
+unsafe impl std::alloc::GlobalAlloc for Alloc {
+  unsafe fn alloc(&self, l: std::alloc::Layout) -> *mut u8 {
+    std::alloc::System.alloc(l)
+  }
+  unsafe fn alloc_zeroed(&self, l: std::alloc::Layout) -> *mut u8 {
+    std::alloc::System.alloc_zeroed(l)
+  }
+  unsafe fn dealloc(&self, p: *mut u8, l: std::alloc::Layout) {
+    std::alloc::System.dealloc(p, l)
+  }
+  unsafe fn realloc(&self, p: *mut u8, l: std::alloc::Layout, new_size: usize) -> *mut u8 {
+    if l.size().max(new_size) < REMAP_MIN {
+      return std::alloc::System.realloc(p, l, new_size);
+    }
+    let nl = std::alloc::Layout::from_size_align_unchecked(new_size, l.align());
+    let n = std::alloc::System.alloc(nl);
+    if !n.is_null() {
+      std::ptr::copy_nonoverlapping(p, n, l.size().min(new_size));
+      std::alloc::System.dealloc(p, l);
+    }
+    n
+  }
+}
+
+#[global_allocator]
+static GLOBAL: Alloc = Alloc;
+
 // ---- background test mode ---------------------------------------------------
 //
 // RIVEN_TAURI_BACKGROUND=1 (set by test launches, never by tauri/run.sh):
@@ -898,6 +944,27 @@ fn cursor(app: &AppHandle) -> Res {
 fn background() -> bool {
   static BG: OnceLock<bool> = OnceLock::new();
   *BG.get_or_init(|| std::env::var("RIVEN_TAURI_BACKGROUND").as_deref() == Ok("1"))
+}
+
+/// A test window sits behind everything, so WebKit sees it as occluded and
+/// treats the page as hidden: timers and socket messages slow to a crawl and
+/// the page is not what a person would see. Turn WebKit's occlusion check off
+/// for it (the private `_windowOcclusionDetectionEnabled`, as Safari's own
+/// tests do), so the page runs as a visible one would.
+fn no_occlusion(wv: &tauri::Webview<Wry>) {
+  #[cfg(target_os = "macos")]
+  {
+    let _ = wv.with_webview(|pv| unsafe {
+      let v = pv.inner() as *mut objc2::runtime::AnyObject;
+      let sel = objc2::sel!(_setWindowOcclusionDetectionEnabled:);
+      let ok: bool = objc2::msg_send![&*v, respondsToSelector: sel];
+      if ok {
+        let _: () = objc2::msg_send![&*v, _setWindowOcclusionDetectionEnabled: false];
+      }
+    });
+  }
+  #[cfg(not(target_os = "macos"))]
+  let _ = wv;
 }
 
 /// Show a window without bringing it forward: orderBack, on the main thread.
