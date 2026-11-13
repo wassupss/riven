@@ -398,24 +398,57 @@ export const safeStorage = {
   }
 }
 
-// ---- Notification: osascript (a click on it can't be observed) ---------------
+// ---- Notification: Rust (src-tauri/src/services/notify.rs) ---------------------
+//
+// Posted through UNUserNotificationCenter, so it wears the app's icon and a
+// click comes back as {ev: 'notify', id, kind: 'click'}. The page's own
+// notifications (notify:show) never come here: Rust plans and posts those.
+// 'show' / 'failed' follow the OS's answer, like Electron's.
+
+const notifications = new Map<string, Notification>()
+onEvent((m) => {
+  if (m.ev !== 'notify' || typeof m.id !== 'string') return
+  const n = notifications.get(m.id)
+  if (!n) return
+  if (m.kind === 'click') {
+    notifications.delete(m.id)
+    n.emit('click', {})
+  }
+})
 
 export class Notification extends EventEmitter {
   static isSupported(): boolean {
-    return true
+    return process.platform === 'darwin'
   }
+  private id: string | null = null
   constructor(private readonly o: { title?: string; subtitle?: string; body?: string; silent?: boolean } = {}) {
     super()
   }
   show(): void {
-    const q = (s: string): string => JSON.stringify(s)
-    let script = `display notification ${q(this.o.body ?? '')} with title ${q(this.o.title ?? APP_NAME)}`
-    if (this.o.subtitle) script += ` subtitle ${q(this.o.subtitle)}`
-    if (!this.o.silent) script += ' sound name "default"'
-    execFile('/usr/bin/osascript', ['-e', script], () => {})
-    this.emit('show')
+    call<string>('notify.post', {
+      title: this.o.title ?? APP_NAME,
+      subtitle: this.o.subtitle ?? '',
+      body: this.o.body ?? '',
+      silent: !!this.o.silent
+    }).then(
+      (id) => {
+        this.id = id
+        notifications.set(id, this)
+        // Electron lets an unreferenced Notification (and its click) go; keep
+        // ours for as long as a click is still likely, then let it go too.
+        setTimeout(() => this.forget(), 5 * 60 * 1000).unref?.()
+        this.emit('show', {})
+      },
+      (e: Error) => this.emit('failed', {}, e.message)
+    )
   }
-  close(): void {}
+  close(): void {
+    this.forget()
+    this.emit('close', {})
+  }
+  private forget(): void {
+    if (this.id) notifications.delete(this.id)
+  }
 }
 
 // ---- nativeImage ---------------------------------------------------------------

@@ -141,6 +141,9 @@ permissions = [
   "allow-notes-delete",
   "allow-notes-write-file",
   "allow-notes-save-to-file",
+  "allow-notify-show",
+  "allow-notify-presence",
+  "allow-notify-diag",
   "allow-power-busy",
   "allow-power-remote",
   "allow-perf-metrics",
@@ -869,6 +872,21 @@ commands.allow = ["notes_write_file"]
 identifier = "allow-notes-save-to-file"
 description = "Allows notes_save_to_file."
 commands.allow = ["notes_save_to_file"]
+
+[[permission]]
+identifier = "allow-notify-show"
+description = "Allows notify_show."
+commands.allow = ["notify_show"]
+
+[[permission]]
+identifier = "allow-notify-presence"
+description = "Allows notify_presence."
+commands.allow = ["notify_presence"]
+
+[[permission]]
+identifier = "allow-notify-diag"
+description = "Allows notify_diag."
+commands.allow = ["notify_diag"]
 
 [[permission]]
 identifier = "allow-power-busy"

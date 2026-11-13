@@ -204,7 +204,12 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   // keep-awake (sends) and the CPU sample (services/power)
   'power:busy': ['count', 'on'],
   'power:remote': ['on'],
-  'perf:metrics': []
+  'perf:metrics': [],
+  // desktop notifications (services/notify). show and presence are sends;
+  // a click comes back as the 'notify:click' event to the window it chose.
+  'notify:show': ['req'],
+  'notify:presence': ['p'],
+  'notify:diag': []
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -240,7 +245,8 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'git:changed',
   'lsp:notify',
   'lsp:stopped',
-  'debug:event'
+  'debug:event',
+  'notify:click'
 ])
 
 export function rustCommand(channel: string): string {

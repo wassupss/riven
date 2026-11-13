@@ -13,6 +13,7 @@ pub mod http;
 pub mod lsp;
 pub mod mcp;
 pub mod notes;
+pub mod notify;
 pub mod paths;
 pub mod power;
 pub mod pty;

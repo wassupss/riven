@@ -1020,6 +1020,15 @@ fn order_back(app: &AppHandle, w: Window<Wry>) {
 fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
   match cmd {
     "app.ready" => Ok(Value::Null),
+    // The shim's Notification.show() (update.ts). Answers once the OS took or
+    // refused it; a click comes back as {ev: 'notify', id, kind: 'click'}.
+    "notify.post" => services::notify::post_for_node(
+      s(a, "title").unwrap_or(""),
+      s(a, "subtitle").unwrap_or(""),
+      s(a, "body").unwrap_or(""),
+      b(a, "silent").unwrap_or(false),
+    )
+    .map(Value::from),
     // A Rust-owned sendSync channel, relayed by Node's sync endpoint.
     "ipc.sync" => {
       let args = a.get("args").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -1138,7 +1147,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
 fn is_slow(cmd: &str) -> bool {
   matches!(
     cmd,
-    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
+    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup" | "notify.post"
   )
 }
 
@@ -1284,6 +1293,9 @@ fn main() {
     .on_menu_event(|_app, ev| emit(json!({ "ev": "menu", "id": ev.id().0 })))
     .on_window_event(|w, ev| {
       let label = w.label();
+      if let WindowEvent::Destroyed = ev {
+        services::notify::forget(label);
+      }
       // Popouts are dockview's, owned by the opener's page; node never made them.
       if label.starts_with("pop-") {
         popout_event(w, ev);
@@ -1360,6 +1372,9 @@ fn main() {
       services::chat::init(app.handle());
       services::lsp::init(app.handle());
       services::debug::init(app.handle());
+      // Click routing, and the permission request notify.ts's startup probe
+      // made (not in the background test mode, which asks for nothing).
+      services::notify::init(app.handle(), background());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;

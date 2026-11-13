@@ -19,6 +19,7 @@ pub mod git;
 pub mod lsp;
 pub mod mcp;
 pub mod notes;
+pub mod notify;
 pub mod power;
 pub mod pty;
 pub mod search;
@@ -64,6 +65,9 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     power::power_busy,
     power::power_remote,
     power::perf_metrics,
+    notify::notify_show,
+    notify::notify_presence,
+    notify::notify_diag,
     tools::cli_list,
     tools::ports_list,
     tools::ports_kill,

@@ -11,6 +11,9 @@
     "icon": [
       "../build/icon.icns",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

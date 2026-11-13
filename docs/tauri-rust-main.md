@@ -578,6 +578,16 @@ Node 판과 다른 점:
 - 확인 (실앱, `window.api.power`): busy(2,true) -> caffeinate 1개(`-i -w <riven-tauri pid>`), busy(1,true) 유지, busy(0,true) 해제, remote(true) 잡음, busy(3,false) 유지(remote 때문), remote(false) 해제, busy(3,false) 없음, busy(2.7,true) 잡음("2 pane(s)" 로그). 각 단계마다 시험 앱의 자식 프로세스만 확인했다. `perf:metrics`는 두 번째 표본에서 0.17%.
 - 추론만 한 것: 실제로 잠자기가 막히는지(`pmset -g assertions`는 다른 프로세스의 정보까지 보여 줘서 읽지 않음. caffeinate 자체의 동작).
 
+#### 7-6. 알림 (notify)
+
+- `notify:show`, `notify:presence`(send), `notify:diag`를 `services/notify.rs`로 옮겼다. `MOVED`에 `notify`를 더했고 `tauri/shim/moved/notify.ts`는 빈 함수 두 개다. 계획(`computePlan`), 5초 쿨다운, 통계는 notify.ts와 같다(같은 단위 시험을 Rust로 옮김). presence는 webContents id 대신 창 label로 묶고, 창이 Destroyed 되면 지운다.
+- 게시는 UNUserNotificationCenter(objc2-user-notifications)다. 앱 아이콘과 이름으로 뜨고, 클릭은 센터 delegate로 돌아온다. 클릭하면 계획이 고른 창을 복원, 표시, 포커스하고 그 창에 `notify:click`(paneId)을 보낸다. 앱이 앞에 있을 때도 배너를 띄운다(Electron과 같음, 보고 있는 패널은 계획이 이미 거름).
+- notify.ts의 시작 시 무음 알림(목록 등록용)은 Rust 시작 시 권한 요청(alert, sound)으로 바꿨다. 백그라운드 시험 모드에서는 하지 않는다.
+- 셰임의 `Notification` 클래스(update.ts의 "업데이트 준비됨")도 osascript 대신 제어 회선 `notify.post`로 같은 경로를 쓴다. 클릭은 `{ev: 'notify', id, kind: 'click'}`으로 Node에 온다.
+- UNUserNotificationCenter는 번들 id가 있는 .app에서만 된다. `tauri/run.sh`는 개발 바이너리를 `src-tauri/target/debug/riven-tauri.app`(Info.plist, MacOS/riven-tauri 복제본, Resources/icon.icns, ad-hoc 서명)으로 감싸 실행한다. Resources에 app, node가 없어서 `bundled()`는 거짓이고 개발은 그대로 out-tauri를 쓴다. 번들 id는 `riven-tauri`다. WebKit이 페이지 데이터(localStorage)를 `~/Library/WebKit/<번들 id>`에 두는데, 번들 없는 바이너리는 이름(riven-tauri)을 썼으므로 같은 id여야 개발 데이터가 그대로 보인다. 패키지 앱(`dev.riven.tauri`)과도 섞이지 않는다. 번들이 아니면(`RIVEN_TAURI_NO_APP=1`, cargo run) 예전처럼 osascript로 띄우고 클릭은 못 본다.
+- 패키지 앱은 tauri.bundle.json에 ad-hoc 서명(`signingIdentity: "-"`)을 더했다.
+- 추론만 한 것: 실제 배너 표시, 아이콘, 클릭 경로, 권한 창(사용자가 쓰는 Mac이라 알림을 띄우지 않음). 빌드, 단위 시험, 개발 .app 구조와 서명만 확인했다.
+
 #### 7단계 정리
 
 Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnostics 5, usage 2, api:request 1, power 2, perf 1 = invoke/send 25개, 이벤트 3개(`lsp:notify`, `lsp:stopped`, `debug:event`). MCP의 마지막 Node 다리(`riven_api_request`)를 지웠다. `MOVED`에 `lsp`, `debugger`, `cli`, `ports`, `modelCatalog`, `diagnostics`, `usage`(`usage:limits`만 남김), `apiclient`, `keepAwake`, `perf`를 더했다.
@@ -596,7 +606,7 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
 이번 단계에서 옮기지 않은 것 (이유):
 
 - **usage:limits:** Claude Code의 OAuth 토큰을 사용자 키체인에서 읽는다. 이번 시험은 키체인을 건드리지 않기로 해서 옮기지 않았다. Rust로 옮길 때는 같은 `security find-generic-password` 호출(서비스 이름 규칙은 `usage.ts`의 `keychainService`)과 https 요청(이제 `services/http.rs`로 가능)이면 된다.
-- **notify (`notify:show`, `presence`, `diag`), permissions (`perm:report`, `ask`, `open`), auth (`auth:oauth`), update (`update:*`, `app:version`), remoteKey (`remoteKey:*`, 키체인):** 알림 배너, 권한 창, 로그인 창, 업데이트 내려받기, 키체인처럼 시험할 때 화면에 뜨거나 실제 서비스/사용자 데이터를 건드리는 것들이다. 코드만 옮기고 검증 없이 넣지 않으려고 남겼다. 8단계에서 tauri-plugin-notification, tauri-plugin-updater, 딥링크와 함께 옮긴다.
+- **permissions (`perm:report`, `ask`, `open`), auth (`auth:oauth`), update (`update:*`, `app:version`), remoteKey (`remoteKey:*`, 키체인):** 권한 창, 로그인 창, 업데이트 내려받기, 키체인처럼 시험할 때 화면에 뜨거나 실제 서비스/사용자 데이터를 건드리는 것들이다. 코드만 옮기고 검증 없이 넣지 않으려고 남겼다. 8단계에서 tauri-plugin-updater, 딥링크와 함께 옮긴다.
 - **pet (17개 채널), tray (`tray:feed`, `diag`):** 화면 위에 떠 있는 창과 메뉴 막대 아이콘이라 시험 중 사용자 화면에 보인다. 창/트레이 원시 기능은 이미 Rust(제어 회선의 `win.*`, `tray.*`)이고 남은 것은 그 위의 로직이다.
 - **browser (19개 채널):** 브라우저 패널의 TS 쪽 로직(즐겨찾기, 기록, 찾기, 요소 선택 등). 네이티브 부분은 이미 `browser.rs`다. 722줄로 크고 페이지 로드 시험이 필요해 다음으로 미뤘다.
 - **index, menu, bridge(`capture:save`, `shell:openExternal`, `ui:setZoom`), media(riven-media 프로토콜), systemResume, focusTrace, demo, appWindow, atomicWrite, `env:defaults`:** 앱 생명주기와 창, 메뉴, 페이지 제공에 붙어 있어서 Node를 지우는 8단계와 같이 옮긴다.
@@ -607,5 +617,5 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
 - **sendSync 중계 없애기:** `config:save-sync`, `sessions:save-sync`는 창 닫기에서는 이제 `flush_page`(7-4)가 페이지의 beforeunload를 미리 돌려서 해결된다. 앱 종료(Cmd+Q, Dock 메뉴, 로그아웃)도 RunEvent::ExitRequested에서 모든 앱 창에 `flush_page`를 돌린 뒤 끝내면 동기 XHR이 필요 없다. `__riven:dragPaths`(드롭한 파일 경로)는 Rust가 드래그 시작/드롭 때 경로를 페이지에 미리 보내는 방식으로 바꿔야 한다.
 - **종료 확인:** index.ts의 before-quit 대화상자와 그 수(`pty.working`, `chat.running` 동기 호출)를 Rust로.
 - **시험 훅:** `server.ts`의 `/__riven/test`(`op=eval`, `wv`, `shot`, `close`, `busy`, `displays`, `front`)를 Rust 쪽 루프백 엔드포인트로 옮긴다(`RIVEN_TAURI_TEST_KEY`가 있을 때만). 백그라운드 모드(`RIVEN_TAURI_BACKGROUND=1`, 7-1의 가림 감지 끄기 포함)는 이미 Rust다.
-- **위 "옮기지 않은 것" 전부:** usage:limits, notify, permissions, auth, update, remoteKey, pet, tray, browser, menu, bridge, media, systemResume, focusTrace, demo.
+- **위 "옮기지 않은 것" 전부:** usage:limits, permissions, auth, update, remoteKey, pet, tray, browser, menu, bridge, media, systemResume, focusTrace, demo.
 - **패키징:** `tauri/package.mjs`에서 Node 바이너리와 node_modules 동봉을 빼고, 서명/공증, tauri-plugin-updater 피드. 언어 서버는 이미 설치된 것만 쓰므로(7-2) 앱에 넣을 것이 없다. 묶인 서버가 빠지면 Electron에서 넘어온 사용자에게 상태줄 안내가 처음 보일 수 있다.
