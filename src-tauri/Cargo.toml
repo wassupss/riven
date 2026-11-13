@@ -13,13 +13,27 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 url = "2"
-tokio = { version = "1", features = ["fs", "sync", "time", "rt", "process", "io-util"] }
+tokio = { version = "1", features = ["fs", "sync", "time", "rt", "process", "io-util", "net", "macros"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 regex = "1"
 sha1 = "0.10"
 base64 = "0.22"
 portable-pty = "0.9"
 libc = "0.2"
+# DB (services/db): the PostgreSQL and MySQL wire protocols are spoken here
+# (text results, like node-pg / mysql2); SQLite is the bundled C library.
+postgres-protocol = "0.6"
+bytes = "1"
+libsqlite3-sys = { version = "0.40", features = ["bundled"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+sha2 = "0.10"
+rsa = { version = "0.9", features = ["sha1"] }
+aes-gcm = "0.10"
+ryu-js = "1"
+encoding_rs = "0.8"
+flate2 = "1"
+crc32fast = "1"
 
 # Already in the tree through wry; same versions, a few more features.
 [target.'cfg(target_os = "macos")'.dependencies]

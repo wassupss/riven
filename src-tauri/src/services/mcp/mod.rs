@@ -8,8 +8,9 @@
 // terminal) gets a URL that names its pane and a per-run token; nothing is
 // written into the user's CLI configs. A tools/call is done by the app page
 // (Rust sends 'mcp:invoke', the page answers 'mcp:result'), except the tools
-// whose engine is still Node (the DB, the HTTP request): those go to Node on
-// the control line ('mcpTool', answered with 'mcp.toolResult').
+// whose engine is still Node (the HTTP request): it goes to Node on the
+// control line ('mcpTool', answered with 'mcp.toolResult'). The DB tools run
+// here (services/db/engine.rs).
 //
 // The tool catalog and the tool prompt are not written here: catalog.json is
 // generated from src/main/mcpServer.ts by tauri/build.mjs, so the Electron and
@@ -477,6 +478,31 @@ fn page_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, par
   })
 }
 
+// riven_db_* (services/db/engine.rs). riven_db_execute asks the calling pane
+// to confirm (ask_user on its behalf), so a cancelled call drops the card.
+fn db_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, call: &Call) -> Option<String> {
+  use crate::services::db::engine;
+  let id = util::uuid();
+  let (name, args, cwd, key, id2) = (name.to_string(), args.clone(), cwd.map(str::to_string), key.map(str::to_string), id.clone());
+  wait(&id, None, None, call, None, move || {
+    crate::services::db::runtime().spawn(async move {
+      let parent = id2.clone();
+      let ask: engine::Ask = Box::new(move |question, options| {
+        Box::pin(async move {
+          let args = json!({ "question": question, "options": options });
+          let none = Call { conn: None, rpc: None };
+          tokio::task::spawn_blocking(move || page_call("ask_user", &args, cwd.as_deref(), key.as_deref(), Some(parent), &none).unwrap_or_else(|| CANCELLED.into()))
+            .await
+            .unwrap_or_default()
+        })
+      });
+      let text = engine::run_db_tool(&name, &args, ask).await;
+      page_result(&json!({ "id": id2, "result": text }));
+    });
+    true
+  })
+}
+
 // A tool whose engine is still Node (tauri/shim/moved/mcpServer.ts).
 fn node_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, call: &Call) -> Option<String> {
   let id = util::uuid();
@@ -484,21 +510,14 @@ fn node_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, cal
   wait(&id, None, None, call, None, move || crate::try_emit(msg))
 }
 
-/// riven_db_execute's confirmation, asked by Node for one of its calls
-/// (main.rs dispatch 'mcp.ask', off the control line's reader thread).
-pub fn node_ask(a: &Value) -> String {
-  let parent = a.get("parent").and_then(Value::as_str).unwrap_or("").to_string();
-  let args = json!({ "question": a.get("question"), "options": a.get("options") });
-  let s = |k: &str| a.get(k).and_then(Value::as_str).map(str::to_string);
-  let (cwd, key) = (s("cwd"), s("key"));
-  page_call("ask_user", &args, cwd.as_deref(), key.as_deref(), Some(parent), &Call { conn: None, rpc: None }).unwrap_or_else(|| CANCELLED.into())
-}
-
 // One tools/call. None: the client is gone, nothing to answer.
 fn call_tool(name: &str, args: &Value, cwd: Option<&str>, pane: Option<&str>, call: &Call) -> Option<String> {
   let known = tool(name);
-  if name == "riven_api_request" || (name.starts_with("riven_db_") && known.is_some()) {
+  if name == "riven_api_request" {
     return node_call(name, args, cwd, pane, call);
+  }
+  if name.starts_with("riven_db_") && known.is_some() {
+    return db_call(name, args, cwd, pane, call);
   }
   if !known.is_some_and(|t| t.implemented) {
     return Some(format!("error: unknown tool {name}"));

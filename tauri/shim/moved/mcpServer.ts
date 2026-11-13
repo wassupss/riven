@@ -4,11 +4,10 @@
 // env every agent gets). Tool calls go from Rust straight to the app page
 // ('mcp:invoke' / 'mcp:result' / 'mcp:cancel' are Rust-owned channels).
 //
-// What stays here is the tools whose engine is still Node, run on Rust's
-// request ('mcpTool' on the control line, answered with 'mcp.toolResult'):
-//   riven_db_*         the DB engine (src/main/db, stage 6). riven_db_execute
-//                      asks the user first: 'mcp.ask' has Rust show the
-//                      ask_user card in the calling pane and wait.
+// The riven_db_* tools run in Rust too (src-tauri/src/services/db/engine.rs,
+// stage 6). What stays here is the one tool whose engine is still Node, run on
+// Rust's request ('mcpTool' on the control line, answered with
+// 'mcp.toolResult'):
 //   riven_api_request  Node's fetch (src/main/apiRequest.ts, stage 7 with the
 //                      API client panel).
 import { runApiRequest } from '../../../src/main/apiRequest'
@@ -18,12 +17,7 @@ type ToolAsk = { id: string; tool: string; args: Record<string, unknown>; cwd: s
 
 async function run(m: ToolAsk): Promise<string> {
   if (m.tool === 'riven_api_request') return runApiRequest(m.args ?? {})
-  const { runDbTool } = await import('../../../src/main/db/engine')
-  return runDbTool(m.tool, m.args ?? {}, (question, options) =>
-    call<string>('mcp.ask', { parent: m.id, question, options, cwd: m.cwd, key: m.key }).catch(
-      () => 'riven: no window available'
-    )
-  )
+  return `error: unknown tool ${m.tool}`
 }
 
 export function registerMcpServer(_webContentsGetter?: unknown): void {

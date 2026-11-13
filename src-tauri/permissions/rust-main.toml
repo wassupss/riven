@@ -35,6 +35,58 @@ permissions = [
   "allow-config-load",
   "allow-config-save",
   "allow-config-reveal",
+  "allow-db-list",
+  "allow-db-save",
+  "allow-db-delete",
+  "allow-db-test",
+  "allow-db-sqlite-pick",
+  "allow-db-databases",
+  "allow-db-schemas",
+  "allow-db-objects",
+  "allow-db-table",
+  "allow-db-ddl",
+  "allow-db-query",
+  "allow-db-session-commit",
+  "allow-db-session-rollback",
+  "allow-db-session-status",
+  "allow-db-session-close",
+  "allow-db-edit-target",
+  "allow-db-apply",
+  "allow-db-ddl-apply",
+  "allow-db-roles",
+  "allow-db-privileges",
+  "allow-db-default-acl",
+  "allow-db-rls",
+  "allow-db-completion-meta",
+  "allow-db-role-grants",
+  "allow-db-mon-overview",
+  "allow-db-mon-sessions",
+  "allow-db-mon-locks",
+  "allow-db-mon-tables",
+  "allow-db-mon-indexes",
+  "allow-db-mon-settings",
+  "allow-db-mon-signal",
+  "allow-db-mon-reload",
+  "allow-db-cancel",
+  "allow-db-column",
+  "allow-db-erd",
+  "allow-db-schema-snapshot",
+  "allow-db-save-text",
+  "allow-db-import-pick",
+  "allow-db-search-tables",
+  "allow-db-search-run",
+  "allow-db-search-cancel",
+  "allow-db-import-preview",
+  "allow-db-import-run",
+  "allow-db-import-cancel",
+  "allow-db-backup-tools",
+  "allow-db-backup-server",
+  "allow-db-backup-run",
+  "allow-db-restore-pick",
+  "allow-db-restore-inspect",
+  "allow-db-restore-run",
+  "allow-db-backup-cancel",
+  "allow-db-export",
   "allow-git-info",
   "allow-git-repos",
   "allow-git-log",
@@ -262,6 +314,266 @@ commands.allow = ["config_save"]
 identifier = "allow-config-reveal"
 description = "Allows config_reveal."
 commands.allow = ["config_reveal"]
+
+[[permission]]
+identifier = "allow-db-list"
+description = "Allows db_list."
+commands.allow = ["db_list"]
+
+[[permission]]
+identifier = "allow-db-save"
+description = "Allows db_save."
+commands.allow = ["db_save"]
+
+[[permission]]
+identifier = "allow-db-delete"
+description = "Allows db_delete."
+commands.allow = ["db_delete"]
+
+[[permission]]
+identifier = "allow-db-test"
+description = "Allows db_test."
+commands.allow = ["db_test"]
+
+[[permission]]
+identifier = "allow-db-sqlite-pick"
+description = "Allows db_sqlite_pick."
+commands.allow = ["db_sqlite_pick"]
+
+[[permission]]
+identifier = "allow-db-databases"
+description = "Allows db_databases."
+commands.allow = ["db_databases"]
+
+[[permission]]
+identifier = "allow-db-schemas"
+description = "Allows db_schemas."
+commands.allow = ["db_schemas"]
+
+[[permission]]
+identifier = "allow-db-objects"
+description = "Allows db_objects."
+commands.allow = ["db_objects"]
+
+[[permission]]
+identifier = "allow-db-table"
+description = "Allows db_table."
+commands.allow = ["db_table"]
+
+[[permission]]
+identifier = "allow-db-ddl"
+description = "Allows db_ddl."
+commands.allow = ["db_ddl"]
+
+[[permission]]
+identifier = "allow-db-query"
+description = "Allows db_query."
+commands.allow = ["db_query"]
+
+[[permission]]
+identifier = "allow-db-session-commit"
+description = "Allows db_session_commit."
+commands.allow = ["db_session_commit"]
+
+[[permission]]
+identifier = "allow-db-session-rollback"
+description = "Allows db_session_rollback."
+commands.allow = ["db_session_rollback"]
+
+[[permission]]
+identifier = "allow-db-session-status"
+description = "Allows db_session_status."
+commands.allow = ["db_session_status"]
+
+[[permission]]
+identifier = "allow-db-session-close"
+description = "Allows db_session_close."
+commands.allow = ["db_session_close"]
+
+[[permission]]
+identifier = "allow-db-edit-target"
+description = "Allows db_edit_target."
+commands.allow = ["db_edit_target"]
+
+[[permission]]
+identifier = "allow-db-apply"
+description = "Allows db_apply."
+commands.allow = ["db_apply"]
+
+[[permission]]
+identifier = "allow-db-ddl-apply"
+description = "Allows db_ddl_apply."
+commands.allow = ["db_ddl_apply"]
+
+[[permission]]
+identifier = "allow-db-roles"
+description = "Allows db_roles."
+commands.allow = ["db_roles"]
+
+[[permission]]
+identifier = "allow-db-privileges"
+description = "Allows db_privileges."
+commands.allow = ["db_privileges"]
+
+[[permission]]
+identifier = "allow-db-default-acl"
+description = "Allows db_default_acl."
+commands.allow = ["db_default_acl"]
+
+[[permission]]
+identifier = "allow-db-rls"
+description = "Allows db_rls."
+commands.allow = ["db_rls"]
+
+[[permission]]
+identifier = "allow-db-completion-meta"
+description = "Allows db_completion_meta."
+commands.allow = ["db_completion_meta"]
+
+[[permission]]
+identifier = "allow-db-role-grants"
+description = "Allows db_role_grants."
+commands.allow = ["db_role_grants"]
+
+[[permission]]
+identifier = "allow-db-mon-overview"
+description = "Allows db_mon_overview."
+commands.allow = ["db_mon_overview"]
+
+[[permission]]
+identifier = "allow-db-mon-sessions"
+description = "Allows db_mon_sessions."
+commands.allow = ["db_mon_sessions"]
+
+[[permission]]
+identifier = "allow-db-mon-locks"
+description = "Allows db_mon_locks."
+commands.allow = ["db_mon_locks"]
+
+[[permission]]
+identifier = "allow-db-mon-tables"
+description = "Allows db_mon_tables."
+commands.allow = ["db_mon_tables"]
+
+[[permission]]
+identifier = "allow-db-mon-indexes"
+description = "Allows db_mon_indexes."
+commands.allow = ["db_mon_indexes"]
+
+[[permission]]
+identifier = "allow-db-mon-settings"
+description = "Allows db_mon_settings."
+commands.allow = ["db_mon_settings"]
+
+[[permission]]
+identifier = "allow-db-mon-signal"
+description = "Allows db_mon_signal."
+commands.allow = ["db_mon_signal"]
+
+[[permission]]
+identifier = "allow-db-mon-reload"
+description = "Allows db_mon_reload."
+commands.allow = ["db_mon_reload"]
+
+[[permission]]
+identifier = "allow-db-cancel"
+description = "Allows db_cancel."
+commands.allow = ["db_cancel"]
+
+[[permission]]
+identifier = "allow-db-column"
+description = "Allows db_column."
+commands.allow = ["db_column"]
+
+[[permission]]
+identifier = "allow-db-erd"
+description = "Allows db_erd."
+commands.allow = ["db_erd"]
+
+[[permission]]
+identifier = "allow-db-schema-snapshot"
+description = "Allows db_schema_snapshot."
+commands.allow = ["db_schema_snapshot"]
+
+[[permission]]
+identifier = "allow-db-save-text"
+description = "Allows db_save_text."
+commands.allow = ["db_save_text"]
+
+[[permission]]
+identifier = "allow-db-import-pick"
+description = "Allows db_import_pick."
+commands.allow = ["db_import_pick"]
+
+[[permission]]
+identifier = "allow-db-search-tables"
+description = "Allows db_search_tables."
+commands.allow = ["db_search_tables"]
+
+[[permission]]
+identifier = "allow-db-search-run"
+description = "Allows db_search_run."
+commands.allow = ["db_search_run"]
+
+[[permission]]
+identifier = "allow-db-search-cancel"
+description = "Allows db_search_cancel."
+commands.allow = ["db_search_cancel"]
+
+[[permission]]
+identifier = "allow-db-import-preview"
+description = "Allows db_import_preview."
+commands.allow = ["db_import_preview"]
+
+[[permission]]
+identifier = "allow-db-import-run"
+description = "Allows db_import_run."
+commands.allow = ["db_import_run"]
+
+[[permission]]
+identifier = "allow-db-import-cancel"
+description = "Allows db_import_cancel."
+commands.allow = ["db_import_cancel"]
+
+[[permission]]
+identifier = "allow-db-backup-tools"
+description = "Allows db_backup_tools."
+commands.allow = ["db_backup_tools"]
+
+[[permission]]
+identifier = "allow-db-backup-server"
+description = "Allows db_backup_server."
+commands.allow = ["db_backup_server"]
+
+[[permission]]
+identifier = "allow-db-backup-run"
+description = "Allows db_backup_run."
+commands.allow = ["db_backup_run"]
+
+[[permission]]
+identifier = "allow-db-restore-pick"
+description = "Allows db_restore_pick."
+commands.allow = ["db_restore_pick"]
+
+[[permission]]
+identifier = "allow-db-restore-inspect"
+description = "Allows db_restore_inspect."
+commands.allow = ["db_restore_inspect"]
+
+[[permission]]
+identifier = "allow-db-restore-run"
+description = "Allows db_restore_run."
+commands.allow = ["db_restore_run"]
+
+[[permission]]
+identifier = "allow-db-backup-cancel"
+description = "Allows db_backup_cancel."
+commands.allow = ["db_backup_cancel"]
+
+[[permission]]
+identifier = "allow-db-export"
+description = "Allows db_export."
+commands.allow = ["db_export"]
 
 [[permission]]
 identifier = "allow-git-info"

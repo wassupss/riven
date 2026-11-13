@@ -5,6 +5,7 @@
 pub mod atomic;
 pub mod chat;
 pub mod collate;
+pub mod db;
 pub mod fsx;
 pub mod git;
 pub mod mcp;

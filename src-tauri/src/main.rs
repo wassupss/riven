@@ -932,13 +932,11 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     // What quitting would cut off (Node's quit confirmation, a sync call).
     "pty.working" => Ok(services::pty::working_count().into()),
     "chat.running" => Ok(services::chat::running_count().into()),
-    // riven's MCP tools whose engine is still Node (DB, HTTP request): its
-    // answer, and riven_db_execute's confirmation in the calling pane.
+    // riven_api_request, whose engine is still Node: its answer.
     "mcp.toolResult" => {
       services::mcp::node_result(a);
       Ok(Value::Null)
     }
-    "mcp.ask" => Ok(services::mcp::node_ask(a).into()),
     "app.setOrigin" => {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)
@@ -1049,7 +1047,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
 fn is_slow(cmd: &str) -> bool {
   matches!(
     cmd,
-    "dialog.open" | "dialog.save" | "dialog.message" | "mcp.ask" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
+    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
   )
 }
 
@@ -1174,6 +1172,12 @@ fn start_node(app: &AppHandle) -> Result<(), String> {
 }
 
 fn main() {
+  // Debug builds: the DB engine on stdin/stdout, no window (services/db/harness.rs).
+  #[cfg(debug_assertions)]
+  if std::env::var_os("RIVEN_DB_HARNESS").is_some() {
+    services::db::harness::run();
+    return;
+  }
   let mut builder = tauri::Builder::default();
   // tao activates the app when it finishes launching (activateIgnoringOtherApps
   // YES), which can bring a background test run in front of the user's work
@@ -1267,6 +1271,10 @@ fn main() {
       services::mcp::shutdown();
       services::pty::shutdown();
       services::chat::shutdown();
+      // Say goodbye to the database servers (bounded: quitting never waits on a network).
+      tauri::async_runtime::block_on(async {
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), services::db::close_all()).await;
+      });
     }
     #[cfg(target_os = "macos")]
     RunEvent::Reopen { has_visible_windows, .. } => {

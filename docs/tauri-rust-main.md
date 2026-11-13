@@ -402,3 +402,70 @@ Node 판과 다른 점:
 - **gh를 시험할 때:** 실제 GitHub에 쓰지 말 것. 이번처럼 시험용 `$SHELL`로 로그인 PATH 앞에 기록용 gh를 두면 앱과 Node 대역 둘 다 같은 gh를 쓴다(앱은 시작할 때 `$SHELL -lic`로 PATH를 읽는다). `execFile`처럼 stdin을 열어 두는 쪽과 닫는 쪽이 있으니 기록용 gh는 쓰기 명령에서만 stdin을 읽어야 한다(`--web`에서 읽으면 Node 쪽이 30초 시간 초과로 멈춘다).
 - **`services/git::exec`:** 다른 그룹이 CLI를 `execFile`처럼 부를 때 그대로 쓸 수 있다(오류 메시지, 시간 제한, 출력 한도가 Node와 같음).
 - **원래부터 있던 문제 두 가지**(위)를 고칠 때는 Electron 쪽 `git.ts`도 같이 고친다.
+
+### 6단계 (2026-11-13): DB
+
+`src/main/db/*`(engine, store, pg/mysql/sqlite 드라이버와 메타데이터, 내보내기, CSV 가져오기, 백업/복원, sqlite 워커)를 Rust `services/db`로 옮겼다. 명령은 `commands/db.rs`(채널마다 하나씩 52개). `tauri/build.mjs`의 `MOVED`에 `db/engine`을 더했고(`tauri/shim/moved/db/engine.ts`는 빈 `registerDbHandlers`), Node 번들에서 sqlite 워커 진입점을 뺐다. MCP의 DB 다리(Rust가 `mcpTool`로 Node에 넘기고 Node가 `mcp.ask`로 확인 카드를 되묻던 길)를 없앴다. `riven_db_*`는 Rust `services/mcp::db_call`이 엔진을 바로 부르고, 확인 카드는 다른 도구처럼 `page_call("ask_user")`로 연다. `riven_api_request`만 Node(`node_call`)에 남았다. `main.rs`의 `mcp.ask` 처리도 지웠다.
+
+Rust로 옮긴 채널 (invoke 52개, 이벤트 4개): `db:list`, `save`, `delete`, `test`, `sqlite-pick`, `databases`, `schemas`, `objects`, `table`, `column`, `editTarget`, `ddl`, `ddl-apply`, `apply`, `query`, `cancel`, `session-commit`/`rollback`/`status`/`close`, `roles`, `privileges`, `default-acl`, `rls`, `role-grants`, `completion-meta`, `erd`, `schema-snapshot`, `mon-overview`/`sessions`/`locks`/`tables`/`indexes`/`settings`/`signal`/`reload`, `search-tables`/`run`/`cancel`, `export`, `save-text`, `import-pick`/`preview`/`run`/`cancel`, `backup-tools`/`server`/`run`/`cancel`, `restore-pick`/`inspect`/`run` (`engine.rs`의 `CHANNELS` 표가 인자 이름까지 담은 전체 목록). 이벤트 `db:search-progress`, `db:import-progress`, `db:backup-progress`, `db:export-progress`.
+
+구조:
+
+- **드라이버를 직접 구현:** 화면이 받는 값이 Node 드라이버(node-postgres, mysql2)의 텍스트 변환 결과라서, 그 변환을 바이트 단위로 맞추려고 pg 와이어(`pgwire.rs`, `postgres-protocol`로 SCRAM/메시지만 씀)와 MySQL 와이어(`mywire.rs`, native/caching_sha2/RSA, TLS)를 직접 구현했다. 값 변환은 `pg.rs`/`my.rs`(Node의 type parser 규칙), 숫자를 JS 문자열로 찍는 것은 `js.rs`(`ryu-js`). SQLite는 `libsqlite3-sys`(bundled)로 핸들마다 스레드 하나(`sl.rs` 워커, Node의 worker_threads 자리). 풀은 연결당 4개, 5분 유휴 종료, 수동 커밋 세션은 10분 유휴 종료로 Node와 같다.
+- **취소:** pg는 cancel 요청, MySQL은 `KILL QUERY`, SQLite는 `sqlite3_interrupt` 뒤 핸들을 닫는다. 취소 이유("cancelled", "timeout")가 있으면 SQLite의 "interrupted" 대신 그 이유를 돌려준다(Node와 같은 메시지).
+- **인자 그대로 읽기:** 명령이 invoke 본문 JSON을 직접 읽어서 화면이 뺀 인자(undefined)와 `null`을 구분한다. `db:save`는 비밀번호가 undefined면 저장된 것을 두고 `null`이면 지운다(Node와 같음). 5단계의 `git:log` null 문제 같은 차이가 DB에는 없다.
+- **저장소:** 연결 목록과 비밀번호를 Node와 같은 파일, 같은 형식(`db/connections.json`, 비밀번호는 `riven-tauri Safe Storage` 키체인 키로 암호화, Node 판이 Electron safeStorage와 맞춘 형식)에 둔다. 비밀 항목 삭제가 순서를 바꾸지 않게 `shift_remove`.
+- **백업 도구:** `pg_dump`/`pg_restore`/`mysqldump` 등을 로그인 PATH와 Homebrew, libpq, Postgres.app 경로에서 찾고, 자식 환경은 비우고(`PG*` 변수 없음) 로그인 PATH와 도구용 변수만 준다(Node와 같은 규칙). 진행 목록(TOC) 파싱의 키 순서도 Node와 같다.
+- **XLSX:** zip을 직접 만든다(`flate2` deflate + `crc32fast`). 시트 XML은 Node와 같다.
+- **대화 상자:** `tauri_plugin_dialog`. Electron의 "모든 파일"(`*`) 필터는 macOS 패널에 없어서 그 필터가 있으면 필터를 걸지 않는다. 개발용 훅 `RIVEN_DEV_SQLITE_FILE`, `RIVEN_DEV_PICK_FILE`, `RIVEN_DEV_SAVE_FILE`을 지킨다(아래 차이 참고).
+- **시험 하네스:** 디버그 빌드에서 `RIVEN_DB_HARNESS=1`이면 바이너리가 창 없이 stdin의 JSON 줄(`{ch,args,env}` 또는 `{tool,args,answer}`)을 엔진에 넘기고 결과와 이벤트를 stdout에 쓴다(`services/db/harness.rs`, 릴리스 빌드에는 없음). Node 쪽은 원래 모듈을 electron 대역으로 묶어 같은 줄 형식으로 돌렸다.
+
+Node 판과 다른 점:
+
+- **pg 시작 매개변수:** node-postgres는 항상 `client_encoding=UTF8`을 보낸다. 처음에는 빠뜨려서 서버 설정 화면 비교에서 차이가 났고, 같게 넣었다.
+- **SQLite 버전:** Node 내장 3.53.4, Rust bundled 3.54.1. `db:test` 문구("SQLite 3.54.1")만 다르다.
+- **SQLite 세션 취소 뒤 잠금:** Node는 취소된 워커가 잠금을 쥔 채 남아 다음 쓰기가 "database is locked"였다. Rust는 핸들을 닫아서 잠금이 풀린다(의도한 동작이라 맞추지 않음).
+- **쓸 수 없는 경로로 내보내기:** Node는 쓰기 스트림이 `drain`을 영원히 기다려 응답이 오지 않았다. Rust는 `ENOENT: no such file or directory, open '<경로>'`를 돌려준다.
+- **XLSX 압축:** 시트와 부품 파일은 같고 zip 컨테이너만 다르다(Node zlib vs Rust miniz, 파일이 약 4% 큼). 엑셀/Numbers에서 같은 내용.
+- **개발 훅:** Node는 `RIVEN_DEV_SAVE_FILE`을 `backup-run`에만 썼고 Rust는 `export`, `save-text`에도 쓴다(대화 상자 없이 시험하려고). 실사용에는 영향 없음.
+
+같은 입력으로 비교 (원래 Node 모듈 vs Rust 하네스, Docker의 임시 PostgreSQL 16 / MySQL 8 / MariaDB와 스크래치 sqlite 파일만 사용):
+
+| 묶음 | 호출 | 다른 것 |
+|---|---|---|
+| 기본(저장, 목록, 연결 시험, 비밀번호 유지/삭제) | 34 | SQLite 버전 문구 2건 |
+| pg(타입 전부, 스키마/객체/컬럼/DDL, 편집 적용, 세션, 취소, 시간대/격리/시작 스크립트, 읽기 전용 거부) | 107 | 0 |
+| mysql | 105 | InnoDB 행 수 추정치 1건(서버가 매번 다름) |
+| mariadb | 105 | 0 |
+| sqlite | 101 | 세션 취소 뒤 잠금 2건(위 차이) |
+| MCP 도구 결과 텍스트 | 6 | 0 |
+| 기타(검색, 내보내기, 가져오기, 백업/복원, 대화 상자 훅, 없는 채널) | 147 | 비결정적인 것만: 새 테이블 oid, 검색 진행 이벤트 순서(순서 무시하면 같음), 병렬 덤프 진행 순서, 쓸 수 없는 경로 내보내기(Node 멈춤) |
+
+- 내보내기 파일 csv/tsv/json/sql/svg는 바이트 단위로 같다(pg 15만 행, sqlite 10만 행 포함). 가져오기는 UTF-8 BOM, EUC-KR, UTF-16LE, 건너뛰기 모드, 6만 행이 같다(결과 테이블 md5 비교). 백업은 plain/custom/directory/tar와 inspect, 복원(pg_restore의 `transaction_timeout` 무시 처리 포함)이 같다.
+- **화면 경로:** 같은 시나리오를 실앱 `window.api` -> preload 셰임 -> Tauri -> Rust로 다시 돌렸다(백그라운드 모드 개발 빌드, 시험 훅 eval). 위 표와 같은 차이 외에는 같았다. 화면 경로에서 뺀 것: MCP 도구 호출(아래 따로 시험), 저장 경로가 앱 환경으로 고정되어 백업 형식은 plain만, 대화 상자 훅 경로가 앱 환경 값인 것, `window.electron`이 없어서 "없는 채널" 호출.
+- **MCP:** 실앱의 MCP 서버에 HTTP로 `riven_db_connections`/`browse`/`describe`/`query`(읽기 전용 거부 포함)를 불렀다. `riven_db_execute`는 (1) 채팅 패널이 아닌 pane에서 "needs the user to confirm in a riven chat pane" 거부, (2) 채팅 패널 pane에서 확인 카드가 Node와 같은 문구(`PG local / rt_run 에 아래 SQL 2개를 한 트랜잭션으로 실행할까요?`, WHERE 없는 DELETE 경고)로 떠서 "실행"을 누르면 `committed: 1. UPDATE 1 2. DELETE 0`, (3) "취소"면 `not executed: the user did not approve (취소).`, (4) 클라이언트가 끊으면 카드가 만료 상태로 바뀌는 것까지 확인했다. 채팅 패널은 CLI를 띄우지 않으려고 시험 중에만 화면의 `chat.start`를 빈 함수로 바꿔 열었다.
+
+메모리 (개발 빌드, 10만 행 결과, pg `select * from public.big` 20만 행 중 한도 10만):
+
+- 엔진만(하네스): Rust 12번 반복 후 52MB에서 멈춤, 유휴 10초 45MB. 같은 일을 Node 엔진은 335MB(반복마다 늘어 유휴 뒤에도 그대로).
+- 실앱: 쿼리 한 번 545ms 안팎. 그런데 riven-tauri footprint가 호출마다 약 13MB씩 늘고 줄지 않았다(102MB -> 12번 뒤 355MB). DB 엔진 문제가 아니다: 1단계부터 있던 `workspace:readFile`로 12MB 파일을 읽어도 호출마다 약 23MB씩 같은 모양으로 늘었다. 늘어난 몫은 "Owned physical footprint (unmapped)"와 MALLOC_LARGE에 있다. Tauri IPC 응답(큰 invoke 결과를 WKWebView로 넘기는 길)이 응답 바이트를 놓지 않는 것으로 보인다. 큰 결과를 자주 받는 DB 패널에서 바로 드러나므로 다음 단계 전에 따로 조사해야 한다(시험은 숨긴 창이었고 eval 훅을 WKWebView 직접 실행으로 바꾼 상태였으니 보이는 창에서도 재현되는지부터).
+- 20만 행 CSV 내보내기: 680ms, 내보내는 동안 footprint가 늘지 않았다(스트리밍).
+
+추론만 한 것: TLS 연결(pg `sslmode`, MySQL TLS, 코드는 `native-tls`로 맞춤, 시험 DB는 TLS 없음), MySQL 8의 RSA 공개키 교환 경로(caching_sha2 캐시가 비어 있을 때, 시험에서는 캐시된 빠른 경로만), MariaDB 외 다른 서버 버전, Windows/리눅스의 백업 도구 위치, 실제 macOS 파일 대화 상자(창을 띄우면 안 되어 개발 훅으로만), 사용자 키체인의 기존 비밀번호 복호화(시험은 별도 키체인 파일).
+
+시험 중 사고: 화면 경로 시험에서 `db:sqlite-pick`이 개발 훅 없이(훅 변수를 시험 스크립트에만 주고 앱 환경에 안 줌) 실제 macOS 파일 대화 상자를 열어서 시험 앱이 약 8초(15:26:37~15:26:44) 맨 앞 앱이 되었다. 그 뒤 실행 스크립트에 훅 변수를 넣고, 시험 앱이 맨 앞이 되면 바로 죽이는 감시 스크립트(50ms 간격)를 붙였다. 이후에는 맨 앞에 온 적이 없다. 다음 단계도 대화 상자를 여는 채널은 반드시 개발 훅을 앱 환경에 주고 시험할 것.
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 5단계 후 | 13,962 (소스맵 기준 11,720) |
+| 6단계 후 | 4,461 (`src/main/db` 테스트 제외 9,501 제외). 소스맵 기준 4,491, 30개 파일 |
+
+Rust 쪽은 `services/db` 10,985줄(단위 시험 포함) + `commands/db.rs` 328줄이 늘었다.
+
+다음 단계가 알아야 할 것:
+
+- **eval 훅이 멈출 때:** 백그라운드 모드에서 한동안 아무것도 안 하면 페이지 소켓 eval(`op=eval`)이 답하지 않는 일이 있었다(`document.visibilityState`가 hidden). 시험 중에만 빌드된 번들의 `executeJavaScript`가 `wv.exec`(WKWebView 직접 실행)를 쓰게 바꿔서 피했다. 다시 빌드하면 원래대로 돌아간다.
+- **값 변환을 바꿀 때:** 화면과 MCP 결과가 Node 드라이버의 텍스트 변환에 맞춰져 있으니 `pg.rs`/`my.rs`/`js.rs`의 변환을 바꾸면 하네스 비교를 다시 돌릴 것.
+- **IPC 메모리**(위)는 DB만의 일이 아니라 큰 invoke 결과 전부에 해당한다.
