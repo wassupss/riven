@@ -151,6 +151,28 @@ fn store_id(partition: &str) -> [u8; 16] {
   out
 }
 
+// WKWebView's own user agent stops at "(KHTML, like Gecko)", with no Version/
+// or Safari/ token. Many sites read that as an unknown embedded browser and
+// refuse or degrade (sign-in pages, "browser not supported"). Present the
+// installed Safari's own string, so sites see the engine that actually renders.
+fn safari_ua() -> String {
+  static UA: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+  UA.get_or_init(|| {
+    let version = std::process::Command::new("/usr/bin/defaults")
+      .args(["read", "/Applications/Safari.app/Contents/Info", "CFBundleShortVersionString"])
+      .output()
+      .ok()
+      .and_then(|o| String::from_utf8(o.stdout).ok())
+      .map(|s| s.trim().to_string())
+      .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.'))
+      .unwrap_or_else(|| "18.0".into());
+    format!(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/{version} Safari/605.1.15"
+    )
+  })
+  .clone()
+}
+
 fn create(app: &AppHandle, a: &Value) -> Res {
   let label = s(a, "label").ok_or("no label")?.to_string();
   let host = app.get_window(s(a, "host").unwrap_or("")).ok_or("no host window")?;
@@ -164,6 +186,7 @@ fn create(app: &AppHandle, a: &Value) -> Res {
   let win_label = label.clone();
   let dl_label = label.clone();
   let mut bld = WebviewBuilder::new(&label, blank)
+    .user_agent(&safari_ua())
     .devtools(true)
     .disable_drag_drop_handler()
     .on_navigation(move |_url| {
