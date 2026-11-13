@@ -231,7 +231,8 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
     .initialization_script(format!("window.__RIVEN_WIN__={};", Value::String(label.clone())))
     .disable_drag_drop_handler()
     .inner_size(f(&o, "width").unwrap_or(800.0), f(&o, "height").unwrap_or(600.0))
-    .visible(b(&o, "show").unwrap_or(true))
+    .visible(b(&o, "show").unwrap_or(true) && !background())
+    .focused(!background())
     .title(s(&o, "title").unwrap_or("riven"))
     .resizable(b(&o, "resizable").unwrap_or(true))
     .maximizable(b(&o, "maximizable").unwrap_or(true))
@@ -307,7 +308,10 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
       bld = bld.parent_raw(p.ns_window().map_err(|e| e.to_string())?);
     }
   }
-  bld.build().map_err(|e| e.to_string())?;
+  let built = bld.build().map_err(|e| e.to_string())?;
+  if background() && b(&o, "show").unwrap_or(true) {
+    order_back(app, built.as_ref().window());
+  }
   Ok(Value::Null)
 }
 
@@ -349,6 +353,8 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
   let (bg, theme) = shared().pop_theme.lock().unwrap().unwrap_or((Color(0x1e, 0x1e, 0x1e, 0xff), None));
   let bld = WebviewWindowBuilder::new(app, &label, blank)
     .window_features(features)
+    .focused(!background())
+    .visible(!background())
     .title(title)
     .disable_drag_drop_handler()
     .theme(theme)
@@ -366,6 +372,9 @@ fn popout(app: &AppHandle, url: url::Url, features: tauri::webview::NewWindowFea
     .build();
   match built {
     Ok(window) => {
+      if background() {
+        order_back(app, window.as_ref().window());
+      }
       keep_on_screen(app, &window, id.rsplit_once('-').map_or(id, |(o, _)| o));
       NewWindowResponse::Create { window }
     }
@@ -565,6 +574,11 @@ fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
   let Wv { w, v } = win(app, a)?;
   let e = |r: tauri::Result<()>| r.map(|_| Value::Null).map_err(|e| e.to_string());
   match cmd {
+    "win.show" if background() => {
+      order_back(app, w);
+      Ok(Value::Null)
+    }
+    "win.focus" if background() => Ok(Value::Null),
     "win.show" => {
       e(w.show())?;
       if b(a, "focus").unwrap_or(true) {
@@ -868,6 +882,39 @@ fn cursor(app: &AppHandle) -> Res {
   Ok(json!({ "x": (c.x / sf).round(), "y": (c.y / sf).round() }))
 }
 
+
+// ---- background test mode ---------------------------------------------------
+//
+// RIVEN_TAURI_BACKGROUND=1 (set by test launches, never by tauri/run.sh):
+// the app never takes focus or comes in front of the user's work. It runs as
+// an Accessory app (no Dock icon, never activated), windows are created
+// unfocused and ordered BEHIND every other window instead of in front, and
+// focus/activation requests are ignored. The windows are still on screen as
+// far as WebKit is concerned, so the page keeps running.
+fn background() -> bool {
+  static BG: OnceLock<bool> = OnceLock::new();
+  *BG.get_or_init(|| std::env::var("RIVEN_TAURI_BACKGROUND").as_deref() == Ok("1"))
+}
+
+/// Show a window without bringing it forward: orderBack, on the main thread.
+fn order_back(app: &AppHandle, w: Window<Wry>) {
+  #[cfg(target_os = "macos")]
+  {
+    let _ = app.run_on_main_thread(move || {
+      if let Ok(ns) = w.ns_window() {
+        let ns = ns as *mut objc2::runtime::AnyObject;
+        unsafe {
+          let _: () = objc2::msg_send![&*ns, orderBack: std::ptr::null::<objc2::runtime::AnyObject>()];
+        }
+      }
+    });
+  }
+  #[cfg(not(target_os = "macos"))]
+  {
+    let _ = (app, w.show());
+  }
+}
+
 // ---- dispatch ----------------------------------------------------------------
 
 fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
@@ -900,6 +947,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "perm.status" => perm::status(s(a, "kind").unwrap_or("")),
     #[cfg(target_os = "macos")]
     "perm.ask" => perm::ask(s(a, "kind").unwrap_or("")),
+    "app.activationPolicy" | "app.focus" if background() => Ok(Value::Null),
     "app.activationPolicy" => {
       #[cfg(target_os = "macos")]
       {
@@ -1106,6 +1154,9 @@ fn start_node(app: &AppHandle) -> Result<(), String> {
     .current_dir(&root)
     .env("RIVEN_TAURI_CTL_PORT", port.to_string())
     .env("RIVEN_TAURI_CTL_TOKEN", &token)
+    // The Node app's own background flag (index.ts: showInactive, no
+    // notification-center registration), so it asks for nothing in front.
+    .envs(background().then_some(("RIVEN_TEST_BACKGROUND", "1")))
     .spawn()
     .map_err(|e| format!("node: {e}"))?;
   // Node is the app: when it exits (app.quit -> process.exit) so does the shell.
@@ -1168,6 +1219,10 @@ fn main() {
       }
     })
     .setup(|app| {
+      #[cfg(target_os = "macos")]
+      if background() {
+        app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+      }
       services::shell_env::start();
       services::pty::init(app.handle());
       #[cfg(target_os = "macos")]

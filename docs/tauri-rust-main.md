@@ -219,3 +219,13 @@ Tauri Channel이나 `webview.eval`을 쓰지 않은 이유 (측정):
 - **WebSocket 경로는 채팅 스트림(3단계)에도 쓸 수 있다.** `stream::send(label, frame)`에 종류만 더하면 된다. 큰 데이터를 `emit`/`eval`로 보내면 위의 메모리 문제가 난다.
 - **MCP를 옮길 때(4단계):** `ptyEnv`/`pty.hook`/`ptyAgents` 왕복을 없애고 `services/pty::open`에서 직접 환경을 만들면 된다. zsh shim 파일 내용은 `tauri/shim/moved/pty.ts`에 있다.
 - **ghostty 메모리 압축:** libghostty-vt에 `ghostty_terminal_compress`가 있다. 숨은 터미널의 스크롤백을 줄이는 데 쓸 수 있다(아직 안 씀).
+
+### 시험 실행: 백그라운드 모드 (2026-11-13)
+
+에이전트나 스크립트가 앱을 띄울 때는 반드시 `RIVEN_TAURI_BACKGROUND=1`을 준다 (예: `RIVEN_TAURI_BACKGROUND=1 RIVEN_TAURI_TEST_KEY=... tauri/run.sh --no-renderer`). 사용자가 다른 작업을 하는 중에 시험 창이 앞으로 나오면 안 되기 때문이다. `tauri/run.sh`는 이 값을 기본으로 켜지 않는다(평소 개발은 앞에 띄운다).
+
+- 앱을 Accessory로 돌린다(독 아이콘 없음, 활성화 안 됨). Node 쪽 `app.activationPolicy`, `app.focus`, `win.focus`는 무시한다.
+- 창(메인, 펫, dockview 팝아웃)은 포커스 없이 만들고 앞에 띄우는 대신 `orderBack`으로 모든 창 뒤에 놓는다. `win.show`도 같다(시험 훅의 `op=front` 포함).
+- 창은 화면에 있는 상태라 WebKit이 페이지를 숨김으로 보지 않는다(`document.visibilityState`가 `visible`).
+- Node에는 `RIVEN_TEST_BACKGROUND=1`을 넘긴다(index.ts: `showInactive`, 알림 센터 등록 생략).
+- 확인 방법: 실행 전후로 맨 앞 앱(`lsappinfo info -only name $(lsappinfo front)`)이 바뀌지 않고, `CGWindowListCopyWindowInfo` 순서에서 riven-tauri 창이 맨 뒤에 있어야 한다. `osascript`로 System Events에 묻는 방법은 이 환경에서 Apple 이벤트 권한이 없어 쓰지 못했다.
