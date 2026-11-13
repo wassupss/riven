@@ -1,5 +1,6 @@
 import * as monaco from 'monaco-editor'
 import type { HighlighterCore, LanguageInput, ThemeInput } from 'shiki/core'
+import { onShikiTheme } from '../state/themes'
 
 // Monaco's built-in tokenizer doesn't understand JSX and mis-colors it. We swap
 // in Shiki (the same TextMate grammars + themes VSCode uses) so .tsx/.jsx and
@@ -169,6 +170,9 @@ export function setShikiTheme(name: string): void {
   currentTheme = name
   if (shikiReady) monaco.editor.setTheme(name)
 }
+// The theme system calls in through this hook rather than importing this module
+// (see onShikiTheme), so windows without an editor never load Monaco.
+onShikiTheme(setShikiTheme)
 
 // Starts Shiki once (later calls get the same promise). Colors swap in on every
 // open editor when it resolves; until then they show Monaco's plain vs-dark.

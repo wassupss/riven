@@ -1,5 +1,3 @@
-import { setShikiTheme } from '../editor/highlight'
-
 // Color theme sets for the "obsidian workbench" system. Each theme provides
 // only the primitive tokens that differ from the default (ember) :root palette
 // in styles.css; applyTheme resets managed tokens then applies overrides.
@@ -317,5 +315,18 @@ export function applyTheme(id: string): void {
   // Flips the alpha-derived system tokens (hairline/edge/hover/lift/elevation/
   // glass/scrollbar) between white-alpha and black-alpha in styles.css.
   root.dataset.themeMode = t.mode ?? 'dark'
-  setShikiTheme(t.shiki)
+  shikiTheme = t.shiki
+  shikiListener?.(t.shiki)
+}
+
+// The editor's Shiki theme follows the app theme, but this module must not
+// import the editor: the pet window loads themes too, and a static import of
+// editor/highlight dragged all of Monaco and Shiki (~10MB of JS) into it.
+// highlight.ts subscribes here when it loads instead, and is told the current
+// theme at once if one has already been applied.
+let shikiTheme: string | null = null
+let shikiListener: ((name: string) => void) | null = null
+export function onShikiTheme(fn: (name: string) => void): void {
+  shikiListener = fn
+  if (shikiTheme) fn(shikiTheme)
 }
