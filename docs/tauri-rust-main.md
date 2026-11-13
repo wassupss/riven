@@ -132,3 +132,38 @@ Node 경로는 옮기는 동안만 쓰는 임시 발판이다. 단계마다 남�
 2. **Electron:** Tauri가 8단계를 마칠 때까지 Electron 버전을 계속 배포한다.
 3. **Windows:** macOS를 끝낸 뒤 진행한다.
 4. **언어 서버:** 설치된 것만 쓴다 (4장).
+
+## 9. 진행 기록
+
+### 1단계 (2026-11-13): 설정, 세션, 워크스페이스, 검색, 메모, 파일 감시
+
+경계(seam): `tauri/shim/rust-owned.ts` 목록 하나가 기준이다. 여기 있는 채널은 preload 셰임이 Node 대신 Tauri `invoke`로 보내고(채널 `a:bC` -> 명령 `a_b_c`, 위치 인자 -> 이름 인자), Rust가 보내는 이벤트는 Tauri 이벤트 `riven:ipc`(`{ch, args}`, 창 라벨 대상)로 받아 기존 `ipcRenderer.on` 리스너에 넘긴다. 옮긴 그룹의 `src/main` 모듈은 Tauri 빌드에서 `tauri/shim/moved/*` 빈 모듈로 바뀐다(`tauri/build.mjs`의 `MOVED`). Rust 명령은 `src-tauri/src/commands/*`에 `#[tauri::command]`로 두면 build.rs가 권한 세트 `rust-main`을 만들어 앱 창(`w*`, `pop-*`)에만 허용한다.
+
+Rust로 옮긴 채널 (invoke/send/sendSync 34개, 이벤트 1개):
+
+- config: `config:load`, `config:save`, `config:reveal`, `config:save-sync`
+- sessions: `sessions:load`, `sessions:save`, `sessions:save-sync`
+- workspace: `workspace:setRoots`, `pickFolder`, `readDir`, `listFiles`, `readFile`, `writeFile`, `createFile`, `createFolder`, `rename`, `delete`, `reveal`, `importPaths`, `snapshotContents`, `image:saveTemp`, `font:import`, `scripts:list`
+- search: `search:inFiles`, `search:replaceInFiles`
+- notes: `notes:list`, `read`, `write`, `append`, `delete`, `writeFile`, `saveToFile`
+- 감시: `watch:start`, `watch:stop`, 이벤트 `fs:changed`
+
+그 밖에: 로그인 셸 PATH (`services/shell_env.rs`, 시작 시 `$SHELL -lic`로 한 번 읽음, 5초 제한). 이후 단계의 자식 프로세스는 `shell_env::command()` / `tokio_command()`로 띄운다.
+
+남은 Node 코드 (`src/main`, 테스트 제외):
+
+| | 줄 수 |
+|---|---|
+| 1단계 전 | 22,753 |
+| 1단계 후 (Tauri 빌드의 Node 번들에 들어가는 것) | 22,026 |
+
+`src/main` 파일 자체는 Electron 배포가 계속 쓰므로 지우지 않는다. 줄 수는 Tauri 빌드에서 빠진 모듈(config, sessions, workspace, search, notes, 727줄)을 뺀 값이다. bridge.ts의 watch 처리(약 60줄)는 번들에 남아 있지만 호출되지 않는다.
+
+다음 단계가 알아야 할 것:
+
+- **sendSync:** Tauri에는 동기 호출이 없다. Rust 소유 sendSync(`*-sync`)는 지금 Node의 동기 XHR 엔드포인트가 Rust로 중계한다(`ipc.sync`). WebKit이 페이지 종료 중에 동기 XHR을 거부하면 같은 저장의 비동기 명령을 Rust로 보내고 기다리지 않는다. Node를 지울 때는 이 중계 대신 창 닫기 시 Rust가 페이지에 저장을 요청하는 방식이 필요하다.
+- **창 닫기 저장 누락 (기존 문제):** WKWebView는 스크립트나 셸이 시작한 새로고침/닫기에 beforeunload를 보내지 않는다. 셰임이 pagehide에서 beforeunload를 대신 보내도록 해서 새로고침은 해결했다. 창을 닫을 때는 pagehide도 오지 않아, 300ms 디바운스 안의 설정/세션 변경이 사라진다(1단계 전에도 같았다).
+- **Node가 쓰는 Rust 상태:** media.ts의 `isConfined`는 워크스페이스 루트가 필요하다. Rust가 `setRoots` 때마다 제어 회선으로 `roots` 이벤트를 보내고 `tauri/shim/moved/workspace.ts`가 받는다. 다른 그룹을 옮길 때도 Node에 남는 코드가 그 그룹의 함수를 직접 부르는지 먼저 확인한다.
+- **이름 정렬:** `readDir`의 `localeCompare`는 ICU 없이 `services/collate.rs`로 흉내 낸다(실제 파일 이름 7,745개로 Node와 같은 순서 확인). Node `fs.readdir`는 이름 바이트 순으로 정렬해서 돌려주므로 Rust 쪽 디렉터리 순회도 정렬한다(`fsx::read_dir_sorted`). 검색 결과 순서와 개수 제한이 여기에 달려 있다.
+- **검색 정규식:** JS RegExp 대신 Rust `regex`를 쓴다. 전후방 탐색과 역참조는 지원하지 않아 결과 없음으로 처리된다(잘못된 정규식과 같음).
+- **감시 이벤트:** FSEvents 기반이라 원자적 저장(임시 파일 + rename)은 chokidar의 `change` 대신 `add`로 온다. 받는 쪽(탐색기, git)은 둘을 같게 처리한다.

@@ -25,6 +25,20 @@ function alias(map) {
   }
 }
 
+// src/main modules whose group moved to Rust (src-tauri/src/commands): the
+// Tauri build gets the stub in tauri/shim/moved instead, so the Node bundle
+// no longer carries them. Add a name here when its group moves.
+const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes']
+const movedPlugin = {
+  name: 'moved',
+  setup(b) {
+    const mainDir = path.join(root, 'src/main')
+    b.onResolve({ filter: new RegExp(`^\\./(${MOVED.join('|')})$`) }, (a) =>
+      a.resolveDir === mainDir ? { path: shim(`moved/${a.path.slice(2)}.ts`) } : undefined
+    )
+  }
+}
+
 // electron-vite's `?asset`: the file is emitted beside the bundle and the import
 // is its absolute path at run time.
 const assetPlugin = {
@@ -62,6 +76,7 @@ const mainOpts = {
   logLevel: 'warning',
   plugins: [
     alias({ electron: shim('electron-main.ts'), 'electron-updater': shim('electron-updater.ts') }),
+    movedPlugin,
     assetPlugin
   ]
 }

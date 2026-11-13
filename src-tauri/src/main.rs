@@ -1,7 +1,10 @@
 // riven's Tauri shell. It owns the native side (windows, menus, the tray,
-// dialogs, the screen) and nothing else: the app itself is the same main
-// process code Electron ran, executed by Node (out-tauri/main/index.js) with
+// dialogs, the screen) and the groups already moved to Rust (commands/ and
+// services/, called by the page with Tauri invoke; see
+// tauri/shim/rust-owned.ts). The rest of the app is still the main process
+// code Electron ran, executed by Node (out-tauri/main/index.js) with
 // `electron` shimmed to commands sent over a loopback line to this process.
+// docs/tauri-rust-main.md has the plan that removes Node.
 //
 // Wire format (see tauri/shim/rust.ts): newline-delimited JSON over TCP on
 // 127.0.0.1. The first line on a connection is {hello: token, role}. Requests
@@ -16,8 +19,10 @@
 
 #[cfg(target_os = "macos")]
 mod browser;
+mod commands;
 #[cfg(target_os = "macos")]
 mod perm;
+mod services;
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -855,6 +860,11 @@ fn cursor(app: &AppHandle) -> Res {
 fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
   match cmd {
     "app.ready" => Ok(Value::Null),
+    // A Rust-owned sendSync channel, relayed by Node's sync endpoint.
+    "ipc.sync" => {
+      let args = a.get("args").and_then(Value::as_array).cloned().unwrap_or_default();
+      commands::sync_relay(s(a, "ch").unwrap_or(""), &args)
+    }
     "app.setOrigin" => {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)
@@ -1088,6 +1098,7 @@ fn start_node(app: &AppHandle) -> Result<(), String> {
 fn main() {
   let app = tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    .invoke_handler(commands::handler())
     .on_menu_event(|_app, ev| emit(json!({ "ev": "menu", "id": ev.id().0 })))
     .on_window_event(|w, ev| {
       let label = w.label();
@@ -1134,6 +1145,7 @@ fn main() {
       }
     })
     .setup(|app| {
+      services::shell_env::start();
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;

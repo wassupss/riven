@@ -18,6 +18,7 @@ import type { Duplex } from 'stream'
 import { call } from './rust'
 import { decode, encode } from './codec'
 import { ipcMain } from './ipc'
+import { RUST_SYNC } from './rust-owned'
 import { rendererDir, serverOrigin, setServerOrigin } from './server-info'
 // A cycle (electron-main imports this file), but only functions, used at request time.
 import { mimeOf, protocolHandler } from './electron-main'
@@ -82,7 +83,16 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
     const wc = windowByLabel(label)?.webContents
     if (!wc) return void res.writeHead(404).end()
     // The preload's drop hook: file paths off the drag pasteboard.
-    const v = ch === '__riven:dragPaths' ? await call('drag.paths').catch(() => []) : ipcMain._send(wc, ch, args ?? []).returnValue
+    // A sendSync channel Rust owns: relay it and wait (the page is blocked on us).
+    const v =
+      ch === '__riven:dragPaths'
+        ? await call('drag.paths').catch(() => [])
+        : ch in RUST_SYNC
+          ? await call('ipc.sync', { ch, args: args ?? [] }).catch((e) => {
+              console.error(`[tauri] ${ch} failed:`, e)
+              return false
+            })
+          : ipcMain._send(wc, ch, args ?? []).returnValue
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(encode({ v }))
     return

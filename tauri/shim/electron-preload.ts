@@ -4,7 +4,10 @@
 // world (there is no isolated world to bridge from).
 //
 // ipcRenderer rides a WebSocket to server.ts; sendSync is a synchronous XHR.
+// Channels Rust owns (rust-owned.ts) go to Tauri instead: invoke/send become
+// Tauri commands, and Rust's events arrive as the Tauri event 'riven:ipc'.
 import { decode, encode } from './codec'
+import { RUST_EVENTS, RUST_INVOKE, RUST_SYNC, rustCommand } from './rust-owned'
 
 type W = Window & {
   __RIVEN_T__?: string
@@ -12,6 +15,7 @@ type W = Window & {
   __RIVEN_MEDIA__?: string
   __TAURI_INTERNALS__?: {
     invoke: (cmd: string, args?: unknown) => Promise<unknown>
+    transformCallback: (cb: (payload: unknown) => void, once?: boolean) => number
     metadata?: { currentWindow?: { label?: string } }
   }
 }
@@ -64,16 +68,7 @@ function onMessage(s: string): void {
     if (m.ok) p.resolve(m.val)
     else p.reject(new Error(m.err))
   } else if (m.t === 'ev') {
-    const ls = listeners.get(m.ch)
-    if (!ls) return
-    const evt = { sender: ipcRenderer }
-    for (const l of [...ls]) {
-      try {
-        l(evt, ...(m.args ?? []))
-      } catch (e) {
-        console.error(`[ipc] listener for ${m.ch} threw`, e)
-      }
-    }
+    if (!RUST_EVENTS.has(m.ch)) deliver(m.ch, m.args)
   } else if (m.t === 'eval') {
     Promise.resolve()
       .then(() => (0, eval)(m.code))
@@ -84,8 +79,55 @@ function onMessage(s: string): void {
   }
 }
 
+function deliver(ch: string, args: unknown[] | undefined): void {
+  const ls = listeners.get(ch)
+  if (!ls) return
+  const evt = { sender: ipcRenderer }
+  for (const l of [...ls]) {
+    try {
+      l(evt, ...(args ?? []))
+    } catch (e) {
+      console.error(`[ipc] listener for ${ch} threw`, e)
+    }
+  }
+}
+
+// ---- the Rust side ------------------------------------------------------------
+
+// Positional ipc arguments -> the command's named ones. A rejection reads like
+// Electron's ("Error invoking remote method 'ch': Error: ..."), as the Node
+// path's did.
+function rustInvoke(channel: string, names: readonly string[], args: unknown[]): Promise<unknown> {
+  const t = w.__TAURI_INTERNALS__
+  if (!t) return Promise.reject(new Error(`riven: Tauri is not available for '${channel}'`))
+  const named: Record<string, unknown> = {}
+  names.forEach((n, i) => {
+    if (args[i] !== undefined) named[n] = args[i]
+  })
+  return t.invoke(rustCommand(channel), named).catch((e: unknown) => {
+    throw new Error(`Error invoking remote method '${channel}': Error: ${e instanceof Error ? e.message : String(e)}`)
+  })
+}
+
+// One listener for every event Rust sends this page: {ch, args}, delivered to
+// ipcRenderer.on listeners like the socket's 'ev' messages. Targeted at this
+// webview's label, so another window's events never arrive here.
+function listenRust(): void {
+  const t = w.__TAURI_INTERNALS__
+  if (!t || !LABEL) return
+  const handler = t.transformCallback((e) => {
+    const p = (e as { payload?: { ch: string; args: unknown[] } }).payload
+    if (p) deliver(p.ch, p.args)
+  })
+  t.invoke('plugin:event|listen', { event: 'riven:ipc', target: { kind: 'AnyLabel', label: LABEL }, handler }).catch((e) =>
+    console.error('[ipc] listening for Rust events failed', e)
+  )
+}
+
 export const ipcRenderer = {
   invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+    const names = RUST_INVOKE[channel]
+    if (names) return rustInvoke(channel, names, args)
     const id = nextId++
     return new Promise((resolve, reject) => {
       pending.set(id, { resolve, reject })
@@ -93,18 +135,26 @@ export const ipcRenderer = {
     })
   },
   send(channel: string, ...args: unknown[]): void {
+    const names = RUST_INVOKE[channel]
+    if (names) return void rustInvoke(channel, names, args).catch((e) => console.warn(`[ipc] ${channel}`, e))
     post({ t: 'send', ch: channel, args })
   },
   sendSync(channel: string, ...args: unknown[]): unknown {
+    const twin = RUST_SYNC[channel]
     const x = new XMLHttpRequest()
     x.open('POST', `/__riven/sync?t=${TOKEN}`, false)
     x.setRequestHeader('content-type', 'application/json')
     try {
       x.send(encode({ label: LABEL, ch: channel, args }))
     } catch {
-      return undefined
+      x.abort()
     }
-    if (x.status !== 200) return undefined
+    if (x.status !== 200) {
+      if (!twin) return undefined
+      // Refused during teardown: hand the write to Rust without waiting.
+      void rustInvoke(twin, RUST_INVOKE[twin], args).catch(() => {})
+      return true
+    }
     return (decode(x.responseText) as { v: unknown }).v
   },
   on(channel: string, fn: Listener): typeof ipcRenderer {
@@ -517,4 +567,14 @@ document.addEventListener(
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchRegions)
 else watchRegions()
 
+// WKWebView does not fire beforeunload for a reload or close it was not given
+// a user gesture for, but it does fire pagehide. The renderer flushes its
+// debounced saves (settings, sessions) on beforeunload, so make sure that runs.
+let unloading = false
+w.addEventListener('beforeunload', () => void (unloading = true))
+w.addEventListener('pagehide', () => {
+  if (!unloading) w.dispatchEvent(new Event('beforeunload'))
+})
+
+listenRust()
 connect()
