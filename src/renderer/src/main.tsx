@@ -2,13 +2,13 @@ import './monaco-setup'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import { initHighlighting } from './editor/highlight'
+// Registers the extra Monaco languages (tsx/jsx/toml/...) up front. Shiki itself
+// starts lazily, when the first editor asks for its theme (see highlight.ts).
+import './editor/highlight'
 import { initOutputCapture } from './state/outputLog'
 import { installDialogRouting } from './lib/hostWindow'
 import './styles.css'
 
-// VSCode-grade syntax highlighting (async; colors swap in once ready).
-initHighlighting()
 // Start capturing language-server logs into the Output panel from launch.
 initOutputCapture()
 // confirm/alert from a popped-out panel open over that window, not the parent.
