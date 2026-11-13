@@ -399,7 +399,7 @@ pub async fn start(cfg: Value, sink: String) -> Value {
   let file_arg = cfg.get("file").and_then(Value::as_str).unwrap_or("").to_string();
   let file = realpath(&file_arg);
   let is_ts = [".ts", ".tsx", ".mts", ".cts"].iter().any(|e| file.ends_with(e));
-  let Some(node) = crate::services::shell_env::which("node") else {
+  let Some(node) = crate::services::tools::resolve_bin("node").map(std::path::PathBuf::from) else {
     return json!({ "ok": false, "error": "node was not found on PATH (the debugger runs your installed Node.js)" });
   };
   let mut args = vec!["--inspect-brk=127.0.0.1:0".to_string()];

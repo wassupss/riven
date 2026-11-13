@@ -190,7 +190,17 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'debug:stepOut': [],
   'debug:setBreakpoints': ['file', 'lines'],
   'debug:getProperties': ['objectId'],
-  'debug:evaluate': ['callFrameId', 'expression']
+  'debug:evaluate': ['callFrameId', 'expression'],
+  // small read-the-machine features (services/tools, services/usage)
+  'cli:list': [],
+  'ports:list': ['folder'],
+  'ports:kill': ['folder', 'port', 'pid'],
+  'models:claude': ['configDir'],
+  'diagnostics:run': ['root', 'kind'],
+  'usage:today': ['configDir'],
+  'usage:codex': [],
+  // the API client panel's requests (services/http)
+  'api:request': ['opts']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri

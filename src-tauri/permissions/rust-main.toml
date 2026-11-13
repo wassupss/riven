@@ -154,6 +154,14 @@ permissions = [
   "allow-search-replace-in-files",
   "allow-sessions-load",
   "allow-sessions-save",
+  "allow-cli-list",
+  "allow-ports-list",
+  "allow-ports-kill",
+  "allow-models-claude",
+  "allow-diagnostics-run",
+  "allow-usage-today",
+  "allow-api-request",
+  "allow-usage-codex",
   "allow-watch-start",
   "allow-watch-stop",
   "allow-workspace-set-roots",
@@ -923,6 +931,46 @@ commands.allow = ["sessions_load"]
 identifier = "allow-sessions-save"
 description = "Allows sessions_save."
 commands.allow = ["sessions_save"]
+
+[[permission]]
+identifier = "allow-cli-list"
+description = "Allows cli_list."
+commands.allow = ["cli_list"]
+
+[[permission]]
+identifier = "allow-ports-list"
+description = "Allows ports_list."
+commands.allow = ["ports_list"]
+
+[[permission]]
+identifier = "allow-ports-kill"
+description = "Allows ports_kill."
+commands.allow = ["ports_kill"]
+
+[[permission]]
+identifier = "allow-models-claude"
+description = "Allows models_claude."
+commands.allow = ["models_claude"]
+
+[[permission]]
+identifier = "allow-diagnostics-run"
+description = "Allows diagnostics_run."
+commands.allow = ["diagnostics_run"]
+
+[[permission]]
+identifier = "allow-usage-today"
+description = "Allows usage_today."
+commands.allow = ["usage_today"]
+
+[[permission]]
+identifier = "allow-api-request"
+description = "Allows api_request."
+commands.allow = ["api_request"]
+
+[[permission]]
+identifier = "allow-usage-codex"
+description = "Allows usage_codex."
+commands.allow = ["usage_codex"]
 
 [[permission]]
 identifier = "allow-watch-start"

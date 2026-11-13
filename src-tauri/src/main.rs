@@ -82,19 +82,6 @@ fn emit(v: Value) {
   }
 }
 
-/// emit() that says whether Node's line was there to take it.
-pub(crate) fn try_emit(v: Value) -> bool {
-  let mut g = shared().events.lock().unwrap();
-  let Some(s) = g.as_mut() else { return false };
-  let mut line = v.to_string();
-  line.push('\n');
-  if s.write_all(line.as_bytes()).is_err() {
-    *g = None;
-    return false;
-  }
-  true
-}
-
 fn win_event(label: &str, kind: &str, extra: Value) {
   let mut v = json!({ "ev": "win", "label": label, "kind": kind });
   if let (Some(o), Value::Object(e)) = (v.as_object_mut(), extra) {
@@ -999,11 +986,6 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     // What quitting would cut off (Node's quit confirmation, a sync call).
     "pty.working" => Ok(services::pty::working_count().into()),
     "chat.running" => Ok(services::chat::running_count().into()),
-    // riven_api_request, whose engine is still Node: its answer.
-    "mcp.toolResult" => {
-      services::mcp::node_result(a);
-      Ok(Value::Null)
-    }
     "app.setOrigin" => {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)

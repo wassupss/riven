@@ -523,3 +523,39 @@ Rust로 옮긴 채널 (invoke/send 14개, 이벤트 3개): `lsp:servers`, `start
 - **정리:** 시험 뒤 디버그 대상 node, 언어 서버 자식이 남지 않았다. 앱을 SIGTERM으로 끝낸 경우(Exit 이벤트 없음)도 typescript-language-server가 stdin EOF로 스스로 끝났다.
 
 추론만 한 것: 10분 유휴 정지(같은 타이머 코드, 시간을 줄여 돌리지 않음), clangd/gopls/rust-analyzer/svelte 서버로 실제 편집(목록과 경로 찾기만), 서버가 죽었을 때 다음 요청이 "not started"인 것, 디버거 화면 패널(`DebugPanel`)을 눌러서 쓰는 흐름(같은 `window.api.debug`를 직접 불러 확인).
+
+#### 7-3. 작은 기능: cli, ports, models, diagnostics, usage, API 클라이언트
+
+Rust로 옮긴 채널 (invoke 9개):
+
+- `cli:list`, `ports:list`, `ports:kill`, `models:claude`, `diagnostics:run` (`services/tools.rs`)
+- `usage:today`, `usage:codex` (`services/usage.rs`)
+- `api:request` (`services/http.rs`)
+- MCP `riven_api_request`도 `services/http.rs`로 돈다. 4단계에서 남긴 마지막 Node 다리(`mcpTool` / `mcp.toolResult`, `node_call`, `try_emit`)를 지웠다. 이제 MCP 도구는 전부 Rust 아니면 화면에서 돈다.
+
+`MOVED`에 `cli`, `ports`, `modelCatalog`, `diagnostics`, `usage`, `apiclient`를 더했다. `usage:limits`(Anthropic OAuth 사용량 API)는 Claude Code 토큰을 키체인에서 읽어야 해서 이번에는 Node에 남겼다. 그래서 `usage.ts`에서 그 처리를 `usageLimits()`로 떼어 export했다(Electron 동작은 같음). `tauri/shim/moved/usage.ts`가 그 채널 하나만 등록한다.
+
+구조와 Node 판과 같게 맞춘 것:
+
+- **실행 파일 찾기:** `tools::resolve_bin`은 Node `resolveBin`처럼 로그인 PATH에서 X_OK로 찾는다. 언어 서버와 디버거의 node 찾기도 이걸로 바꿨다(처음엔 `is_file`만 봤음).
+- **ports:** `lsof -Fpcn` 두 번, 같은 파싱(pid별 포트를 처음 본 순서로), 워크스페이스 안 cwd만, 포트 순 정렬. kill은 새로 스캔한 목록에 그 pid가 있는지 확인하고, riven 자신(이제 Rust 프로세스)은 거부, SIGTERM 3초 뒤 SIGKILL, 오류 문구(`kill ESRCH` 등)도 같다.
+- **models:claude:** 같은 인자로 claude CLI에 `initialize` 제어 요청만 보내고(턴 없음), 20초 제한, 설정 폴더마다 캐시, 실패는 캐시하지 않는다.
+- **diagnostics:** 워크스페이스의 `node_modules/.bin/tsc`, `eslint`만 쓰고(5단계의 `git::exec`, execFile과 같은 오류와 버퍼 64MB), 같은 정규식과 로그 문구.
+- **usage:** JS `Date`의 로컬 날짜 계산(ISO 파싱, `localtime_r`), 같은 순서의 f64 합(결과 숫자가 마지막 자리까지 같음), 파일마다 크기/시간/오프셋을 기억해 덧붙은 부분만 읽는 캐시, 메시지 id|요청 id 중복 제거, 비용 내림차순 안정 정렬. 정수는 `.0` 없이 낸다.
+- **http (fetch 대신):** reqwest를 들이지 않고 HTTP/1.1을 직접 했다(TLS는 이미 있는 native-tls, 압축은 이미 있는 flate2). undici와 같게 맞춘 것: 기본 요청 헤더(`accept`, `accept-language`, `sec-fetch-mode`, `user-agent: node`, `accept-encoding: gzip, deflate`, keep-alive, HEAD는 close), 문자열 본문의 `text/plain;charset=UTF-8`, 본문 없는 POST/PUT의 `content-length: 0`, 리디렉션(최대 20번, 303과 POST의 301/302는 GET으로, 다른 출처로 가면 authorization/cookie 제거), gzip/deflate 풀기, 청크 전송, 응답 헤더를 소문자 정렬하고 중복은 ", "로 합침(set-cookie는 따로), `text()`의 BOM 제거, 오류 문구(`fetch failed`, `Failed to parse URL from ...`), riven_api_request의 8000자(UTF-16) 자르기.
+
+Node 판과 다른 점:
+
+- https에서 undici는 `br`도 받겠다고 하고 brotli를 푼다. Rust는 `gzip, deflate`만 보내서 서버가 gzip으로 준다. 본문은 같고 `content-encoding` 헤더가 다르다(example.com 확인).
+- TLS 인증서는 시스템 신뢰 저장소로 확인한다(Node는 자체 Mozilla 목록). 회사 내부 CA는 Rust 쪽이 오히려 통한다.
+- `data:`, `file:` URL은 지원하지 않는다(`fetch failed`).
+- riven_api_request가 실행 중에 에이전트가 끊으면 답은 버리지만 요청 자체는 끝까지 간다(Node도 같았음).
+
+같은 입력으로 비교 (원래 모듈을 electron 대역으로 묶어 Node로 실행 vs 실앱 `window.api` -> Rust, HTTP는 Rust 시험 함수):
+
+- **도구 13건:** cli:list, ports:list 2, ports:kill(틀린 pid), diagnostics 5(tsc 오류 있는 ts 프로젝트, eslint 설정 없음, 도구 없는 폴더 2, 빈 루트), usage:today 2(오늘 고친 실제 대화 기록 33개 파일, 1GB를 스크래치 폴더에 복사해 고정, 없는 폴더), usage:codex, models:claude. 12건이 같았고 cli:list만 Rust가 `cargo`를 하나 더 찾았다(시험 앱 로그인 PATH의 `~/.cargo/bin`, 언어 서버의 rust-analyzer와 같은 환경 차이). usage:today는 총비용 931.96달러, 토큰 4억 6천만 개, 모델별 숫자까지 같았다.
+- **ports:kill 실제:** 스크래치 폴더에서 띄운 python http.server 두 개를 Node와 Rust가 하나씩 죽였다. 둘 다 `{ok:true}`, 다시 부르면 Rust는 "that port is no longer held by that process".
+- **HTTP 32가지 x 2 (api:request, riven_api_request 문자열):** 로컬 시험 서버로 GET/POST/PUT/PATCH/DELETE/HEAD, 사용자 헤더와 대소문자, 리디렉션 3단계, 무한 리디렉션, 301/302/303/307, 다른 출처 리디렉션(Authorization, Cookie 제거), gzip, deflate, 청크, set-cookie와 중복 헤더, BOM, 사용자 정의 상태 문구(418), 2만 자 본문 자르기, 204, 잘못된 UTF-8, 404, 잘못된 URL, 빈 URL, ftp, 연결 거부, 그리고 https://example.com 읽기 하나. 64건 모두 같았다(date 헤더와 example.com의 캐시 헤더는 빼고 비교). 처음에는 HEAD의 `connection` 헤더 하나가 달랐다.
+- **실앱:** `window.api.api.request`로 307 POST(본문 유지)와 연결 거부(`fetch failed`)를 확인했다.
+
+추론만 한 것: MCP를 거친 riven_api_request 왕복(시험 앱의 MCP 토큰을 얻으려고 터미널 환경을 읽으려 했는데 권한 확인에서 거부되어 하지 않음. 같은 `api_request_text`를 위 비교에서 확인했고, 연결은 DB 도구와 같은 `wait`/`page_result` 길), usage:today의 하루가 바뀔 때 캐시 비우기, ports:kill의 SIGKILL 경로(시험 서버가 SIGTERM에 바로 끝남).

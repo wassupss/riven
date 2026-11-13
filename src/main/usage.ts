@@ -422,10 +422,11 @@ export async function usageToday(configDir?: string): Promise<UsageToday> {
   return { totalCost, totalTokens, perModel }
 }
 
-export function registerUsageHandlers(): void {
-  ipcMain.handle('usage:codex', async (): Promise<CodexUsage> => codexUsage())
-
-  ipcMain.handle('usage:limits', async (_e, configDir?: string): Promise<UsageLimits> => {
+// The plan windows (session 5h / weekly 7d) from Claude's OAuth usage endpoint.
+// Exported on its own so the Tauri build (whose usage:today / usage:codex run in
+// Rust) can keep serving this one from Node.
+export async function usageLimits(configDir?: string): Promise<UsageLimits> {
+  {
     const cacheKey = configDir ?? '<default>'
     const token = await claudeToken(configDir)
     if (!token) return cachedLimits(cacheKey)
@@ -456,7 +457,13 @@ export function registerUsageHandlers(): void {
     } finally {
       clearTimeout(timer)
     }
-  })
+  }
+}
+
+export function registerUsageHandlers(): void {
+  ipcMain.handle('usage:codex', async (): Promise<CodexUsage> => codexUsage())
+
+  ipcMain.handle('usage:limits', async (_e, configDir?: string): Promise<UsageLimits> => usageLimits(configDir))
 
   ipcMain.handle('usage:today', (_e, configDir?: string): Promise<UsageToday> => usageToday(configDir))
 }

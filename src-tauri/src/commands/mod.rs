@@ -22,6 +22,7 @@ pub mod notes;
 pub mod pty;
 pub mod search;
 pub mod sessions;
+pub mod tools;
 pub mod watch;
 pub mod workspace;
 
@@ -59,6 +60,14 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     debug::debug_set_breakpoints,
     debug::debug_get_properties,
     debug::debug_evaluate,
+    tools::cli_list,
+    tools::ports_list,
+    tools::ports_kill,
+    tools::models_claude,
+    tools::diagnostics_run,
+    tools::usage_today,
+    tools::usage_codex,
+    tools::api_request,
     lsp::lsp_servers,
     lsp::lsp_start,
     lsp::lsp_request,

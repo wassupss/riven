@@ -321,10 +321,6 @@ pub fn page_result(payload: &Value) {
 }
 
 /// Node's answer to an 'mcpTool' (main.rs dispatch 'mcp.toolResult').
-pub fn node_result(a: &Value) {
-  page_result(&json!({ "id": a.get("id"), "result": a.get("text") }))
-}
-
 // End a call with `msg`, and every call made on its behalf. A page call is
 // told to drop its UI (the ask_user card must stop offering choices, or a
 // click goes to a call that already returned).
@@ -503,18 +499,27 @@ fn db_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, call:
   })
 }
 
-// A tool whose engine is still Node (tauri/shim/moved/mcpServer.ts).
-fn node_call(name: &str, args: &Value, cwd: Option<&str>, key: Option<&str>, call: &Call) -> Option<String> {
+// riven_api_request (services/http.rs). On its own thread so the agent can
+// still cancel (the request itself runs to its end; its answer is dropped).
+fn api_call(args: &Value, call: &Call) -> Option<String> {
   let id = util::uuid();
-  let msg = json!({ "ev": "mcpTool", "id": id, "tool": name, "args": args, "cwd": cwd, "key": key });
-  wait(&id, None, None, call, None, move || crate::try_emit(msg))
+  let (args, id2) = (args.clone(), id.clone());
+  wait(&id, None, None, call, None, move || {
+    std::thread::Builder::new()
+      .name("mcp-api-request".into())
+      .spawn(move || {
+        let text = crate::services::http::api_request_text(&args);
+        page_result(&json!({ "id": id2, "result": text }));
+      })
+      .is_ok()
+  })
 }
 
 // One tools/call. None: the client is gone, nothing to answer.
 fn call_tool(name: &str, args: &Value, cwd: Option<&str>, pane: Option<&str>, call: &Call) -> Option<String> {
   let known = tool(name);
   if name == "riven_api_request" {
-    return node_call(name, args, cwd, pane, call);
+    return api_call(args, call);
   }
   if name.starts_with("riven_db_") && known.is_some() {
     return db_call(name, args, cwd, pane, call);

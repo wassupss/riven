@@ -68,7 +68,7 @@ fn from_workspace(root: &str, rel: &str) -> Option<PathBuf> {
 }
 
 fn node() -> Option<PathBuf> {
-  crate::services::shell_env::which("node")
+  crate::services::tools::resolve_bin("node").map(PathBuf::from)
 }
 
 fn via_node(entry: PathBuf, args: &[&str]) -> Option<Spec> {
@@ -79,7 +79,7 @@ fn via_node(entry: PathBuf, args: &[&str]) -> Option<Spec> {
 }
 
 fn on_path(bin: &str, args: &[&str]) -> Option<Spec> {
-  let command = crate::services::shell_env::which(bin)?;
+  let command = PathBuf::from(crate::services::tools::resolve_bin(bin)?);
   Some(Spec { command, args: args.iter().map(|s| s.to_string()).collect(), init_options: None, client_watches_files: false })
 }
 
