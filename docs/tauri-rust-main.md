@@ -283,3 +283,66 @@ Node 판과 다른 점:
 
 - `usage.ts`(usage:today 등), `modelCatalog.ts`, `cli.ts`(cli:list)는 채팅 그룹이 아니라서 Node에 남겼다(7단계 작은 기능).
 - 시험 중 채팅 패널 입력은 `.chat-panel` 안의 textarea에 값을 넣고 Enter keydown을 보내면 된다. 새 패널이 열리면 보이는 textarea가 바뀌니 대상 패널을 골라서 넣을 것.
+
+### 4단계 (2026-11-13): MCP 도구 서버
+
+`src/main/mcpServer.ts`, `agentHooks.ts`, `agents.ts`, `agentEdits.ts`, 훅 해석(`terminal/activity.ts`의 `claudeHookToEvent`), 터미널에 넣던 riven 환경과 zsh shim, `pty:codexSessionTitle`(`codexSessions.ts`)을 Rust `services/mcp`로 옮겼다. `tauri/build.mjs`의 `MOVED`에 `mcpServer`, `agentHooks`를 더했다.
+
+구조:
+
+- **서버:** 루프백 HTTP/1.1을 직접 구현했다(`services/mcp/http.rs`, 연결마다 스레드). `rmcp` + axum을 쓰지 않은 이유: Node 판도 JSON 응답만 하는 수제 구현이었고(SSE 없음, 도구만 있는 서버라 필요 없음), 이 프로세스에는 hyper가 아직 없다. rmcp의 streamable-http 서버는 axum, hyper, tower, SSE를 끌고 오는데 쓰는 메서드는 6개(initialize, ping, tools/list, tools/call, notifications/cancelled, DELETE)뿐이고, 세션 처리 방식(실행 동안 Mcp-Session-Id 하나, 알림은 202, 취소된 호출은 문장으로 답함)도 지금 에이전트가 보는 것과 달라진다.
+- **같은 프로토콜:** 경로(`/mcp`, `/hook`), 인증(Bearer 또는 `?token=`, 실행마다 새 UUID), 상태 코드(401, 404, 405 + `allow`, 400 parse error, 202, 204, 413(1MB), 100 Continue), 응답 본문, `Mcp-Session-Id`, 30분 대기(`REQUEST_TIMEOUT_MS`), `MCP_TOOL_TIMEOUT`, 서버별 `timeout`, 환경 변수 이름(`RIVEN_PANE`, `RIVEN_HOOK_URL`, `RIVEN_HOOK_TOKEN`, `RIVEN_HOOKS_SETTINGS`, `RIVEN_MCP_CONFIG`, `RIVEN_MCP_PROMPT`, `RIVEN_MCP_TOKEN`, `RIVEN_CODEX_ARGS`, `RIVEN_REAL_CLAUDE`, `RIVEN_REAL_CODEX`, `ZDOTDIR`)가 그대로다. Node의 timeout도 같다(요청 중 무제한, 헤더 60초, keep-alive 65초).
+- **도구 목록과 안내 프롬프트는 한 곳:** `src/main/mcpServer.ts`가 계속 원본이다(Electron이 그대로 씀). `tauri/build.mjs`가 그 모듈을 묶어 실행해서 `src-tauri/src/services/mcp/catalog.json`(ASCII 이스케이프)을 만들고, Rust가 `include_str!`로 읽는다. 바뀔 때만 쓰고, 커밋해 둬서 `cargo build`만 해도 된다. 그래서 두 빌드의 도구 이름, 스키마, 설명, 프롬프트가 어긋날 수 없다. 이를 위해 `mcpServer.ts`에서 `PROMPT_LINES`, `PROMPT_HEAD`를 export하고, `runApiRequest`를 `src/main/apiRequest.ts`로 뺐다(동작 변경 없음).
+- **도구 호출:** Rust가 화면에 `mcp:invoke`를 보내고 `mcp:result`(Rust 명령 `mcp_result`)를 기다린다. 받을 페이지는 App.tsx가 `mcp:invoke`를 듣기 시작할 때 preload 셰임이 알려 준다(`mcp_attach`, Electron의 `setAppWindow` 대신). 에이전트가 끊으면(소켓 닫힘 확인) 또는 `notifications/cancelled`가 오면 화면에 `mcp:cancel`을 보내고 "riven: the caller cancelled this request"로 답한다. 그 페이지가 다시 로드되기 시작하면(`on_page_load` Started) 기다리던 호출을 모두 "riven: the app reloaded ..."로 끝낸다(Electron의 did-start-navigation).
+- **훅:** `/hook`이 PreToolUse/PostToolUse의 파일 기준본을 204 전에 읽고(EditTracker), 바뀐 파일은 Rust가 `agent:fileEdit`로 모든 앱 페이지에 보낸다. 나머지 훅은 204를 먼저 보낸 뒤 `services::pty::hook`을 직접 부른다. `RIVEN_HOOK_DEBUG=1` 로그도 같다.
+- **설정 파일:** `userData/hooks/claude-settings.json`과 `userData/zdotdir/.zshenv`, `.zprofile`, `.zshrc`를 시작할 때 쓴다. Node 판이 쓴 파일과 바이트 단위로 같다(확인).
+
+없앤 다리 (2, 3단계가 남긴 것):
+
+- `ptyEnv` / `pty.env`: 터미널 환경은 `services::mcp::pty_env`를 직접 부른다.
+- `pty.hook`: 훅 라우트가 Rust라 중계가 없다.
+- `ptyAgents`, `chatRunning`: 바뀔 때마다 Node로 밀던 수를 없애고, 종료 확인이 필요할 때 Node가 동기 호출(`pty.working`, `chat.running`)로 묻는다.
+- `chatEnv` / `chat.env`: 채팅 패널의 MCP 설정, 프롬프트, 훅 환경은 `services::mcp::chat_env`가 바로 준다(8초 대기 없음).
+- `chatEdit`: Codex 패널의 파일 변경도 Rust가 바로 `agent:fileEdit`로 보낸다.
+
+새로 생긴 다리 (엔진이 아직 Node인 도구, 해당 단계에서 지운다):
+
+- `riven_db_*`(6단계 DB)와 `riven_api_request`(7단계 API 클라이언트): Rust가 제어 회선으로 `mcpTool`을 보내고 Node(`tauri/shim/moved/mcpServer.ts`, 46줄)가 실행해 `mcp.toolResult`로 답한다. `riven_db_execute`의 확인은 Node가 `mcp.ask`로 Rust에 부탁하고, Rust가 호출한 패널에 ask_user 카드를 띄운다. 에이전트가 끊으면 이 확인도 같이 취소된다.
+
+실앱에서 확인한 것(백그라운드 모드, 개발 빌드, 앞 앱이 바뀌지 않음):
+
+- 같은 입력으로 3단계 빌드(Node 서버)와 비교: 터미널 셸 환경 전체(`env -0`, 포트와 토큰만 다름), `typeset -f claude codex`, zsh shim 3개 파일, 훅 설정 파일, Claude 채팅 패널의 argv와 환경, Codex 패널의 argv와 환경이 모두 같았다. 프로토콜 16가지 요청(인증 없음, 틀린 토큰, 없는 경로, GET, DELETE, parse error, 알림, initialize 2가지, ping, 없는 메서드, tools/list 전체 14,518바이트, tools/list 좁힘, 없는 도구, pane 없는 훅, 1.1MB 본문)의 상태와 본문이 같았다(헤더 순서와 빈 응답의 `content-length: 0`만 다름).
+- 채팅 패널의 Claude(haiku)가 riven_panels, riven_note_write, riven_note_read, riven_open_file, riven_browser_state, riven_ask_agent(다른 채팅 패널 P4B, "[P4B] PONG")를 차례로 호출하고 결과를 받음.
+- 터미널에서 친 `claude -p`(zsh shim 경유)가 riven_panels를 호출하고 Edit을 함: 훅 왕복으로 `pty:agentSession`(세션 id, SessionEnd에서 null), `pty:status`(busy -> finished), `agent:fileEdit`(before/after), `pty:done`, `pty:reply`가 화면에 옴.
+- Codex 채팅 패널(gpt-5.6-luna)이 URL과 토큰으로 riven MCP에 붙어 riven_panels를 호출(rollout에 기록). `gpt-5.5`는 ChatGPT 계정에서 지원하지 않는다는 Codex 오류였다(riven과 무관).
+- 틀린 토큰(헤더, `?token=`) 401. riven_api_request와 riven_db_connections가 Node 다리로 동작.
+- 취소 세 가지: 에이전트가 끊음(화면에 `mcp:cancel`), `notifications/cancelled`(같은 문장으로 답함), 기다리는 중 페이지 새로고침(재로드 문장, 로그 "[mcp] dropped 1 tool call(s)"). 새로고침 뒤 다시 붙어서 도구 호출이 됨.
+- 종료 확인의 수: 채팅 턴과 터미널 에이전트가 일하는 동안 `chat 1, terminal 1`, 끝나면 0. 대화상자는 띄우지 않고 index.ts가 부르는 같은 함수를 시험 훅(`op=busy`, `tauri/shim/server.ts`)으로 읽었다.
+- `pty:codexSessionTitle`: 최근 Codex rollout 40개에서 Node 판과 결과가 모두 같음.
+
+추론만 한 것: `riven_db_execute`의 확인 경로(`mcp.ask`, DB 연결이 없어 실행 못 함), 30분 시간 초과, 터미널에서 친 `codex`(환경 변수가 Node 판과 바이트 단위로 같은 것만 확인), Codex 패널의 apply_patch 파일 변경이 타임라인으로 가는 것(같은 `report_edit`을 쓰는 훅 경로만 확인), WebContent 프로세스가 죽었을 때(Electron의 render-process-gone에 해당하는 Tauri 이벤트가 없어 처리하지 않음, 페이지가 다시 로드되면 위 경로로 끝남), 릴리스 빌드.
+
+측정 (개발 빌드, 빈 상태, 실행 45초 후, footprint):
+
+| | 3단계 | 4단계 |
+|---|---|---|
+| riven-tauri | 55MB | 56MB |
+| Node | 177MB | 175MB |
+
+MCP 서버는 원래 작아서 메모리 차이는 측정 오차 수준이다. 쉴 때 CPU는 둘 다 0.0%.
+
+남은 Node 코드 (`src/main`, 테스트 제외, Tauri 빌드의 Node 번들에 들어가는 것):
+
+| | 줄 수 |
+|---|---|
+| 3단계 후 | 17,126 (소스맵 기준 14,827) |
+| 4단계 후 | 15,477 (소스맵 기준 13,178). mcpServer 931 + agentHooks 198 + agents 105 + agentEdits 142 + terminal/activity 139 + codexSessions 159 제외, apiRequest 25 추가 |
+
+`tauri/shim/moved`의 다리 코드는 pty.ts 186 + agentChat.ts 85 = 271줄에서 89줄이 됐다(pty 18, agentChat 18, agentHooks 7, mcpServer 46). Rust 쪽은 `services/mcp` 1,331줄 + `commands/mcp.rs` 16줄이 늘었다.
+
+다음 단계가 알아야 할 것:
+
+- **도구 목록을 바꿀 때:** `src/main/mcpServer.ts`만 고치고 `node tauri/build.mjs`를 돌리면 `catalog.json`이 바뀐다. Rust에 도구 이름을 따로 적지 않는다. 화면이 수행하는 도구는 Rust가 이름만 보고 넘기므로 새 도구도 Rust 변경이 필요 없다(Node 엔진 도구만 `services::mcp::call_tool`의 분기).
+- **6단계(DB)와 7단계(API 클라이언트):** 엔진을 Rust로 옮기면 `call_tool`의 `node_call` 분기와 `mcp.ask`, `mcp.toolResult`, `tauri/shim/moved/mcpServer.ts`를 지운다. DB 확인은 `page_call("ask_user", ...)`에 부모 호출 id를 넘기면 취소가 같이 된다.
+- **8단계:** 종료 확인(index.ts의 before-quit)을 Rust로 옮기면 `pty.working`, `chat.running` 동기 호출도 없어진다. `mcp_attach`는 페이지를 Tauri가 직접 주게 돼도 그대로 쓸 수 있다.
+- **시험할 때:** 이 환경의 셸에는 사용자의 실제 riven이 넣은 `RIVEN_*`, `MCP_TOOL_TIMEOUT`, `ZDOTDIR`, `CLAUDE_CODE_*`가 있다. 그대로 시험 앱을 띄우면 그 값이 자식에게 새어 들어가 훅이 사용자의 riven으로 갈 수 있으니, 띄우기 전에 지운다.

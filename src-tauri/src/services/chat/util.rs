@@ -24,6 +24,11 @@ pub fn s<'a>(v: &'a Value, k: &str) -> &'a str {
 }
 
 /// JS truthiness of a JSON value.
+/// String.prototype.trim: whitespace and the BOM.
+pub fn js_trim(s: &str) -> &str {
+  s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+}
+
 pub fn truthy(v: Option<&Value>) -> bool {
   match v {
     None | Some(Value::Null) => false,

@@ -35,6 +35,8 @@ permissions = [
   "allow-config-load",
   "allow-config-save",
   "allow-config-reveal",
+  "allow-mcp-attach",
+  "allow-mcp-result",
   "allow-notes-list",
   "allow-notes-read",
   "allow-notes-write",
@@ -50,6 +52,7 @@ permissions = [
   "allow-pty-seen",
   "allow-pty-resize",
   "allow-pty-kill",
+  "allow-pty-codex-session-title",
   "allow-search-in-files",
   "allow-search-replace-in-files",
   "allow-sessions-load",
@@ -230,6 +233,16 @@ description = "Allows config_reveal."
 commands.allow = ["config_reveal"]
 
 [[permission]]
+identifier = "allow-mcp-attach"
+description = "Allows mcp_attach."
+commands.allow = ["mcp_attach"]
+
+[[permission]]
+identifier = "allow-mcp-result"
+description = "Allows mcp_result."
+commands.allow = ["mcp_result"]
+
+[[permission]]
 identifier = "allow-notes-list"
 description = "Allows notes_list."
 commands.allow = ["notes_list"]
@@ -303,6 +316,11 @@ commands.allow = ["pty_resize"]
 identifier = "allow-pty-kill"
 description = "Allows pty_kill."
 commands.allow = ["pty_kill"]
+
+[[permission]]
+identifier = "allow-pty-codex-session-title"
+description = "Allows pty_codex_session_title."
+commands.allow = ["pty_codex_session_title"]
 
 [[permission]]
 identifier = "allow-search-in-files"

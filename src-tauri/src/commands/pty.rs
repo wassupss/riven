@@ -53,3 +53,11 @@ pub fn pty_resize(id: String, cols: f64, rows: f64) {
 pub fn pty_kill(id: String) {
   pty::kill(id)
 }
+
+// The name of the Codex conversation a terminal is in (its rollout's first
+// user message).
+#[tauri::command]
+pub async fn pty_codex_session_title(id: serde_json::Value) -> Option<String> {
+  let id = id.as_str()?.to_string();
+  tokio::task::spawn_blocking(move || crate::services::chat::read_codex_session_title(&id)).await.ok().flatten()
+}

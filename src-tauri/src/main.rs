@@ -259,6 +259,10 @@ fn create_window(app: &AppHandle, a: &Value) -> Res {
       external
     })
     .on_page_load(move |wv, p| {
+      // A fresh page: tool calls waiting on the old one are told (services/mcp).
+      if p.event() == PageLoadEvent::Started {
+        services::mcp::page_started(&load_label);
+      }
       if p.event() == PageLoadEvent::Finished {
         sync_frame(&wv);
         if let Some(waiters) = shared().loading.lock().unwrap().remove(&load_label) {
@@ -925,22 +929,16 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
       let args = a.get("args").and_then(Value::as_array).cloned().unwrap_or_default();
       commands::sync_relay(s(a, "ch").unwrap_or(""), &args)
     }
-    // Terminals (services/pty): the shell environment Node builds, and the
-    // agent hooks its loopback route receives.
-    "pty.env" => {
-      services::pty::env_reply(a);
+    // What quitting would cut off (Node's quit confirmation, a sync call).
+    "pty.working" => Ok(services::pty::working_count().into()),
+    "chat.running" => Ok(services::chat::running_count().into()),
+    // riven's MCP tools whose engine is still Node (DB, HTTP request): its
+    // answer, and riven_db_execute's confirmation in the calling pane.
+    "mcp.toolResult" => {
+      services::mcp::node_result(a);
       Ok(Value::Null)
     }
-    // Agent chat (services/chat): riven's MCP config and hook env for a pane,
-    // built by Node's MCP server until stage 4.
-    "chat.env" => {
-      services::chat::env_reply(a);
-      Ok(Value::Null)
-    }
-    "pty.hook" => {
-      services::pty::hook(a);
-      Ok(Value::Null)
-    }
+    "mcp.ask" => Ok(services::mcp::node_ask(a).into()),
     "app.setOrigin" => {
       *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
       Ok(Value::Null)
@@ -1051,7 +1049,7 @@ fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
 fn is_slow(cmd: &str) -> bool {
   matches!(
     cmd,
-    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
+    "dialog.open" | "dialog.save" | "dialog.message" | "mcp.ask" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup"
   )
 }
 
@@ -1230,6 +1228,7 @@ fn main() {
         app.set_activation_policy(tauri::ActivationPolicy::Accessory);
       }
       services::shell_env::start();
+      services::mcp::init(app.handle());
       services::pty::init(app.handle());
       services::chat::init(app.handle());
       #[cfg(target_os = "macos")]
@@ -1251,6 +1250,7 @@ fn main() {
       }
     }
     RunEvent::Exit => {
+      services::mcp::shutdown();
       services::pty::shutdown();
       services::chat::shutdown();
     }

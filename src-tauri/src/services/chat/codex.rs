@@ -381,7 +381,6 @@ impl Session {
         super::restart_in_place(key).await;
       });
     }
-    super::report_running_soon();
   }
 
   fn on_notification(&self, method: &str, params: &Value) {
@@ -391,7 +390,6 @@ impl Session {
         st.turn_id = params.get("turn").and_then(|t| t.get("id")).and_then(Value::as_str).map(str::to_string);
         st.turn_busy = true;
         st.usage_at_turn = st.usage_total;
-        super::report_running_soon();
       }
       "item/agentMessage/delta" => {
         if let Some(d) = params.get("delta").and_then(Value::as_str) {
@@ -491,8 +489,8 @@ impl Session {
       // An unchanged "baseline" is not a before; the diff falls back to git.
       let known = if saw && before.as_deref() != Some(after.as_str()) { before } else { None };
       let path = f.to_string_lossy().into_owned();
-      // The changes timeline lives in Node until stage 4 (agentHooks.reportAgentEdit).
-      super::node_edit(json!({ "pane": self.key, "path": path, "before": known, "after": after }));
+      // Into the changes timeline, like a hook-reported edit (services/mcp).
+      super::report_edit(json!({ "pane": self.key, "path": path, "before": known, "after": after }));
       emit(st, json!({ "key": self.key, "kind": "fileEdited", "path": path }));
     }
   }
@@ -513,7 +511,6 @@ impl Session {
         }
       }
     }
-    super::report_running_soon();
     let mut rx = self.ready.subscribe();
     let ok = loop {
       if let Some(v) = *rx.borrow_and_update() {

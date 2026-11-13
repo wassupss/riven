@@ -535,7 +535,7 @@ pub async fn fetch_session_info(cwd: String, config_dir: Option<String>, fresh: 
 async fn probe_session_info(cwd: String, config_dir: Option<String>, k: String) -> SessionInfo {
   use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
   let Some(cmd) = util::resolve_bin("claude").await else { return SessionInfo::default() };
-  let mcp_config = super::node_env("probe", "", &[]).await.and_then(|v| v.get("mcpConfig").and_then(Value::as_str).map(str::to_string));
+  let mcp_config = super::mcp_env("probe", "", &[]).get("mcpConfig").and_then(Value::as_str).map(str::to_string);
   let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence"].iter().map(|s| s.to_string()).collect();
   if let Some(c) = mcp_config {
     args.push("--mcp-config".into());

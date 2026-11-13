@@ -28,7 +28,7 @@ function alias(map) {
 // src/main modules whose group moved to Rust (src-tauri/src/commands): the
 // Tauri build gets the stub in tauri/shim/moved instead, so the Node bundle
 // no longer carries them. Add a name here when its group moves.
-const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty', 'agentChat']
+const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty', 'agentChat', 'mcpServer', 'agentHooks']
 const movedPlugin = {
   name: 'moved',
   setup(b) {
@@ -72,10 +72,56 @@ const mainOpts = {
   ]
 }
 
+// riven's MCP tool catalog and tool prompt, for the Rust MCP server
+// (src-tauri/src/services/mcp). src/main/mcpServer.ts stays the one source:
+// the Electron build serves it as is, and the Tauri build reads this JSON, so
+// both offer agents the same tools, schemas, descriptions and prompt. Written
+// only when it changed (cargo rebuilds on it); ASCII-escaped.
+async function writeMcpCatalog() {
+  const r = await esbuild.build({
+    entryPoints: ['src/main/mcpServer.ts'],
+    absWorkingDir: root,
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    write: false,
+    logLevel: 'warning',
+    plugins: [
+      {
+        name: 'no-electron',
+        setup(b) {
+          b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'stub' }))
+          b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: 'module.exports = { ipcMain: {} }', loader: 'js' }))
+        }
+      }
+    ]
+  })
+  const mod = { exports: {} }
+  new Function('module', 'exports', 'require', r.outputFiles[0].text)(mod, mod.exports, (await import('module')).createRequire(import.meta.url))
+  const m = mod.exports
+  const catalog = {
+    tools: m.MCP_TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+      implemented: t.implemented,
+      advertised: t.advertised !== false
+    })),
+    promptHead: m.PROMPT_HEAD,
+    promptLines: m.PROMPT_LINES
+  }
+  const text =
+    JSON.stringify(catalog, null, 1).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')) + '\n'
+  const file = path.join(root, 'src-tauri/src/services/mcp/catalog.json')
+  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+  if (old !== text) fs.writeFileSync(file, text)
+}
+
 fs.rmSync(path.join(out, 'main'), { recursive: true, force: true })
 fs.rmSync(path.join(out, 'preload'), { recursive: true, force: true })
 
 await Promise.all([
+  writeMcpCatalog(),
   esbuild.build({
     ...mainOpts,
     entryPoints: { index: 'src/main/index.ts', 'sqlite-worker': 'src/main/db/sqlite-worker.ts' },

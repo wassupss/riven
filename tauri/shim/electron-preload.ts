@@ -163,6 +163,12 @@ export const ipcRenderer = {
     return (decode(x.responseText) as { v: unknown }).v
   },
   on(channel: string, fn: Listener): typeof ipcRenderer {
+    // The page that answers riven's MCP tool calls (App.tsx registers this
+    // once, in the app window only) tells Rust where to send them, as
+    // Electron's main was told with setAppWindow.
+    if (channel === 'mcp:invoke') {
+      w.__TAURI_INTERNALS__?.invoke('mcp_attach').catch((e) => console.error('[ipc] mcp_attach failed', e))
+    }
     const ls = listeners.get(channel) ?? []
     ls.push(fn)
     listeners.set(channel, ls)

@@ -33,7 +33,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
@@ -62,7 +61,6 @@ const INPUT_ECHO: Duration = Duration::from_millis(350);
 const NOTIFY_MIN_BUSY: Duration = Duration::from_millis(1200);
 const HIDDEN_ACTIVITY_PING: Duration = Duration::from_millis(250);
 const STARTUP_QUIET: Duration = Duration::from_millis(3000);
-const ENV_TIMEOUT: Duration = Duration::from_secs(8);
 
 
 struct St {
@@ -131,8 +129,6 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Session>>>> = OnceLock::new();
 static CTL: OnceLock<Mutex<mpsc::Sender<Op>>> = OnceLock::new();
 static WORKING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-static ENV_WAIT: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>> = OnceLock::new();
-static ENV_SEQ: AtomicU64 = AtomicU64::new(1);
 
 fn sessions() -> MutexGuard<'static, HashMap<String, Arc<Session>>> {
   SESSIONS.get_or_init(Default::default).lock().unwrap()
@@ -230,10 +226,9 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
     return Opened { id: key, existed: true, error: None };
   }
 
-  // riven's own environment for the shell (the zsh shim that gives a typed
-  // `claude` riven's MCP tools, the hook URL): built by Node, which still runs
-  // the MCP server and the hook route, until those move here.
-  let extras = node_env(&key, opts.config_dir.as_deref()).await;
+  // riven's own environment for the shell: the zsh shim that gives a typed
+  // `claude`/`codex` riven's MCP tools, and the hook URL (services/mcp).
+  let extras = crate::services::mcp::pty_env(&key).await;
   let cols = opts.cols.filter(|c| *c > 0.0).map(|c| c as u16).unwrap_or(80);
   let rows = opts.rows.filter(|r| *r > 0.0).map(|r| r as u16).unwrap_or(24);
   let spawned = tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows)).await;
@@ -244,34 +239,6 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
       eprintln!("[pty] spawn failed: {e}");
       Opened { id: key, existed: false, error: Some(e) }
     }
-  }
-}
-
-async fn node_env(key: &str, config_dir: Option<&str>) -> HashMap<String, String> {
-  let id = ENV_SEQ.fetch_add(1, Ordering::Relaxed);
-  let (tx, rx) = tokio::sync::oneshot::channel();
-  ENV_WAIT.get_or_init(Default::default).lock().unwrap().insert(id, tx);
-  let asked = crate::try_emit(json!({ "ev": "ptyEnv", "id": id, "key": key, "configDir": config_dir }));
-  let got = if asked { tokio::time::timeout(ENV_TIMEOUT, rx).await.ok().and_then(Result::ok) } else { None };
-  ENV_WAIT.get_or_init(Default::default).lock().unwrap().remove(&id);
-  let mut out = HashMap::new();
-  if let Some(Value::Object(m)) = got {
-    for (k, v) in m {
-      if let Value::String(v) = v {
-        out.insert(k, v);
-      }
-    }
-  } else {
-    eprintln!("[pty] no environment from Node for {key}; the terminal runs without riven's hooks");
-  }
-  out
-}
-
-/// Node's answer to a 'ptyEnv' request (main.rs dispatch 'pty.env').
-pub fn env_reply(a: &Value) {
-  let id = a.get("id").and_then(Value::as_u64).unwrap_or(0);
-  if let Some(tx) = ENV_WAIT.get_or_init(Default::default).lock().unwrap().remove(&id) {
-    let _ = tx.send(a.get("env").cloned().unwrap_or(Value::Null));
   }
 }
 
@@ -787,23 +754,40 @@ fn publish(s: &Arc<Session>, st: &mut St, notify: Option<Attention>) {
   }
 }
 
-// Terminals whose CLI agent is working right now; Node asks before quitting.
+// Terminals whose CLI agent is working right now.
 fn set_working(key: &str, on: bool) {
   let mut w = WORKING.get_or_init(Default::default).lock().unwrap();
-  let changed = if on { w.insert(key.to_string()) } else { w.remove(key) };
-  if changed {
-    crate::try_emit(json!({ "ev": "ptyAgents", "n": w.len() }));
+  if on {
+    w.insert(key.to_string());
+  } else {
+    w.remove(key);
   }
 }
 
-/// An agent hook, relayed by Node's loopback route (main.rs 'pty.hook').
-pub fn hook(a: &Value) {
-  let str_of = |k: &str| a.get(k).and_then(Value::as_str).map(str::to_string);
-  let Some(pane) = str_of("pane") else { return };
+/// How many terminal agents are working (Node's quit confirmation asks).
+pub fn working_count() -> usize {
+  WORKING.get_or_init(Default::default).lock().unwrap().len()
+}
+
+/// An agent hook for a pane, from the hook route (services/mcp/hooks.rs).
+pub struct AgentHook<'a> {
+  pub pane: &'a str,
+  pub agent: &'a str,
+  /// working | idle | needs_input
+  pub event: &'a str,
+  /// The CLI's hook name (SessionStart, Stop, ...).
+  pub hook: &'a str,
+  pub session_id: Option<String>,
+  /// What the agent answered, when this hook ended a turn.
+  pub reply: Option<String>,
+}
+
+pub fn hook(h: &AgentHook) {
+  let pane = h.pane.to_string();
   let Some(s) = get(&pane) else { return };
-  let agent = str_of("agent").unwrap_or_else(|| "claude".into());
-  let hook = str_of("hook").unwrap_or_default();
-  let session_id = str_of("sessionId");
+  let agent = h.agent.to_string();
+  let hook = h.hook;
+  let session_id = h.session_id.clone();
   let mut st = lock(&s);
   cancel_timer(&mut st);
   st.awaiting_reply = false;
@@ -823,10 +807,10 @@ pub fn hook(a: &Value) {
     st.agent_session_kind = next_kind.clone();
     emit(&st.sender, "pty:agentSession", json!({ "key": pane, "sessionId": next, "agent": next_kind }));
   }
-  let notify = a.get("event").and_then(Value::as_str).and_then(HookEvent::parse).and_then(|e| st.activity.hook(e));
+  let notify = HookEvent::parse(h.event).and_then(|e| st.activity.hook(e));
   publish(&s, &mut st, notify);
   // A finished turn's answer, for whoever asked this pane something.
-  if let Some(text) = str_of("reply") {
+  if let Some(text) = &h.reply {
     emit(&st.sender, "pty:reply", json!({ "key": pane, "text": text }));
   }
 }

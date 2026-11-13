@@ -9,13 +9,9 @@
 // pane as 'chat:event' on the ordinary 'riven:ipc' event: a chat stream is a
 // few KB per turn, not the pty's megabytes.
 //
-// Still in Node until stage 4 (MCP server + hook route), reached over the
-// control line:
-//   'chatEnv'  -> riven's MCP config / prompt / hook env for a pane (Node's
-//                 mcpServer + agentHooks build them), answered by 'chat.env'.
-//   'chatEdit' -> a Codex pane's file change for the changes timeline
-//                 (agentHooks.reportAgentEdit).
-//   'chatRunning' -> how many panes are mid-turn, for the quit confirmation.
+// riven's MCP config, tool prompt and hook env for a pane come from
+// services/mcp, and so does the changes timeline a Codex pane's file edits go
+// to.
 
 pub mod claude;
 mod cli;
@@ -30,14 +26,14 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
 pub use cli::UpdateState;
-pub use history::SessionSummary;
+pub use history::{read_codex_session_title, SessionSummary};
 pub use mcp::SessionInfo;
 
 #[derive(Deserialize, Clone, Default, Debug)]
@@ -126,52 +122,21 @@ fn user_content(text: &str, images: &[Image]) -> Value {
   Value::Array(blocks)
 }
 
-// ---- Node bridge (until stage 4) -------------------------------------------------------
+// ---- riven's MCP server and hooks (services/mcp) ----------------------------------------
 
-static ENV_WAIT: OnceLock<Mutex<HashMap<u64, tokio::sync::oneshot::Sender<Value>>>> = OnceLock::new();
-static ENV_SEQ: AtomicU64 = AtomicU64::new(1);
-const ENV_TIMEOUT: Duration = Duration::from_secs(8);
-
-/// riven's MCP config, prompt and hook env for a pane, built by Node's MCP
-/// server. kind: 'claude' | 'codex' | 'probe'. None when Node did not answer.
-pub async fn node_env(kind: &str, key: &str, disabled: &[String]) -> Option<Value> {
-  let id = ENV_SEQ.fetch_add(1, Ordering::Relaxed);
-  let (tx, rx) = tokio::sync::oneshot::channel();
-  ENV_WAIT.get_or_init(Default::default).lock().unwrap().insert(id, tx);
-  let asked = crate::try_emit(json!({ "ev": "chatEnv", "id": id, "kind": kind, "key": key, "disabled": disabled }));
-  let got = if asked { tokio::time::timeout(ENV_TIMEOUT, rx).await.ok().and_then(Result::ok) } else { None };
-  ENV_WAIT.get_or_init(Default::default).lock().unwrap().remove(&id);
-  if got.is_none() {
-    eprintln!("[chat] no MCP environment from Node for {key}; the agent runs without riven's tools");
-  }
-  got
+/// riven's MCP config, prompt and hook env for a pane. kind: 'claude' |
+/// 'codex' | 'probe'.
+pub fn mcp_env(kind: &str, key: &str, disabled: &[String]) -> Value {
+  crate::services::mcp::chat_env(kind, key, disabled)
 }
 
-/// Node's answer to 'chatEnv' (main.rs dispatch 'chat.env').
-pub fn env_reply(a: &Value) {
-  let id = a.get("id").and_then(Value::as_u64).unwrap_or(0);
-  if let Some(tx) = ENV_WAIT.get_or_init(Default::default).lock().unwrap().remove(&id) {
-    let _ = tx.send(a.get("val").cloned().unwrap_or(Value::Null));
-  }
+pub fn report_edit(edit: Value) {
+  crate::services::mcp::hooks::report_edit(edit);
 }
 
-pub fn node_edit(edit: Value) {
-  crate::try_emit(json!({ "ev": "chatEdit", "edit": edit }));
-}
-
-static LAST_RUNNING: AtomicI64 = AtomicI64::new(-1);
-
-/// Recount the panes mid-turn and tell Node when it changed (quit prompt).
-pub fn report_running_soon() {
-  tauri::async_runtime::spawn(async {
-    let n = running_count() as i64;
-    if LAST_RUNNING.swap(n, Ordering::SeqCst) != n {
-      crate::try_emit(json!({ "ev": "chatRunning", "n": n }));
-    }
-  });
-}
-
-fn running_count() -> usize {
+/// Panes whose agent is mid-turn: what quitting would cut off (Node's quit
+/// confirmation asks).
+pub fn running_count() -> usize {
   let (c, x) = {
     let r = reg();
     (r.claude.values().cloned().collect::<Vec<_>>(), r.codex.values().cloned().collect::<Vec<_>>())
@@ -341,10 +306,8 @@ async fn start_claude(key: String, opts: StartOpts, label: String) -> Started {
   }
   // Starting explicitly supersedes a parked child.
   reg().parked.remove(&key);
-  // riven's MCP config is only known once Node's loopback server listens; Node
-  // waits for it (mcpReady) before answering, as pty:open does.
   let disabled = opts.mcp_disabled.clone().unwrap_or_default();
-  let renv = node_env("claude", &key, &disabled).await.unwrap_or(Value::Null);
+  let renv = mcp_env("claude", &key, &disabled);
   let Some(cmd) = util::resolve_bin("claude").await else { return err("claude CLI not found on PATH") };
 
   let mut args: Vec<String> = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--include-hook-events", "--permission-mode"]
@@ -490,7 +453,6 @@ fn run_post(s: &Arc<claude::Session>, p: claude::Post) {
         prev.0.resume = Some(id);
       }
     }
-    claude::Post::Running => report_running_soon(),
   }
 }
 
@@ -509,7 +471,6 @@ async fn claude_exited(s: Arc<claude::Session>, code: i32) {
   if !mine {
     return;
   }
-  report_running_soon();
   let (parking, saw_init, opts, sender, unsent) = {
     let mut st = s.lock();
     (st.parking, st.saw_init, st.opts.clone(), st.sender.clone(), std::mem::take(&mut st.unsent))
@@ -551,7 +512,7 @@ async fn start_codex(key: String, opts: StartOpts, label: String) -> Started {
     return ok();
   }
   let disabled = opts.mcp_disabled.clone().unwrap_or_default();
-  let renv = node_env("codex", &key, &disabled).await.unwrap_or(Value::Null);
+  let renv = mcp_env("codex", &key, &disabled);
   let Some(cmd) = util::resolve_bin("codex").await else { return err("codex CLI not found on PATH") };
   let bin = util::bin_identity(Some(&cmd)).await;
   let url = renv.get("url").and_then(Value::as_str).map(str::to_string);
@@ -600,7 +561,6 @@ async fn start_codex(key: String, opts: StartOpts, label: String) -> Started {
         r.codex.remove(&x3.key);
       }
     }
-    report_running_soon();
     x3.emit_exit(code);
   });
   let prompt = renv.get("prompt").and_then(Value::as_str).map(str::to_string);
@@ -622,7 +582,6 @@ pub fn send(label: String, key: String, text: String, images: Option<Vec<Value>>
   let s = reg().claude.get(&key).cloned();
   if let Some(s) = s {
     s.deliver(line, turn);
-    report_running_soon();
     return;
   }
   // Parked while idle, or gone: respawn (resuming) and deliver, so a message
@@ -641,7 +600,6 @@ pub fn send(label: String, key: String, text: String, images: Option<Vec<Value>>
     let revived = reg().claude.get(&key).cloned();
     if let Some(s) = revived {
       s.deliver(line, turn);
-      report_running_soon();
     }
   });
 }
@@ -723,7 +681,6 @@ fn stop_session(key: &str) {
     let _ = s.tx.send(claude::Msg::Close);
     s.kill();
   }
-  report_running_soon();
 }
 
 /// Replace the process behind a pane with the installed CLI, resuming the same

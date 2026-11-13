@@ -13,6 +13,7 @@
 
 pub mod chat;
 pub mod config;
+pub mod mcp;
 pub mod notes;
 pub mod pty;
 pub mod search;
@@ -84,6 +85,7 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     pty::pty_seen,
     pty::pty_resize,
     pty::pty_kill,
+    pty::pty_codex_session_title,
     chat::chat_start,
     chat::chat_send,
     chat::chat_alive,
@@ -112,6 +114,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     chat::accounts_profile_dir,
     chat::accounts_logout,
     chat::accounts_list,
+    mcp::mcp_attach,
+    mcp::mcp_result,
   ]);
   move |invoke: Invoke<Wry>| {
     let label = invoke.message.webview_ref().label().to_string();

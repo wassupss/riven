@@ -6,6 +6,7 @@ pub mod atomic;
 pub mod chat;
 pub mod collate;
 pub mod fsx;
+pub mod mcp;
 pub mod notes;
 pub mod paths;
 pub mod pty;

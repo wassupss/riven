@@ -23,6 +23,8 @@ import { rendererDir, serverOrigin, setServerOrigin } from './server-info'
 // A cycle (electron-main imports this file), but only functions, used at request time.
 import { mimeOf, protocolHandler } from './electron-main'
 import { windowByLabel, type Sock, type WebContents } from './windows'
+import { runningChatCount } from './moved/agentChat'
+import { runningTerminalAgentCount } from './moved/pty'
 
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const PRELOAD = path.join(__dirname, '../preload/index.js')
@@ -113,12 +115,17 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 //   GET  /__riven/test?k=KEY&w=w1&op=shot   answers the window (or a pop-* popout) as PNG
 //   GET  /__riven/test?k=KEY&w=w1&op=front  shows and focuses the window
 //   GET  /__riven/test?k=KEY&w=LABEL&op=close  asks any window to close, as its close button does
+//   GET  /__riven/test?k=KEY&op=busy    the counts the quit confirmation would show {chat, terminal}
 const TEST_KEY = process.env.RIVEN_TAURI_TEST_KEY ?? ''
 async function testHook(u: URL, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const k = u.searchParams.get('k') ?? ''
   if (k.length !== TEST_KEY.length || !crypto.timingSafeEqual(Buffer.from(k), Buffer.from(TEST_KEY)))
     return void res.writeHead(403).end()
   const label = u.searchParams.get('w') ?? ''
+  if (u.searchParams.get('op') === 'busy') {
+    const busy = { chat: runningChatCount(), terminal: runningTerminalAgentCount() }
+    return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(busy))
+  }
   if (u.searchParams.get('op') === 'close') {
     await call('win.close', { label }).catch(() => {})
     return void res.writeHead(204).end()

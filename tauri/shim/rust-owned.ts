@@ -57,6 +57,7 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pty:seen': ['id'],
   'pty:resize': ['id', 'cols', 'rows'],
   'pty:kill': ['id'],
+  'pty:codexSessionTitle': ['id'],
   // agent chat (services/chat). Stream events come back as 'chat:event'.
   'chat:start': ['key', 'opts'],
   'chat:send': ['key', 'text', 'images', 'turn'],
@@ -85,7 +86,9 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'cli:deferUpdate': ['cmd'],
   'accounts:profileDir': ['id'],
   'accounts:logout': ['configDir'],
-  'accounts:list': ['configDir']
+  'accounts:list': ['configDir'],
+  // riven's MCP tools (services/mcp): the page's answer to an 'mcp:invoke'.
+  'mcp:result': ['payload']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -110,7 +113,10 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'pty:bell',
   'pty:title',
   'chat:event',
-  'cli:update-changed'
+  'cli:update-changed',
+  'mcp:invoke',
+  'mcp:cancel',
+  'agent:fileEdit'
 ])
 
 export function rustCommand(channel: string): string {

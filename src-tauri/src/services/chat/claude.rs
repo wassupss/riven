@@ -142,7 +142,6 @@ pub enum Post {
   Remember(Vec<String>),
   RestartIfMarked,
   ResumeId(String),
-  Running,
 }
 
 fn note_background_report(st: &mut St) {
@@ -397,7 +396,6 @@ pub fn handle_event(key: &str, st: &mut St, ev: &Value) -> Vec<Post> {
   }
   if ty == "result" {
     st.turn_busy = false;
-    post.push(Post::Running);
     // --resume of a session the CLI no longer has answers this before init and
     // exits; the exit path restarts the pane fresh.
     let resume = super::nz(&st.opts.resume).map(str::to_string);

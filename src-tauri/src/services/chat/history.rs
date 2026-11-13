@@ -34,9 +34,7 @@ pub struct TitleScan {
   pub messages: u64,
 }
 
-fn js_trim(s: &str) -> &str {
-  s.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
-}
+use super::util::js_trim;
 
 pub fn scan_line(out: &mut TitleScan, line: &str) {
   if line.is_empty() {
@@ -415,6 +413,42 @@ fn transcript_from_rollout(text: &str) -> Vec<Value> {
     out.push(m);
   }
   out
+}
+
+// A conversation's name: the first thing the user asked, on one line (Codex
+// has no summarised title the way Claude Code does).
+fn title_from_rollout(text: &str) -> Option<String> {
+  const TITLE_MAX: usize = 80;
+  let clip = |s: &str| if super::util::utf16_len(s) > TITLE_MAX { format!("{}\u{2026}", super::util::slice(s, TITLE_MAX - 1)) } else { s.to_string() };
+  let first_line = |m: &str| m.split('\n').map(js_trim).find(|l| !l.is_empty()).map(str::to_string);
+  for line in text.split('\n') {
+    if !line.contains("user_message") {
+      continue;
+    }
+    let Some(ev) = super::util::parse(line) else { continue };
+    if ev.get("type").and_then(Value::as_str) != Some("event_msg") || ev.pointer("/payload/type").and_then(Value::as_str) != Some("user_message") {
+      continue;
+    }
+    let msg = ev.pointer("/payload/message").and_then(Value::as_str).unwrap_or("");
+    if let Some(f) = first_line(msg) {
+      return Some(clip(&f));
+    }
+  }
+  // A thread run through app-server logs no user_message events.
+  let t = transcript_from_rollout(text);
+  let user = t.iter().find(|m| m["role"] == "user")?;
+  first_line(user["text"].as_str().unwrap_or("")).map(|l| clip(&l))
+}
+
+/// pty:codexSessionTitle: the name of a Codex conversation a terminal is in.
+/// Only the head of the rollout is read (it runs to megabytes).
+pub fn read_codex_session_title(session_id: &str) -> Option<String> {
+  use std::io::Read;
+  const HEAD_BYTES: u64 = 256 * 1024;
+  let file = find_rollout(session_id)?;
+  let mut buf = Vec::new();
+  std::fs::File::open(file).ok()?.take(HEAD_BYTES).read_to_end(&mut buf).ok()?;
+  title_from_rollout(&String::from_utf8_lossy(&buf))
 }
 
 pub fn read_codex_transcript(session_id: &str) -> Vec<Value> {
