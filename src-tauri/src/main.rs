@@ -458,6 +458,18 @@ fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
   }
 }
 
+/// Run the page's beforeunload handlers and wait for them (at most 3s).
+fn flush_page(app: &AppHandle, label: &str) {
+  let (tx, rx) = mpsc::channel();
+  let (app, a) = (app.clone(), json!({ "label": label, "code": "dispatchEvent(new Event('beforeunload')); 1", "expr": false }));
+  std::thread::spawn(move || {
+    let _ = tx.send(dispatch(&app, "wv.exec", &a));
+  });
+  if let Ok(Err(e)) = rx.recv_timeout(Duration::from_secs(3)) {
+    eprintln!("[close] {e}");
+  }
+}
+
 fn navigate(app: &AppHandle, a: &Value) -> Res {
   let w = win(app, a)?;
   let label = w.w.label().to_string();
@@ -828,7 +840,37 @@ fn dialog_message(app: &AppHandle, a: &Value) -> Res {
 
 // ---- screen ------------------------------------------------------------------
 
+// Electron's screen always has a display; callers (the pet's placement, the
+// window restore) read .workArea of the first without checking. macOS can
+// report none for a moment (displays asleep, lid closed, a display being
+// reconfigured), and then that read threw. Answer with the last list seen,
+// else the main window's monitor, else a 1440x900 display at 0,0.
 fn displays(app: &AppHandle) -> Res {
+  static LAST: Mutex<Option<Value>> = Mutex::new(None);
+  let got = if std::env::var("RIVEN_DEV_NO_DISPLAYS").as_deref() == Ok("1") { Ok(json!([])) } else { monitors(app) };
+  match got {
+    Ok(v) if v.as_array().is_some_and(|a| !a.is_empty()) => {
+      *LAST.lock().unwrap() = Some(v.clone());
+      Ok(v)
+    }
+    _ => {
+      if let Some(v) = LAST.lock().unwrap().clone() {
+        return Ok(v);
+      }
+      let fallback = app.get_window("w1").and_then(|w| w.current_monitor().ok().flatten()).map(|m| {
+        let sf = m.scale_factor();
+        let p = m.position().to_logical::<f64>(sf);
+        let z = m.size().to_logical::<f64>(sf);
+        json!({ "x": p.x, "y": p.y, "width": z.width, "height": z.height, "sf": sf })
+      });
+      let r = fallback.unwrap_or(json!({ "x": 0.0, "y": 0.0, "width": 1440.0, "height": 900.0, "sf": 2.0 }));
+      let rect = json!({ "x": r["x"], "y": r["y"], "width": r["width"], "height": r["height"] });
+      Ok(json!([{ "id": 0, "bounds": rect, "workArea": rect, "scaleFactor": r["sf"] }]))
+    }
+  }
+}
+
+fn monitors(app: &AppHandle) -> Res {
   let primary = app.primary_monitor().map_err(|e| e.to_string())?;
   let mut all = app.available_monitors().map_err(|e| e.to_string())?;
   let pname = primary.as_ref().and_then(|m| m.name().cloned());
@@ -1248,6 +1290,28 @@ fn main() {
         return;
       }
       match ev {
+        // WKWebView sends no beforeunload when a window closes, so the page's
+        // debounced saves (settings, sessions: 300ms) were lost if the window
+        // closed inside that window of time. Hold the close, run the page's
+        // beforeunload (its flush is a blocking sendSync, done when the script
+        // returns), then close for real. Bounded: a stuck page closes anyway.
+        WindowEvent::CloseRequested { api, .. } if commands::app_page(label) => {
+          if shared().closing.lock().unwrap().insert(label.to_string()) {
+            api.prevent_close();
+            let (app, label) = (w.app_handle().clone(), label.to_string());
+            std::thread::spawn(move || {
+              flush_page(&app, &label);
+              match app.get_window(&label) {
+                Some(win) => {
+                  let _ = win.close();
+                }
+                None => {
+                  shared().closing.lock().unwrap().remove(&label);
+                }
+              }
+            });
+          }
+        }
         WindowEvent::Focused(true) => win_event(label, "focus", Value::Null),
         WindowEvent::Focused(false) => win_event(label, "blur", Value::Null),
         WindowEvent::Moved(_) => {
@@ -1275,6 +1339,7 @@ fn main() {
         }
         WindowEvent::Destroyed => {
           let sh = shared();
+          sh.closing.lock().unwrap().remove(label);
           sh.external.lock().unwrap().remove(label);
           sh.expected.lock().unwrap().remove(label);
           sh.minimized.lock().unwrap().remove(label);

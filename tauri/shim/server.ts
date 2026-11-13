@@ -21,7 +21,7 @@ import { ipcMain } from './ipc'
 import { RUST_SYNC } from './rust-owned'
 import { rendererDir, serverOrigin, setServerOrigin } from './server-info'
 // A cycle (electron-main imports this file), but only functions, used at request time.
-import { mimeOf, protocolHandler } from './electron-main'
+import { mimeOf, protocolHandler, screen } from './electron-main'
 import { windowByLabel, type Sock, type WebContents } from './windows'
 import { runningChatCount } from './moved/agentChat'
 import { runningTerminalAgentCount } from './moved/pty'
@@ -116,12 +116,20 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse): Prom
 //   GET  /__riven/test?k=KEY&w=w1&op=front  shows and focuses the window
 //   GET  /__riven/test?k=KEY&w=LABEL&op=close  asks any window to close, as its close button does
 //   GET  /__riven/test?k=KEY&op=busy    the counts the quit confirmation would show {chat, terminal}
+//   POST /__riven/test?k=KEY&w=w1&op=wv  body = one JS expression, run by WKWebView itself
+//   GET  /__riven/test?k=KEY&op=displays  what Node's screen module sees {count, primaryWorkArea}
 const TEST_KEY = process.env.RIVEN_TAURI_TEST_KEY ?? ''
 async function testHook(u: URL, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const k = u.searchParams.get('k') ?? ''
   if (k.length !== TEST_KEY.length || !crypto.timingSafeEqual(Buffer.from(k), Buffer.from(TEST_KEY)))
     return void res.writeHead(403).end()
   const label = u.searchParams.get('w') ?? ''
+  if (u.searchParams.get('op') === 'displays') {
+    // What Node's screen module sees (the pet and window placement read it).
+    const all = screen.getAllDisplays()
+    const v = { count: all.length, primaryWorkArea: screen.getPrimaryDisplay()?.workArea ?? null }
+    return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(v))
+  }
   if (u.searchParams.get('op') === 'busy') {
     const busy = { chat: runningChatCount(), terminal: runningTerminalAgentCount() }
     return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(busy))
