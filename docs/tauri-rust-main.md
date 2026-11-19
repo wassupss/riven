@@ -617,7 +617,7 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
 - **sendSync 중계 없애기:** `config:save-sync`, `sessions:save-sync`는 창 닫기에서는 이제 `flush_page`(7-4)가 페이지의 beforeunload를 미리 돌려서 해결된다. 앱 종료(Cmd+Q, Dock 메뉴, 로그아웃)도 RunEvent::ExitRequested에서 모든 앱 창에 `flush_page`를 돌린 뒤 끝내면 동기 XHR이 필요 없다. `__riven:dragPaths`(드롭한 파일 경로)는 Rust가 드래그 시작/드롭 때 경로를 페이지에 미리 보내는 방식으로 바꿔야 한다.
 - **종료 확인:** index.ts의 before-quit 대화상자와 그 수(`pty.working`, `chat.running` 동기 호출)를 Rust로.
 - **시험 훅:** `server.ts`의 `/__riven/test`(`op=eval`, `wv`, `shot`, `close`, `busy`, `displays`, `front`)를 Rust 쪽 루프백 엔드포인트로 옮긴다(`RIVEN_TAURI_TEST_KEY`가 있을 때만). 백그라운드 모드(`RIVEN_TAURI_BACKGROUND=1`, 7-1의 가림 감지 끄기 포함)는 이미 Rust다.
-- **위 "옮기지 않은 것" 전부:** usage:limits, permissions, auth, update, remoteKey, pet, tray, browser, menu, bridge, media, systemResume, focusTrace, demo.
+- **위 "옮기지 않은 것" 중 남은 것:** menu, bridge, media, systemResume, focusTrace, demo, index, appWindow (usage:limits, permissions, auth, update, remoteKey, pet, tray, browser는 8a에서 옮김). 업데이트는 내려받기/설치를 tauri-plugin-updater로 붙이고 `RIVEN_UPDATE_FEED` 대신 설정의 피드를 쓴다.
 - **패키징:** `tauri/package.mjs`에서 Node 바이너리와 node_modules 동봉을 빼고, 서명/공증, tauri-plugin-updater 피드. 언어 서버는 이미 설치된 것만 쓰므로(7-2) 앱에 넣을 것이 없다. 묶인 서버가 빠지면 Electron에서 넘어온 사용자에게 상태줄 안내가 처음 보일 수 있다.
 
 ### 8단계 전 정리 (2026-11-19)
@@ -665,12 +665,27 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
 
 - **usage:limits:** 토큰 찾는 순서(프로필의 `.credentials.json`, 디렉터리 sha256 앞 8자리가 붙은 키체인 서비스, 기본 로그인은 OS 사용자/계정 없음/"unknown" 항목 중 만료 안 된 가장 늦은 것, 그다음 `~/.claude/.credentials.json`), 같은 요청 헤더, 10초 제한, 1시간 캐시와 stale 표시, 빈 configDir 처리가 usage.ts와 같다. 키체인 읽기는 `security`를 5초 제한으로 부른다.
 - **remoteKey:** 셰임의 safeStorage와 같은 봉인(`rt1` + IV 12 + 태그 16 + AES-256-GCM, 키는 키체인 "riven-tauri Safe Storage")이라 전에 쓴 `remote-key.bin`이 그대로 열린다. Node로 봉인한 값을 Rust가 열고, 같은 IV로 Rust가 봉인한 값이 Node와 바이트까지 같다(단위 시험). 파일은 원자적 쓰기, 0600.
-- **백그라운드 시험 모드에서는 키체인을 건드리지 않는다:** usage:limits는 캐시만, remoteKey는 "봉인 불가"(available false, load null)로 답한다. 키체인 읽기가 사용자 화면에 키체인 창을 띄울 수 있어서다. (그 전까지 Node 쪽은 시험 앱에서도 이 읽기를 했다.)
+- **백그라운드 시험 모드에서는 키체인을 건드리지 않는다:** usage:limits는 캐시만, remoteKey는 "봉인 불가"(available false, load null)로 답한다. 키체인 읽기가 사용자 화면에 키체인 창을 띄울 수 있어서다. Node 판에는 이 구분이 없었다.
 - **auth:oauth:** 로그인 창(라벨 `auth`, 480x680, 부모 창의 자식, 제목 "로그인")에서 탐색 훅으로 콜백 주소의 `code`를 잡는다. extractCode 규칙(콜백 주소일 때만, error/error_description은 거부)이 같다. Esc는 창 안 스크립트가 취소 주소로 보내고 훅이 잡는다. 창을 닫으면 "cancelled". 한 번에 하나.
 - **update:** `app:version`은 package.json 버전(셰임과 같음). 개발 빌드는 확인하면 늘 upToDate(전과 같음). 패키지 앱은 tauri-plugin-updater의 latest.json 형식(`version`, `platforms["darwin-aarch64"].url/signature`)을 `RIVEN_UPDATE_FEED`에서 읽어 버전을 비교하고 available까지 알린다. 내려받기와 설치(서명된 번들 교체)는 하지 않는다(8단계에서 플러그인으로). "업데이트 준비됨" 알림은 셰임의 Notification 대신 `services/notify`로 올리고 클릭하면 설치하게 해 두었다(알림 남은 것). 셰임의 Notification은 이제 Node 쪽에서 쓰는 곳이 없다.
 - **permissions:** report는 기존 `perm.rs`(묻지 않는 상태 읽기), ask는 같은 요청, open은 같은 시스템 설정 주소.
-- **tray:** 메뉴 내용과 순서, 숫자 제목, 템플릿 아이콘, 클릭(창 복원/표시/포커스 + `notify:click`), 종료는 Cmd+Q와 같은 경로. 백그라운드 시험 모드에서는 그리지 않고 `diag`만 남긴다. **Electron과 일부러 다른 점:** 행이 "제목 — 워크스페이스" 대신 "제목 · 워크스페이스", 툴팁이 "riven · N"이다(em dash를 쓰지 않음).
+- **tray:** 메뉴 내용과 순서, 숫자 제목, 템플릿 아이콘, 클릭(창 복원/표시/포커스 + `notify:click`), 종료는 Cmd+Q와 같은 경로. 백그라운드 시험 모드에서는 그리지 않고 `diag`만 남긴다. **Electron과 일부러 다른 점:** Electron은 행과 툴팁을 긴 줄표(U+2014)로 잇는데, Rust는 "제목 · 워크스페이스", "riven · N"처럼 가운뎃점으로 잇는다(긴 줄표를 쓰지 않음).
 - **pet:** 창은 Rust가 만든다(라벨 `pet`, app 페이지로 취급해 명령 허용). 펫 페이지가 쓰는 채널은 pet, config, chat 이벤트뿐이라 Node가 필요 없다. 위치(저장된 자리가 화면에 있으면 그 자리, 아니면 riven 옆 오른쪽/왼쪽/모서리), 크기 조절(아래 끝 기준, 120~1000 / 100~700), 끌기, 커서 안 판정, 항상 위(floating), 포커스 잠깐 받기, 복사(UTF-16 4096), 이벤트 브로드캐스트, 사용자가 닫으면 `pet:closed`, riven이 닫으면 조용히, riven 창이 닫히면 펫도 닫힘. 펫 창 배율은 1(WebKit에는 출처별 배율이 없음, 셰임에서도 1).
 - **같은 입력 비교 (같은 시험 앱에서 Node 구현과 Rust 구현을 차례로, 화면에 아무것도 띄우지 않는 채널만):** perm:report, app:version, update:current 전후와 check(이벤트 포함), tray:feed 5가지 뒤 tray:diag, 창 없는 pet 조회와 조작, setBreak 4가지(25, '7', 'x', 0), press, setOnTop/askOnTop 이벤트까지 14건. 12건이 같았고 2건은 위의 em dash 대신 가운뎃점 차이뿐이었다.
 - **Node에서 원래 모듈로 비교:** pet.ts를 electron 대역으로 Node에서 돌려 처음 자리 5가지, 저장된 자리 3가지(화면 안 1, 밖 2), 크기 조절 4가지를 뽑았고 Rust 단위 시험의 값과 모두 같았다. auth.ts의 extractCode 8가지, usage.ts의 keychainService 해시 2가지도 같았다.
 - 추론만 한 것과 화면 확인이 필요한 것: 실제 키체인 읽기와 사용량 API 응답, 원격 키 봉인/열기(실제 키체인 키), 로그인 창 흐름, 권한 요청 창과 시스템 설정 열기, 메뉴 막대 아이콘과 메뉴, 펫 창 전체(열기, 끌기, 크기, 항상 위, 이름 바꾸기 포커스, 닫기와 다시 열기), 업데이트 피드(설정된 피드가 없음).
+
+#### 8a 정리
+
+- 커밋 5개: 탭 넘침 버튼(렌더러, Electron에도 들어감), 브라우저 로드 실패, 브라우저 로직 Rust로, 원래 있던 git 버그 3개(Rust만), 남은 데스크톱 채널 Rust로.
+- 이번에 Rust로 옮긴 채널: browser 21개 + 이벤트 3개, 남은 데스크톱 채널 31개 + 이벤트 6개.
+- 남은 Node 코드 (`src/main`, Tauri 빌드의 Node 번들에 들어가는 것, 소스맵 기준):
+
+| | 줄 수 |
+|---|---|
+| 7단계 후 | 3,033 (18개 파일) |
+| 8a 후 | 879 (8개 파일: index 447, demo 100, media 85, systemResume 68, menu 65, bridge 63, focusTrace 27, appWindow 24) |
+
+  번들에 들어가는 `tauri/shim`은 2,683줄이다(7단계 후 3,080. `views.ts` 451줄을 지움).
+- 메모리 참고 (시험 앱, 위 시험을 모두 돌린 뒤 10분쯤, footprint): riven-tauri 79MB, Node 40MB. 빈 상태 측정이 아니라 7단계 표와 바로 비교하지 않는다.
+- 사용자 화면에서 확인할 것 (시험 앱에서는 띄우지 않음): 브라우저 패널의 오른쪽 클릭/도구 막대 메뉴와 항목, 주소 줄 추천 창, 팝아웃 창의 브라우저 패널, 오류 페이지 모양, 메뉴 막대 아이콘과 메뉴, 펫 창 전체, 로그인 창, 권한 요청과 시스템 설정 열기, 사용량 위젯의 플랜 한도(키체인), 원격 제어 키.
