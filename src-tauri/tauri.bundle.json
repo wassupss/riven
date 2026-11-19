@@ -1,19 +1,12 @@
 {
   "bundle": {
     "active": true,
-    "targets": [
-      "app"
-    ],
-    "resources": {
-      "target/stage/app/": "app/",
-      "target/stage/node": "node"
-    },
-    "icon": [
-      "../build/icon.icns",
-      "icons/icon.png"
-    ],
+    "targets": ["app"],
+    "icon": ["../build/icon.icns", "icons/icon.png"],
+    "createUpdaterArtifacts": false,
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
     }
   }
 }

@@ -100,7 +100,6 @@ enum Click {
   // notify:show: focus `label` and tell its page about `pane`.
   Pane { label: Option<String>, pane: Option<String> },
   // "Update ready" (services/update): a click installs it.
-  #[allow(dead_code)]
   Update,
 }
 
@@ -258,7 +257,6 @@ pub fn show(sender: &str, req: &Value) {
 }
 
 /// update.ts's "update ready" notification.
-#[allow(dead_code)]
 pub fn post_update(title: &str, body: &str) -> Result<(), String> {
   if crate::background() {
     return Ok(());

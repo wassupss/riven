@@ -34,6 +34,8 @@ ryu-js = "1"
 encoding_rs = "0.8"
 flate2 = "1"
 crc32fast = "1"
+# Updates (services/update.rs). native-tls: the TLS stack already in the tree.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls"] }
 
 # Already in the tree through wry; same versions, a few more features.
 [target.'cfg(target_os = "macos")'.dependencies]

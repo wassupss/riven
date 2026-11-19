@@ -944,6 +944,7 @@ fn main() {
   #[allow(unused_mut)]
   let mut app = builder
     .plugin(tauri_plugin_dialog::init())
+    .plugin(services::update::plugin())
     // The app's pages (page.rs). Answered off the main thread: an asset read
     // or a media range must not hold up the event loop.
     .register_asynchronous_uri_scheme_protocol(page::SCHEME, |ctx, req, responder| {
