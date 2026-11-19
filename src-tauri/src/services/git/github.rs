@@ -221,11 +221,32 @@ pub fn to_pull_requests(raw: &[Value], login: Option<&str>) -> Vec<Value> {
 
 const PR_FIELDS: &str = "number,title,url,state,author,headRefName,baseRefName,isDraft,reviewDecision,statusCheckRollup,reviewRequests,updatedAt";
 
-/// Who gh is logged in as, cached for the life of the app once known (as
-/// before: the first repo asked decides it).
+// Who gh is logged in as, per repo directory. githubPr.ts cached the first
+// answer for the life of the app, but gh can answer differently by directory
+// (a gh wrapper that picks the account by the working directory, GH_CONFIG_DIR
+// per project), and then every other repo's "mine" / "review requested" was
+// judged against the wrong account. Electron still has the app-wide cache.
+const LOGIN_CACHE_MAX: usize = 64;
+
+fn login_cache() -> &'static Mutex<HashMap<String, String>> {
+  static C: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+  C.get_or_init(Default::default)
+}
+
+fn cached_login(cwd: &str) -> Option<String> {
+  login_cache().lock().unwrap().get(cwd).cloned()
+}
+
+fn remember_login(cwd: &str, login: &str) {
+  let mut c = login_cache().lock().unwrap();
+  if c.len() >= LOGIN_CACHE_MAX && !c.contains_key(cwd) {
+    c.clear();
+  }
+  c.insert(cwd.to_string(), login.to_string());
+}
+
 async fn viewer_login(cwd: &str) -> Option<String> {
-  static CACHE: Mutex<Option<String>> = Mutex::new(None);
-  if let Some(l) = CACHE.lock().unwrap().clone() {
+  if let Some(l) = cached_login(cwd) {
     return Some(l);
   }
   let r = gh_list(cwd, sv(&["api", "user", "--jq", ".login"]), 20000).await;
@@ -233,7 +254,7 @@ async fn viewer_login(cwd: &str) -> Option<String> {
   if login.is_empty() {
     return None;
   }
-  *CACHE.lock().unwrap() = Some(login.clone());
+  remember_login(cwd, &login);
   Some(login)
 }
 
@@ -828,6 +849,15 @@ pub async fn set_thread_resolved(repo_dir: &str, thread_id: &str, resolved: bool
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn login_is_cached_per_repo_directory() {
+    super::remember_login("/tmp/riven-test-a", "alice");
+    super::remember_login("/tmp/riven-test-b", "bob");
+    assert_eq!(super::cached_login("/tmp/riven-test-a").as_deref(), Some("alice"));
+    assert_eq!(super::cached_login("/tmp/riven-test-b").as_deref(), Some("bob"));
+    assert_eq!(super::cached_login("/tmp/riven-test-c"), None);
+  }
+
   use super::*;
 
   // The cases of src/main/githubPr.test.ts, githubPrDetail.test.ts and

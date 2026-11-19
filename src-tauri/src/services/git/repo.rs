@@ -313,25 +313,46 @@ pub async fn pull(folder: &str) -> Value {
   run(folder, &["pull", "--ff-only"]).await
 }
 
-/// Tracked files go back to HEAD; an untracked file is deleted (an untracked
-/// folder is not: rm without recursive refuses it, as before).
+/// Tracked files go back to HEAD; an untracked file or folder is deleted.
+/// git.ts used rm without recursive, which refuses a folder (git status shows
+/// a new folder as one `dir/` entry), and answered ok anyway: nothing went and
+/// the panel said it had. Electron still does that.
 pub async fn discard(folder: &str, rel: &str, untracked: Option<&Value>) -> Value {
   bump();
   if truthy(untracked) {
-    let p = join(folder, rel);
-    let _ = tokio::task::spawn_blocking(move || {
-      if let Ok(md) = std::fs::symlink_metadata(&p) {
-        if !md.is_dir() {
-          let _ = std::fs::remove_file(&p);
-        }
-      }
-    })
-    .await;
+    let (folder, rel) = (folder.to_string(), rel.to_string());
+    let r = tokio::task::spawn_blocking(move || remove_untracked(&folder, &rel))
+      .await
+      .unwrap_or_else(|e| Err(e.to_string()));
     bump();
-    return json!({ "ok": true });
+    return match r {
+      Ok(()) => json!({ "ok": true }),
+      Err(e) => json!({ "ok": false, "error": e }),
+    };
   }
   run(folder, &["reset", "-q", "HEAD", "--", rel]).await; // unstage if staged
   run(folder, &["checkout", "--", rel]).await
+}
+
+/// Delete an untracked path inside the repo: a file or symlink itself, a
+/// folder with everything in it (symlinks inside are removed, not followed).
+/// Never the repo itself or anything outside it. Gone already is fine (rm -f).
+pub(crate) fn remove_untracked(folder: &str, rel: &str) -> Result<(), String> {
+  let root = join(folder, "");
+  let p = join(folder, rel);
+  let rel_ok = !rel.is_empty() && std::path::Path::new(rel).components().all(|c| matches!(c, std::path::Component::Normal(_)) || matches!(c, std::path::Component::CurDir));
+  if !rel_ok || p == root || !p.starts_with(&format!("{}/", root.trim_end_matches('/'))) {
+    return Err(format!("refusing to delete '{rel}': not inside the repository"));
+  }
+  // "dir/" as git prints it; with the slash a symlink would be followed.
+  let p = p.trim_end_matches('/').to_string();
+  let md = match std::fs::symlink_metadata(&p) {
+    Ok(md) => md,
+    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+    Err(e) => return Err(e.to_string()),
+  };
+  let r = if md.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+  r.map_err(|e| e.to_string())
 }
 
 pub async fn stage(folder: &str, rel: &str) -> Value {
@@ -392,7 +413,10 @@ pub async fn stash_pop(folder: &str) -> Value {
 }
 
 pub async fn stash_list(folder: &str) -> Value {
-  let r = git(args(folder, &["stash", "list", "--format=%gd%00%s"]), DEFAULT_MAX_BUFFER).await;
+  // %x00: git log's pretty format has no %00 (that is for-each-ref's), so
+  // git.ts got "stash@{0}%00" with no subject and every title was empty.
+  // Electron still sends %00.
+  let r = git(args(folder, &["stash", "list", "--format=%gd%x00%s"]), DEFAULT_MAX_BUFFER).await;
   if !r.ok {
     return json!([]);
   }
@@ -415,6 +439,38 @@ pub async fn stash_list(folder: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn untracked_folders_and_files_go() {
+    let base = std::env::temp_dir().join(format!("riven-discard-{}", std::process::id()));
+    let repo = base.join("repo");
+    std::fs::create_dir_all(repo.join("newdir/sub")).unwrap();
+    std::fs::write(repo.join("newdir/sub/a.txt"), "a").unwrap();
+    std::fs::write(repo.join("f.txt"), "f").unwrap();
+    std::fs::create_dir_all(base.join("outside")).unwrap();
+    std::fs::write(base.join("outside/keep.txt"), "k").unwrap();
+    // A symlink inside the new folder must not take its target with it.
+    std::os::unix::fs::symlink(base.join("outside"), repo.join("newdir/link")).unwrap();
+    let r = repo.to_str().unwrap();
+    assert_eq!(super::remove_untracked(r, "newdir/"), Ok(()));
+    assert!(!repo.join("newdir").exists());
+    assert!(base.join("outside/keep.txt").exists());
+    // A symlink to a folder, named as git names a folder ("ln/"): the link goes, not the folder.
+    std::os::unix::fs::symlink(base.join("outside"), repo.join("ln")).unwrap();
+    assert_eq!(super::remove_untracked(r, "ln/"), Ok(()));
+    assert!(std::fs::symlink_metadata(repo.join("ln")).is_err());
+    assert!(base.join("outside/keep.txt").exists());
+    assert_eq!(super::remove_untracked(r, "f.txt"), Ok(()));
+    assert!(!repo.join("f.txt").exists());
+    assert_eq!(super::remove_untracked(r, "gone.txt"), Ok(()));
+    assert!(super::remove_untracked(r, "../outside").is_err());
+    assert!(super::remove_untracked(r, "").is_err());
+    assert!(super::remove_untracked(r, ".").is_err());
+    assert!(super::remove_untracked(r, "/etc").is_err());
+    assert!(base.join("outside/keep.txt").exists());
+    assert!(repo.exists());
+    std::fs::remove_dir_all(&base).unwrap();
+  }
+
   #[test]
   fn parse_int_like_js() {
     assert_eq!(super::parse_int("1731500000"), 1731500000);
