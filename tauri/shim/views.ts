@@ -115,7 +115,7 @@ export class ViewContents extends EventEmitter {
   // created with is not a page anyone asked for.
   private started = false
   private poll: ReturnType<typeof setInterval> | null = null
-  private loadWaiters: Array<() => void> = []
+  private loadWaiters: Array<(err?: Error) => void> = []
   _openHandler: ((d: { url: string }) => { action: 'allow' | 'deny' }) | null = null
   host: BrowserWindow | null = null
 
@@ -157,14 +157,15 @@ export class ViewContents extends EventEmitter {
     if (this.destroyed || !this.host) return Promise.reject(new Error('view is not attached'))
     this.started = true
     this.cmd('bv.navigate', { url })
-    // Electron resolves when the load is done.
-    return new Promise((resolve) => {
+    // Electron resolves when the load is done, and rejects when it fails.
+    return new Promise((resolve, reject) => {
       const t = setTimeout(done, 30000)
       const self = this
-      function done(): void {
+      function done(err?: Error): void {
         clearTimeout(t)
         self.loadWaiters = self.loadWaiters.filter((w) => w !== done)
-        resolve()
+        if (err) reject(err)
+        else resolve()
       }
       this.loadWaiters.push(done)
     })
@@ -293,6 +294,26 @@ export class ViewContents extends EventEmitter {
     // A load that fails never says it finished: ask while one is going.
     if (st.loading) this.startPoll()
     else this.stopPoll()
+  }
+  // Rust's navigation delegate saw the load fail (browser.rs NavProxy), with
+  // Chromium's net error code and name. Electron's order: the failure, then
+  // the load stopping (from the state that comes with it).
+  _fail(m: Record<string, unknown>, st: State | null): void {
+    if (!this.started || this.destroyed) return
+    const code = Number(m.code) || -2
+    const desc = String(m.desc ?? 'ERR_FAILED')
+    const url = String(m.url ?? '')
+    console.log(`[browser] load failed: ${desc} (${code}) ${url}`)
+    if (m.provisional) this.emit('did-fail-provisional-load', ev(), code, desc, url, true, 0, 0)
+    this.emit('did-fail-load', ev(), code, desc, url, true, 0, 0)
+    const err = Object.assign(new Error(`${desc} (${code}) loading '${url}'`), { errno: code, code: desc, url })
+    for (const w of this.loadWaiters.splice(0)) w(err)
+    // A load that never reached the page is followed at once by the error page
+    // Rust shows at the failed URL; WebKit's state here still names the old
+    // page for a moment, which would flash it into the address bar. The error
+    // page's own load brings the state.
+    const errorPage = !!m.provisional && code !== -3
+    if (st && !errorPage) this._state(st, 'fail')
   }
   private startPoll(): void {
     if (this.poll) return
@@ -424,6 +445,9 @@ onEvent((m) => {
       break
     case 'msg':
       wc._msg((m.msg as Record<string, unknown>) ?? {}, st)
+      break
+    case 'fail':
+      wc._fail(m, st)
       break
     case 'newwindow':
       wc._newWindow(String(m.url))

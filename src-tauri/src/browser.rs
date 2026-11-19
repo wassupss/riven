@@ -16,18 +16,20 @@
 use super::{b, base64_encode, emit, f, s, Res};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+use objc2::runtime::{AnyObject, ProtocolObject, Sel};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{
   NSArray, NSData, NSDictionary, NSError, NSJSONSerialization, NSJSONWritingOptions, NSObject, NSObjectProtocol,
-  NSString,
+  NSString, NSURL,
 };
 use objc2_web_kit::{
-  WKContentWorld, WKScriptMessage, WKScriptMessageHandler, WKSnapshotConfiguration, WKUserContentController,
-  WKUserScript, WKUserScriptInjectionTime, WKWebView,
+  WKContentWorld, WKNavigation, WKNavigationDelegate, WKScriptMessage, WKScriptMessageHandler,
+  WKSnapshotConfiguration, WKUserContentController, WKUserScript, WKUserScriptInjectionTime, WKWebView,
 };
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use serde_json::{json, Value};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -105,6 +107,217 @@ impl Messages {
     let this = Self::alloc(mtm).set_ivars(HandlerIvars { label });
     unsafe { msg_send![super(this), init] }
   }
+}
+
+// ---- failed loads -------------------------------------------------------------------
+//
+// Electron raises did-fail-load (and did-fail-provisional-load) when a page
+// cannot be reached, and Chromium commits an error page at the failed URL, so
+// the address bar keeps what was typed and Reload tries it again. wry's
+// navigation delegate has no failure callbacks, so a failed load here was
+// silent: the old page stayed, the address went back to it, nothing said why.
+//
+// The view's navigation delegate becomes a small proxy: it answers the two
+// failure callbacks, and hands every other delegate
+// message to wry's own delegate unchanged (forwardingTargetForSelector), so
+// wry's navigation policy, page-load and download hooks run as before. WebKit
+// holds its delegate weakly; the proxy (which holds wry's) lives in PROXIES
+// until the view closes.
+
+struct ProxyIvars {
+  label: String,
+  inner: Retained<ProtocolObject<dyn WKNavigationDelegate>>,
+  // The WKNavigation of the error page we loaded, so its own commit is known.
+  error_nav: Cell<usize>,
+}
+
+define_class!(
+  #[unsafe(super(NSObject))]
+  #[thread_kind = MainThreadOnly]
+  #[name = "RivenBrowserNavigation"]
+  #[ivars = ProxyIvars]
+  struct NavProxy;
+
+  impl NavProxy {
+    #[unsafe(method(respondsToSelector:))]
+    fn responds_to(&self, sel: Sel) -> bool {
+      let mine: bool = unsafe { msg_send![super(self), respondsToSelector: sel] };
+      mine || unsafe { msg_send![&*self.ivars().inner, respondsToSelector: sel] }
+    }
+
+    #[unsafe(method(forwardingTargetForSelector:))]
+    fn forwarding_target(&self, _sel: Sel) -> *mut AnyObject {
+      Retained::as_ptr(&self.ivars().inner) as *mut AnyObject
+    }
+  }
+
+  unsafe impl NSObjectProtocol for NavProxy {}
+
+  unsafe impl WKNavigationDelegate for NavProxy {
+    #[unsafe(method(webView:didFailProvisionalNavigation:withError:))]
+    fn did_fail_provisional(&self, wv: &WKWebView, nav: *mut WKNavigation, err: &NSError) {
+      if self.inner_responds(sel!(webView:didFailProvisionalNavigation:withError:)) {
+        let _: () = unsafe { msg_send![&*self.ivars().inner, webView: wv, didFailProvisionalNavigation: nav, withError: err] };
+      }
+      self.failed(wv, nav, err, true);
+    }
+
+    #[unsafe(method(webView:didFailNavigation:withError:))]
+    fn did_fail(&self, wv: &WKWebView, nav: *mut WKNavigation, err: &NSError) {
+      if self.inner_responds(sel!(webView:didFailNavigation:withError:)) {
+        let _: () = unsafe { msg_send![&*self.ivars().inner, webView: wv, didFailNavigation: nav, withError: err] };
+      }
+      self.failed(wv, nav, err, false);
+    }
+  }
+);
+
+thread_local! {
+  // Main thread only (every with_webview closure runs there).
+  static PROXIES: RefCell<HashMap<String, Retained<NavProxy>>> = RefCell::new(HashMap::new());
+}
+
+impl NavProxy {
+  fn new(mtm: MainThreadMarker, label: String, inner: Retained<ProtocolObject<dyn WKNavigationDelegate>>) -> Retained<Self> {
+    let this = Self::alloc(mtm).set_ivars(ProxyIvars { label, inner, error_nav: Cell::new(0) });
+    unsafe { msg_send![super(this), init] }
+  }
+
+  fn inner_responds(&self, sel: Sel) -> bool {
+    unsafe { msg_send![&*self.ivars().inner, respondsToSelector: sel] }
+  }
+
+  fn failed(&self, wv: &WKWebView, nav: *mut WKNavigation, err: &NSError, provisional: bool) {
+    // Our own error page failing (it cannot, it is a string) must not loop.
+    if nav as usize != 0 && nav as usize == self.ivars().error_nav.get() {
+      return;
+    }
+    let domain = err.domain().to_string();
+    let code = err.code() as i64;
+    let (net, name) = net_error(&domain, code);
+    let url = unsafe { failing_url(err) }.unwrap_or_else(|| unsafe {
+      wv.URL().and_then(|u| u.absoluteString()).map(|s| s.to_string()).unwrap_or_default()
+    });
+    let detail = err.localizedDescription().to_string();
+    let state = unsafe { state_of(wv) };
+    emit(json!({
+      "ev": "bv", "label": self.ivars().label, "kind": "fail", "provisional": provisional,
+      "code": net, "desc": name, "url": url, "detail": detail, "domain": domain, "nsCode": code, "state": state,
+    }));
+    // Like Chromium, a page that could not be reached at all is replaced by an
+    // error page at its URL (Reload tries the URL again). An aborted load
+    // (superseded, stopped, turned into a download) is not an error to show,
+    // and a page that failed after it was committed keeps what it drew.
+    if provisional && net != -3 && !url.is_empty() {
+      self.show_error(wv, &url, &detail, name);
+    }
+  }
+
+  fn show_error(&self, wv: &WKWebView, url: &str, detail: &str, name: &str) {
+    let Some(target) = NSURL::URLWithString(&NSString::from_str(url)) else { return };
+    let html = NSString::from_str(&error_page(url, detail, name));
+    unsafe {
+      let wv = wv as *const WKWebView as *const AnyObject;
+      // Safari's own way (WKWebView SPI): the page is shown in place of the
+      // unreachable URL, which stays the view's URL and is what Reload loads.
+      let alt = sel!(_loadAlternateHTMLString:baseURL:forUnreachableURL:);
+      let has_alt: bool = msg_send![&*wv, respondsToSelector: alt];
+      if has_alt {
+        let none: Option<&NSURL> = None;
+        let _: () = msg_send![&*wv, _loadAlternateHTMLString: &*html, baseURL: none, forUnreachableURL: &*target];
+      } else {
+        let nav: *mut WKNavigation = msg_send![&*wv, loadHTMLString: &*html, baseURL: &*target];
+        self.ivars().error_nav.set(nav as usize);
+      }
+    }
+  }
+}
+
+unsafe fn failing_url(err: &NSError) -> Option<String> {
+  let info = err.userInfo();
+  if let Some(v) = info.objectForKey(&NSString::from_str("NSErrorFailingURLStringKey")) {
+    if let Ok(s) = v.downcast::<NSString>() {
+      return Some(s.to_string());
+    }
+  }
+  let v = info.objectForKey(&NSString::from_str("NSErrorFailingURLKey"))?;
+  let u = v.downcast::<NSURL>().ok()?;
+  u.absoluteString().map(|s| s.to_string())
+}
+
+/// WebKit's NSError as Chromium's net error (code, name): what Electron's
+/// did-fail-load reports as errorCode and errorDescription.
+pub(crate) fn net_error(domain: &str, code: i64) -> (i32, &'static str) {
+  if domain == "WebKitErrorDomain" {
+    return match code {
+      // Cannot show the MIME type / interrupted by a policy change: the load
+      // became a download or was refused by the navigation policy.
+      100 | 102 => (-3, "ERR_ABORTED"),
+      101 => (-301, "ERR_UNKNOWN_URL_SCHEME"),
+      103 => (-312, "ERR_UNSAFE_PORT"),
+      _ => (-2, "ERR_FAILED"),
+    };
+  }
+  if domain != "NSURLErrorDomain" {
+    return (-2, "ERR_FAILED");
+  }
+  match code {
+    -999 => (-3, "ERR_ABORTED"),
+    -1001 => (-7, "ERR_TIMED_OUT"),
+    -1002 => (-301, "ERR_UNKNOWN_URL_SCHEME"),
+    -1003 | -1006 => (-105, "ERR_NAME_NOT_RESOLVED"),
+    -1004 => (-102, "ERR_CONNECTION_REFUSED"),
+    -1005 => (-101, "ERR_CONNECTION_RESET"),
+    -1007 => (-310, "ERR_TOO_MANY_REDIRECTS"),
+    -1009 | -1018 | -1019 | -1020 => (-106, "ERR_INTERNET_DISCONNECTED"),
+    -1011 | -1017 => (-320, "ERR_INVALID_RESPONSE"),
+    -1014 => (-324, "ERR_EMPTY_RESPONSE"),
+    -1015 | -1016 => (-330, "ERR_CONTENT_DECODING_FAILED"),
+    -1100 => (-6, "ERR_FILE_NOT_FOUND"),
+    -1102 => (-10, "ERR_ACCESS_DENIED"),
+    -1200 => (-107, "ERR_SSL_PROTOCOL_ERROR"),
+    -1201 | -1204 => (-201, "ERR_CERT_DATE_INVALID"),
+    -1202 | -1203 => (-202, "ERR_CERT_AUTHORITY_INVALID"),
+    -1205 => (-117, "ERR_BAD_SSL_CLIENT_AUTH_CERT"),
+    -1206 => (-110, "ERR_SSL_CLIENT_AUTH_CERT_NEEDED"),
+    _ => (-2, "ERR_FAILED"),
+  }
+}
+
+fn html_escape(s: &str) -> String {
+  let mut o = String::with_capacity(s.len());
+  for c in s.chars() {
+    match c {
+      '&' => o.push_str("&amp;"),
+      '<' => o.push_str("&lt;"),
+      '>' => o.push_str("&gt;"),
+      '"' => o.push_str("&quot;"),
+      '\'' => o.push_str("&#39;"),
+      c => o.push(c),
+    }
+  }
+  o
+}
+
+/// The page shown in place of one that could not be reached: WebKit's own
+/// description (in the system language), the URL, and the net error name.
+/// Static, no script, nothing loaded.
+pub(crate) fn error_page(url: &str, detail: &str, name: &str) -> String {
+  let host = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| url.to_string());
+  format!(
+    "<!doctype html><html><head><meta charset=\"utf-8\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\">\
+<meta name=\"color-scheme\" content=\"light dark\"><title>{t}</title><style>\
+html,body{{height:100%;margin:0}}body{{display:flex;align-items:center;justify-content:center;\
+font:14px -apple-system,system-ui,sans-serif;color:GrayText}}main{{max-width:560px;padding:24px}}\
+h1{{font-size:17px;font-weight:600;color:CanvasText;margin:0 0 10px}}p{{margin:0 0 10px;word-break:break-all}}\
+code{{font:12px ui-monospace,monospace}}</style></head><body><main data-riven-error=\"{n}\">\
+<h1>{d}</h1><p>{u}</p><code>{n}</code></main></body></html>",
+    t = html_escape(&host),
+    d = html_escape(detail),
+    u = html_escape(url),
+    n = html_escape(name),
+  )
 }
 
 unsafe fn wk<'a>(pv: &'a tauri::webview::PlatformWebview) -> &'a WKWebView {
@@ -244,8 +457,14 @@ fn create(app: &AppHandle, a: &Value) -> Res {
       &world,
     );
     ucc.addUserScript(&script);
-    let h = Messages::new(mtm, hl);
+    let h = Messages::new(mtm, hl.clone());
     ucc.addScriptMessageHandler_contentWorld_name(ProtocolObject::from_ref(&*h), &world, &NSString::from_str(HANDLER));
+    // Failed loads (see NavProxy): wry's delegate stays behind the proxy.
+    if let Some(inner) = wk.navigationDelegate() {
+      let proxy = NavProxy::new(mtm, hl.clone(), inner);
+      wk.setNavigationDelegate(Some(ProtocolObject::from_ref(&*proxy)));
+      PROXIES.with(|p| p.borrow_mut().insert(hl, proxy));
+    }
   })
   .map_err(|e| e.to_string())?;
   Ok(Value::Null)
@@ -457,9 +676,52 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
           v.open_devtools();
           Ok(Value::Null)
         }
-        "bv.close" => e(v.close()),
+        "bv.close" => {
+          let label = v.label().to_string();
+          let r = v.close();
+          // After WebKit has let go of the view (main thread, queued behind the close).
+          let _ = app.run_on_main_thread(move || {
+            PROXIES.with(|p| p.borrow_mut().remove(&label));
+          });
+          e(r)
+        }
         _ => Err(format!("unknown command {cmd}")),
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn net_errors_match_chromium() {
+    assert_eq!(net_error("NSURLErrorDomain", -1003), (-105, "ERR_NAME_NOT_RESOLVED"));
+    assert_eq!(net_error("NSURLErrorDomain", -1004), (-102, "ERR_CONNECTION_REFUSED"));
+    assert_eq!(net_error("NSURLErrorDomain", -1001), (-7, "ERR_TIMED_OUT"));
+    assert_eq!(net_error("NSURLErrorDomain", -999), (-3, "ERR_ABORTED"));
+    assert_eq!(net_error("NSURLErrorDomain", -1202), (-202, "ERR_CERT_AUTHORITY_INVALID"));
+    assert_eq!(net_error("NSURLErrorDomain", -1201), (-201, "ERR_CERT_DATE_INVALID"));
+    assert_eq!(net_error("NSURLErrorDomain", -1200), (-107, "ERR_SSL_PROTOCOL_ERROR"));
+    assert_eq!(net_error("NSURLErrorDomain", -1005), (-101, "ERR_CONNECTION_RESET"));
+    assert_eq!(net_error("NSURLErrorDomain", -1009), (-106, "ERR_INTERNET_DISCONNECTED"));
+    assert_eq!(net_error("NSURLErrorDomain", -1234), (-2, "ERR_FAILED"));
+    assert_eq!(net_error("WebKitErrorDomain", 102), (-3, "ERR_ABORTED"));
+    assert_eq!(net_error("WebKitErrorDomain", 101), (-301, "ERR_UNKNOWN_URL_SCHEME"));
+    assert_eq!(net_error("WebKitErrorDomain", 103), (-312, "ERR_UNSAFE_PORT"));
+    assert_eq!(net_error("kCFErrorDomainCFNetwork", 1), (-2, "ERR_FAILED"));
+  }
+
+  #[test]
+  fn error_page_escapes_everything() {
+    let p = error_page("http://a.test/<script>\"x'", "bad <b>host</b> & co", "ERR_NAME_NOT_RESOLVED");
+    assert!(!p.contains("<script>"));
+    assert!(!p.contains("<b>"));
+    assert!(p.contains("&lt;script&gt;&quot;x&#39;"));
+    assert!(p.contains("bad &lt;b&gt;host&lt;/b&gt; &amp; co"));
+    assert!(p.contains("<title>a.test</title>"));
+    assert!(p.contains("default-src 'none'"));
+    assert!(!p.contains("<script"));
   }
 }

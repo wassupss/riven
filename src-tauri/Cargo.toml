@@ -41,7 +41,7 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSJSONSerialization", "NSNotification", "NSOperation", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSScreen", "NSWorkspace"] }
-objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKContentWorld", "WKFrameInfo", "WKNavigation", "WKScriptMessage", "WKScriptMessageHandler", "WKUserContentController", "WKUserScript", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKContentWorld", "WKFrameInfo", "WKNavigation", "WKNavigationDelegate", "WKScriptMessage", "WKScriptMessageHandler", "WKUserContentController", "WKUserScript", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNError", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
