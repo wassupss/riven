@@ -106,6 +106,9 @@ enum Click {
   Pane { label: Option<String>, pane: Option<String> },
   // The Node shim's own Notification: tell Node.
   Node,
+  // "Update ready" (services/update): a click installs it.
+  #[allow(dead_code)]
+  Update,
 }
 
 #[derive(Default)]
@@ -280,6 +283,17 @@ pub fn post_for_node(title: &str, subtitle: &str, body: &str, silent: bool) -> R
   }
 }
 
+/// update.ts's "update ready" notification (it was the shim's Notification).
+#[allow(dead_code)]
+pub fn post_update(title: &str, body: &str) -> Result<(), String> {
+  if crate::background() {
+    return Ok(());
+  }
+  let id = with(|s| next_id(s, Click::Update));
+  post(&id, title, "", body, false, |_| {});
+  Ok(())
+}
+
 fn post(id: &str, title: &str, subtitle: &str, body: &str, silent: bool, done: impl FnOnce(Result<(), String>) + Send + 'static) {
   #[cfg(target_os = "macos")]
   if mac::available() {
@@ -333,6 +347,9 @@ fn clicked(id: &str) {
       std::thread::spawn(move || focus(label, pane));
     }
     Some(Click::Node) => crate::emit(json!({ "ev": "notify", "id": id, "kind": "click" })),
+    Some(Click::Update) => {
+      std::thread::spawn(super::update::install);
+    }
     None => {}
   }
 }

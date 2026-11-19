@@ -197,6 +197,11 @@ fn content_bounds(w: &Window<Wry>) -> Result<Value, String> {
   Ok(json!({ "x": p.x, "y": p.y, "width": z.width, "height": z.height }))
 }
 
+/// Where the pages are served (http://127.0.0.1:<port>, from Node for now).
+pub(crate) fn origin() -> String {
+  shared().origin.lock().unwrap().clone()
+}
+
 fn allowed_url(url: &str) -> bool {
   let origin = shared().origin.lock().unwrap().clone();
   url.starts_with("about:")
@@ -207,7 +212,7 @@ fn allowed_url(url: &str) -> bool {
 
 // ---- windows -----------------------------------------------------------------
 
-fn create_window(app: &AppHandle, a: &Value) -> Res {
+pub(crate) fn create_window(app: &AppHandle, a: &Value) -> Res {
   let label = s(a, "label").ok_or("no label")?.to_string();
   let o = a.get("opts").cloned().unwrap_or(Value::Null);
   let blank = WebviewUrl::External("about:blank".parse().unwrap());
@@ -473,7 +478,7 @@ fn flush_page(app: &AppHandle, label: &str) {
   }
 }
 
-fn navigate(app: &AppHandle, a: &Value) -> Res {
+pub(crate) fn navigate(app: &AppHandle, a: &Value) -> Res {
   let w = win(app, a)?;
   let label = w.w.label().to_string();
   let url = s(a, "url").ok_or("no url")?.to_string();
@@ -977,7 +982,7 @@ static GLOBAL: Alloc = Alloc;
 // unfocused and ordered BEHIND every other window instead of in front, and
 // focus/activation requests are ignored. The windows are still on screen as
 // far as WebKit is concerned, so the page keeps running.
-fn background() -> bool {
+pub(crate) fn background() -> bool {
   static BG: OnceLock<bool> = OnceLock::new();
   *BG.get_or_init(|| std::env::var("RIVEN_TAURI_BACKGROUND").as_deref() == Ok("1"))
 }
@@ -1380,16 +1385,23 @@ fn main() {
   let mut app = builder
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(commands::handler())
-    .on_menu_event(|_app, ev| {
+    .on_menu_event(|app, ev| {
       #[cfg(target_os = "macos")]
       if services::browser::on_menu(&ev.id().0) {
+        return;
+      }
+      if services::tray::on_menu(app, &ev.id().0) {
         return;
       }
       emit(json!({ "ev": "menu", "id": ev.id().0 }))
     })
     .on_window_event(|w, ev| {
       let label = w.label();
+      services::pet::on_window(label, ev);
       if let WindowEvent::Destroyed = ev {
+        if label == "auth" {
+          services::auth::closed();
+        }
         services::notify::forget(label);
         #[cfg(target_os = "macos")]
         services::browser::on_host_destroyed(label);
@@ -1483,6 +1495,8 @@ fn main() {
       services::notify::init(app.handle(), background());
       #[cfg(target_os = "macos")]
       services::browser::init(app.handle());
+      services::pet::init(app.handle());
+      services::update::init(app.handle());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;

@@ -16,6 +16,7 @@ pub mod chat;
 pub mod config;
 pub mod db;
 pub mod debug;
+pub mod desk;
 pub mod git;
 pub mod lsp;
 pub mod mcp;
@@ -48,12 +49,45 @@ pub fn emit_ipc(app: &AppHandle, label: &str, ch: &str, args: serde_json::Value)
 }
 
 pub(crate) fn app_page(label: &str) -> bool {
-  (label.starts_with('w') && label[1..].chars().all(|c| c.is_ascii_digit())) || label.starts_with("pop-")
+  (label.starts_with('w') && label[1..].chars().all(|c| c.is_ascii_digit()))
+    || label.starts_with("pop-")
+    || label == crate::services::pet::LABEL
 }
 
 pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
   let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
     config::config_load,
+    desk::usage_limits,
+    desk::remote_key_available,
+    desk::remote_key_load,
+    desk::remote_key_save,
+    desk::auth_oauth,
+    desk::app_version,
+    desk::update_current,
+    desk::update_check,
+    desk::update_install,
+    desk::perm_report,
+    desk::perm_ask,
+    desk::perm_open,
+    desk::tray_feed,
+    desk::tray_diag,
+    desk::pet_open,
+    desk::pet_close,
+    desk::pet_hide,
+    desk::pet_dock,
+    desk::pet_is_open,
+    desk::pet_cursor_inside,
+    desk::pet_resize,
+    desk::pet_drag_start,
+    desk::pet_drag_move,
+    desk::pet_drag_end,
+    desk::pet_press,
+    desk::pet_set_break,
+    desk::pet_set_on_top,
+    desk::pet_ask_on_top,
+    desk::pet_is_on_top,
+    desk::pet_focusable,
+    desk::pet_copy,
     browser::browser_bookmarks,
     browser::browser_history,
     browser::browser_add_bookmark,

@@ -117,6 +117,37 @@ permissions = [
   "allow-debug-set-breakpoints",
   "allow-debug-get-properties",
   "allow-debug-evaluate",
+  "allow-usage-limits",
+  "allow-remote-key-available",
+  "allow-remote-key-load",
+  "allow-remote-key-save",
+  "allow-auth-oauth",
+  "allow-app-version",
+  "allow-update-current",
+  "allow-update-check",
+  "allow-update-install",
+  "allow-perm-report",
+  "allow-perm-ask",
+  "allow-perm-open",
+  "allow-tray-feed",
+  "allow-tray-diag",
+  "allow-pet-close",
+  "allow-pet-hide",
+  "allow-pet-dock",
+  "allow-pet-is-open",
+  "allow-pet-cursor-inside",
+  "allow-pet-drag-start",
+  "allow-pet-drag-move",
+  "allow-pet-drag-end",
+  "allow-pet-is-on-top",
+  "allow-pet-open",
+  "allow-pet-resize",
+  "allow-pet-press",
+  "allow-pet-set-break",
+  "allow-pet-set-on-top",
+  "allow-pet-ask-on-top",
+  "allow-pet-focusable",
+  "allow-pet-copy",
   "allow-git-info",
   "allow-git-repos",
   "allow-git-log",
@@ -773,6 +804,161 @@ commands.allow = ["debug_get_properties"]
 identifier = "allow-debug-evaluate"
 description = "Allows debug_evaluate."
 commands.allow = ["debug_evaluate"]
+
+[[permission]]
+identifier = "allow-usage-limits"
+description = "Allows usage_limits."
+commands.allow = ["usage_limits"]
+
+[[permission]]
+identifier = "allow-remote-key-available"
+description = "Allows remote_key_available."
+commands.allow = ["remote_key_available"]
+
+[[permission]]
+identifier = "allow-remote-key-load"
+description = "Allows remote_key_load."
+commands.allow = ["remote_key_load"]
+
+[[permission]]
+identifier = "allow-remote-key-save"
+description = "Allows remote_key_save."
+commands.allow = ["remote_key_save"]
+
+[[permission]]
+identifier = "allow-auth-oauth"
+description = "Allows auth_oauth."
+commands.allow = ["auth_oauth"]
+
+[[permission]]
+identifier = "allow-app-version"
+description = "Allows app_version."
+commands.allow = ["app_version"]
+
+[[permission]]
+identifier = "allow-update-current"
+description = "Allows update_current."
+commands.allow = ["update_current"]
+
+[[permission]]
+identifier = "allow-update-check"
+description = "Allows update_check."
+commands.allow = ["update_check"]
+
+[[permission]]
+identifier = "allow-update-install"
+description = "Allows update_install."
+commands.allow = ["update_install"]
+
+[[permission]]
+identifier = "allow-perm-report"
+description = "Allows perm_report."
+commands.allow = ["perm_report"]
+
+[[permission]]
+identifier = "allow-perm-ask"
+description = "Allows perm_ask."
+commands.allow = ["perm_ask"]
+
+[[permission]]
+identifier = "allow-perm-open"
+description = "Allows perm_open."
+commands.allow = ["perm_open"]
+
+[[permission]]
+identifier = "allow-tray-feed"
+description = "Allows tray_feed."
+commands.allow = ["tray_feed"]
+
+[[permission]]
+identifier = "allow-tray-diag"
+description = "Allows tray_diag."
+commands.allow = ["tray_diag"]
+
+[[permission]]
+identifier = "allow-pet-close"
+description = "Allows pet_close."
+commands.allow = ["pet_close"]
+
+[[permission]]
+identifier = "allow-pet-hide"
+description = "Allows pet_hide."
+commands.allow = ["pet_hide"]
+
+[[permission]]
+identifier = "allow-pet-dock"
+description = "Allows pet_dock."
+commands.allow = ["pet_dock"]
+
+[[permission]]
+identifier = "allow-pet-is-open"
+description = "Allows pet_is_open."
+commands.allow = ["pet_is_open"]
+
+[[permission]]
+identifier = "allow-pet-cursor-inside"
+description = "Allows pet_cursor_inside."
+commands.allow = ["pet_cursor_inside"]
+
+[[permission]]
+identifier = "allow-pet-drag-start"
+description = "Allows pet_drag_start."
+commands.allow = ["pet_drag_start"]
+
+[[permission]]
+identifier = "allow-pet-drag-move"
+description = "Allows pet_drag_move."
+commands.allow = ["pet_drag_move"]
+
+[[permission]]
+identifier = "allow-pet-drag-end"
+description = "Allows pet_drag_end."
+commands.allow = ["pet_drag_end"]
+
+[[permission]]
+identifier = "allow-pet-is-on-top"
+description = "Allows pet_is_on_top."
+commands.allow = ["pet_is_on_top"]
+
+[[permission]]
+identifier = "allow-pet-open"
+description = "Allows pet_open."
+commands.allow = ["pet_open"]
+
+[[permission]]
+identifier = "allow-pet-resize"
+description = "Allows pet_resize."
+commands.allow = ["pet_resize"]
+
+[[permission]]
+identifier = "allow-pet-press"
+description = "Allows pet_press."
+commands.allow = ["pet_press"]
+
+[[permission]]
+identifier = "allow-pet-set-break"
+description = "Allows pet_set_break."
+commands.allow = ["pet_set_break"]
+
+[[permission]]
+identifier = "allow-pet-set-on-top"
+description = "Allows pet_set_on_top."
+commands.allow = ["pet_set_on_top"]
+
+[[permission]]
+identifier = "allow-pet-ask-on-top"
+description = "Allows pet_ask_on_top."
+commands.allow = ["pet_ask_on_top"]
+
+[[permission]]
+identifier = "allow-pet-focusable"
+description = "Allows pet_focusable."
+commands.allow = ["pet_focusable"]
+
+[[permission]]
+identifier = "allow-pet-copy"
+description = "Allows pet_copy."
+commands.allow = ["pet_copy"]
 
 [[permission]]
 identifier = "allow-git-info"

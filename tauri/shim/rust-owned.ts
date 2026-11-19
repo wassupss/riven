@@ -233,7 +233,40 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'browser:setLang': ['l'],
   'browser:suggest': ['payload'],
   'browser:barMenu': ['a'],
-  'browser:pickElement': ['a']
+  'browser:pickElement': ['a'],
+  // phase 7's leftovers (commands/desk.rs). tray:feed and the pet's drags are
+  // sends; 'update:status' and the pet's events come back from Rust.
+  'usage:limits': ['configDir'],
+  'remoteKey:available': [],
+  'remoteKey:load': [],
+  'remoteKey:save': ['k'],
+  'auth:oauth': ['authorizeUrl', 'redirectTo'],
+  'app:version': [],
+  'update:current': [],
+  'update:check': [],
+  'update:install': [],
+  'perm:report': [],
+  'perm:ask': ['kind'],
+  'perm:open': ['kind'],
+  'tray:feed': ['feed'],
+  'tray:diag': [],
+  'pet:open': [],
+  'pet:close': [],
+  'pet:hide': [],
+  'pet:dock': [],
+  'pet:isOpen': [],
+  'pet:cursorInside': [],
+  'pet:resize': ['height', 'width'],
+  'pet:dragStart': [],
+  'pet:dragMove': [],
+  'pet:dragEnd': [],
+  'pet:press': ['key'],
+  'pet:setBreak': ['min'],
+  'pet:setOnTop': ['on'],
+  'pet:askOnTop': ['on'],
+  'pet:isOnTop': [],
+  'pet:focusable': ['on'],
+  'pet:copy': ['text']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -273,7 +306,13 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'notify:click',
   'browser:event',
   'browser:key',
-  'browser:suggestPick'
+  'browser:suggestPick',
+  'update:status',
+  'pet:closed',
+  'pet:hidden',
+  'pet:press',
+  'pet:break',
+  'pet:onTop'
 ])
 
 export function rustCommand(channel: string): string {
