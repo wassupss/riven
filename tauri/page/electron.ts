@@ -1,19 +1,21 @@
 // 'electron' as src/preload sees it in the Tauri build. The preload bundle is
-// loaded by a <script> the server puts at the top of every app page, so it runs
-// before the page's own scripts, as Electron's preload did, but in the page's
-// world (there is no isolated world to bridge from).
+// loaded by a <script> Rust puts at the top of every app page (src-tauri/src/
+// page.rs), so it runs before the page's own scripts, as Electron's preload
+// did, but in the page's world (there is no isolated world to bridge from).
 //
-// ipcRenderer rides a WebSocket to server.ts; sendSync is a synchronous XHR.
-// Channels Rust owns (rust-owned.ts) go to Tauri instead: invoke/send become
-// Tauri commands, and Rust's events arrive as the Tauri event 'riven:ipc'.
-import { decode, encode } from './codec'
+// Every channel is Rust's (rust-owned.ts): invoke/send become Tauri commands,
+// and Rust's events arrive as the Tauri event 'riven:ipc'. There is no
+// synchronous call: sendSync's two save channels start their async twin, and
+// Rust waits for those before a window closes or the app quits
+// (window.__rivenSettle, see lifecycle.rs FLUSH_JS).
 import { ptyStream } from './pty-stream'
-import { RUST_EVENTS, RUST_INVOKE, RUST_SYNC, rustCommand } from './rust-owned'
+import { RUST_INVOKE, RUST_SYNC, rustCommand } from './rust-owned'
 
 type W = Window & {
-  __RIVEN_T__?: string
   __RIVEN_WIN__?: string
   __RIVEN_MEDIA__?: string
+  __rivenSettle?: () => Promise<unknown>
+  __rivenUnloading?: boolean
   __TAURI_INTERNALS__?: {
     invoke: (cmd: string, args?: unknown) => Promise<unknown>
     transformCallback: (cb: (payload: unknown) => void, once?: boolean) => number
@@ -21,64 +23,12 @@ type W = Window & {
   }
 }
 const w = window as W
-const TOKEN = w.__RIVEN_T__ ?? ''
 const LABEL = w.__RIVEN_WIN__ ?? w.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? ''
-w.__RIVEN_MEDIA__ = `/__riven/media/{}?t=${TOKEN}`
-
-// ---- the socket -------------------------------------------------------------
+// Workspace media, served by Rust on the page's own origin (page.rs).
+w.__RIVEN_MEDIA__ = '/__riven/media/{}'
 
 type Listener = (event: unknown, ...args: unknown[]) => void
 const listeners = new Map<string, Listener[]>()
-const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
-let nextId = 1
-let ws: WebSocket | null = null
-let open = false
-const queue: string[] = []
-
-function connect(): void {
-  ws = new WebSocket(`ws://${location.host}/__riven/ws?t=${TOKEN}&w=${encodeURIComponent(LABEL)}`)
-  ws.onopen = (): void => {
-    open = true
-    for (const q of queue.splice(0)) ws!.send(q)
-  }
-  ws.onmessage = (e): void => onMessage(String(e.data))
-  ws.onclose = (): void => {
-    open = false
-    ws = null
-    // Main never drops a live page; this is the page going away, or Node gone.
-    for (const p of pending.values()) p.reject(new Error('riven: connection to main lost'))
-    pending.clear()
-  }
-}
-
-function post(m: unknown): void {
-  const s = encode(m)
-  if (open && ws) ws.send(s)
-  else queue.push(s)
-}
-
-function onMessage(s: string): void {
-  const m = decode(s) as
-    | { t: 'res'; id: number; ok: boolean; val?: unknown; err?: string }
-    | { t: 'ev'; ch: string; args: unknown[] }
-    | { t: 'eval'; id: number; code: string }
-  if (m.t === 'res') {
-    const p = pending.get(m.id)
-    if (!p) return
-    pending.delete(m.id)
-    if (m.ok) p.resolve(m.val)
-    else p.reject(new Error(m.err))
-  } else if (m.t === 'ev') {
-    if (!RUST_EVENTS.has(m.ch)) deliver(m.ch, m.args)
-  } else if (m.t === 'eval') {
-    Promise.resolve()
-      .then(() => (0, eval)(m.code))
-      .then(
-        (val) => post({ t: 'evalres', id: m.id, ok: true, val }),
-        (e: unknown) => post({ t: 'evalres', id: m.id, ok: false, err: String(e) })
-      )
-  }
-}
 
 function deliver(ch: string, args: unknown[] | undefined): void {
   const ls = listeners.get(ch)
@@ -91,6 +41,12 @@ function deliver(ch: string, args: unknown[] | undefined): void {
       console.error(`[ipc] listener for ${ch} threw`, e)
     }
   }
+}
+
+function tauriInvoke(cmd: string, args: Record<string, unknown> = {}): Promise<unknown> {
+  const t = w.__TAURI_INTERNALS__
+  if (!t) return Promise.reject(new Error(`riven: Tauri is not available for '${cmd}'`))
+  return t.invoke(cmd, args)
 }
 
 // ---- the Rust side ------------------------------------------------------------
@@ -129,38 +85,42 @@ function listenRust(): void {
   )
 }
 
-export const ipcRenderer = {
+// Saves started by sendSync that have not landed yet. Rust awaits them
+// (__rivenSettle) before it lets a window close or the app quit.
+const inFlight = new Set<Promise<unknown>>()
+w.__rivenSettle = (): Promise<unknown> => Promise.allSettled([...inFlight])
+
+type IpcR = {
+  invoke(channel: string, ...args: unknown[]): Promise<unknown>
+  send(channel: string, ...args: unknown[]): void
+  sendSync(channel: string, ...args: unknown[]): unknown
+  on(channel: string, fn: Listener): IpcR
+  once(channel: string, fn: Listener): IpcR
+  removeListener(channel: string, fn: Listener): IpcR
+  off(channel: string, fn: Listener): IpcR
+  removeAllListeners(channel?: string): IpcR
+}
+
+export const ipcRenderer: IpcR = {
   invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     const names = RUST_INVOKE[channel]
     if (names) return rustInvoke(channel, names, args)
-    const id = nextId++
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject })
-      post({ t: 'invoke', id, ch: channel, args })
-    })
+    return Promise.reject(
+      new Error(`Error invoking remote method '${channel}': Error: No handler registered for '${channel}'`)
+    )
   },
   send(channel: string, ...args: unknown[]): void {
     const names = RUST_INVOKE[channel]
     if (names) return void rustInvoke(channel, names, args).catch((e) => console.warn(`[ipc] ${channel}`, e))
-    post({ t: 'send', ch: channel, args })
+    // Electron drops a send nobody listens for (browser:focusApp has no handler there either).
   },
   sendSync(channel: string, ...args: unknown[]): unknown {
     const twin = RUST_SYNC[channel]
-    const x = new XMLHttpRequest()
-    x.open('POST', `/__riven/sync?t=${TOKEN}`, false)
-    x.setRequestHeader('content-type', 'application/json')
-    try {
-      x.send(encode({ label: LABEL, ch: channel, args }))
-    } catch {
-      x.abort()
-    }
-    if (x.status !== 200) {
-      if (!twin) return undefined
-      // Refused during teardown: hand the write to Rust without waiting.
-      void rustInvoke(twin, RUST_INVOKE[twin], args).catch(() => {})
-      return true
-    }
-    return (decode(x.responseText) as { v: unknown }).v
+    if (!twin) return undefined
+    const p = rustInvoke(twin, RUST_INVOKE[twin], args).catch((e) => console.error(`[ipc] ${channel}`, e))
+    inFlight.add(p)
+    void p.finally(() => inFlight.delete(p))
+    return true
   },
   on(channel: string, fn: Listener): typeof ipcRenderer {
     // The page that answers riven's MCP tool calls (App.tsx registers this
@@ -215,19 +175,35 @@ export const webFrame = {
   }
 }
 
-// WebKit gives a dropped File no path. At drop time the paths are still on the
-// macOS drag pasteboard, so main reads them (one sync call per file drop) and
-// we pair them with the Files: by order when the names line up, else by name.
+// WebKit gives a dropped File no path. The paths are on the macOS drag
+// pasteboard for as long as the drag runs, so Rust reads them when a drag with
+// files comes in (long before a person lets go), and at the drop we pair them
+// with the Files: by order when the names line up, else by name.
 const dropPaths = new WeakMap<File, string>()
 let dropByName = new Map<string, string>()
+let dragged: string[] = []
+let asking = false
 const baseName = (p: string): string => p.slice(p.lastIndexOf('/') + 1).normalize('NFC')
+
+w.addEventListener(
+  'dragenter',
+  (e) => {
+    if (asking || !e.dataTransfer?.types.includes('Files')) return
+    asking = true
+    tauriInvoke('riven_drag_paths')
+      .then((v) => void (dragged = Array.isArray(v) ? (v as string[]) : []))
+      .catch(() => void (dragged = []))
+      .finally(() => void (asking = false))
+  },
+  true
+)
 
 w.addEventListener(
   'drop',
   (e) => {
     const files = [...(e.dataTransfer?.files ?? [])]
     if (!files.length) return
-    const paths = (ipcRenderer.sendSync('__riven:dragPaths') as string[] | undefined) ?? []
+    const paths = dragged
     dropByName = new Map(paths.map((p) => [baseName(p), p]))
     const inOrder = paths.length === files.length && files.every((f, i) => baseName(paths[i]) === f.name.normalize('NFC'))
     files.forEach((f, i) => {
@@ -269,7 +245,8 @@ w.open = ((url?: string | URL, target?: string, features?: string): Window | nul
     /* not a url */
   }
   if (u?.origin !== location.origin) {
-    ipcRenderer.send('__riven:open', s)
+    // Electron's setWindowOpenHandler sent real links to the default browser.
+    void tauriInvoke('shell_open_external', { url: s }).catch(() => {})
     return null
   }
   for (const [k, c] of pops) if (c.closed) pops.delete(k) // closed by the shell
@@ -281,7 +258,7 @@ w.open = ((url?: string | URL, target?: string, features?: string): Window | nul
     sendPopTheme()
     child.close = (): void => {
       pops.delete(id)
-      ipcRenderer.send('__riven:closePopout', id)
+      void tauriInvoke('riven_close_popout', { id }).catch(() => {})
     }
   }
   return child
@@ -307,7 +284,7 @@ function sendPopTheme(): void {
       .map((v) => Math.round(v).toString(16).padStart(2, '0'))
       .join('')}`
     const mode = document.documentElement.getAttribute('data-theme-mode') ?? 'dark'
-    ipcRenderer.send('__riven:popTheme', hex, mode)
+    void tauriInvoke('riven_pop_theme', { color: hex, mode }).catch(() => {})
   })
 }
 new MutationObserver(() => {
@@ -474,7 +451,7 @@ document.addEventListener(
     const external = a.target === '_blank' || e.metaKey || a.origin !== location.origin
     if (external && /^https?:/.test(a.href)) {
       e.preventDefault()
-      ipcRenderer.send('__riven:open', a.href)
+      void tauriInvoke('shell_open_external', { url: a.href }).catch(() => {})
     }
   },
   false
@@ -561,7 +538,7 @@ function regionAt(target: Element | null): boolean {
 }
 
 function tauri(cmd: string, args: Record<string, unknown> = {}): void {
-  w.__TAURI_INTERNALS__?.invoke(cmd, args).catch((e) => console.warn(`[tauri] ${cmd}`, e))
+  tauriInvoke(cmd, args).catch((e) => console.warn(`[tauri] ${cmd}`, e))
 }
 
 document.addEventListener(
@@ -581,11 +558,10 @@ else watchRegions()
 // WKWebView does not fire beforeunload for a reload or close it was not given
 // a user gesture for, but it does fire pagehide. The renderer flushes its
 // debounced saves (settings, sessions) on beforeunload, so make sure that runs.
-let unloading = false
-w.addEventListener('beforeunload', () => void (unloading = true))
+// (Rust's flush before a close or quit checks the same flag.)
+w.addEventListener('beforeunload', () => void (w.__rivenUnloading = true))
 w.addEventListener('pagehide', () => {
-  if (!unloading) w.dispatchEvent(new Event('beforeunload'))
+  if (!w.__rivenUnloading) w.dispatchEvent(new Event('beforeunload'))
 })
 
 listenRust()
-connect()

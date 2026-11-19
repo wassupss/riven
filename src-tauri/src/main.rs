@@ -1,43 +1,34 @@
-// riven's Tauri shell. It owns the native side (windows, menus, the tray,
-// dialogs, the screen) and the groups already moved to Rust (commands/ and
-// services/, called by the page with Tauri invoke; see
-// tauri/shim/rust-owned.ts). The rest of the app is still the main process
-// code Electron ran, executed by Node (out-tauri/main/index.js) with
-// `electron` shimmed to commands sent over a loopback line to this process.
-// docs/tauri-rust-main.md has the plan that removes Node.
+// riven's Tauri main process: Rust only (docs/tauri-rust-main.md).
 //
-// Wire format (see tauri/shim/rust.ts): newline-delimited JSON over TCP on
-// 127.0.0.1. The first line on a connection is {hello: token, role}. Requests
-// {id, cmd, args} -> replies {id, ok, val|err}. Events {ev, ...} go out on the
-// async connection.
-//
-//   async - handled in order on the reader thread, except calls that wait on a
-//           person or a page load (dialogs, navigate), which get a thread.
-//   sync  - the Node worker blocks on each answer, so they are handled inline.
+// It owns the native side (windows, menus, the tray, dialogs, the screen), the
+// app's pages (served on riven://localhost, page.rs), and every feature the
+// page calls with Tauri invoke (commands/ over services/; the channel list is
+// tauri/page/rust-owned.ts). lifecycle.rs is what src/main/index.ts did for
+// Electron: the main window, the menu, quitting, flushing the page's saves.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(target_os = "macos")]
 mod browser;
 mod commands;
+mod demo;
+mod lifecycle;
+mod lsmigrate;
+mod page;
 #[cfg(target_os = "macos")]
 mod perm;
 mod services;
+mod testhook;
 
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
-use std::hash::{BuildHasher, Hasher};
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::hash::Hasher;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
-use tauri::image::Image;
 use tauri::menu::{
   CheckMenuItemBuilder, IsMenuItem, Menu, MenuItemBuilder, MenuItemKind, PredefinedMenuItem, SubmenuBuilder,
 };
-use tauri::tray::TrayIconBuilder;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
@@ -50,9 +41,7 @@ type Res = Result<Value, String>;
 
 #[derive(Default)]
 struct Shared {
-  origin: Mutex<String>,
-  // Windows given a URL outside our origin (the sign-in window): every load is
-  // allowed there and reported.
+  // Windows given a URL outside our origin: every load is allowed there.
   external: Mutex<HashSet<String>>,
   // The load win.navigate itself asked for: allowed without a 'navigate' event.
   expected: Mutex<HashMap<String, String>>,
@@ -63,31 +52,11 @@ struct Shared {
   closing: Mutex<HashSet<String>>,
   // The opener's theme (background, light/dark), worn by popout title bars.
   pop_theme: Mutex<Option<(Color, Option<tauri::Theme>)>>,
-  events: Mutex<Option<TcpStream>>,
 }
 
 static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
 fn shared() -> &'static Arc<Shared> {
   SHARED.get_or_init(|| Arc::new(Shared::default()))
-}
-
-fn emit(v: Value) {
-  let mut g = shared().events.lock().unwrap();
-  if let Some(s) = g.as_mut() {
-    let mut line = v.to_string();
-    line.push('\n');
-    if s.write_all(line.as_bytes()).is_err() {
-      *g = None;
-    }
-  }
-}
-
-fn win_event(label: &str, kind: &str, extra: Value) {
-  let mut v = json!({ "ev": "win", "label": label, "kind": kind });
-  if let (Some(o), Value::Object(e)) = (v.as_object_mut(), extra) {
-    o.extend(e);
-  }
-  emit(v);
 }
 
 // ---- small helpers -----------------------------------------------------------
@@ -100,15 +69,6 @@ fn b(a: &Value, k: &str) -> Option<bool> {
 }
 fn f(a: &Value, k: &str) -> Option<f64> {
   a.get(k).and_then(Value::as_f64)
-}
-
-// Tray ids arrive as numbers; Tauri wants a string.
-fn tray_id(a: &Value) -> String {
-  match a.get("id") {
-    Some(Value::String(v)) => v.clone(),
-    Some(v) => v.to_string(),
-    None => String::new(),
-  }
 }
 
 // A window and its own (full-size) webview. Not a WebviewWindow: once the
@@ -127,26 +87,8 @@ fn win(app: &AppHandle, a: &Value) -> Result<Wv, String> {
 }
 
 fn base64_decode(input: &str) -> Vec<u8> {
-  let mut out = Vec::with_capacity(input.len() * 3 / 4);
-  let (mut acc, mut bits) = (0u32, 0u32);
-  for c in input.bytes() {
-    let v = match c {
-      b'A'..=b'Z' => c - b'A',
-      b'a'..=b'z' => c - b'a' + 26,
-      b'0'..=b'9' => c - b'0' + 52,
-      b'+' | b'-' => 62,
-      b'/' | b'_' => 63,
-      _ => continue,
-    } as u32;
-    acc = (acc << 6) | v;
-    bits += 6;
-    if bits >= 8 {
-      bits -= 8;
-      out.push((acc >> bits) as u8);
-      acc &= (1 << bits) - 1;
-    }
-  }
-  out
+  use base64::Engine;
+  base64::engine::general_purpose::STANDARD.decode(input.trim()).unwrap_or_default()
 }
 
 fn base64_encode(data: &[u8]) -> String {
@@ -159,11 +101,6 @@ fn base64_encode(data: &[u8]) -> String {
     }
   }
   out
-}
-
-fn image(a: &Value) -> Result<Image<'static>, String> {
-  let png = base64_decode(s(a, "png").unwrap_or(""));
-  Image::from_bytes(&png).map(|i| i.to_owned()).map_err(|e| e.to_string())
 }
 
 // #RGB, #ARGB, #RRGGBB, #AARRGGBB (Electron's forms).
@@ -180,34 +117,9 @@ fn color(hex: &str) -> Option<Color> {
   }
 }
 
-fn bounds(w: &Window<Wry>) -> Result<Value, String> {
-  let sf = w.scale_factor().map_err(|e| e.to_string())?;
-  let p = w.outer_position().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
-  let z = w.outer_size().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
-  Ok(json!({ "x": p.x.round(), "y": p.y.round(), "width": z.width.round(), "height": z.height.round() }))
-}
-
-// The content area (Electron's getContentBounds), in the same logical points
-// child webviews are positioned in. With the hidden title bar this is the
-// whole window, but say so rather than assume it.
-fn content_bounds(w: &Window<Wry>) -> Result<Value, String> {
-  let sf = w.scale_factor().map_err(|e| e.to_string())?;
-  let p = w.inner_position().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
-  let z = w.inner_size().map_err(|e| e.to_string())?.to_logical::<f64>(sf);
-  Ok(json!({ "x": p.x, "y": p.y, "width": z.width, "height": z.height }))
-}
-
-/// Where the pages are served (http://127.0.0.1:<port>, from Node for now).
-pub(crate) fn origin() -> String {
-  shared().origin.lock().unwrap().clone()
-}
-
 fn allowed_url(url: &str) -> bool {
-  let origin = shared().origin.lock().unwrap().clone();
-  url.starts_with("about:")
-    || url.starts_with("data:")
-    || url.starts_with("blob:")
-    || (!origin.is_empty() && (url == origin || url.starts_with(&format!("{origin}/"))))
+  let origin = page::ORIGIN;
+  url.starts_with("about:") || url.starts_with("data:") || url.starts_with("blob:") || url == origin || url.starts_with(&format!("{origin}/"))
 }
 
 // ---- windows -----------------------------------------------------------------
@@ -218,7 +130,6 @@ pub(crate) fn create_window(app: &AppHandle, a: &Value) -> Res {
   let blank = WebviewUrl::External("about:blank".parse().unwrap());
   let nav_label = label.clone();
   let load_label = label.clone();
-  let title_label = label.clone();
   let mut bld = WebviewWindowBuilder::new(app, &label, blank)
     .initialization_script(format!("window.__RIVEN_WIN__={};", Value::String(label.clone())))
     .disable_drag_drop_handler()
@@ -246,9 +157,14 @@ pub(crate) fn create_window(app: &AppHandle, a: &Value) -> Res {
       if allowed_url(url) {
         return true;
       }
-      let external = sh.external.lock().unwrap().contains(&nav_label);
-      win_event(&nav_label, "navigate", json!({ "url": url }));
-      external
+      if sh.external.lock().unwrap().contains(&nav_label) {
+        return true;
+      }
+      // Keep the app's pages on the app's origin (a page that kept the
+      // preload's reach on someone else's content would be handing it the
+      // files, the shell and git). Real links go to the default browser.
+      commands::app::open_external(url);
+      false
     })
     .on_page_load(move |wv, p| {
       // A fresh page: tool calls waiting on the old one are told (services/mcp).
@@ -264,7 +180,6 @@ pub(crate) fn create_window(app: &AppHandle, a: &Value) -> Res {
         }
       }
     })
-    .on_document_title_changed(move |_wv, title| win_event(&title_label, "title", json!({ "title": title })))
     .on_new_window({
       let app = app.clone();
       move |url, features| popout(&app, url, features)
@@ -466,18 +381,6 @@ fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
   }
 }
 
-/// Run the page's beforeunload handlers and wait for them (at most 3s).
-fn flush_page(app: &AppHandle, label: &str) {
-  let (tx, rx) = mpsc::channel();
-  let (app, a) = (app.clone(), json!({ "label": label, "code": "dispatchEvent(new Event('beforeunload')); 1", "expr": false }));
-  std::thread::spawn(move || {
-    let _ = tx.send(dispatch(&app, "wv.exec", &a));
-  });
-  if let Ok(Err(e)) = rx.recv_timeout(Duration::from_secs(3)) {
-    eprintln!("[close] {e}");
-  }
-}
-
 pub(crate) fn navigate(app: &AppHandle, a: &Value) -> Res {
   let w = win(app, a)?;
   let label = w.w.label().to_string();
@@ -499,10 +402,14 @@ pub(crate) fn navigate(app: &AppHandle, a: &Value) -> Res {
   Ok(Value::Null)
 }
 
-// app.dock.setIcon.
-#[cfg(target_os = "macos")]
-fn dock_icon(app: &AppHandle, a: &Value) -> Res {
-  let png = base64_decode(s(a, "png").unwrap_or(""));
+// Dev builds run as a bare binary too (RIVEN_TAURI_NO_APP=1), where the Dock
+// would show a generic icon: give it riven's (index.ts did the same for dev).
+#[cfg(all(target_os = "macos", debug_assertions))]
+fn dev_dock_icon(app: &AppHandle) -> Res {
+  if std::env::current_exe().map(|p| p.to_string_lossy().contains(".app/Contents/MacOS/")).unwrap_or(true) {
+    return Ok(Value::Null);
+  }
+  let png = include_bytes!("../../build/icon.png").to_vec();
   app
     .run_on_main_thread(move || {
       use objc2::{AllocAnyThread, MainThreadMarker};
@@ -517,9 +424,9 @@ fn dock_icon(app: &AppHandle, a: &Value) -> Res {
 }
 
 // webUtils.getPathForFile: WKWebView hides the paths of dropped files, but
-// the drag pasteboard still holds them while the drop event runs.
+// the drag pasteboard holds them for as long as the drag runs.
 #[cfg(target_os = "macos")]
-fn drag_paths(app: &AppHandle) -> Res {
+pub(crate) fn drag_paths(app: &AppHandle) -> Result<Vec<String>, String> {
   let (tx, rx) = mpsc::channel::<Vec<String>>();
   app
     .run_on_main_thread(move || {
@@ -541,12 +448,12 @@ fn drag_paths(app: &AppHandle) -> Res {
       let _ = tx.send(out);
     })
     .map_err(|e| e.to_string())?;
-  rx.recv_timeout(Duration::from_secs(2)).map(|v| json!(v)).map_err(|_| "drag.paths timed out".into())
+  rx.recv_timeout(Duration::from_secs(2)).map_err(|_| "drag.paths timed out".into())
 }
 
 // powerMonitor / screen events. Observers live for the whole process.
 #[cfg(target_os = "macos")]
-fn observe_system() {
+fn observe_system(app: &AppHandle) {
   use block2::RcBlock;
   use objc2::MainThreadMarker;
   use objc2_app_kit::{
@@ -562,7 +469,10 @@ fn observe_system() {
     let token = unsafe { center.addObserverForName_object_queue_usingBlock(Some(name), None, None, &block) };
     std::mem::forget(token);
   }
-  let power = |kind: &'static str| move || emit(json!({ "ev": "power", "kind": kind }));
+  let power = |kind: &'static str| {
+    let app = app.clone();
+    move || lifecycle::on_power(&app, kind)
+  };
   let ws = NSWorkspace::sharedWorkspace().notificationCenter();
   unsafe {
     on(&ws, NSWorkspaceDidWakeNotification, power("resume"));
@@ -573,78 +483,11 @@ fn observe_system() {
   on(&dist, &NSString::from_str("com.apple.screenIsLocked"), power("lock-screen"));
   static SCREENS: AtomicUsize = AtomicUsize::new(0);
   SCREENS.store(NSScreen::screens(mtm).count(), Ordering::Relaxed);
+  let app = app.clone();
   on(&NSNotificationCenter::defaultCenter(), unsafe { NSApplicationDidChangeScreenParametersNotification }, move || {
-    let n = NSScreen::screens(mtm).count();
-    let prev = SCREENS.swap(n, Ordering::Relaxed);
-    let kind = match n.cmp(&prev) {
-      std::cmp::Ordering::Greater => "display-added",
-      std::cmp::Ordering::Less => "display-removed",
-      std::cmp::Ordering::Equal => "display-metrics-changed",
-    };
-    emit(json!({ "ev": "display", "kind": kind }));
+    SCREENS.store(NSScreen::screens(mtm).count(), Ordering::Relaxed);
+    lifecycle::on_display(&app);
   });
-}
-
-fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
-  let Wv { w, v } = win(app, a)?;
-  let e = |r: tauri::Result<()>| r.map(|_| Value::Null).map_err(|e| e.to_string());
-  match cmd {
-    "win.show" if background() => {
-      order_back(app, w);
-      Ok(Value::Null)
-    }
-    "win.focus" if background() => Ok(Value::Null),
-    "win.show" => {
-      e(w.show())?;
-      if b(a, "focus").unwrap_or(true) {
-        let _ = w.set_focus();
-      }
-      Ok(Value::Null)
-    }
-    "win.hide" => e(w.hide()),
-    "win.close" => e(w.close()),
-    "win.destroy" => {
-      #[cfg(target_os = "macos")]
-      services::browser::host_closing(w.label());
-      e(w.destroy())
-    }
-    "win.focus" => e(w.set_focus()),
-    "win.minimize" => e(w.minimize()),
-    "win.restore" => e(w.unminimize()),
-    "win.maximize" => e(w.maximize()),
-    "win.center" => e(w.center()),
-    "win.setTitle" => e(w.set_title(s(a, "title").unwrap_or(""))),
-    "win.isMinimized" => w.is_minimized().map(Value::Bool).map_err(|e| e.to_string()),
-    "win.isVisible" => w.is_visible().map(Value::Bool).map_err(|e| e.to_string()),
-    "win.isAlwaysOnTop" => w.is_always_on_top().map(Value::Bool).map_err(|e| e.to_string()),
-    "win.setFocusable" => e(w.set_focusable(b(a, "on").unwrap_or(true))),
-    "win.setAlwaysOnTop" => e(w.set_always_on_top(b(a, "on").unwrap_or(false))),
-    "win.setVisibleOnAllWorkspaces" => e(w.set_visible_on_all_workspaces(b(a, "on").unwrap_or(false))),
-    "win.setIgnoreCursorEvents" => e(w.set_ignore_cursor_events(b(a, "on").unwrap_or(false))),
-    "win.setShadow" => e(w.set_shadow(b(a, "on").unwrap_or(true))),
-    "win.setBackgroundColor" => e(w.set_background_color(s(a, "color").and_then(color))),
-    "win.getBounds" => bounds(&w),
-    "win.getContentBounds" => content_bounds(&w),
-    "win.setBounds" => {
-      let cur = bounds(&w)?;
-      let nb = a.get("bounds").cloned().unwrap_or(Value::Null);
-      let pick = |k: &str| f(&nb, k).or_else(|| f(&cur, k)).unwrap_or(0.0);
-      if f(&nb, "x").is_some() || f(&nb, "y").is_some() {
-        e(w.set_position(LogicalPosition::new(pick("x"), pick("y"))))?;
-      }
-      if f(&nb, "width").is_some() || f(&nb, "height").is_some() {
-        e(w.set_size(LogicalSize::new(pick("width"), pick("height"))))?;
-      }
-      Ok(Value::Null)
-    }
-    "win.zoom" => e(v.set_zoom(f(a, "factor").unwrap_or(1.0))),
-    "win.reload" => e(v.eval("location.reload()")),
-    "win.devtools" => {
-      v.open_devtools();
-      Ok(Value::Null)
-    }
-    _ => Err(format!("unknown command {cmd}")),
-  }
 }
 
 // ---- menus -------------------------------------------------------------------
@@ -719,7 +562,7 @@ fn menu_items(app: &AppHandle, items: &[Value]) -> tauri::Result<Vec<MenuItemKin
   Ok(out)
 }
 
-fn build_menu(app: &AppHandle, a: &Value) -> Result<Menu<Wry>, String> {
+pub(crate) fn build_menu(app: &AppHandle, a: &Value) -> Result<Menu<Wry>, String> {
   let items = a.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
   let kids = menu_items(app, &items).map_err(|e| e.to_string())?;
   let refs: Vec<&dyn IsMenuItem<Wry>> = kids.iter().map(|k| k as &dyn IsMenuItem<Wry>).collect();
@@ -732,81 +575,7 @@ fn parent_of(app: &AppHandle, a: &Value) -> Option<Window<Wry>> {
   s(a, "label").and_then(|l| app.get_window(l))
 }
 
-fn file_dialog(app: &AppHandle, a: &Value) -> tauri_plugin_dialog::FileDialogBuilder<Wry> {
-  let o = a.get("opts").cloned().unwrap_or(Value::Null);
-  let mut d = app.dialog().file();
-  if let Some(t) = s(&o, "title").or_else(|| s(&o, "message")) {
-    d = d.set_title(t);
-  }
-  if let Some(fs) = o.get("filters").and_then(Value::as_array) {
-    for flt in fs {
-      let exts: Vec<String> = flt
-        .get("extensions")
-        .and_then(Value::as_array)
-        .map(|v| v.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-      if exts.iter().any(|e| e == "*") {
-        continue;
-      }
-      let refs: Vec<&str> = exts.iter().map(String::as_str).collect();
-      d = d.add_filter(s(flt, "name").unwrap_or(""), &refs);
-    }
-  }
-  if let Some(p) = parent_of(app, a) {
-    d = d.set_parent(&p);
-  }
-  d
-}
-
-fn path_str(p: tauri_plugin_dialog::FilePath) -> Option<String> {
-  p.into_path().ok().map(|p| p.to_string_lossy().into_owned())
-}
-
-fn dialog_open(app: &AppHandle, a: &Value) -> Res {
-  let o = a.get("opts").cloned().unwrap_or(Value::Null);
-  let props: Vec<String> = o
-    .get("properties")
-    .and_then(Value::as_array)
-    .map(|v| v.iter().filter_map(|x| x.as_str().map(String::from)).collect())
-    .unwrap_or_default();
-  let has = |p: &str| props.iter().any(|x| x == p);
-  let mut d = file_dialog(app, a).set_can_create_directories(has("createDirectory") || has("openDirectory"));
-  if let Some(dp) = s(&o, "defaultPath") {
-    d = d.set_directory(dp);
-  }
-  let multi = has("multiSelections");
-  let picked: Option<Vec<tauri_plugin_dialog::FilePath>> = match (has("openDirectory"), multi) {
-    (true, true) => d.blocking_pick_folders(),
-    (true, false) => d.blocking_pick_folder().map(|p| vec![p]),
-    (false, true) => d.blocking_pick_files(),
-    (false, false) => d.blocking_pick_file().map(|p| vec![p]),
-  };
-  Ok(match picked {
-    Some(v) => json!(v.into_iter().filter_map(path_str).collect::<Vec<_>>()),
-    None => Value::Null,
-  })
-}
-
-fn dialog_save(app: &AppHandle, a: &Value) -> Res {
-  let o = a.get("opts").cloned().unwrap_or(Value::Null);
-  let mut d = file_dialog(app, a).set_can_create_directories(true);
-  if let Some(dp) = s(&o, "defaultPath") {
-    let p = PathBuf::from(dp);
-    if p.is_dir() {
-      d = d.set_directory(&p);
-    } else {
-      if let Some(dir) = p.parent().filter(|d| d.is_dir()) {
-        d = d.set_directory(dir);
-      }
-      if let Some(name) = p.file_name() {
-        d = d.set_file_name(name.to_string_lossy());
-      }
-    }
-  }
-  Ok(d.blocking_save_file().and_then(path_str).map(Value::String).unwrap_or(Value::Null))
-}
-
-fn dialog_message(app: &AppHandle, a: &Value) -> Res {
+pub(crate) fn dialog_message(app: &AppHandle, a: &Value) -> Res {
   let o = a.get("opts").cloned().unwrap_or(Value::Null);
   let mut text = s(&o, "message").unwrap_or("").to_string();
   if let Some(d) = s(&o, "detail").filter(|d| !d.is_empty()) {
@@ -1008,6 +777,33 @@ fn no_occlusion(wv: &tauri::Webview<Wry>) {
   let _ = wv;
 }
 
+/// WebKit's tracking prevention (ITP) on the app pages' data store: off.
+/// It deletes the script-written storage of a site with no recorded user
+/// interaction, and the app's origin riven://localhost counts as the site
+/// "localhost". Measured: the localStorage carried over from the old origin
+/// (127 entries) was on disk at quit, then deleted by WebKit about 5s into the
+/// next launch, before anyone could click (the old http://127.0.0.1 origin, an
+/// IP address, was never a candidate). The app's own pages are not a tracker,
+/// and losing chat logs, pipelines and layouts to it is data loss. The browser
+/// panel's pages live in their own stores (browser.rs store_id) and keep it.
+/// Main thread, before the first webview.
+#[cfg(target_os = "macos")]
+fn no_tracking_prevention() {
+  use objc2::MainThreadMarker;
+  use objc2_web_kit::WKWebsiteDataStore;
+  let Some(mtm) = MainThreadMarker::new() else { return };
+  unsafe {
+    let store = WKWebsiteDataStore::defaultDataStore(mtm);
+    let sel = objc2::sel!(_setResourceLoadStatisticsEnabled:);
+    let ok: bool = objc2::msg_send![&*store, respondsToSelector: sel];
+    if ok {
+      let _: () = objc2::msg_send![&*store, _setResourceLoadStatisticsEnabled: false];
+    } else {
+      eprintln!("[webkit] cannot turn tracking prevention off for the app pages (no _setResourceLoadStatisticsEnabled:)");
+    }
+  }
+}
+
 /// Show a window without bringing it forward: orderBack, on the main thread.
 fn order_back(app: &AppHandle, w: Window<Wry>) {
   #[cfg(target_os = "macos")]
@@ -1069,7 +865,7 @@ pub(crate) fn suggest_window(app: &AppHandle, parent: &str, frame: services::bro
           }
           let app = wv.app_handle().clone();
           std::thread::spawn(move || {
-            let h = dispatch(&app, "wv.exec", &json!({ "label": SUGGEST, "code": "document.getElementById('l').getBoundingClientRect().height", "expr": true }))
+            let h = browser::dispatch(&app, "wv.exec", &json!({ "label": SUGGEST, "code": "document.getElementById('l').getBoundingClientRect().height", "expr": true }))
               .ok()
               .and_then(|v| v.as_str().and_then(|t| serde_json::from_str::<Value>(t).ok()))
               .and_then(|v| v.get("v").and_then(Value::as_f64));
@@ -1100,7 +896,7 @@ pub(crate) fn suggest_window(app: &AppHandle, parent: &str, frame: services::bro
   let _ = zoom;
   w.set_position(LogicalPosition::new(frame.x, frame.y)).map_err(|e| e.to_string())?;
   w.set_size(LogicalSize::new(frame.width, frame.height)).map_err(|e| e.to_string())?;
-  dispatch(app, "wv.html", &json!({ "label": SUGGEST, "html": html }))
+  browser::dispatch(app, "wv.html", &json!({ "label": SUGGEST, "html": html }))
 }
 
 #[cfg(target_os = "macos")]
@@ -1110,260 +906,24 @@ pub(crate) fn suggest_hide(app: &AppHandle) {
   }
 }
 
-// ---- dispatch ----------------------------------------------------------------
+// ---- popouts' theme -------------------------------------------------------------
 
-fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
-  match cmd {
-    "app.ready" => Ok(Value::Null),
-    // The shim's Notification.show() (update.ts). Answers once the OS took or
-    // refused it; a click comes back as {ev: 'notify', id, kind: 'click'}.
-    "notify.post" => services::notify::post_for_node(
-      s(a, "title").unwrap_or(""),
-      s(a, "subtitle").unwrap_or(""),
-      s(a, "body").unwrap_or(""),
-      b(a, "silent").unwrap_or(false),
-    )
-    .map(Value::from),
-    // A Rust-owned sendSync channel, relayed by Node's sync endpoint.
-    "ipc.sync" => {
-      let args = a.get("args").and_then(Value::as_array).cloned().unwrap_or_default();
-      commands::sync_relay(s(a, "ch").unwrap_or(""), &args)
-    }
-    // What quitting would cut off (Node's quit confirmation, a sync call).
-    "pty.working" => Ok(services::pty::working_count().into()),
-    "chat.running" => Ok(services::chat::running_count().into()),
-    "app.setOrigin" => {
-      *shared().origin.lock().unwrap() = s(a, "origin").unwrap_or("").trim_end_matches('/').to_string();
-      Ok(Value::Null)
-    }
-    #[cfg(target_os = "macos")]
-    "app.dockIcon" => dock_icon(app, a),
-    #[cfg(target_os = "macos")]
-    "app.dockBadge" => perm::set_badge(app, s(a, "text").unwrap_or("").to_string()),
-    #[cfg(target_os = "macos")]
-    "perm.status" => perm::status(s(a, "kind").unwrap_or("")),
-    #[cfg(target_os = "macos")]
-    "perm.ask" => perm::ask(s(a, "kind").unwrap_or("")),
-    "app.activationPolicy" | "app.focus" if background() => Ok(Value::Null),
-    "app.activationPolicy" => {
-      #[cfg(target_os = "macos")]
-      {
-        let p = match s(a, "policy") {
-          Some("accessory") => tauri::ActivationPolicy::Accessory,
-          Some("prohibited") => tauri::ActivationPolicy::Prohibited,
-          _ => tauri::ActivationPolicy::Regular,
-        };
-        app.set_activation_policy(p).map_err(|e| e.to_string())?;
-      }
-      Ok(Value::Null)
-    }
-    "app.focus" => {
-      #[cfg(target_os = "macos")]
-      let _ = app.show();
-      if let Some(w) = app.windows().values().find(|w| w.is_visible().unwrap_or(false)) {
-        let _ = w.set_focus();
-      }
-      Ok(Value::Null)
-    }
-    "app.hide" => {
-      #[cfg(target_os = "macos")]
-      app.hide().map_err(|e| e.to_string())?;
-      Ok(Value::Null)
-    }
-    "dialog.open" => dialog_open(app, a),
-    "dialog.save" => dialog_save(app, a),
-    "dialog.message" => dialog_message(app, a),
-    "screen.displays" => displays(app),
-    "screen.cursor" => cursor(app),
-    "menu.popup" => {
-      let m = build_menu(app, a)?;
-      let w = app.get_window(s(a, "label").unwrap_or("")).ok_or("no window")?;
-      w.popup_menu(&m).map(|_| Value::Null).map_err(|e| e.to_string())
-    }
-    "menu.setApp" => {
-      let m = build_menu(app, a)?;
-      app.set_menu(m).map(|_| Value::Null).map_err(|e| e.to_string())
-    }
-    "tray.create" => {
-      TrayIconBuilder::with_id(tray_id(a))
-        .icon(image(a)?)
-        .icon_as_template(b(a, "template").unwrap_or(false))
-        .build(app)
-        .map(|_| Value::Null)
-        .map_err(|e| e.to_string())
-    }
-    "tray.setTitle" | "tray.setTooltip" | "tray.setIcon" | "tray.setMenu" => {
-      let t = app.tray_by_id(&tray_id(a)).ok_or("no tray")?;
-      let r = match cmd {
-        "tray.setTitle" => t.set_title(s(a, "title")),
-        "tray.setTooltip" => t.set_tooltip(s(a, "tooltip")),
-        "tray.setIcon" => t
-          .set_icon(Some(image(a)?))
-          .and_then(|_| t.set_icon_as_template(b(a, "template").unwrap_or(false))),
-        _ => t.set_menu(Some(build_menu(app, a)?)),
-      };
-      r.map(|_| Value::Null).map_err(|e| e.to_string())
-    }
-    "tray.destroy" => {
-      app.remove_tray_by_id(&tray_id(a));
-      Ok(Value::Null)
-    }
-    "pop.theme" => {
-      let Some(bg) = s(a, "color").and_then(color) else { return Ok(Value::Null) };
-      let theme = match s(a, "mode") {
-        Some("light") => Some(tauri::Theme::Light),
-        Some("dark") => Some(tauri::Theme::Dark),
-        _ => None,
-      };
-      *shared().pop_theme.lock().unwrap() = Some((bg, theme));
-      for (label, w) in app.webview_windows() {
-        if label.starts_with("pop-") {
-          let _ = w.set_theme(theme);
-          let _ = w.set_background_color(Some(bg));
-        }
-      }
-      Ok(Value::Null)
-    }
-    "win.create" => create_window(app, a),
-    "win.navigate" => navigate(app, a),
-    #[cfg(target_os = "macos")]
-    "win.capture" => browser::capture(app, a),
-    #[cfg(target_os = "macos")]
-    "drag.paths" => drag_paths(app),
-    #[cfg(target_os = "macos")]
-    c if c.starts_with("bv.") || c.starts_with("wv.") => browser::dispatch(app, c, a),
-    c if c.starts_with("win.") => win_cmd(app, c, a),
-    _ => Err(format!("unknown command {cmd}")),
-  }
-}
-
-// Calls that wait on a person or a page load: off the async reader thread so
-// they do not hold up the commands behind them.
-fn is_slow(cmd: &str) -> bool {
-  matches!(
-    cmd,
-    "dialog.open" | "dialog.save" | "dialog.message" | "win.navigate" | "win.capture" | "wv.exec" | "wv.capture" | "bv.state" | "bv.frame" | "menu.popup" | "notify.post"
-  )
-}
-
-fn reply(out: &Arc<Mutex<TcpStream>>, id: &Value, r: Res) {
-  let v = match r {
-    Ok(val) => json!({ "id": id, "ok": true, "val": val }),
-    Err(err) => json!({ "id": id, "ok": false, "err": err }),
+/// The opener's theme (background, light/dark), worn by popout title bars:
+/// kept for the next popout and applied to the open ones.
+pub(crate) fn pop_theme(app: &AppHandle, color_hex: &str, mode: &str) {
+  let Some(bg) = color(color_hex) else { return };
+  let theme = match mode {
+    "light" => Some(tauri::Theme::Light),
+    "dark" => Some(tauri::Theme::Dark),
+    _ => None,
   };
-  let mut line = v.to_string();
-  line.push('\n');
-  let _ = out.lock().unwrap().write_all(line.as_bytes());
-}
-
-fn serve(app: AppHandle, stream: TcpStream, token: String) {
-  let _ = stream.set_nodelay(true);
-  let Ok(write_half) = stream.try_clone() else { return };
-  let out = Arc::new(Mutex::new(write_half));
-  let mut lines = BufReader::new(stream).lines();
-  let Some(Ok(hello)) = lines.next() else { return };
-  let hello: Value = serde_json::from_str(&hello).unwrap_or(Value::Null);
-  if s(&hello, "hello") != Some(token.as_str()) {
-    return;
-  }
-  let is_async = s(&hello, "role") == Some("async");
-  if is_async {
-    if let Ok(ev) = out.lock().unwrap().try_clone() {
-      *shared().events.lock().unwrap() = Some(ev);
+  *shared().pop_theme.lock().unwrap() = Some((bg, theme));
+  for (label, w) in app.webview_windows() {
+    if label.starts_with("pop-") {
+      let _ = w.set_theme(theme);
+      let _ = w.set_background_color(Some(bg));
     }
   }
-  for line in lines {
-    let Ok(line) = line else { break };
-    let Ok(m) = serde_json::from_str::<Value>(&line) else { continue };
-    let id = m.get("id").cloned().unwrap_or(Value::Null);
-    let cmd = s(&m, "cmd").unwrap_or("").to_string();
-    let args = m.get("args").cloned().unwrap_or(Value::Null);
-    if is_async && is_slow(&cmd) {
-      let (app, out) = (app.clone(), out.clone());
-      std::thread::spawn(move || reply(&out, &id, dispatch(&app, &cmd, &args)));
-    } else {
-      reply(&out, &id, dispatch(&app, &cmd, &args));
-    }
-  }
-}
-
-fn random_token() -> String {
-  let mut parts = String::new();
-  for _ in 0..2 {
-    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos());
-    h.write_u32(std::process::id());
-    parts.push_str(&format!("{:016x}", h.finish()));
-  }
-  parts
-}
-
-// ---- Node --------------------------------------------------------------------
-
-fn repo_root() -> PathBuf {
-  PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
-}
-
-// A bundled app (tauri/package.mjs + `tauri build`) carries its own Node and
-// app tree in Resources; the dev build runs from the repo with a local Node.
-fn bundled(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
-  let res = app.path().resource_dir().ok()?;
-  let (root, node) = (res.join("app"), res.join("node"));
-  (root.join("out-tauri/main/index.js").exists() && node.exists()).then_some((root, node))
-}
-
-fn node_bin() -> PathBuf {
-  if let Ok(p) = std::env::var("RIVEN_NODE") {
-    return PathBuf::from(p);
-  }
-  if let Ok(home) = std::env::var("HOME") {
-    let nvm = PathBuf::from(home).join(".nvm/versions/node");
-    if let Ok(rd) = std::fs::read_dir(&nvm) {
-      let mut vs: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path().join("bin/node"))).filter(|p| p.exists()).collect();
-      vs.sort();
-      if let Some(last) = vs.pop() {
-        return last;
-      }
-    }
-  }
-  PathBuf::from("node")
-}
-
-fn start_node(app: &AppHandle) -> Result<(), String> {
-  let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-  let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-  let token = random_token();
-  {
-    let (app, token) = (app.clone(), token.clone());
-    std::thread::spawn(move || {
-      for stream in listener.incoming().flatten() {
-        let (app, token) = (app.clone(), token.clone());
-        std::thread::spawn(move || serve(app, stream, token));
-      }
-    });
-  }
-  let (root, node) = bundled(app).unwrap_or_else(|| (repo_root(), node_bin()));
-  let script = std::env::var("RIVEN_TAURI_MAIN")
-    .map(PathBuf::from)
-    .unwrap_or_else(|_| root.join("out-tauri/main/index.js"));
-  let mut child = std::process::Command::new(node)
-    .arg(&script)
-    .current_dir(&root)
-    .env("RIVEN_TAURI_CTL_PORT", port.to_string())
-    .env("RIVEN_TAURI_CTL_TOKEN", &token)
-    // The Node app's own background flag (index.ts: showInactive, no
-    // notification-center registration), so it asks for nothing in front.
-    .envs(background().then_some(("RIVEN_TEST_BACKGROUND", "1")))
-    .spawn()
-    .map_err(|e| format!("node: {e}"))?;
-  // Node is the app: when it exits (app.quit -> process.exit) so does the shell.
-  // The other way round needs nothing: Node exits when this line closes.
-  let app = app.clone();
-  std::thread::spawn(move || {
-    let code = child.wait().ok().and_then(|s| s.code()).unwrap_or(0);
-    app.exit(code);
-  });
-  Ok(())
 }
 
 fn main() {
@@ -1384,6 +944,12 @@ fn main() {
   #[allow(unused_mut)]
   let mut app = builder
     .plugin(tauri_plugin_dialog::init())
+    // The app's pages (page.rs). Answered off the main thread: an asset read
+    // or a media range must not hold up the event loop.
+    .register_asynchronous_uri_scheme_protocol(page::SCHEME, |ctx, req, responder| {
+      let (app, label) = (ctx.app_handle().clone(), ctx.webview_label().to_string());
+      tauri::async_runtime::spawn_blocking(move || responder.respond(page::handle(&app, &label, &req)));
+    })
     .invoke_handler(commands::handler())
     .on_menu_event(|app, ev| {
       #[cfg(target_os = "macos")]
@@ -1393,7 +959,7 @@ fn main() {
       if services::tray::on_menu(app, &ev.id().0) {
         return;
       }
-      emit(json!({ "ev": "menu", "id": ev.id().0 }))
+      lifecycle::on_menu(app, &ev.id().0);
     })
     .on_window_event(|w, ev| {
       let label = w.label();
@@ -1414,7 +980,7 @@ fn main() {
       if label == SUGGEST {
         return;
       }
-      // Popouts are dockview's, owned by the opener's page; node never made them.
+      // Popouts are dockview's, owned by the opener's page.
       if label.starts_with("pop-") {
         popout_event(w, ev);
         return;
@@ -1423,14 +989,14 @@ fn main() {
         // WKWebView sends no beforeunload when a window closes, so the page's
         // debounced saves (settings, sessions: 300ms) were lost if the window
         // closed inside that window of time. Hold the close, run the page's
-        // beforeunload (its flush is a blocking sendSync, done when the script
-        // returns), then close for real. Bounded: a stuck page closes anyway.
+        // beforeunload and wait for its saves, then close for real. Bounded:
+        // a stuck page closes anyway.
         WindowEvent::CloseRequested { api, .. } if commands::app_page(label) => {
           if shared().closing.lock().unwrap().insert(label.to_string()) {
             api.prevent_close();
             let (app, label) = (w.app_handle().clone(), label.to_string());
             std::thread::spawn(move || {
-              flush_page(&app, &label);
+              lifecycle::flush_page(&app, &label);
               match app.get_window(&label) {
                 Some(win) => {
                   let _ = win.close();
@@ -1442,12 +1008,8 @@ fn main() {
             });
           }
         }
-        WindowEvent::Focused(true) => win_event(label, "focus", Value::Null),
-        WindowEvent::Focused(false) => win_event(label, "blur", Value::Null),
-        WindowEvent::Moved(_) => {
-          frame_changed(w);
-          win_event(label, "moved", Value::Null)
-        }
+        WindowEvent::Focused(true) => lifecycle::on_focus(w.app_handle(), label),
+        WindowEvent::Moved(_) => frame_changed(w),
         WindowEvent::Resized(_) => {
           frame_changed(w);
           let now = w.is_minimized().unwrap_or(false);
@@ -1461,10 +1023,8 @@ fn main() {
             }
             was
           };
-          match (was, now) {
-            (false, true) => win_event(label, "minimize", Value::Null),
-            (true, false) => win_event(label, "restore", Value::Null),
-            _ => win_event(label, "resized", Value::Null),
+          if was != now {
+            lifecycle::visibility(w.app_handle(), label);
           }
         }
         WindowEvent::Destroyed => {
@@ -1474,7 +1034,6 @@ fn main() {
           sh.expected.lock().unwrap().remove(label);
           sh.minimized.lock().unwrap().remove(label);
           sh.loading.lock().unwrap().remove(label);
-          win_event(label, "closed", Value::Null);
         }
         _ => {}
       }
@@ -1484,22 +1043,36 @@ fn main() {
       if background() {
         app.set_activation_policy(tauri::ActivationPolicy::Accessory);
       }
+      #[cfg(target_os = "macos")]
+      no_tracking_prevention();
       services::shell_env::start();
       services::mcp::init(app.handle());
       services::pty::init(app.handle());
       services::chat::init(app.handle());
       services::lsp::init(app.handle());
       services::debug::init(app.handle());
-      // Click routing, and the permission request notify.ts's startup probe
-      // made (not in the background test mode, which asks for nothing).
+      // Click routing, and the notification permission request (not in the
+      // background test mode, which asks for nothing).
       services::notify::init(app.handle(), background());
       #[cfg(target_os = "macos")]
       services::browser::init(app.handle());
       services::pet::init(app.handle());
       services::update::init(app.handle());
       #[cfg(target_os = "macos")]
-      observe_system();
-      start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+      observe_system(app.handle());
+      #[cfg(all(target_os = "macos", debug_assertions))]
+      let _ = dev_dock_icon(app.handle());
+      lifecycle::set_menu(app.handle());
+      testhook::start(app.handle());
+      // The first window, once the page data has its new origin (lsmigrate.rs).
+      // Off the main thread: both wait on page loads the event loop delivers.
+      let handle = app.handle().clone();
+      std::thread::spawn(move || {
+        let carry = lsmigrate::pending(&handle);
+        if let Err(e) = lifecycle::open_main(&handle, carry) {
+          eprintln!("[riven] the main window did not open: {e}");
+        }
+      });
       Ok(())
     })
     .build(tauri::generate_context!())
@@ -1511,13 +1084,14 @@ fn main() {
   }
 
   app.run(|app, ev| match ev {
-    // The last window closing, or Cmd+Q / the Dock's Quit. Only Node may
-    // decide to quit (before-quit runs there); app.exit from the Node watcher
-    // carries a code and is let through.
+    // app.exit(code) (the quit flow's own) goes through. Without a code: the
+    // last window closed (macOS keeps the app; the Dock brings a window back)
+    // or the system asked (the Dock's Quit, logout), which goes through the
+    // same quit as Cmd+Q.
     RunEvent::ExitRequested { code: None, api, .. } => {
       api.prevent_exit();
       if !app.windows().is_empty() {
-        emit(json!({ "ev": "quit-requested" }));
+        lifecycle::request_quit(app);
       }
     }
     RunEvent::Exit => {
@@ -1532,9 +1106,15 @@ fn main() {
         let _ = tokio::time::timeout(std::time::Duration::from_millis(1000), services::db::close_all()).await;
       });
     }
+    // The Dock icon with no window left: a new one (Electron's 'activate').
     #[cfg(target_os = "macos")]
-    RunEvent::Reopen { has_visible_windows, .. } => {
-      emit(json!({ "ev": "activate", "hasVisibleWindows": has_visible_windows }))
+    RunEvent::Reopen { .. } => {
+      if lifecycle::main_windows(app).is_empty() {
+        let app = app.clone();
+        std::thread::spawn(move || {
+          let _ = lifecycle::open_main(&app, None);
+        });
+      }
     }
     _ => {}
   });

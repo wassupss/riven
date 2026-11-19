@@ -8,9 +8,10 @@
 // panel's pages (bv-*) reach nothing.
 //
 // Main -> page events: emit_ipc() sends {ch, args} as the Tauri event
-// 'riven:ipc' to one window; the preload shim hands it to ipcRenderer.on
-// listeners exactly like a webContents.send from Node.
+// 'riven:ipc' to one window; the preload hands it to ipcRenderer.on
+// listeners exactly like Electron's webContents.send.
 
+pub mod app;
 pub mod browser;
 pub mod chat;
 pub mod config;
@@ -56,6 +57,13 @@ pub(crate) fn app_page(label: &str) -> bool {
 
 pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
   let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
+    app::env_defaults,
+    app::capture_save,
+    app::shell_open_external,
+    app::ui_set_zoom,
+    app::riven_drag_paths,
+    app::riven_close_popout,
+    app::riven_pop_theme,
     config::config_load,
     desk::usage_limits,
     desk::remote_key_available,
@@ -298,22 +306,5 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
       return true;
     }
     inner(invoke)
-  }
-}
-
-/// sendSync relayed by Node (tauri/shim/server.ts): the page's blocking flush
-/// on unload. Runs on the relay's plain thread, so it may block.
-pub fn sync_relay(ch: &str, args: &[serde_json::Value]) -> CmdResult<serde_json::Value> {
-  match ch {
-    "config:save-sync" => {
-      let name = args.first().and_then(|v| v.as_str()).unwrap_or("");
-      let data = args.get(1).cloned().unwrap_or(serde_json::Value::Null);
-      Ok(config::save_sync(name, &data).into())
-    }
-    "sessions:save-sync" => {
-      let data = args.first().cloned().unwrap_or(serde_json::Value::Null);
-      Ok(sessions::save_sync(&data).into())
-    }
-    _ => Err(format!("no Rust sync handler for '{ch}'")),
   }
 }

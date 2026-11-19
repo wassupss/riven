@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "dev.riven.tauri",
   "build": {
-    "frontendDist": "../tauri/blank"
+    "frontendDist": "../out-tauri/renderer",
+    "devUrl": "http://riven-dev.invalid/"
   },
   "app": {
     "macOSPrivateApi": true,
@@ -16,6 +17,8 @@
   },
   "bundle": {
     "active": false,
-    "icon": ["icons/icon.png"]
+    "icon": [
+      "icons/icon.png"
+    ]
   }
 }

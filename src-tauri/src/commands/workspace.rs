@@ -10,9 +10,8 @@ use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub fn workspace_set_roots(roots: Vec<String>) {
-  let list = ws::set_roots(roots);
-  // media.ts (still in Node) confines the files it serves to the same roots.
-  crate::emit(serde_json::json!({ "ev": "roots", "roots": list }));
+  // The media route (page.rs) confines the files it serves to the same roots.
+  ws::set_roots(roots);
 }
 
 #[tauri::command]

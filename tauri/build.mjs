@@ -1,10 +1,13 @@
-// Builds the Tauri flavour of riven into out-tauri/:
-//   main/      src/main bundled for plain Node, 'electron' -> tauri/shim
-//   preload/   src/preload as a page script, 'electron' -> the preload shim
-//   renderer/  the unchanged renderer build (electron-vite), copied
+// Builds the Tauri flavour of riven's page into out-tauri/renderer, which is
+// Tauri's frontendDist (src-tauri/tauri.conf.json; embedded in a packaged
+// binary, read from disk by a dev build):
+//   renderer/                  the unchanged renderer build (electron-vite), copied
+//   renderer/__riven/preload.js src/preload as a page script, 'electron' -> tauri/page
+// and writes src-tauri/src/services/mcp/catalog.json. There is no Node main
+// process any more: everything src/main did runs in Rust (src-tauri).
 //
-//   node tauri/build.mjs            all three
-//   node tauri/build.mjs --no-renderer
+//   node tauri/build.mjs            both
+//   node tauri/build.mjs --no-renderer   the preload and the catalog only
 import * as esbuild from 'esbuild'
 import { execFileSync } from 'child_process'
 import * as fs from 'fs'
@@ -13,7 +16,7 @@ import { fileURLToPath } from 'url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const out = path.join(root, 'out-tauri')
-const shim = (f) => path.join(root, 'tauri/shim', f)
+const renderer = path.join(out, 'renderer')
 
 function alias(map) {
   return {
@@ -23,53 +26,6 @@ function alias(map) {
       b.onResolve({ filter: re }, (a) => ({ path: map[a.path] }))
     }
   }
-}
-
-// src/main modules whose group moved to Rust (src-tauri/src/commands): the
-// Tauri build gets the stub in tauri/shim/moved instead, so the Node bundle
-// no longer carries them. Add a name here when its group moves.
-const MOVED = ['config', 'sessions', 'workspace', 'search', 'notes', 'pty', 'agentChat', 'mcpServer', 'agentHooks', 'git', 'githubPr', 'githubPrDetail', 'githubPrReview', 'watch', 'db/engine', 'lsp', 'debugger', 'cli', 'ports', 'modelCatalog', 'diagnostics', 'usage', 'apiclient', 'keepAwake', 'perf', 'notify', 'browser', 'remoteKey', 'auth', 'update', 'permissions', 'tray', 'pet']
-const movedPlugin = {
-  name: 'moved',
-  setup(b) {
-    const mainDir = path.join(root, 'src/main')
-    b.onResolve({ filter: new RegExp(`^\\./(${MOVED.join('|')})$`) }, (a) =>
-      a.resolveDir === mainDir ? { path: shim(`moved/${a.path.slice(2)}.ts`) } : undefined
-    )
-  }
-}
-
-// electron-vite's `?asset`: the file is emitted beside the bundle and the import
-// is its absolute path at run time.
-const assetPlugin = {
-  name: 'asset',
-  setup(b) {
-    b.onResolve({ filter: /\?asset$/ }, (a) => ({
-      path: path.resolve(a.resolveDir, a.path.replace(/\?asset$/, '')),
-      namespace: 'asset'
-    }))
-    b.onLoad({ filter: /.*/, namespace: 'asset' }, (a) => {
-      const name = path.basename(a.path)
-      fs.mkdirSync(path.join(out, 'main'), { recursive: true })
-      fs.copyFileSync(a.path, path.join(out, 'main', name))
-      return { contents: `module.exports = require('path').join(__dirname, ${JSON.stringify(name)})`, loader: 'js' }
-    })
-  }
-}
-
-const mainOpts = {
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  target: 'node22',
-  packages: 'external',
-  sourcemap: 'linked',
-  logLevel: 'warning',
-  plugins: [
-    alias({ electron: shim('electron-main.ts'), 'electron-updater': shim('electron-updater.ts') }),
-    movedPlugin,
-    assetPlugin
-  ]
 }
 
 // riven's MCP tool catalog and tool prompt, for the Rust MCP server
@@ -117,18 +73,20 @@ async function writeMcpCatalog() {
   if (old !== text) fs.writeFileSync(file, text)
 }
 
+if (!process.argv.includes('--no-renderer')) {
+  execFileSync(path.join(root, 'node_modules/.bin/electron-vite'), ['build'], { cwd: root, stdio: 'inherit' })
+  fs.rmSync(renderer, { recursive: true, force: true })
+  fs.cpSync(path.join(root, 'out/renderer'), renderer, { recursive: true })
+} else if (!fs.existsSync(path.join(renderer, 'index.html'))) {
+  throw new Error('out-tauri/renderer is missing: build once without --no-renderer')
+}
+// Left over from the Node days (out-tauri/main, out-tauri/preload).
 fs.rmSync(path.join(out, 'main'), { recursive: true, force: true })
 fs.rmSync(path.join(out, 'preload'), { recursive: true, force: true })
+fs.rmSync(path.join(renderer, '__riven'), { recursive: true, force: true })
 
 await Promise.all([
   writeMcpCatalog(),
-  esbuild.build({
-    ...mainOpts,
-    // The DB feature (and its SQLite worker) runs in Rust since stage 6.
-    entryPoints: { index: 'src/main/index.ts' },
-    outdir: path.join(out, 'main'),
-    absWorkingDir: root
-  }),
   esbuild.build({
     bundle: true,
     platform: 'browser',
@@ -136,16 +94,10 @@ await Promise.all([
     target: 'safari17',
     sourcemap: 'inline',
     logLevel: 'warning',
-    entryPoints: { index: 'src/preload/index.ts' },
-    outdir: path.join(out, 'preload'),
+    entryPoints: { preload: 'src/preload/index.ts' },
+    outdir: path.join(renderer, '__riven'),
     absWorkingDir: root,
-    plugins: [alias({ electron: shim('electron-preload.ts') })]
+    plugins: [alias({ electron: path.join(root, 'tauri/page/electron.ts') })]
   })
 ])
-
-if (!process.argv.includes('--no-renderer')) {
-  execFileSync(path.join(root, 'node_modules/.bin/electron-vite'), ['build'], { cwd: root, stdio: 'inherit' })
-  fs.rmSync(path.join(out, 'renderer'), { recursive: true, force: true })
-  fs.cpSync(path.join(root, 'out/renderer'), path.join(out, 'renderer'), { recursive: true })
-}
 console.log('out-tauri ready')

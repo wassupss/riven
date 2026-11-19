@@ -4,13 +4,11 @@
 // asking for the same identity.
 
 use objc2::rc::Retained;
-use objc2::runtime::{AnyClass, AnyObject, Bool};
-use objc2::{msg_send, MainThreadMarker};
-use objc2_app_kit::NSApplication;
+use objc2::runtime::{AnyClass, Bool};
+use objc2::msg_send;
 use objc2_foundation::NSString;
 use serde_json::Value;
 use std::sync::mpsc;
-use tauri::AppHandle;
 
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {}
@@ -66,27 +64,4 @@ pub fn ask(kind: &str) -> Result<Value, String> {
     let _: () = msg_send![cls, requestAccessForMediaType: &*ty, completionHandler: &*block];
   }
   Ok(Value::Bool(rx.recv().unwrap_or(false)))
-}
-
-pub fn set_badge(app: &AppHandle, label: String) -> Result<Value, String> {
-  app
-    .run_on_main_thread(move || {
-      let Some(mtm) = MainThreadMarker::new() else { return };
-      let nsapp = NSApplication::sharedApplication(mtm);
-      unsafe {
-        let tile: *mut AnyObject = msg_send![&*nsapp, dockTile];
-        if tile.is_null() {
-          return;
-        }
-        if label.is_empty() {
-          let none: *const NSString = std::ptr::null();
-          let _: () = msg_send![tile, setBadgeLabel: none];
-        } else {
-          let s = NSString::from_str(&label);
-          let _: () = msg_send![tile, setBadgeLabel: &*s];
-        }
-      }
-    })
-    .map(|_| Value::Null)
-    .map_err(|e| e.to_string())
 }

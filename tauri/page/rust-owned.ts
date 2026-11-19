@@ -1,15 +1,19 @@
-// The IPC channels Rust owns (src-tauri/src/commands). Everything listed here
-// skips Node: the preload shim sends invoke/send to Tauri, and main -> page
-// events come from Tauri. A channel not listed still goes to Node, the
-// temporary fallback until its group moves (docs/tauri-rust-main.md).
+// The IPC channels of src/preload, all answered by Rust (src-tauri/src/
+// commands): the preload sends invoke/send to Tauri, and main -> page events
+// come from Rust as the Tauri event 'riven:ipc'.
 //
-// To move a channel: add its #[tauri::command] in src-tauri/src/commands and
+// To add a channel: add its #[tauri::command] in src-tauri/src/commands and
 // list it here. The command name is derived from the channel
 // ('workspace:readFile' -> workspace_read_file); the array names the
 // positional arguments, which Tauri takes as named ones (camelCase here,
 // snake_case in Rust).
 
 export const RUST_INVOKE: Record<string, readonly string[]> = {
+  // the app (src-tauri/src/commands/app.rs): what Node's index.ts and bridge.ts answered
+  'env:defaults': [],
+  'capture:save': ['folder', 'dataUrl'],
+  'shell:openExternal': ['url'],
+  'ui:setZoom': ['factor'],
   // config
   'config:load': ['name'],
   'config:save': ['name', 'data'],
@@ -269,51 +273,13 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pet:copy': ['text']
 }
 
-// ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
-// has no synchronous call, so the page's sync XHR still goes to Node, which
-// relays it to Rust (dispatch 'ipc.sync' in main.rs) and waits. WebKit refuses
-// a sync XHR while the page is being torn down (beforeunload on reload/close),
-// which is exactly when these flushes run, so then the preload fires the async
-// twin at Rust instead and does not wait.
+// ipcRenderer.sendSync channels, each with its async twin. Tauri has no
+// synchronous call: the preload starts the twin and returns true, and Rust
+// waits for it before a window closes or the app quits (lifecycle.rs).
 export const RUST_SYNC: Readonly<Record<string, string>> = {
   'config:save-sync': 'config:save',
   'sessions:save-sync': 'sessions:save'
 }
-
-// webContents.send channels Rust emits (as the Tauri event 'riven:ipc').
-export const RUST_EVENTS: ReadonlySet<string> = new Set([
-  'fs:changed',
-  'pty:status',
-  'pty:agent',
-  'pty:agentSession',
-  'pty:reply',
-  'pty:done',
-  'pty:bell',
-  'pty:title',
-  'chat:event',
-  'cli:update-changed',
-  'mcp:invoke',
-  'mcp:cancel',
-  'db:search-progress',
-  'db:import-progress',
-  'db:backup-progress',
-  'db:export-progress',
-  'agent:fileEdit',
-  'git:changed',
-  'lsp:notify',
-  'lsp:stopped',
-  'debug:event',
-  'notify:click',
-  'browser:event',
-  'browser:key',
-  'browser:suggestPick',
-  'update:status',
-  'pet:closed',
-  'pet:hidden',
-  'pet:press',
-  'pet:break',
-  'pet:onTop'
-])
 
 export function rustCommand(channel: string): string {
   return channel

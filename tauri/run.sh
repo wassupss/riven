@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Build and launch the Tauri flavour of riven (dev).
 #   tauri/run.sh                 everything
-#   tauri/run.sh --no-renderer   skip the renderer build (main/preload/shell only)
+#   tauri/run.sh --no-renderer   skip the renderer build (preload and shell only)
+#   RIVEN_TAURI_BUILD_ONLY=1 tauri/run.sh   build, print the executable, do not launch
+#
+# Node only builds (tauri/build.mjs: the renderer and the preload). The app
+# itself is the Rust binary; it never starts Node.
 #
 # Test launches (agents, scripts) add RIVEN_TAURI_BACKGROUND=1: the app then
 # never takes focus or comes in front of the user's work (Accessory app,
@@ -10,10 +14,11 @@
 # The binary runs from a minimal dev .app (src-tauri/target/debug/riven-tauri.app):
 # notifications (UNUserNotificationCenter) need a bundle with an identifier and
 # an icon, or they wear Script Editor's and a click can't come back. The
-# wrapper holds only Info.plist, the binary and the icon; no Resources/app or
-# Resources/node, so main.rs `bundled()` stays false and dev keeps running the
-# live out-tauri with the local Node. RIVEN_TAURI_NO_APP=1 runs the bare binary.
-# Its bundle id is riven-tauri, not tauri.conf.json's (see dev_app below).
+# wrapper holds only Info.plist, the binary and the icon. A dev build reads the
+# page from out-tauri/renderer on disk (tauri.conf.json devUrl, see
+# src-tauri/src/page.rs), so a renderer rebuild needs no Rust rebuild.
+# RIVEN_TAURI_NO_APP=1 runs the bare binary. Its bundle id is riven-tauri, not
+# tauri.conf.json's (see dev_app below).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
@@ -22,6 +27,7 @@ node tauri/build.mjs "$@"
 
 bin=src-tauri/target/debug/riven-tauri
 if [ "$(uname)" != Darwin ] || [ "${RIVEN_TAURI_NO_APP:-}" = 1 ]; then
+  [ "${RIVEN_TAURI_BUILD_ONLY:-}" = 1 ] && { echo "$bin"; exit 0; }
   exec "$bin"
 fi
 
@@ -77,6 +83,7 @@ PLIST
 }
 
 if exe=$(dev_app); then
+  [ "${RIVEN_TAURI_BUILD_ONLY:-}" = 1 ] && { echo "$exe"; exit 0; }
   exec "$exe"
 fi
 echo "run.sh: could not build the dev .app; running the bare binary (notifications fall back to osascript)" >&2

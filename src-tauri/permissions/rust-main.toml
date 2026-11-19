@@ -4,6 +4,13 @@
 identifier = "rust-main"
 description = "Every command of riven's Rust main."
 permissions = [
+  "allow-env-defaults",
+  "allow-capture-save",
+  "allow-shell-open-external",
+  "allow-ui-set-zoom",
+  "allow-riven-drag-paths",
+  "allow-riven-close-popout",
+  "allow-riven-pop-theme",
   "allow-browser-bookmarks",
   "allow-browser-history",
   "allow-browser-add-bookmark",
@@ -239,6 +246,41 @@ permissions = [
   "allow-font-import",
   "allow-scripts-list",
 ]
+
+[[permission]]
+identifier = "allow-env-defaults"
+description = "Allows env_defaults."
+commands.allow = ["env_defaults"]
+
+[[permission]]
+identifier = "allow-capture-save"
+description = "Allows capture_save."
+commands.allow = ["capture_save"]
+
+[[permission]]
+identifier = "allow-shell-open-external"
+description = "Allows shell_open_external."
+commands.allow = ["shell_open_external"]
+
+[[permission]]
+identifier = "allow-ui-set-zoom"
+description = "Allows ui_set_zoom."
+commands.allow = ["ui_set_zoom"]
+
+[[permission]]
+identifier = "allow-riven-drag-paths"
+description = "Allows riven_drag_paths."
+commands.allow = ["riven_drag_paths"]
+
+[[permission]]
+identifier = "allow-riven-close-popout"
+description = "Allows riven_close_popout."
+commands.allow = ["riven_close_popout"]
+
+[[permission]]
+identifier = "allow-riven-pop-theme"
+description = "Allows riven_pop_theme."
+commands.allow = ["riven_pop_theme"]
 
 [[permission]]
 identifier = "allow-browser-bookmarks"

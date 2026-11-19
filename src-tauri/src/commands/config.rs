@@ -19,11 +19,6 @@ pub async fn config_save(name: String, data: Value) -> CmdResult<()> {
   atomic::write(&file, atomic::json_pretty(&data)).await.map_err(|e| fsx::io_err(&e, "open", &file))
 }
 
-/// The blocking flush on unload (config:save-sync, relayed by Node).
-pub fn save_sync(name: &str, data: &Value) -> bool {
-  atomic::write_blocking(&paths::user_file(name), &atomic::json_pretty(data)).is_ok()
-}
-
 #[tauri::command]
 pub fn config_reveal(name: String) {
   fsx::reveal(&paths::user_file(&name));

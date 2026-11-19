@@ -166,6 +166,7 @@ fn save_position() {
 /// Shown without activating anything (showInactive), on the main thread.
 fn show_inactive(w: tauri::Window) {
   let Some(app) = app() else { return };
+  crate::lifecycle::note("pet: show");
   if crate::background() {
     crate::order_back(app, w);
     return;
@@ -217,8 +218,7 @@ pub fn open() -> Result<(), String> {
   )?;
   let w = win().ok_or("pet window did not open")?;
   let _ = w.set_visible_on_all_workspaces(true);
-  let origin = crate::origin();
-  let a = json!({ "label": LABEL, "url": format!("{origin}/pet.html") });
+  let a = json!({ "label": LABEL, "url": crate::page::url("pet.html") });
   let app2 = app.clone();
   std::thread::spawn(move || {
     // ready-to-show: once the page has loaded, never stealing focus.

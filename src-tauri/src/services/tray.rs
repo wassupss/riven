@@ -155,8 +155,8 @@ pub fn on_menu(app: &AppHandle, id: &str) -> bool {
   let rest = rest.to_string();
   std::thread::spawn(move || match rest.as_str() {
     "open" => bring_up(&app, None),
-    // Quitting goes through before-quit (Node, for now), like Cmd+Q.
-    "quit" => crate::emit(json!({ "ev": "quit-requested" })),
+    // The same quit as Cmd+Q (with its confirmation).
+    "quit" => crate::lifecycle::request_quit(&app),
     r => {
       if let Some(i) = r.strip_prefix("pane:").and_then(|n| n.parse::<usize>().ok()) {
         let p = state().lock().unwrap().panes.get(i).cloned();
@@ -178,6 +178,7 @@ fn bring_up(app: &AppHandle, pane: Option<String>) {
   if w.is_minimized().unwrap_or(false) {
     let _ = w.unminimize();
   }
+  crate::lifecycle::note("tray: bring up");
   let _ = w.show();
   let _ = w.set_focus();
   if let Some(p) = pane {

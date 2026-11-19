@@ -15,11 +15,6 @@
 // (target/debug/riven-tauri.app). A bare binary has neither, and asking for
 // the notification center there throws, so it falls back to `osascript
 // display notification` (Script Editor's icon, a click can't be seen).
-//
-// Notifications the Node side still posts (the shim's Notification class:
-// update.ts's "update ready") go through the same poster from the control line
-// (`notify.post` in main.rs) and their click comes back to Node as the event
-// {ev: 'notify', id, kind: 'click'}.
 
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -104,8 +99,6 @@ struct Stats {
 enum Click {
   // notify:show: focus `label` and tell its page about `pane`.
   Pane { label: Option<String>, pane: Option<String> },
-  // The Node shim's own Notification: tell Node.
-  Node,
   // "Update ready" (services/update): a click installs it.
   #[allow(dead_code)]
   Update,
@@ -264,26 +257,7 @@ pub fn show(sender: &str, req: &Value) {
   });
 }
 
-/// The Node shim's Notification.show(): posts and waits (bounded) for the OS
-/// to accept or refuse it. Ok is the id a click will come back with.
-pub fn post_for_node(title: &str, subtitle: &str, body: &str, silent: bool) -> Result<String, String> {
-  let id = with(|s| next_id(s, Click::Node));
-  let (tx, rx) = std::sync::mpsc::channel();
-  post(&id, title, subtitle, body, silent, move |r| {
-    let _ = tx.send(r);
-  });
-  match rx.recv_timeout(std::time::Duration::from_secs(10)) {
-    Ok(Ok(())) => Ok(id),
-    Ok(Err(e)) => {
-      with(|s| s.pending.retain(|(i, _)| i != &id));
-      Err(e)
-    }
-    // Not refused, just slow: the click may still come.
-    Err(_) => Ok(id),
-  }
-}
-
-/// update.ts's "update ready" notification (it was the shim's Notification).
+/// update.ts's "update ready" notification.
 #[allow(dead_code)]
 pub fn post_update(title: &str, body: &str) -> Result<(), String> {
   if crate::background() {
@@ -346,7 +320,6 @@ fn clicked(id: &str) {
       // Window calls go through the event loop; never block the delegate.
       std::thread::spawn(move || focus(label, pane));
     }
-    Some(Click::Node) => crate::emit(json!({ "ev": "notify", "id": id, "kind": "click" })),
     Some(Click::Update) => {
       std::thread::spawn(super::update::install);
     }
@@ -363,6 +336,7 @@ fn focus(label: Option<String>, pane: Option<String>) {
     if w.is_minimized().unwrap_or(false) {
       let _ = w.unminimize();
     }
+    crate::lifecycle::note("notification click");
     #[cfg(target_os = "macos")]
     let _ = app.show();
     let _ = w.show();

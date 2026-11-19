@@ -592,12 +592,15 @@ fn is_expression(v: &Webview<Wry>, code: &str) -> Result<bool, String> {
   rx.recv_timeout(Duration::from_secs(10)).map_err(|_| "script timed out".to_string())
 }
 
-// The address bar's suggestion list: a static page, no network.
+// The address bar's suggestion list: a static page, no network. With `base`,
+// the document takes that URL's origin (the localStorage move, lsmigrate.rs).
 fn load_html(app: &AppHandle, a: &Value) -> Res {
   let v = view(app, a)?;
   let html = s(a, "html").unwrap_or("").to_string();
+  let base = s(a, "base").map(String::from);
   v.with_webview(move |pv| unsafe {
-    let _ = wk(&pv).loadHTMLString_baseURL(&NSString::from_str(&html), None);
+    let base = base.and_then(|b| objc2_foundation::NSURL::URLWithString(&NSString::from_str(&b)));
+    let _ = wk(&pv).loadHTMLString_baseURL(&NSString::from_str(&html), base.as_deref());
   })
   .map(|_| Value::Null)
   .map_err(|e| e.to_string())
@@ -607,7 +610,7 @@ fn load_html(app: &AppHandle, a: &Value) -> Res {
 
 // WKWebView draws the page into an image itself, so no screen-recording
 // permission is involved (as with Electron's). rect: in the view's points.
-fn snapshot(v: &Webview<Wry>, rect: Option<[f64; 4]>) -> Res {
+fn snapshot(v: &Webview<Wry>, rect: Option<[f64; 4]>, width: Option<f64>) -> Res {
   let (tx, rx) = mpsc::channel::<Option<Vec<u8>>>();
   v.with_webview(move |pv| {
     let Some(mtm) = MainThreadMarker::new() else { return };
@@ -622,9 +625,15 @@ fn snapshot(v: &Webview<Wry>, rect: Option<[f64; 4]>) -> Res {
       let _ = tx.send(png.map(|d| d.to_vec()));
     });
     unsafe {
-      let cfg = rect.map(|r| {
+      let cfg = (rect.is_some() || width.is_some()).then(|| {
         let c = WKSnapshotConfiguration::new(mtm);
-        c.setRect(CGRect::new(CGPoint::new(r[0], r[1]), CGSize::new(r[2], r[3])));
+        if let Some(r) = rect {
+          c.setRect(CGRect::new(CGPoint::new(r[0], r[1]), CGSize::new(r[2], r[3])));
+        }
+        // The image's width in points (the demo's 1280-wide frames).
+        if let Some(w) = width {
+          c.setSnapshotWidth(Some(&objc2_foundation::NSNumber::new_f64(w)));
+        }
         c
       });
       wk(&pv).takeSnapshotWithConfiguration_completionHandler(cfg.as_deref(), &done);
@@ -646,7 +655,7 @@ fn rect_arg(a: &Value) -> Option<[f64; 4]> {
 // win.capture (an app window) and wv.capture (any webview by label).
 pub fn capture(app: &AppHandle, a: &Value) -> Res {
   let v = view(app, a)?;
-  snapshot(&v, rect_arg(a))
+  snapshot(&v, rect_arg(a), f(a, "snapshotWidth"))
 }
 
 // ---- dispatch -----------------------------------------------------------------------

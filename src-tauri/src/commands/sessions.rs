@@ -21,7 +21,3 @@ pub async fn sessions_save(data: Value) -> CmdResult<()> {
   atomic::write(&file, atomic::json_pretty(&data)).await.map_err(|e| fsx::io_err(&e, "open", &file))
 }
 
-/// The blocking flush on unload (sessions:save-sync, relayed by Node).
-pub fn save_sync(data: &Value) -> bool {
-  atomic::write_blocking(&store_file(), &atomic::json_pretty(data)).is_ok()
-}

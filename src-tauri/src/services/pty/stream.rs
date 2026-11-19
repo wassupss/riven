@@ -3,14 +3,15 @@
 // binary frames, in order (see frame() in mod.rs, decoded by
 // tauri/shim/pty-stream.ts).
 //
-// Why not a Tauri Channel or webview.eval: the app's pages are served over
-// http://127.0.0.1 by Node, and WebKit refuses their fetch to Tauri's ipc://
-// scheme, so Tauri falls back to postMessage + eval. A raw Channel message over
-// 1KB then arrives as a JSON array of numbers (4x the bytes, then an Array to
-// convert), and every eval'd script stays attributed to this process as
-// "owned unmapped" memory until WebKit lets go of it: a 300MB flood left
-// 441MB here that never came back. A socket is a real binary path, and its
-// buffers are the kernel's.
+// Why not a Tauri Channel: measured again in phase 8, with the page on
+// riven://localhost where Channel is a real binary path (each message one
+// eval, plus an ipc:// fetch above 1KB). Release build, flow control acked
+// on receipt: 300MB without newlines 11.1s / CPU 17% here vs 11.3s / 21%,
+// `yes` 200MB 63.9s / 99% vs 67.8s / 102%, footprint the same (50 vs 51MB
+// after), keystroke echo the same (median 7ms). The socket stays: a little
+// lighter, and no script per message. (Phase 2, with the page on
+// http://127.0.0.1, a Channel fell back to postMessage + eval and a 300MB
+// flood left 441MB here.)
 //
 // Only what the app's own pages need: the handshake (RFC 6455, sha1 +
 // base64), unmasked binary frames out, and reading the page's frames only to
@@ -121,7 +122,7 @@ fn serve(stream: TcpStream, token: &str) {
       if k == "sec-websocket-key" {
         key = Some(v.to_string());
       } else if k == "origin" {
-        origin_ok = v.starts_with("http://127.0.0.1:") || v.starts_with("tauri://");
+        origin_ok = v == crate::page::ORIGIN;
       }
     }
   }
