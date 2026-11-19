@@ -11,7 +11,6 @@ import * as path from 'path'
 import { call, callSync, connect, fire, onEvent } from './rust'
 import { BrowserWindow, WebContents, setAppEmitter, type Rect } from './windows'
 import { serverReady } from './server'
-import { session, WebContentsView } from './views'
 
 export { ipcMain } from './ipc'
 export { BrowserWindow, WebContents }
@@ -858,10 +857,6 @@ export const systemPreferences = {
   on(): void {}
 }
 
-// ---- session / WebContentsView: the browser panel (views.ts) -----------------
-
-export { session, WebContentsView } from './views'
-
 export const webContents = {
   getAllWebContents(): WebContents[] {
     return BrowserWindow.getAllWindows().map((w) => w.webContents)
@@ -946,8 +941,6 @@ export default {
   Menu,
   Tray,
   systemPreferences,
-  session,
-  WebContentsView,
   webContents,
   utilityProcess
 }

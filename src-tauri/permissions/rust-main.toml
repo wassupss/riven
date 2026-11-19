@@ -4,6 +4,27 @@
 identifier = "rust-main"
 description = "Every command of riven's Rust main."
 permissions = [
+  "allow-browser-bookmarks",
+  "allow-browser-history",
+  "allow-browser-add-bookmark",
+  "allow-browser-remove-bookmark",
+  "allow-browser-clear-history",
+  "allow-browser-create",
+  "allow-browser-navigate",
+  "allow-browser-go",
+  "allow-browser-destroy",
+  "allow-browser-sync",
+  "allow-browser-hide-all",
+  "allow-browser-exec-js",
+  "allow-browser-capture",
+  "allow-browser-state",
+  "allow-browser-set-zoom",
+  "allow-browser-find",
+  "allow-browser-open-devtools",
+  "allow-browser-set-lang",
+  "allow-browser-suggest",
+  "allow-browser-bar-menu",
+  "allow-browser-pick-element",
   "allow-chat-start",
   "allow-chat-send",
   "allow-chat-alive",
@@ -187,6 +208,111 @@ permissions = [
   "allow-font-import",
   "allow-scripts-list",
 ]
+
+[[permission]]
+identifier = "allow-browser-bookmarks"
+description = "Allows browser_bookmarks."
+commands.allow = ["browser_bookmarks"]
+
+[[permission]]
+identifier = "allow-browser-history"
+description = "Allows browser_history."
+commands.allow = ["browser_history"]
+
+[[permission]]
+identifier = "allow-browser-add-bookmark"
+description = "Allows browser_add_bookmark."
+commands.allow = ["browser_add_bookmark"]
+
+[[permission]]
+identifier = "allow-browser-remove-bookmark"
+description = "Allows browser_remove_bookmark."
+commands.allow = ["browser_remove_bookmark"]
+
+[[permission]]
+identifier = "allow-browser-clear-history"
+description = "Allows browser_clear_history."
+commands.allow = ["browser_clear_history"]
+
+[[permission]]
+identifier = "allow-browser-create"
+description = "Allows browser_create."
+commands.allow = ["browser_create"]
+
+[[permission]]
+identifier = "allow-browser-navigate"
+description = "Allows browser_navigate."
+commands.allow = ["browser_navigate"]
+
+[[permission]]
+identifier = "allow-browser-go"
+description = "Allows browser_go."
+commands.allow = ["browser_go"]
+
+[[permission]]
+identifier = "allow-browser-destroy"
+description = "Allows browser_destroy."
+commands.allow = ["browser_destroy"]
+
+[[permission]]
+identifier = "allow-browser-sync"
+description = "Allows browser_sync."
+commands.allow = ["browser_sync"]
+
+[[permission]]
+identifier = "allow-browser-hide-all"
+description = "Allows browser_hide_all."
+commands.allow = ["browser_hide_all"]
+
+[[permission]]
+identifier = "allow-browser-exec-js"
+description = "Allows browser_exec_js."
+commands.allow = ["browser_exec_js"]
+
+[[permission]]
+identifier = "allow-browser-capture"
+description = "Allows browser_capture."
+commands.allow = ["browser_capture"]
+
+[[permission]]
+identifier = "allow-browser-state"
+description = "Allows browser_state."
+commands.allow = ["browser_state"]
+
+[[permission]]
+identifier = "allow-browser-set-zoom"
+description = "Allows browser_set_zoom."
+commands.allow = ["browser_set_zoom"]
+
+[[permission]]
+identifier = "allow-browser-find"
+description = "Allows browser_find."
+commands.allow = ["browser_find"]
+
+[[permission]]
+identifier = "allow-browser-open-devtools"
+description = "Allows browser_open_devtools."
+commands.allow = ["browser_open_devtools"]
+
+[[permission]]
+identifier = "allow-browser-set-lang"
+description = "Allows browser_set_lang."
+commands.allow = ["browser_set_lang"]
+
+[[permission]]
+identifier = "allow-browser-suggest"
+description = "Allows browser_suggest."
+commands.allow = ["browser_suggest"]
+
+[[permission]]
+identifier = "allow-browser-bar-menu"
+description = "Allows browser_bar_menu."
+commands.allow = ["browser_bar_menu"]
+
+[[permission]]
+identifier = "allow-browser-pick-element"
+description = "Allows browser_pick_element."
+commands.allow = ["browser_pick_element"]
 
 [[permission]]
 identifier = "allow-chat-start"

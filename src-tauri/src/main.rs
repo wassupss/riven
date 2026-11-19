@@ -439,6 +439,9 @@ fn popout_event(w: &tauri::Window<Wry>, ev: &WindowEvent) {
   let label = w.label().to_string();
   match ev {
     WindowEvent::CloseRequested { api, .. } => {
+      // The browser views it carries go home before the window goes.
+      #[cfg(target_os = "macos")]
+      services::browser::on_host_closing(&label);
       if !shared().closing.lock().unwrap().insert(label.clone()) {
         return;
       }
@@ -595,7 +598,11 @@ fn win_cmd(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     }
     "win.hide" => e(w.hide()),
     "win.close" => e(w.close()),
-    "win.destroy" => e(w.destroy()),
+    "win.destroy" => {
+      #[cfg(target_os = "macos")]
+      services::browser::host_closing(w.label());
+      e(w.destroy())
+    }
     "win.focus" => e(w.set_focus()),
     "win.minimize" => e(w.minimize()),
     "win.restore" => e(w.unminimize()),
@@ -1015,6 +1022,89 @@ fn order_back(app: &AppHandle, w: Window<Wry>) {
   }
 }
 
+// ---- the browser panel's native bits (services/browser.rs) ----------------------
+
+/// A menu from a JSON template, popped up at the cursor over a window.
+pub(crate) fn popup_menu(app: &AppHandle, label: &str, a: &Value) -> Res {
+  let m = build_menu(app, a)?;
+  let w = app.get_window(label).ok_or("no window")?;
+  w.popup_menu(&m).map(|_| Value::Null).map_err(|e| e.to_string())
+}
+
+const SUGGEST: &str = "bv-suggest";
+
+/// The address bar's suggestion list: its own window, which by construction
+/// can never take the keyboard (focusable false), over the page, which does
+/// not move. Shown without activating anything once its rows are drawn and it
+/// is as tall as they are. Never shown in the background test mode.
+#[cfg(target_os = "macos")]
+pub(crate) fn suggest_window(app: &AppHandle, parent: &str, frame: services::browser::Rect, html: &str, zoom: f64) -> Res {
+  let pw = app.get_window(parent).ok_or("no parent")?;
+  let w = match app.get_window(SUGGEST) {
+    Some(w) => w,
+    None => {
+      let blank = WebviewUrl::External("about:blank".parse().unwrap());
+      let built = WebviewWindowBuilder::new(app, SUGGEST, blank)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .maximizable(false)
+        .minimizable(false)
+        .focusable(false)
+        .focused(false)
+        .skip_taskbar(true)
+        .visible(false)
+        .disable_drag_drop_handler()
+        .parent_raw(pw.ns_window().map_err(|e| e.to_string())?)
+        .on_document_title_changed(|_w, t| services::browser::on_suggest_title(&t))
+        .on_page_load(move |wv, p| {
+          if p.event() != PageLoadEvent::Finished {
+            return;
+          }
+          let app = wv.app_handle().clone();
+          std::thread::spawn(move || {
+            let h = dispatch(&app, "wv.exec", &json!({ "label": SUGGEST, "code": "document.getElementById('l').getBoundingClientRect().height", "expr": true }))
+              .ok()
+              .and_then(|v| v.as_str().and_then(|t| serde_json::from_str::<Value>(t).ok()))
+              .and_then(|v| v.get("v").and_then(Value::as_f64));
+            let Some(w) = app.get_window(SUGGEST) else { return };
+            let k = w.scale_factor().unwrap_or(1.0);
+            if let (Some(h), Ok(sz)) = (h.filter(|h| *h > 0.0), w.inner_size()) {
+              let width = sz.to_logical::<f64>(k).width;
+              let _ = w.set_size(LogicalSize::new(width, h.ceil().max(24.0)));
+            }
+            if background() {
+              return;
+            }
+            let _ = app.run_on_main_thread(move || {
+              if let Ok(ns) = w.ns_window() {
+                let ns = ns as *mut objc2::runtime::AnyObject;
+                unsafe {
+                  let _: () = objc2::msg_send![&*ns, orderFront: std::ptr::null::<objc2::runtime::AnyObject>()];
+                }
+              }
+            });
+          });
+        })
+        .build()
+        .map_err(|e| e.to_string())?;
+      built.as_ref().window()
+    }
+  };
+  let _ = zoom;
+  w.set_position(LogicalPosition::new(frame.x, frame.y)).map_err(|e| e.to_string())?;
+  w.set_size(LogicalSize::new(frame.width, frame.height)).map_err(|e| e.to_string())?;
+  dispatch(app, "wv.html", &json!({ "label": SUGGEST, "html": html }))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn suggest_hide(app: &AppHandle) {
+  if let Some(w) = app.get_window(SUGGEST) {
+    let _ = w.hide();
+  }
+}
+
 // ---- dispatch ----------------------------------------------------------------
 
 fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
@@ -1290,11 +1380,27 @@ fn main() {
   let mut app = builder
     .plugin(tauri_plugin_dialog::init())
     .invoke_handler(commands::handler())
-    .on_menu_event(|_app, ev| emit(json!({ "ev": "menu", "id": ev.id().0 })))
+    .on_menu_event(|_app, ev| {
+      #[cfg(target_os = "macos")]
+      if services::browser::on_menu(&ev.id().0) {
+        return;
+      }
+      emit(json!({ "ev": "menu", "id": ev.id().0 }))
+    })
     .on_window_event(|w, ev| {
       let label = w.label();
       if let WindowEvent::Destroyed = ev {
         services::notify::forget(label);
+        #[cfg(target_os = "macos")]
+        services::browser::on_host_destroyed(label);
+      }
+      // The address bar's list closes when its window moves, resizes, hides or loses focus.
+      #[cfg(target_os = "macos")]
+      if matches!(ev, WindowEvent::Moved(_) | WindowEvent::Resized(_) | WindowEvent::Focused(false) | WindowEvent::Destroyed) {
+        services::browser::on_parent_changed(label);
+      }
+      if label == SUGGEST {
+        return;
       }
       // Popouts are dockview's, owned by the opener's page; node never made them.
       if label.starts_with("pop-") {
@@ -1375,6 +1481,8 @@ fn main() {
       // Click routing, and the permission request notify.ts's startup probe
       // made (not in the background test mode, which asks for nothing).
       services::notify::init(app.handle(), background());
+      #[cfg(target_os = "macos")]
+      services::browser::init(app.handle());
       #[cfg(target_os = "macos")]
       observe_system();
       start_node(app.handle()).map_err(|e| Box::<dyn std::error::Error>::from(e))?;

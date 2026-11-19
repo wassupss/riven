@@ -11,6 +11,7 @@
 // 'riven:ipc' to one window; the preload shim hands it to ipcRenderer.on
 // listeners exactly like a webContents.send from Node.
 
+pub mod browser;
 pub mod chat;
 pub mod config;
 pub mod db;
@@ -53,6 +54,27 @@ pub(crate) fn app_page(label: &str) -> bool {
 pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
   let inner: Box<dyn Fn(Invoke<Wry>) -> bool + Send + Sync> = Box::new(tauri::generate_handler![
     config::config_load,
+    browser::browser_bookmarks,
+    browser::browser_history,
+    browser::browser_add_bookmark,
+    browser::browser_remove_bookmark,
+    browser::browser_clear_history,
+    browser::browser_create,
+    browser::browser_navigate,
+    browser::browser_go,
+    browser::browser_destroy,
+    browser::browser_sync,
+    browser::browser_hide_all,
+    browser::browser_exec_js,
+    browser::browser_capture,
+    browser::browser_state,
+    browser::browser_set_zoom,
+    browser::browser_find,
+    browser::browser_open_devtools,
+    browser::browser_set_lang,
+    browser::browser_suggest,
+    browser::browser_bar_menu,
+    browser::browser_pick_element,
     debug::debug_start,
     debug::debug_stop,
     debug::debug_continue,

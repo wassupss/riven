@@ -3,6 +3,7 @@
 // them too while Node still runs the groups that are not moved yet.
 
 pub mod atomic;
+pub mod browser;
 pub mod chat;
 pub mod collate;
 pub mod db;

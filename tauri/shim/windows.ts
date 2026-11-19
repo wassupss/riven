@@ -10,7 +10,6 @@ import { call, callSync, fire, onEvent } from './rust'
 import { serverOrigin, rendererDir } from './server-info'
 // Cyclic (electron-main imports this file), but only touched at call time.
 import { nativeImage, type NativeImage } from './electron-main'
-import { hostClosed, type WebContentsView } from './views'
 
 export type Rect = { x: number; y: number; width: number; height: number }
 
@@ -202,21 +201,6 @@ export class BrowserWindow extends EventEmitter {
   private title: string
   private parent: BrowserWindow | null
   private minimized = false
-  // browser.ts floats the browser panel's WebContentsViews here (child
-  // webviews of this window, see views.ts).
-  readonly contentView = {
-    children: [] as WebContentsView[],
-    addChildView: (v: WebContentsView): void => {
-      if (this.destroyed) return
-      if (!this.contentView.children.includes(v)) this.contentView.children.push(v)
-      v._attachTo(this)
-    },
-    // The view moves when it is added to another window (attach() in
-    // browser.ts removes it first); there is nothing to undo natively.
-    removeChildView: (v: WebContentsView): void => {
-      this.contentView.children = this.contentView.children.filter((c) => c !== v)
-    }
-  }
 
   static getAllWindows(): BrowserWindow[] {
     // Electron lists the newest first.
@@ -313,7 +297,6 @@ export class BrowserWindow extends EventEmitter {
     windows.delete(this.id)
     byLabel.delete(this.label)
     this.emit('close', { preventDefault: () => {} })
-    hostClosed(this)
     this.webContents._destroy()
     this.emit('closed')
     if (windows.size === 0) app_emit('window-all-closed')

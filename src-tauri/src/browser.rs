@@ -1,5 +1,5 @@
 // The browser panel's pages: Electron WebContentsViews, here child WKWebViews
-// of the app window (tauri/shim/views.ts is the Node side).
+// of the app window (services/browser.rs is the panel's logic).
 //
 // A page is untrusted web content, so it gets nothing of ours. What we need
 // from inside it (Cmd/Ctrl chords, the right-click target, in-page URL
@@ -9,11 +9,12 @@
 // (user-made) events are reported. Script results come back through
 // WebKit's completion handlers, not through anything the page can reach.
 //
-// Every hook (navigation, load, title, the content-world messages) reports the
-// view's state as WebKit has it (url, title, isLoading, back/forward); Node
-// turns the differences into Electron's events.
+// Every hook (navigation, load, title, the content-world messages, failed
+// loads) reports the view's state as WebKit has it (url, title, isLoading,
+// back/forward) to services/browser.rs, which turns the differences into the
+// browser panel's events.
 
-use super::{b, base64_encode, emit, f, s, Res};
+use super::{b, base64_encode, f, s, Res};
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, ProtocolObject, Sel};
@@ -97,7 +98,7 @@ define_class!(
       let Ok(text) = body.downcast::<NSString>() else { return };
       let Ok(m) = serde_json::from_str::<Value>(&text.to_string()) else { return };
       let state = unsafe { msg.webView() }.map(|wk| unsafe { state_of(&wk) });
-      emit(json!({ "ev": "bv", "label": self.ivars().label, "kind": "msg", "msg": m, "state": state }));
+      crate::services::browser::on_view(json!({ "ev": "bv", "label": self.ivars().label, "kind": "msg", "msg": m, "state": state }));
     }
   }
 );
@@ -200,7 +201,7 @@ impl NavProxy {
     });
     let detail = err.localizedDescription().to_string();
     let state = unsafe { state_of(wv) };
-    emit(json!({
+    crate::services::browser::on_view(json!({
       "ev": "bv", "label": self.ivars().label, "kind": "fail", "provisional": provisional,
       "code": net, "desc": name, "url": url, "detail": detail, "domain": domain, "nsCode": code, "state": state,
     }));
@@ -340,7 +341,7 @@ fn report(v: &Webview<Wry>, hint: &'static str) {
   let label = v.label().to_string();
   let _ = v.with_webview(move |pv| {
     let st = unsafe { state_of(wk(&pv)) };
-    emit(json!({ "ev": "bv", "label": label, "kind": "state", "hint": hint, "state": st }));
+    crate::services::browser::on_view(json!({ "ev": "bv", "label": label, "kind": "state", "hint": hint, "state": st }));
   });
 }
 
@@ -415,16 +416,16 @@ fn create(app: &AppHandle, a: &Value) -> Res {
     // target=_blank / window.open: Electron's setWindowOpenHandler decides; the
     // panel opens it as a tab. Never a window of its own.
     .on_new_window(move |url, _features| {
-      emit(json!({ "ev": "bv", "label": win_label, "kind": "newwindow", "url": url.as_str() }));
+      crate::services::browser::on_view(json!({ "ev": "bv", "label": win_label, "kind": "newwindow", "url": url.as_str() }));
       NewWindowResponse::Deny
     })
     .on_download(move |_v, ev| {
       match ev {
-        DownloadEvent::Requested { url, destination } => emit(json!({
+        DownloadEvent::Requested { url, destination } => crate::services::browser::on_view(json!({
           "ev": "bv", "label": dl_label, "kind": "download", "url": url.as_str(),
           "path": destination.to_string_lossy(),
         })),
-        DownloadEvent::Finished { url, path, success } => emit(json!({
+        DownloadEvent::Finished { url, path, success } => crate::services::browser::on_view(json!({
           "ev": "bv", "label": dl_label, "kind": "download-done", "url": url.as_str(),
           "path": path.map(|p| p.to_string_lossy().into_owned()), "success": success,
         })),
@@ -511,7 +512,13 @@ fn data_bytes(d: &NSData) -> &[u8] {
 fn exec(app: &AppHandle, a: &Value) -> Res {
   let v = view(app, a)?;
   let code = s(a, "code").unwrap_or("").to_string();
-  let expr = b(a, "expr").unwrap_or(false);
+  // "auto": an expression if it parses as one (awaited, as Electron awaits a
+  // promise result), otherwise a script. Asked in our own content world, where
+  // the page's CSP does not stop new Function, and nothing runs.
+  let expr = match a.get("expr") {
+    Some(Value::String(m)) if m == "auto" => is_expression(&v, &code)?,
+    _ => b(a, "expr").unwrap_or(false),
+  };
   let (tx, rx) = mpsc::channel::<Result<String, String>>();
   v.with_webview(move |pv| unsafe {
     let Some(mtm) = MainThreadMarker::new() else { return };
@@ -557,6 +564,43 @@ fn exec(app: &AppHandle, a: &Value) -> Res {
     Ok(Err(e)) => Err(e),
     Err(_) => Err("script timed out".into()),
   }
+}
+
+fn is_expression(v: &Webview<Wry>, code: &str) -> Result<bool, String> {
+  let body = format!(
+    "try {{ new Function('(async () => (\\n' + {} + '\\n))'); return true }} catch (e) {{ return false }}",
+    Value::String(code.to_string())
+  );
+  let (tx, rx) = mpsc::channel::<bool>();
+  v.with_webview(move |pv| unsafe {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    let tx = tx.clone();
+    let done = RcBlock::new(move |val: *mut AnyObject, _err: *mut NSError| {
+      let yes = Retained::retain(val).and_then(|o| o.downcast::<objc2_foundation::NSNumber>().ok()).is_some_and(|n| n.boolValue());
+      let _ = tx.send(yes);
+    });
+    let world = WKContentWorld::worldWithName(&NSString::from_str(WORLD), mtm);
+    wk(&pv).callAsyncJavaScript_arguments_inFrame_inContentWorld_completionHandler(
+      &NSString::from_str(&body),
+      None,
+      None,
+      &world,
+      Some(&done),
+    );
+  })
+  .map_err(|e| e.to_string())?;
+  rx.recv_timeout(Duration::from_secs(10)).map_err(|_| "script timed out".to_string())
+}
+
+// The address bar's suggestion list: a static page, no network.
+fn load_html(app: &AppHandle, a: &Value) -> Res {
+  let v = view(app, a)?;
+  let html = s(a, "html").unwrap_or("").to_string();
+  v.with_webview(move |pv| unsafe {
+    let _ = wk(&pv).loadHTMLString_baseURL(&NSString::from_str(&html), None);
+  })
+  .map(|_| Value::Null)
+  .map_err(|e| e.to_string())
 }
 
 // ---- capturePage ------------------------------------------------------------------
@@ -613,6 +657,7 @@ pub fn dispatch(app: &AppHandle, cmd: &str, a: &Value) -> Res {
     "bv.create" => create(app, a),
     "wv.exec" => exec(app, a),
     "wv.capture" => capture(app, a),
+    "wv.html" => load_html(app, a),
     _ => {
       let v = view(app, a)?;
       match cmd {

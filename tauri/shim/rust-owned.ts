@@ -209,7 +209,31 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   // a click comes back as the 'notify:click' event to the window it chose.
   'notify:show': ['req'],
   'notify:presence': ['p'],
-  'notify:diag': []
+  'notify:diag': [],
+  // the browser panel (services/browser.rs). sync, hideAll, find, setLang and
+  // suggest are sends; its events come back as 'browser:event', 'browser:key'
+  // and 'browser:suggestPick'.
+  'browser:bookmarks': [],
+  'browser:history': [],
+  'browser:addBookmark': ['b'],
+  'browser:removeBookmark': ['url'],
+  'browser:clearHistory': [],
+  'browser:create': ['a'],
+  'browser:navigate': ['a'],
+  'browser:go': ['a'],
+  'browser:destroy': ['a'],
+  'browser:sync': ['a'],
+  'browser:hideAll': ['hidden'],
+  'browser:execJs': ['a'],
+  'browser:capture': ['a'],
+  'browser:state': ['a'],
+  'browser:setZoom': ['a'],
+  'browser:find': ['a'],
+  'browser:openDevtools': ['a'],
+  'browser:setLang': ['l'],
+  'browser:suggest': ['payload'],
+  'browser:barMenu': ['a'],
+  'browser:pickElement': ['a']
 }
 
 // ipcRenderer.sendSync channels Rust owns, each with its async twin. Tauri
@@ -246,7 +270,10 @@ export const RUST_EVENTS: ReadonlySet<string> = new Set([
   'lsp:notify',
   'lsp:stopped',
   'debug:event',
-  'notify:click'
+  'notify:click',
+  'browser:event',
+  'browser:key',
+  'browser:suggestPick'
 ])
 
 export function rustCommand(channel: string): string {
