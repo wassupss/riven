@@ -619,3 +619,13 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
 - **시험 훅:** `server.ts`의 `/__riven/test`(`op=eval`, `wv`, `shot`, `close`, `busy`, `displays`, `front`)를 Rust 쪽 루프백 엔드포인트로 옮긴다(`RIVEN_TAURI_TEST_KEY`가 있을 때만). 백그라운드 모드(`RIVEN_TAURI_BACKGROUND=1`, 7-1의 가림 감지 끄기 포함)는 이미 Rust다.
 - **위 "옮기지 않은 것" 전부:** usage:limits, permissions, auth, update, remoteKey, pet, tray, browser, menu, bridge, media, systemResume, focusTrace, demo.
 - **패키징:** `tauri/package.mjs`에서 Node 바이너리와 node_modules 동봉을 빼고, 서명/공증, tauri-plugin-updater 피드. 언어 서버는 이미 설치된 것만 쓰므로(7-2) 앱에 넣을 것이 없다. 묶인 서버가 빠지면 Electron에서 넘어온 사용자에게 상태줄 안내가 처음 보일 수 있다.
+
+### 8단계 전 정리 (2026-11-19)
+
+#### 8a-1. 탭 줄의 거짓 "∨ 1" 넘침 버튼 (WKWebView)
+
+- **현상:** 사용자 앱에서 탭 3개(탐색기, 코드, 안녕?)인 묶음에 아무 탭도 넘치지 않았는데 dockview 넘침 버튼 "1"이 떴다. 잰 값: `.dv-tabs-container` 너비 192.63(clientWidth 192, scrollWidth 193, 높이는 둘 다 30, scrollLeft 0), 마지막 탭의 오른쪽 끝이 탭 줄 오른쪽보다 약 1.5e-6px 밖.
+- **원인:** dockview-core 7.0.2가 넘침을 정확한 비교 두 개로 판단한다. `OverflowObserver`의 `scrollWidth > clientWidth`(193 > 192), `toggleDropdown`의 `isChildEntirelyVisibleWithinParent`(오른쪽 끝 비교). 탭 줄은 내용 너비에 맞춰 줄어드는 상자이고 탭 너비가 소수라서, WebKit이 scrollWidth는 올리고 clientWidth는 내리는 반올림에 두 비교가 모두 걸린다. Chromium은 양쪽을 같게 맞춰서 Electron에서는 안 보였다.
+- **고침:** `vite/dockviewSubpixelOverflow.ts` (렌더러 빌드 플러그인, `dockviewFilePopout`과 같은 방식). 두 비교에 1px 여유를 준다(`scrollWidth - clientWidth > 1`, 탭 위치 비교에 ±1px). 1px보다 덜 잘린 탭은 가려진 것이 아니다. 진짜 넘침은 그대로 같은 개수로 보인다. 레이아웃과 CSS는 건드리지 않아서 탭 줄 빈 곳에 끌어다 놓기는 그대로다. dockview가 바뀌어 고칠 코드를 못 찾으면 빌드가 실패한다. Electron 빌드에도 들어간다(빌드 결과에 고친 코드 확인).
+- **확인 (백그라운드 시험 앱, `op=wv`):** 시험 앱이 같은 세션을 복원해 사용자 앱과 같은 묶음(192.6302, cw 192, sw 193)이 떴고 넘침 버튼이 없었다. 탭 너비를 소수로 바꾼 6가지(그중 5가지는 옛 판단이면 넘침, 4가지는 옛 탭 비교로 1개 숨김)에서 모두 버튼 없음. 진짜 넘침 4가지(숨은 탭 1, 2, 1, 3개)에서 버튼과 개수가 1, 2, 1, 3으로 맞았다. 시험 뒤 원래 너비로 돌리자 버튼 없음.
+- dockview 원래 동작 그대로인 것: 넘친 상태에서 탭 줄 너비가 안 바뀌고 탭만 커지면 개수가 바로 갱신되지 않는다(ResizeObserver가 탭 줄에만 걸려 있음). 고치기 전과 같다.
