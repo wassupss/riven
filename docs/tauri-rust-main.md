@@ -15,6 +15,16 @@ Tauri로 옮기는 이유는 가볍고 빠르게 만들기 위해서다. 그래�
 | 화면 쪽 메모리 | 224MB (Chromium 4개) | 484MB (WebKit 4개) | 별도 조사 후 목표 설정 |
 | 쉴 때 CPU | 약 1.7% | 약 1.0% | 1% 이하 유지 |
 
+8단계 뒤 (2026-11-19, 패키지 앱, 백그라운드 시험 모드, footprint):
+
+| | Electron (설치된 riven.app) | Tauri 8단계 (Node 없음) | 목표 |
+|---|---|---|---|
+| 앱 용량 (du) | 379MB | 28MB | 40MB 이하 |
+| 메인 쪽 메모리 | 146MB (사용 중인 riven 메인, 6일 실행) | 26MB (riven-tauri, 실행 45초 뒤) | 30MB 이하 |
+| 시작 시간 (실행부터 화면이 그려질 때까지) | 재지 않음 | 약 1.0초 (localStorage 이전이 있는 첫 실행 1.4초) | |
+
+Electron 숫자는 사용자가 쓰고 있는 앱이라 같은 조건(빈 상태, 45초)이 아니다. 자세한 것은 9장 8단계.
+
 화면 쪽(WebKit) 메모리는 메인을 Rust로 바꿔도 줄지 않는다. 3장 0단계에서 따로 원인을 잡는다.
 
 ## 2. 최종 구조
@@ -689,3 +699,115 @@ Rust로 옮긴 채널 (이번 단계): lsp 5, debug 9, cli/ports/models/diagnost
   번들에 들어가는 `tauri/shim`은 2,683줄이다(7단계 후 3,080. `views.ts` 451줄을 지움).
 - 메모리 참고 (시험 앱, 위 시험을 모두 돌린 뒤 10분쯤, footprint): riven-tauri 79MB, Node 40MB. 빈 상태 측정이 아니라 7단계 표와 바로 비교하지 않는다.
 - 사용자 화면에서 확인할 것 (시험 앱에서는 띄우지 않음): 브라우저 패널의 오른쪽 클릭/도구 막대 메뉴와 항목, 주소 줄 추천 창, 팝아웃 창의 브라우저 패널, 오류 페이지 모양, 메뉴 막대 아이콘과 메뉴, 펫 창 전체, 로그인 창, 권한 요청과 시스템 설정 열기, 사용량 위젯의 플랜 한도(키체인), 원격 제어 키.
+
+### 8단계 (2026-11-19): Node 제거, 패키징, 업데이트
+
+이제 Tauri 앱은 실행 중에 Node를 띄우지 않는다. 메인 프로세스는 Rust 하나다. Node는 빌드 도구(`tauri/build.mjs`: 렌더러와 preload 빌드, MCP 카탈로그 생성)로만 쓴다. 사용자의 에이전트나 언어 서버가 PATH의 Node를 쓰는 것은 그대로다.
+
+남은 Node 코드: `src/main` 0줄, `tauri/shim` 0줄 (8a 후 879줄 + 2,683줄). `tauri/shim`은 지웠고, 화면 쪽 파일(`electron.ts`, `pty-stream.ts`, `rust-owned.ts`)은 `tauri/page`로 옮겼다. 이것은 페이지 안에서 도는 스크립트다(Node 아님). `src/main`은 Electron 배포용으로 그대로 있다.
+
+#### 8-1. 페이지를 Rust가 준다 (`page.rs`)
+
+- 출처는 `riven://localhost`(Tauri 커스텀 프로토콜)다. Tauri는 직접 등록한 스킴을 "로컬"로 보므로 capability의 `remote`가 필요 없어졌다(`capabilities/app.json`, `pet` 창 라벨도 추가).
+- 렌더러는 Tauri의 frontendDist(`out-tauri/renderer`)다. 패키지 빌드(`tauri build`)는 바이너리에 넣고(압축), 개발 빌드는 디스크에서 읽는다(`tauri.conf.json`의 `devUrl`을 쓰지 않는 주소로 두면 Tauri가 개발 빌드에서 frontendDist를 디스크에서 읽는다). 그래서 렌더러만 다시 빌드하면 Rust를 다시 빌드할 필요가 없다.
+- HTML에는 preload(`/__riven/preload.js`)를 `<head>` 맨 앞에 넣는다(popout.html 제외). 7-1의 CSP 고침(`connect-src`에 `ipc: http://ipc.localhost`)도 여기서 한다.
+- 미디어(`/__riven/media/<경로>`, 예전 riven-media): 열린 워크스페이스 안만, HEAD는 stat, Range는 206(한 번에 최대 4MB). 앱 페이지(w*, pop-*, pet)가 아닌 웹뷰(브라우저 패널 bv-*)에는 403이다.
+- 확인 (실앱): `isSecureContext` true, invoke가 `ipc://` fetch로 감(1건 중 1건), 미디어 전체 200/image/png/37110바이트, Range 206 `bytes 0-9/37110`, HEAD 200, 워크스페이스 밖 403, 없는 파일 404.
+
+#### 8-2. localStorage 이전 (`lsmigrate.rs`)
+
+출처가 바뀌어 localStorage가 비어 보이게 된다. 첫 실행에 한 번 옮긴다.
+
+1. 숨은 도우미 웹뷰가 빈 문서를 옛 출처로 연다(`loadHTMLString`의 base URL `http://127.0.0.1:47391/`. 아무것도 내려받지 않고 포트도 필요 없다). 모든 키를 읽는다.
+2. 첫 앱 창이 앱을 열기 전에 `riven://localhost/__riven/blank.html`을 열고, 새 출처가 비어 있을 때만 전부 쓰고 다시 읽어 비교한다. 그다음 index.html로 간다.
+3. WebKit 데이터 저장소(번들 id)마다 표시 파일(`Application Support/riven-tauri/.localstorage-moved-<번들 id>`)을 남겨 다시 하지 않는다. 새 출처에 이미 데이터가 있으면 덮어쓰지 않는다.
+
+시험 중 발견한 것 두 가지:
+
+- **도우미에서 쓰면 사라졌다.** 도우미 웹뷰에서 127개를 쓰고 다시 읽으면 127개였지만 앱 페이지에서는 0개였다(디스크에도 없음). 도우미를 바로 닫으면 그 프로세스의 저장 메시지가 WebKit 저장소까지 가지 않는다. 그래서 쓰기는 계속 살아 있는 첫 앱 창이 한다.
+- **WebKit 추적 방지(ITP)가 옮긴 데이터를 지웠다.** 옮긴 127개가 종료 때 디스크에 있었는데, 다음 실행 약 5초 뒤 출처 폴더째 지워졌다. ITP가 사용자 상호작용 기록이 없는 사이트("localhost")의 스크립트 저장소를 지운 것이다(ResourceLoadStatistics의 `localhost`가 hadUserInteraction 0). 옛 출처 127.0.0.1은 IP 주소라 대상이 아니었다. 앱 페이지의 데이터 저장소(기본 저장소)에서 ITP를 끈다(`main.rs`의 `no_tracking_prevention`, 비공개 `_setResourceLoadStatisticsEnabled:`). 브라우저 패널은 자기 저장소를 쓰므로 그대로다. 실제 사용자는 첫 실행 5초 안에 클릭하지 않으면 데이터를 잃었을 것이다.
+
+확인 (백업 사본, 번들 id `riven-tauri-migtest`로 복사한 개발 앱, `~/Library/WebKit/riven-tauri-migtest`에 개발 데이터 백업을 복사):
+
+- 사본의 옛 출처(47391) localStorage sqlite에 시험 항목 124개를 직접 더했다(실제 3개 + 시험 124개 = 127개, 60만 9천 자짜리 대화 기록 하나, 빈 값, 한글/이모지, 따옴표와 줄바꿈이 든 키, U+2028과 제어 문자가 든 값).
+- 이전 전 옛 출처 127개(sha256 앞 16자리 d185459d5c57da5d) -> 이전 뒤 새 출처 디스크 127개, 같은 sha, 키 집합 같음, 값이 다른 키 0개. 옛 출처는 그대로(127개, 같은 sha).
+- ITP를 끈 뒤 두 번 더 실행: 2초, 6초, 10초, 15초 시점 모두 127개, 종료 뒤 디스크도 같은 sha.
+- 표시 파일을 지우고 다시 실행하면 "already has 127 entries; left as is"(덮어쓰지 않음).
+- 실제 개발 데이터(번들 id `riven-tauri`, 옛 출처 3개)와 패키지 앱(`dev.riven.tauri`, 3개)도 첫 실행에 옮겨졌다(각 106~127ms). 시험이 끝난 뒤 두 저장소는 백업으로 되돌렸으므로 사용자가 다음에 실행할 때 다시 옮겨진다.
+
+#### 8-3. 터미널 스트림: WebSocket 유지
+
+페이지가 `riven://`이 되어 Tauri Channel이 진짜 바이너리 경로가 됐으므로 다시 쟀다(릴리스 빌드, 같은 바이너리에서 `RIVEN_PTY_STREAM=channel`로 바꿔 가며, 받는 즉시 ack, 터미널 167x50, footprint).
+
+| | WebSocket | Channel |
+|---|---|---|
+| 줄바꿈 없는 300MB | 11.1초, riven-tauri CPU 평균 17% | 11.3초, 21% |
+| `yes` 200MB (화면에는 300MB) | 63.9초, 99% | 67.8초, 102% |
+| 끝난 뒤 footprint | 50MB | 51MB |
+| 키 입력 에코 왕복 (200회) | 중앙값 7ms, 최대 10ms | 중앙값 7ms, 최대 10ms |
+
+Channel은 메시지마다 스크립트 하나를 eval하고 1KB가 넘으면 fetch를 한 번 더 한다. 차이는 작지만 WebSocket이 조금 가볍고 메시지마다 스크립트가 없어서 WebSocket을 두고 Channel 시험 코드는 지웠다. 첫 측정(4회 중 처음 2회)에서는 CPU 표본이 시험 스크립트 실수로 비어 있어 다시 쟀다. 시간은 두 번 모두 같은 경향이었다(11.1/12.6초, 66.6/71.3초).
+
+#### 8-4. sendSync 없애기, 종료와 창 닫기 저장
+
+- sendSync 두 채널(`config:save-sync`, `sessions:save-sync`)은 이제 비동기 저장(`config:save`, `sessions:save`)을 시작하고 true를 돌려준다. preload가 진행 중인 저장을 모아 두고(`window.__rivenSettle`), Rust는 창을 닫거나 앱을 끝내기 전에 페이지의 beforeunload를 돌리고 그 저장이 끝나기를 기다린다(`lifecycle.rs`의 `FLUSH_JS`, 창마다 최대 3초).
+- 앱 종료(Cmd+Q 메뉴, 트레이의 종료, Dock의 종료/로그아웃 = `RunEvent::ExitRequested`): 일하는 에이전트(`chat.running` + 터미널 에이전트)가 있으면 확인 대화상자(한/영, settings.json의 language), 없거나 "종료"면 모든 앱 창(w*)을 flush하고 `app.exit(0)`. 팝아웃은 flush하지 않는다(팝아웃의 beforeunload는 dockview가 묶음을 메인 창으로 되돌리는 것이라 저장된 배치가 바뀐다).
+- 마지막 창을 닫으면 앱은 남는다(macOS). Dock 아이콘을 누르면(`RunEvent::Reopen`) 새 창을 연다(Electron의 activate).
+- 드롭한 파일 경로: 파일을 끌고 창에 들어오는 순간(dragenter) Rust가 드래그 페이스트보드에서 경로를 읽어 페이지에 준다. 드롭 때는 이미 받아 둔 값을 쓴다(동기 호출 없음).
+- 확인 (실앱): 탐색기에서 package.json을 클릭하고 300ms 디바운스 안에 시험 훅으로 종료 -> sessions.json에 package.json이 들어감(전 0건, 후 있음). README.md를 클릭하고 바로 창 닫기(`op=close`) -> sessions.json에 들어감(0 -> 2건), 창이 없어도 앱은 남고 `op=quit`로 정상 종료.
+
+#### 8-5. 시험 훅 (`testhook.rs`)
+
+`RIVEN_TAURI_TEST_KEY`가 있을 때만 `127.0.0.1:47391`(또는 `RIVEN_TAURI_TEST_PORT`)에서 듣는다. 같은 주소와 op(`eval`, `wv`, `shot`, `front`, `close`, `busy`, `displays`)에 `reload`(flush 후 새로고침), `quit`(flush 후 종료, 에이전트가 일하면 409로 거부해서 확인 대화상자가 절대 뜨지 않음), `windows`를 더했다. Host가 127.0.0.1이 아니면 403.
+
+#### 8-6. 나머지 src/main을 Rust로
+
+- `lifecycle.rs`: 메인 창(1600x1000, hiddenInset, #1e1e1e, 페이지 로드 뒤 표시, 백그라운드 모드는 맨 뒤), `win:visibility`(최소화/복원), 앱 메뉴(menu.ts와 같은 항목과 단축키. Cmd+W는 탭 닫기 이벤트, Close Window는 셰임 때와 달리 진짜 Cmd+Shift+W), 시스템 깨어남(`system:resumed`: resume, unlock-screen, 디스플레이 변경은 400ms 모아서), focusTrace(디버그 빌드만, 창이 앞으로 올 때 최근 동작 출력), 종료 흐름.
+- `commands/app.rs`: `env:defaults`(home, shell, platform `darwin`, 로그인 PATH의 claude 또는 cmux의 claude, hostname), `capture:save`(userData/captures/<워크스페이스>, 최신 40개), `shell:openExternal`(http/https만 `/usr/bin/open`), `ui:setZoom`(호출한 웹뷰), 팝아웃 닫기와 테마, 드래그 경로.
+- `demo.rs`: `RIVEN_CAPTURE`(시험: 4초 뒤 1600x1000 PNG 저장 후 종료, 확인), `RIVEN_CAP_LIVE`, `RIVEN_DEMO`(같은 순서의 투어, 휠은 DOM WheelEvent, 프레임은 WKWebView 스냅숏 1280폭. 투어 자체는 돌려 보지 않음).
+- 앱 창에서 우리 출처 밖으로 가는 탐색은 막고 http(s)는 기본 브라우저로 연다(Electron will-navigate).
+- 제어 회선(TCP), `notify.post`, `post_for_node`, sendSync 중계, Node가 쓰던 `win.*`/`dialog.*`/`tray.*` 디스패치를 지웠다.
+
+#### 8-7. 패키징, 서명, 업데이트
+
+- `tauri/package.mjs`: `tauri/build.mjs`로 렌더러와 preload를 만들고 `tauri build --config tauri.bundle.json`. Node 바이너리와 node_modules를 넣지 않는다. 결과는 `src-tauri/target/release/bundle/macos/riven-tauri.app`(28MB, 파일은 Info.plist, 바이너리, 아이콘, 서명 4개). ad-hoc 서명(`-`), `codesign --verify --deep --strict` 통과.
+- 업데이트: tauri-plugin-updater(native-tls 기능만, 이미 있는 TLS를 씀). Electron처럼 실행 때 확인 -> 뒤에서 내려받기(서명 확인은 플러그인이 내려받을 때 공개 키로) -> "업데이트 준비됨" 알림 -> 클릭이나 `update:install`이면 번들 교체 후 flush하고 재시작. 피드와 공개 키는 빌드가 넣는다: 컴파일 때 `RIVEN_UPDATE_FEED`, `RIVEN_UPDATER_PUBKEY`(또는 `tauri.conf.json` `plugins.updater`의 `endpoints`, `pubkey`). 실행 때 `RIVEN_UPDATE_FEED`(https만)가 피드를 덮어쓴다. 둘 다 없으면(지금 상태) 패키지 앱도 늘 최신으로 답한다. 키는 만들지 않았다. 실제 내려받기는 돌려 보지 않았다.
+- CI에서 정식 배포할 때 (macOS 잡, 실제 키와 인증서는 GitHub Secrets):
+  1. 업데이트 서명 키: 한 번만 `npx @tauri-apps/cli signer generate -w riven-updater.key`. 비밀 키와 암호는 Secrets(`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), 공개 키는 `RIVEN_UPDATER_PUBKEY`(빌드 환경 변수, 저장소에 넣어도 됨). 비밀 키를 잃으면 기존 설치에 업데이트를 줄 수 없다.
+  2. 피드: 예 `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`을 `RIVEN_UPDATE_FEED`로(아직 정하지 않은 자리표시).
+  3. Developer ID 인증서(.p12, base64)를 Secrets(`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`)에 두고 잡에서 임시 키체인에 가져온다. Tauri CLI는 `APPLE_CERTIFICATE`가 있으면 직접 가져온다.
+  4. `RIVEN_TAURI_BUNDLE_CONFIG`로 덮어쓸 설정: `{"bundle": {"createUpdaterArtifacts": true, "macOS": {"signingIdentity": "Developer ID Application: <이름> (<팀 ID>)", "hardenedRuntime": true}}}`.
+  5. 공증: `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`(App Store Connect API 키) 또는 `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`가 있으면 `tauri build`가 공증하고 staple한다(없으면 이번처럼 건너뛴다는 경고만).
+  6. 결과물 `riven-tauri.app.tar.gz`와 `.sig`로 latest.json(`version`, `notes`, `pub_date`, `platforms.darwin-aarch64.{url, signature}`)을 만들어 릴리스에 올린다. x86_64는 별도 잡.
+  7. 공증 403은 Apple 약관 미동의다(Electron 때와 같음). 러너는 macos-15.
+- 알림 권한: 패키지 앱(`dev.riven.tauri`)은 백그라운드 시험 모드가 아니면 첫 실행에 알림 권한을 묻는다(7-6).
+
+#### 8-8. 측정 (패키지 앱, 백그라운드 모드, footprint만)
+
+- 앱 용량: 28MB (Electron `/Applications/riven.app` 379MB).
+- 시작 시간(실행부터 페이지에 탭 줄이 그려질 때까지, 시험 훅으로 50ms마다 확인): 1,403ms(localStorage 이전 포함 첫 실행), 962ms, 1,014ms.
+- 유휴 footprint(실행 45초 뒤): riven-tauri 26MB. 사용자가 쓰고 있는 Electron riven(6일 실행, 같은 조건 아님): 메인 146MB, 도우미 7개 합 1,177MB(가장 큰 렌더러 600MB). Tauri의 WebKit 프로세스는 시스템 XPC 서비스라 앱 프로세스 트리에 없어 PID로 좁히지 못해 재지 않았다.
+- 7-1의 12MB `workspace:readFile` 12회: 전 27MB, 1회 68MB, 6회 69MB, 12회 69MB, 20초 뒤 26MB. 한 번 읽는 시간 39~49ms(7-1 때 278ms).
+- 시험한 기능(백그라운드, 개발 빌드와 패키지 앱 둘 다): 터미널(에코, pwd, `exit 7` 종료 코드), 채팅 패널 열기(단축키 Mod+Shift+A로 열고 claude CLI 자식이 뜨는 것까지, 턴은 보내지 않음, 탭 닫기로 자식 정리 확인), git status, 임시 sqlite DB(만들기, 넣기, 조회, 스키마, 연결 삭제. 키체인 안 씀), 브라우저 패널(로컬 서버 페이지 두 개, execJs, 뒤로 가기 상태, 연결 거부), 파일 쓰기/읽기/목록, capture:save, 미디어.
+
+#### 8-9. 사용자 화면에서 확인할 것
+
+8a 목록(브라우저 패널 메뉴와 추천 창, 팝아웃 브라우저, 오류 페이지, 메뉴 막대 아이콘, 펫 창, 로그인 창, 권한, 사용량 한도, 원격 키)에 더해:
+
+- 에이전트가 일할 때 Cmd+Q -> 확인 대화상자(문구, 취소/종료). 일이 없으면 바로 종료되고 다음 실행에 열린 파일과 설정이 남아 있는지.
+- 메뉴: Cmd+W(탭 닫기), Cmd+Alt+W(패널), Cmd+Shift+W(창), Cmd+R(새로고침 뒤 상태 유지), Cmd+0/=/-(확대), Cmd+Alt+I(개발자 도구), 전체 화면, 최소화.
+- 창을 닫은 뒤 Dock 아이콘 클릭 -> 새 창.
+- Finder에서 파일을 끌어다 놓기(경로가 채팅/터미널에 들어가는지).
+- 채팅이나 문서의 링크, 포트 칩 -> 기본 브라우저.
+- 팝아웃 창 열기/닫기와 테마.
+- 잠자기에서 깨어난 뒤 터미널 다시 그리기.
+- 패키지 앱 첫 실행의 알림 권한 요청.
+- 이전 뒤 localStorage(대화 기록, 파이프라인, 에이전트 그룹, DB 기록)가 그대로인지, 며칠 뒤에도 남아 있는지(ITP 끔).
+
+#### 8-10. 남은 것
+
+- 실제 업데이트 피드, 서명 키, Developer ID 서명과 공증(CI 설정만 문서화).
+- `RIVEN_DEMO` 투어 실행, 팝아웃의 브라우저 패널, Reopen, 드래그 앤 드롭, 메뉴 단축키, 종료 확인 대화상자는 화면이나 입력이 필요해 시험 앱에서 돌리지 않았다(코드와 단위 시험만).
+- WebKit 프로세스 메모리 측정 방법(앱별로 PID를 묶을 방법).
+- x86_64 빌드, Windows.
+- Electron 렌더러의 `console-message` 전달(개발용 로그)은 WebKit에 같은 훅이 없어 옮기지 않았다.
