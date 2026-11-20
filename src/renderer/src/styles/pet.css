@@ -1214,6 +1214,52 @@
   fill: color-mix(in srgb, var(--accent-2) 82%, black);
 }
 
+/* ---- a species made from a photo ----
+   Its own colours, set on the box as variables (customVars in PetDevice.tsx),
+   in place of the hue turn the built-in animals get. The outline, the limbs
+   and the light and shadow are made from its body colour the way the built-in
+   ones are made from the accent. The egg below keeps the shell's colours. */
+.pet-lcd.pet-sp-custom {
+  filter: none;
+}
+.pet-sp-custom .pet-px-b {
+  fill: var(--pc-b);
+}
+.pet-sp-custom .pet-px-o {
+  fill: color-mix(in srgb, var(--pc-b) 30%, black);
+}
+.pet-sp-custom .pet-px-s {
+  fill: color-mix(in srgb, var(--pc-b) 72%, black);
+}
+.pet-sp-custom .pet-px-l {
+  fill: color-mix(in srgb, var(--pc-b) 72%, white);
+}
+.pet-sp-custom .pet-px-d {
+  fill: color-mix(in srgb, var(--pc-b) 82%, black);
+}
+/* The face only: what it wears keeps its own reds and darks. */
+.pet-sp-custom .pet-body .pet-px-e {
+  fill: var(--pc-e);
+}
+.pet-sp-custom .pet-body .pet-px-m {
+  fill: var(--pc-m);
+}
+.pet-px-n {
+  fill: var(--pc-n, var(--accent-2));
+}
+.pet-px-k {
+  fill: var(--pc-k, var(--accent-2));
+}
+.pet-px-c {
+  fill: var(--pc-c, var(--warning));
+}
+.pet-px-v {
+  fill: var(--pc-v, var(--fg));
+}
+.pet-px-u {
+  fill: var(--pc-b, var(--accent-2));
+}
+
 /* Grown-up forms used to recolour the body here (grey with red eyes for the
    neglected one), which is a lot of why adults read as a downgrade. A form is
    now a change of shape in petSprites.ts; the pet keeps its own colours. */
@@ -1228,6 +1274,16 @@
 }
 .pet-s-egg .pet-px-d {
   fill: color-mix(in srgb, var(--fg) 66%, var(--accent-2));
+}
+/* A photo species' egg is a shell of its own colour, pale as a shell is. */
+.pet-sp-custom.pet-s-egg .pet-px-b {
+  fill: color-mix(in srgb, var(--fg) 74%, var(--pc-b));
+}
+.pet-sp-custom.pet-s-egg .pet-px-l {
+  fill: color-mix(in srgb, var(--fg) 90%, var(--pc-b));
+}
+.pet-sp-custom.pet-s-egg .pet-px-d {
+  fill: color-mix(in srgb, var(--fg) 60%, var(--pc-b));
 }
 
 /* ---- animation: whole-dot steps, never a smooth slide ---- */

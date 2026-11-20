@@ -1,0 +1,241 @@
+/* Settings > RivenPet > species from photos (PetSpeciesSettings.tsx). Controls
+   are the shared ones (ui-btn, ui-seg, ui-input, ui-switch at --ctl-h); this
+   only lays them out and draws the photo, the cut-out and the dot grid. */
+
+.pm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+.pm-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.pm-stage {
+  flex: 0 0 auto;
+  width: 232px;
+  max-width: 45%;
+}
+.pm-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-side .set-note {
+  margin: 0;
+}
+.pm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pm-field b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.pm-field input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.pm-switch {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* A photo not picked yet: one big target. */
+.pm-drop {
+  width: 100%;
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px dashed var(--edge);
+  border-radius: var(--radius-md);
+  background: var(--hover);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.pm-drop:hover {
+  color: var(--fg);
+  border-color: var(--accent-border);
+}
+
+/* The photo with the crop square over it. */
+.pm-photo {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+.pm-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-sm);
+}
+.pm-square {
+  aspect-ratio: 1;
+  height: auto;
+  background:
+    repeating-conic-gradient(var(--hover-strong) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px;
+}
+.pm-square.painting {
+  cursor: crosshair;
+}
+.pm-crop {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 999px rgb(0 0 0 / 0.45);
+  cursor: move;
+  touch-action: none;
+}
+
+/* The 12x12 dots: live beside the cut-out, editable on the last step. */
+.pm-mini,
+.pm-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  aspect-ratio: 1;
+}
+.pm-mini {
+  width: 96px;
+  gap: 1px;
+}
+.pm-mini i,
+.pm-grid i {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 1px;
+}
+.pm-grid {
+  position: relative;
+  width: 100%;
+  gap: 1px;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--hairline);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+/* Empty is a faint dot, so a dark colour is never mistaken for nothing. */
+.pm-grid i.empty,
+.pm-mini i:not([style]) {
+  background: radial-gradient(circle, var(--hover-strong) 0 22%, transparent 26%), var(--hover);
+}
+.pm-grid.face-tool {
+  cursor: move;
+}
+.pm-face {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--warning);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* The five colours: a swatch picks it as the brush, the dot below edits it. */
+.pm-tools {
+  display: flex;
+  gap: 6px;
+}
+.pm-tool {
+  position: relative;
+  display: inline-flex;
+}
+.pm-swatch {
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  box-sizing: border-box;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.pm-tool.on .pm-swatch {
+  border: 2px solid var(--fg);
+}
+.pm-color {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-2);
+}
+.pm-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.pm-color::-webkit-color-swatch {
+  border: none;
+}
+
+/* How it grows: the same Creature every pet is drawn with. */
+.pm-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pm-label {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pm-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pm-pet {
+  width: 56px;
+  height: 56px;
+  flex: none;
+  padding: 4px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+}
+.pm-item .pm-pet {
+  width: 40px;
+  height: 40px;
+  padding: 2px;
+}
+.pm-item {
+  justify-content: flex-start;
+}
+.pm-item .set-rowctl .ui-btn {
+  width: var(--ctl-h);
+  padding: 0;
+}
+
+.pm-error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+.pm-foot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.pm-gap {
+  flex: 1;
+}
+.pm-side > .ui-btn {
+  align-self: flex-start;
+}

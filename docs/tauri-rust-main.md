@@ -836,6 +836,7 @@ localStorage는 엔진 것이라(Electron은 Chromium, Tauri는 WebKit, 출처�
 | `apiclient-history`, `apiclient-saved`, `apiclient-env` | `apiclient.history.v1`, `apiclient.saved.v1`, `apiclient.env.v1` |
 | `db-erd-positions` | `db.erd.pos.*` (ERD에서 옮겨 놓은 위치) |
 | `auth` | `sb-*` (supabase 로그인 세션, supabase-js의 storage를 파일로) |
+| `pet-species` | 없음 (새 파일). 사진으로 만든 리븐펫 종(`state/petSpecies.ts`가 `store:loadAll`/`store:save`로 직접 읽고 쓴다. 앱 창과 펫 창이 함께 쓰므로 `fileStore` 캐시를 거치지 않고, 바뀌면 BroadcastChannel `riven-pet-species`로 알린다) |
 
 - 채널 `store:loadAll`, `store:save`, `store:save-sync`를 두 메인에 같은 형식으로 구현: `src/main/store.ts`, `src-tauri/src/commands/store.rs`. null을 저장하면 파일을 지운다.
 - 렌더러 `lib/fileStore.ts`: 시작할 때 파일을 모두 읽어 두고(앱 모듈을 읽기 전에, `main.tsx`가 App을 동적 import), 읽기/쓰기는 동기 API. 쓰기는 파일마다 한 번에 하나, 가장 새 값이 마지막. 창을 닫을 때 남은 것은 save-sync.
