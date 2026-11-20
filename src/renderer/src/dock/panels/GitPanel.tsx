@@ -142,7 +142,8 @@ export default function GitPanel({ workspace: wid }: { workspace: string }): JSX
 
   const discard = async (f: GitFile): Promise<void> => {
     if (!window.confirm(t('git.discardConfirm', { name: f.path.split('/').pop() ?? f.path }))) return
-    await window.api.git.discard(workspace, f.path, f.untracked)
+    const r = await window.api.git.discard(workspace, f.path, f.untracked)
+    if (!r.ok) window.alert(r.error ?? 'discard failed')
     refresh()
   }
   const push = async (): Promise<void> => {
