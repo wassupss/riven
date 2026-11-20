@@ -195,13 +195,13 @@ export const DEFAULT_SETTINGS: Settings = {
   deniedTools: [],
   confirmCloseBusy: true,
   confirmDeleteSession: true,
-  // JetBrains Mono for Latin, D2Coding for Hangul (the user picked the D2Coding
-  // look Electron showed). The bundled "D2Coding Web" sits right after the
-  // Latin web face on purpose: WebKit's canvas (Tauri) only falls through to
-  // later @font-face families after a web font, never to a system family, so
-  // with system "D2Coding" there it drew Hangul in Apple SD Gothic Neo.
+  // JetBrains Mono for Latin, D2Coding for Hangul. The previous default put
+  // Apple SD Gothic Neo first, but Chromium (Electron) drew Hangul in D2Coding
+  // anyway and WebKit (Tauri) honoured the order, so the two builds showed
+  // different Korean faces; the user picked the D2Coding look. System names
+  // first (instant if installed), then the bundled web copies.
   terminalFontFamily:
-    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding Web", "D2Coding", "Apple SD Gothic Neo", "Malgun Gothic", Menlo, Monaco, monospace',
+    '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", "Apple SD Gothic Neo", "Malgun Gothic", Menlo, Monaco, monospace',
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
@@ -248,9 +248,7 @@ const LEGACY_TERMINAL_FONTS = new Set([
   '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
   // The JetBrains + Apple SD Gothic Neo default: WebKit drew Hangul in it while
   // Chromium used D2Coding, so the builds disagreed.
-  '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace',
-  // System "D2Coding" before the web copy: WebKit still fell back to the system face.
-  '"JetBrains Mono", "JetBrains Mono Web", "D2Coding", "D2Coding Web", "Apple SD Gothic Neo", "Malgun Gothic", Menlo, Monaco, monospace'
+  '"JetBrains Mono", "JetBrains Mono Web", "Apple SD Gothic Neo", "Malgun Gothic", "D2Coding", "D2Coding Web", Menlo, Monaco, monospace'
 ])
 
 // Values an older build may still hold, read from settings.json at boot or
