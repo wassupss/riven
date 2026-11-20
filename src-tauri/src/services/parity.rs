@@ -73,4 +73,32 @@ mod tests {
     );
     std::fs::write(out, serde_json::to_string_pretty(&Value::Object(report)).unwrap()).unwrap();
   }
+
+  /// Secrets Electron sealed (DB password, remote key) open here, and what
+  /// this side seals opens in Electron. Run against a scratch keychain whose
+  /// item text is the one Electron used (RIVEN_TAURI_KEYCHAIN), never the
+  /// login keychain. Without RIVEN_PARITY_SECRETS_OUT it does nothing.
+  #[test]
+  fn electron_secrets() {
+    let Ok(out) = std::env::var("RIVEN_PARITY_SECRETS_OUT") else { return };
+    assert!(std::env::var("RIVEN_TAURI_KEYCHAIN").is_ok_and(|k| !k.is_empty()), "a scratch keychain only");
+    let mut report = serde_json::Map::new();
+    report.insert("available".into(), json!(crate::services::safe_storage::available()));
+    let conns = dbstore::list();
+    let mut pw = serde_json::Map::new();
+    for c in &conns {
+      let id = c["id"].as_str().unwrap();
+      pw.insert(id.into(), json!(dbstore::password(id)));
+    }
+    report.insert("passwords".into(), Value::Object(pw));
+    report.insert("remoteKey".into(), crate::services::remote_key::load());
+    // Seal new ones for Electron to open.
+    let mut c = conns[0].as_object().unwrap().clone();
+    c.remove("hasPassword");
+    c.insert("id".into(), json!("from-tauri"));
+    c.insert("name".into(), json!("sealed by tauri"));
+    dbstore::save_connection(&Value::Object(c), Some(Some("tauri 비밀 \"pw\"".into()))).unwrap();
+    crate::services::remote_key::save(&json!({ "publicKey": "tpk", "secretKey": "tsk" })).unwrap();
+    std::fs::write(out, serde_json::to_string_pretty(&Value::Object(report)).unwrap()).unwrap();
+  }
 }

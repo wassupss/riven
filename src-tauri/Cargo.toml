@@ -30,6 +30,8 @@ tokio-native-tls = "0.3"
 sha2 = "0.10"
 rsa = { version = "0.9", features = ["sha1"] }
 aes-gcm = "0.10"
+# safeStorage (services/safe_storage.rs): AES-128-CBC as Chromium seals.
+aes = "0.8"
 ryu-js = "1"
 encoding_rs = "0.8"
 flate2 = "1"
@@ -45,6 +47,8 @@ objc2-foundation = { version = "0.3", features = ["NSArray", "NSBundle", "NSData
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSScreen", "NSWorkspace"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKSnapshotConfiguration", "WKContentWorld", "WKFrameInfo", "WKNavigation", "WKNavigationDelegate", "WKScriptMessage", "WKScriptMessageHandler", "WKUserContentController", "WKUserScript", "WKWebViewConfiguration", "block2", "objc2-app-kit", "objc2-core-foundation"] }
 objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+# The keychain item Electron's safeStorage uses, read in process (safe_storage.rs).
+security-framework = "3"
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNError", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [profile.release]

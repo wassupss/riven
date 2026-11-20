@@ -1,31 +1,20 @@
 // Saved data sources (src/main/db/store.ts): userData/db/connections.json,
 // the same file and shape the Node build wrote:
 //   { version: 1, connections: [...], secrets: { id: base64 blob } }
-// Passwords are sealed the way the Tauri build's safeStorage did it
-// (tauri/shim/electron-main.ts): 'rt1' + 12-byte IV + 16-byte tag + AES-256-GCM
-// ciphertext, with a 32-byte key kept in the login keychain as the generic
-// password "riven-tauri Safe Storage" (account "riven-tauri"). The key is read
-// and created through /usr/bin/security exactly like the shim did, so the
-// keychain item's access list (which names that tool) never prompts, and
-// passwords saved by either build open in the other. When no key can be had,
-// passwords live in memory for this run only and are never written in plain
-// text.
-//
-// RIVEN_TAURI_KEYCHAIN (tests): a keychain file to use instead of the login
-// keychain (the shim reads the same variable).
+// Passwords are sealed with Electron's safeStorage format and keychain item
+// (services/safe_storage.rs: "v10" + AES-128-CBC), so a password either build
+// saved opens in the other; ones the Tauri build sealed before ("rt1") still
+// open. When no keychain text can be had, passwords live in memory for this
+// run only and are never written in plain text.
 
 use super::{Cfg, R};
 use crate::services::paths;
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-const KEYCHAIN_SERVICE: &str = "riven-tauri Safe Storage";
-const MAGIC: &[u8] = b"rt1";
 
 struct Store {
   loaded: bool,
@@ -71,77 +60,22 @@ fn save(s: &Store) -> R<()> {
   Ok(())
 }
 
-// ---- keychain ------------------------------------------------------------------
-
-fn security(args: &[&str]) -> Option<String> {
-  let mut a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-  if let Ok(kc) = std::env::var("RIVEN_TAURI_KEYCHAIN") {
-    if !kc.is_empty() {
-      a.push(kc);
-    }
-  }
-  let out = std::process::Command::new("/usr/bin/security")
-    .args(&a)
-    .stdin(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null())
-    .output()
-    .ok()?;
-  out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-fn key() -> Option<[u8; 32]> {
-  static KEY: Mutex<Option<[u8; 32]>> = Mutex::new(None);
-  let mut g = KEY.lock().unwrap_or_else(|e| e.into_inner());
-  if let Some(k) = *g {
-    return Some(k);
-  }
-  let b64 = match security(&["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"]) {
-    Some(s) => s.trim().to_string(),
-    None => {
-      let mut raw = [0u8; 32];
-      std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut raw)).ok()?;
-      let b = base64::engine::general_purpose::STANDARD.encode(raw);
-      security(&["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", "riven-tauri", "-w", &b, "-U"])?;
-      b
-    }
-  };
-  let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
-  let k: [u8; 32] = bytes.try_into().ok()?;
-  *g = Some(k);
-  Some(k)
-}
+// ---- sealing (Electron's safeStorage, services/safe_storage.rs) ----------------------
 
 fn can_seal() -> bool {
-  key().is_some()
+  crate::services::safe_storage::available()
 }
 
+/// safeStorage.encryptString(password).toString('base64').
 fn seal(password: &str) -> Option<String> {
-  let k = key()?;
-  let mut iv = [0u8; 12];
-  std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut iv)).ok()?;
-  let c = Aes256Gcm::new_from_slice(&k).ok()?;
-  let ct = c.encrypt(Nonce::from_slice(&iv), password.as_bytes()).ok()?;
-  // aes-gcm gives ciphertext || tag; the stored order is tag first.
-  let (body, tag) = ct.split_at(ct.len() - 16);
-  let mut out = MAGIC.to_vec();
-  out.extend_from_slice(&iv);
-  out.extend_from_slice(tag);
-  out.extend_from_slice(body);
-  Some(base64::engine::general_purpose::STANDARD.encode(out))
+  crate::services::safe_storage::encrypt_string(password).map(|b| base64::engine::general_purpose::STANDARD.encode(b))
 }
 
+/// safeStorage.decryptString(Buffer.from(blob, 'base64')); the old Tauri
+/// seal (rt1) opens too.
 fn open(blob: &str) -> Option<String> {
   let b = base64::engine::general_purpose::STANDARD.decode(blob).ok()?;
-  if b.len() < 31 || &b[..3] != MAGIC {
-    return None;
-  }
-  let k = key()?;
-  let (iv, tag, body) = (&b[3..15], &b[15..31], &b[31..]);
-  let mut ct = body.to_vec();
-  ct.extend_from_slice(tag);
-  let c = Aes256Gcm::new_from_slice(&k).ok()?;
-  let plain = c.decrypt(Nonce::from_slice(iv), ct.as_ref()).ok()?;
-  String::from_utf8(plain).ok()
+  crate::services::safe_storage::decrypt_string(&b)
 }
 
 // ---- API -------------------------------------------------------------------------

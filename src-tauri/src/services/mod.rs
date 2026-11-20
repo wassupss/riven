@@ -14,6 +14,7 @@ pub mod git;
 pub mod http;
 pub mod limits;
 pub mod remote_key;
+pub mod safe_storage;
 pub mod lsp;
 pub mod mcp;
 pub mod notes;
