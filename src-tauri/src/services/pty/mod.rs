@@ -123,6 +123,7 @@ enum Op {
   Resize(String, u16, u16),
   Seen(String),
   Kill(String),
+  Resync(String),
 }
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -523,13 +524,13 @@ fn send_snapshot(s: &Arc<Session>, st: &mut St) {
     eprintln!("[pty] {e}");
     Vec::new()
   });
-  st.needs_snapshot = false;
   let mut h = [0u8; 16];
   h[..8].copy_from_slice(&(st.parsed as f64).to_le_bytes());
   h[8..12].copy_from_slice(&st.epoch.to_le_bytes());
   h[12..14].copy_from_slice(&st.cols.to_le_bytes());
   h[14..].copy_from_slice(&st.rows.to_le_bytes());
-  stream::send(&st.sender, frame(F_SNAPSHOT, &s.key, &h, &data));
+  // Not connected yet: stay armed; the connection's resync sends it.
+  st.needs_snapshot = !stream::send(&st.sender, frame(F_SNAPSHOT, &s.key, &h, &data));
   st.last_flush = Some(Instant::now());
 }
 
@@ -626,6 +627,20 @@ fn control(op: Op) {
         publish(&s, &mut st, None);
       }
     }
+    Op::Resync(label) => {
+      let all: Vec<Arc<Session>> = sessions().values().cloned().collect();
+      for s in all {
+        let mut st = lock(&s);
+        if st.sender != label || st.dead {
+          continue;
+        }
+        if st.visible {
+          send_snapshot(&s, &mut st);
+        } else {
+          st.needs_snapshot = true;
+        }
+      }
+    }
     Op::Kill(key) => {
       let Some(s) = sessions().remove(&key) else { return };
       {
@@ -665,6 +680,10 @@ pub fn seen(key: String) {
 }
 pub fn kill(key: String) {
   ctl(Op::Kill(key));
+}
+/// A page's stream connection just opened: frames sent before it were lost.
+pub fn resync_page(label: String) {
+  ctl(Op::Resync(label));
 }
 
 /// Quit: hang up every shell, or they outlive the app.

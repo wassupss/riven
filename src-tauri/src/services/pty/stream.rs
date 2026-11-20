@@ -77,10 +77,12 @@ pub fn endpoint() -> Option<(u16, String)> {
     .map(|s| (s.port, s.token.clone()))
 }
 
-/// Queue a frame for the page; dropped if that page has no connection.
-pub fn send(label: &str, frame: Vec<u8>) {
-  if let Some(c) = conns().get(label) {
-    let _ = c.tx.send(frame);
+/// Queue a frame for the page; dropped (false) if that page has no connection
+/// yet. A page that connects later is resynced from the model (see below).
+pub fn send(label: &str, frame: Vec<u8>) -> bool {
+  match conns().get(label) {
+    Some(c) => c.tx.send(frame).is_ok(),
+    None => false,
   }
 }
 
@@ -144,6 +146,10 @@ fn serve(stream: TcpStream, token: &str) {
   let id = NEXT.fetch_add(1, Ordering::Relaxed);
   let (tx, rx) = mpsc::channel::<Vec<u8>>();
   conns().insert(label.clone(), Conn { id, tx });
+  // Frames sent before this connection existed (page load, reload) were
+  // dropped, the first snapshot among them, which left terminals on
+  // "Restoring session" forever. Resend every terminal of this page from the model.
+  super::resync_page(label.clone());
   let w = std::thread::Builder::new().name("pty-stream-write".into()).spawn(move || {
     for f in rx {
       let mut h = Vec::with_capacity(10);
