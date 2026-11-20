@@ -3304,7 +3304,7 @@ select {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: var(--term-font, 'JetBrains Mono', 'JetBrains Mono Web', 'D2Coding', 'D2Coding Web', 'Apple SD Gothic Neo', 'Malgun Gothic', Menlo, Monaco, monospace);
+  font-family: var(--term-font, 'JetBrains Mono', 'JetBrains Mono Web', 'Apple SD Gothic Neo', 'Malgun Gothic', 'D2Coding', 'D2Coding Web', Menlo, Monaco, monospace);
   cursor: text;
 }
 .ghostty-term-canvas {
