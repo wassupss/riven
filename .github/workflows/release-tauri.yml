@@ -137,20 +137,24 @@ jobs:
       # tauri build imports it into a temporary keychain and checks the
       # configured identity is part of it ("-" from tauri.bundle.json is not).
       - name: Release config
+        # The updater public key goes in here too: tauri build checks the
+        # update bundle's signature against plugins.updater.pubkey, and the
+        # committed tauri.conf.json leaves it empty.
         run: |
-          cat > "$RUNNER_TEMP/tauri-release.json" <<EOF
-          {
-            "version": "$VERSION",
-            "bundle": {
-              "createUpdaterArtifacts": true,
-              "macOS": {
-                "signingIdentity": "Developer ID Application",
-                "hardenedRuntime": true
+          node -e '
+            const c = {
+              version: process.env.VERSION,
+              bundle: {
+                createUpdaterArtifacts: true,
+                macOS: { signingIdentity: "Developer ID Application", hardenedRuntime: true }
+              },
+              plugins: {
+                updater: { pubkey: process.env.RIVEN_UPDATER_PUBKEY.trim(), endpoints: [process.env.RIVEN_UPDATE_FEED] }
               }
-            }
-          }
-          EOF
-          cat "$RUNNER_TEMP/tauri-release.json"
+            };
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(c, null, 2));
+          ' "$RUNNER_TEMP/tauri-release.json"
+          node -e 'const c = require(process.argv[1]); console.log(JSON.stringify({ version: c.version, bundle: c.bundle, endpoints: c.plugins.updater.endpoints }, null, 2))' "$RUNNER_TEMP/tauri-release.json"
 
       - name: Build, sign, notarize, staple
         env:
