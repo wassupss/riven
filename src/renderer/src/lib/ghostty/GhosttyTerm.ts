@@ -115,8 +115,11 @@ const S = {
 const K = 16
 
 // Every printable ASCII char, for the primary face's ASCII bounding-box height.
-// Hangul ink height relative to Latin cap height.
-const HANGUL_TO_CAP = 1.25
+// Hangul a touch smaller than Ghostty's ic_width size, which filled the two
+// cells edge to edge (user's pick).
+const HANGUL_TRIM = 0.95
+
+const ASCII_PRINTABLE = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('')
 
 // ---- shared per-wasm callbacks ----------------------------------------------
 
@@ -316,6 +319,9 @@ export class GhosttyTerm {
   private cellW = 8
   private cellH = 16
   private baseline = 12
+  // Offset from the cell's vertical center to the baseline that centers CJK
+  // ink (Hangul has no descender, so on the Latin baseline it rode high).
+  private cjkMid = 0
   private fonts = ['', '', '', '']
   private wideFonts = ['', '', '', '']
   // Whether the last refChar() cell spans two columns.
@@ -925,17 +931,25 @@ export class GhosttyTerm {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.font = this.fonts[0]
     const m = ctx.measureText('MMMMMMMMMM')
-    // Size the CJK fallback face by ink: Hangul about 10% taller than Latin
-    // caps. Ghostty's ic_width scale (~1.21x font size) drew Hangul ~30%
-    // taller than caps at 12px, which read too large next to Latin.
-    const cap = ctx.measureText('H')
-    const capH = cap.actualBoundingBoxAscent + cap.actualBoundingBoxDescent
-    const hk = ctx.measureText('가나다라마바사아자차카타파하')
-    const hkH = hk.actualBoundingBoxAscent + hk.actualBoundingBoxDescent
+    // Size the CJK fallback face the way Ghostty does (font.default_fallback_
+    // adjustment = .ic_width, Collection.scaleFactor): scale it so its ideograph
+    // width ('水' advance) matches the primary face's estimated ideograph width,
+    // min(ASCII bounding-box height, 2 cells), since a Latin-only primary has no
+    // '水'. JetBrains Mono + Apple SD Gothic Neo gives 1.05 / 0.865 = ~1.21x.
+    const ascii = ctx.measureText(ASCII_PRINTABLE)
+    const asciiH = ascii.actualBoundingBoxAscent + ascii.actualBoundingBoxDescent
+    const ic = ctx.measureText('水').width
     ctx.restore()
-    const wideScale = capH > 0 && hkH > 0 ? (capH * HANGUL_TO_CAP) / hkH : 1
-    const wideSize = Math.round(fontSize * wideScale * 10) / 10
+    const primaryIc = Math.min(asciiH > 0 ? asciiH : Infinity, 2 * (m.width / 10))
+    const icScale = ic > 0 && Number.isFinite(primaryIc) ? primaryIc / ic : 1
+    const wideSize = Math.round(fontSize * icScale * HANGUL_TRIM * 10) / 10
     this.wideFonts = this.fonts.map((f) => f.replace(`${fontSize}px`, `${wideSize}px`))
+    ctx.save()
+    ctx.font = this.wideFonts[0]
+    ctx.textBaseline = 'alphabetic'
+    const hk = ctx.measureText('가나다라마바사아자차카타파하')
+    ctx.restore()
+    this.cjkMid = (hk.actualBoundingBoxAscent - hk.actualBoundingBoxDescent) / 2
     // Fractional advance like xterm.js: rounding to whole device pixels made
     // cells ~4% wider (7.5 vs 7.2 css at dpr 1.2), so lines wrapped at other
     // columns than the xterm engine. Fills snap to device pixels in px().
@@ -1242,11 +1256,12 @@ export class GhosttyTerm {
               // Always the regular face: Ghostty resolves a styled codepoint
               // the primary font lacks to the regular fallback (CodepointResolver),
               // so bold/italic Hangul draws regular, as in Ghostty/cmux.
-              // Starts at the cell's left edge on the Latin baseline, like Ghostty.
+              // Starts at the cell's left edge like Ghostty; vertically its ink
+              // is centered in the row so it lines up with prompt segments.
               ctx.font = this.wideFonts[0]
               font = -1
               ctx.textAlign = 'left'
-              ctx.fillText(text, i * cw, base)
+              ctx.fillText(text, i * cw, top + ch / 2 + this.cjkMid)
             } else {
               ctx.fillText(text, (i + 1) * cw, base)
             }
@@ -1629,7 +1644,7 @@ export class GhosttyTerm {
               ctx.font = this.wideFonts[0]
               ctx.textAlign = 'left'
               ctx.textBaseline = 'alphabetic'
-              ctx.fillText(ch0, x0, y0 + this.baseline)
+              ctx.fillText(ch0, x0, y0 + ch / 2 + this.cjkMid)
             } else {
               ctx.font = this.fonts[0]
               ctx.textBaseline = 'alphabetic'
