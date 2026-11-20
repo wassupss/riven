@@ -1,5 +1,7 @@
 import { BRANCH_BY_ID, slotOf } from '../state/pet'
-import type { Accessory, AccessorySlot, BranchId, Form, Mood, Species, Stage } from '../state/pet'
+import type { Accessory, AccessorySlot, BranchId, BuiltinSpecies, Form, Mood, Species, Stage } from '../state/pet'
+import { customOf, isCustomId } from '../state/petSpecies'
+import { customBodies, customCoat } from './petCustomArt'
 
 // ---------------------------------------------------------------------------
 // The pixel art. Every creature is authored as a 16×16 grid of characters, one
@@ -40,6 +42,11 @@ export interface Sprite {
    * dot left of `face`, which is where it lands centred on most bodies.
    */
   bigFace?: { x: number; y: number }
+  /**
+   * A species made from a photo can keep the photo's own look: the face
+   * window still anchors what it wears, but no eyes or mouth are stamped.
+   */
+  hideFace?: boolean
 }
 
 // The shell is plain on purpose: what is printed on it is the strain's coat (see
@@ -1294,7 +1301,7 @@ const slime: Bodies = {
   }
 }
 
-export const BODIES: Record<Species, Bodies> = {
+export const BODIES: Record<BuiltinSpecies, Bodies> = {
   cat,
   rabbit,
   bird,
@@ -1412,7 +1419,7 @@ interface Box {
 }
 
 export const COAT_RULES: Record<
-  Species,
+  BuiltinSpecies,
   (x: number, y: number, b: Box) => string | null
 > = {
   // Tabby bars down both flanks. Stripes right across, every other column, were
@@ -1692,7 +1699,8 @@ function branchMarks(g: Grid, branch: BranchId): void {
  * colours and its coat: it is still the pet, just a sadder one.
  */
 function haunt(g: Grid): void {
-  const lastBody = g.reduce((last, row, y) => (row.includes('b') ? y : last), -1)
+  // Body is 'b', and for a species made from a photo also its own colours.
+  const lastBody = g.reduce((last, row, y) => (row.some((c) => BODY_CHARS.includes(c)) ? y : last), -1)
   if (lastBody < 0) return
   const hem = lastBody + 1
   for (let y = hem + 1; y < g.length; y++) g[y].fill('.')
@@ -1709,7 +1717,7 @@ function withLimbs(rows: string[]): string[] {
   // An animal that already stands on something (bug, turtle) keeps what it has.
   if (rows.some((r) => r.includes('s'))) return rows
   const g = rows.map((r) => [...r])
-  const ys = g.flatMap((row, y) => (row.some((c) => c === 'b') ? [y] : []))
+  const ys = g.flatMap((row, y) => (row.some((c) => BODY_CHARS.includes(c)) ? [y] : []))
   const mid = ys[Math.floor(ys.length / 2)]
   for (const y of [mid, mid + 1]) {
     const row = g[y]
@@ -1722,10 +1730,24 @@ function withLimbs(rows: string[]): string[] {
   return g.map((r) => r.join(''))
 }
 
+/** Body dots: plain body, and the colours of a species made from a photo. */
+const BODY_CHARS = 'bnkcv'
+/** Coat marks: the built-in highlight and accent, and a photo's own markings. */
+const MARK_CHARS = 'hakcnvu'
+
+/** The bodies of an animal, built in or made from a photo (see petCustomArt.ts). */
+function bodiesOf(species: Species): Bodies {
+  if (isCustomId(species)) {
+    const d = customOf(species)
+    return d ? customBodies(d) : BODIES.cat
+  }
+  return BODIES[species] ?? BODIES.cat
+}
+
 /** Which body a pet wears: its animal, at the size its stage calls for. */
 export function bodyOf(species: Species, stage: Stage): Sprite {
   if (stage === 'egg') return egg
-  const b = BODIES[species] ?? BODIES.cat
+  const b = bodiesOf(species)
   if (stage === 'hatchling') return b.baby
   if (stage === 'child') return b.young
   if (stage === 'teen') return { ...b.young, rows: withLimbs(b.young.rows) }
@@ -1803,7 +1825,7 @@ function thinOutline(g: Grid, src: Grid): void {
 }
 
 /** Coats whose marks are stripes, drawn one dot thick at the drawn size. */
-const STRIPED: ReadonlySet<Species> = new Set(['cat'])
+const STRIPED: ReadonlySet<Species> = new Set<Species>(['cat'])
 
 /**
  * A coat, doubled, was a scatter of fat blocks. Its marks are pulled one dot
@@ -1813,7 +1835,7 @@ const STRIPED: ReadonlySet<Species> = new Set(['cat'])
 function refineCoat(g: Grid, coat: boolean[][], species: Species): void {
   const marked = (x: number, y: number): boolean => {
     const ch = g[y][x]
-    if (ch !== 'h' && ch !== 'a') return false
+    if (!MARK_CHARS.includes(ch)) return false
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) if (coat[(y >> 1) + dy]?.[(x >> 1) + dx]) return true
     return false
@@ -1901,7 +1923,14 @@ export function pixelsOf(
   // The coat, first. Only where there is body to mark (never over an outline,
   // never outside the silhouette) and never within a dot of the face: a marking
   // beside an eye reads as a bruise, not as a pattern.
-  const rule = COAT_RULES[species]
+  // A species made from a photo wears the photo itself as its coat; only its
+  // egg needs one stamped on, projected from the grown-up's markings.
+  const custom = isCustomId(species) ? customOf(species) : null
+  const rule = isCustomId(species)
+    ? custom && stage === 'egg'
+      ? customCoat(custom)
+      : null
+    : COAT_RULES[species]
   const coat = grid.map((row) => row.map(() => false))
   if (rule) {
     let x0 = GRID
@@ -1948,7 +1977,7 @@ export function pixelsOf(
           row.forEach((ch, x) => {
             if (ch !== 'b' || !clear(x, y)) return
             if ((x === x0 || x === x1) && y % 2 === 0) {
-              grid[y][x] = 'h'
+              grid[y][x] = custom ? 'k' : 'h'
               coat[y][x] = true
             }
           })
@@ -1962,8 +1991,8 @@ export function pixelsOf(
   refineCoat(fine, coat, species)
   // Doubling rounds a coat's corners, and a corner beside the face can round
   // into it. The face stays clear.
-  const face = faceOf(stage, sprite, mood)
-  if (face)
+  const face = sprite.hideFace ? null : faceOf(stage, sprite, mood)
+  if (face && !custom)
     for (let y = face.y; y < face.y + 8; y++)
       for (let x = face.x; x < face.x + face.w; x++)
         if (fine[y]?.[x] === 'h' || fine[y]?.[x] === 'a') fine[y][x] = 'b'

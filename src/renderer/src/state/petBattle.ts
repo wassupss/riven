@@ -3,9 +3,10 @@ import {
   PRIZES,
   HUNGRY_AT,
   MAX_LEVEL,
-  SPECIES,
   STAGES,
   growthOf,
+  isBuiltinSpecies,
+  type BuiltinSpecies,
   type Form,
   type Accessory,
   type Mood,
@@ -13,6 +14,17 @@ import {
   type Species,
   type Stage
 } from './pet'
+import {
+  buildOfDesign,
+  customOf,
+  familyOfDesign,
+  isCustomId,
+  noteDesign,
+  packDesign,
+  unpackDesign,
+  type CustomDesign,
+  type Family
+} from './petSpecies'
 
 // ---------------------------------------------------------------------------
 // Friend battles. There is no server: a pet travels as a short code you paste
@@ -41,11 +53,17 @@ export interface BattleCard {
   bornAt: number
   /** Prizes it has on, so a friend sees it dressed up. Looks only, never strength. */
   worn?: Accessory[]
+  /**
+   * A species made from a photo travels with its design, so a friend who has
+   * never seen it can draw it, and both sides read the same family and build
+   * off it.
+   */
+  custom?: CustomDesign
 }
 
 /** Matchups: each family has the edge on the next one round. */
-export type Family = 'wild' | 'sea' | 'spark'
-const FAMILY: Record<Species, Family> = {
+export type { Family }
+const FAMILY: Record<BuiltinSpecies, Family> = {
   cat: 'wild',
   rabbit: 'wild',
   dog: 'wild',
@@ -67,12 +85,21 @@ const FAMILY: Record<Species, Family> = {
 }
 // A paw catches a fish, the sea shorts out a spark, a spark zaps a paw.
 const BEATS: Record<Family, Family> = { wild: 'sea', sea: 'spark', spark: 'wild' }
-export const familyOf = (s: Species): Family => FAMILY[s]
+/** The design of a custom species, from the card if it carries one. */
+const designFor = (s: Species, card?: BattleCard): CustomDesign | null =>
+  (card?.species === s ? card.custom : undefined) ?? customOf(s)
+
+/** A species' family. One made from a photo reads it off its colours (see familyOfDesign). */
+export const familyOf = (s: Species, card?: BattleCard): Family => {
+  if (isBuiltinSpecies(s)) return FAMILY[s]
+  const d = designFor(s, card)
+  return d ? familyOfDesign(d) : 'wild'
+}
 export const ADVANTAGE = 1.25
 export const DISADVANTAGE = 0.8
-export function matchup(a: Species, b: Species): number {
-  const fa = familyOf(a)
-  const fb = familyOf(b)
+export function matchup(a: Species, b: Species, ca?: BattleCard, cb?: BattleCard): number {
+  const fa = familyOf(a, ca)
+  const fb = familyOf(b, cb)
   if (BEATS[fa] === fb) return ADVANTAGE
   if (BEATS[fb] === fa) return DISADVANTAGE
   return 1
@@ -82,6 +109,8 @@ export function matchup(a: Species, b: Species): number {
 export function cardOf(s: PetSave, now: number): BattleCard | null {
   const g = growthOf(s, now)
   if (g.stage === 'egg') return null
+  // The keeper's current design, or the pet's own snapshot of a deleted one.
+  const design = isCustomId(s.species) ? (customOf(s.species) ?? s.custom ?? null) : null
   return {
     name: s.name.slice(0, 24),
     species: s.species,
@@ -92,7 +121,8 @@ export function cardOf(s: PetSave, now: number): BattleCard | null {
     mood: Math.round(s.mood),
     sick: s.sick,
     bornAt: Math.floor(s.bornAt),
-    ...(s.worn.length ? { worn: [...s.worn] } : {})
+    ...(s.worn.length ? { worn: [...s.worn] } : {}),
+    ...(design ? { custom: design } : {})
   }
 }
 
@@ -157,7 +187,12 @@ const fieldsOf = (c: BattleCard): unknown[] => [
 
 /** The code to send a friend: `RP1.<data>.<check>`. */
 export function encodeCard(c: BattleCard): string {
-  const fields = c.worn?.length ? [...fieldsOf(c), c.worn] : fieldsOf(c)
+  // What it wears is the tenth field and a photo species' design the eleventh.
+  const fields = c.custom
+    ? [...fieldsOf(c), c.worn ?? [], packDesign(c.custom)]
+    : c.worn?.length
+      ? [...fieldsOf(c), c.worn]
+      : fieldsOf(c)
   const body = toB64url(JSON.stringify(fields))
   return `${PREFIX}.${body}.${hashOf(body).toString(36)}`
 }
@@ -180,7 +215,9 @@ export function decodeCard(text: string): BattleCard | null {
     return null
   }
   if (!Array.isArray(raw) || raw.length < 9) return null
-  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt, worn] = raw
+  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt, worn, packed] = raw
+  // An animal made from a photo is only a pet with its design along.
+  const custom = isCustomId(species) ? unpackDesign(packed) : null
   const int = (v: unknown, lo: number, hi: number): number | null =>
     typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : null
   const stage = STAGES[int(stageIx, 1, STAGES.length - 1) ?? -1]
@@ -190,7 +227,7 @@ export function decodeCard(text: string): BattleCard | null {
   const born = int(bornAt, 0, Number.MAX_SAFE_INTEGER)
   if (
     typeof name !== 'string' ||
-    !SPECIES.includes(species as Species) ||
+    (!isBuiltinSpecies(species) && !custom) ||
     !stage ||
     !FORMS.includes(form as Form) ||
     lvl === null ||
@@ -217,8 +254,14 @@ export function decodeCard(text: string): BattleCard | null {
     mood: md,
     sick: sick === 1,
     bornAt: born,
-    ...(dressed.length ? { worn: dressed } : {})
+    ...(dressed.length ? { worn: dressed } : {}),
+    ...(custom ? { custom } : {})
   }
+}
+
+/** Make a friend's animal drawable, when it is one made from a photo. */
+export function noteCard(c: BattleCard): void {
+  if (c.custom && isCustomId(c.species) && !customOf(c.species)) noteDesign(c.species, c.custom)
 }
 
 // ---- the fight ----
@@ -265,6 +308,16 @@ export function fighterOf(c: BattleCard): Fighter {
       atk *= 1.25
       def *= 0.8
       break
+  }
+  // A species made from a photo: a round one is a little sturdier and slower,
+  // a lanky one quicker and harder hitting. Zero-sum (see buildOfDesign).
+  const design = isCustomId(c.species) ? designFor(c.species, c) : null
+  if (design) {
+    const t = buildOfDesign(design)
+    hp *= 1 + 0.08 * t
+    def *= 1 + 0.08 * t
+    atk *= 1 - 0.06 * t
+    spd *= 1 - 0.1 * t
   }
   // And how it is doing today: look after it before sending it out.
   if (c.sick) atk *= 0.8
@@ -348,7 +401,7 @@ function simulate(a: BattleCard, b: BattleCard, seed: number): Bout {
     const crit = !miss && rand() < f[me].crit
     let dmg = 0
     if (!miss) {
-      const swing = f[me].atk * (0.85 + rand() * 0.3) * matchup(cards[me].species, cards[foe].species)
+      const swing = f[me].atk * (0.85 + rand() * 0.3) * matchup(cards[me].species, cards[foe].species, cards[me], cards[foe])
       dmg = Math.max(1, Math.round((crit ? swing * CRIT_MULT : swing) - f[foe].def * 0.5))
     }
     hp[foe] = Math.max(0, hp[foe] - dmg)

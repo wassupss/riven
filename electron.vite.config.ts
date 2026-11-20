@@ -2,6 +2,7 @@ import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { dockviewFilePopout } from './vite/dockviewFilePopout'
+import { dockviewSubpixelOverflow } from './vite/dockviewSubpixelOverflow'
 
 export default defineConfig({
   main: {
@@ -31,7 +32,8 @@ export default defineConfig({
     },
     // dockviewFilePopout: see the file — without it ⌘⇧O does nothing in the
     // packaged app, which loads its renderer from file://.
-    plugins: [react(), dockviewFilePopout()],
+    // dockviewSubpixelOverflow: no false tab overflow dropdown under WebKit rounding.
+    plugins: [react(), dockviewFilePopout(), dockviewSubpixelOverflow()],
     build: {
       rollupOptions: {
         // popout.html is a SECOND renderer entry. dockview opens a pop-out group

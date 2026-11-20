@@ -80,9 +80,11 @@ import {
   type BranchId,
   type Form,
   type Mood,
+  speciesName,
   type Species,
   type Stage
 } from '../state/pet'
+import { customOf, designOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
 import {
   cardOf,
   decodeCard,
@@ -90,6 +92,7 @@ import {
   fight,
   isUpset,
   moodOfCard,
+  noteCard,
   type BattleCard,
   type Bout
 } from '../state/petBattle'
@@ -225,8 +228,26 @@ function Glyph({ rows, className }: { rows: string[]; className?: string }): JSX
   )
 }
 
+/**
+ * The colours of a species made from a photo, as the CSS variables pet.css
+ * reads (.pet-sp-custom). The face is drawn light on a dark body and dark on
+ * a light one, or a black cat would have no eyes.
+ */
+export function customVars(d: CustomDesign): CSSProperties {
+  const dark = hslOf(d.colors.body).l < 0.32
+  return {
+    '--pc-b': d.colors.body,
+    '--pc-n': d.colors.shade,
+    '--pc-k': d.colors.highlight,
+    '--pc-c': d.colors.accent,
+    '--pc-v': d.colors.white,
+    '--pc-e': dark ? '#f3f1ee' : '#211d26',
+    '--pc-m': dark ? '#f08a9a' : '#6e1f2a'
+  } as CSSProperties
+}
+
 // The creature itself: one <rect> per lit dot, no anti-aliasing.
-function Creature({
+export function Creature({
   stage,
   form,
   species,
@@ -255,11 +276,16 @@ function Creature({
   /** A branch evolution: its shape goes dark and flickers before it shows. */
   whiteout?: boolean
 }): JSX.Element {
+  // A species made from a photo: its design, which can change under the same
+  // id (edited in settings), so the memos below are keyed on it too.
+  useCustomSpecies((s) => s.rev)
+  const design = isCustomId(species) ? customOf(species) : null
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
   const runs = useMemo(
     () => runsOf(pixelsOf(stage, form, mood, species, branch)),
-    [stage, form, mood, species, branch]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stage, form, mood, species, branch, design]
   )
   const br = branch ? BRANCH_BY_ID.get(branch) : undefined
   const wearingKey = wearing?.join(',')
@@ -267,7 +293,24 @@ function Creature({
     const { back, front } = outfitPixels(stage, form, species, wearing ?? [])
     return { back: runsOf(back), front: runsOf(front) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, form, species, level, wearingKey])
+  }, [stage, form, species, level, wearingKey, design])
+  // Every animation here runs on an HTML box, never on something inside an
+  // <svg>: animating the insides of an svg kept WebKit's GPU process at ~130MB
+  // for as long as the pet was on screen (~11MB this way, measured). So the
+  // twinkling accent dots ('a') are drawn on layers of their own. The shine
+  // behind it twinkles out of step, every second dot half a beat behind, so it
+  // glitters rather than blinks.
+  const layers = useMemo(() => {
+    const still = (list: typeof runs): typeof runs => list.filter((d) => d.ch !== 'a')
+    const lit = (list: typeof runs): typeof runs => list.filter((d) => d.ch === 'a')
+    return {
+      auraStill: still(outfit.back),
+      auraLitA: outfit.back.filter((d, i) => d.ch === 'a' && i % 2 === 0),
+      auraLitB: outfit.back.filter((d, i) => d.ch === 'a' && i % 2 === 1),
+      bodyStill: still(runs),
+      bodyLit: lit(runs)
+    }
+  }, [runs, outfit])
   const dots = (list: typeof runs): JSX.Element[] =>
     list.map((d) => (
       <rect
@@ -279,44 +322,76 @@ function Creature({
         height="1"
       />
     ))
-  return (
+  // One full-box svg on the shared 32-dot grid; every layer letterboxes the same
+  // way, so stacked layers line up dot for dot.
+  const plate = (children: JSX.Element | JSX.Element[], extra?: string): JSX.Element => (
     <svg
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
+      className={`pet-layer${extra ? ` ${extra}` : ''}`}
       viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
       shapeRendering="crispEdges"
       aria-hidden="true"
     >
-      <g className={`pet-sprite${chewing ? ' chew' : ''}`}>
+      {children}
+    </svg>
+  )
+  // A twinkle is a two-frame reel: the dots, and below them the same dots at
+  // 15% (fill-opacity), slid up into view and back with a translate. Fading the
+  // layer with opacity instead (or scaling it away) kept WebKit's GPU process at
+  // ~130MB the whole time it ran; a translate of a layer that stays on screen is
+  // composited for free (measured ~11MB).
+  const twinkle = (rects: JSX.Element[], alt?: boolean): JSX.Element | null =>
+    rects.length > 0 ? (
+      <div className={`pet-tw${alt ? ' alt' : ''}`}>
+        <div className="pet-tw-reel">
+          {plate(rects)}
+          {plate(rects, 'pet-tw-dim')}
+        </div>
+      </div>
+    ) : null
+  return (
+    <div
+      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}`}
+      style={design ? customVars(design) : undefined}
+      aria-hidden="true"
+    >
+      <div className={`pet-sprite${chewing ? ' chew' : ''}`}>
         {/* What it has earned since growing up: its shine behind it, left to
             twinkle, and the rest on top of it. */}
-        {outfit.back.length > 0 && <g className="pet-aura">{dots(outfit.back)}</g>}
-        {dots(runs)}
-        {outfit.front.length > 0 && <g className="pet-acc">{dots(outfit.front)}</g>}
-      </g>
+        {layers.auraStill.length > 0 && plate(dots(layers.auraStill))}
+        {twinkle(dots(layers.auraLitA))}
+        {twinkle(dots(layers.auraLitB), true)}
+        {plate(dots(layers.bodyStill), 'pet-body')}
+        {twinkle(dots(layers.bodyLit))}
+        {outfit.front.length > 0 && plate(dots(outfit.front))}
+      </div>
       {chewing && (
-        <g className="pet-crumbs">
-          <rect className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />
-          <rect className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
-        </g>
+        <div className="pet-crumbs">
+          {plate([
+            <rect key="a" className="pet-px pet-px-a" x="26" y="4" width="2" height="2" />,
+            <rect key="b" className="pet-px pet-px-a" x="4" y="2" width="2" height="2" />
+          ])}
+        </div>
       )}
       {/* Growing up: a ring of dots bursts outward for a moment. */}
       {evolving && (
-        <g className="pet-burst">
-          {[
-            [16, 0],
-            [28, 4],
-            [30, 16],
-            [26, 28],
-            [16, 30],
-            [4, 26],
-            [0, 16],
-            [4, 4]
-          ].map(([x, y]) => (
-            <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
-          ))}
-        </g>
+        <div className="pet-burst">
+          {twinkle(
+            [
+              [16, 0],
+              [28, 4],
+              [30, 16],
+              [26, 28],
+              [16, 30],
+              [4, 26],
+              [0, 16],
+              [4, 4]
+            ].map(([x, y]) => (
+              <rect key={`${x},${y}`} className="pet-px pet-px-a" x={x} y={y} width="2" height="2" />
+            ))
+          )}
+        </div>
       )}
-    </svg>
+    </div>
   )
 }
 
@@ -497,6 +572,31 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     void load()
     return flushPetSave
   }, [show, detached, load])
+
+  // The species the keeper made from photos (made in Settings, in the app's
+  // window): this window reads the shared file, and hears when it changes.
+  const loadSpecies = useCustomSpecies((s) => s.load)
+  const ownSpecies = useCustomSpecies((s) => s.own)
+  const speciesLoaded = useCustomSpecies((s) => s.loaded)
+  const syncCustom = usePet((s) => s.syncCustom)
+  useEffect(() => {
+    if (!show && !detached) return
+    void loadSpecies()
+  }, [show, detached, loadSpecies])
+  // Opening the setup screen reads the file again, in case the message from
+  // the other window never came (a window that was asleep, another engine).
+  useEffect(() => {
+    if (mode === 'settings') void loadSpecies()
+  }, [mode, loadSpecies])
+  // An edited species shows on the pets of it at once; a deleted one leaves
+  // them as they were (their own snapshot).
+  useEffect(() => {
+    if (speciesLoaded && loaded) syncCustom(ownSpecies)
+  }, [ownSpecies, speciesLoaded, loaded, syncCustom])
+  // What the next egg will be: a random draw (null), or one of the keeper's own.
+  const [eggPick, setEggPick] = useState<string | null>(null)
+  const eggSpecies = ownSpecies.find((o) => o.id === eggPick) ?? null
+  const hatch = eggSpecies ? { id: eggSpecies.id, design: designOf(eggSpecies) } : null
 
   // The three keys, reachable from riven's keyboard shortcuts. The press is
   // relayed through main, so it works whether the device is in the app window or
@@ -1115,6 +1215,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (!text?.trim()) return
     const foe = decodeCard(text)
     if (!foe) return speak(t('pet.battle.bad'))
+    // A friend's animal made from a photo is drawn from the design in its code.
+    noteCard(foe)
     // A friend's pet, never one of your own: a pet is known by its birthday.
     if (pets.some((p) => Math.floor(p.bornAt) === foe.bornAt)) return speak(t('pet.battle.own'))
     setSpeech(null)
@@ -1358,6 +1460,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           }
         ]
       : []),
+    // Only once the keeper has made a species of their own: which egg comes next.
+    ...(ownSpecies.length
+      ? [
+          {
+            id: 'egg',
+            label: t('pet.settings.egg'),
+            value: eggSpecies ? eggSpecies.name : t('pet.settings.eggRandom'),
+            on: !!eggSpecies
+          }
+        ]
+      : []),
     {
       id: 'adopt',
       label: t('pet.settings.adopt'),
@@ -1392,13 +1505,18 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       case 'hide':
         return void (detached ? window.api.pet.hide() : setSettings({ petShow: false }))
       case 'restart':
-        if (window.confirm(t('pet.resetConfirm'))) reset()
+        if (window.confirm(t('pet.resetConfirm'))) reset(hatch)
         return
+      case 'egg': {
+        // Round the list: random, then each of the keeper's own.
+        const order = [null, ...ownSpecies.map((o) => o.id)]
+        return setEggPick(order[(order.indexOf(eggSpecies?.id ?? null) + 1) % order.length])
+      }
       case 'switch':
         return select()
       case 'adopt':
         if (pets.length >= MAX_PETS) return speak(t('pet.settings.nestFull', { max: MAX_PETS }))
-        adopt()
+        adopt(hatch)
         return setMode('char')
       case 'release':
         if (window.confirm(t('pet.releaseConfirm'))) letGo()
@@ -1530,7 +1648,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <div className="pet-nest">
               {pets.map((p, i) => {
                 const who = t(i === active ? 'pet.nestOut' : 'pet.nestIn', {
-                  name: p.name || t(`pet.species.${p.species}`)
+                  name: p.name || speciesName(p.species, t, customOf(p.species) ?? p.custom)
                 })
                 return (
                   <button
@@ -1586,7 +1704,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           </div>
           <div>
             <dt>{t('pet.stat.species')}</dt>
-            <dd>{t(`pet.species.${pet.species}`)}</dd>
+            <dd>{speciesName(pet.species, t, customOf(pet.species) ?? pet.custom)}</dd>
           </div>
           <div>
             <dt>{t('pet.stat.stage')}</dt>
@@ -1769,7 +1887,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <div key={a.endedAt} className="pet-album-row">
               <b>{a.name || t('pet.default.name')}</b>
               <span>
-                {t(`pet.species.${a.species}`)} ·{' '}
+                {speciesName(a.species, t, a.speciesName ? { name: a.speciesName } : customOf(a.species))} ·{' '}
                 {a.branches?.length
                   ? t(`pet.branch.${a.branches[a.branches.length - 1]}`)
                   : a.form === 'base'
@@ -1856,7 +1974,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           const pct = Math.round((hp[i] / duel.bout.fighters[i].hp) * 100)
           return (
             <div className={`pet-fighter side-${i}`}>
-              <span className="pet-fighter-name">{c.name || t(`pet.species.${c.species}`)}</span>
+              <span className="pet-fighter-name">{c.name || speciesName(c.species, t, c.custom ?? customOf(c.species))}</span>
               <i className="pet-hp">
                 <i style={{ width: `${pct}%` }} className={pct <= 25 ? 'low' : undefined} />
               </i>

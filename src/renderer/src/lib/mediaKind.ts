@@ -63,5 +63,8 @@ export function isDocFile(filePath: string): boolean {
 // (see src/main/media.ts) rather than file://, which a page on http://localhost
 // (dev) is not allowed to read.
 export function mediaUrl(absPath: string): string {
+  // The Tauri build serves the same handler on the page's own origin.
+  const tauriMedia = typeof window !== 'undefined' ? (window as { __RIVEN_MEDIA__?: string }).__RIVEN_MEDIA__ : undefined
+  if (tauriMedia) return tauriMedia.replace('{}', encodeURIComponent(absPath))
   return `riven-media://local/${encodeURIComponent(absPath)}`
 }

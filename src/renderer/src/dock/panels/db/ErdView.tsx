@@ -17,6 +17,7 @@ import { useT } from '../../../i18n'
 import { useDb, type ErdTab } from '../../../state/db'
 import { TextInput } from '../../../components/ui/Controls'
 import { errText } from './ConnectionForm'
+import { storeMapGet, storeMapSet } from '../../../lib/fileStore'
 
 // ER diagram of a schema: an SVG canvas with auto layout, pan and zoom,
 // draggable tables (positions kept per schema), key-only mode, search and
@@ -24,7 +25,9 @@ import { errText } from './ConnectionForm'
 // export stands on its own.
 
 const LS_KEYS = 'db.erd.keysOnly'
-const posKey = (tab: ErdTab): string => `db.erd.pos.${tab.connId}/${tab.db ?? ''}/${tab.schema}`
+// Node positions per diagram, in userData/store/db-erd-positions.json
+// (lib/fileStore; they were localStorage 'db.erd.pos.<this key>').
+const posKey = (tab: ErdTab): string => `${tab.connId}/${tab.db ?? ''}/${tab.schema}`
 const FONT = 12
 const MIN_K = 0.1
 const MAX_K = 2.5
@@ -63,12 +66,8 @@ function readPalette(el: Element): Palette {
 }
 
 function loadPos(tab: ErdTab): Pos {
-  try {
-    const p = JSON.parse(localStorage.getItem(posKey(tab)) ?? '{}') as unknown
-    return p && typeof p === 'object' ? (p as Pos) : {}
-  } catch {
-    return {}
-  }
+  const p = storeMapGet<Pos>('db-erd-positions', posKey(tab))
+  return p && typeof p === 'object' ? p : {}
 }
 
 /** Text widths for sizing nodes, from one offscreen canvas. */
@@ -222,11 +221,11 @@ export default function ErdView({ tab }: { tab: ErdTab }): JSX.Element {
   const onPointerUp = (): void => {
     const d = drag.current
     drag.current = null
-    if (d?.kind === 'node' && d.moved) localStorage.setItem(posKey(tab), JSON.stringify(posRef.current))
+    if (d?.kind === 'node' && d.moved) storeMapSet('db-erd-positions', posKey(tab), posRef.current)
   }
 
   const resetLayout = (): void => {
-    localStorage.removeItem(posKey(tab))
+    storeMapSet('db-erd-positions', posKey(tab), undefined)
     setPos({})
     fitted.current = false
   }

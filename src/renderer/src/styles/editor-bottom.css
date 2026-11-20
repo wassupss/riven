@@ -52,6 +52,14 @@
   background: var(--hover-strong);
   color: var(--fg);
 }
+.esb-hint {
+  cursor: default;
+  color: var(--fg-dim);
+}
+.esb-hint:hover {
+  background: transparent;
+  color: var(--fg-dim);
+}
 .esb-num {
   font-variant-numeric: tabular-nums;
 }

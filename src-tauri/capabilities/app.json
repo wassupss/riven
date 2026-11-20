@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "app",
+  "description": "The app's own pages (served by riven on riven://localhost, a scheme Tauri counts as local) may move their window (drag regions, the title bar double-click), call riven's Rust commands (the generated set rust-main) and listen for the events Rust sends them. Scoped by webview label (app windows are w<n>, dockview popouts pop-<id>, the pet pet) so the browser panel's pages (bv-<n>), which share their window, get nothing.",
+  "webviews": [
+    "w*",
+    "pop-*",
+    "pet"
+  ],
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "rust-main"
+  ]
+}

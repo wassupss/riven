@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import { dbUid } from './db'
+import { storeGet, storeSet, type StoreName } from '../lib/fileStore'
 
 // The SQL console's query history (every run, newest first, capped) and saved
-// snippets. Both live in localStorage; history writes are debounced so a burst
-// of runs costs one write.
+// snippets. Both live in userData/store (lib/fileStore; they were localStorage
+// 'db.console.history.v1' / 'db.console.snippets.v1'); history writes are
+// debounced so a burst of runs costs one write.
 
 export interface HistoryEntry {
   id: string
@@ -23,18 +25,14 @@ export interface Snippet {
   at: number
 }
 
-const LS_HISTORY = 'db.console.history.v1'
-const LS_SNIPPETS = 'db.console.snippets.v1'
+const LS_HISTORY: StoreName = 'db-console-history'
+const LS_SNIPPETS: StoreName = 'db-console-snippets'
 const MAX_HISTORY = 500
 const MAX_SQL = 20_000
 
-const read = <T>(k: string): T[] => {
-  try {
-    const v = JSON.parse(localStorage.getItem(k) ?? '[]')
-    return Array.isArray(v) ? v : []
-  } catch {
-    return []
-  }
+const read = <T>(k: StoreName): T[] => {
+  const v = storeGet<T[]>(k)
+  return Array.isArray(v) ? v : []
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -42,7 +40,7 @@ const saveHistory = (list: HistoryEntry[]): void => {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
-    localStorage.setItem(LS_HISTORY, JSON.stringify(list))
+    storeSet(LS_HISTORY, list)
   }, 500)
 }
 
@@ -81,16 +79,16 @@ export const useDbHistory = create<HistoryState>((set, get) => ({
   saveSnippet: (name, sql) => {
     const snippets = [...get().snippets, { id: dbUid(), name, sql, at: Date.now() }]
     set({ snippets })
-    localStorage.setItem(LS_SNIPPETS, JSON.stringify(snippets))
+    storeSet(LS_SNIPPETS, snippets)
   },
   updateSnippet: (id, patch) => {
     const snippets = get().snippets.map((s) => (s.id === id ? { ...s, ...patch, at: Date.now() } : s))
     set({ snippets })
-    localStorage.setItem(LS_SNIPPETS, JSON.stringify(snippets))
+    storeSet(LS_SNIPPETS, snippets)
   },
   removeSnippet: (id) => {
     const snippets = get().snippets.filter((s) => s.id !== id)
     set({ snippets })
-    localStorage.setItem(LS_SNIPPETS, JSON.stringify(snippets))
+    storeSet(LS_SNIPPETS, snippets)
   }
 }))

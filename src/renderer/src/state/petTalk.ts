@@ -1,5 +1,6 @@
 import type { TFn } from '../i18n'
-import { dietOf, growthOf, HUNGRY_AT, type PetSave } from './pet'
+import { dietOf, growthOf, HUNGRY_AT, speciesName, type PetSave } from './pet'
+import { customOf, isCustomId } from './petSpecies'
 
 // ---------------------------------------------------------------------------
 // What the pet says when you talk to it.
@@ -159,13 +160,18 @@ export function answer(question: string, f: TalkFacts): { topic: TalkTopic; text
     case 'self': {
       const g = growthOf(f.pet, f.now)
       const text = t('pet.talk.self', {
-        species: t(`pet.species.${f.pet.species}`),
+        species: speciesName(f.pet.species, t, customOf(f.pet.species) ?? f.pet.custom),
         stage: g.branch ? t(`pet.branch.${g.branch.id}`) : t(`pet.stage.${g.stage}`),
         age: f.dur(f.now - f.pet.bornAt),
         mood: t(`pet.mood.${f.pet.sick ? 'sick' : f.pet.fullness < HUNGRY_AT ? 'hungry' : 'ok'}`)
       })
-      // The way it grew up colours how it talks about itself.
-      return { topic, text: g.branch ? `${text} ${t(`pet.talk.line.${g.branch.line ?? g.branch.id}`)}` : text }
+      // The way it grew up colours how it talks about itself, and one made from
+      // a photo knows where it came from.
+      const origin = isCustomId(f.pet.species) ? ` ${t('pet.talk.custom')}` : ''
+      return {
+        topic,
+        text: (g.branch ? `${text} ${t(`pet.talk.line.${g.branch.line ?? g.branch.id}`)}` : text) + origin
+      }
     }
 
     case 'help':

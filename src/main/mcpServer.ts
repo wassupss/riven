@@ -1,6 +1,7 @@
 import { ipcMain, WebContents } from 'electron'
 import * as http from 'http'
 import { randomUUID } from 'crypto'
+import { runApiRequest } from './apiRequest'
 
 // riven's OWN tools, exposed to the Claude CLI over MCP — things the CLI can't do
 // itself or that should run inside riven's UI. The CLI talks Streamable-HTTP MCP
@@ -574,30 +575,6 @@ function toolDefs(enabled: Set<string> | null): Array<Record<string, unknown>> {
   }))
 }
 
-// riven_api_request: run an HTTP request and return a compact status/headers/body
-// summary. Body is truncated so a huge response doesn't flood the transcript.
-async function runApiRequest(args: Record<string, unknown>): Promise<string> {
-  const method = String(args.method ?? 'GET').toUpperCase()
-  const url = String(args.url ?? '')
-  if (!url) return 'error: url is required'
-  const headers = (args.headers as Record<string, string>) ?? {}
-  const body = args.body != null ? String(args.body) : undefined
-  try {
-    const res = await fetch(url, {
-      method,
-      headers,
-      body: method === 'GET' || method === 'HEAD' ? undefined : body
-    })
-    const text = await res.text()
-    const hdrs: string[] = []
-    res.headers.forEach((v, k) => hdrs.push(`${k}: ${v}`))
-    const clipped = text.length > 8000 ? text.slice(0, 8000) + '\n… (truncated)' : text
-    return `HTTP ${res.status} ${res.statusText}\n${hdrs.join('\n')}\n\n${clipped}`
-  } catch (e) {
-    return `error: ${e instanceof Error ? e.message : String(e)}`
-  }
-}
-
 // Run one tool call. UI tools round-trip through the renderer (mcp:invoke →
 // mcp:result); pure-network ones run right here so they work with no window.
 function invokeTool(
@@ -878,7 +855,7 @@ export const MCP_TOOL_PREFIX = 'mcp__riven'
 // advertised to this pane. It used to describe every tool unconditionally, so a
 // user who switched the browser tools off still paid for — and the agent still
 // read about — tools it could not call.
-const PROMPT_LINES: Array<[string[], string]> = [
+export const PROMPT_LINES: Array<[string[], string]> = [
   [['ask_user'], "- 사용자에게 선택지를 물을 땐 번호 목록을 쓰지 말고 ask_user(question, options)를 호출하세요(방향키로 고른 값을 돌려줍니다)."],
   [['riven_open_file'], "- 코드/파일을 사용자와 함께 볼 땐 riven_open_file(path, line?)로 riven 에디터에 엽니다."],
   [['riven_panels', 'riven_open_panel', 'riven_close_panel', 'riven_workspaces', 'riven_open_workspace'], "- riven의 패널/워크스페이스를 파악·조작할 수 있습니다: riven_panels(현재 패널 목록), riven_open_panel(kind, command?, dir?), riven_close_panel(id), riven_workspaces, riven_open_workspace(path). 에이전트(Claude Code·Codex)를 새로 띄울 땐 터미널이 아니라 채팅 패널로 엽니다: riven_open_panel(kind='chat', agent='codex', message='첫 지시', dir='right') — 돌려받은 패널 id로 riven_ask_agent를 쓸 수 있습니다. 터미널(kind='terminal', command=...)은 사용자가 터미널/CLI를 원할 때나 에이전트가 아닌 명령에만 씁니다."],
@@ -889,10 +866,12 @@ const PROMPT_LINES: Array<[string[], string]> = [
   [['riven_agents', 'riven_ask_agent', 'riven_ask_agents', 'riven_group_add_agent', 'riven_start_pipeline'], "- 다른 에이전트와 협업: riven_agents로 열린 동료(채팅·터미널의 Claude Code, Codex 등 — cli 필드로 구분)를 확인하고, riven_ask_agent(agent, message)로 위임한 뒤 답을 받습니다. 다른 모델에게 검토·반론을 맡기면 서로의 결과를 교차 확인할 수 있습니다. 여러 명에 동시에는 riven_ask_agents(tasks=[{agent,message}…]). 새 동료는 riven_group_add_agent(group, name, persona?). 여러 단계를 순서대로 거칠 일은 riven_start_pipeline(name, task, stages=[{name, instruction}…])로 직렬 파이프라인을 돌립니다."]
 ]
 
+export const PROMPT_HEAD = '이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:'
+
 export function mcpSystemPrompt(enabled: string[] = implementedToolNames()): string {
   const on = new Set(enabled)
   const lines = PROMPT_LINES.filter(([tools]) => tools.some((t) => on.has(t))).map(([, line]) => line)
-  return lines.length ? ["이 세션에는 riven이 제공하는 도구가 있습니다. 적절할 때 사용하세요:", ...lines].join('\n') : ''
+  return lines.length ? [PROMPT_HEAD, ...lines].join('\n') : ''
 }
 
 /**

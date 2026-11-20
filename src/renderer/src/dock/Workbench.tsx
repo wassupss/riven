@@ -32,6 +32,7 @@ import {
 } from './registry'
 import { useT } from '../i18n'
 import { HostScope } from '../lib/hostWindow'
+import { keymap } from '../keybindings/keys'
 
 type SavedLayout = Parameters<DockviewApi['fromJSON']>[0]
 
@@ -288,6 +289,26 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
 
       if (workspace === useSession.getState().activeWorkspace) setActiveApi(api)
       disposers.current.push(api.onDidLayoutChange(() => healRef.current?.()))
+
+      // App shortcuts listen on main's window, and a key pressed in a popped-out
+      // group's window never reaches it. Give each popout the same handler.
+      const popWins = new Set<Window>()
+      disposers.current.push(
+        api.onDidAddPopoutGroup(({ window: w }) => {
+          popWins.add(w)
+          w.addEventListener('keydown', keymap.handle, { capture: true })
+        }),
+        api.onDidRemovePopoutGroup(({ window: w }) => {
+          popWins.delete(w)
+          w.removeEventListener('keydown', keymap.handle, { capture: true })
+        }),
+        {
+          dispose: () => {
+            for (const w of popWins) w.removeEventListener('keydown', keymap.handle, { capture: true })
+            popWins.clear()
+          }
+        }
+      )
 
       // Kill a terminal's PTY session only when its panel is actually removed
       // (user close) — NOT on renderer reload, so sessions survive ⌘R.

@@ -1,0 +1,14 @@
+{
+  "productName": "riven",
+  "identifier": "dev.riven.app",
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["../build/icon.icns", "icons/icon.png"],
+    "createUpdaterArtifacts": false,
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    }
+  }
+}

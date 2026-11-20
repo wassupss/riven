@@ -15,6 +15,7 @@ import RemoteSettings from './RemoteSettings'
 import { useRemote } from '../state/remote'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
+import PetSpeciesSettings from './PetSpeciesSettings'
 import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
@@ -621,6 +622,9 @@ export default function SettingsModal(): JSX.Element | null {
                     <option value={0}>{t('settings.petBreakOff')}</option>
                   </Select>
                 </Row>
+
+                <div className="section-label">{t('pet.maker.section')}</div>
+                <PetSpeciesSettings />
 
               </>
             )}

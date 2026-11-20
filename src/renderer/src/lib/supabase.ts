@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { storeMapGet, storeMapSet } from './fileStore'
 
 // Supabase is configured through Vite env vars (VITE_ prefix → exposed to the
 // renderer). When they're absent the whole account/sync feature degrades
@@ -16,6 +17,15 @@ export const REDIRECT_TO =
 
 export const isSupabaseConfigured = !!(url && anonKey)
 
+// The session lives in userData/store/auth.json (lib/fileStore), not in the
+// engine's localStorage, so signing in once holds for the Electron and the
+// Tauri build alike. Same keys as supabase-js put in localStorage (sb-...).
+const fileStorage = {
+  getItem: (k: string): string | null => storeMapGet<string>('auth', k) ?? null,
+  setItem: (k: string, v: string): void => storeMapSet('auth', k, v),
+  removeItem: (k: string): void => storeMapSet('auth', k, undefined)
+}
+
 export const supabase: SupabaseClient | null = isSupabaseConfigured
   ? createClient(url as string, anonKey as string, {
       auth: {
@@ -24,6 +34,7 @@ export const supabase: SupabaseClient | null = isSupabaseConfigured
         // hand — never let supabase-js scan the renderer URL for a session.
         flowType: 'pkce',
         persistSession: true,
+        storage: fileStorage,
         autoRefreshToken: true,
         detectSessionInUrl: false
       }

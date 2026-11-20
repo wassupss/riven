@@ -1,5 +1,6 @@
 import { app, ipcMain, Notification, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
+import { exportChromiumData } from './chromiumExport'
 
 // Auto-update wiring. electron-updater checks GitHub Releases (see the publish
 // block in electron-builder.yml). We drive the flow ourselves — instead of
@@ -32,14 +33,21 @@ export function registerUpdateHandlers(): void {
   autoUpdater.on('download-progress', (p) =>
     send({ state: 'downloading', percent: Math.round(p.percent) })
   )
+  // Before the switch: whatever only Chromium holds goes to files the next
+  // build reads (chromiumExport, the bridge to the Tauri build). Again on
+  // install, so the copy is the newest.
+  const install = (): void => {
+    void exportChromiumData('install').finally(() => autoUpdater.quitAndInstall(false, true))
+  }
   autoUpdater.on('update-downloaded', (i) => {
+    void exportChromiumData(`update ${i.version} downloaded`)
     send({ state: 'downloaded', version: i.version })
     if (Notification.isSupported()) {
       const n = new Notification({
         title: `riven ${i.version} 업데이트 준비됨 / update ready`,
         body: '클릭하면 재시작하여 설치합니다. / Click to restart and install.'
       })
-      n.on('click', () => autoUpdater.quitAndInstall(false, true))
+      n.on('click', install)
       n.show()
     }
   })
@@ -62,7 +70,7 @@ export function registerUpdateHandlers(): void {
     }
   })
   // isForceRunAfter=true → relaunch riven after the update is applied.
-  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall(false, true))
+  ipcMain.handle('update:install', install)
 
   // Check once on launch (packaged only; dev has no feed).
   if (app.isPackaged) {
