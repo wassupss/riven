@@ -1,9 +1,11 @@
 import { create } from 'zustand'
+import { storeGet, storeSet } from '../lib/fileStore'
 
 // Saved pipeline definitions (persisted, like agent groups). A pipeline is a named
 // ordered list of stages; you create it once, then run it (with a task) as many
 // times as you like and control the run from its tab. Runs themselves are the
-// ephemeral [[pipelineRuns]] instances.
+// ephemeral [[pipelineRuns]] instances. Kept in userData/store/pipelines.json
+// (lib/fileStore; it was localStorage 'pipelines:v1').
 
 export interface PipelineStageDef {
   name: string
@@ -23,24 +25,13 @@ export interface PipelineDef {
 
 type Store = Record<string, PipelineDef[]> // keyed by workspace
 
-const LS_KEY = 'pipelines:v1'
-
 function load(): Store {
-  try {
-    const raw = localStorage.getItem(LS_KEY)
-    if (raw) return JSON.parse(raw) as Store
-  } catch {
-    /* ignore */
-  }
-  return {}
+  const v = storeGet<Store>('pipelines')
+  return v && typeof v === 'object' ? v : {}
 }
 
 function persist(store: Store): void {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(store))
-  } catch {
-    /* ignore */
-  }
+  storeSet('pipelines', store)
 }
 
 interface State {

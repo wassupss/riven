@@ -21,6 +21,9 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   // sessions
   'sessions:load': [],
   'sessions:save': ['data'],
+  // the renderer's data files (commands/store.rs)
+  'store:loadAll': [],
+  'store:save': ['name', 'data'],
   // workspace
   'workspace:setRoots': ['roots'],
   'workspace:pickFolder': [],
@@ -278,7 +281,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
 // waits for it before a window closes or the app quits (lifecycle.rs).
 export const RUST_SYNC: Readonly<Record<string, string>> = {
   'config:save-sync': 'config:save',
-  'sessions:save-sync': 'sessions:save'
+  'sessions:save-sync': 'sessions:save',
+  'store:save-sync': 'store:save'
 }
 
 export function rustCommand(channel: string): string {

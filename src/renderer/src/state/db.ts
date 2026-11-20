@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { storeGet, storeSet, type StoreName } from '../lib/fileStore'
 import type { ConnectionInfo, ObjectKind, QueryResult, TxStatus } from '../../../main/db/types'
 import { t } from '../i18n'
 import type { ResultView } from '../../../main/db/sqlText'
@@ -148,7 +149,8 @@ export interface RunState {
   shown: number
 }
 
-const LS_TABS = 'db.console.tabs.v1'
+// userData/store/db-console-tabs.json (lib/fileStore; was localStorage 'db.console.tabs.v1').
+const LS_TABS: StoreName = 'db-console-tabs'
 
 let seq = 0
 export const dbUid = (): string => `t${Date.now().toString(36)}${(seq++).toString(36)}`
@@ -159,15 +161,8 @@ interface Persisted {
 }
 
 function loadPersisted(): Persisted {
-  try {
-    const raw = localStorage.getItem(LS_TABS)
-    if (raw) {
-      const p = JSON.parse(raw) as Persisted
-      if (Array.isArray(p.tabs)) return { tabs: p.tabs, active: p.active ?? p.tabs[0]?.id ?? null }
-    }
-  } catch {
-    // corrupt: start empty
-  }
+  const p = storeGet<Persisted>(LS_TABS)
+  if (p && Array.isArray(p.tabs)) return { tabs: p.tabs, active: p.active ?? p.tabs[0]?.id ?? null }
   return { tabs: [], active: null }
 }
 
@@ -176,11 +171,7 @@ function persist(p: Persisted): void {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
-    try {
-      localStorage.setItem(LS_TABS, JSON.stringify(p))
-    } catch {
-      // quota: the console still works, it just won't remember
-    }
+    storeSet(LS_TABS, p)
   }, 400)
 }
 

@@ -94,6 +94,14 @@ await call('notes:write', ws, null, 'Plan 계획', '# Plan 계획\n\n- one\n- tw
 await call('notes:write', ws, null, 'Second', 'no heading line\nsecond line')
 m.db.saveConnection({ name: 'local pg', engine: 'postgres', host: 'localhost', port: 5432, user: 'me', database: 'app', ssl: false })
 m.db.saveConnection({ name: 'sqlite 파일', engine: 'sqlite', file: '~/data/app.db' })
+// The renderer's data files (src/main/store.ts), as lib/fileStore saves them.
+if (m.registerStoreHandlers) {
+  await call('store:save', 'pipelines', { [ws]: [{ id: 'pl_1', name: '리뷰', stages: [{ name: 's', model: 'opus', role: 'r', agent: '' }] }] })
+  await call('store:save', 'db-console-history', [{ id: 't1', sql: "select '한글', 1.5", connId: 'c', at: 1763600000000, ms: 3, rows: 1 }])
+  await call('store:save', 'db-erd-positions', { 'c1//public': { users: { x: 10, y: -20 } } })
+  await call('store:save', 'auth', { 'sb-abc-auth-token': JSON.stringify({ access_token: 'x', expires_at: 1 }) })
+  await call('store:save', 'removed-by-tauri', [1])
+}
 // browser.ts writes JSON.stringify(store) (compact), 300ms after a change.
 fs.writeFileSync(
   path.join(electronDir, 'browser.json'),
@@ -157,6 +165,17 @@ const norm = (p) => p.replace(/\/+$/, '')
 check('claude-profiles/<id> paths', JSON.stringify(rust.profileDirs.map(norm)) === JSON.stringify(fixture.profileIds.map(profile)))
 const key = createHash('sha1').update(ws).digest('hex').slice(0, 16)
 check('notes folder key', fs.existsSync(path.join(tauriDir, 'notes', key)))
+
+if (m.registerStoreHandlers) {
+  for (const f of fs.readdirSync(path.join(electronDir, 'store'))) {
+    if (f !== 'removed-by-tauri.json') same(`store/${f}`)
+  }
+  check('store: Rust read every file', JSON.stringify(rust.store) === JSON.stringify(await call('store:loadAll')))
+  check('store: Rust removes a file on null', !fs.existsSync(path.join(tauriDir, 'store/removed-by-tauri.json')))
+  fs.cpSync(path.join(tauriDir, 'store/from-tauri.json'), path.join(electronDir, 'store/from-tauri.json'))
+  const el = await call('store:loadAll')
+  check('store: Electron reads the file Rust wrote', JSON.stringify(el['from-tauri']) === JSON.stringify({ by: 'rust', n: [1, 2.5] }))
+}
 
 if (globalThis.__parityExtra) failed += await globalThis.__parityExtra({ call, m, electronDir, tauriDir, rust, check })
 fs.rmSync(tmp, { recursive: true, force: true })

@@ -19,6 +19,7 @@ import { registerDiagnosticsHandlers } from './diagnostics'
 import { registerDebuggerHandlers } from './debugger'
 import { registerSessionsHandlers } from './sessions'
 import { registerConfigHandlers } from './config'
+import { registerStoreHandlers } from './store'
 import { registerPetHandlers, closePetWindow } from './pet'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
@@ -321,6 +322,7 @@ app.whenReady().then(() => {
   registerDebuggerHandlers()
   registerSessionsHandlers()
   registerConfigHandlers()
+  registerStoreHandlers()
   registerPetHandlers()
   registerSearchHandlers()
   registerCliHandlers()

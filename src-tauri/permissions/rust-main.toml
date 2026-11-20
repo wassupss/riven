@@ -219,6 +219,8 @@ permissions = [
   "allow-search-replace-in-files",
   "allow-sessions-load",
   "allow-sessions-save",
+  "allow-store-load-all",
+  "allow-store-save",
   "allow-cli-list",
   "allow-ports-list",
   "allow-ports-kill",
@@ -1321,6 +1323,16 @@ commands.allow = ["sessions_load"]
 identifier = "allow-sessions-save"
 description = "Allows sessions_save."
 commands.allow = ["sessions_save"]
+
+[[permission]]
+identifier = "allow-store-load-all"
+description = "Allows store_load_all."
+commands.allow = ["store_load_all"]
+
+[[permission]]
+identifier = "allow-store-save"
+description = "Allows store_save."
+commands.allow = ["store_save"]
 
 [[permission]]
 identifier = "allow-cli-list"

@@ -1,12 +1,12 @@
 import './monaco-setup'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App'
 // Registers the extra Monaco languages (tsx/jsx/toml/...) up front. Shiki itself
 // starts lazily, when the first editor asks for its theme (see highlight.ts).
 import './editor/highlight'
 import { initOutputCapture } from './state/outputLog'
 import { installDialogRouting } from './lib/hostWindow'
+import { hydrateFileStore } from './lib/fileStore'
 import './styles.css'
 
 // Start capturing language-server logs into the Output panel from launch.
@@ -14,11 +14,17 @@ initOutputCapture()
 // confirm/alert from a popped-out panel open over that window, not the parent.
 installDialogRouting()
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+// The app's data files are read before the app's modules load: several of them
+// (pipelines, the DB console, the sign-in session) read their store as they
+// are imported (lib/fileStore).
+void hydrateFileStore().then(async () => {
+  const { default: App } = await import('./App')
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
+})
 
 // Dev load/stress harness — only when a dedicated profiling instance passes
 // ?stress=1 (never in normal use). Dynamic import so it stays out of the app path.

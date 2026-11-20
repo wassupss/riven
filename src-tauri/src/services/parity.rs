@@ -53,6 +53,15 @@ mod tests {
     let text = std::fs::read_to_string(paths::user_file("browser.json")).ok();
     report.insert("browserText".into(), json!(Store::parse(text.as_deref()).text()));
 
+    // store/<name>.json (the renderer's data files): load all, save each back.
+    let all = rt.block_on(commands::store::store_load_all()).unwrap();
+    report.insert("store".into(), all.clone());
+    for (name, v) in all.as_object().unwrap() {
+      rt.block_on(commands::store::store_save(name.clone(), Some(v.clone()))).unwrap();
+    }
+    rt.block_on(commands::store::store_save("from-tauri".into(), Some(json!({ "by": "rust", "n": [1, 2.5] })))).unwrap();
+    rt.block_on(commands::store::store_save("removed-by-tauri".into(), None)).unwrap();
+
     // Names Electron derives from user input.
     report.insert(
       "captureDirs".into(),

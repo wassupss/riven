@@ -4,11 +4,12 @@ import { useApiTarget } from '../../state/apiTarget'
 import { useT } from '../../i18n'
 import { highlightCode } from '../../components/highlight'
 import { promptInput } from '../../components/promptInput'
+import { storeGet, storeSet, type StoreName } from '../../lib/fileStore'
 
 // =============================================================================
 // APIClientPanel — a Postman-like HTTP client.
 //
-// Everything persists to localStorage (no IPC). Requests go out via the
+// History, collections and env persist as files (lib/fileStore). Requests go out via the
 // existing bridge: window.api.api.request({ method, url, headers, body }).
 // The UI is split into a left sidebar (History / Collections / Env) and a main
 // area (method+url+send, request-builder tabs, response viewer).
@@ -68,9 +69,11 @@ interface HistoryItem {
 }
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
-const LS_HISTORY = 'apiclient.history.v1'
-const LS_SAVED = 'apiclient.saved.v1'
-const LS_ENV = 'apiclient.env.v1'
+// userData/store/apiclient-*.json (lib/fileStore; they were localStorage
+// 'apiclient.history.v1', 'apiclient.saved.v1', 'apiclient.env.v1').
+const LS_HISTORY: StoreName = 'apiclient-history'
+const LS_SAVED: StoreName = 'apiclient-saved'
+const LS_ENV: StoreName = 'apiclient-env'
 const HISTORY_MAX = 25
 
 let idSeq = 0
@@ -130,22 +133,13 @@ const buildUrl = (base: string, params: KV[]): string => {
   return `${base}?${qs}`
 }
 
-// ---- localStorage helpers ---------------------------------------------------
+// ---- store helpers ------------------------------------------------------------
 
-function loadLS<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
+function loadLS<T>(key: StoreName, fallback: T): T {
+  return storeGet<T>(key) ?? fallback
 }
-function saveLS(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    /* quota / private mode — ignore */
-  }
+function saveLS(key: StoreName, value: unknown): void {
+  storeSet(key, value)
 }
 
 const methodClass = (m: string): string => `m-${m.toLowerCase()}`

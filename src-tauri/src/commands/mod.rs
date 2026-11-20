@@ -27,6 +27,7 @@ pub mod power;
 pub mod pty;
 pub mod search;
 pub mod sessions;
+pub mod store;
 pub mod tools;
 pub mod watch;
 pub mod workspace;
@@ -149,6 +150,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     config::config_reveal,
     sessions::sessions_load,
     sessions::sessions_save,
+    store::store_load_all,
+    store::store_save,
     workspace::workspace_set_roots,
     workspace::workspace_pick_folder,
     workspace::workspace_read_dir,
