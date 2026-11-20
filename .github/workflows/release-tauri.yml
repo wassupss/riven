@@ -50,7 +50,7 @@ jobs:
       # The feed URL and the public key are compiled into the app
       # (src-tauri/src/services/update.rs). Both are public: repository variables.
       RIVEN_UPDATE_FEED: ${{ vars.RIVEN_UPDATE_FEED || format('https://github.com/{0}/releases/download/tauri-feed/latest.json', github.repository) }}
-      RIVEN_UPDATER_PUBKEY: ${{ vars.RIVEN_UPDATER_PUBKEY }}
+      RIVEN_UPDATER_PUBKEY: ${{ vars.RIVEN_UPDATER_PUBKEY || secrets.RIVEN_UPDATER_PUBKEY }}
     steps:
       - uses: actions/checkout@v4
 
