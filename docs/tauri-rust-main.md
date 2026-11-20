@@ -780,6 +780,7 @@ Channel은 메시지마다 스크립트 하나를 eval하고 1KB가 넘으면 fe
   5. 공증: `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_PATH`(App Store Connect API 키) 또는 `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`가 있으면 `tauri build`가 공증하고 staple한다(없으면 이번처럼 건너뛴다는 경고만).
   6. 결과물 `riven-tauri.app.tar.gz`와 `.sig`로 latest.json(`version`, `notes`, `pub_date`, `platforms.darwin-aarch64.{url, signature}`)을 만들어 릴리스에 올린다. x86_64는 별도 잡.
   7. 공증 403은 Apple 약관 미동의다(Electron 때와 같음). 러너는 macos-15.
+  - 위 내용으로 만든 실제 워크플로와 비밀 이름(Electron 것을 그대로 매핑, x86_64는 별도 잡 대신 universal 한 번)은 9-7.
 - 알림 권한: 패키지 앱(`dev.riven.tauri`)은 백그라운드 시험 모드가 아니면 첫 실행에 알림 권한을 묻는다(7-6).
 
 #### 8-8. 측정 (패키지 앱, 백그라운드 모드, footprint만)
@@ -878,3 +879,75 @@ localStorage는 엔진 것이라(Electron은 Chromium, Tauri는 WebKit, 출처�
 - **Windows는 Electron 그대로**: latest.yml(Windows)과 Windows 빌드는 Electron으로 계속 나간다. 9-2와 9-4 코드는 Windows Electron에서도 무해하다(파일로 옮기기는 Windows에서도 그대로 이득).
 - **위험: 브리지를 건너뛴 사용자**. 1을 실행하지 않은 채(예: 오래 꺼 둔 Mac) 바로 2를 받으면 Chromium localStorage에 남아 있던 진짜 데이터(파이프라인, DB 기록, API 요청 등)와 화면 설정이 Tauri로 오지 않는다(변환 계층이 없으므로). 대책 후보: (a) 1과 2 사이를 충분히 둔다, (b) 1이 electron-updater의 channel(예: `migrate-mac.yml`)을 읽게 해서, 옛 버전은 latest-mac.yml로 1을 받고 1만 migrate 채널로 2를 받게 한다(1을 반드시 거침). (b)는 1에 넣어야 하므로 1을 내기 전에 정한다.
 - 배포 전 확인: 서명한 1과 2로 실제 업데이트 한 번(키체인 항목이 묻지 않고 열리는지, 알림 권한이 그대로인지, electron-export가 쓰였는지, Tauri 첫 실행 로그 `[localStorage] moved N entries from .../electron-export/local-storage.json`).
+
+#### 9-7. macOS 릴리스 워크플로와 배포 절차 (2026-11-20, 아직 한 번도 돌리지 않음)
+
+파일:
+
+- `.github/workflows/release-tauri.yml`: Tauri macOS 릴리스 잡 하나(`release-mac`, macos-15).
+- `scripts/tauri-release-assets.mjs`: 서명된 riven.app과 tauri build의 업데이트 묶음으로 두 피드의 파일을 만든다.
+- `tauri/package.mjs`: `--target <triple>`(CI는 `universal-apple-darwin`), `--dry-run`(실행할 명령만 출력)을 더했다.
+
+트리거:
+
+- `tauri-v*` 태그 push: 초안(draft) 릴리스만 만든다.
+- workflow_dispatch(`tag`, `publish`): `publish` 끔이면 초안, 켬이면 공개 + latest 지정 + `tauri-feed` 갱신. workflow_dispatch는 이 파일이 기본 브랜치(main)에 있어야 Actions 화면에 나온다. 태그 push는 태그가 가리키는 커밋의 파일로 돈다.
+- Electron의 `release.yml`은 `v*`라서 `tauri-v*`, `tauri-feed`에 돌지 않고, 이 워크플로도 `v*`에 돌지 않는다(GitHub 태그 필터는 앞에서부터 맞추는 glob. picomatch로 v0.3.2, tauri-v0.4.0, tauri-feed를 대조함).
+
+잡이 하는 일 (순서대로):
+
+1. 태그 확인: `tauri-v<버전>`이고 package.json의 version과 같아야 한다(app:version은 package.json, 업데이트 비교는 tauri.conf.json의 version. 후자는 아래 설정으로 태그 버전을 넣는다).
+2. 비밀과 변수 확인: 빠진 이름만 출력하고 긴 빌드 전에 실패.
+3. libghostty-vt 확인: `src-tauri/vendor/ghostty-vt/<target>/libghostty-vt.a`가 arm64, x86_64 각각 맞는지 `lipo -archs`. 두 아키텍처 모두 저장소에 들어 있으므로 CI에는 zig가 필요 없다. 라이브러리를 바꿀 때만 손으로 `ZIG=<zig 0.17.0> scripts/build-ghostty-vt-native.sh`(두 아키텍처를 한 번에 만든다).
+4. Node 22, Rust stable + 두 타깃, `npm ci`, Supabase `.env`(release.yml과 같음).
+5. 덧씌울 설정(`$RUNNER_TEMP/tauri-release.json`): `version`, `createUpdaterArtifacts: true`, `signingIdentity: "Developer ID Application"`, `hardenedRuntime: true`. tauri build는 `APPLE_CERTIFICATE`가 있으면 임시 키체인에 가져오고 설정의 이름이 인증서 이름에 들어 있는지 본다(tauri.bundle.json의 `-`는 맞지 않아서 덮어쓴다).
+6. `node tauri/package.mjs --release --target universal-apple-darwin`: 렌더러 빌드, 두 아키텍처 빌드 후 lipo, 서명, 공증, staple, 업데이트 묶음(`riven.app.tar.gz` + `.sig`). 결과는 `src-tauri/target/universal-apple-darwin/release/bundle/macos/`.
+7. 묶음 확인: 번들 id `dev.riven.app`, 버전, 실행 파일에 arm64와 x86_64, `codesign --verify --deep --strict`, 지정 요구 사항(designated requirement)에 `identifier "dev.riven.app"`과 팀 ID, hardened runtime, `stapler validate`, `spctl --assess`.
+8. `scripts/tauri-release-assets.mjs`로 `dist-tauri/`에:
+   - `riven-<버전>-universal-mac.zip`(ditto `--keepParent`)과 `latest-mac.yml`(version, files[url, sha512, size], path, sha512, releaseDate). 이름에 arm64를 넣지 않는다: electron-updater는 Apple 실리콘에서 arm64 이름 파일이 있으면 그것만, 없으면 나머지를 고른다(universal 허용).
+   - `riven-<버전>-universal.app.tar.gz`, `.sig`, `latest.json`(`darwin-aarch64`, `darwin-x86_64`와 `-app` 붙은 이름 둘 다. 플러그인은 `{os}-{arch}-{bundle type}`을 먼저, 없으면 `{os}-{arch}`를 찾는다. 하나의 universal 묶음을 둘이 가리킨다).
+9. Windows 파일 옮겨 싣기: 가장 최근 Electron `v*` 릴리스의 `latest.yml`, `*.exe`, `*.exe.blockmap`을 같은 릴리스에 올린다. 이 릴리스가 GitHub의 latest가 되면 Windows Electron 앱도 여기서 `latest.yml`을 찾기 때문이다(electron-updater GitHub provider는 `releases/latest`의 태그에서 채널 파일을 받는다. 태그 이름은 무엇이든 된다). 없으면 Windows 업데이트가 404.
+10. Actions 아티팩트(14일)와 GitHub 릴리스(`riven <버전>`, 초안 또는 latest). 같은 태그 릴리스가 이미 있으면 실패.
+11. `publish`일 때만 `tauri-feed` 릴리스(프리릴리스라 latest가 되지 않고 electron-updater도 보지 않음)에 `latest.json`을 `--clobber`로 올린다. 앱에 들어가는 피드 주소는 기본 `https://github.com/<저장소>/releases/download/tauri-feed/latest.json`(변수 `RIVEN_UPDATE_FEED`로 바꿀 수 있음). `releases/latest/download/latest.json`을 쓰지 않는 까닭: 나중에 Windows Electron 릴리스가 latest가 되면 그 안에 latest.json이 없다.
+
+비밀 (Settings > Secrets and variables > Actions):
+
+| 이름 | 종류 | 쓰는 곳 | 비고 |
+|---|---|---|---|
+| `MAC_CERT_P12_BASE64` | secret | `APPLE_CERTIFICATE` | Electron과 같음 (Developer ID Application .p12의 base64) |
+| `MAC_CERT_PASSWORD` | secret | `APPLE_CERTIFICATE_PASSWORD` | Electron과 같음 |
+| `APPLE_ID` | secret | 공증 | Electron과 같음 |
+| `APPLE_APP_SPECIFIC_PASSWORD` | secret | `APPLE_PASSWORD` | Electron과 같음 |
+| `APPLE_TEAM_ID` | secret | 공증, 지정 요구 사항 확인 | Electron과 같음 |
+| `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_SUPABASE_REDIRECT` | secret | 렌더러 `.env` | Electron과 같음 |
+| `TAURI_SIGNING_PRIVATE_KEY` | secret | 업데이트 서명 | **새로 필요**. `npx @tauri-apps/cli@2 signer generate -w riven-updater.key`로 한 번 만든다. 잃으면 설치된 앱에 다시 업데이트를 줄 수 없다(따로 안전하게 보관) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | secret | 업데이트 서명 | **새로 필요**(키에 암호를 걸었을 때) |
+| `RIVEN_UPDATER_PUBKEY` | variable | 앱에 컴파일 | **새로 필요**. 위 키의 공개 키(`riven-updater.key.pub` 내용). 공개 값이라 variable |
+| `RIVEN_UPDATE_FEED` | variable | 앱에 컴파일 | 선택. 없으면 위 tauri-feed 주소 |
+
+`GITHUB_TOKEN`(contents: write)으로 릴리스를 만든다. 이 토큰으로 만든 태그는 다른 워크플로를 깨우지 않는다.
+
+배포 순서:
+
+1. **브리지 Electron 릴리스** (`v0.3.x`, 평소 `release.yml`): 9-2부터 9-4가 들어간 것. 9-6의 (b)(migrate 채널)를 쓸지 이 전에 정한다. 사용자 대부분이 한 번 실행할 때까지 둔다.
+2. **Tauri를 Electron 피드로** (`tauri-v0.4.0`): package.json version을 0.4.0으로 올린 커밋에 태그를 push하면 초안이 생긴다. 초안 파일로 아래 "서명한 빌드 확인"을 한다. 괜찮으면 초안을 공개하고 latest로 지정(`gh release edit tauri-v0.4.0 --draft=false --latest`)한 뒤 `latest.json`을 tauri-feed에 올린다(처음이면 `gh release create tauri-feed --prerelease --latest=false ...` 후 `gh release upload tauri-feed latest.json --clobber`). 또는 처음부터 workflow_dispatch `publish=true`. 이때부터 Electron Mac 사용자는 latest-mac.yml로 Tauri를 받는다.
+3. **그 뒤로는 Tauri 피드**: 다음 Tauri 릴리스도 같은 워크플로. 매번 latest-mac.yml도 함께 실리므로 늦게 오는 Electron 사용자는 가장 새 Tauri로 바로 온다(9-6의 "2를 계속 가리킨다"보다 단순. 브리지를 건너뛰는 위험은 같다).
+- 마이그레이션 뒤 Electron `release.yml`의 mac 잡은 지우거나 끈다. 그대로 두면 다음 Windows용 `v*` 릴리스가 latest가 되면서 Electron 맥 빌드의 latest-mac.yml을 내보내, 아직 Electron인 맥 사용자가 Tauri 대신 Electron을 받는다. 그 릴리스에는 Tauri의 latest-mac.yml과 zip을 대신 실어야 한다(Tauri 피드는 tauri-feed라 영향 없음).
+
+서명한 빌드 확인 (배포 전, 사용자 Mac에서. Electron 키체인 비밀이 묻지 않고 열리는지):
+
+1. 지금 설치된 Electron riven(같은 Developer ID로 서명한 정식 릴리스)으로 DB 연결 하나에 비밀번호를 저장해 둔다(키체인에 `riven Safe Storage` 항목이 생기고, `db/connections.json`의 `secrets`가 v10으로 봉해진다). 원격 제어 키를 쓰면 `remote-key.bin`도.
+2. 키체인 접근에서 `riven Safe Storage` 항목 > 접근 제어에 riven이 들어 있는지 본다. 항목의 신뢰 목록은 앱의 지정 요구 사항으로 묶인다. 초안의 zip을 풀어 `codesign -d -r- riven.app`과 `codesign -d -r- /Applications/riven.app`을 비교한다: 둘 다 `identifier "dev.riven.app" and anchor apple generic and ... leaf[subject.OU] = <팀 ID>` 꼴이어야 한다.
+3. 초안의 zip을 받아 `ditto -x -k`로 풀고, Electron riven을 종료한 뒤 `/Applications/riven.app`을 다른 폴더로 옮겨 두고(되돌리기용) 그 자리에 Tauri riven.app을 넣는다. 같은 데이터 폴더(`~/Library/Application Support/riven`)를 쓰므로 되돌려도 Electron이 그대로 읽는다(9-1).
+4. Tauri riven을 실행: 키체인 허용 창이 뜨지 않아야 한다. DB 패널에서 1의 연결이 비밀번호 없이 붙는지, 원격 키가 그대로인지. 창이 뜨면 서명 신원이 다른 것이다(배포 중지).
+5. 같은 곳에서: 알림 권한이 그대로인지, `~/Library/Application Support/riven/electron-export/`가 있는지, 첫 실행 로그 `[localStorage] moved N entries from .../electron-export/local-storage.json`, `~/Library/WebKit/dev.riven.app`가 생겼는지.
+6. 실제 자동 업데이트 경로(Squirrel.Mac이 번들을 바꾸는 것)는 공개한 뒤에만 볼 수 있다. 공개 직후 브리지 Electron이 깔린 Mac 한 대에서 업데이트를 받고, ShipIt 로그(`~/Library/Caches/dev.riven.app.ShipIt/ShipIt_stderr.log`)에 코드 요구 사항 불일치 오류가 없는지, 재시작 뒤 Tauri로 떴는지 본다. 문제가 있으면 곧바로 릴리스를 초안으로 돌려 latest에서 뺀다(`gh release edit <태그> --draft`).
+
+공증 403은 Apple 개발자 약관을 아직 동의하지 않은 것이다(developer.apple.com에서 동의 후 잡만 다시 실행, 반영에 시간이 걸릴 수 있음). 러너는 macos-15(macos-14는 0초 cancelled).
+
+로컬에서 확인한 것 (서명, 키체인, 앱 실행 없음):
+
+- actionlint 1.7.12(docker `rhysd/actionlint`, shellcheck 포함): `release-tauri.yml` 오류 0.
+- `node tauri/package.mjs --dry-run` 그리고 `--release --target universal-apple-darwin --no-build --dry-run`: 명령과 결과 경로(`src-tauri/target/universal-apple-darwin/release/bundle/macos/riven.app`)가 맞음.
+- `scripts/tauri-release-assets.mjs`를 scratchpad의 가짜 riven.app(심볼릭 링크 포함)과 가짜 `.sig`로: latest-mac.yml을 js-yaml(electron-updater가 쓰는 것)로 읽어 sha512와 size가 zip과 같음, ditto로 다시 풀면 링크가 그대로, latest.json 형식.
+- 돌리지 않은 것: x86_64 컴파일과 링크(로컬에 x86_64 Rust 타깃이 없음), 실제 universal 빌드, 서명과 공증, 업로드. 첫 실제 실행에서 확인한다.

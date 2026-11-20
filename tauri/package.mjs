@@ -6,6 +6,9 @@
 //   node tauri/package.mjs              build out-tauri, then `tauri build`
 //   node tauri/package.mjs --no-build   bundle the existing out-tauri
 //   node tauri/package.mjs --release    the release identity (see below)
+//   node tauri/package.mjs --target universal-apple-darwin
+//                                       one Rust target (CI's release: both arches in one .app)
+//   node tauri/package.mjs --dry-run    print the build step and the tauri command, run nothing
 //
 // Identity: tauri.bundle.json is the release one, riven.app with bundle id
 // dev.riven.app, the Electron app's (electron-builder.yml appId). Run as that
@@ -27,7 +30,27 @@ import { fileURLToPath } from 'url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-if (!process.argv.includes('--no-build')) {
+const argv = process.argv.slice(2)
+const dry = argv.includes('--dry-run')
+const release = argv.includes('--release')
+const ti = argv.indexOf('--target')
+const target = ti >= 0 ? argv[ti + 1] : null
+if (ti >= 0 && (!target || target.startsWith('--'))) throw new Error('--target needs a Rust target triple')
+
+const args = ['-y', '@tauri-apps/cli@2', 'build', '--config', 'tauri.bundle.json']
+if (!release) args.push('--config', 'tauri.local.json')
+if (process.env.RIVEN_TAURI_BUNDLE_CONFIG) args.push('--config', path.resolve(process.env.RIVEN_TAURI_BUNDLE_CONFIG))
+if (target) args.push('--target', target)
+const bundle = `src-tauri/target/${target ? target + '/' : ''}release/bundle/macos/${release ? 'riven' : 'riven-tauri'}.app`
+
+if (dry) {
+  if (!argv.includes('--no-build')) console.log(`would run: node tauri/build.mjs`)
+  console.log(`would run (in src-tauri): npx ${args.join(' ')}`)
+  console.log(`bundle: ${bundle}`)
+  process.exit(0)
+}
+
+if (!argv.includes('--no-build')) {
   execFileSync(process.execPath, [path.join(root, 'tauri/build.mjs')], { cwd: root, stdio: 'inherit' })
 }
 if (!fs.existsSync(path.join(root, 'out-tauri/renderer/__riven/preload.js'))) {
@@ -36,9 +59,5 @@ if (!fs.existsSync(path.join(root, 'out-tauri/renderer/__riven/preload.js'))) {
 // Left over from the Node-bundling packager.
 fs.rmSync(path.join(root, 'src-tauri/target/stage'), { recursive: true, force: true })
 
-const release = process.argv.includes('--release')
-const args = ['-y', '@tauri-apps/cli@2', 'build', '--config', 'tauri.bundle.json']
-if (!release) args.push('--config', 'tauri.local.json')
-if (process.env.RIVEN_TAURI_BUNDLE_CONFIG) args.push('--config', path.resolve(process.env.RIVEN_TAURI_BUNDLE_CONFIG))
 execFileSync('npx', args, { cwd: path.join(root, 'src-tauri'), stdio: 'inherit' })
-console.log(`bundle: src-tauri/target/release/bundle/macos/${release ? 'riven' : 'riven-tauri'}.app`)
+console.log(`bundle: ${bundle}`)

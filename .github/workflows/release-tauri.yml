@@ -1,0 +1,262 @@
+name: Release (Tauri, macOS)
+
+# The Tauri riven.app (Rust main, src-tauri) for macOS: one universal .app
+# (aarch64 + x86_64), Developer ID signed, notarized and stapled, with assets
+# for both update feeds (docs/tauri-rust-main.md, 9-7):
+#   Electron's feed (GitHub Releases "latest", electron-updater):
+#     riven-<v>-universal-mac.zip + latest-mac.yml. This is how Electron users
+#     move to Tauri once (9-6).
+#   Tauri's feed (tauri-plugin-updater): riven-<v>-universal.app.tar.gz + .sig
+#     + latest.json, also copied to the fixed "tauri-feed" release, the URL the
+#     app has built in (RIVEN_UPDATE_FEED).
+#
+# Triggers: a tauri-v* tag (draft release only), or workflow_dispatch (a draft
+# by default; publish=true publishes, marks it latest and updates tauri-feed).
+# It never runs on Electron's v* tags (release.yml), and release.yml never runs
+# on tauri-v*: GitHub tag filters are globs anchored at the start.
+on:
+  push:
+    tags:
+      - 'tauri-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create, e.g. tauri-v0.4.0 (must equal tauri-v + package.json version)'
+        required: true
+        type: string
+      publish:
+        description: 'Publish now (latest release = Electron feed, and update tauri-feed/latest.json). Off: draft only'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the GitHub Release and upload to tauri-feed
+
+concurrency:
+  group: release-tauri
+  cancel-in-progress: false
+
+jobs:
+  release-mac:
+    # macos-15 (Apple silicon). macos-14 is retired: a job on it is cancelled in
+    # 0 seconds (that is how v0.3.1's mac build went missing).
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && 'true' || 'false' }}
+      TARGET: universal-apple-darwin
+      # The feed URL and the public key are compiled into the app
+      # (src-tauri/src/services/update.rs). Both are public: repository variables.
+      RIVEN_UPDATE_FEED: ${{ vars.RIVEN_UPDATE_FEED || format('https://github.com/{0}/releases/download/tauri-feed/latest.json', github.repository) }}
+      RIVEN_UPDATER_PUBKEY: ${{ vars.RIVEN_UPDATER_PUBKEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag and the version
+        run: |
+          case "$TAG" in
+            tauri-v[0-9]*) ;;
+            *) echo "::error::tag must look like tauri-v1.2.3, got '$TAG'"; exit 1 ;;
+          esac
+          VERSION="${TAG#tauri-v}"
+          PKG=$(node -p "require('./package.json').version")
+          # app:version answers package.json's version, the updater compares
+          # tauri.conf.json's (set below from the tag): all three must agree.
+          if [ "$PKG" != "$VERSION" ]; then
+            echo "::error::package.json version $PKG does not match tag $TAG"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # Fail before the long build if anything the release needs is missing.
+      # Names only: values never reach the log.
+      - name: Check secrets and variables
+        env:
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          missing=""
+          for n in MAC_CERT_P12_BASE64 MAC_CERT_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID TAURI_SIGNING_PRIVATE_KEY RIVEN_UPDATER_PUBKEY; do
+            [ -n "${!n}" ] || missing="$missing $n"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::missing secrets/variables:$missing"
+            exit 1
+          fi
+          case "$RIVEN_UPDATE_FEED" in https://*) ;; *) echo "::error::RIVEN_UPDATE_FEED must be https"; exit 1 ;; esac
+
+      # libghostty-vt is vendored per Rust target (scripts/build-ghostty-vt-native.sh,
+      # needs zig 0.17.0, run by hand). CI only checks both arches are there, so
+      # the runner needs no zig.
+      - name: Check vendored libghostty-vt
+        run: |
+          for t in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x86_64; do
+            lib="src-tauri/vendor/ghostty-vt/${t%%:*}/libghostty-vt.a"
+            archs=$(lipo -archs "$lib")
+            echo "$lib: $archs"
+            [ "$archs" = "${t##*:}" ] || { echo "::error::$lib is '$archs', expected ${t##*:}"; exit 1; }
+          done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # The renderer is the Electron renderer build (electron-vite), so the same
+      # install as release.yml.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure Supabase env
+        run: |
+          {
+            echo "VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}"
+            echo "VITE_SUPABASE_ANON_KEY=${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+            echo "VITE_SUPABASE_REDIRECT=${{ secrets.VITE_SUPABASE_REDIRECT }}"
+          } > .env
+
+      # Merged after tauri.bundle.json (riven.app, dev.riven.app). The identity
+      # is a substring of the certificate's name: with APPLE_CERTIFICATE set,
+      # tauri build imports it into a temporary keychain and checks the
+      # configured identity is part of it ("-" from tauri.bundle.json is not).
+      - name: Release config
+        run: |
+          cat > "$RUNNER_TEMP/tauri-release.json" <<EOF
+          {
+            "version": "$VERSION",
+            "bundle": {
+              "createUpdaterArtifacts": true,
+              "macOS": {
+                "signingIdentity": "Developer ID Application",
+                "hardenedRuntime": true
+              }
+            }
+          }
+          EOF
+          cat "$RUNNER_TEMP/tauri-release.json"
+
+      - name: Build, sign, notarize, staple
+        env:
+          RIVEN_TAURI_BUNDLE_CONFIG: ${{ runner.temp }}/tauri-release.json
+          # Developer ID certificate: the same secrets electron-builder uses (CSC_LINK / CSC_KEY_PASSWORD there).
+          APPLE_CERTIFICATE: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: Developer ID Application
+          # Notarization (Apple ID + app-specific password, as release.yml).
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Updater signing (minisign). Losing this key strands every install.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node tauri/package.mjs --release --target "$TARGET"
+
+      # What Squirrel.Mac and the keychain item's access list check: the new
+      # bundle must satisfy the Electron app's designated requirement (same
+      # bundle id, same team). Also Gatekeeper on a notarized, stapled app.
+      - name: Verify the bundle
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          BUNDLE="src-tauri/target/$TARGET/release/bundle/macos"
+          APP="$BUNDLE/riven.app"
+          echo "BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$APP/Contents/Info.plist"; }
+          [ "$(plist CFBundleIdentifier)" = "dev.riven.app" ] || { echo "::error::bundle id is $(plist CFBundleIdentifier)"; exit 1; }
+          [ "$(plist CFBundleShortVersionString)" = "$VERSION" ] || { echo "::error::bundle version is $(plist CFBundleShortVersionString)"; exit 1; }
+          EXE="$APP/Contents/MacOS/$(plist CFBundleExecutable)"
+          archs=$(lipo -archs "$EXE")
+          echo "executable archs: $archs"
+          case " $archs " in *" arm64 "*) ;; *) echo "::error::no arm64 slice"; exit 1 ;; esac
+          case " $archs " in *" x86_64 "*) ;; *) echo "::error::no x86_64 slice"; exit 1 ;; esac
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          REQ=$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p')
+          echo "designated requirement: $REQ"
+          case "$REQ" in *'identifier "dev.riven.app"'*) ;; *) echo "::error::requirement has no identifier dev.riven.app"; exit 1 ;; esac
+          case "$REQ" in *"$APPLE_TEAM_ID"*) ;; *) echo "::error::requirement has no team id"; exit 1 ;; esac
+          codesign -d --verbose=2 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Runtime|Identifier)' || true
+          codesign -d --verbose=2 "$APP" 2>&1 | grep -q 'flags=.*runtime' || { echo "::error::hardened runtime is off"; exit 1; }
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          ls -la "$BUNDLE"
+
+      - name: Release assets
+        run: |
+          node scripts/tauri-release-assets.mjs \
+            --app "$BUNDLE/riven.app" \
+            --updater "$BUNDLE/riven.app.tar.gz" \
+            --sig "$BUNDLE/riven.app.tar.gz.sig" \
+            --version "$VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --out dist-tauri
+
+      # The release becomes GitHub's "latest", which is also where the Windows
+      # Electron app looks for latest.yml. Windows stays on Electron (9-6), so
+      # carry the newest Electron release's Windows files over, or Windows
+      # updates would 404 while this release is latest.
+      - name: Carry the Windows (Electron) update files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WIN_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 100 --json tagName --jq '[.[].tagName | select(startswith("v"))][0]')
+          if [ -z "$WIN_TAG" ]; then
+            echo "::warning::no Electron v* release found; Windows files not carried"
+            exit 0
+          fi
+          echo "Windows files from $WIN_TAG"
+          gh release download "$WIN_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-tauri \
+            --pattern 'latest.yml' --pattern '*.exe' --pattern '*.exe.blockmap'
+          ls -la dist-tauri
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: riven-tauri-${{ env.VERSION }}-mac
+          path: dist-tauri/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $TAG already exists; delete it or bump the version"
+            exit 1
+          fi
+          flags=(--title "riven $VERSION" --target "$GITHUB_SHA" --generate-notes)
+          if [ "$PUBLISH" = "true" ]; then
+            flags+=(--latest)
+          else
+            flags+=(--draft)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" dist-tauri/*
+
+      # The Tauri feed: a fixed release (prerelease, so never "latest" and never
+      # seen by electron-updater) whose latest.json is replaced each release.
+      - name: Update the Tauri feed
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view tauri-feed --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create tauri-feed --repo "$GITHUB_REPOSITORY" --prerelease --latest=false \
+              --target "$GITHUB_SHA" --title "Tauri update feed" \
+              --notes "latest.json for the Tauri app's updater. Do not delete."
+          fi
+          gh release upload tauri-feed dist-tauri/latest.json --repo "$GITHUB_REPOSITORY" --clobber
