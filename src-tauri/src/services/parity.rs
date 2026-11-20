@@ -101,4 +101,21 @@ mod tests {
     crate::services::remote_key::save(&json!({ "publicKey": "tpk", "secretKey": "tsk" })).unwrap();
     std::fs::write(out, serde_json::to_string_pretty(&Value::Object(report)).unwrap()).unwrap();
   }
+
+  /// What Electron's bridge export wrote (src/main/chromiumExport.ts, run in
+  /// real Electron with the mock keychain): the localStorage file is what
+  /// lsmigrate takes, and the sealed cookies open with the keychain text.
+  /// Without RIVEN_PARITY_EXPORT_DIR it does nothing.
+  #[test]
+  fn electron_export_opens() {
+    let Ok(dir) = std::env::var("RIVEN_PARITY_EXPORT_DIR") else { return };
+    let dir = std::path::PathBuf::from(dir);
+    let ls = crate::lsmigrate::electron_export(&std::fs::read_to_string(dir.join("local-storage.json")).unwrap()).unwrap();
+    let text = std::env::var("RIVEN_PARITY_KEY_TEXT").unwrap();
+    use base64::Engine;
+    let blob = base64::engine::general_purpose::STANDARD.decode(std::fs::read_to_string(dir.join("browser-cookies.bin")).unwrap().trim()).unwrap();
+    let cookies: Value = serde_json::from_slice(&crate::services::safe_storage::open_with(&text, &blob).unwrap()).unwrap();
+    let out = json!({ "localStorage": ls, "cookies": cookies });
+    std::fs::write(dir.join("rust-read.json"), serde_json::to_string_pretty(&out).unwrap()).unwrap();
+  }
 }

@@ -811,3 +811,69 @@ Channel은 메시지마다 스크립트 하나를 eval하고 1KB가 넘으면 fe
 - WebKit 프로세스 메모리 측정 방법(앱별로 PID를 묶을 방법).
 - x86_64 빌드, Windows.
 - Electron 렌더러의 `console-message` 전달(개발용 로그)은 WebKit에 같은 훅이 없어 옮기지 않았다.
+
+### 9단계 (2026-11-20): Electron 사용자를 Tauri로 (같은 데이터, 같은 자리)
+
+목표: 지금 Electron riven을 쓰는 사용자가 평소처럼 자동 업데이트를 받으면 Tauri 앱이 되고, 데이터는 그냥 거기 있다. 결정(사용자): 데이터 구조와 위치를 똑같이 하고 변환 계층은 두지 않는다. 예외는 Chromium 엔진만 들고 있는 것을 마지막 Electron 릴리스가 한 번 파일로 내보내는 것 하나.
+
+#### 9-1. 같은 데이터 폴더 (`services/paths.rs`)
+
+- Electron 패키지 앱의 `app.getPath('userData')`는 `~/Library/Application Support/riven`이다(package.json `productName`/`name` "riven", `src/main/index.ts`가 패키지 앱에서 `app.setName('riven')`).
+- Tauri는 번들 id가 `dev.riven.app`(electron-builder.yml `appId`)일 때만 이 폴더를 쓴다. 그 밖의 빌드(개발 .app `riven-tauri`, 로컬 패키지 `dev.riven.tauri`, cargo test)는 `riven-tauri` 폴더 그대로라서 시험이 사용자의 실제 Electron 데이터를 건드릴 수 없다. `RIVEN_TAURI_DATA_DIR`로 아무 빌드나 다른 폴더를 쓰게 할 수 있다(시험용).
+- `tauri.bundle.json`이 배포 신원(riven.app, `dev.riven.app`)이다. `tauri/package.mjs`는 기본으로 `tauri.local.json`(riven-tauri.app, `dev.riven.tauri`)을 덧씌우고, CI 배포 잡만 `--release`로 배포 신원을 쓴다. `tauri/run.sh`는 개발 .app에 `dev.riven.app`을 주면 거부한다.
+- 파일마다 확인(`scripts/data-parity.mjs` + `services/parity.rs`): Electron의 `src/main` 코드 그대로(electron만 흉내) 임시 폴더에 settings.json, keybindings.json, sessions.json, notes, db/connections.json, browser.json, store/*.json을 쓰고, Rust가 사본을 읽어 다시 저장하면 바이트까지 같다. notes 폴더 이름(sha1 앞 16자리), captures 폴더 이름, claude-profiles 경로도 같다. Rust가 쓴 노트와 store 파일은 Electron이 읽는다. 숫자(1.5, 0.1, 1/3, 1e-7, 큰 정수), 한글, 이모지, U+2028, 제어 문자도 같았다. 나머지(pet-window.json, mcp-servers.json, hooks/claude-settings.json, zdotdir, remote-key.bin)는 코드를 대조했다. sessions.json의 백업이나 스키마 버전 같은 것은 Electron에 없다(그대로 덮어쓴다).
+
+#### 9-2. localStorage에서 파일로 (`store/<name>.json`)
+
+localStorage는 엔진 것이라(Electron은 Chromium, Tauri는 WebKit, 출처도 다름) 따라오지 못한다. 진짜 데이터는 이제 `userData/store/<이름>.json`(JSON 값 하나, `JSON.stringify(v, null, 2)`, 임시 파일 후 rename)에 있다.
+
+| 파일 | 예전 localStorage 키 |
+|---|---|
+| `pipelines` | `pipelines:v1` |
+| `db-console-tabs` | `db.console.tabs.v1` (SQL 콘솔 탭과 내용) |
+| `db-console-history` | `db.console.history.v1` |
+| `db-console-snippets` | `db.console.snippets.v1` |
+| `apiclient-history`, `apiclient-saved`, `apiclient-env` | `apiclient.history.v1`, `apiclient.saved.v1`, `apiclient.env.v1` |
+| `db-erd-positions` | `db.erd.pos.*` (ERD에서 옮겨 놓은 위치) |
+| `auth` | `sb-*` (supabase 로그인 세션, supabase-js의 storage를 파일로) |
+
+- 채널 `store:loadAll`, `store:save`, `store:save-sync`를 두 메인에 같은 형식으로 구현: `src/main/store.ts`, `src-tauri/src/commands/store.rs`. null을 저장하면 파일을 지운다.
+- 렌더러 `lib/fileStore.ts`: 시작할 때 파일을 모두 읽어 두고(앱 모듈을 읽기 전에, `main.tsx`가 App을 동적 import), 읽기/쓰기는 동기 API. 쓰기는 파일마다 한 번에 하나, 가장 새 값이 마지막. 창을 닫을 때 남은 것은 save-sync.
+- 처음 이 코드로 실행할 때: 각 앱이 자기 엔진의 localStorage 항목을 아직 없는 파일에만 한 번 복사한다(표시 키 `riven.fileStore.migrated.v1`). 이미 있는 파일(다른 빌드가 쓴 것)이 이긴다. 옛 항목은 지우지 않는다.
+- localStorage에 남는 것: 화면 편의(사이드바 폭, 접힘, 토글, 마지막 형식, 레일 접힘), 창 id 카운터 `paneSeq:v1`(sessions.json에서 다시 올리므로 같은 id를 주지 않음), 이미 sessions.json으로 옮겨진 옛 키(`chatlog:*` 등 채팅 키, `agentGroups:v1`, 예약 작업의 옛 키)의 한 번 읽기용 대체값.
+
+#### 9-3. 비밀 (`services/safe_storage.rs`)
+
+- Electron은 `safeStorage`로 DB 비밀번호(`db/connections.json`의 `secrets`, base64)와 원격 제어 키(`remote-key.bin`, base64)를 봉한다. macOS의 Chromium 형식: `"v10"` + AES-128-CBC(PKCS#7), 키는 PBKDF2-HMAC-SHA1(키체인 문자열, "saltysalt", 1003회, 16바이트), IV는 공백 16개, 빈 문자열은 빈 결과.
+- 키체인 항목: 서비스 `riven Safe Storage`, 계정 `riven Key`(Electron은 앱 이름 + " Safe Storage" / + " Key". Electron Framework 바이너리의 electron_browser_main_parts 문자열로 확인). 없으면 Chromium처럼 16바이트 난수의 base64로 만든다.
+- Rust도 같은 형식, 같은 항목을 쓴다. 배포 앱(`dev.riven.app`)은 Security.framework로 프로세스 안에서 읽는다. 그래야 항목의 접근 목록(앱 서명: 같은 Developer ID, 같은 번들 id)이 Tauri 앱에도 맞아 묻지 않는다(`/usr/bin/security`로 읽으면 그 도구가 묻는 창이 뜬다). 개발 빌드는 예전처럼 `riven-tauri Safe Storage`(계정 `riven-tauri`)를 `/usr/bin/security`로.
+- 예전 Tauri 형식(`rt1`, AES-256-GCM, 항목 문자열이 32바이트 키의 base64)도 계속 연다. 새로 봉하는 것은 모두 v10. 개발 데이터에는 봉한 비밀이 없었다(db 폴더, remote-key.bin 없음).
+- 확인: Electron 44.4.5의 진짜 `safeStorage`를 Chromium 모의 키체인(`--use-mock-keychain`, 문자열 "mock_password", 실제 키체인 안 씀)으로 돌려 만든 값을 Rust가 열고, Rust는 같은 바이트를 만든다(IV가 고정이라 같아야 함). 임시 키체인(`security create-keychain`, 검색 목록에 넣지 않음)에서: Electron이 만든 것처럼 다른 앱이 만든 항목을 배포 이름으로 프로세스 안에서 찾음, 계정이 다르면 못 찾음, 없을 때 만들기(두 경로 모두). 끝에서 끝: 진짜 Electron이 봉한 DB 비밀번호와 원격 키를 Rust의 db store와 remote_key가 열고, Rust가 봉한 것을 진짜 Electron이 연다. 시험 중 키체인 창은 `SecKeychainSetUserInteractionAllowed(false)`로 막았다.
+- 실제 배포 앱 둘(같은 Developer ID 서명) 사이에서 묻지 않고 열리는지는 아직 확인하지 않았다(서명한 빌드가 필요). 배포 전에 확인할 것.
+
+#### 9-4. 브리지 내보내기 (Electron, `src/main/chromiumExport.ts`)
+
+마지막 Electron 릴리스가 Chromium만 들고 있는 것을 `userData/electron-export/`에 쓴다.
+
+- `local-storage.json`: 앱 페이지의 localStorage에서 9-2로 옮긴 것을 뺀 나머지(`{ version, page, entries }`). Tauri는 첫 실행에 이 파일이 있으면 이것을 출처로 삼아 WebKit localStorage에 넣는다(`lsmigrate.rs`, 새 출처가 비어 있을 때만, 한 번).
+- `browser-cookies.bin`: 브라우저 패널(`persist:riven-browser`)의 쿠키 전부를 safeStorage로 봉한 것(base64, 0600). Tauri가 9-3으로 열 수 있다(확인함).
+- `manifest.json`: 언제, 왜, 몇 개.
+- 언제: 이 코드로 처음 시작할 때 한 번(렌더러가 파일을 읽은 뒤 `export:ready`, manifest가 없을 때만). 그리고 업데이트를 내려받았을 때와 설치 직전(알림 클릭, `update:install`)에 항상 다시 쓴다.
+- 확인: vitest(모의 electron)와 진짜 Electron(창을 띄우지 않음, 모의 키체인, 임시 user data): localStorage 3개와 쿠키 1개를 내보내고, Rust가 localStorage 파일을 lsmigrate 그대로 읽고 쿠키 파일을 연다.
+
+#### 9-5. 아직 Electron과 다른 것
+
+- 브라우저 패널의 쿠키: 내보내기는 되지만 Tauri가 WebKit 저장소(`browser.rs` store_id)에 넣는 코드는 아직 없다. 넣기 전까지 패널의 사이트 로그인은 다시 해야 한다. 사이트별 localStorage, IndexedDB, 캐시, 방문 기록 외 Chromium 데이터는 옮기지 않는다(riven 데이터가 아님).
+- Electron userData 안의 Chromium 폴더(`Local Storage`, `Partitions`, `Cache`, `GPUCache` 등)는 Tauri가 쓰지 않고 그대로 남는다. 지우는 것은 나중 일.
+- 개발 빌드끼리는 다르다: Electron 개발판은 `riven-dev` 폴더와 그 키체인 항목, Tauri 개발판은 `riven-tauri`.
+- WebKit 데이터는 `~/Library/WebKit/dev.riven.app`에 새로 생긴다(Electron 것과 무관).
+- 실행 시험: 사용자의 개발 riven-tauri가 같은 데이터 폴더와 WebKit 저장소로 떠 있어서 이번에는 Tauri 앱을 띄워 보지 않았다. 렌더러의 파일 이전, Tauri에서의 export 읽기는 단위 시험과 위 교차 시험까지만.
+
+#### 9-6. 배포 순서
+
+1. **마지막 Electron 릴리스 (브리지)**: 9-2부터 9-4가 들어간 Electron(예: 0.3.x). 평소 피드(GitHub Releases, latest-mac.yml)로 나간다. 첫 실행에 localStorage를 파일로 옮기고 Chromium 것을 내보낸다. 사용자 대부분이 이 버전을 한 번 실행할 때까지 둔다.
+2. **같은 피드로 Tauri 릴리스**: Tauri 앱을 riven.app, 번들 id `dev.riven.app`, 같은 Developer ID로 서명, 공증해서(`node tauri/package.mjs --release` + 8-7의 CI 설정) Electron이 읽는 latest-mac.yml에 올린다. 버전은 브리지보다 높게(예: 0.4.0, `tauri.conf.json`의 version). electron-updater(Squirrel.Mac)가 받을 zip(riven.app을 ditto로 묶은 것)과 sha512를 latest-mac.yml에 넣는다. Squirrel.Mac은 새 번들의 서명이 지금 앱의 지정 요구 사항(같은 팀, 같은 번들 id)을 만족해야 바꾼다. 실행 파일 이름이 달라도(riven-tauri) 번들째 바뀐다. 이 Tauri 앱에 Tauri 업데이트 피드 주소와 공개 키를 넣어 둔다.
+3. **그 뒤로는 Tauri 업데이트 피드**: Tauri 앱은 자기 피드(latest.json, tauri-plugin-updater, 8-7)로 업데이트한다. latest-mac.yml은 2의 Tauri 릴리스를 계속 가리키게 두어, 늦게 오는 Electron 사용자도 Tauri로 넘어오게 한다.
+- **Windows는 Electron 그대로**: latest.yml(Windows)과 Windows 빌드는 Electron으로 계속 나간다. 9-2와 9-4 코드는 Windows Electron에서도 무해하다(파일로 옮기기는 Windows에서도 그대로 이득).
+- **위험: 브리지를 건너뛴 사용자**. 1을 실행하지 않은 채(예: 오래 꺼 둔 Mac) 바로 2를 받으면 Chromium localStorage에 남아 있던 진짜 데이터(파이프라인, DB 기록, API 요청 등)와 화면 설정이 Tauri로 오지 않는다(변환 계층이 없으므로). 대책 후보: (a) 1과 2 사이를 충분히 둔다, (b) 1이 electron-updater의 channel(예: `migrate-mac.yml`)을 읽게 해서, 옛 버전은 latest-mac.yml로 1을 받고 1만 migrate 채널로 2를 받게 한다(1을 반드시 거침). (b)는 1에 넣어야 하므로 1을 내기 전에 정한다.
+- 배포 전 확인: 서명한 1과 2로 실제 업데이트 한 번(키체인 항목이 묻지 않고 열리는지, 알림 권한이 그대로인지, electron-export가 쓰였는지, Tauri 첫 실행 로그 `[localStorage] moved N entries from .../electron-export/local-storage.json`).

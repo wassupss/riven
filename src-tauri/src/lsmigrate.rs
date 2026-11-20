@@ -18,6 +18,13 @@
 //   3. a marker per WebKit data store (the bundle id) means it never runs again.
 //
 // It never overwrites: a new origin that already has data is left alone.
+//
+// Coming from the Electron build (the released app shares its data folder,
+// services/paths.rs), the entries are not in any WebKit store: the last
+// Electron release wrote them to userData/electron-export/local-storage.json
+// (src/main/chromiumExport.ts: the page's localStorage minus what moved to
+// userData/store). When that file is there it is the source, and step 1 is
+// skipped.
 
 use serde_json::{json, Map, Value};
 use std::time::{Duration, Instant};
@@ -25,6 +32,19 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 pub const LABEL: &str = "riven-lsmigrate";
 pub const OLD_ORIGIN: &str = "http://127.0.0.1:47391";
+const ELECTRON_EXPORT: &str = "electron-export/local-storage.json";
+
+fn source() -> &'static std::sync::Mutex<String> {
+  static S: std::sync::OnceLock<std::sync::Mutex<String>> = std::sync::OnceLock::new();
+  S.get_or_init(|| std::sync::Mutex::new(OLD_ORIGIN.to_string()))
+}
+
+/// The Electron export's entries ({ entries: { key: string } }); values that
+/// are not strings are left out (localStorage holds strings only).
+pub fn electron_export(text: &str) -> Option<Map<String, Value>> {
+  let v: Value = serde_json::from_str(text).ok()?;
+  Some(v.get("entries")?.as_object()?.iter().filter(|(_, v)| v.is_string()).map(|(k, v)| (k.clone(), v.clone())).collect())
+}
 
 const READ_ALL: &str = "(() => { const o = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); o[k] = localStorage.getItem(k) } return JSON.stringify(o) })()";
 
@@ -86,6 +106,21 @@ pub enum Outcome {
 pub fn pending(app: &AppHandle) -> Option<Map<String, Value>> {
   if marker().exists() {
     return None;
+  }
+  let export = crate::services::paths::user_data().join(ELECTRON_EXPORT);
+  if let Ok(text) = std::fs::read_to_string(&export) {
+    *source().lock().unwrap() = export.to_string_lossy().into_owned();
+    return match electron_export(&text) {
+      Some(m) if m.is_empty() => {
+        done(&Outcome::Empty);
+        None
+      }
+      Some(m) => Some(m),
+      None => {
+        eprintln!("[localStorage] {} does not parse; left alone", export.display());
+        None
+      }
+    };
   }
   let w = match WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
     .visible(false)
@@ -153,17 +188,32 @@ pub fn write(app: &AppHandle, label: &str, old: Map<String, Value>) {
       done(&o);
       eprintln!("[localStorage] ({}ms)", t.elapsed().as_millis());
     }
-    Err(e) => eprintln!("[localStorage] moving from {OLD_ORIGIN} failed: {e} (will retry next launch)"),
+    Err(e) => eprintln!("[localStorage] moving from {} failed: {e} (will retry next launch)", source().lock().unwrap()),
   }
 }
 
 fn done(o: &Outcome) {
+  let from = source().lock().unwrap().clone();
   let line = match o {
-    Outcome::Empty => format!("nothing at {OLD_ORIGIN}"),
-    Outcome::Moved(n) => format!("moved {n} entries from {OLD_ORIGIN} to {}", crate::page::ORIGIN),
+    Outcome::Empty => format!("nothing at {from}"),
+    Outcome::Moved(n) => format!("moved {n} entries from {from} to {}", crate::page::ORIGIN),
     Outcome::Kept(n) => format!("{} already has {n} entries; left as is", crate::page::ORIGIN),
   };
   eprintln!("[localStorage] {line}");
   let _ = std::fs::create_dir_all(crate::services::paths::user_data());
   let _ = std::fs::write(marker(), format!("{line}\n"));
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn reads_the_electron_export() {
+    let m = electron_export(r#"{"version":1,"page":"file:///x","entries":{"railCollapsed":"[\"a\"]","paneSeq:v1":"7","odd":5}}"#).unwrap();
+    assert_eq!(serde_json::to_string(&m).unwrap(), r#"{"railCollapsed":"[\"a\"]","paneSeq:v1":"7"}"#);
+    assert!(electron_export(r#"{"entries":{}}"#).unwrap().is_empty());
+    assert!(electron_export("{").is_none());
+    assert!(electron_export(r#"{"version":1}"#).is_none());
+  }
 }

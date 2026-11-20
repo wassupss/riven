@@ -156,3 +156,18 @@ describe('fileStore', () => {
     expect(fromEntries(STORES['db-erd-positions'], {})).toBeUndefined()
   })
 })
+
+describe('the bridge export hook', () => {
+  it('hands main every localStorage entry that did not move, and says it is ready', async () => {
+    setup({ [MIGRATED_KEY]: '1', 'pipelines:v1': '{}', 'sb-x-auth-token': 't', railCollapsed: '["a"]', 'paneSeq:v1': '7', 'chatlog:chat-1': '[]' })
+    let ready = 0
+    ;(g.window as { api: { store: { exportReady?: () => Promise<boolean> } } }).api.store.exportReady = async () => {
+      ready++
+      return true
+    }
+    await hydrateFileStore()
+    const fn = (g.window as { __rivenLocalStorageExport?: () => Record<string, string> }).__rivenLocalStorageExport
+    expect(fn?.()).toEqual({ railCollapsed: '["a"]', 'paneSeq:v1': '7', 'chatlog:chat-1': '[]' })
+    expect(ready).toBe(1)
+  })
+})

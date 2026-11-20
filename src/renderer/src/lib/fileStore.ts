@@ -91,6 +91,7 @@ type Api = {
   loadAll(): Promise<Record<string, unknown>>
   save(name: string, data: unknown): Promise<void>
   saveSync(name: string, data: unknown): boolean
+  exportReady?(): Promise<boolean>
 }
 
 const cache = new Map<string, unknown>()
@@ -175,6 +176,19 @@ export async function hydrateFileStore(): Promise<void> {
     channel = null
   }
   window.addEventListener('beforeunload', flushFileStore)
+  // The bridge to the Tauri build (Electron's main/chromiumExport): main reads
+  // this to copy the localStorage that did not move into files. The Tauri
+  // build has no handler for exportReady; that rejection is expected.
+  ;(window as unknown as { __rivenLocalStorageExport?: () => Record<string, string> }).__rivenLocalStorageExport =
+    remainingLocalStorage
+  void a.exportReady?.()?.catch(() => {})
+}
+
+/** Every localStorage entry whose data did not move into a store file. */
+export function remainingLocalStorage(): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(lsEntries())) if (!isMovedKey(k)) out[k] = v
+  return out
 }
 
 export function storeGet<T>(name: StoreName): T | undefined {

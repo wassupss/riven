@@ -1294,7 +1294,10 @@ const api = {
     loadAll: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('store:loadAll'),
     save: (name: string, data: unknown): Promise<void> => ipcRenderer.invoke('store:save', name, data),
     // Blocking write, for the last moment before the renderer goes away.
-    saveSync: (name: string, data: unknown): boolean => ipcRenderer.sendSync('store:save-sync', name, data) === true
+    saveSync: (name: string, data: unknown): boolean => ipcRenderer.sendSync('store:save-sync', name, data) === true,
+    // Electron only (main/chromiumExport): the page is ready for the one-time
+    // export of what only Chromium holds. The Tauri build has no handler.
+    exportReady: (): Promise<boolean> => ipcRenderer.invoke('export:ready')
   },
   auth: {
     // Runs the provider OAuth flow in a dedicated window and resolves with the

@@ -20,6 +20,7 @@ import { registerDebuggerHandlers } from './debugger'
 import { registerSessionsHandlers } from './sessions'
 import { registerConfigHandlers } from './config'
 import { registerStoreHandlers } from './store'
+import { registerChromiumExport } from './chromiumExport'
 import { registerPetHandlers, closePetWindow } from './pet'
 import { registerSearchHandlers } from './search'
 import { registerCliHandlers } from './cli'
@@ -323,6 +324,7 @@ app.whenReady().then(() => {
   registerSessionsHandlers()
   registerConfigHandlers()
   registerStoreHandlers()
+  registerChromiumExport()
   registerPetHandlers()
   registerSearchHandlers()
   registerCliHandlers()
