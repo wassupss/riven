@@ -3309,8 +3309,11 @@ select {
 }
 .ghostty-term-canvas {
   display: block;
-  /* Skip macOS stem darkening, matching native ghostty (font-thicken = false). */
-  -webkit-font-smoothing: antialiased;
+  /* Keep macOS stem darkening. Chromium's canvas draws with it whatever this
+     says, and that heavier stroke is what reads well, Hangul above all;
+     WebKit's canvas honours this property, and `antialiased` there drew
+     Apple SD Gothic Neo thin and washed out next to the Electron build. */
+  -webkit-font-smoothing: auto;
 }
 .ghostty-term-input {
   position: absolute;
