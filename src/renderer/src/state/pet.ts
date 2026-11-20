@@ -1,5 +1,14 @@
 import { create } from 'zustand'
 import type { UsageToday } from './usage'
+import {
+  designOf,
+  isCustomId,
+  noteDesign,
+  sameDesign,
+  sanitizeDesign,
+  type CustomDesign,
+  type CustomSpeciesId
+} from './petSpecies'
 
 // ---------------------------------------------------------------------------
 // 리븐펫: a pet fed by the tokens riven's agents actually spend.
@@ -87,7 +96,7 @@ export const FLAVORS: Flavor[] = ['opus', 'sonnet', 'haiku', 'codex', 'other']
 // with a dozen hats. Care still decides the adult FORM, which is applied to
 // whichever animal you got: eighteen animals x four forms is seventy-two grown-up
 // pets, from eighteen eggs you can tell apart.
-export type Species =
+export type BuiltinSpecies =
   | 'cat'
   | 'rabbit'
   | 'bird'
@@ -106,7 +115,14 @@ export type Species =
   | 'octopus'
   | 'axolotl'
   | 'slime'
-export const SPECIES: Species[] = [
+/**
+ * Any animal a pet can be: one of the built-in ones, or a species the keeper
+ * made from a photo (`u-...`, see petSpecies.ts), which is drawn, fights and
+ * talks like any other.
+ */
+export type Species = BuiltinSpecies | CustomSpeciesId
+/** The built-in animals: what an egg is drawn from at random. */
+export const SPECIES: BuiltinSpecies[] = [
   'cat',
   'rabbit',
   'bird',
@@ -127,8 +143,17 @@ export const SPECIES: Species[] = [
   'slime'
 ]
 
+/** True for the built-in animals, false for one made from a photo. */
+export const isBuiltinSpecies = (s: unknown): s is BuiltinSpecies => SPECIES.includes(s as BuiltinSpecies)
+
+/** What a new egg will be: a random draw, or a species the keeper made. */
+export interface Hatch {
+  id: CustomSpeciesId
+  design: CustomDesign
+}
+
 /** An even draw from the strains. */
-export function drawSpecies(rand: number = Math.random()): Species {
+export function drawSpecies(rand: number = Math.random()): BuiltinSpecies {
   const i = Math.floor(Math.min(0.999999, Math.max(0, rand)) * SPECIES.length)
   return SPECIES[i] ?? SPECIES[0]
 }
@@ -138,7 +163,7 @@ export function drawSpecies(rand: number = Math.random()): Species {
  * pet's own birth instant so it is stable: a live pet must not change what it is
  * every time the app reloads, and re-drawing at random would do exactly that.
  */
-export function speciesFromBirth(bornAt: number): Species {
+export function speciesFromBirth(bornAt: number): BuiltinSpecies {
   // A proper 32-bit avalanche, not one multiply: a single imul leaves the low
   // bits of a seconds-resolution clock correlated, and the modulo of that only
   // ever produced half of the strains.
@@ -174,6 +199,12 @@ export interface PetSave {
   bornAt: number
   /** The strain it hatched as. Drawn once, at birth. */
   species: Species
+  /**
+   * For a species made from a photo: its design as of the last time this pet
+   * saw it. The species can be edited or deleted later; a pet of one that was
+   * deleted goes on looking like itself from this.
+   */
+  custom?: CustomDesign
   // When decay() was last applied. Time between this and "now" is what the next
   // decay() charges for, so a closed app still gets hungry.
   lastTickAt: number
@@ -257,6 +288,8 @@ export interface DayFeed {
 export interface AlbumEntry {
   name: string
   species: Species
+  /** A species made from a photo has no translation: its name, as it was. */
+  speciesName?: string
   stage: Stage
   form: Form
   xp: number
@@ -272,11 +305,12 @@ const clamp = (n: number, lo = 0, hi = 100): number => Math.min(hi, Math.max(lo,
 const num = (v: unknown, fallback: number): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : fallback
 
-export function initialState(now: number): PetSave {
+export function initialState(now: number, hatch?: Hatch | null): PetSave {
   return {
     version: 1,
     bornAt: now,
-    species: drawSpecies(),
+    species: hatch ? hatch.id : drawSpecies(),
+    ...(hatch ? { custom: hatch.design } : {}),
     lastTickAt: now,
     carryTokens: 0,
     xp: 0,
@@ -329,14 +363,20 @@ export function normalize(raw: unknown, now: number): PetSave {
   if (!raw || typeof raw !== 'object') return base
   const o = raw as Record<string, unknown>
   const bornAt = Math.min(now, num(o.bornAt, base.bornAt))
+  // A species made from a photo comes with its own snapshot of the design; one
+  // without (hand-edited) cannot be drawn, so it falls back like an old save.
+  const custom = isCustomId(o.species) ? sanitizeDesign(o.custom) : null
   return {
     version: 1,
     bornAt,
     // Saved pets keep their strain; ones from before species existed get the one
     // their own birthday implies, so nobody's pet changes into something else.
-    species: SPECIES.includes(o.species as Species)
-      ? (o.species as Species)
-      : speciesFromBirth(bornAt),
+    species: isBuiltinSpecies(o.species)
+      ? o.species
+      : custom && isCustomId(o.species)
+        ? o.species
+        : speciesFromBirth(bornAt),
+    ...(custom ? { custom } : {}),
     lastTickAt: Math.min(now, Math.max(bornAt, num(o.lastTickAt, bornAt))),
     carryTokens: Math.max(0, Math.min(KIBBLE_TOKENS - 1, Math.floor(num(o.carryTokens, 0)))),
     xp: Math.max(0, Math.floor(num(o.xp, 0))),
@@ -387,6 +427,28 @@ export function normalize(raw: unknown, now: number): PetSave {
       : [],
     album: Array.isArray(o.album) ? (o.album.slice(-ALBUM_SIZE) as AlbumEntry[]) : []
   }
+}
+
+/**
+ * Bring each pet's snapshot of a custom species up to date with the keeper's
+ * own list. A species that is no longer on it is left as the pet last saw it.
+ * Returns the same array when nothing changed.
+ */
+export function refreshCustom(pets: PetSave[], own: Array<{ id: string } & CustomDesign>): PetSave[] {
+  let changed = false
+  const next = pets.map((p) => {
+    if (!isCustomId(p.species)) return p
+    const cur = own.find((o) => o.id === p.species)
+    if (!cur || (p.custom && sameDesign(p.custom, cur))) return p
+    changed = true
+    return { ...p, custom: designOf(cur) }
+  })
+  return changed ? next : pets
+}
+
+/** Make every pet's snapshot drawable, for species the keeper's list does not have. */
+export function noteSnapshots(pets: PetSave[]): void {
+  for (const p of pets) if (p.custom && isCustomId(p.species)) noteDesign(p.species, p.custom)
 }
 
 // Today's tally in the feed history, capped to the last HISTORY_DAYS.
@@ -1119,6 +1181,16 @@ export function strainsSeen(s: PetSave): number {
   return new Set<Species>([s.species, ...s.album.map((a) => a.species)]).size
 }
 
+/** What an animal is called: the dictionary's name, or the one its maker gave it. */
+export function speciesName(
+  species: Species,
+  t: (key: string) => string,
+  design?: { name: string } | null
+): string {
+  if (isBuiltinSpecies(species)) return t(`pet.species.${species}`)
+  return design?.name || t('pet.species.custom')
+}
+
 export function awardsOf(s: PetSave, now: number): Award[] {
   const grown = stageIndexOf(s.xp) >= STAGES.length - 1
   return [
@@ -1163,6 +1235,7 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
   const entry: AlbumEntry = {
     name: s.name,
     species: s.species,
+    ...(s.custom ? { speciesName: s.custom.name } : {}),
     stage: g.stage,
     form: g.form,
     xp: s.xp,
@@ -1229,9 +1302,9 @@ export function show(n: Nest, i: number, now: number): Nest {
 }
 
 /** A fresh egg in the nest, brought out at once. Nothing happens when it is full. */
-export function adopt(n: Nest, now: number): Nest {
+export function adopt(n: Nest, now: number, hatch?: Hatch | null): Nest {
   if (n.pets.length >= MAX_PETS) return n
-  const egg = { ...initialState(now), album: n.pets[0]?.album ?? [] }
+  const egg = { ...initialState(now, hatch), album: n.pets[0]?.album ?? [] }
   return show({ ...n, pets: [...n.pets, egg] }, n.pets.length, now)
 }
 
@@ -1248,10 +1321,10 @@ export function release(n: Nest, now: number): Nest {
 }
 
 /** Start the shown pet over from an egg, keeping the one it was in the album. */
-export function restart(n: Nest, now: number): Nest {
+export function restart(n: Nest, now: number, hatch?: Hatch | null): Nest {
   const album = archive(n.pets[n.active], now)
   const pets = shareAlbum(
-    n.pets.map((p, i) => (i === n.active ? initialState(now) : p)),
+    n.pets.map((p, i) => (i === n.active ? initialState(now, hatch) : p)),
     album
   )
   return { ...n, pets }
@@ -1299,9 +1372,11 @@ interface PetStore {
   /** Put a won prize on the shown pet, or take it off. */
   wear: (id: Accessory) => void
   /** Start the shown pet over, keeping the finished one in the album. */
-  reset: () => void
+  reset: (hatch?: Hatch | null) => void
   /** Take in another egg, if the nest has room; it becomes the shown pet. */
-  adopt: () => void
+  adopt: (hatch?: Hatch | null) => void
+  /** Bring the pets' snapshots of custom species up to date with the keeper's list. */
+  syncCustom: (own: Array<{ id: string } & CustomDesign>) => void
   /** Let the shown pet go into the album, if it is not the only one. */
   release: () => void
   /** Bring another pet out of the bag: by index, or the next one round when omitted. */
@@ -1333,6 +1408,7 @@ export function flushPetSave(): void {
 export const usePet = create<PetStore>((set, get) => {
   /** Swap in a new nest and persist it. */
   const commit = (n: { pets: PetSave[]; active: number }): void => {
+    noteSnapshots(n.pets)
     set({ pets: n.pets, active: n.active, pet: n.pets[n.active] })
     scheduleSave(nestOf(n))
   }
@@ -1368,6 +1444,7 @@ export const usePet = create<PetStore>((set, get) => {
         const evolutions = settleBranches(p, now)
         return evolutions === p.evolutions ? p : { ...p, evolutions }
       }).map((p, i) => (i === n.active ? decay(p, now) : p))
+      noteSnapshots(pets)
       set({ pets, active: n.active, pet: pets[n.active], loaded: true })
     },
     // Seasonal prizes are handed out here, so a pet that is only being looked at
@@ -1407,12 +1484,17 @@ export const usePet = create<PetStore>((set, get) => {
       return get().pet !== before
     },
     wear: (id) => onActive((p) => toggleWear(p, id, Date.now())),
-    reset: () => {
+    reset: (hatch) => {
       set({ seen: {}, justEvolved: null, justLeveled: null })
-      commit(restart(nestOf(get()), Date.now()))
+      commit(restart(nestOf(get()), Date.now(), hatch))
     },
-    adopt: () => {
-      const n = adopt(nestOf(get()), Date.now())
+    syncCustom: (own) => {
+      if (!get().loaded) return
+      const pets = refreshCustom(get().pets, own)
+      if (pets !== get().pets) commit({ pets, active: get().active })
+    },
+    adopt: (hatch) => {
+      const n = adopt(nestOf(get()), Date.now(), hatch)
       if (n.pets === get().pets) return
       set({ justEvolved: null, justLeveled: null })
       commit(n)
