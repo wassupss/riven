@@ -42,6 +42,12 @@ dev_app() {
   # that id keeps the dev data where it was, and keeps dev apart from the
   # packaged app (tauri.conf.json's identifier). RIVEN_TAURI_DEV_ID overrides.
   id=${RIVEN_TAURI_DEV_ID:-riven-tauri}
+  # dev.riven.app is the released app's id: run as it, the app opens the real
+  # Electron data folder and keychain item (src-tauri/src/services/paths.rs).
+  if [ "$id" = dev.riven.app ]; then
+    echo "run.sh: refusing the release bundle id for a dev build" >&2
+    return 1
+  fi
   name=$(node -p "require('./$conf').productName") || return 1
   version=$(node -p "require('./$conf').version") || return 1
   rm -rf "$stage"

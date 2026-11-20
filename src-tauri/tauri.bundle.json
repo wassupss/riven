@@ -1,4 +1,6 @@
 {
+  "productName": "riven",
+  "identifier": "dev.riven.app",
   "bundle": {
     "active": true,
     "targets": ["app"],

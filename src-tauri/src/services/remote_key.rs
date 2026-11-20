@@ -81,7 +81,7 @@ fn key() -> Option<[u8; 32]> {
       let t = b64e(&raw);
       let mut add = std::process::Command::new("/usr/bin/security");
       add
-        .args(["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", super::paths::APP_NAME, "-w", &t, "-U"])
+        .args(["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", "riven-tauri", "-w", &t, "-U"])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
       super::limits::output_timeout(add, std::time::Duration::from_secs(10)).filter(|o| o.status.success())?;

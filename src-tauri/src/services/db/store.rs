@@ -101,7 +101,7 @@ fn key() -> Option<[u8; 32]> {
       let mut raw = [0u8; 32];
       std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut raw)).ok()?;
       let b = base64::engine::general_purpose::STANDARD.encode(raw);
-      security(&["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", paths::APP_NAME, "-w", &b, "-U"])?;
+      security(&["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", "riven-tauri", "-w", &b, "-U"])?;
       b
     }
   };

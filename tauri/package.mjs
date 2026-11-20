@@ -5,6 +5,16 @@
 //
 //   node tauri/package.mjs              build out-tauri, then `tauri build`
 //   node tauri/package.mjs --no-build   bundle the existing out-tauri
+//   node tauri/package.mjs --release    the release identity (see below)
+//
+// Identity: tauri.bundle.json is the release one, riven.app with bundle id
+// dev.riven.app, the Electron app's (electron-builder.yml appId). Run as that
+// id the app uses Electron's data folder and keychain item
+// (src-tauri/src/services/paths.rs, safe_storage.rs). A local package is
+// therefore built WITHOUT it by default: tauri.local.json puts back
+// riven-tauri.app / dev.riven.tauri, whose data stays in
+// ~/Library/Application Support/riven-tauri. Only CI's release job passes
+// --release.
 //
 // Signing here is ad-hoc ("-", tauri.bundle.json): runs on this Mac only.
 // Release builds in CI pass their own config on top (Developer ID identity,
@@ -26,7 +36,9 @@ if (!fs.existsSync(path.join(root, 'out-tauri/renderer/__riven/preload.js'))) {
 // Left over from the Node-bundling packager.
 fs.rmSync(path.join(root, 'src-tauri/target/stage'), { recursive: true, force: true })
 
+const release = process.argv.includes('--release')
 const args = ['-y', '@tauri-apps/cli@2', 'build', '--config', 'tauri.bundle.json']
+if (!release) args.push('--config', 'tauri.local.json')
 if (process.env.RIVEN_TAURI_BUNDLE_CONFIG) args.push('--config', path.resolve(process.env.RIVEN_TAURI_BUNDLE_CONFIG))
 execFileSync('npx', args, { cwd: path.join(root, 'src-tauri'), stdio: 'inherit' })
-console.log('bundle: src-tauri/target/release/bundle/macos/riven-tauri.app')
+console.log(`bundle: src-tauri/target/release/bundle/macos/${release ? 'riven' : 'riven-tauri'}.app`)

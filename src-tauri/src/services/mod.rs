@@ -18,6 +18,7 @@ pub mod lsp;
 pub mod mcp;
 pub mod notes;
 pub mod notify;
+pub mod parity;
 pub mod paths;
 pub mod pet;
 pub mod power;

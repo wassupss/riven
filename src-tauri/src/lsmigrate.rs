@@ -31,12 +31,8 @@ const READ_ALL: &str = "(() => { const o = {}; for (let i = 0; i < localStorage.
 /// The data store's name: WebKit keeps the page data under
 /// ~/Library/WebKit/<bundle id> (the bare dev binary: its file name).
 fn store_id() -> String {
-  #[cfg(target_os = "macos")]
-  {
-    use objc2_foundation::NSBundle;
-    if let Some(id) = NSBundle::mainBundle().bundleIdentifier() {
-      return id.to_string();
-    }
+  if let Some(id) = crate::services::paths::bundle_id() {
+    return id;
   }
   std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "riven-tauri".into())
 }
