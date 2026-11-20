@@ -215,15 +215,33 @@ async function gh(
   }
 }
 
-// Who gh is logged in as. Needed to tell "mine" from "waiting on me", and cheap
-// enough to cache for the life of the app (it only changes on `gh auth switch`).
-let cachedLogin: string | null = null
+// Who gh is logged in as, per repo directory. Needed to tell "mine" from
+// "waiting on me". It used to be cached once for the whole app, but gh can
+// answer differently by directory (a gh wrapper that picks the account by the
+// working directory, GH_CONFIG_DIR per project), and then every other repo's
+// "mine" / "review requested" was judged against the wrong account. Only the
+// login name is kept, never a token.
+const LOGIN_CACHE_MAX = 64
+const loginCache = new Map<string, string>()
+
+export function cachedLogin(cwd: string): string | null {
+  return loginCache.get(path.resolve(cwd)) ?? null
+}
+
+export function rememberLogin(cwd: string, login: string): void {
+  const key = path.resolve(cwd)
+  if (loginCache.size >= LOGIN_CACHE_MAX && !loginCache.has(key)) loginCache.clear()
+  loginCache.set(key, login)
+}
+
 async function viewerLogin(cwd: string): Promise<string | null> {
-  if (cachedLogin) return cachedLogin
+  const hit = cachedLogin(cwd)
+  if (hit) return hit
   const r = await gh(cwd, ['api', 'user', '--jq', '.login'])
   const login = r.ok ? r.stdout.trim() : ''
-  cachedLogin = login || null
-  return cachedLogin
+  if (!login) return null
+  rememberLogin(cwd, login)
+  return login
 }
 
 function classify(stderr: string): PrListResult['error'] {

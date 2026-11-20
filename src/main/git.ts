@@ -161,6 +161,62 @@ async function gitStatus(folder: string) {
     }
 }
 
+// The stash list as {ref, subject}. The separator is %x00: git log's pretty
+// format (which `stash list` uses) has no %00, that spelling belongs to
+// for-each-ref. With %00 git printed it literally, every line stayed one piece
+// and every subject came out empty.
+export async function stashList(folder: string): Promise<Array<{ ref: string; subject: string }>> {
+  try {
+    const { stdout } = await pexec('git', ['-C', folder, 'stash', 'list', '--format=%gd%x00%s'])
+    return stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => {
+        const [ref, subject = ''] = l.split('\x00')
+        return { ref, subject }
+      })
+  } catch {
+    return []
+  }
+}
+
+function isInside(root: string, p: string): boolean {
+  const rel = path.relative(root, p)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
+
+// Delete an untracked path inside the repo. git status shows a new folder as
+// one `dir/` entry, and the old rm without recursive refused it while the
+// handler still answered ok, so nothing went and the panel said it had.
+// A file or symlink goes by itself; a folder goes with everything in it
+// (symlinks inside are removed, not followed). The repo itself, anything
+// outside it, or anything reached through a symlinked parent is refused.
+// Already gone is fine (rm -f). Failures come back as {ok:false, error}.
+export async function removeUntracked(folder: string, relPath: string): Promise<{ ok: boolean; error?: string }> {
+  const refuse = { ok: false, error: `refusing to delete '${relPath}': not inside the repository` }
+  if (!relPath || path.isAbsolute(relPath) || relPath.split(/[\\/]/).includes('..')) return refuse
+  const root = path.resolve(folder)
+  // "dir/" as git prints it; with the trailing slash a symlink would be followed.
+  const p = path.resolve(root, relPath).replace(/[\\/]+$/, '')
+  if (!isInside(root, p)) return refuse
+  try {
+    // The parent, resolved, must still be inside the resolved repo, so a
+    // symlinked folder on the way cannot carry the delete somewhere else.
+    const [realRoot, realParent] = await Promise.all([
+      fs.promises.realpath(root),
+      fs.promises.realpath(path.dirname(p))
+    ])
+    if (realParent !== realRoot && !isInside(realRoot, realParent)) return refuse
+    const st = await fs.promises.lstat(p)
+    if (st.isDirectory()) await fs.promises.rm(p, { recursive: true, force: true })
+    else await fs.promises.unlink(p)
+    return { ok: true }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true }
+    return { ok: false, error: (e as Error).message }
+  }
+}
+
 export function registerGitHandlers(): void {
   ipcMain.handle('git:info', (_e, folder: string) => gitInfo(folder))
 
@@ -299,17 +355,13 @@ export function registerGitHandlers(): void {
   ipcMain.handle('git:pull', (_e, folder: string) => run(folder, ['pull', '--ff-only']))
 
   // Discard local changes to a file: revert tracked files to HEAD; delete
-  // untracked files.
+  // untracked files and folders (see removeUntracked).
   ipcMain.handle('git:discard', async (_e, folder: string, relPath: string, untracked: boolean) => {
     mutations++
     if (untracked) {
-      try {
-        await fs.promises.rm(path.join(folder, relPath), { force: true })
-      } catch {
-        /* ignore */
-      }
+      const r = await removeUntracked(folder, relPath)
       mutations++
-      return { ok: true }
+      return r
     }
     await run(folder, ['reset', '-q', 'HEAD', '--', relPath]) // unstage if staged
     return run(folder, ['checkout', '--', relPath])
@@ -384,20 +436,7 @@ export function registerGitHandlers(): void {
     gitOk(['-C', folder, 'stash', 'push', ...(message ? ['-m', message] : [])])
   )
   ipcMain.handle('git:stashPop', (_e, folder: string) => gitOk(['-C', folder, 'stash', 'pop']))
-  ipcMain.handle('git:stashList', async (_e, folder: string) => {
-    try {
-      const { stdout } = await pexec('git', ['-C', folder, 'stash', 'list', '--format=%gd%00%s'])
-      return stdout
-        .split('\n')
-        .filter(Boolean)
-        .map((l) => {
-          const [ref, subject] = l.split('\x00')
-          return { ref, subject }
-        })
-    } catch {
-      return []
-    }
-  })
+  ipcMain.handle('git:stashList', (_e, folder: string) => stashList(folder))
 
   ipcMain.handle('git:watch', (event, folder: string) => {
     headWatcher?.close()

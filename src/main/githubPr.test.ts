@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { summariseChecks, reviewStateOf, buildStacks, toPullRequests, humanizeBranch } from './githubPr'
+import {
+  summariseChecks,
+  reviewStateOf,
+  buildStacks,
+  toPullRequests,
+  humanizeBranch,
+  cachedLogin,
+  rememberLogin
+} from './githubPr'
 
 describe('summariseChecks', () => {
   // gh puts both shapes in one array — a CheckRun reports status+conclusion, a
@@ -183,5 +191,30 @@ describe('humanizeBranch', () => {
 
   it('gives back something rather than nothing for an odd name', () => {
     expect(humanizeBranch('feat/')).toBe('feat/')
+  })
+})
+
+describe('viewer login cache', () => {
+  // gh can answer as a different account per directory (a wrapper that picks
+  // the account by the working directory), so one app-wide answer judged every
+  // other repo's "mine" against the wrong account.
+  it('keeps the login per repo directory', () => {
+    rememberLogin('/tmp/riven-test-a', 'alice')
+    rememberLogin('/tmp/riven-test-b', 'bob')
+    expect(cachedLogin('/tmp/riven-test-a')).toBe('alice')
+    expect(cachedLogin('/tmp/riven-test-b')).toBe('bob')
+    expect(cachedLogin('/tmp/riven-test-c')).toBeNull()
+  })
+
+  it('treats spellings of the same directory as one entry', () => {
+    rememberLogin('/tmp/riven-test-d/', 'dana')
+    expect(cachedLogin('/tmp/riven-test-d')).toBe('dana')
+    expect(cachedLogin('/tmp/riven-test-d/sub/..')).toBe('dana')
+  })
+
+  it('stays bounded', () => {
+    for (let i = 0; i < 200; i++) rememberLogin(`/tmp/riven-bound-${i}`, `u${i}`)
+    expect(cachedLogin('/tmp/riven-bound-199')).toBe('u199')
+    expect(cachedLogin('/tmp/riven-bound-0')).toBeNull()
   })
 })
