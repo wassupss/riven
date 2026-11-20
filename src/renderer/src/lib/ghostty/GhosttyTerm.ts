@@ -115,6 +115,10 @@ const S = {
 const K = 16
 
 // Every printable ASCII char, for the primary face's ASCII bounding-box height.
+// Hangul a touch smaller than Ghostty's ic_width size, which filled the two
+// cells edge to edge (user's pick).
+const HANGUL_TRIM = 0.95
+
 const ASCII_PRINTABLE = Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)).join('')
 
 // ---- shared per-wasm callbacks ----------------------------------------------
@@ -938,7 +942,7 @@ export class GhosttyTerm {
     ctx.restore()
     const primaryIc = Math.min(asciiH > 0 ? asciiH : Infinity, 2 * (m.width / 10))
     const icScale = ic > 0 && Number.isFinite(primaryIc) ? primaryIc / ic : 1
-    const wideSize = Math.round(fontSize * icScale * 10) / 10
+    const wideSize = Math.round(fontSize * icScale * HANGUL_TRIM * 10) / 10
     this.wideFonts = this.fonts.map((f) => f.replace(`${fontSize}px`, `${wideSize}px`))
     ctx.save()
     ctx.font = this.wideFonts[0]
