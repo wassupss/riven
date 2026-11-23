@@ -1982,8 +1982,19 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'pet.maker.limit': { ko: '최대 {n}종까지 만들 수 있어요', en: 'Up to {n} species' },
   'pet.maker.hatchHint': {
-    ko: '새 알은 펫의 설정 화면에서 "다음 알"로 고르세요.',
-    en: 'Choose it as "Next egg" on the pet\'s own setup screen.'
+    ko: '"키우기"를 누르면 지금 바로 그 종의 알을 받아요. 펫 화면의 "다음 알"로 정해 둘 수도 있어요.',
+    en: 'Press "Raise" to get an egg of it right now, or pick it as "Next egg" on the pet\'s own setup screen.'
+  },
+  'pet.maker.raise': { ko: '키우기', en: 'Raise' },
+  'pet.maker.raiseDesc': { ko: '이 종의 알을 지금 받아서 바로 키워요', en: 'Get an egg of this species now' },
+  'pet.maker.raised': { ko: '"{name}" 알을 받았어요. 펫 화면에서 바로 보여요.', en: 'An egg of "{name}" is here, shown on the pet now.' },
+  'pet.maker.raiseNoPet': {
+    ko: '펫이 화면에 없어요. 설정에서 펫 보이기를 켠 뒤 다시 눌러 주세요.',
+    en: 'The pet is not on screen. Turn it on above, then press again.'
+  },
+  'pet.maker.raiseFull': {
+    ko: '펫은 최대 {max}마리까지예요. 펫 화면 설정에서 한 마리를 떠나보내면 받을 수 있어요.',
+    en: 'Up to {max} pets. Let one go from the pet\'s setup screen to make room.'
   },
   'pet.maker.step.photo': { ko: '1. 사진', en: '1. Photo' },
   'pet.maker.step.cutout': { ko: '2. 배경 지우기', en: '2. Background' },

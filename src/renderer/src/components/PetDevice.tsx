@@ -1,3 +1,4 @@
+import { listenRaise } from '../lib/petRaise'
 import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
@@ -552,6 +553,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [mime, setMime] = useState<string | null>(null)
   const mimeRef = useRef(false)
   const [mode, setMode] = useState<ScreenMode>('char')
+  // Settings > RivenPet "Raise": a fresh egg of that species, out at once.
+  useEffect(() => {
+    if (!loaded) return
+    return listenRaise((hatch) => {
+      if (usePet.getState().pets.length >= MAX_PETS) return 'full'
+      adopt(hatch)
+      setMode('char')
+      return 'ok'
+    })
+  }, [loaded, adopt])
   // Which LCD icon the A key's highlight is on — null when none is, which is how
   // a real one idles. The setup screen has its own row cursor. (The strip is also
   // clickable; the highlight is only for working it from the keys.)

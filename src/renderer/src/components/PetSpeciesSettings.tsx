@@ -1,6 +1,6 @@
 import '../styles/pet-maker.css'
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent } from 'react'
-import { Pencil, Trash2, ImagePlus } from 'lucide-react'
+import { Pencil, Trash2, ImagePlus, Egg } from 'lucide-react'
 import { useT } from '../i18n'
 import { Button, Segmented, Switch, TextInput } from './ui/Controls'
 import { Creature } from './PetDevice'
@@ -16,6 +16,7 @@ import {
   ROLE_COLOR,
   buildOfDesign,
   cellsOf,
+  designOf,
   familyOfDesign,
   forgetDesign,
   hexToRgb,
@@ -30,6 +31,8 @@ import {
   type PhotoSize,
   type Role
 } from '../state/petSpecies'
+import { MAX_PETS } from '../state/pet'
+import { requestRaise } from '../lib/petRaise'
 import {
   WORK,
   backgroundMask,
@@ -692,7 +695,21 @@ export default function PetSpeciesSettings(): JSX.Element {
   const loaded = useCustomSpecies((s) => s.loaded)
   // null: the list; 'new': making one; otherwise the one being edited.
   const [making, setMaking] = useState<'new' | CustomSpecies | null>(null)
+  // What the last "raise" press did, said under the list.
+  const [raised, setRaised] = useState<string | null>(null)
   useEffect(() => void load(), [load])
+  // A fresh egg of this species, brought out now by whichever window shows the pet.
+  const raise = (s: CustomSpecies): void => {
+    void requestRaise({ id: s.id, design: designOf(s) }).then((r) =>
+      setRaised(
+        r === 'ok'
+          ? t('pet.maker.raised', { name: s.name })
+          : r === 'full'
+            ? t('pet.maker.raiseFull', { max: MAX_PETS })
+            : t('pet.maker.raiseNoPet')
+      )
+    )
+  }
 
   if (making)
     return <Maker key={making === 'new' ? 'new' : making.id} editing={making === 'new' ? null : making} onDone={() => setMaking(null)} />
@@ -709,6 +726,10 @@ export default function PetSpeciesSettings(): JSX.Element {
             <span className="set-rowdesc">{t(`pet.maker.family.${familyOfDesign(s)}`)}</span>
           </div>
           <div className="set-rowctl">
+            <Button title={t('pet.maker.raiseDesc')} onClick={() => raise(s)}
+            >
+              <Egg size={14} /> {t('pet.maker.raise')}
+            </Button>
             <Button variant="ghost" title={t('pet.maker.edit')} aria-label={t('pet.maker.edit')} onClick={() => setMaking(s)}>
               <Pencil size={14} />
             </Button>
@@ -725,6 +746,7 @@ export default function PetSpeciesSettings(): JSX.Element {
           </div>
         </div>
       ))}
+      {raised && <div className="set-note">{raised}</div>}
       <div className="set-row">
         <div className="set-rowinfo">
           <span className="set-rowtitle">{t('pet.maker.create')}</span>
