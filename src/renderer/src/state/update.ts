@@ -6,7 +6,7 @@ export type UpdateStatus =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'available'; version: string }
-  | { state: 'downloading'; percent: number }
+  | { state: 'downloading'; percent?: number; version?: string }
   | { state: 'downloaded'; version: string }
   | { state: 'upToDate' }
   | { state: 'error'; message: string }
