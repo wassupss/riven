@@ -932,7 +932,7 @@ localStorage는 엔진 것이라(Electron은 Chromium, Tauri는 WebKit, 출처�
 1. **브리지 Electron 릴리스** (`v0.3.x`, 평소 `release.yml`): 9-2부터 9-4가 들어간 것. 9-6의 (b)(migrate 채널)를 쓸지 이 전에 정한다. 사용자 대부분이 한 번 실행할 때까지 둔다.
 2. **Tauri를 Electron 피드로** (`tauri-v0.4.0`): package.json version을 0.4.0으로 올린 커밋에 태그를 push하면 초안이 생긴다. 초안 파일로 아래 "서명한 빌드 확인"을 한다. 괜찮으면 초안을 공개하고 latest로 지정(`gh release edit tauri-v0.4.0 --draft=false --latest`)한 뒤 `latest.json`을 tauri-feed에 올린다(처음이면 `gh release create tauri-feed --prerelease --latest=false ...` 후 `gh release upload tauri-feed latest.json --clobber`). 또는 처음부터 workflow_dispatch `publish=true`. 이때부터 Electron Mac 사용자는 latest-mac.yml로 Tauri를 받는다.
 3. **그 뒤로는 Tauri 피드**: 다음 Tauri 릴리스도 같은 워크플로. 매번 latest-mac.yml도 함께 실리므로 늦게 오는 Electron 사용자는 가장 새 Tauri로 바로 온다(9-6의 "2를 계속 가리킨다"보다 단순. 브리지를 건너뛰는 위험은 같다).
-- 마이그레이션 뒤 Electron `release.yml`의 mac 잡은 지우거나 끈다. 그대로 두면 다음 Windows용 `v*` 릴리스가 latest가 되면서 Electron 맥 빌드의 latest-mac.yml을 내보내, 아직 Electron인 맥 사용자가 Tauri 대신 Electron을 받는다. 그 릴리스에는 Tauri의 latest-mac.yml과 zip을 대신 실어야 한다(Tauri 피드는 tauri-feed라 영향 없음).
+- (1.0.0에서 반영: release.yml의 mac 잡은 Electron을 빌드하지 않고, 가장 최근 공개 tauri-v 릴리스의 latest-mac.yml과 zip을 실어 나른다.) 마이그레이션 뒤 Electron `release.yml`의 mac 잡은 지우거나 끈다. 그대로 두면 다음 Windows용 `v*` 릴리스가 latest가 되면서 Electron 맥 빌드의 latest-mac.yml을 내보내, 아직 Electron인 맥 사용자가 Tauri 대신 Electron을 받는다. 그 릴리스에는 Tauri의 latest-mac.yml과 zip을 대신 실어야 한다(Tauri 피드는 tauri-feed라 영향 없음).
 
 서명한 빌드 확인 (배포 전, 사용자 Mac에서. Electron 키체인 비밀이 묻지 않고 열리는지):
 
