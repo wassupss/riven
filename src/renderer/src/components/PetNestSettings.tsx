@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LayoutGrid, Move, PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
+import { LayoutGrid, MoreHorizontal, Move, PawPrint, RotateCcw } from 'lucide-react'
 import { useT } from '../i18n'
 import { onNest, requestPet } from '../lib/petCommand'
 import {
@@ -25,6 +25,7 @@ import PetSpeciesSettings from './PetSpeciesSettings'
 import PetLayoutEditor from './PetLayoutEditor'
 import { useUI } from '../state/ui'
 import { promptInput } from './promptInput'
+import ContextMenu, { type MenuItem } from './ContextMenu'
 
 // ---------------------------------------------------------------------------
 // Settings > 리븐펫: the pets ("내 펫") and the keeper's own species ("내가 만든
@@ -125,6 +126,9 @@ export default function PetNestSettings(): JSX.Element {
   const [nest, setNest] = useState<NestBrief | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [pick, setPick] = useState<string>('')
+  // The ⋯ menu of one pet: its less used actions (rename, start over, let go).
+  const [menu, setMenu] = useState<{ x: number; y: number; i: number } | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
   const own = useCustomSpecies((s) => s.own)
   // The decoration layout of the pet that is out, open below the list.
   const [layoutOpen, setLayoutOpen] = useState(false)
@@ -226,13 +230,17 @@ export default function PetNestSettings(): JSX.Element {
             <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
           </div>
           <div className="set-rowinfo">
-            <span className="set-rowtitle">{petTitle(p, t)}</span>
-            <span className="set-rowdesc">{petSubtitle(p, t)}</span>
+            <span className="set-rowtitle" title={petTitle(p, t)}>
+              {petTitle(p, t)}
+            </span>
+            <span className="set-rowdesc">
+              {petSubtitle(p, t)}
+              {i === nest.active && <span className="pet-nest-shown">{t('pet.nest.shown')}</span>}
+            </span>
           </div>
           <div className="set-rowctl">
             {i === nest.active ? (
               <>
-                <span className="pet-nest-shown">{t('pet.nest.shown')}</span>
                 <Button onClick={() => setLayoutOpen((o) => !o)} aria-expanded={layoutOpen}>
                   <LayoutGrid size={14} /> {t('pet.layout.open')}
                 </Button>
@@ -243,18 +251,18 @@ export default function PetNestSettings(): JSX.Element {
             ) : (
               <Button onClick={() => void run({ op: 'select', ...ref(i) })}>{t('pet.nest.show')}</Button>
             )}
-            <Button onClick={() => void rename(i)}>
-              <Pencil size={14} /> {t('pet.nest.rename')}
-            </Button>
-            <Button onClick={() => restart(i)}>
-              <RotateCcw size={14} /> {t('pet.nest.restart')}
-            </Button>
             <Button
-              disabled={count <= 1}
-              title={count <= 1 ? t('pet.nest.lastOne') : undefined}
-              onClick={() => release(i)}
+              variant="ghost"
+              className="pet-nest-more"
+              aria-label={t('pet.nest.more')}
+              title={t('pet.nest.more')}
+              onClick={(e) => {
+                e.stopPropagation()
+                const r = e.currentTarget.getBoundingClientRect()
+                setMenu((m) => (m?.i === i ? null : { x: r.right - 180, y: r.bottom + 4, i }))
+              }}
             >
-              <Undo2 size={14} /> {t('pet.nest.release')}
+              <MoreHorizontal size={16} />
             </Button>
           </div>
         </div>
@@ -284,6 +292,27 @@ export default function PetNestSettings(): JSX.Element {
           </Button>
         </div>
       </div>
+      {menu && nest?.pets[menu.i] && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={closeMenu}
+          items={((): MenuItem[] => {
+            const i = menu.i
+            const items: MenuItem[] = [
+              { label: t('pet.nest.rename'), onClick: () => void rename(i) },
+              { label: t('pet.nest.restart'), onClick: () => restart(i) },
+              { label: '', onClick: () => {}, separator: true }
+            ]
+            items.push(
+              count <= 1
+                ? { label: t('pet.nest.lastOne'), onClick: () => {}, info: true }
+                : { label: t('pet.nest.release'), onClick: () => release(i), danger: true }
+            )
+            return items
+          })()}
+        />
+      )}
       {note && <div className="set-note">{note}</div>}
       {layoutOpen && nest?.pets[nest.active] && (
         <div ref={layoutRef}>

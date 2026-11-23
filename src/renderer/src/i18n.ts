@@ -2059,6 +2059,7 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   'pet.nest.restart': { ko: '처음부터', en: 'Start over' },
   'pet.nest.rename': { ko: '이름 바꾸기', en: 'Rename' },
   'pet.nest.shown': { ko: '보는 중', en: 'Showing' },
+  'pet.nest.more': { ko: '더 보기', en: 'More' },
   'pet.nest.show': { ko: '보이기', en: 'Show' },
   'pet.nest.count': { ko: '내 펫 ({n}/{max})', en: 'My pets ({n}/{max})' },
   'pet.nest.title': { ko: '내 펫', en: 'My pets' },

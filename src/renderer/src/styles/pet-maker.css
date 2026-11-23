@@ -437,17 +437,43 @@
 .pm-item {
   justify-content: flex-start;
 }
-/* A pet in Settings > 리븐펫 > 내 펫: its buttons wrap rather than squeeze. */
+/* A pet in Settings > 리븐펫 > 내 펫: picture, name, then at most two
+   buttons and the ⋯ menu, all on one line. The name gives way (ellipsis)
+   before the buttons do, so it never breaks a letter a line. */
+.pet-nest-item {
+  gap: 14px;
+  padding: 12px 0;
+}
+.pet-nest-item .set-rowinfo {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 3px;
+}
+.pet-nest-item .set-rowtitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pet-nest-item .set-rowdesc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
 .pet-nest-item .set-rowctl {
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 6px;
 }
 .pet-nest-shown {
-  padding: 0 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--accent);
   font-size: var(--text-xs);
   font-weight: 600;
+  line-height: 1.5;
 }
 .pm-item .set-rowctl .ui-btn-ghost {
   width: var(--ctl-h);
