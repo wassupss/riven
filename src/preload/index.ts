@@ -1341,6 +1341,28 @@ const api = {
       return () => ipcRenderer.removeListener('pet:hidden', l)
     }
   },
+  // One-shot AI help for the pet maker and the decoration layout (Rust
+  // services/petai.rs): the CLI runs once with no tools and nothing saved.
+  petAi: {
+    run: (req: {
+      id: string
+      engine: 'claude' | 'codex'
+      model?: string
+      system: string
+      prompt: string
+      images?: string[]
+      timeoutMs?: number
+    }): Promise<{
+      ok: boolean
+      text?: string
+      error?: 'notInstalled' | 'timeout' | 'cancelled' | 'failed'
+      detail?: string
+      usage?: { input: number; output: number; cacheRead: number; cacheWrite: number }
+      ms?: number
+    }> => ipcRenderer.invoke('petAi:run', req),
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke('petAi:cancel', id),
+    engines: (): Promise<{ claude: boolean; codex: boolean }> => ipcRenderer.invoke('petAi:engines')
+  },
   // The Claude models this account can use, from the CLI itself (see
   // main/modelCatalog). null when the CLI could not be asked.
   models: {

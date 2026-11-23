@@ -16,6 +16,10 @@ import {
 import { useT } from '../i18n'
 import { Button, Segmented } from './ui/Controls'
 import { hexToRgb, minPhotoCells } from '../state/petSpecies'
+import PetAiAsk from './PetAiAsk'
+import { pngOf, scaleFor } from '../lib/petAi'
+import { PIXEL_SYSTEM, buildPixelPrompt, parsePixelAnswer, rgbaOfDoc } from '../lib/petAiPixels'
+import type { Rgba } from '../lib/petPhoto'
 import {
   EMPTY,
   MAX_COLORS,
@@ -77,16 +81,32 @@ interface Stroke {
   changed: boolean
 }
 
+/** A picture at its own size on a canvas (CSS scales it up, pixelated). */
+function DocCanvas({ doc, label }: { doc: PixelDoc; label: string }): JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null)
+  useEffect(() => {
+    const ctx = ref.current?.getContext('2d')
+    if (!ctx) return
+    const img = ctx.createImageData(doc.n, doc.n)
+    img.data.set(rgbaOfDoc(doc, hexToRgb))
+    ctx.putImageData(img, 0, 0)
+  }, [doc])
+  return <canvas ref={ref} width={doc.n} height={doc.n} className="pm-pixels pai-canvas" aria-label={label} />
+}
+
 export default function PetPixelEditor({
   initial,
   onChange,
-  side
+  side,
+  photo
 }: {
   /** Read once: the editor is remounted (keyed) for a new picture. */
   initial: PixelDoc
   onChange: (doc: PixelDoc) => void
   /** What the maker puts beside the editor (name, regenerate, ...). */
   side?: ReactNode
+  /** The square photo crop the picture was made from, if there is one (the AI sees it too). */
+  photo?: Rgba | null
 }): JSX.Element {
   const t = useT()
   const doc = useRef<PixelDoc>(cloneDoc(initial))
@@ -240,6 +260,16 @@ export default function PetPixelEditor({
     },
     []
   )
+
+  // A whole new picture (the AI's, applied): one undo step.
+  const applyDoc = (next: PixelDoc): void => {
+    if (next.n !== doc.current.n) return
+    const before = cloneDoc(doc.current)
+    doc.current = cloneDoc(next)
+    setColor((c) => Math.min(c, Math.max(0, next.palette.length - 1)))
+    commit(before)
+    schedule()
+  }
 
   // ---- pointer ----
   const cellOf = (e: ReactPointerEvent<HTMLCanvasElement>): [number, number] => {
@@ -571,6 +601,34 @@ export default function PetPixelEditor({
             </div>
           </div>
         )}
+        <PetAiAsk<PixelDoc>
+          title={t('pet.ai.title')}
+          placeholder={t('pet.ai.pixelHint')}
+          build={(q) => {
+            const d = doc.current
+            const scale = scaleFor(d.n)
+            const images = [pngOf(d.n, d.n, rgbaOfDoc(d, hexToRgb), scale)]
+            if (photo) images.push(pngOf(photo.width, photo.height, new Uint8ClampedArray(photo.data), 1))
+            return { system: PIXEL_SYSTEM, prompt: buildPixelPrompt(d, q, { scale, photo: !!photo }), images }
+          }}
+          check={(text) => {
+            const r = parsePixelAnswer(text, doc.current)
+            return r.ok ? { ok: true, result: r.doc } : r
+          }}
+          preview={(next) => (
+            <div className="pai-compare">
+              <figure>
+                <DocCanvas doc={cloneDoc(doc.current)} label={t('pet.ai.now')} />
+                <figcaption>{t('pet.ai.now')}</figcaption>
+              </figure>
+              <figure>
+                <DocCanvas doc={next} label={t('pet.ai.after')} />
+                <figcaption>{t('pet.ai.after')}</figcaption>
+              </figure>
+            </div>
+          )}
+          onApply={applyDoc}
+        />
       </div>
     </div>
   )

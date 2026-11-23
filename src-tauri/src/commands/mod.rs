@@ -24,6 +24,7 @@ pub mod lsp;
 pub mod mcp;
 pub mod notes;
 pub mod notify;
+pub mod petai;
 pub mod power;
 pub mod pty;
 pub mod search;
@@ -217,6 +218,9 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     chat::chat_set_mode,
     chat::chat_stop,
     chat::chat_title,
+    petai::pet_ai_run,
+    petai::pet_ai_cancel,
+    petai::pet_ai_engines,
     chat::chat_detect_clis,
     chat::chat_session_info,
     chat::chat_sessions,

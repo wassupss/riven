@@ -220,6 +220,9 @@ permissions = [
   "allow-notify-show",
   "allow-notify-presence",
   "allow-notify-diag",
+  "allow-pet-ai-run",
+  "allow-pet-ai-cancel",
+  "allow-pet-ai-engines",
   "allow-power-busy",
   "allow-power-remote",
   "allow-perf-metrics",
@@ -1347,6 +1350,21 @@ commands.allow = ["notify_presence"]
 identifier = "allow-notify-diag"
 description = "Allows notify_diag."
 commands.allow = ["notify_diag"]
+
+[[permission]]
+identifier = "allow-pet-ai-run"
+description = "Allows pet_ai_run."
+commands.allow = ["pet_ai_run"]
+
+[[permission]]
+identifier = "allow-pet-ai-cancel"
+description = "Allows pet_ai_cancel."
+commands.allow = ["pet_ai_cancel"]
+
+[[permission]]
+identifier = "allow-pet-ai-engines"
+description = "Allows pet_ai_engines."
+commands.allow = ["pet_ai_engines"]
 
 [[permission]]
 identifier = "allow-power-busy"

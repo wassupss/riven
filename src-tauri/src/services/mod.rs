@@ -24,6 +24,7 @@ pub mod notify;
 pub mod parity;
 pub mod paths;
 pub mod pet;
+pub mod petai;
 pub mod power;
 pub mod pty;
 pub mod search;

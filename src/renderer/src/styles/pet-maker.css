@@ -460,3 +460,74 @@
 .pmx-blank > .ui-btn svg {
   vertical-align: -2px;
 }
+
+/* ---- "AI에게 맡기기" (PetAiAsk): a request, the model, a run, a preview ---- */
+.pai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+.pai-head,
+.pai-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pai-head .ui-select {
+  width: auto;
+}
+.pai-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.pai-note {
+  margin: 0;
+  opacity: 0.75;
+}
+.pai-error {
+  margin: 0;
+  color: var(--danger, #d9534f);
+}
+.pai-spin {
+  animation: pai-spin 1s linear infinite;
+}
+@keyframes pai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.pai-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pai-compare {
+  display: flex;
+  gap: 10px;
+}
+.pai-compare figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.pai-canvas {
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}

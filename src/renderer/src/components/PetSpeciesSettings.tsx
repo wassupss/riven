@@ -207,6 +207,8 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
   const [edited, setEdited] = useState(!!editing?.photo)
   // The picture was drawn on since it was made, so its 12x12 is made again from it.
   const [redrawn, setRedrawn] = useState(false)
+  // The picture was made from the photo cropped now (not a blank canvas), so the AI can see that photo.
+  const [fromPhoto, setFromPhoto] = useState(false)
   // "Throw the hand edits away?", asked in place before something would.
   const [ask, setAsk] = useState<{ run: () => void } | null>(null)
   const [colorCount, setColorCount] = useState<number>(PHOTO_MAX_COLORS)
@@ -337,6 +339,7 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
     setSeed((s) => ({ gen: (s?.gen ?? 0) + 1, doc: docOfPhoto(d.photo!) }))
     setEdited(false)
     setRedrawn(drawn)
+    setFromPhoto(!drawn)
     setStep('dots')
   }
 
@@ -539,6 +542,7 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
           key={seed.gen}
           initial={seed.doc}
           onChange={onPicture}
+          photo={fromPhoto ? sq : null}
           side={
             <>
               <label className="pm-field">
