@@ -317,6 +317,11 @@
 }
 .pet-bare {
   position: relative;
+  /* Its own width, not its content's: the LCD inside is a size container
+     (container-type: size), which gives nothing to measure, and WebKit then
+     sized this box, and the LCD's width: 100% of it, to 0 (no pet drawn,
+     only its speech bubble). Chromium happened to resolve it. */
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
