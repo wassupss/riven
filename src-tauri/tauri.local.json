@@ -1,4 +1,5 @@
 {
   "productName": "riven-tauri",
+  "mainBinaryName": "riven-tauri",
   "identifier": "dev.riven.tauri"
 }
