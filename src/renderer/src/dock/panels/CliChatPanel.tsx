@@ -4,13 +4,15 @@ import TerminalPane from '../../components/TerminalPane'
 import { useT } from '../../i18n'
 import { pathOf, loadPaneState, setPaneState } from '../../state/session'
 import { claudeConfigDirFor, getSettings } from '../../state/settings'
-import { buildTurns, initialModel, lastModel, reduce, type AgentProgress, type CliEvent, type Turn } from '../../lib/cliChat'
+import { buildTurns, initialModel, lastModel, MODES, modeValue, reduce, type AgentProgress, type CliEvent, type Turn } from '../../lib/cliChat'
 import { TurnView } from './clichat/TurnView'
 import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from './clichat/Cards'
 import Composer, { type ComposerHandle } from './clichat/Composer'
-import Header from './clichat/Header'
+import Header, { MODE_KEY } from './clichat/Header'
+import { useClaudeCatalog } from '../../state/modelCatalog'
+import { modelLabel, modelsFor, pinnedModels } from '../../lib/models'
 import SessionPicker from './clichat/SessionPicker'
-import { getAgentStatus, setAgentStatus, useAgents } from '../../state/agents'
+import { getAgentStatus, setAgentStatus, useAgents, type AgentController } from '../../state/agents'
 import { markPaneSeen } from '../../state/roster'
 import { cliLive, registerCliChatAgent } from '../../state/cliChats'
 import { takeInitialText } from '../registry'
@@ -156,7 +158,14 @@ export default function CliChatPanel({
           titleRef.current = title
         },
         send: (text) => sendRef.current(text),
-        attach: (text) => composerRef.current?.append(text)
+        attach: (text) => composerRef.current?.append(text),
+        // A paired phone (state/remote): the header's own pickers.
+        remote: {
+          info: () => remoteRef.current.info(),
+          setModel: (m) => remoteRef.current.setModel(m),
+          setMode: (m) => remoteRef.current.setMode(m),
+          stop: () => remoteRef.current.stop()
+        }
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key, workspace]
@@ -215,6 +224,25 @@ export default function CliChatPanel({
     if (getAgentStatus(key) === 'done') setAgentStatus(key, 'idle')
     markPaneSeen(key)
   }, [key])
+
+  // What the phone sees and changes: the same choices as the header.
+  const catalog = useClaudeCatalog(configDir)
+  const remoteRef = useRef<NonNullable<AgentController['remote']>>(null!)
+  remoteRef.current = {
+    info: () => ({
+      cli: 'claude',
+      model: pickedModel,
+      mode: modeValue(state.mode ?? pickedMode),
+      models: [...modelsFor('claude'), ...pinnedModels(catalog).map((p) => p.value)].map((v) => ({
+        value: v,
+        label: modelLabel(v, catalog)
+      })),
+      modes: MODES.map((m) => ({ value: m, label: t(MODE_KEY[m]) }))
+    }),
+    setModel: pickModel,
+    setMode: pickMode,
+    stop: () => window.api.cliChat.interrupt(key)
+  }
 
   const lastNotice = model.notices[model.notices.length - 1]
   const showNotice = lastNotice && (lastNotice.level === 'error' || lastNotice.level === 'update') && Date.now() - lastNotice.at < 60_000

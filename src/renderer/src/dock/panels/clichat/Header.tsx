@@ -11,7 +11,7 @@ import { MODES, modeValue, type CliState } from '../../../lib/cliChat'
 // --resume at the end of the turn (services/clichat/life.rs). /model is never
 // typed, because the CLI saves that as the person's global default.
 
-const MODE_KEY: Record<string, string> = {
+export const MODE_KEY: Record<string, string> = {
   default: 'chat.mode.ask',
   acceptEdits: 'chat.mode.acceptEdits',
   plan: 'chat.mode.plan',
