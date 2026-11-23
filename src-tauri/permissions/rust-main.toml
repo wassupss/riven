@@ -217,6 +217,8 @@ permissions = [
   "allow-pty-resize",
   "allow-pty-kill",
   "allow-pty-codex-session-title",
+  "allow-pty-remote-text",
+  "allow-pty-remote-input",
   "allow-search-in-files",
   "allow-search-replace-in-files",
   "allow-sessions-load",
@@ -1315,6 +1317,16 @@ commands.allow = ["pty_kill"]
 identifier = "allow-pty-codex-session-title"
 description = "Allows pty_codex_session_title."
 commands.allow = ["pty_codex_session_title"]
+
+[[permission]]
+identifier = "allow-pty-remote-text"
+description = "Allows pty_remote_text."
+commands.allow = ["pty_remote_text"]
+
+[[permission]]
+identifier = "allow-pty-remote-input"
+description = "Allows pty_remote_input."
+commands.allow = ["pty_remote_input"]
 
 [[permission]]
 identifier = "allow-search-in-files"

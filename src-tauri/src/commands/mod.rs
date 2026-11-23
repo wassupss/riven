@@ -190,6 +190,8 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     pty::pty_resize,
     pty::pty_kill,
     pty::pty_codex_session_title,
+    pty::pty_remote_text,
+    pty::pty_remote_input,
     chat::chat_start,
     chat::chat_send,
     chat::chat_alive,

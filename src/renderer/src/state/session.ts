@@ -35,6 +35,9 @@ export interface PaneState {
   // conversation — never adopt the workspace's most recent session (see the
   // adopt effect in ChatPanel). Set once at creation and kept for the pane's life.
   fresh?: boolean
+  // A terminal the user chose to show on paired phones (state/remoteTerms). Off
+  // unless turned on from the tab's menu; a phone cannot set it.
+  remoteShare?: boolean
 }
 
 export interface Session {
@@ -132,7 +135,8 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
     // Which CLI the pane's conversation belongs to (a Codex chat pane, or the
     // agent a terminal was last running) — without it every pane reads as Claude.
     cli: rec?.cli ?? null,
-    persona: rec?.persona
+    persona: rec?.persona,
+    remoteShare: rec?.remoteShare === true
   }
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {

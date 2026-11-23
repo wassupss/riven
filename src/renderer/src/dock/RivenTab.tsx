@@ -8,7 +8,9 @@ import { activityOf } from '../state/rosterActivity'
 import { loadPaneState, useSession } from '../state/session'
 import { tintStyle, hueColor, encodeAvatar, AVATAR_COLOR_COUNT, AVATAR_NONE } from '../lib/avatar'
 import { useT } from '../i18n'
-import { X } from 'lucide-react'
+import { Check, Smartphone, X } from 'lucide-react'
+import { setTermShared } from '../state/remoteTerms'
+import '../styles/remote-terms.css'
 import { hostFor, type Host } from '../lib/hostWindow'
 
 // Custom dockview tab: double-click the title to rename the panel. The name is
@@ -26,6 +28,9 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
   const [avatarRev, setAvatarRev] = useState(0) // bump to re-read the override
   const [menu, setMenu] = useState<{ x: number; y: number; host: Host } | null>(null)
   const isChat = api.id.startsWith('chat-')
+  const isTerm = api.id.startsWith('term-')
+  // A terminal the user chose to show on paired phones (state/remoteTerms).
+  const shared = useSession((s) => isTerm && s.sessions[workspace]?.panes?.[api.id]?.remoteShare === true)
   // Re-read the pane's agent status on every roster change so the tab title can
   // shimmer while it's running (native dock-tab parity).
   useAgents((s) => s.version)
@@ -119,6 +124,11 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
       ) : (
         <span className="riven-tab-title">
           {dot && <span className={`tab-dot ${dot}`} />}
+          {shared && (
+            <span className="riven-tab-remote" title={t('remoteTerm.sharedTip')}>
+              <Smartphone size={10} />
+            </span>
+          )}
           <span className={`riven-tab-label${status === 'busy' ? ' shimmer' : ''}`}>{title}</span>
         </span>
       )}
@@ -165,6 +175,24 @@ export default function RivenTab(props: IDockviewPanelHeaderProps): JSX.Element 
               >
                 {t('tab.closeAllTabs')}
               </div>
+              {isTerm && (
+                <>
+                  <div className="context-sep" />
+                  {/* Off unless the user turns it on here; a phone cannot. */}
+                  <div
+                    className="context-item remote-share-item"
+                    role="menuitemcheckbox"
+                    aria-checked={shared}
+                    onClick={() => {
+                      setMenu(null)
+                      setTermShared(workspace, api.id, !shared)
+                    }}
+                  >
+                    <span className="remote-share-check">{shared ? <Check size={12} /> : null}</span>
+                    {t('remoteTerm.share')}
+                  </div>
+                </>
+              )}
               <div className="context-sep" />
               <div className="context-label">{t('tab.color')}</div>
               <div className="tab-swatches">

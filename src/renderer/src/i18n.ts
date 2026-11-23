@@ -1877,6 +1877,37 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     ko: '원격 제어가 켜져 있는 동안 이 컴퓨터는 잠자기에 들어가지 않아요(화면은 꺼질 수 있어요). 노트북 덮개를 닫으면 잠들 수 있어요.',
     en: 'While remote control is on, this machine will not sleep (the display may). Closing a laptop lid can still put it to sleep.'
   },
+  // ---- remote terminals (state/remoteTerms) ----
+  'remoteTerm.share': { ko: '원격에 보이기', en: 'Show on phone' },
+  'remoteTerm.sharedTip': {
+    ko: '터미널 보기가 허용된 휴대폰에 이 터미널의 에이전트 화면이 보여요',
+    en: "Phones allowed to view terminals can see this terminal's agent"
+  },
+  'remoteTerm.watching': { ko: '휴대폰에서 보는 중: {names}', en: 'Viewed from phone: {names}' },
+  'remoteTerm.view': { ko: '터미널 보기', en: 'Terminal view' },
+  'remoteTerm.input': { ko: '터미널 입력', en: 'Terminal input' },
+  'remoteTerm.section': { ko: '원격 터미널', en: 'Remote terminals' },
+  'remoteTerm.sectionDesc': {
+    ko: "휴대폰별로 '터미널 보기'를 켜면, 탭 메뉴에서 '원격에 보이기'로 표시한 터미널 중 에이전트(Claude Code, Codex 등)가 실행 중인 것만 휴대폰에 보여요. 화면은 최근 200줄까지이고 토큰과 키처럼 보이는 값은 가려서 보내요. '터미널 입력'은 한 줄 프롬프트와 정해진 키(1-9, Enter, Esc, 위/아래)만 허용하고, Ctrl+C는 보낼 수 없어요.",
+    en: "With 'Terminal view' on for a phone, it sees terminals you marked 'Show on phone' in the tab menu, and only while an agent (Claude Code, Codex, ...) runs in them. It gets the last 200 lines, with anything that looks like a token or key hidden. 'Terminal input' allows one line of prompt text and a fixed set of keys (1-9, Enter, Esc, up/down); never Ctrl+C."
+  },
+  'remoteTerm.stopAll': { ko: '원격 터미널 모두 중지', en: 'Stop all remote terminal access' },
+  'remoteTerm.stopAllDesc': {
+    ko: '모든 휴대폰의 터미널 보기와 입력을 끄고, 열려 있는 화면을 바로 닫아요.',
+    en: 'Turns terminal view and input off for every phone and closes any terminal open on one now.'
+  },
+  'remoteTerm.stop': { ko: '중지', en: 'Stop' },
+  'remoteTerm.audit': { ko: '원격 입력 기록', en: 'Remote input log' },
+  'remoteTerm.auditDesc': {
+    ko: '휴대폰이 터미널에 입력한 내역이에요. 이 컴퓨터에만 저장돼요.',
+    en: 'What phones typed into terminals. Kept on this machine only.'
+  },
+  'remoteTerm.auditEmpty': { ko: '아직 기록이 없어요.', en: 'Nothing yet.' },
+  'remoteTerm.auditClear': { ko: '기록 지우기', en: 'Clear log' },
+  'remoteTerm.line': { ko: '입력 "{text}"', en: 'typed "{text}"' },
+  'remoteTerm.key': { ko: '키 {key}', en: 'key {key}' },
+  'remoteTerm.ok': { ko: '전송됨', en: 'sent' },
+  'remoteTerm.refused': { ko: '거부됨 ({why})', en: 'refused ({why})' },
   'sched.atMinute': { ko: '매시', en: 'at minute' },
   'sched.time': { ko: '시각', en: 'time' },
   'sched.hour': { ko: '시', en: 'h' },

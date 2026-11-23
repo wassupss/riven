@@ -15,8 +15,11 @@ import {
   type PhoneMsg,
   type RemoteAgent,
   type RemoteJob,
+  type RemoteTerm,
   type RemoteUsage,
-  type RemoteWork
+  type RemoteWork,
+  type TermGone,
+  type TermInput
 } from '@riven/remote'
 import { closeChannel, joinChannel, openChannel } from './relay'
 import type { Computer } from './computers'
@@ -56,6 +59,20 @@ export interface UsageView {
   at: number
 }
 
+/** The terminals the computer shows this phone. `allowed` false: it shows none to it at all. */
+export interface TermsView {
+  allowed: boolean
+  terms: RemoteTerm[]
+}
+
+/** The open terminal's last lines, as the computer sent them (secrets already hidden). */
+export interface TermScreen {
+  text: string
+  canInput: boolean
+  /** When it arrived, this phone's clock. */
+  at: number
+}
+
 /** What the computer said to a request: done, or why not. */
 export type Ack = { ok: true } | { ok: false; error: string }
 
@@ -92,6 +109,15 @@ export interface ComputerLink {
   /** Plan usage per account, once asked for. */
   usage: UsageView | null
   loadUsage: () => void
+  /** Terminals, once asked for (kept current after that). */
+  terms: TermsView | null
+  loadTerms: () => void
+  /** The terminal on screen (null when none): its text is sent while it is. */
+  watchTerm: (termKey: string | null) => void
+  termScreens: Record<string, TermScreen>
+  /** Why a terminal stopped being shown, if it did. */
+  termGone: Record<string, TermGone>
+  termInput: (termKey: string, input: TermInput) => Promise<Ack>
 }
 
 // A request the computer never answers (it went to sleep mid-way) gives up.
@@ -117,6 +143,10 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const waiting = useRef(new Map<string, (a: Ack) => void>())
   const [work, setWork] = useState<Record<string, ChatWork>>({})
   const watchRef = useRef<string | null>(null)
+  const [terms, setTerms] = useState<TermsView | null>(null)
+  const [termScreens, setTermScreens] = useState<Record<string, TermScreen>>({})
+  const [termGone, setTermGone] = useState<Record<string, TermGone>>({})
+  const termWatchRef = useRef<string | null>(null)
   const chRef = useRef<RealtimeChannel | null>(null)
   const sharedRef = useRef<Uint8Array | null>(null)
   const eventRef = useRef(onEvent)
@@ -236,6 +266,32 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
         case 'usage':
           setUsage({ accounts: Array.isArray(msg.accounts) ? msg.accounts : [], at: msg.at })
           break
+        case 'terms':
+          setTerms({ allowed: msg.allowed === true, terms: Array.isArray(msg.terms) ? msg.terms : [] })
+          break
+        case 'termScreen':
+          if (typeof msg.termKey !== 'string' || typeof msg.text !== 'string') break
+          setTermScreens((all) => ({
+            ...all,
+            [msg.termKey]: { text: msg.text, canInput: msg.canInput === true, at: Date.now() }
+          }))
+          setTermGone((g) => {
+            if (!(msg.termKey in g)) return g
+            const next = { ...g }
+            delete next[msg.termKey]
+            return next
+          })
+          break
+        case 'termGone':
+          if (typeof msg.termKey !== 'string') break
+          setTermGone((g) => ({ ...g, [msg.termKey]: msg.reason }))
+          // Nothing more will come for it; what was shown is cleared too.
+          setTermScreens((all) => {
+            const next = { ...all }
+            delete next[msg.termKey]
+            return next
+          })
+          break
         case 'revoked':
           setState('revoked')
           break
@@ -255,14 +311,20 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
         void ch.track({ role: 'phone' })
         post({ t: 'hello' })
         if (watchRef.current) post({ t: 'watch', chatKey: watchRef.current })
+        if (termWatchRef.current) post({ t: 'termWatch', termKey: termWatchRef.current })
       } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setState('relay-error')
     })
 
     // Back from the background: ask for the current picture again.
     const sub = AppState.addEventListener('change', (s) => {
-      if (s !== 'active') return
+      // In the background a terminal is not being looked at: stop its stream.
+      if (s !== 'active') {
+        if (termWatchRef.current) post({ t: 'termWatch', termKey: null })
+        return
+      }
       post({ t: 'hello' })
       if (watchRef.current) post({ t: 'watch', chatKey: watchRef.current })
+      if (termWatchRef.current) post({ t: 'termWatch', termKey: termWatchRef.current })
     })
     return () => {
       sub.remove()
@@ -347,6 +409,30 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
   const deleteJob = useCallback((id: string) => request<'jobDelete'>({ t: 'jobDelete', id }), [request])
   const addJob = useCallback((job: NewJob) => request<'jobAdd'>({ t: 'jobAdd', job }), [request])
   const loadUsage = useCallback(() => post({ t: 'usage' }), [post])
+  const loadTerms = useCallback(() => post({ t: 'terms' }), [post])
+  const watchTerm = useCallback(
+    (termKey: string | null) => {
+      termWatchRef.current = termKey
+      if (termKey) {
+        // A fresh look: an old "no longer shown" is the computer's to repeat.
+        setTermGone((g) => {
+          if (!(termKey in g)) return g
+          const next = { ...g }
+          delete next[termKey]
+          return next
+        })
+      } else {
+        // Closed: what it showed is not kept on the phone.
+        setTermScreens({})
+      }
+      post({ t: 'termWatch', termKey })
+    },
+    [post]
+  )
+  const termInput = useCallback(
+    (termKey: string, input: TermInput) => request<'termInput'>({ t: 'termInput', termKey, input }),
+    [request]
+  )
 
   return {
     state,
@@ -373,6 +459,12 @@ export function useComputer(c: Computer | null, onEvent?: (title: string, body: 
     deleteJob,
     addJob,
     usage,
-    loadUsage
+    loadUsage,
+    terms,
+    loadTerms,
+    watchTerm,
+    termScreens,
+    termGone,
+    termInput
   }
 }

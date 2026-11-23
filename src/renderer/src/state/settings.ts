@@ -13,6 +13,26 @@ export interface RemoteDevice {
   addedAt: number
   // Expo push token, when the phone allowed notifications.
   pushToken?: string | null
+  // What this phone may do with terminals (state/remoteTerms). Absent = off,
+  // so every phone paired before these existed starts with neither. Only the
+  // computer's settings turn them on; no phone message touches them.
+  termView?: boolean
+  termInput?: boolean
+}
+
+/** One thing a phone typed into a terminal (state/remoteTerms), kept on this machine only. */
+export interface RemoteTermAudit {
+  at: number
+  device: string
+  deviceId: string
+  pane: string
+  paneKey: string
+  /** 'line' or the key pressed ('enter', '1', ...). */
+  what: string
+  /** The start of a typed line. */
+  preview?: string
+  ok: boolean
+  error?: string
 }
 
 // The panel background image fields (panelBg*) live in PanelBgSettings: see
@@ -124,6 +144,8 @@ export interface Settings extends PanelBgSettings {
   // The account the identity above belongs to. Signing in as someone else
   // starts over: another account's phones must not reach this machine.
   remoteOwner: string
+  // What phones typed into terminals, newest last, capped (state/remoteTerms).
+  remoteTermAudit: RemoteTermAudit[]
   // Terminal behaviour, all of it things the terminal engine exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -190,6 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteDeskSecret: '',
   remoteDevices: [],
   remoteOwner: '',
+  remoteTermAudit: [],
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,

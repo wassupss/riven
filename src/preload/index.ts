@@ -250,6 +250,22 @@ const api = {
     seen: (id: string): void => ipcRenderer.send('pty:seen', id),
     onAgentSession: onPtyAgentSession,
     codexSessionTitle: (id: string): Promise<string | null> => ipcRenderer.invoke('pty:codexSessionTitle', id),
+    // A paired phone (state/remoteTerms.ts). The text is the model's tail, or
+    // null text when `since` is still current; null when there is no such
+    // terminal. Input is a fixed key or one line, checked again by main.
+    remoteText: (
+      id: string,
+      lines: number,
+      since: string
+    ): Promise<{ rev: string; text: string | null; agent: boolean } | null> =>
+      ipcRenderer.invoke('pty:remoteText', id, lines, since),
+    remoteInput: (id: string, input: { text: string } | { key: string }): Promise<boolean> =>
+      ipcRenderer.invoke(
+        'pty:remoteInput',
+        id,
+        'text' in input ? input.text : undefined,
+        'key' in input ? input.key : undefined
+      ),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id: string): void => ipcRenderer.send('pty:kill', id),
