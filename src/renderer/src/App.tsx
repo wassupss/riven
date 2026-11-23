@@ -27,6 +27,7 @@ import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startTrayFeed } from './state/trayFeed'
 import { startRemote } from './state/remote'
+import { startCliChats } from './state/cliChats'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
@@ -174,6 +175,9 @@ export default function App(): JSX.Element {
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
     // otherwise take its status (and its very existence) with it.
     const offRoster = startRoster()
+    // CLI chat panes (services/clichat) feed the roster, notifications, the
+    // ask queue and delegation from one app-level listener.
+    const offCliChats = startCliChats()
     // The menu bar icon's list, from the roster just started.
     const offTray = startTrayFeed()
     // Remote control from a phone, when the user has turned it on (state/remote).
@@ -292,6 +296,7 @@ export default function App(): JSX.Element {
       clearInterval(presenceBeat)
       offMcp()
       offRoster()
+      offCliChats()
       offTray()
       offRemote()
       offBrowser()

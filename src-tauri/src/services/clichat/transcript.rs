@@ -64,6 +64,21 @@ impl Item {
   }
 }
 
+/// What the agent said in the last turn: the text items after the last
+/// user message (the answer a delegating agent or a phone waits for, when the
+/// Stop hook did not carry it).
+pub fn last_reply(items: &[Item]) -> Option<String> {
+  let from = items.iter().rposition(|i| matches!(i, Item::User { .. })).map_or(0, |i| i + 1);
+  let texts: Vec<&str> = items[from..]
+    .iter()
+    .filter_map(|i| match i {
+      Item::Text { text, .. } if !text.trim().is_empty() => Some(text.as_str()),
+      _ => None,
+    })
+    .collect();
+  (!texts.is_empty()).then(|| texts.join("\n\n"))
+}
+
 struct Rec {
   parent: Option<String>,
   logical_parent: Option<String>,
@@ -540,6 +555,17 @@ pub fn turn_usage(items: &[Item]) -> Vec<Value> {
 mod tests {
   use super::*;
   use serde_json::json;
+
+  #[test]
+  fn last_reply_is_the_text_after_the_last_prompt() {
+    let user = |k: &str| Item::User { key: k.into(), text: "q".into(), command: None, images: 0 };
+    let text = |k: &str, t: &str| Item::Text { key: k.into(), msg_id: "m".into(), text: t.into() };
+    let tool = Item::Tool { key: "t".into(), tool_id: "x".into(), name: "Bash".into(), input: json!({}) };
+    let items = vec![user("u1"), text("a", "old"), user("u2"), text("b", "first"), tool, text("c", " "), text("d", "second")];
+    assert_eq!(last_reply(&items).as_deref(), Some("first\n\nsecond"));
+    assert_eq!(last_reply(&[user("u")]), None);
+    assert_eq!(last_reply(&[text("a", "no prompt yet")]).as_deref(), Some("no prompt yet"));
+  }
 
   // Hand-written in the shape 2.1.330 writes (trimmed to the fields read).
   fn fixture() -> Vec<String> {

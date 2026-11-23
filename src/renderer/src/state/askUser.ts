@@ -18,6 +18,10 @@ export interface AskRequest {
   // stays visible but stops accepting answers: silently removing it would make
   // the user think their click was registered.
   expired?: boolean
+  // A CLI chat's own card (permission, AskUserQuestion, a menu), put here so
+  // a paired phone can answer it (state/cliChats). The pane draws the card
+  // itself, so the inline prompt leaves it out.
+  mirror?: boolean
 }
 
 interface AskUserState {

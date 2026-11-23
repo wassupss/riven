@@ -15,6 +15,7 @@ import NotesPanel from './panels/NotesPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import DbPanel from './panels/DbPanel'
 import ChatPanel from './panels/ChatPanel'
+import { dropCliChat } from '../state/cliChats'
 import CliChatPanel, { type CliChatParams } from './panels/CliChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
 import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
@@ -333,9 +334,15 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('clichat-')) {
             window.api.cliChat.stop(panel.id)
+            dropCliChat(panel.id)
             clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('chat-')) {
+            // A chat pane runs on the headless driver or the CLI chat
+            // (pane state `engine`); stopping the one it does not use is a
+            // no-op.
             window.api.chat.stop(panel.id)
+            window.api.cliChat.stop(panel.id)
+            dropCliChat(panel.id)
             // A team member's pane is the member's desk, not a throwaway chat:
             // what it did is the team's work, and the org chart reopens it
             // (reopenChat). So its conversation — session id, transcript,
@@ -568,8 +575,10 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       if (getActiveApi() === api) setActiveApi(null)
       for (const p of api.panels) {
         if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
-        else if (p.id.startsWith('chat-')) window.api.chat.stop(p.id)
-        else if (p.id.startsWith('clichat-')) window.api.cliChat.stop(p.id)
+        else if (p.id.startsWith('chat-')) {
+          window.api.chat.stop(p.id)
+          window.api.cliChat.stop(p.id)
+        } else if (p.id.startsWith('clichat-')) window.api.cliChat.stop(p.id)
       }
     }
   }, [workspace])

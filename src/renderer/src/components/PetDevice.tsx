@@ -23,6 +23,7 @@ import {
 import { useT, type TFn } from '../i18n'
 import { fmtTokens, tightestLimit, useUsage } from '../state/usage'
 import { useRoster, workspaceOfPane } from '../state/roster'
+import { onCliTurnDone } from '../state/cliChats'
 import { useSession, workspaceName } from '../state/session'
 import { useAgentEdits } from '../state/agentEdits'
 import { answer as talkAnswer } from '../state/petTalk'
@@ -752,35 +753,53 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const busyRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (detached) return
-    return window.api.chat.onEvent((e) => {
-      const ws = workspaceOfPane(e.key)
-      const watching =
-        useSession.getState().activeWorkspace === ws && getActiveApi()?.activePanel?.id === e.key
-
-      if (e.kind === 'tool') {
-        if (!watching || !awakeRef.current || mimeRef.current) return
-        const mime = mimeOf(e.name)
-        if (!mime) return
-        setMime(mime)
-        mimeRef.current = true
-        later(() => {
-          setMime(null)
-          mimeRef.current = false
-        }, MIME_MS)
-        return
-      }
-
-      if (e.kind !== 'turnDone') return
+    const watchingPane = (key: string): { ws: string | null; watching: boolean } => {
+      const ws = workspaceOfPane(key)
+      return { ws, watching: useSession.getState().activeWorkspace === ws && getActiveApi()?.activePanel?.id === key }
+    }
+    const onTool = (key: string, name: string): void => {
+      if (!watchingPane(key).watching || !awakeRef.current || mimeRef.current) return
+      const mime = mimeOf(name)
+      if (!mime) return
+      setMime(mime)
+      mimeRef.current = true
+      later(() => {
+        setMime(null)
+        mimeRef.current = false
+      }, MIME_MS)
+    }
+    const onTurnDone = (key: string, error: boolean): void => {
+      const { ws, watching } = watchingPane(key)
       // Tokens have just been spent: ask usage now rather than waiting the poll.
       useUsage.getState().refresh()
       const where = workspaceName(ws ?? '', useSession.getState().names)
       if (!where) return
-      const entry: Finished = { workspace: where, title: e.key, at: Date.now(), failed: !!e.error }
+      const entry: Finished = { workspace: where, title: key, at: Date.now(), failed: error }
       setRecent((r) => [entry, ...r].slice(0, RECENT_KEEP))
       // Saying "done" about the pane you are staring at is noise.
-      if (watching && !e.error) return
-      speak(t(e.error ? 'pet.notice.failed' : 'pet.notice.done', { where }), NOTICE_MS)
+      if (watching && !error) return
+      speak(t(error ? 'pet.notice.failed' : 'pet.notice.done', { where }), NOTICE_MS)
+    }
+    const offChat = window.api.chat.onEvent((e) => {
+      if (e.kind === 'tool') onTool(e.key, e.name)
+      else if (e.kind === 'turnDone') onTurnDone(e.key, !!e.error)
     })
+    // The CLI chat: its tool calls arrive as transcript items, its turn end
+    // from the hub (a stopped turn is not news).
+    const offCli = window.api.cliChat.onEvent((e) => {
+      if (e.kind !== 'items' || e.reset) return
+      const items = (e as unknown as { items: Array<{ kind: string; name?: string }> }).items
+      const tool = items.filter((i) => i.kind === 'tool').pop()
+      if (tool?.name) onTool(e.key, tool.name)
+    })
+    const offCliDone = onCliTurnDone((key, done) => {
+      if (!done.interrupted) onTurnDone(key, !!done.error)
+    })
+    return () => {
+      offChat()
+      offCli()
+      offCliDone()
+    }
   }, [detached, later, t])
 
   // The pet has no screen of its own, so anything that needs one (a menu

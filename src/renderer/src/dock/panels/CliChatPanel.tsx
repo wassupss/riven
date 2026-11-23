@@ -10,6 +10,8 @@ import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from './clichat
 import Composer, { type ComposerHandle } from './clichat/Composer'
 import Header from './clichat/Header'
 import SessionPicker from './clichat/SessionPicker'
+import { getAgentStatus, setAgentStatus } from '../../state/agents'
+import { markPaneSeen } from '../../state/roster'
 import '../../styles/cli-chat.css'
 
 // Experimental CLI chat: the REAL interactive `claude`, run by Rust in a
@@ -143,6 +145,14 @@ export default function CliChatPanel({
     window.api.cliChat.reconfigure(key, null, m)
   }
 
+  // A finished turn is acknowledged only by touching the pane (a click or a
+  // key in it), as in the chat pane: a completion nobody looked at stays on
+  // the rail and the tab.
+  const ackDone = useCallback((): void => {
+    if (getAgentStatus(key) === 'done') setAgentStatus(key, 'idle')
+    markPaneSeen(key)
+  }, [key])
+
   const lastNotice = model.notices[model.notices.length - 1]
   const showNotice = lastNotice && (lastNotice.level === 'error' || lastNotice.level === 'update') && Date.now() - lastNotice.at < 60_000
 
@@ -151,7 +161,9 @@ export default function CliChatPanel({
       className={`chat-panel cli-chat${state.busy ? ' busy' : ''}`}
       onPointerDownCapture={() => {
         if (!api.isActive) api.setActive()
+        ackDone()
       }}
+      onKeyDownCapture={ackDone}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && state.busy && !state.terminal) {
           e.preventDefault()

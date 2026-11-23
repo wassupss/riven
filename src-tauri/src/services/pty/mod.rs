@@ -843,9 +843,10 @@ fn set_working(key: &str, on: bool) {
   }
 }
 
-/// How many terminal agents are working (Node's quit confirmation asks).
-pub fn working_count() -> usize {
-  WORKING.get_or_init(Default::default).lock().unwrap().len()
+/// The keys of the terminals whose CLI agent is working (the quit count
+/// leaves out the hidden ptys a CLI chat runs in: those count as chats).
+pub fn working_keys() -> Vec<String> {
+  WORKING.get_or_init(Default::default).lock().unwrap().iter().cloned().collect()
 }
 
 /// An agent hook for a pane, from the hook route (services/mcp/hooks.rs).

@@ -186,6 +186,17 @@ fn lock(s: &Mutex<Sess>) -> MutexGuard<'_, Sess> {
   s.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// CLI chats mid-turn: what quitting would cut off (lifecycle::busy).
+pub fn running_count() -> usize {
+  let list: Vec<Arc<Mutex<Sess>>> = all().values().cloned().collect();
+  list.iter().filter(|s| { let st = lock(s); st.busy && !st.dead && !st.parked }).count()
+}
+
+/// Whether this pty key is a CLI chat's hidden process.
+pub fn owns(key: &str) -> bool {
+  get(key).is_some()
+}
+
 pub fn init(app: &AppHandle) {
   let _ = APP.set(app.clone());
   attach::sweep();
@@ -217,6 +228,17 @@ fn emit_ask(s: &Sess, p: &Pending) {
 
 fn emit_agents(s: &Sess) {
   emit(&s.label, json!({ "key": s.key, "kind": "agents", "agents": s.agents.snapshot() }));
+}
+
+/// A turn is over: what it answered (the Stop hook's last message, else the
+/// transcript's), for the roster, notifications, the pet and whoever asked
+/// this pane something (riven_ask_agent, a phone).
+fn emit_turn_done(s: &Sess, reply: Option<String>, error: Option<String>, interrupted: bool) {
+  let reply = reply.filter(|r| !r.trim().is_empty()).or_else(|| transcript::last_reply(&s.store.branch()));
+  emit(
+    &s.label,
+    json!({ "key": s.key, "kind": "turnDone", "reply": reply.unwrap_or_default(), "error": error, "interrupted": interrupted }),
+  );
 }
 
 fn emit_title(s: &Sess) {
@@ -482,8 +504,8 @@ fn park(st: &mut Sess) {
   emit_state(st);
 }
 
-fn pump(st: &mut Sess) {
-  // 1. The transcript.
+// New transcript lines into the store (no event yet: pump sends the delta).
+fn pump_transcript(st: &mut Sess) {
   if !st.tail.path.is_file() {
     // Long cwds get a hashed folder name: find the session by its id.
     if st.started.elapsed() > Duration::from_secs(3) {
@@ -511,6 +533,11 @@ fn pump(st: &mut Sess) {
       Err(_) => {}
     }
   }
+}
+
+fn pump(st: &mut Sess) {
+  // 1. The transcript.
+  pump_transcript(st);
   if st.store.take_title_dirty() {
     emit_title(st);
   }
@@ -698,6 +725,9 @@ pub fn interrupt(key: &str) {
     return;
   }
   crate::services::pty::write(key.to_string(), "\x1b".into());
+  if st.busy {
+    emit_turn_done(&st, None, None, true);
+  }
   st.busy = false;
   st.shown = None;
   st.last_active = Instant::now();
@@ -849,6 +879,9 @@ pub fn on_pty_exit(key: &str, code: i32) {
   let Some(s) = all().remove(key) else { return };
   let mut st = lock(&s);
   st.dead = true;
+  if st.busy {
+    emit_turn_done(&st, None, Some(format!("the CLI exited ({code})")), false);
+  }
   st.busy = false;
   for p in st.perms.drain(..) {
     let _ = p.tx.send(Decision::Terminal);
@@ -929,6 +962,13 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
       emit_state(&st);
     }
     "Stop" | "StopFailure" | "SessionEnd" => {
+      if event != "SessionEnd" && !sub {
+        let reply = payload.get("last_assistant_message").and_then(Value::as_str).map(str::to_string);
+        let error = (event == "StopFailure").then(|| payload.get("error").map(|e| e.to_string()).unwrap_or_else(|| "turn failed".into()));
+        // The transcript may still be a line behind the hook: read it first.
+        pump_transcript(&mut st);
+        emit_turn_done(&st, reply, error, false);
+      }
       st.busy = false;
       st.waiting = false;
       st.plan = None;

@@ -97,6 +97,9 @@ export type CliEvent = { key: string } & (
   | { kind: 'agents'; agents: AgentProgress[] }
   | { kind: 'meta'; title: string | null }
   | { kind: 'exit'; code: number }
+  // A turn ended (Stop hook, interrupt, the CLI exiting mid-turn): what it
+  // answered, for whoever asked (state/cliChats).
+  | { kind: 'turnDone'; reply: string; error: string | null; interrupted: boolean }
 )
 
 export interface CliModel {
@@ -168,6 +171,8 @@ export function reduce(m: CliModel, e: CliEvent): CliModel {
       return m.title === e.title ? m : { ...m, title: e.title }
     case 'exit':
       return { ...m, state: { ...m.state, busy: false, dead: true }, preview: null, permissions: [], questions: [] }
+    case 'turnDone':
+      return m
   }
 }
 
