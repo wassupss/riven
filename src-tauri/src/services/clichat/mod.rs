@@ -98,6 +98,39 @@ pub struct StartOpts {
   pub model: Option<String>,
   pub permission_mode: Option<String>,
   pub config_dir: Option<String>,
+  /// The chat settings the headless chat launches with (Settings > AI):
+  /// riven's own tools switched off, built-in tools held back from the
+  /// allow list (the CLI asks for them), the autocompact window, the global
+  /// prompt (with a group member's persona), and a custom agent.
+  pub mcp_disabled: Option<Vec<String>>,
+  pub tools_denied: Option<Vec<String>>,
+  pub autocompact: Option<String>,
+  pub global_prompt: Option<String>,
+  pub agent: Option<String>,
+}
+
+/// What the launch adds to the command line besides `StartOpts`.
+#[derive(Default, Debug)]
+pub struct Flags {
+  /// riven's MCP config is in $RIVEN_MCP_CONFIG.
+  pub mcp: bool,
+  /// A system prompt to append is in $RIVEN_CLICHAT_PROMPT.
+  pub prompt: bool,
+  /// The --allowedTools value.
+  pub allowed: Option<String>,
+}
+
+/// The system prompt appended to the CLI's: riven's tool guide (with MCP),
+/// then the person's own instructions, as the headless chat composes it.
+pub fn system_prompt(mcp_prompt: Option<&str>, global: Option<&str>) -> Option<String> {
+  let mut parts: Vec<String> = Vec::new();
+  if let Some(p) = mcp_prompt.filter(|p| !p.trim().is_empty()) {
+    parts.push(p.to_string());
+  }
+  if let Some(g) = global.map(str::trim).filter(|g| !g.is_empty()) {
+    parts.push(format!("# 사용자 지정 지침\n{g}"));
+  }
+  (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 /// A message on its way into the TUI: text, and image files pasted after it.
@@ -280,13 +313,24 @@ fn mode_arg(m: &str) -> &str {
 /// the CLI chat) types /model, which would write the person's global
 /// default into ~/.claude/settings.json. Another model is a restart with
 /// --resume and --model.
-pub fn command_line(real: Option<&str>, has_mcp: bool, settings: &str, opts: &StartOpts, session: &str, resume_from: Option<&str>, fork: bool) -> String {
+pub fn command_line(real: Option<&str>, flags: &Flags, settings: &str, opts: &StartOpts, session: &str, resume_from: Option<&str>, fork: bool) -> String {
   let mut c = vec![real.map(sq).unwrap_or_else(|| "claude".into())];
-  if has_mcp {
+  if flags.mcp {
     c.push("--mcp-config \"$RIVEN_MCP_CONFIG\"".into());
-    c.push("--append-system-prompt \"$RIVEN_MCP_PROMPT\"".into());
+  }
+  if flags.prompt {
+    c.push("--append-system-prompt \"$RIVEN_CLICHAT_PROMPT\"".into());
+  }
+  if let Some(a) = flags.allowed.as_deref().filter(|a| !a.is_empty()) {
+    c.push(format!("--allowedTools {}", sq(a)));
   }
   c.push(format!("--settings {}", sq(settings)));
+  if let Some(a) = opts.agent.as_deref().filter(|a| !a.is_empty()) {
+    c.push(format!("--agent {}", sq(a)));
+  }
+  if let Some(ac) = crate::services::chat::autocompact_arg(opts.autocompact.as_deref()) {
+    c.push(format!("--autocompact {ac}"));
+  }
   if let Some(m) = opts.model.as_deref().filter(|m| !m.is_empty() && *m != "default") {
     c.push(format!("--model {}", sq(m)));
   }
@@ -351,10 +395,9 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   let fork = opts.fork == Some(true) && resume_from.is_some();
   let session_id = if fork { crate::services::chat::util::uuid() } else { resume.clone().unwrap_or_else(crate::services::chat::util::uuid) };
   let settings = settings_file()?;
-  let extras = crate::services::mcp::pty_env(&key).await;
-  let has_mcp = extras.contains_key("RIVEN_MCP_CONFIG");
+  let (extras, flags) = launch_env(&key, &opts).await;
   let real = extras.get("RIVEN_REAL_CLAUDE").cloned();
-  let cmd = command_line(real.as_deref(), has_mcp, &settings.to_string_lossy(), &opts, &session_id, resume_from.as_deref(), fork);
+  let cmd = command_line(real.as_deref(), &flags, &settings.to_string_lossy(), &opts, &session_id, resume_from.as_deref(), fork);
   let path = transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), &session_id);
   let bin_path = real.map(PathBuf::from).or_else(|| crate::services::shell_env::which("claude"));
   let kept = StartOpts { resume: None, fork: None, ..opts.clone() };
@@ -411,6 +454,37 @@ async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing
   }
   tauri::async_runtime::spawn(run(sess));
   Ok(json!({ "sessionId": session_id, "existed": false }))
+}
+
+/// The pty's environment and the flags that read it: riven's MCP config
+/// without the tools the person switched off, the appended prompt, and the
+/// allow list (built-ins minus the held-back ones, riven's tools, every MCP
+/// server the CLI sees), as services/chat starts the headless chat.
+async fn launch_env(key: &str, opts: &StartOpts) -> (HashMap<String, String>, Flags) {
+  let mut extras = crate::services::mcp::pty_env(key).await;
+  let disabled = opts.mcp_disabled.clone().unwrap_or_default();
+  if extras.contains_key("RIVEN_MCP_CONFIG") && !disabled.is_empty() {
+    let env = crate::services::mcp::chat_env("claude", key, &disabled);
+    match env.get("mcpConfig").and_then(Value::as_str) {
+      Some(cfg) => {
+        extras.insert("RIVEN_MCP_CONFIG".into(), cfg.to_string());
+        extras.insert("RIVEN_MCP_PROMPT".into(), env.get("prompt").and_then(Value::as_str).unwrap_or("").to_string());
+      }
+      None => {
+        extras.remove("RIVEN_MCP_CONFIG");
+        extras.remove("RIVEN_MCP_PROMPT");
+      }
+    }
+  }
+  let mcp = extras.contains_key("RIVEN_MCP_CONFIG");
+  let prompt = system_prompt(extras.get("RIVEN_MCP_PROMPT").filter(|_| mcp).map(String::as_str), opts.global_prompt.as_deref());
+  if let Some(p) = &prompt {
+    extras.insert("RIVEN_CLICHAT_PROMPT".into(), p.clone());
+  }
+  let external = crate::services::chat::mcp::configured_mcp_servers(&opts.cwd, opts.config_dir.as_deref().filter(|d| !d.is_empty())).await;
+  let base = crate::services::chat::allowed_base(&opts.tools_denied);
+  let allowed = crate::services::chat::mcp::allowed_tools_value(&base, crate::services::mcp::TOOL_PREFIX, &external, &[]);
+  (extras, Flags { mcp, prompt: prompt.is_some(), allowed: Some(allowed) })
 }
 
 /// Stop the process of a pane but keep nothing else: the half of a restart
@@ -1081,17 +1155,31 @@ mod tests {
   #[test]
   fn command_lines() {
     let o = StartOpts { cwd: "/w".into(), model: Some("haiku".into()), permission_mode: Some("acceptEdits".into()), ..Default::default() };
-    let c = command_line(Some("/bin/cl aude"), true, "/s/x.json", &o, "id-1", None, false);
+    let flags = Flags { mcp: true, prompt: true, allowed: Some("Read,Bash,mcp__riven".into()) };
+    let c = command_line(Some("/bin/cl aude"), &flags, "/s/x.json", &o, "id-1", None, false);
     assert_eq!(
       c,
-      "'/bin/cl aude' --mcp-config \"$RIVEN_MCP_CONFIG\" --append-system-prompt \"$RIVEN_MCP_PROMPT\" --settings '/s/x.json' --model 'haiku' --permission-mode 'acceptEdits' --session-id 'id-1'"
+      "'/bin/cl aude' --mcp-config \"$RIVEN_MCP_CONFIG\" --append-system-prompt \"$RIVEN_CLICHAT_PROMPT\" --allowedTools 'Read,Bash,mcp__riven' --settings '/s/x.json' --model 'haiku' --permission-mode 'acceptEdits' --session-id 'id-1'"
     );
-    let r = command_line(None, false, "/s", &StartOpts { model: Some("default".into()), ..Default::default() }, "id", Some("id"), false);
+    let none = Flags::default();
+    let r = command_line(None, &none, "/s", &StartOpts { model: Some("default".into()), ..Default::default() }, "id", Some("id"), false);
     assert_eq!(r, "claude --settings '/s' --resume 'id'");
+    // A custom agent and the autocompact window (out of range: dropped).
+    let a = StartOpts { agent: Some("rev iewer".into()), autocompact: Some("250k".into()), ..Default::default() };
+    assert_eq!(command_line(None, &none, "/s", &a, "id", None, false), "claude --settings '/s' --agent 'rev iewer' --autocompact 250000 --session-id 'id'");
+    let a = StartOpts { autocompact: Some("5m".into()), ..Default::default() };
+    assert_eq!(command_line(None, &none, "/s", &a, "id", None, false), "claude --settings '/s' --session-id 'id'");
     // A fork names its new id; "default" is spelled the way 2.1.330 takes it.
-    let f = command_line(None, false, "/s", &StartOpts { permission_mode: Some("default".into()), ..Default::default() }, "new", Some("old"), true);
+    let f = command_line(None, &none, "/s", &StartOpts { permission_mode: Some("default".into()), ..Default::default() }, "new", Some("old"), true);
     assert_eq!(f, "claude --settings '/s' --permission-mode 'manual' --resume 'old' --fork-session --session-id 'new'");
     assert_eq!(urlencode("chat-1 x"), "chat-1%20x");
+  }
+
+  #[test]
+  fn appended_prompt() {
+    assert_eq!(system_prompt(Some("tools"), Some("  be brief ")).as_deref(), Some("tools\n\n# 사용자 지정 지침\nbe brief"));
+    assert_eq!(system_prompt(None, Some("x")).as_deref(), Some("# 사용자 지정 지침\nx"));
+    assert_eq!(system_prompt(Some(" "), Some("")), None);
   }
 
   #[test]

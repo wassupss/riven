@@ -17,7 +17,7 @@ pub mod claude;
 mod cli;
 pub mod codex;
 pub(crate) mod history;
-mod mcp;
+pub(crate) mod mcp;
 mod tools;
 pub mod util;
 
@@ -211,7 +211,7 @@ pub fn start(key: String, opts: StartOpts, label: String) -> BoxFut<Started> {
 const DEFAULT_ALLOWED: &str = "Task,Read,Grep,Glob,LS,Edit,Write,MultiEdit,NotebookEdit,Bash,BashOutput,WebFetch,WebSearch,TodoWrite";
 
 /// The allow-list minus what the user held back (not forbidden: the CLI asks).
-fn allowed_base(denied: &Option<Vec<String>>) -> String {
+pub(crate) fn allowed_base(denied: &Option<Vec<String>>) -> String {
   match denied.as_ref().filter(|d| !d.is_empty()) {
     None => DEFAULT_ALLOWED.into(),
     Some(off) => DEFAULT_ALLOWED.split(',').filter(|n| !off.iter().any(|o| o == n)).collect::<Vec<_>>().join(","),
@@ -220,7 +220,7 @@ fn allowed_base(denied: &Option<Vec<String>>) -> String {
 
 /// --autocompact: 'auto' passes nothing; outside 100K-1M is dropped (the CLI
 /// would refuse to start).
-fn autocompact_arg(v: Option<&str>) -> Option<String> {
+pub(crate) fn autocompact_arg(v: Option<&str>) -> Option<String> {
   let v = v.unwrap_or("").trim().to_lowercase();
   if v.is_empty() || v == "auto" {
     return None;

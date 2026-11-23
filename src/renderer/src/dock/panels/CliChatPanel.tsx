@@ -57,7 +57,7 @@ export default function CliChatPanel({
   const [epoch, setEpoch] = useState(0) // bumped by "restart"
   const [sessionsOpen, setSessionsOpen] = useState(false)
   const pane0 = useMemo(() => loadPaneState(workspace, key), [workspace, key])
-  const [pickedModel, setPickedModel] = useState(pane0.model || 'default')
+  const [pickedModel, setPickedModel] = useState(pane0.model || getSettings().defaultChatModel || 'default')
   const [pickedMode, setPickedMode] = useState(pane0.mode || getSettings().defaultPermissionMode || 'acceptEdits')
   const scrollRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<ComposerHandle>(null)
@@ -77,13 +77,27 @@ export default function CliChatPanel({
     [workspace, key, api, params]
   )
 
-  const opts = (extra: { resume?: string; fork?: boolean } = {}): Parameters<typeof window.api.cliChat.start>[1] => ({
-    cwd,
-    configDir,
-    model: pickedModel !== 'default' ? pickedModel : undefined,
-    permissionMode: pickedMode,
-    ...extra
-  })
+  // Settings > AI, read at each launch (a restart picks up a change), as the
+  // chat pane does: the global prompt with a group member's persona appended
+  // (a system prompt, never a chat turn), riven's tools switched off, the
+  // built-ins held back from the allow list, the autocompact window, a
+  // custom agent (.claude/agents) and the workspace's account profile.
+  const opts = (extra: { resume?: string; fork?: boolean } = {}): Parameters<typeof window.api.cliChat.start>[1] => {
+    const st = getSettings()
+    const persona = (pane0.persona ?? '').trim()
+    return {
+      cwd,
+      configDir,
+      model: pickedModel !== 'default' ? pickedModel : undefined,
+      permissionMode: pickedMode,
+      mcpDisabled: st.mcpDisabledTools,
+      toolsDenied: st.deniedTools,
+      autocompact: st.autocompact,
+      globalPrompt: persona ? [st.globalPrompt?.trim(), persona].filter(Boolean).join('\n\n') : st.globalPrompt,
+      agent: params.agent || pane0.agent || undefined,
+      ...extra
+    }
+  }
 
   // Events first, then start: nothing the session says on start is missed.
   // An existing session (page reload) is reattached, not restarted.

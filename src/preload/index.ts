@@ -148,6 +148,12 @@ export interface CliChatStartOpts {
   model?: string
   permissionMode?: string
   configDir?: string
+  // The chat settings a chat launches with (see chat.start).
+  mcpDisabled?: string[]
+  toolsDenied?: string[]
+  autocompact?: string
+  globalPrompt?: string
+  agent?: string
 }
 
 export interface CliUpdateState {
