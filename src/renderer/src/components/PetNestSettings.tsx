@@ -19,7 +19,7 @@ import { customOf, designOf, isCustomId, motionOfSpecies, noteDesign, useCustomS
 import PetMotionEditor, { useUndoable } from './PetMotionEditor'
 import type { MotionSet, Situation } from '../lib/petMotion'
 import { useSettings } from '../state/settings'
-import { Button, Select } from './ui/Controls'
+import { Button, Select, Switch } from './ui/Controls'
 import { Creature } from './PetDevice'
 import PetSpeciesSettings from './PetSpeciesSettings'
 import PetLayoutEditor from './PetLayoutEditor'
@@ -130,7 +130,7 @@ export default function PetNestSettings(): JSX.Element {
   const [menu, setMenu] = useState<{ x: number; y: number; i: number } | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   const own = useCustomSpecies((s) => s.own)
-  // The decoration layout of the pet that is out, open below the list.
+  // The decoration layout of the focused pet (주인공), open below the list.
   const [layoutOpen, setLayoutOpen] = useState(false)
   const layoutAsk = useUI((s) => s.petLayoutAsk)
   const layoutRef = useRef<HTMLDivElement>(null)
@@ -140,7 +140,7 @@ export default function PetNestSettings(): JSX.Element {
   useEffect(() => {
     if (layoutOpen) layoutRef.current?.scrollIntoView({ block: 'nearest' })
   }, [layoutOpen])
-  // The motion editor (움직임) of the pet that is out, the same way.
+  // The motion editor (움직임) of the focused pet, the same way.
   const [motionOpen, setMotionOpen] = useState(false)
   const motionAsk = useUI((s) => s.petMotionAsk)
   const motionRef = useRef<HTMLDivElement>(null)
@@ -224,49 +224,84 @@ export default function PetNestSettings(): JSX.Element {
   return (
     <>
       <div className="section-label">{t('pet.nest.count', { n: count, max: MAX_PETS })}</div>
-      {nest?.pets.map((p, i) => (
-        <div key={`${p.bornAt}-${i}`} className="set-row pm-item pet-nest-item">
-          <div className="pm-pet">
-            <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
-          </div>
-          <div className="set-rowinfo">
-            <span className="set-rowtitle" title={petTitle(p, t)}>
-              {petTitle(p, t)}
-            </span>
-            <span className="set-rowdesc">
-              {petSubtitle(p, t)}
-              {i === nest.active && <span className="pet-nest-shown">{t('pet.nest.shown')}</span>}
-            </span>
-          </div>
-          <div className="set-rowctl">
-            {i === nest.active ? (
-              <>
-                <Button onClick={() => setLayoutOpen((o) => !o)} aria-expanded={layoutOpen}>
-                  <LayoutGrid size={14} /> {t('pet.layout.open')}
+      {nest?.pets.map((p, i) => {
+        const out = nest.shown.includes(p.bornAt)
+        // The one pet left out stays out.
+        const last = out && nest.shown.length <= 1
+        return (
+          <div key={`${p.bornAt}-${i}`} className={`set-row pm-item pet-nest-item${out ? '' : ' off'}`}>
+            <div className="pm-pet">
+              <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
+            </div>
+            <div className="set-rowinfo">
+              <span className="set-rowtitle" title={petTitle(p, t)}>
+                {petTitle(p, t)}
+              </span>
+              <span className="set-rowdesc">
+                <span className="pet-nest-sub">{petSubtitle(p, t)}</span>
+                {i === nest.active ? (
+                  <span className="pet-nest-shown" title={t('pet.nest.focusHint')}>
+                    {t('pet.nest.focused')}
+                  </span>
+                ) : (
+                  out && <span className="pet-nest-shown dim">{t('pet.nest.out')}</span>
+                )}
+              </span>
+            </div>
+            <div className="set-rowctl">
+              {i === nest.active ? (
+                <>
+                  {/* On a narrow row these two keep only their icons (pet-maker.css). */}
+                  <Button
+                    className="pet-nest-icon"
+                    title={t('pet.layout.open')}
+                    aria-label={t('pet.layout.open')}
+                    onClick={() => setLayoutOpen((o) => !o)}
+                    aria-expanded={layoutOpen}
+                  >
+                    <LayoutGrid size={14} />
+                    <span className="pet-nest-label">{t('pet.layout.open')}</span>
+                  </Button>
+                  <Button
+                    className="pet-nest-icon"
+                    title={t('pet.mo.open')}
+                    aria-label={t('pet.mo.open')}
+                    onClick={() => setMotionOpen((o) => !o)}
+                    aria-expanded={motionOpen}
+                  >
+                    <Move size={14} />
+                    <span className="pet-nest-label">{t('pet.mo.open')}</span>
+                  </Button>
+                </>
+              ) : (
+                <Button title={t('pet.nest.focusHint')} onClick={() => void run({ op: 'select', ...ref(i) })}>
+                  {t('pet.nest.focus')}
                 </Button>
-                <Button onClick={() => setMotionOpen((o) => !o)} aria-expanded={motionOpen}>
-                  <Move size={14} /> {t('pet.mo.open')}
-                </Button>
-              </>
-            ) : (
-              <Button onClick={() => void run({ op: 'select', ...ref(i) })}>{t('pet.nest.show')}</Button>
-            )}
-            <Button
-              variant="ghost"
-              className="pet-nest-more"
-              aria-label={t('pet.nest.more')}
-              title={t('pet.nest.more')}
-              onClick={(e) => {
-                e.stopPropagation()
-                const r = e.currentTarget.getBoundingClientRect()
-                setMenu((m) => (m?.i === i ? null : { x: r.right - 180, y: r.bottom + 4, i }))
-              }}
-            >
-              <MoreHorizontal size={16} />
-            </Button>
+              )}
+              <Switch
+                checked={out}
+                disabled={last}
+                label={t('pet.nest.showToggle')}
+                title={last ? t('pet.nest.lastShown') : t('pet.nest.showToggle')}
+                onChange={(on) => void run({ op: 'setShown', ...ref(i), on })}
+              />
+              <Button
+                variant="ghost"
+                className="pet-nest-more"
+                aria-label={t('pet.nest.more')}
+                title={t('pet.nest.more')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const r = e.currentTarget.getBoundingClientRect()
+                  setMenu((m) => (m?.i === i ? null : { x: r.right - 180, y: r.bottom + 4, i }))
+                }}
+              >
+                <MoreHorizontal size={16} />
+              </Button>
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
       <div className="set-row">
         <div className="set-rowinfo">
           <span className="set-rowtitle">{t('pet.nest.newPet')}</span>
