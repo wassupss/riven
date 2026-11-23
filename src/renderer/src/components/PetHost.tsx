@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useSettings } from '../state/settings'
 import { useUI, type SettingsTab } from '../state/ui'
 import PetDevice from './PetDevice'
+import PetChatDialog from './PetChatDialog'
 
 // ---------------------------------------------------------------------------
 // Decides WHERE 리븐펫 lives, so only one of the two ever runs.
@@ -51,8 +52,13 @@ export default function PetHost(): JSX.Element | null {
     // last had it.
     const offHidden = window.api.pet.onHidden(() => set({ petShow: false }))
     // The floating pet's "설정 열기": main has brought this window up.
+    // 'pet-chat' only brings this window up: the conversation itself is
+    // opened by the pet assistant host (state/petAssistants) from the pet's
+    // message.
     const offSettings = window.api.pet.onOpenSettings((tab) =>
-      tab === 'pet-layout'
+      tab === 'pet-chat'
+        ? undefined
+        : tab === 'pet-layout'
         ? useUI.getState().openPetLayout()
         : tab === 'pet-motion'
           ? useUI.getState().openPetMotion()
@@ -68,6 +74,11 @@ export default function PetHost(): JSX.Element | null {
     }
   }, [set])
 
-  if (detached) return null
-  return <PetDevice />
+  return (
+    <>
+      {!detached && <PetDevice />}
+      {/* A pet assistant's whole conversation (펫 비서), wherever the pet lives. */}
+      <PetChatDialog />
+    </>
+  )
 }
