@@ -198,6 +198,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       ) =>
         boxed(
           'chat',
+          props,
           // The pane's own engine (pane state, set when it was made): a saved
           // layout's headless chats stay headless, CLI chats stay CLI chats.
           useSession.getState().sessions[workspace]?.panes?.[props.params.chatKey]?.engine === 'cli' ? (
