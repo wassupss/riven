@@ -1,6 +1,6 @@
 import '../styles/pet-maker.css'
 import { useEffect, useMemo, useRef, useState, type HTMLAttributes, type PointerEvent as ReactPointerEvent } from 'react'
-import { Pencil, Trash2, ImagePlus, Egg } from 'lucide-react'
+import { Pencil, Trash2, ImagePlus, PawPrint } from 'lucide-react'
 import { useT } from '../i18n'
 import { Button, Segmented, Switch, TextInput } from './ui/Controls'
 import { Creature } from './PetDevice'
@@ -130,11 +130,11 @@ function PhotoCanvas({
   return <canvas ref={ref} width={n} height={n} className={`pm-canvas pm-square pm-pixels ${className}`} {...rest} />
 }
 
-/** A pet of the design, as a small picture. */
-function Preview({ id, stage, form = 'base' }: { id: string; stage: 'egg' | 'hatchling' | 'child' | 'teen' | 'adult'; form?: 'base' | 'sturdy' }): JSX.Element {
+/** A pet of the design, as a small picture, with what its level has earned it. */
+function Preview({ id, level = 1 }: { id: string; level?: number }): JSX.Element {
   return (
     <div className="pm-pet">
-      <Creature stage={stage} form={form} species={id as `u-${string}`} mood="happy" chewing={false} />
+      <Creature species={id as `u-${string}`} mood="happy" chewing={false} level={level} />
     </div>
   )
 }
@@ -639,13 +639,10 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
 
       {step === 'dots' && draft && ready && (
         <div className="pm-stages">
-          <span className="pm-label">{t('pet.maker.stages')}</span>
+          <span className="pm-label">{t('pet.maker.preview')}</span>
           <div className="pm-row">
-            <Preview id={DRAFT_ID} stage="egg" />
-            <Preview id={DRAFT_ID} stage="hatchling" />
-            <Preview id={DRAFT_ID} stage="child" />
-            <Preview id={DRAFT_ID} stage="teen" />
-            <Preview id={DRAFT_ID} stage="adult" form="sturdy" />
+            <Preview id={DRAFT_ID} />
+            <Preview id={DRAFT_ID} level={50} />
           </div>
         </div>
       )}
@@ -685,14 +682,14 @@ function Maker({ editing, onDone }: { editing: CustomSpecies | null; onDone: () 
 
 /**
  * Settings > 리븐펫 > 내가 만든 종: the keeper's own species, and the way to
- * make one. "알 받기" on one is the same new egg as the nest's own button, of
+ * make one. "펫 받기" on one is the same new pet as the nest's own button, of
  * that species (PetNestSettings runs it and says what happened).
  */
 export default function PetSpeciesSettings({
   full,
   onRaise
 }: {
-  /** The nest has no room for another egg. */
+  /** The nest has no room for another pet. */
   full: boolean
   onRaise: (s: CustomSpecies) => Promise<string | null>
 }): JSX.Element {
@@ -703,7 +700,7 @@ export default function PetSpeciesSettings({
   const loaded = useCustomSpecies((s) => s.loaded)
   // null: the list; 'new': making one; otherwise the one being edited.
   const [making, setMaking] = useState<'new' | CustomSpecies | null>(null)
-  // What the last "알 받기" press did, said under the list.
+  // What the last "펫 받기" press did, said under the list.
   const [raised, setRaised] = useState<string | null>(null)
   useEffect(() => void load(), [load])
   const raise = (s: CustomSpecies): void => void onRaise(s).then(setRaised)
@@ -717,14 +714,14 @@ export default function PetSpeciesSettings({
       {own.length === 0 && <div className="set-note">{t('pet.maker.empty')}</div>}
       {own.map((s) => (
         <div key={s.id} className="set-row pm-item">
-          <Preview id={s.id} stage="adult" form="sturdy" />
+          <Preview id={s.id} />
           <div className="set-rowinfo">
             <span className="set-rowtitle">{s.name}</span>
             <span className="set-rowdesc">{t(`pet.maker.family.${familyOfDesign(s)}`)}</span>
           </div>
           <div className="set-rowctl">
             <Button disabled={full} onClick={() => raise(s)}>
-              <Egg size={14} /> {t('pet.nest.adopt')}
+              <PawPrint size={14} /> {t('pet.nest.adopt')}
             </Button>
             <Button variant="ghost" title={t('pet.maker.edit')} aria-label={t('pet.maker.edit')} onClick={() => setMaking(s)}>
               <Pencil size={14} />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Egg, Pencil, RotateCcw, Undo2 } from 'lucide-react'
+import { PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
 import { useT } from '../i18n'
 import { onNest, requestPet } from '../lib/petCommand'
 import {
@@ -48,7 +48,7 @@ export default function PetNestSettings(): JSX.Element {
   const shown = useSettings((s) => s.settings.petShow)
   const [nest, setNest] = useState<NestBrief | null>(null)
   const [note, setNote] = useState<string | null>(null)
-  const [eggPick, setEggPick] = useState<string>('')
+  const [pick, setPick] = useState<string>('')
   const own = useCustomSpecies((s) => s.own)
 
   const take = useCallback((b: NestBrief | null) => {
@@ -68,7 +68,7 @@ export default function PetNestSettings(): JSX.Element {
       take(b)
     })
     void readNest().then((n) => {
-      if (!live.current) take(briefOf(n, Date.now()))
+      if (!live.current) take(briefOf(n))
     })
     if (shown) void requestPet(null).then((a) => a.nest && take(a.nest))
     return off
@@ -96,7 +96,7 @@ export default function PetNestSettings(): JSX.Element {
     const n = await readNest()
     const { nest: next, result } = applyCommand(n, cmd, Date.now())
     if (next !== n) await window.api.config.save(FILE, next)
-    take(briefOf(next, Date.now()))
+    take(briefOf(next))
     say(result)
     return result
   }
@@ -127,7 +127,7 @@ export default function PetNestSettings(): JSX.Element {
       {nest?.pets.map((p, i) => (
         <div key={`${p.bornAt}-${i}`} className="set-row pm-item pet-nest-item">
           <div className="pm-pet">
-            <Creature stage={p.stage} form={p.form} species={p.species} mood="ok" chewing={false} branch={p.branch} />
+            <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
           </div>
           <div className="set-rowinfo">
             <span className="set-rowtitle">{petTitle(p, t)}</span>
@@ -157,12 +157,12 @@ export default function PetNestSettings(): JSX.Element {
       ))}
       <div className="set-row">
         <div className="set-rowinfo">
-          <span className="set-rowtitle">{t('pet.nest.newEgg')}</span>
+          <span className="set-rowtitle">{t('pet.nest.newPet')}</span>
           {full && <span className="set-rowdesc">{t('pet.nest.full', { max: MAX_PETS })}</span>}
         </div>
         <div className="set-rowctl">
           {own.length > 0 && (
-            <Select aria-label={t('pet.nest.species')} value={eggPick} onChange={(e) => setEggPick(e.target.value)}>
+            <Select aria-label={t('pet.nest.species')} value={pick} onChange={(e) => setPick(e.target.value)}>
               <option value="">{t('pet.nest.random')}</option>
               {own.map((o) => (
                 <option key={o.id} value={o.id}>
@@ -174,9 +174,9 @@ export default function PetNestSettings(): JSX.Element {
           <Button
             variant="primary"
             disabled={full}
-            onClick={() => void adopt(hatchOf(own.find((o) => o.id === eggPick)))}
+            onClick={() => void adopt(hatchOf(own.find((o) => o.id === pick)))}
           >
-            <Egg size={14} /> {t('pet.nest.adopt')}
+            <PawPrint size={14} /> {t('pet.nest.adopt')}
           </Button>
         </div>
       </div>

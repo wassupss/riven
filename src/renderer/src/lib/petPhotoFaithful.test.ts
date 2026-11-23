@@ -35,9 +35,9 @@ import {
   type CustomSpeciesId,
   type PhotoArt
 } from '../state/petSpecies'
-import { PHOTO_DOT, customBodies, photoGrid, scalePhoto } from '../components/petCustomArt'
+import { PHOTO_DOT, customBody, photoGrid } from '../components/petCustomArt'
 import { PALETTE, SPRITE_SIZE, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf } from '../components/petSprites'
-import { FORMS, PRIZES, type Stage } from '../state/pet'
+import { PRIZES } from '../state/pet'
 
 // "사진 충실 모드": a photo species drawn as its own 32x32 picture.
 
@@ -302,68 +302,50 @@ describe('a faithful design, drawn', () => {
   }
   const id = (k: string): CustomSpeciesId => `u-faith${k.toLowerCase()}` as CustomSpeciesId
   beforeAll(() => Object.entries(designs).forEach(([k, d]) => noteDesign(id(k), d)))
-  const STAGES: Stage[] = ['hatchling', 'child', 'teen', 'adult']
   const allowed = PALETTE + PHOTO_DOT
 
-  it.each(Object.keys(designs))('%s: every stage and form inside the grid, with no face', (k) => {
-    for (const stage of STAGES)
-      for (const form of stage === 'adult' ? FORMS : (['base'] as const)) {
-        const dots = pixelsOf(stage, form, 'happy', id(k))
-        expect(dots.length).toBeGreaterThan(20)
-        for (const d of dots) {
-          expect(d.x >= 0 && d.y >= 0 && d.x < SPRITE_SIZE && d.y < SPRITE_SIZE).toBe(true)
-          expect(allowed.includes(d.ch)).toBe(true)
-          // No eyes, no mouth: the picture is its face.
-          expect(d.ch === 'e' || d.ch === 'm').toBe(false)
-        }
+  it.each(Object.keys(designs))('%s: drawn inside the grid in every mood, with no face', (k) => {
+    for (const mood of ['happy', 'ok', 'sad'] as const) {
+      const dots = pixelsOf(mood, id(k))
+      expect(dots.length).toBeGreaterThan(20)
+      for (const d of dots) {
+        expect(d.x >= 0 && d.y >= 0 && d.x < SPRITE_SIZE && d.y < SPRITE_SIZE).toBe(true)
+        expect(allowed.includes(d.ch)).toBe(true)
+        // No eyes, no mouth: the picture is its face.
+        expect(d.ch === 'e' || d.ch === 'm').toBe(false)
       }
+    }
   })
 
-  it.each(Object.keys(designs))('%s: the grown-up is the picture itself, dot for dot', (k) => {
+  it.each(Object.keys(designs))('%s: the pet is the picture itself, dot for dot', (k) => {
     const d = designs[k]
-    const dots = pixelsOf('adult', 'base', 'ok', id(k))
+    const dots = pixelsOf('ok', id(k))
     const at = new Map(dots.map((p) => [`${p.x},${p.y}`, p.ch]))
     d.photo!.rows.forEach((row, y) =>
       [...row].forEach((ch, x) => {
         if (ch !== '.') expect(at.get(`${x},${y}`)).toBe(PHOTO_DOT[PHOTO_CHARS.indexOf(ch)])
       })
     )
-    // And outlined.
+    // And outlined, in one piece.
     expect(dots.some((p) => p.ch === 'o')).toBe(true)
+    expect(parts(photoGrid(d).map((r) => r.replace(/o/g, '.')))).toBe(1)
   })
 
-  it.each(Object.keys(designs))('%s: it grows (hatchling < child < teen <= adult), the hatchling in its shell', (k) => {
-    const d = designs[k]
-    const size = (s: Stage): number => photoGrid(d, s as 'adult').join('').replace(/[.ow]/g, '').length
-    expect(size('hatchling')).toBeLessThan(size('child'))
-    expect(size('child')).toBeLessThan(size('teen'))
-    expect(size('teen')).toBeLessThanOrEqual(size('adult'))
-    expect(photoGrid(d, 'hatchling').join('')).toContain('w')
-    // Every size is one piece.
-    for (const s of STAGES) expect(parts(photoGrid(d, s as 'adult').map((r) => r.replace(/[ow]/g, '.')))).toBe(1)
-  })
-
-  it('caches each stage: drawing a frame does no work', () => {
+  it('caches the picture: drawing a frame does no work', () => {
     const d = designs.cat
-    expect(photoGrid(d, 'child')).toBe(photoGrid(d, 'child'))
-    expect(customBodies(d)).toBe(customBodies(d))
+    expect(photoGrid(d)).toBe(photoGrid(d))
+    expect(customBody(d)).toBe(customBody(d))
   })
 
-  it('a smaller picture keeps the colours it had', () => {
-    const p = designs.twoTone.photo!
-    const half = scalePhoto(p, 0.5)
-    const used = new Set(half.flat().filter((c) => c !== '.'))
-    for (const ch of used) expect(PHOTO_CHARS.slice(0, p.palette.length)).toContain(ch)
-    expect(used.size).toBeGreaterThan(1)
-  })
-
-  it.each(Object.keys(designs))('%s: the grown-up can wear every prize', (k) => {
+  it.each(Object.keys(designs))('%s: can wear every prize, and shows its decorations', (k) => {
     for (const prize of PRIZES) {
-      const { back, front } = outfitPixels('adult', 'base', id(k), [prize.id])
+      const { back, front } = outfitPixels(id(k), [prize.id])
       for (const d of [...back, ...front]) expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
     }
     const hat = PRIZES.find((p) => p.slot === 'head')!
-    expect(outfitPixels('adult', 'base', id(k), [hat.id]).front.length).toBeGreaterThan(0)
+    expect(outfitPixels(id(k), [hat.id]).front.length).toBeGreaterThan(0)
+    const decor = outfitPixels(id(k), [], 50)
+    expect(decor.back.length + decor.front.length).toBeGreaterThan(0)
   })
 })
 
@@ -513,35 +495,26 @@ describe('a faithful picture at 32, 48 and 64', () => {
   describe('drawn', () => {
     const id = (n: number): CustomSpeciesId => `u-res${n}` as CustomSpeciesId
     beforeAll(() => PHOTO_SIZES.forEach((n) => noteDesign(id(n), made[n])))
-    const STAGES: Stage[] = ['hatchling', 'child', 'teen', 'adult']
-
-    it.each(PHOTO_SIZES)('%i: every stage and form, the picture on its grid and the marks on the 32 one', (n) => {
-      for (const stage of STAGES)
-        for (const form of stage === 'adult' ? FORMS : (['base'] as const)) {
-          const drawn = photoDrawing(stage, form, id(n), stage === 'adult' ? 'omega' : null)!
-          expect(drawn.size).toBe(n)
-          expect(drawn.picture.length).toBeGreaterThan(20)
-          for (const d of drawn.picture) {
-            expect(d.x >= 0 && d.y >= 0 && d.x < n && d.y < n).toBe(true)
-            expect((PHOTO_DOT + 'ow').includes(d.ch)).toBe(true)
-          }
-          // What the rest of the pet reads is on the 32 grid, faceless.
-          const dots = pixelsOf(stage, form, 'happy', id(n))
-          for (const d of dots) {
-            expect(d.x >= 0 && d.y >= 0 && d.x < SPRITE_SIZE && d.y < SPRITE_SIZE).toBe(true)
-            expect((PALETTE + PHOTO_DOT).includes(d.ch)).toBe(true)
-            expect(d.ch === 'e' || d.ch === 'm').toBe(false)
-          }
-          // A mark never sits on the picture.
-          const k = n / SPRITE_SIZE
-          const under = new Set(drawn.picture.map((d) => `${Math.floor(d.x / k)},${Math.floor(d.y / k)}`))
-          for (const m of drawn.marks) expect(under.has(`${m.x},${m.y}`)).toBe(false)
-        }
+    it.each(PHOTO_SIZES)('%i: the picture on its grid, and what the rest reads on the 32 one', (n) => {
+      const drawn = photoDrawing(id(n))!
+      expect(drawn.size).toBe(n)
+      expect(drawn.picture.length).toBeGreaterThan(20)
+      for (const d of drawn.picture) {
+        expect(d.x >= 0 && d.y >= 0 && d.x < n && d.y < n).toBe(true)
+        expect((PHOTO_DOT + 'o').includes(d.ch)).toBe(true)
+      }
+      // What the rest of the pet reads is on the 32 grid, faceless.
+      for (const d of pixelsOf('happy', id(n))) {
+        expect(d.x >= 0 && d.y >= 0 && d.x < SPRITE_SIZE && d.y < SPRITE_SIZE).toBe(true)
+        expect((PALETTE + PHOTO_DOT).includes(d.ch)).toBe(true)
+        expect(d.ch === 'e' || d.ch === 'm').toBe(false)
+      }
+      expect(photoGrid(made[n])).toHaveLength(n)
     })
 
-    it.each(PHOTO_SIZES)('%i: the grown-up is the picture itself, dot for dot, outlined', (n) => {
+    it.each(PHOTO_SIZES)('%i: the pet is the picture itself, dot for dot, outlined', (n) => {
       const p = made[n].photo!
-      const drawn = photoDrawing('adult', 'base', id(n))!
+      const drawn = photoDrawing(id(n))!
       const at = new Map(drawn.picture.map((d) => [`${d.x},${d.y}`, d.ch]))
       p.rows.forEach((row, y) =>
         [...row].forEach((ch, x) => {
@@ -551,52 +524,37 @@ describe('a faithful picture at 32, 48 and 64', () => {
       expect(drawn.picture.filter((d) => d.ch === 'o').length).toBeGreaterThan(n)
     })
 
-    it.each(PHOTO_SIZES)('%i: it grows, the hatchling in its shell, every size one piece', (n) => {
-      const d = made[n]
-      const size = (s: Stage): number => photoGrid(d, s as 'adult').join('').replace(/[.ow]/g, '').length
-      expect(size('hatchling')).toBeLessThan(size('child'))
-      expect(size('child')).toBeLessThan(size('teen'))
-      expect(size('teen')).toBeLessThanOrEqual(size('adult'))
-      for (const s of STAGES) {
-        const g = photoGrid(d, s as 'adult')
-        expect(g).toHaveLength(n)
-        expect(parts(g.map((r) => r.replace(/[ow]/g, '.')))).toBe(1)
-      }
-      expect(photoGrid(d, 'hatchling').join('')).toContain('w')
-    })
-
-    it.each(PHOTO_SIZES)('%i: titan is wider and wraith thinner, by about the same css pixels', (n) => {
-      const span = (form: (typeof FORMS)[number]): number => {
-        const xs = photoDrawing('adult', form, id(n))!.picture.map((d) => d.x)
-        return (Math.max(...xs) - Math.min(...xs) + 1) / (n / SPRITE_SIZE)
-      }
-      const count = (form: (typeof FORMS)[number]): number => photoDrawing('adult', form, id(n))!.picture.length
-      expect(span('titan')).toBeGreaterThan(span('base') + 2)
-      expect(count('wraith')).toBeLessThan(count('base'))
-    })
-
     it.each(PHOTO_SIZES)('%i: drawn as whole-dot paths, no fractional coordinates', (n) => {
-      for (const stage of STAGES) {
-        const drawn = photoDrawing(stage, 'base', id(n))!
-        const paths = runPaths(runsOf(drawn.picture))
-        expect(paths.length).toBeLessThanOrEqual(18)
-        for (const { d } of paths) {
-          expect(d).not.toMatch(/\./)
-          for (const v of d.match(/-?\d+/g)!.map(Number)) expect(Math.abs(v)).toBeLessThanOrEqual(n)
-        }
+      const paths = runPaths(runsOf(photoDrawing(id(n))!.picture))
+      expect(paths.length).toBeLessThanOrEqual(18)
+      for (const { d } of paths) {
+        expect(d).not.toMatch(/\./)
+        for (const v of d.match(/-?\d+/g)!.map(Number)) expect(Math.abs(v)).toBeLessThanOrEqual(n)
       }
     })
 
-    it.each(PHOTO_SIZES)('%i: cached per stage, and wears every prize', (n) => {
+    it.each(PHOTO_SIZES)('%i: cached, wears every prize, and its decorations never cover the picture', (n) => {
       const d = made[n]
-      expect(photoGrid(d, 'teen')).toBe(photoGrid(d, 'teen'))
-      expect(customBodies(d)).toBe(customBodies(d))
+      expect(photoGrid(d)).toBe(photoGrid(d))
+      expect(customBody(d)).toBe(customBody(d))
       for (const prize of PRIZES) {
-        const { back, front } = outfitPixels('adult', 'base', id(n), [prize.id])
+        const { back, front } = outfitPixels(id(n), [prize.id])
         for (const p of [...back, ...front]) expect(p.x >= 0 && p.x < SPRITE_SIZE && p.y >= 0 && p.y < SPRITE_SIZE).toBe(true)
       }
       const hat = PRIZES.find((p) => p.slot === 'head')!
-      expect(outfitPixels('adult', 'base', id(n), [hat.id]).front.length).toBeGreaterThan(0)
+      expect(outfitPixels(id(n), [hat.id]).front.length).toBeGreaterThan(0)
+      const k = n / SPRITE_SIZE
+      const under = new Set(photoDrawing(id(n))!.picture.map((p) => `${Math.floor(p.x / k)},${Math.floor(p.y / k)}`))
+      const at = (level: number): ReturnType<typeof outfitPixels> => outfitPixels(id(n), [], level)
+      for (const level of [10, 20, 30, 40, 50]) {
+        const { back, front } = at(level)
+        expect(back.length + front.length, `Lv${level}`).toBeGreaterThan(0)
+      }
+      // The ribbon is tied round it (on the picture, as a scarf is); the badge,
+      // the halo, the sparkles and the glow only ever take the air around it.
+      const halo = at(40).front.filter((m) => !at(30).front.some((o) => o.x === m.x && o.y === m.y))
+      for (const m of [...at(10).front, ...halo, ...at(50).back])
+        expect(under.has(`${m.x},${m.y}`), `at ${m.x},${m.y}`).toBe(false)
     })
   })
 })

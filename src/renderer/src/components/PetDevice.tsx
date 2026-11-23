@@ -5,28 +5,19 @@ import { isPageHidden } from '../lib/windowVisibility'
 import '../styles/pet.css'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
-  Award,
   BarChart3,
   BookOpen,
-  ChevronLeft,
-  ChevronRight,
-  CornerDownLeft,
   ExternalLink,
   EyeOff,
   Clock,
   Coffee,
-  GitBranch,
   Heart,
   ListTree,
   MessageCircle,
   PawPrint,
-  Pill,
   Pin,
-  Smile,
   Swords,
-  Trash2,
   Trophy,
-  Utensils,
   X
 } from 'lucide-react'
 import { useT, type TFn } from '../i18n'
@@ -40,68 +31,34 @@ import { useSettings } from '../state/settings'
 import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
-import {
-  CROSS,
-  MIMES,
-  POOP,
-  ZZZ,
-  outfitPixels,
-  photoDrawing,
-  pixelsOf,
-  runPaths,
-  runsOf,
-  SPRITE_SIZE,
-  type Run
-} from './petSprites'
+import { MIMES, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf, SPRITE_SIZE, type Run } from './petSprites'
 import {
   awardsOf,
-  discoveredBranches,
   dietOf,
   briefOf,
   foodTokens,
   foodTotals,
   feedFrame,
-  growthOf,
-  isNight,
-  moodOf,
+  progressOf,
   wantsBreak,
   workStreakMs,
   BREAK_MIN_MS,
   BREAK_MS,
   BREAK_NAG_EVERY_MS,
-  STAGE_XP,
   outfitOf,
   prizesOf,
   usePet,
-  HUNGRY_AT,
-  KIBBLE_TOKENS,
   MAX_PETS,
-  MAX_POOPS,
   PRIZES,
-  BRANCH_BY_ID,
-  LINES,
-  TIER_LEVELS,
   type Accessory,
-  type BranchId,
-  type Form,
   type Mood,
   speciesName,
-  type Species,
-  type Stage
+  type Species
 } from '../state/pet'
+import { STATS, XP_TOKENS, decorationsOf, nextDecoration, statsOf, topStat } from '../state/petLevel'
 import { customOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
 import { PHOTO_DOT } from './petCustomArt'
-import {
-  cardOf,
-  decodeCard,
-  encodeCard,
-  fight,
-  isUpset,
-  moodOfCard,
-  noteCard,
-  type BattleCard,
-  type Bout
-} from '../state/petBattle'
+import { cardOf, encodeCard, fight, isUpset, noteCard, readCode, type BattleCard, type Bout } from '../state/petBattle'
 
 // ---------------------------------------------------------------------------
 // 리븐펫: a virtual pet that floats over the workbench, or lives in its own
@@ -109,18 +66,18 @@ import {
 // decides whether that window floats above other apps).
 //
 // Deliberately NOT a dock panel: a pet you have to open a tab for is a pet you
-// forget to feed. It is just the creature on a transparent background: click to
+// forget about. It is just the creature on a transparent background: click to
 // pat it, right-click for its menu, and every screen opens in a card beside it.
 // The keyboard shortcuts press three keys (A walks the menu, B runs it, C backs
 // out), so it can be worked without a pointer too.
 //
-// The economy lives in state/pet.ts (pure + unit-tested) and the art in
-// petSprites.ts. This file is the pet on screen: wiring, dragging, the screens.
+// The levels live in state/pet.ts and state/petLevel.ts (pure + unit-tested)
+// and the art in petSprites.ts. This file is the pet on screen: wiring,
+// dragging, the screens.
 //
-// Feeding reads the per-account `usage.today` through foodTotals, driven
-// by the shared usage poll — chewing is triggered by an actual feed, so it works
-// the same in both windows. Nothing animates while nobody is looking; hunger is
-// charged on waking, because decay() replays the elapsed time in one step.
+// XP comes from the per-account `usage.today` through foodTotals, driven by the
+// shared usage poll; the little chew it does is triggered by an actual gain, so
+// it works the same in both windows. Nothing animates while nobody is looking.
 // ---------------------------------------------------------------------------
 
 const TICK_MS = 15_000
@@ -135,7 +92,6 @@ type ScreenMode =
   | 'graph'
   | 'awards'
   | 'album'
-  | 'dex'
   | 'manage'
   | 'talk'
   | 'battle'
@@ -160,7 +116,7 @@ interface Finished {
 const RECENT_KEEP = 8
 // One announcement at a time, and never the same turn twice.
 const NOTICE_MS = 4000
-// An answer is a sentence, not a mood — give it time to be read.
+// An answer is a sentence, not a mood, give it time to be read.
 const ANSWER_MS = 7000
 /** How long the line it says on opening the menu stays up. */
 const MENU_HI_MS = 4000
@@ -171,6 +127,8 @@ const MENU_W = 172
 // How long the screen announces the icon you just moved to before going back to
 // showing the pet's name.
 const PICK_MS = 1600
+// How long a pat (or a level up) keeps it smiling.
+const HAPPY_MS = 4000
 // On a break the pet suggests something to do with it, a new one this often.
 const TIP_MS = 60_000
 const TIP_COUNT = 5
@@ -190,15 +148,6 @@ function mimeOf(tool: string): string | null {
   return null
 }
 
-// Korean marks the subject with 이 after a final consonant and 가 otherwise —
-// "아이가 됐다", "청소년이 됐다". Left alone for anything that isn't Hangul, so
-// the English strings pass through untouched.
-const subject = (word: string): string => {
-  const code = word.charCodeAt(word.length - 1)
-  if (Number.isNaN(code) || code < 0xac00 || code > 0xd7a3) return word
-  return word + ((code - 0xac00) % 28 === 0 ? '가' : '이')
-}
-
 const dur = (t: TFn, ms: number): string => {
   const total = Math.floor(Math.max(0, ms) / 60_000)
   if (total < 1) return t('pet.dur.now')
@@ -210,7 +159,7 @@ const dur = (t: TFn, ms: number): string => {
   return t('pet.dur.m', { n: total })
 }
 
-// A glyph grid → <rect> dots, for the small props (droppings, medicine, arrows).
+// A glyph grid to <rect> dots, for the small props (what the watched pane is doing).
 function Glyph({ rows, className }: { rows: string[]; className?: string }): JSX.Element {
   const w = rows[0].length
   return (
@@ -255,59 +204,51 @@ export function customVars(d: CustomDesign): CSSProperties {
 
 // The creature itself: one <rect> per lit dot, no anti-aliasing.
 export function Creature({
-  stage,
-  form,
   species,
   mood,
   chewing,
   flavor,
-  evolving,
+  cheer,
   level = 0,
-  outfit: wearing,
-  branch,
-  whiteout
+  outfit: wearing
 }: {
-  stage: Stage
-  form: Form
   species: Species
   mood: Mood
   chewing: boolean
   flavor?: string
-  evolving?: boolean
-  /** Its level, for the keepsakes it has earned by it. */
+  /** A level up: it hops and a ring of dots bursts round it. */
+  cheer?: boolean
+  /** Its level, for the decorations it has earned by it (decorationsOf). */
   level?: number
-  /** What it actually has on, prizes included; defaults to its level keepsakes. */
+  /** What it has on (outfitOf). */
   outfit?: Accessory[]
-  /** The way it grew up, which marks the adult it became. */
-  branch?: BranchId | null
-  /** A branch evolution: its shape goes dark and flickers before it shows. */
-  whiteout?: boolean
 }): JSX.Element {
   // A species made from a photo: its design, which can change under the same
   // id (edited in settings), so the memos below are keyed on it too.
   useCustomSpecies((s) => s.rev)
   const design = isCustomId(species) ? customOf(species) : null
   // A faithful picture is drawn on its own grid (32, 48 or 64 dots across
-  // the same 32 css pixels); only its marks go on the shared 32 grid below.
+  // the same 32 css pixels), not as dots on the shared 32 grid below.
   const photo = useMemo(
-    () => (design?.photo ? photoDrawing(stage, form, species, branch) : null),
+    () => (design?.photo ? photoDrawing(species) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stage, form, species, branch, design]
+    [species, design]
   )
   // Same-coloured neighbours in a row share one rect: the drawn grid is four
   // times the dots, and this keeps the rect count near what it was.
   const runs = useMemo(
-    () => runsOf(photo ? photo.marks : pixelsOf(stage, form, mood, species, branch)),
+    () => (photo ? [] : runsOf(pixelsOf(mood, species))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stage, form, mood, species, branch, design, photo]
+    [mood, species, design, photo]
   )
-  const br = branch ? BRANCH_BY_ID.get(branch) : undefined
   const wearingKey = wearing?.join(',')
+  // Decorations change only every ten levels: key the layout on those, not the level.
+  const decorKey = decorationsOf(level).join(',')
   const outfit = useMemo(() => {
-    const { back, front } = outfitPixels(stage, form, species, wearing ?? [])
+    const { back, front } = outfitPixels(species, wearing ?? [], level)
     return { back: runsOf(back), front: runsOf(front) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, form, species, level, wearingKey, design])
+  }, [species, decorKey, wearingKey, design])
   // Every animation here runs on an HTML box, never on something inside an
   // <svg>: animating the insides of an svg kept WebKit's GPU process at ~130MB
   // for as long as the pet was on screen (~11MB this way, measured). So the
@@ -337,7 +278,7 @@ export function Creature({
   // to the 32 of the plate: every coordinate stays a whole dot of its grid
   // (no 0.5 or 0.667 in the paths), and neighbouring colours share exact
   // edges, so there are no seams between them. At 64 a dot is half a css
-  // pixel, one device pixel on a Retina screen. Made once per stage and form.
+  // pixel, one device pixel on a Retina screen. Made once per design.
   const picture = useMemo(
     () =>
       photo ? (
@@ -396,18 +337,16 @@ export function Creature({
       </div>
     ) : null
   // A faithful picture has no face, so its mood is in how it moves (pet.css,
-  // .pet-pm). Not while something else is moving it: an egg rocks, a wraith
-  // floats, growing up hops and flickers.
-  const moves = !!design?.photo && stage !== 'egg' && form !== 'wraith' && !evolving && !whiteout
+  // .pet-pm). Not while a level up is moving it.
+  const moves = !!design?.photo && !cheer
   return (
     <div
-      className={`pet-lcd pet-s-${stage} pet-f-${form} pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${evolving ? ' evolving' : ''}${br ? ` pet-br-${br.line ?? br.id} pet-t-${br.tier}` : ''}${whiteout ? ' whiteout' : ''}${design?.photo ? ' pet-photo' : ''}${moves ? ' pet-pm' : ''}`}
+      className={`pet-lcd pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${cheer ? ' cheer' : ''}${design?.photo ? ' pet-photo' : ''}${moves ? ' pet-pm' : ''}`}
       style={design ? customVars(design) : undefined}
       aria-hidden="true"
     >
       <div className={`pet-sprite${chewing ? ' chew' : ''}`}>
-        {/* What it has earned since growing up: its shine behind it, left to
-            twinkle, and the rest on top of it. */}
+        {/* Its shine and glow behind it, left to twinkle, and the rest on top of it. */}
         {layers.auraStill.length > 0 && plate(dots(layers.auraStill))}
         {twinkle(dots(layers.auraLitA))}
         {twinkle(dots(layers.auraLitB), true)}
@@ -423,8 +362,8 @@ export function Creature({
           ])}
         </div>
       )}
-      {/* Growing up: a ring of dots bursts outward for a moment. */}
-      {evolving && (
+      {/* A level up: a ring of dots bursts outward for a moment. */}
+      {cheer && (
         <div className="pet-burst">
           {twinkle(
             [
@@ -446,17 +385,18 @@ export function Creature({
   )
 }
 
-// A handheld-style segmented gauge: ten dots, lit left to right.
-function Gauge({ label, value, tone }: { label: string; value: number; tone: string }): JSX.Element {
-  const lit = Math.round(Math.min(100, Math.max(0, value)) / 10)
+// A handheld-style segmented gauge: ten dots, lit left to right, and the number.
+function Gauge({ label, value, max }: { label: string; value: number; max: number }): JSX.Element {
+  const lit = Math.round(Math.min(1, Math.max(0, value / Math.max(1, max))) * 10)
   return (
-    <div className="pet-gauge" title={`${label} ${Math.round(value)}%`}>
+    <div className="pet-gauge" title={`${label} ${value}`}>
       <span className="pet-gauge-label">{label}</span>
       <span className="pet-gauge-cells">
         {Array.from({ length: 10 }, (_, i) => (
-          <i key={i} className={`pet-cell tone-${tone}${i < lit ? ' on' : ''}`} />
+          <i key={i} className={`pet-cell${i < lit ? ' on' : ''}`} />
         ))}
       </span>
+      <b className="pet-gauge-num">{value}</b>
     </div>
   )
 }
@@ -507,9 +447,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const load = usePet((s) => s.load)
   const tick = usePet((s) => s.tick)
   const sample = usePet((s) => s.sample)
-  const patHead = usePet((s) => s.patHead)
-  const cleanUp = usePet((s) => s.cleanUp)
-  const giveMedicine = usePet((s) => s.giveMedicine)
   const takeBreak = usePet((s) => s.takeBreak)
   const pets = usePet((s) => s.pets)
   const active = usePet((s) => s.active)
@@ -538,22 +475,22 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [mode, setMode] = useState<ScreenMode>('char')
   // Settings > 리븐펫 looks after the pets too, from another window when the
   // pet lives in its own: it asks here (lib/petCommand), and this window answers
-  // with the nest as it is after the command. A new egg comes out at once.
+  // with the nest as it is after the command. A new pet comes out at once.
   useEffect(() => {
     if (!loaded) return
     return servePet((cmd) => {
       const result = cmd ? usePet.getState().apply(cmd) : 'ok'
       if (cmd?.op === 'adopt' && result === 'ok') setMode('char')
-      return { result, nest: briefOf(usePet.getState(), Date.now()) }
+      return { result, nest: briefOf(usePet.getState()) }
     })
   }, [loaded])
   // And tells everyone listening (a Settings list) whenever the nest changes:
-  // a pet out, a name, a stage. Compared as text, since the pets themselves
-  // change on every tick.
+  // a pet out, a name, a level. Compared as text, since the pets themselves
+  // change on every gain.
   const lastBrief = useRef('')
   useEffect(() => {
     if (!loaded) return
-    const brief = briefOf({ pets, active }, Date.now())
+    const brief = briefOf({ pets, active })
     const text = JSON.stringify(brief)
     if (text === lastBrief.current) return
     lastBrief.current = text
@@ -570,24 +507,22 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const [restNow, setRestNow] = useState(0)
   const lastNag = useRef(0)
   // The ask field stays open across answers. Answering sends the screen back to
-  // the pet — that is the point, you watch it answer — and closing the field with
+  // the pet, that is the point, you watch it answer, and closing the field with
   // it meant every follow-up question needed the menu again.
   const [talking, setTalking] = useState(false)
   // The screen's top line: the name of whatever is under the pointer. A label,
   // not a voice.
   const [flash, setFlash] = useState<string | null>(null)
-  // What the pet is actually saying — answers, and news from the workspaces.
+  // What the pet is actually saying, answers, and news from the workspaces.
   const [speech, setSpeech] = useState<string | null>(null)
-  // Re-rendered on the tick, so the pet nods off and wakes up on the hour
-  // without a timer of its own.
+  // Re-rendered on the tick, so the clock, the break and the plan limit stay
+  // current without a timer of their own.
   const [nowTick, setNowTick] = useState(() => Date.now())
-  const justEvolved = usePet((s) => s.justEvolved)
-  const ackEvolution = usePet((s) => s.ackEvolution)
   const justLeveled = usePet((s) => s.justLeveled)
   const ackLevel = usePet((s) => s.ackLevel)
-  const [evolving, setEvolving] = useState(false)
-  const [whiteout, setWhiteout] = useState(false)
-  const [dexHint, setDexHint] = useState<string | null>(null)
+  // A level up being celebrated, and a pat being enjoyed: both make it smile.
+  const [cheer, setCheer] = useState(false)
+  const [patted, setPatted] = useState(false)
   // A friend battle: the fight, how far through it the playback is, and once it
   // is over, how it went and whether it went on the record (once a day a friend).
   const [duel, setDuel] = useState<Duel | null>(null)
@@ -658,10 +593,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // The three keys, reachable from riven's keyboard shortcuts. The press is
   // relayed through main, so it works whether the device is in the app window or
-  // out on the desktop — and the pet window answers its own keys when focused.
+  // out on the desktop, and the pet window answers its own keys when focused.
   // The handlers are declared far below, past an early return, so the listener
   // reaches them through a ref: a hook may NOT sit on the far side of a `return`
-  // (React counts hooks per render — the in-app device crashed on being hidden).
+  // (React counts hooks per render, the in-app device crashed on being hidden).
   const keysRef = useRef<Record<'a' | 'b' | 'c', () => void>>({
     a: NOOP,
     b: NOOP,
@@ -670,7 +605,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   useEffect(() => {
     const off = window.api.pet.onPress((k) => keysRef.current[k]?.())
     // riven's window owns the keymap; this window has none, so when the floating
-    // pet itself has focus it matches the same chords directly — from the same
+    // pet itself has focus it matches the same chords directly, from the same
     // overrides file, or a rebind would work in one window and not the other.
     let chords: Record<string, 'a' | 'b' | 'c'> = {}
     if (detached) void petKeyChords().then((c) => (chords = c))
@@ -709,7 +644,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
     compute()
     // The floating window is deliberately never focused (showInactive), so for it
-    // "awake" is just "is this window visible" — otherwise the desk pet would sit
+    // "awake" is just "is this window visible", otherwise the desk pet would sit
     // frozen forever while you work in another app, which is exactly when you
     // want to see it.
     const computeDetached = (): void => {
@@ -729,8 +664,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
   }, [detached])
 
-  // Hunger/mood only need recomputing while someone is looking: decay() charges
-  // for the whole gap in one call when the window comes back.
+  // The clock and the seasonal events only need a look while someone is looking.
   useEffect(() => {
     if (!awake || !loaded) return
     tick()
@@ -742,45 +676,20 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     return () => clearInterval(id)
   }, [awake, loaded, tick])
 
-  // Growing up is the one moment worth interrupting for.
-  useEffect(() => {
-    if (!justEvolved) return
-    ackEvolution()
-    // The egg it was born as is bookkeeping, not an event.
-    if (justEvolved.stage === 'egg') return
-    setEvolving(true)
-    // A branch is the bigger moment: the shape goes dark and flickers first,
-    // and the name comes with the reveal rather than before it.
-    const branch = justEvolved.branch
-    if (!branch) {
-      setFlash(t('pet.evolved', { stage: subject(t(`pet.stage.${justEvolved.stage}`)) }))
-      later(() => setEvolving(false), 2600)
-      later(() => setFlash(null), 2600)
-      return
-    }
-    setWhiteout(true)
-    setFlash('...')
-    later(() => setWhiteout(false), 1800)
-    later(() => setFlash(t('pet.evolvedBranch', { name: t(`pet.branch.${branch}`) })), 1800)
-    later(() => setEvolving(false), 3600)
-    later(() => setFlash(null), 4400)
-  }, [justEvolved, ackEvolution, later, t])
-
-  // A grown-up's level-up: the same burst, smaller words. Keepsakes come with
-  // awards now, and the prize effect below announces those.
+  // A level up: it hops, a ring of dots bursts round it, and it says so.
   useEffect(() => {
     if (!justLeveled) return
     ackLevel()
-    setEvolving(true)
+    setCheer(true)
     setFlash(t('pet.levelUp', { n: justLeveled }))
-    later(() => setEvolving(false), 2600)
+    later(() => setCheer(false), 2600)
     later(() => setFlash(null), 2600)
   }, [justLeveled, ackLevel, later, t])
 
   // A prize just unlocked (an award that comes with something to wear). The
   // first look at each pet only takes stock, so switching pets or loading the
   // save never announces what was already there.
-  const prizeKey = useMemo(() => prizesOf(pet, nowTick).join(','), [pet, nowTick])
+  const prizeKey = useMemo(() => prizesOf(pet).join(','), [pet])
   const seenPrizes = useRef<{ pet: number; ids: string } | null>(null)
   useEffect(() => {
     const seen = seenPrizes.current
@@ -793,28 +702,28 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     later(() => setFlash(null), 2600)
   }, [prizeKey, pet.bornAt, loaded, later, t])
 
-  // Feed from the usage totals. Ignored until the save is loaded, so the first
-  // sample can't feed a pet that is about to be replaced by the stored one.
+  // XP from the usage totals. Ignored until the save is loaded, so the first
+  // sample can't credit a pet that is about to be replaced by the stored one.
   useEffect(() => {
     if (!loaded) return
     // One counter per account AND model, so the pet's diet records which model
-    // actually paid for each meal (see foodTotals).
+    // actually paid for the work (see foodTotals).
     let totals = foodTotals(accounts)
     if (!Object.keys(totals).length && fallbackToday) totals = foodTotals([{ id: 'claude', today: fallbackToday }])
     if (Object.keys(totals).length) sample(totals)
   }, [loaded, accounts, fallbackToday, sample])
 
-  // Chew whenever a meal actually lands — true in both windows, unlike the chat
-  // stream (which only reaches the window that started the turn).
+  // A little chew whenever XP actually lands: true in both windows, unlike the
+  // chat stream (which only reaches the window that started the turn).
   const lastMeal = useRef(0)
   const mealOf = useRef(active)
   useEffect(() => {
     if (!pet.lastFedAt || pet.lastFedAt === lastMeal.current) return
-    // Picking another pet out of the nest shows ITS last meal, not a new one.
+    // Picking another pet out of the nest shows ITS last gain, not a new one.
     const first = lastMeal.current === 0 || mealOf.current !== active
     lastMeal.current = pet.lastFedAt
     mealOf.current = active
-    if (first) return // the meal that came out of the save file, not a fresh one
+    if (first) return // the gain that came out of the save file, not a fresh one
     setChewing(true)
     later(() => setChewing(false), CHEW_MS)
   }, [pet.lastFedAt, active, later])
@@ -825,7 +734,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // rules keep that from turning the pet into a strobe:
   //
   //  · a tool is mimed only when it comes from the pane you are actually looking
-  //    at — a mime needs one subject, and that is the one you can follow;
+  //    at, a mime needs one subject, and that is the one you can follow;
   //  · a turn ENDING is announced wherever it happened, because that is the bit
   //    you want while looking away. It is announced once, in words, naming the
   //    workspace, and only for panes you are not already watching.
@@ -866,15 +775,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   }, [detached, later, t])
 
   // The pet has no screen of its own, so anything that needs one (a menu
-  // screen, the game, a question) opens one in a card beside it; once that is
+  // screen, a battle, a question) opens one in a card beside it; once that is
   // done with, the card folds away and it is just the pet again.
   const peek = mode !== 'char' || !!resting || talking
 
   // ---- break time ----
   // Long enough at it and the pet asks you to step away, again every
-  // BREAK_NAG_EVERY_MS until you do. The streak lives in the save (see feed), so
+  // BREAK_NAG_EVERY_MS until you do. The streak lives in the save (see earn), so
   // both windows agree on it; this only decides when to say so.
-  const needBreak = loaded && !resting && pet.xp >= STAGE_XP[1] && wantsBreak(pet, nowTick, nagMs)
+  const needBreak = loaded && !resting && wantsBreak(pet, nowTick, nagMs)
   useEffect(() => {
     if (!needBreak || (!show && !detached)) return
     const now = Date.now()
@@ -938,14 +847,14 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     }
     send()
     // Measure again on the next frame as well: a change is measured the
-    // instant it renders, and the sprite//font work that follows can still move
-    // the bottom edge — folding back up left the window at the folded height
-    // with the case cut off.
+    // instant it renders, and the sprite and font work that follows can still
+    // move the bottom edge: folding back up left the window at the folded
+    // height with the case cut off.
     const frame = requestAnimationFrame(send)
     const ro = new ResizeObserver(send)
     ro.observe(el)
     // And whenever the window itself changes size. The device's own box does not
-    // change when the WINDOW does, so the observer above never fires for it —
+    // change when the WINDOW does, so the observer above never fires for it,
     // which left any window that ended up too small staying too small. Asking
     // for a height it already has is a no-op in main, so this cannot loop.
     window.addEventListener('resize', send)
@@ -1050,7 +959,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     const el = ref.current
     if (!el) return
     // Left/top rather than a transform, so the element's own box is where it
-    // looks — clamping and the next drag both measure the same rect.
+    // looks, clamping and the next drag both measure the same rect.
     el.style.left = `${x}px`
     el.style.top = `${y}px`
     el.style.right = 'auto'
@@ -1059,8 +968,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // Dragging listens on the WINDOW, not on the device.
   //
-  // With the listeners on the element, a release the element never saw — the
-  // pointer left it, capture was refused, the window lost focus — left the drag
+  // With the listeners on the element, a release the element never saw, the
+  // pointer left it, capture was refused, the window lost focus, left the drag
   // armed. After that the pet was still stuck to the pointer, so moving the
   // mouse anywhere near it made it flee. A drag now ends on the first of:
   // pointerup anywhere, pointercancel, the window blurring, or a move that
@@ -1106,7 +1015,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   const onPointerDown = (e: React.PointerEvent): void => {
     // Buttons and the text field act; everything else is a drag handle. (Detached,
-    // the OS drags the window for us — see -webkit-app-region in the stylesheet.)
+    // the OS drags the window for us, see -webkit-app-region in the stylesheet.)
     if (detached || e.button !== 0) return
     if ((e.target as HTMLElement).closest('button, input, form, .pet-menu, .pet-card')) return
     const el = ref.current
@@ -1146,61 +1055,46 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         .filter((b) => b.workspace),
     [live, wsNames]
   )
-  // The tightest plan window across the accounts — the one that will bite first.
+  // The tightest plan window across the accounts, the one that will bite first.
   const limit = useMemo(() => {
     const all = accounts.map(tightestLimit).filter((l): l is NonNullable<typeof l> => !!l)
     if (!all.length) return null
     return all.reduce((worst, l) => (l.usedPct > worst.usedPct ? l : worst))
   }, [accounts])
 
-  const growth = useMemo(() => growthOf(pet, Date.now()), [pet])
-  // Sleep is a property of the clock, not of the pet: the logic layer stays free
-  // of "what time is it" and the device decides (see isNight).
-  const sleeping = isNight(nowTick) && !pet.sick && growth.stage !== 'egg'
-  const mood: Mood = sleeping ? 'asleep' : moodOf(pet)
+  const growth = useMemo(() => progressOf(pet.xp), [pet.xp])
+  const mood: Mood = patted || cheer ? 'happy' : 'ok'
   const diet = useMemo(() => dietOf(pet), [pet])
-  const awards = useMemo(() => awardsOf(pet, nowTick), [pet, nowTick])
+  const stats = useMemo(
+    () => statsOf(growth.level, pet.species, pet.diet, customOf(pet.species) ?? pet.custom),
+    [growth.level, pet.species, pet.diet, pet.custom]
+  )
+  const awards = useMemo(() => awardsOf(pet), [pet])
   const outfit = useMemo(() => outfitOf(pet.worn), [pet.worn])
-  const found = useMemo(() => discoveredBranches(pets), [pets])
 
   if (!show && !detached) {
-    // Put away: a shortcut must not go on feeding and cleaning a pet that is not
-    // on screen, so the relayed presses land on nothing.
+    // Put away: a shortcut must not act on a pet that is not on screen, so the
+    // relayed presses land on nothing.
     keysRef.current = { a: NOOP, b: NOOP, c: NOOP }
     return null
   }
 
   // Unnamed: the screen shows what it is rather than the words "no name".
   const name = pet.name || null
-  // A branch is its name from then on; the form still shows beside it.
-  const stageName = growth.branch ? t(`pet.branch.${growth.branch.id}`) : t(`pet.stage.${growth.stage}`)
-  const stageLabel = growth.form === 'base' ? stageName : `${stageName} · ${t(`pet.form.${growth.form}`)}`
 
   // One short line, the most pressing thing first, in the balloon over the pet.
   const bubble =
     speech ??
-    (sleeping
-    ? t('pet.say.sleep')
-    : pet.sick
-      ? t('pet.say.sick')
-      : limit && limit.usedPct >= 90
-        ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
-        : needBreak
-          ? t('pet.say.break')
+    (limit && limit.usedPct >= 90
+      ? t('pet.say.limit', { left: Math.max(0, 100 - Math.round(limit.usedPct)) })
+      : needBreak
+        ? t('pet.say.break')
         : busy.length >= 4
           ? t('pet.say.swamped', { n: busy.length })
-          : chewing
-            ? t('pet.say.eat')
-            : pet.poops >= MAX_POOPS
-              ? t('pet.say.dirty')
-            : pet.fullness < HUNGRY_AT
-              ? t('pet.say.hungry')
-              : pet.mood < 45
-                ? t('pet.say.bored')
-                : null)
+          : null)
 
   const doRename = async (): Promise<void> => {
-    // In its own window the pet cannot focus itself (by design — see pet.ts), so
+    // In its own window the pet cannot focus itself (by design, see pet.ts), so
     // it borrows the keyboard for the prompt and gives it straight back.
     if (detached) await window.api.pet.focusable(true)
     try {
@@ -1219,15 +1113,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setSpeech(msg)
     later(() => setSpeech((v) => (v === msg ? null : v)), ms)
   }
-  /** What it says when the menu opens: what it needs first, else hello. */
-  const menuLine = (): string => {
-    if (growth.stage === 'egg') return t('pet.menuHi.egg')
-    if (sleeping) return t('pet.menuHi.sleep')
-    if (pet.sick) return t('pet.menuHi.sick')
-    if (pet.poops > 0) return t('pet.menuHi.dirty')
-    if (pet.fullness < HUNGRY_AT) return t('pet.menuHi.hungry')
-    return t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
-  }
+  /** What it says when the menu opens. */
+  const menuLine = (): string => t(`pet.menuHi.${Math.floor(Math.random() * MENU_HI_COUNT)}`)
   const startBreak = (): void => {
     const now = Date.now()
     leaveDuel()
@@ -1249,14 +1136,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   // No server: you send your code, your friend sends theirs, and each side
   // pastes the other's. The same two codes make the same fight on both machines.
   const copyCode = async (): Promise<void> => {
-    const mine = cardOf(pet, Date.now())
-    if (!mine) return speak(t('pet.say.egg'))
-    await window.api.pet.copy(encodeCard(mine))
+    await window.api.pet.copy(encodeCard(cardOf(pet)))
     say(t('pet.battle.copied'))
   }
   const pasteCode = async (): Promise<void> => {
-    const mine = cardOf(pet, Date.now())
-    if (!mine) return speak(t('pet.say.egg'))
+    const mine = cardOf(pet)
     // The pasted code needs a keyboard, which the floating pet borrows (see doRename).
     if (detached) await window.api.pet.focusable(true)
     let text: string | null
@@ -1266,8 +1150,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       if (detached) void window.api.pet.focusable(false)
     }
     if (!text?.trim()) return
-    const foe = decodeCard(text)
-    if (!foe) return speak(t('pet.battle.bad'))
+    const read = readCode(text)
+    if ('error' in read) return speak(t(read.error === 'newer' ? 'pet.battle.newer' : 'pet.battle.bad'))
+    const foe = read.card
     // A friend's animal made from a photo is drawn from the design in its code.
     noteCard(foe)
     // A friend's pet, never one of your own: a pet is known by its birthday.
@@ -1286,10 +1171,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   // ---- the functions ----
   //
-  // Everything the pet can do, as the right-click menu lists it (the first five
-  // as its row of care buttons). A care button lights by itself when the pet
-  // wants that thing (a mess to clear, medicine), so the row doubles as the
-  // alarm; `on` marks the screen you are looking at.
+  // Everything the pet can do, as the right-click menu lists it (the first
+  // CARE as its row of buttons). The break button lights by itself when it is
+  // time for one; `on` marks the screen you are looking at.
   interface Icon {
     id: string
     label: string
@@ -1303,9 +1187,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   const icons: Icon[] = [
     {
-      id: 'feed',
+      id: 'graph',
       label: t('pet.mode.graph'),
-      node: <Utensils size={11} />,
+      node: <BarChart3 size={11} />,
       on: mode === 'graph',
       run: () => openScreen('graph')
     },
@@ -1315,42 +1199,15 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       node: <Coffee size={11} />,
       alert: needBreak,
       on: !!resting,
-      run: () => {
-        if (resting) return endBreak()
-        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
-        startBreak()
-      }
-    },
-    {
-      id: 'clean',
-      label: t('pet.clean'),
-      node: <Trash2 size={11} />,
-      alert: pet.poops > 0,
-      run: () => {
-        if (pet.poops === 0) return speak(t('pet.say.alreadyClean'))
-        cleanUp()
-        speak(t('pet.cleaned'))
-      }
-    },
-    {
-      id: 'medicine',
-      label: t('pet.medicine'),
-      node: <Pill size={11} />,
-      alert: pet.sick,
-      run: () => {
-        if (!pet.sick) return speak(t('pet.say.notIll'))
-        giveMedicine()
-        speak(t('pet.cured'))
-      }
+      run: () => (resting ? endBreak() : startBreak())
     },
     {
       id: 'pet',
       label: t('pet.pet'),
       node: <Heart size={11} />,
       run: () => {
-        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
-        if (sleeping) return speak(t('pet.say.sleep'))
-        patHead()
+        setPatted(true)
+        later(() => setPatted(false), HAPPY_MS)
         speak(t('pet.patted'))
       }
     },
@@ -1376,21 +1233,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('album')
     },
     {
-      id: 'dex',
-      label: t('pet.mode.dex'),
-      node: <GitBranch size={11} />,
-      on: mode === 'dex',
-      run: () => openScreen('dex')
-    },
-    {
       id: 'battle',
       label: t('pet.mode.battle'),
       node: <Swords size={11} />,
       on: mode === 'battle',
-      run: () => {
-        if (growth.stage === 'egg') return speak(t('pet.say.egg'))
-        openScreen('battle')
-      }
+      run: () => openScreen('battle')
     },
     {
       id: 'clock',
@@ -1414,6 +1261,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       run: () => openScreen('manage')
     }
   ]
+  /** How many of the icons make the row of buttons at the top of the menu. */
+  const CARE = 3
 
   /** Open a screen. The ask field belongs to the talk screen and follows it. */
   const openScreen = (m: ScreenMode): void => {
@@ -1490,7 +1339,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const ask = (question: string): void => {
     const q = question.trim()
     if (!q) return
-    // It answers by SAYING it — the screen goes back to the pet and the balloon
+    // It answers by SAYING it, the screen goes back to the pet and the balloon
     // carries the reply. A transcript would just be a small chat window, and
     // there is a real one of those two panes away.
     const said = talkAnswer(q, {
@@ -1514,25 +1363,23 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     minute: '2-digit'
   })
 
-  // Seven calendar days, fed or not (see feedFrame): plotting only the days with
-  // a meal in them drew one fat bar for a new pet and put distant days next to
+  // Seven calendar days, worked or not (see feedFrame): plotting only the days
+  // with XP in them drew one fat bar for a new pet and put distant days next to
   // each other. The scale is printed, because a bar chart with no numbers on a
   // 160-pixel screen says nothing.
   const graph = feedFrame(pet.history, nowTick)
-  const peak = Math.max(1, ...graph.map((d) => d.kibble))
-  const weekTotal = graph.reduce((n, d) => n + d.kibble, 0)
+  const peak = Math.max(1, ...graph.map((d) => d.xp))
+  const weekTotal = graph.reduce((n, d) => n + d.xp, 0)
 
   // On a break the foot says how to cut it short, and the count so far.
   const restLeft = resting ? Math.max(0, BREAK_MS - (restNow - resting.from)) : 0
   const footer = resting
     ? t('pet.break.hint', { n: pet.plays })
-    : growth.level > 0
-      ? growth.toNext > 0
-        ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
-        : t('pet.maxLevel', { lv: growth.level })
-      : growth.toNext > 0
-        ? t('pet.toNext', { n: growth.toNext })
-        : t('pet.grown')
+    : growth.toNext > 0
+      ? t('pet.toLevel', { lv: growth.level, n: growth.toNext })
+      : t('pet.maxLevel', { lv: growth.level })
+  const nextDecor = nextDecoration(growth.level)
+  const statMax = stats[topStat(stats)]
 
   // Asking puts the screen back on the pet (the reply is a balloon), but the chat
   // card stays up for the next question: keep its title, and the X on it.
@@ -1552,7 +1399,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
                   })
                 : '')}
           </span>
-          {/* The way out of whatever is up — on the title of the thing itself,
+          {/* The way out of whatever is up, on the title of the thing itself,
               where you are already looking. */}
           {(mode !== 'char' || resting || chatCard) && (
             <button
@@ -1572,8 +1419,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
       {mode === 'stats' && (
         <dl className="pet-rows">
           <div className="pet-meters">
-            <Gauge label={t('pet.gauge.fullness')} value={pet.fullness} tone="food" />
-            <Gauge label={t('pet.gauge.mood')} value={pet.mood} tone="mood" />
+            {STATS.map((k) => (
+              <Gauge key={k} label={t(`pet.stat.${k}`)} value={stats[k]} max={statMax} />
+            ))}
           </div>
           <div>
             <dt>{t('pet.stat.name')}</dt>
@@ -1584,33 +1432,31 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             <dd>{speciesName(pet.species, t, customOf(pet.species) ?? pet.custom)}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.stage')}</dt>
-            <dd>{stageLabel}</dd>
+            <dt>{t('pet.stat.level')}</dt>
+            <dd>{footer}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.next')}</dt>
-            <dd>{footer}</dd>
+            <dt>{t('pet.stat.decor')}</dt>
+            <dd>
+              {nextDecor
+                ? t('pet.decor.next', { item: t(`pet.decor.${nextDecor.id}`), lv: nextDecor.level })
+                : t('pet.decor.all')}
+            </dd>
+          </div>
+          <div>
+            <dt>{t('pet.stat.xp')}</dt>
+            <dd>{pet.xp.toLocaleString()}</dd>
           </div>
           <div>
             <dt>{t('pet.stat.tokens')}</dt>
             <dd>{fmtTokens(pet.totalTokens)}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.kibble')}</dt>
-            <dd>{pet.xp}</dd>
-          </div>
-          <div>
             <dt>{t('pet.stat.age')}</dt>
             <dd>{dur(t, Date.now() - pet.bornAt)}</dd>
           </div>
           <div>
-            <dt>{t('pet.stat.neglect')}</dt>
-            <dd className={pet.neglectMs >= 60_000 ? 'warn' : undefined}>
-              {pet.neglectMs >= 60_000 ? dur(t, pet.neglectMs) : t('pet.stat.noNeglect')}
-            </dd>
-          </div>
-          <div>
-            <dt>{t('pet.stat.lastMeal')}</dt>
+            <dt>{t('pet.stat.lastGain')}</dt>
             <dd>{pet.lastFedAt ? dur(t, Date.now() - pet.lastFedAt) : t('pet.never')}</dd>
           </div>
           <div>
@@ -1631,7 +1477,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               <dd className={limit.usedPct >= 90 ? 'warn' : undefined}>
                 {t('pet.stat.limitValue', {
                   left: Math.max(0, 100 - Math.round(limit.usedPct)),
-                  in: limit.resetsAt ? dur(t, new Date(limit.resetsAt).getTime() - nowTick) : '—'
+                  in: limit.resetsAt ? dur(t, new Date(limit.resetsAt).getTime() - nowTick) : '-'
                 })}
               </dd>
             </div>
@@ -1647,16 +1493,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
                 : t('pet.never')}
             </dd>
           </div>
-          {pet.evolutions.length > 0 && (
-            <div>
-              <dt>{t('pet.stat.story')}</dt>
-              <dd>
-                {pet.evolutions
-                  .map((e) => (e.branch ? t(`pet.branch.${e.branch}`) : t(`pet.stage.${e.stage}`)))
-                  .join(' → ')}
-              </dd>
-            </div>
-          )}
         </dl>
       )}
 
@@ -1672,12 +1508,12 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
             {graph.map((d) => (
               <div
                 key={d.day}
-                className={`pet-bar${d.today ? ' today' : ''}${d.kibble === 0 ? ' none' : ''}`}
-                title={t('pet.graph.day', { day: d.day, n: d.kibble })}
+                className={`pet-bar${d.today ? ' today' : ''}${d.xp === 0 ? ' none' : ''}`}
+                title={t('pet.graph.day', { day: d.day, n: d.xp })}
               >
                 {/* A day with nothing in it gets a floor, not a bar: the gap has
-                    to be visible or the chart lies about how it was fed. */}
-                <i style={{ height: d.kibble ? `${Math.max(8, (d.kibble / peak) * 100)}%` : '1px' }} />
+                    to be visible or the chart lies about the week. */}
+                <i style={{ height: d.xp ? `${Math.max(8, (d.xp / peak) * 100)}%` : '1px' }} />
                 <span>{Number(d.day.slice(8))}</span>
               </div>
             ))}
@@ -1685,9 +1521,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           <div className="pet-graph-foot">
             {weekTotal === 0
               ? t('pet.graph.empty')
-              : t('pet.graph.today', { n: graph[graph.length - 1].kibble })}
+              : t('pet.graph.today', { n: graph[graph.length - 1].xp })}
           </div>
-          <p className="pet-note">{t('pet.hint', { n: KIBBLE_TOKENS.toLocaleString() })}</p>
+          <p className="pet-note">{t('pet.hint', { n: XP_TOKENS.toLocaleString() })}</p>
         </div>
       )}
 
@@ -1718,7 +1554,6 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               </div>
             )
           })}
-          {growth.stage !== 'adult' && <div className="pet-award-note">{t('pet.prizeAdultOnly')}</div>}
         </div>
       )}
 
@@ -1748,56 +1583,10 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
               <b>{a.name || t('pet.default.name')}</b>
               <span>
                 {speciesName(a.species, t, a.speciesName ? { name: a.speciesName } : customOf(a.species))} ·{' '}
-                {a.branches?.length
-                  ? t(`pet.branch.${a.branches[a.branches.length - 1]}`)
-                  : a.form === 'base'
-                    ? t(`pet.stage.${a.stage}`)
-                    : t(`pet.form.${a.form}`)}{' '}
-                · {a.xp}
-                {t('pet.album.kibble')} · {dur(t, a.ageMs)}
+                {t('pet.level', { n: a.level })} · {fmtTokens(a.tokens)} · {dur(t, a.ageMs)}
               </span>
             </div>
           ))}
-        </div>
-      )}
-
-      {mode === 'dex' && (
-        <div className="pet-dex">
-          <p className="pet-dex-head">{t('pet.dex.found', { n: found.size, total: BRANCH_BY_ID.size })}</p>
-          {[...LINES.map((line) => ({ line, ids: ['1', '2a', '3a', '2b', '3b'].map((k) => `${line}${k}`) })), { line: null, ids: ['omega', 'apex'] }].map(
-            ({ line, ids }) => (
-              <div key={line ?? 'hidden'} className="pet-dex-line">
-                <span className="pet-dex-name">{line ? t(`pet.line.${line}`) : t('pet.dex.hidden')}</span>
-                {ids.map((id) => {
-                  const b = BRANCH_BY_ID.get(id)!
-                  const seen = found.has(id)
-                  // Unmet branches keep their shape as a shadow and say how to get
-                  // there; the hidden ones keep even that to themselves.
-                  const hint = seen
-                    ? t(`pet.branch.${id}`)
-                    : b.hidden
-                      ? t(`pet.dex.hint.${id}`)
-                      : `Lv${TIER_LEVELS[b.tier - 1]} · ${t(`pet.dex.hint.${line}`)}${b.tier > 1 ? ` · ${t(`pet.dex.hint.${id.endsWith('a') ? 'a' : 'b'}`)}` : ''}`
-                  return (
-                    <button
-                      type="button"
-                      key={id}
-                      className={`pet-dex-cell${seen ? ' seen' : ''}${dexHint === hint ? ' on' : ''}`}
-                      title={hint}
-                      onClick={() => setDexHint(hint)}
-                    >
-                      {seen || !b.hidden ? (
-                        <Creature stage="adult" form="base" species={pet.species} mood="happy" chewing={false} branch={id} />
-                      ) : (
-                        <b>?</b>
-                      )}
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          )}
-          <p className="pet-note">{dexHint ?? t('pet.dex.note')}</p>
         </div>
       )}
 
@@ -1834,7 +1623,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           const pct = Math.round((hp[i] / duel.bout.fighters[i].hp) * 100)
           return (
             <div className={`pet-fighter side-${i}`}>
-              <span className="pet-fighter-name">{c.name || speciesName(c.species, t, c.custom ?? customOf(c.species))}</span>
+              <span className="pet-fighter-name">
+                {c.name || speciesName(c.species, t, c.custom ?? customOf(c.species))} {t('pet.level', { n: c.level })}
+              </span>
               <i className="pet-hp">
                 <i style={{ width: `${pct}%` }} className={pct <= 25 ? 'low' : undefined} />
               </i>
@@ -1843,12 +1634,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
                 className={`pet-fighter-body${swung ? ' swing' : ''}${hit ? ' hit' : ''}`}
               >
                 <Creature
-                  stage={c.stage}
-                  form={c.form}
                   species={c.species}
-                  mood={
-                    winner === null ? moodOfCard(c) : winner === i ? 'happy' : 'sad'
-                  }
+                  mood={winner === null ? 'ok' : winner === i ? 'happy' : 'sad'}
                   chewing={false}
                   level={c.level}
                   outfit={outfitOf(c.worn ?? [])}
@@ -1914,8 +1701,8 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     setMenu(false)
     run()
   }
-  const care = icons.slice(0, 5)
-  const pages = icons.slice(5)
+  const care = icons.slice(0, CARE)
+  const pages = icons.slice(CARE)
 
   // In the app the menu opens beside the pet, bottoms aligned: to its right, or
   // its left when the window has no room there. Its own window widens instead
@@ -1991,7 +1778,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     >
       {mode === 'manage' ? (
         <PetManage
-          nest={briefOf({ pets, active }, nowTick)}
+          nest={briefOf({ pets, active })}
           detached={!!detached}
           onTop={onTop}
           own={ownSpecies}
@@ -2128,29 +1915,16 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
         onPointerCancel={onBareUp}
       >
         <Creature
-          stage={growth.stage}
-          form={growth.form}
           species={pet.species}
           mood={mood}
-          chewing={chewing && awake && !sleeping}
+          chewing={chewing && awake}
           flavor={diet.total > 0 ? diet.top : undefined}
-          evolving={evolving}
+          cheer={cheer}
           level={growth.level}
           outfit={outfit}
-          branch={growth.branch?.id}
-          whiteout={whiteout}
         />
-        {sleeping && <Glyph rows={ZZZ} className="pet-zzz" />}
         {/* What the pane you are watching is doing, acted out. */}
-        {mime && !sleeping && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
-        {(pet.sick || pet.poops > 0) && (
-          <div className="pet-floor">
-            {pet.sick && <Glyph rows={CROSS} className="pet-cross" />}
-            {Array.from({ length: Math.min(MAX_POOPS, pet.poops) }, (_, i) => (
-              <Glyph key={i} rows={POOP} className="pet-poop" />
-            ))}
-          </div>
-        )}
+        {mime && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}
       </div>
     </div>
   )

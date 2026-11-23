@@ -38,7 +38,7 @@
   background: transparent;
   border: 1px solid transparent;
   border-radius: 2px;
-  /* An unlit segment is still visible — faint, but there. */
+  /* An unlit segment is still visible, faint, but there. */
   color: color-mix(in srgb, var(--fg) 30%, transparent);
   cursor: pointer;
 }
@@ -96,7 +96,7 @@
 .pet-detached * {
   -webkit-app-region: drag;
 }
-/* On a transparent window a soft box-shadow is not a shadow — it is a grey
+/* On a transparent window a soft box-shadow is not a shadow, it is a grey
    smudge around the device, because there is nothing behind it to fall on.
    (Measured: alpha 5–71 over the whole margin.) Drop everything that blurs
    outward. */
@@ -118,8 +118,6 @@
 .pet-detached .pet-graph *,
 .pet-detached .pet-album,
 .pet-detached .pet-album *,
-.pet-detached .pet-dex,
-.pet-detached .pet-dex *,
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
@@ -127,7 +125,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* A screen of the bare pet's (stats, dex, a question...) opens in a card beside
+/* A screen of the bare pet's (stats, a battle, a question...) opens in a card beside
    it, made like the right-click menu: a plain panel. The screens' type is sized
    in 8-9px lines, so the card's content is drawn at 1.4x, which brings them to
    the menu's reading size. */
@@ -322,7 +320,7 @@
   margin: 0 0 5px;
   line-height: 1.4;
 }
-/* A pick of one: the egg's species, where it lives. */
+/* A pick of one: the new pet's species, where it lives. */
 .pet-chips {
   display: flex;
   flex-wrap: wrap;
@@ -529,7 +527,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* ---- a screen (stats, dex, a question...), drawn in the card beside the pet ---- */
+/* ---- a screen (stats, a battle, a question...), drawn in the card beside the pet ---- */
 .pet-screen {
   position: relative;
   display: flex;
@@ -588,53 +586,6 @@
   overflow: visible;
 }
 /* The nest: a dot per pet in the corner, the one on screen filled. */
-/* What it has left lying about, and whether it needs a doctor. */
-.pet-floor {
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  bottom: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  pointer-events: none;
-}
-.pet-glyph {
-  display: block;
-  overflow: visible;
-}
-.pet-poop {
-  width: 10px;
-  height: 6px;
-}
-.pet-cross {
-  width: 7px;
-  height: 7px;
-}
-.pet-poop {
-  animation: pet-stink 2.2s steps(1, end) infinite;
-}
-.pet-poop .pet-px-p {
-  fill: color-mix(in srgb, var(--warning) 42%, black);
-}
-.pet-cross {
-  margin-right: auto;
-  animation: pet-twinkle 0.9s steps(1, end) infinite;
-}
-.pet-cross .pet-px-p {
-  fill: var(--danger);
-}
-@keyframes pet-stink {
-  0%,
-  50% {
-    transform: translateY(0);
-  }
-  51%,
-  100% {
-    transform: translateY(-1px);
-  }
-}
-
 /* ---- what it says ----
    A proper speech balloon above the device, in type you can actually read. It
    sits in the layout rather than floating, so in its own window the window can
@@ -674,20 +625,7 @@
     transform: translateY(3px);
   }
 }
-/* Asleep: the Z hangs by its head and blinks slowly. */
-.pet-zzz {
-  position: absolute;
-  top: 8%;
-  right: 12%;
-  width: 9px;
-  height: 12px;
-  animation: pet-twinkle 1.8s steps(1, end) infinite;
-}
-.pet-zzz .pet-px-p {
-  fill: color-mix(in srgb, var(--info) 80%, white);
-}
-
-/* Growing up: the ring of dots flies outward and fades. It scales about the
+/* A level up: the ring of dots flies outward and fades. It scales about the
    box's centre, which is the viewBox's (16, 16) under xMidYMid meet. */
 .pet-burst {
   transform-origin: 50% 50%;
@@ -703,37 +641,13 @@
     opacity: 0;
   }
 }
-.pet-lcd.evolving .pet-sprite {
+.pet-lcd.cheer .pet-sprite {
   animation: pet-hop 0.25s steps(1, end) infinite;
-}
-/* A branch evolution: the new shape shows only as a flat silhouette that
-   flickers, faster as it goes, and then the class drops and it is revealed.
-   Fill rather than filter, so the species and diet tints are left alone. */
-.pet-lcd.whiteout .pet-px {
-  fill: var(--fg);
-}
-.pet-lcd.whiteout .pet-tw-reel,
-.pet-lcd.whiteout .pet-crumbs {
-  animation: none;
-}
-.pet-lcd.whiteout .pet-sprite {
-  animation: pet-whiteout 1.8s linear forwards;
-}
-@keyframes pet-whiteout {
-  0%, 12%, 30%, 44%, 56%, 66%, 74%, 80%, 86%, 90%, 94%, 97% {
-    opacity: 1;
-  }
-  6%, 21%, 37%, 50%, 61%, 70%, 77%, 83%, 88%, 92%, 95%, 99% {
-    opacity: 0.15;
-  }
-  100% {
-    opacity: 1;
-  }
 }
 
 /* ---- species colour ----
    The strain's hue, turned on the WHOLE sprite (the <svg>) while the diet tint
-   below turns the body group inside it — two nested elements, so the two
+   below turns the body group inside it, two nested elements, so the two
    compose instead of one winning. A hue turn rather than fixed colours, so a
    strain still belongs to whatever theme riven is wearing.
    'spot' is left alone: it is the colour the pet has always been. */
@@ -797,11 +711,11 @@
 .pet-lcd.pet-sp-slime {
   filter: hue-rotate(-110deg) saturate(1.2);
 }
-/* A dragon keeps riven's own violet — the one that was every pet's colour before
+/* A dragon keeps riven's own violet, the one that was every pet's colour before
    strains existed, now reserved for the showiest of them. */
 
-/* What it grew up eating tints it, on top of whatever form it took. A hue turn
-   rather than a colour swap, so it composes with radiant/titan/wraith. */
+/* Which models did its work tints it, on top of its species' colour. A hue
+   turn rather than a colour swap, so the two compose. */
 .pet-diet-sonnet .pet-sprite {
   filter: hue-rotate(-18deg);
 }
@@ -899,7 +813,7 @@
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
 
-/* The meter screen leads with the two bars. */
+/* The status screen leads with the four stats. */
 .pet-meters {
   flex-direction: column;
   gap: 2px;
@@ -1004,10 +918,6 @@
   color: var(--warning);
   opacity: 1;
 }
-.pet-award-note {
-  font-size: 8px;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-  padding-top: 2px;
 }
 
 /* ---- the stats / graph / album screens ---- */
@@ -1129,73 +1039,6 @@
   font-size: 8px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
-/* ---- the evolution tree ----
-   One row per line, read left to right: its first form, then the cared-for
-   pair (2a, 3a), then the neglected pair (2b, 3b). */
-.pet-dex {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px 0;
-}
-.pet-dex-head {
-  margin: 0 0 1px;
-  font-size: 8.5px;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-}
-.pet-dex-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-}
-/* Name on its own line so the five cells always fit the card. */
-.pet-dex-name {
-  flex: 0 0 100%;
-  font-size: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in srgb, var(--fg) 60%, transparent);
-}
-.pet-dex-cell {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 26px;
-  aspect-ratio: 1;
-  padding: 1px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.06);
-  border-radius: 3px;
-  background: rgb(0 0 0 / 0.15);
-  cursor: pointer;
-}
-.pet-dex-cell .pet-lcd {
-  width: 100%;
-  height: 100%;
-}
-.pet-dex-cell.on {
-  border-color: var(--accent);
-}
-.pet-dex-cell b {
-  font-size: 10px;
-  color: color-mix(in srgb, var(--fg) 30%, transparent);
-}
-/* Not met yet: the shape, and nothing else. */
-.pet-dex-cell:not(.seen) .pet-px {
-  fill: color-mix(in srgb, var(--fg) 16%, transparent);
-}
-.pet-dex-cell:not(.seen) .pet-tw-reel,
-.pet-dex-cell:not(.seen) .pet-crumbs {
-  animation: none;
-}
-.pet-dex-cell:not(.seen) .pet-lcd {
-  filter: none;
-}
 .pet-empty {
   margin: auto;
   font-size: 9px;
@@ -1236,12 +1079,17 @@
 .pet-px-d {
   fill: color-mix(in srgb, var(--accent-2) 82%, black);
 }
+/* The glow of a level 50 pet: a soft ring round its silhouette. */
+.pet-px-g {
+  fill: var(--warning);
+  fill-opacity: 0.32;
+}
 
 /* ---- a species made from a photo ----
    Its own colours, set on the box as variables (customVars in PetDevice.tsx),
    in place of the hue turn the built-in animals get. The outline, the limbs
    and the light and shadow are made from its body colour the way the built-in
-   ones are made from the accent. The egg below keeps the shell's colours. */
+   ones are made from the accent. */
 .pet-lcd.pet-sp-custom {
   filter: none;
 }
@@ -1305,32 +1153,6 @@
   filter: none;
 }
 
-/* Grown-up forms used to recolour the body here (grey with red eyes for the
-   neglected one), which is a lot of why adults read as a downgrade. A form is
-   now a change of shape in petSprites.ts; the pet keeps its own colours. */
-.pet-s-egg .pet-px-b {
-  fill: color-mix(in srgb, var(--fg) 78%, var(--accent-2));
-}
-.pet-s-egg .pet-px-o {
-  fill: color-mix(in srgb, var(--fg) 34%, black);
-}
-.pet-s-egg .pet-px-l {
-  fill: color-mix(in srgb, var(--fg) 92%, white);
-}
-.pet-s-egg .pet-px-d {
-  fill: color-mix(in srgb, var(--fg) 66%, var(--accent-2));
-}
-/* A photo species' egg is a shell of its own colour, pale as a shell is. */
-.pet-sp-custom.pet-s-egg .pet-px-b {
-  fill: color-mix(in srgb, var(--fg) 74%, var(--pc-b));
-}
-.pet-sp-custom.pet-s-egg .pet-px-l {
-  fill: color-mix(in srgb, var(--fg) 90%, var(--pc-b));
-}
-.pet-sp-custom.pet-s-egg .pet-px-d {
-  fill: color-mix(in srgb, var(--fg) 60%, var(--pc-b));
-}
-
 /* ---- animation: whole-dot steps, never a smooth slide ---- */
 .pet-sprite {
   animation: pet-hop 1.6s steps(1, end) infinite;
@@ -1338,37 +1160,22 @@
 .pet-m-happy .pet-sprite {
   animation-duration: 0.9s;
 }
-.pet-m-hungry .pet-sprite,
 .pet-m-sad .pet-sprite {
   animation-duration: 2.8s;
-}
-/* The little ghost: see-through, and it drifts rather than hops. */
-.pet-f-wraith .pet-sprite {
-  opacity: 0.78;
-  animation: pet-float 3.2s steps(1, end) infinite;
 }
 .pet-sprite.chew {
   animation: pet-chew 0.3s steps(1, end) infinite;
 }
-.pet-s-egg .pet-sprite {
-  animation: pet-rock 2.4s steps(1, end) infinite;
-}
 /* A faithful picture has no face to wear its mood, so it moves it: a happy
    one skips (two quick hops), a sad one sinks a dot and looks from side to
-   side, a sick one shivers, an asleep one only breathes. Hungry and fine keep
-   the plain hop. Translates only, whole dots (see pet-twinkle-reel for why
-   nothing here scales). .pet-pm is left off while something else moves it. */
+   side, a content one keeps the plain hop. Translates only, whole dots (see
+   pet-twinkle-reel for why nothing here scales). .pet-pm is left off while
+   something else moves it. */
 .pet-pm.pet-m-happy .pet-sprite:not(.chew) {
   animation: pet-pm-skip 1.2s steps(1, end) infinite;
 }
 .pet-pm.pet-m-sad .pet-sprite:not(.chew) {
   animation: pet-pm-sway 3.6s steps(1, end) infinite;
-}
-.pet-pm.pet-m-sick .pet-sprite:not(.chew) {
-  animation: pet-pm-shiver 0.6s steps(1, end) infinite;
-}
-.pet-pm.pet-m-asleep .pet-sprite:not(.chew) {
-  animation: pet-pm-breathe 3.2s steps(1, end) infinite;
 }
 @keyframes pet-pm-skip {
   0%,
@@ -1404,34 +1211,6 @@
   81%,
   100% {
     transform: translate(3.125cqmin, 3.125cqmin);
-  }
-}
-@keyframes pet-pm-shiver {
-  0%,
-  25% {
-    transform: translateX(-3.125cqmin);
-  }
-  26%,
-  50% {
-    transform: translateX(0);
-  }
-  51%,
-  75% {
-    transform: translateX(3.125cqmin);
-  }
-  76%,
-  100% {
-    transform: translateX(0);
-  }
-}
-@keyframes pet-pm-breathe {
-  0%,
-  50% {
-    transform: translateY(0);
-  }
-  51%,
-  100% {
-    transform: translateY(3.125cqmin);
   }
 }
 /* The accent dots twinkle: same beat as pet-twinkle (lit, then 15% from 51%),
@@ -1477,41 +1256,6 @@
     transform: translateY(-6.25cqmin);
   }
 }
-/* The ghost drifts a dot at a time, which the finer grid makes smooth. */
-@keyframes pet-float {
-  0%,
-  12% {
-    transform: translateY(0);
-  }
-  13%,
-  25% {
-    transform: translateY(-3.125cqmin);
-  }
-  26%,
-  37% {
-    transform: translateY(-6.25cqmin);
-  }
-  38%,
-  50% {
-    transform: translateY(-9.375cqmin);
-  }
-  51%,
-  62% {
-    transform: translateY(-12.5cqmin);
-  }
-  63%,
-  75% {
-    transform: translateY(-9.375cqmin);
-  }
-  76%,
-  87% {
-    transform: translateY(-6.25cqmin);
-  }
-  88%,
-  100% {
-    transform: translateY(-3.125cqmin);
-  }
-}
 @keyframes pet-chew {
   0%,
   50% {
@@ -1520,20 +1264,6 @@
   51%,
   100% {
     transform: translateY(6.25cqmin);
-  }
-}
-@keyframes pet-rock {
-  0%,
-  33% {
-    transform: translateX(-6.25cqmin);
-  }
-  34%,
-  66% {
-    transform: translateX(0);
-  }
-  67%,
-  100% {
-    transform: translateX(6.25cqmin);
   }
 }
 @keyframes pet-twinkle-reel {
@@ -1601,9 +1331,6 @@
   flex: 0 0 auto;
   color: var(--accent);
 }
-.pet-screen-mood.mood-hungry {
-  color: var(--warning);
-}
 .pet-screen-mood.mood-sad {
   color: var(--danger);
 }
@@ -1630,11 +1357,14 @@
   height: 4px;
   background: rgb(255 255 255 / 0.07);
 }
-.pet-cell.on.tone-food {
+.pet-cell.on {
   background: var(--accent);
 }
-.pet-cell.on.tone-mood {
-  background: var(--accent-2);
+.pet-gauge-num {
+  margin-left: auto;
+  font-size: 8px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 리븐펫's own window: nothing but the device floats there, so the document has

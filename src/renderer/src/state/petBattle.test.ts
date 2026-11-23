@@ -9,26 +9,39 @@ import {
   encodeCard,
   fight,
   fighterOf,
+  hashOf,
+  isUpset,
+  legacyLevel,
   matchup,
+  readCode,
   type BattleCard
 } from './petBattle'
+import { statsOf, statTotal, xpForLevel } from './petLevel'
 
-const card = (over: Partial<BattleCard> = {}): BattleCard => ({
-  name: '뭉치',
-  species: 'cat',
-  stage: 'adult',
-  form: 'base',
-  level: 10,
-  fullness: 80,
-  mood: 60,
-  sick: false,
-  bornAt: 1_700_000_000_000,
-  ...over
-})
+const card = (over: Partial<BattleCard> = {}): BattleCard => {
+  const level = over.level ?? 10
+  const species = over.species ?? 'cat'
+  return {
+    name: '뭉치',
+    species,
+    level,
+    stats: statsOf(level, species),
+    bornAt: 1_700_000_000_000,
+    ...over
+  }
+}
+
+/** A well-formed code (right checksum) around any body, as a given version wrote it. */
+const codeOf = (fields: unknown[], version = 1): string => {
+  const bin = String.fromCharCode(...new TextEncoder().encode(JSON.stringify(fields)))
+  const body = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `RP${version}.${body}.${hashOf(body).toString(36)}`
+}
 
 describe('battle codes', () => {
   it('round-trips, Korean names included', () => {
-    const c = card({ name: '꼬마 용🐉', species: 'dragon', form: 'radiant', level: 42 })
+    const c = card({ name: '꼬마 용🐉', species: 'dragon', level: 42, stats: statsOf(42, 'dragon') })
+    expect(encodeCard(c).startsWith('RP2.')).toBe(true)
     expect(decodeCard(encodeCard(c))).toEqual(c)
   })
 
@@ -48,28 +61,73 @@ describe('battle codes', () => {
   })
 
   it('rejects pets that cannot exist', () => {
-    // Well-formed codes (right checksum) around pets that cannot exist: an egg,
-    // a non-adult with a form, an adult at level 0, an unknown species, Lv1000.
+    // Well-formed codes around pets that cannot exist: level 0 or 1000, an
+    // unknown species, stats that do not add up to the level's total, a stat
+    // under the base.
+    const s = statsOf(10, 'cat')
     for (const bad of [
-      card({ stage: 'egg' as BattleCard['stage'], level: 0 }),
-      card({ stage: 'teen', level: 0, form: 'titan' }),
-      card({ stage: 'adult', level: 0 }),
+      card({ level: 0 }),
+      card({ level: 1000 }),
       card({ species: 'unicorn' as BattleCard['species'] }),
-      card({ level: 1000 })
+      card({ stats: { ...s, power: s.power + 50 } }),
+      card({ stats: { ...s, power: 1, smarts: s.smarts + s.power - 1 } })
     ]) {
       expect(decodeCard(encodeCard(bad))).toBeNull()
     }
   })
 
-  it('an egg has no card', () => {
-    expect(cardOf(initialState(Date.now()), Date.now())).toBeNull()
+  it('says so when a code is from a newer riven', () => {
+    const newer = codeOf(['x', 'cat', 10, 1, 2, 3, 4, 5], 3)
+    expect(readCode(newer)).toEqual({ error: 'newer' })
+    expect(readCode('RP3.abc.0')).toEqual({ error: 'bad' })
+    expect(readCode('nonsense')).toEqual({ error: 'bad' })
+  })
+
+  it('every pet has a card, a new one too', () => {
+    const c = cardOf(initialState(Date.now()))
+    expect(c.level).toBe(1)
+    expect(decodeCard(encodeCard(c))).toEqual(c)
+  })
+})
+
+describe('old (RP1) codes', () => {
+  // [name, species, stage index, form, level, fullness, mood, sick, bornAt, worn?, design?]
+  it('still read, at the level that much work is now', () => {
+    const adult = decodeCard(codeOf(['뭉치', 'fox', 4, 'radiant', 10, 80, 60, 0, 42, ['crown']]))!
+    expect(adult).not.toBeNull()
+    expect(adult.level).toBe(legacyLevel(4, 10))
+    expect(adult.stats).toEqual(statsOf(adult.level, 'fox'))
+    expect(adult.worn).toEqual(['crown'])
+    expect(adult.bornAt).toBe(42)
+    const teen = decodeCard(codeOf(['', 'cat', 3, 'base', 0, 50, 50, 1, 7]))!
+    expect(teen.level).toBe(legacyLevel(3, 0))
+  })
+
+  it('map stage and level onto the new curve', () => {
+    // A v1 adult was 800 kibble; its level 10 took another 900 + 50 * 36.
+    expect(legacyLevel(1, 0)).toBe(1)
+    expect(legacyLevel(4, 1)).toBe(11)
+    expect(legacyLevel(4, 10)).toBe(25)
+    expect(xpForLevel(legacyLevel(4, 10))).toBeLessThanOrEqual(3500)
+  })
+
+  it('reject what the old format rejected', () => {
+    for (const bad of [
+      ['x', 'cat', 0, 'base', 0, 50, 50, 0, 1], // an egg
+      ['x', 'cat', 3, 'titan', 0, 50, 50, 0, 1], // a form before adulthood
+      ['x', 'cat', 4, 'base', 0, 50, 50, 0, 1], // an adult at level 0
+      ['x', 'unicorn', 4, 'base', 3, 50, 50, 0, 1],
+      ['x', 'cat', 4, 'nope', 3, 50, 50, 0, 1],
+      ['x', 'cat', 4, 'base', 3, 500, 50, 0, 1]
+    ])
+      expect(decodeCard(codeOf(bad))).toBeNull()
   })
 })
 
 describe('fight', () => {
   it('is the same fight from either side', () => {
-    const a = card({ name: 'A', species: 'fox', level: 20 })
-    const b = card({ name: 'B', species: 'crab', level: 25, bornAt: 1 })
+    const a = card({ name: 'A', species: 'fox', level: 20, stats: statsOf(20, 'fox') })
+    const b = card({ name: 'B', species: 'crab', level: 25, stats: statsOf(25, 'crab'), bornAt: 1 })
     const ab = fight(a, b)
     const ba = fight(b, a)
     expect(ab).toEqual(fight(a, b))
@@ -93,19 +151,48 @@ describe('fight', () => {
     expect(matchup('cat', 'dog')).toBe(1)
   })
 
-  it('a well raised pet usually wins, but not always by a mile', () => {
+  it('a higher level usually wins, but not by a mile', () => {
     let wins = 0
     for (let i = 0; i < 40; i++) {
-      const big = card({ name: `big${i}`, species: 'dog', level: 60, bornAt: i })
-      const small = card({ name: `small${i}`, species: 'bear', level: 5, bornAt: 1000 + i })
+      const big = card({ name: `big${i}`, species: 'dog', level: 60, stats: statsOf(60, 'dog'), bornAt: i })
+      const small = card({ name: `small${i}`, species: 'bear', level: 5, stats: statsOf(5, 'bear'), bornAt: 1000 + i })
       if (fight(big, small).winner === 0) wins++
     }
     expect(wins).toBeGreaterThanOrEqual(32)
-    expect(fighterOf(card({ level: 60 })).hp).toBeLessThan(fighterOf(card({ level: 5 })).hp * 2)
+    const hp = (lvl: number): number => fighterOf(card({ level: lvl, stats: statsOf(lvl, 'cat') })).hp
+    expect(hp(60)).toBeLessThan(hp(5) * 2)
   })
 
-  it('a sick, hungry pet hits softer', () => {
-    expect(fighterOf(card({ sick: true, fullness: 0 })).atk).toBeLessThan(fighterOf(card()).atk)
+  it('reads each stat for its own part of a fight', () => {
+    const even = statsOf(30, 'cat')
+    const total = statTotal(30)
+    const lean = (k: keyof typeof even): typeof even => {
+      const rest = (total - 150) / 3
+      return { power: rest, smarts: rest, speed: rest, stamina: rest, [k]: 150 }
+    }
+    const f = (s: typeof even): ReturnType<typeof fighterOf> => fighterOf(card({ level: 30, stats: s }))
+    const plain = f({ power: total / 4, smarts: total / 4, speed: total / 4, stamina: total / 4 })
+    expect(f(lean('power')).atk).toBeGreaterThan(plain.atk)
+    expect(f(lean('stamina')).hp).toBeGreaterThan(plain.hp)
+    expect(f(lean('speed')).spd).toBeGreaterThan(plain.spd)
+    expect(f(lean('smarts')).crit).toBeGreaterThan(plain.crit)
+  })
+
+  it('makes two pets of the same level a fair match', () => {
+    // Same level, opposite leans: neither side wins every time.
+    let wins = 0
+    for (let i = 0; i < 60; i++) {
+      const a = card({ name: `a${i}`, species: 'crab', level: 30, stats: statsOf(30, 'crab', { opus: 100 }), bornAt: i })
+      const b = card({ name: `b${i}`, species: 'turtle', level: 30, stats: statsOf(30, 'turtle', { codex: 100 }), bornAt: 500 + i })
+      if (fight(a, b).winner === 0) wins++
+    }
+    expect(wins).toBeGreaterThan(10)
+    expect(wins).toBeLessThan(50)
+  })
+
+  it('an upset is a win over a pet ten levels up', () => {
+    expect(isUpset(card({ level: 5 }), card({ level: 15 }))).toBe(true)
+    expect(isUpset(card({ level: 5 }), card({ level: 14 }))).toBe(false)
   })
 })
 

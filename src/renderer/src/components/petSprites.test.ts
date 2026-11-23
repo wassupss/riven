@@ -2,36 +2,43 @@ import { describe, it, expect } from 'vitest'
 import {
   BIG_FACES,
   BODIES,
+  DECOR_ART,
   FACES,
   GRID,
   PALETTE,
-  SPRITES,
   SPRITE_SIZE,
   accessoryPixels,
   outfitPixels,
   bigFaceOf,
   bodyOf,
   pixelsOf,
-  runsOf
+  runsOf,
+  type Dot
 } from './petSprites'
-import {
-  MAX_LEVEL,
-  PRIZES,
-  SPECIES,
-  STAGES,
-  outfitOf,
-  slotOf,
-  type Accessory,
-  type Form
-} from '../state/pet'
+import { PRIZES, SPECIES, outfitOf, slotOf, type Accessory, type Species } from '../state/pet'
 
-const FORMS: Form[] = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
+const ORDER = ['head', 'neck', 'float', 'ground', 'aura']
+const sorted = (worn: Accessory[]): Accessory[] =>
+  [...worn].sort((a, b) => ORDER.indexOf(slotOf(a)) - ORDER.indexOf(slotOf(b)))
+
+/** Inside the grid, never on the big face, and no dot placed twice. */
+function expectClear(species: Species, dots: Dot[], what: string): void {
+  const face = bigFaceOf(bodyOf(species))!
+  const seen = new Set<string>()
+  for (const d of dots) {
+    expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE, what).toBe(true)
+    const onFace = d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
+    expect(onFace, `${what} on its face`).toBe(false)
+    expect(seen.has(`${d.x},${d.y}`), `${what} twice at ${d.x},${d.y}`).toBe(false)
+    seen.add(`${d.x},${d.y}`)
+  }
+}
 
 describe('sprite grids', () => {
   // A miscounted row silently shifts every dot after it, which is invisible in
-  // review and obvious only on screen — so the grid shape is asserted here.
-  it.each(Object.keys(SPRITES))('%s is a %d×%d grid of palette dots', (name) => {
-    const s = SPRITES[name]
+  // review and obvious only on screen, so the grid shape is asserted here.
+  it.each(Object.keys(BODIES))('%s is a 16x16 grid of palette dots', (name) => {
+    const s = BODIES[name as keyof typeof BODIES]
     expect(s.rows).toHaveLength(GRID)
     for (const row of s.rows) {
       expect(row).toHaveLength(GRID)
@@ -39,7 +46,8 @@ describe('sprite grids', () => {
     }
   })
 
-  it('every mood face is 8 wide and 8 tall, drawn over a 4×4 window', () => {
+  it('every mood face is 8 wide and 8 tall, drawn over a 4x4 window', () => {
+    expect(Object.keys(FACES).sort()).toEqual(['happy', 'ok', 'sad'])
     for (const rows of Object.values(FACES)) {
       expect(rows).toHaveLength(8)
       for (const row of rows) expect(row).toHaveLength(8)
@@ -47,43 +55,24 @@ describe('sprite grids', () => {
   })
 
   it('keeps each face inside its body', () => {
-    for (const s of Object.values(SPRITES)) {
-      if (!s.face) continue
-      expect(s.face.x + 4).toBeLessThanOrEqual(GRID)
-      expect(s.face.y + 4).toBeLessThanOrEqual(GRID)
+    for (const s of Object.values(BODIES)) {
+      expect(s.face).not.toBeNull()
+      expect(s.face!.x + 4).toBeLessThanOrEqual(GRID)
+      expect(s.face!.y + 4).toBeLessThanOrEqual(GRID)
     }
   })
 
-  it('has a body for every animal at every stage', () => {
-    for (const species of SPECIES)
-      for (const stage of STAGES) {
-        const body = bodyOf(species, stage)
-        expect(body.rows).toHaveLength(GRID)
-        // Every stage but the egg shows a face, and the egg never does.
-        expect(!!body.face).toBe(stage !== 'egg')
-      }
+  it('has one grown body for every animal, and no egg', () => {
+    expect(Object.keys(BODIES).sort()).toEqual([...SPECIES].sort())
+    for (const species of SPECIES) expect(bodyOf(species)).toBe(BODIES[species])
   })
 
   it('gives every animal its own silhouette, not a recolour of one body', () => {
-    // The complaint this answers: six strains that were the same blob in six
-    // colours. Compare the shapes with the pattern and the face stripped out.
-    const shapeOf = (sp: (typeof SPECIES)[number], stage: 'child' | 'adult'): string =>
-      bodyOf(sp, stage)
+    const shapeOf = (sp: (typeof SPECIES)[number]): string =>
+      bodyOf(sp)
         .rows.map((r) => r.replace(/[bshwa]/g, '#'))
         .join('')
-    for (const stage of ['child', 'adult'] as const) {
-      const shapes = SPECIES.map((sp) => shapeOf(sp, stage))
-      expect(new Set(shapes).size).toBe(SPECIES.length)
-    }
-  })
-
-  it('draws each animal at three sizes, and grows through them', () => {
-    for (const species of SPECIES) {
-      const b = BODIES[species]
-      const dots = (rows: string[]): number => rows.join('').replace(/\./g, '').length
-      expect(dots(b.baby.rows)).toBeLessThan(dots(b.grown.rows))
-      expect(dots(b.young.rows)).toBeLessThanOrEqual(dots(b.grown.rows))
-    }
+    expect(new Set(SPECIES.map(shapeOf)).size).toBe(SPECIES.length)
   })
 })
 
@@ -94,26 +83,15 @@ describe('pixelsOf', () => {
 
   it('stamps the mood face onto the body', () => {
     const eyeRow = (mood: 'happy' | 'sad'): number => {
-      const eyes = pixelsOf('child', 'base', mood).filter((d) => d.ch === 'e')
+      const eyes = pixelsOf(mood, 'cat').filter((d) => d.ch === 'e')
       expect(eyes.length).toBeGreaterThanOrEqual(8) // two eyes, several dots each
       return Math.min(...eyes.map((d) => d.y))
     }
     expect(eyeRow('sad')).toBeGreaterThan(eyeRow('happy')) // sad eyes droop
   })
 
-  it('leaves the body showing through the gaps in a face', () => {
-    const dots = pixelsOf('child', 'base', 'ok', 'cat')
-    const face = bodyOf('cat', 'child').face!
-    // The dot between the eyes is body (lit or shaded), not a hole.
-    const between = dots.find((d) => d.x === face.x * 2 + 3 && d.y === face.y * 2 + 1)
-    expect('bld').toContain(between?.ch)
-  })
-
   it('outlines in a single dot, not a doubled one', () => {
-    // Doubling the authored grid doubled the outline too, as heavy as an eye.
-    // Every outline dot of a body must touch the air, or be a line drawn
-    // inside it on purpose; here, a plain body without any.
-    const dots = pixelsOf('child', 'base', 'ok', 'hamster')
+    const dots = pixelsOf('ok', 'hamster')
     const lit = new Set(dots.map((d) => `${d.x},${d.y}`))
     const outline = dots.filter((d) => d.ch === 'o')
     const touchingAir = outline.filter((d) =>
@@ -123,7 +101,7 @@ describe('pixelsOf', () => {
   })
 
   it('shades the body: lit on top, shadowed underneath', () => {
-    const dots = pixelsOf('adult', 'sturdy', 'ok', 'cat')
+    const dots = pixelsOf('ok', 'cat')
     const meanY = (ch: string): number => {
       const ys = dots.filter((d) => d.ch === ch).map((d) => d.y)
       expect(ys.length).toBeGreaterThan(0)
@@ -132,70 +110,25 @@ describe('pixelsOf', () => {
     expect(meanY('l')).toBeLessThan(meanY('d'))
   })
 
-  it('gives an egg no face at all', () => {
-    const dots = pixelsOf('egg', 'base', 'happy')
-    expect(dots.some((d) => d.ch === 'e' || d.ch === 'm')).toBe(false)
-  })
-
-  it('changes the grown-up it became, whichever animal it is', () => {
-    // A form is a change made to the animal's own body, so it has to hold for
-    // every one of them — not just for the single body forms used to be.
+  it('marks every animal with its coat, never on its face', () => {
     for (const species of SPECIES) {
-      const dots = (form: Form): number => pixelsOf('adult', form, 'ok', species).length
-      expect(dots('titan')).toBeGreaterThan(dots('sturdy'))
-      expect(dots('wraith')).toBeLessThan(dots('sturdy'))
-      // Radiant adds its halo without eating into the body.
-      expect(dots('radiant')).toBeGreaterThan(dots('sturdy'))
-    }
-  })
-
-  it('marks every strain, at every size, egg included', () => {
-    // Including the hatchling, which is the hard one: its body is barely wider
-    // than its own face, so a pattern has almost nowhere to land.
-    for (const species of SPECIES) {
-      for (const stage of STAGES) {
-        const marks = pixelsOf(stage, 'base', 'ok', species).filter(
-          (d) => d.ch === 'h' || d.ch === 'a'
-        )
-        expect(marks.length).toBeGreaterThan(0)
+      const body = bodyOf(species)
+      const face = bigFaceOf(body)!
+      // The blush of the big face is 'h' too: look at the coat without a face.
+      const marks = pixelsOf('sad', species).filter((d) => d.ch === 'h' || d.ch === 'a')
+      expect(marks.length, species).toBeGreaterThan(0)
+      for (const d of marks) {
+        const onFace = d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
+        expect(onFace, species).toBe(false)
       }
     }
   })
 
-  it('keeps a coat off the face, at every size', () => {
-    // The window the face is stamped into (4×4, or 6×4 for the big face from
-    // the teens on) is off limits everywhere. (A dot of clearance around it is
-    // kept too, but only on bodies wide enough to spare it, see pixelsOf.)
-    for (const species of SPECIES)
-      for (const stage of STAGES) {
-        const body = bodyOf(species, stage)
-        if (!body.face) continue
-        const big = stage === 'teen' || stage === 'adult' ? bigFaceOf(body) : null
-        const face = big ?? body.face
-        const w = (big ? 6 : 4) * 2
-        // Asleep, because the awake big face has its own blush ('h'), which
-        // is part of the face, not a coat on it.
-        const marks = pixelsOf(stage, 'base', 'asleep', species).filter(
-          (d) => d.ch === 'h' || d.ch === 'a'
-        )
-        for (const d of marks) {
-          const onFace =
-            d.x >= face.x * 2 &&
-            d.x < face.x * 2 + w &&
-            d.y >= face.y * 2 &&
-            d.y < face.y * 2 + 8
-          expect(onFace).toBe(false)
-        }
-      }
+  it('gives every animal the big face', () => {
+    for (const species of SPECIES) expect(bigFaceOf(bodyOf(species))).not.toBeNull()
   })
 
-  it('gives every grown-up the big face', () => {
-    // The complaint: adults looked worse than the babies. The big eyes are
-    // most of what fixes that, so no animal may silently fall back to dots.
-    for (const species of SPECIES) expect(bigFaceOf(bodyOf(species, 'adult'))).not.toBeNull()
-  })
-
-  it('keeps every big face 12 wide and 8 tall, drawn over a 6×4 window', () => {
+  it('keeps every big face 12 wide and 8 tall, drawn over a 6x4 window', () => {
     for (const rows of Object.values(BIG_FACES)) {
       expect(rows).toHaveLength(8)
       for (const row of rows) expect(row).toHaveLength(12)
@@ -204,51 +137,33 @@ describe('pixelsOf', () => {
 
   it('never lights a dot outside the grid', () => {
     for (const species of SPECIES)
-      for (const stage of STAGES)
-        for (const form of FORMS)
-          for (const d of pixelsOf(stage, form, 'hungry', species)) {
-            expect(d.x).toBeGreaterThanOrEqual(0)
-            expect(d.x).toBeLessThan(SPRITE_SIZE)
-            expect(d.y).toBeGreaterThanOrEqual(0)
-            expect(d.y).toBeLessThan(SPRITE_SIZE)
-          }
-  })
-
-  it('never lights a dot outside the grid, for any stage', () => {
-    for (const stage of STAGES)
-      for (const d of pixelsOf(stage, 'base', 'hungry')) {
-        expect(d.x).toBeGreaterThanOrEqual(0)
-        expect(d.x).toBeLessThan(SPRITE_SIZE)
-        expect(d.y).toBeGreaterThanOrEqual(0)
-        expect(d.y).toBeLessThan(SPRITE_SIZE)
-      }
+      for (const mood of ['happy', 'ok', 'sad'] as const)
+        for (const d of pixelsOf(mood, species)) {
+          expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
+        }
   })
 })
 
-describe('accessoryPixels', () => {
-  it('only a grown-up wears anything', () => {
-    expect(accessoryPixels('teen', 'base', 'cat', 'crown')).toEqual([])
-    expect(accessoryPixels('adult', 'sturdy', 'cat', null)).toEqual([])
+describe('keepsakes', () => {
+  it('nothing worn and no decorations is nothing drawn', () => {
+    expect(accessoryPixels('cat', null)).toEqual([])
+    expect(outfitPixels('cat', [], 9)).toEqual({ back: [], front: [] })
   })
 
-  it('sits on the head, inside the grid and never over the eyes', () => {
+  it('a hat sits on the head, inside the grid and never over the eyes', () => {
     for (const species of SPECIES)
-      for (const form of FORMS)
-        for (const acc of ['sprout', 'bow', 'crown'] as const) {
-          const worn = accessoryPixels('adult', form, species, acc)
-          expect(worn.length).toBeGreaterThan(0)
-          const face = bigFaceOf(bodyOf(species, 'adult'))!
-          for (const d of worn) {
-            expect(d.x).toBeGreaterThanOrEqual(0)
-            expect(d.x).toBeLessThan(SPRITE_SIZE)
-            expect(d.y).toBeGreaterThanOrEqual(0)
-            expect(d.y).toBeLessThan(face.y * 2)
-          }
+      for (const acc of ['sprout', 'bow', 'crown'] as const) {
+        const worn = accessoryPixels(species, acc)
+        expect(worn.length).toBeGreaterThan(0)
+        const face = bigFaceOf(bodyOf(species))!
+        for (const d of worn) {
+          expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0).toBe(true)
+          expect(d.y).toBeLessThan(face.y * 2)
         }
+      }
   })
 
   it('fits a full outfit, off its face and clear of each other', () => {
-    const order = ['head', 'neck', 'float', 'ground', 'aura']
     const outfits: Accessory[][] = [
       ['scarf', 'sprout'],
       ['heart', 'scarf', 'crown'],
@@ -257,67 +172,97 @@ describe('accessoryPixels', () => {
       ['legend', 'mushrooms', 'moon', 'medal', 'crown']
     ]
     for (const species of SPECIES)
-      for (const form of FORMS)
-        for (const [level, outfit] of outfits.entries()) {
-          const worn = [...outfit].sort(
-            (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
-          )
-          // Pieces are fitted in this order, so each one must add something.
-          let before = 0
-          worn.forEach((_, k) => {
-            const o = outfitPixels('adult', form, species, worn.slice(0, k + 1))
-            const n = o.back.length + o.front.length
-            expect(n, `${species}/${form}/${worn[k]}`).toBeGreaterThan(before)
-            before = n
-          })
-          const { back, front } = outfitPixels('adult', form, species, worn)
-          const face = bigFaceOf(bodyOf(species, 'adult'))!
-          const seen = new Set<string>()
-          for (const d of [...back, ...front]) {
-            expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
-            const onFace =
-              d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
-            expect(onFace, `${species}/${form} L${level} on its face`).toBe(false)
-            expect(seen.has(`${d.x},${d.y}`)).toBe(false)
-            seen.add(`${d.x},${d.y}`)
-          }
-        }
+      for (const outfit of outfits) {
+        const worn = sorted(outfit)
+        // Pieces are fitted in this order, so each one must add something.
+        let before = 0
+        worn.forEach((_, k) => {
+          const o = outfitPixels(species, worn.slice(0, k + 1))
+          const n = o.back.length + o.front.length
+          expect(n, `${species}/${worn[k]}`).toBeGreaterThan(before)
+          before = n
+        })
+        const { back, front } = outfitPixels(species, worn)
+        expectClear(species, [...back, ...front], `${species} ${worn.join('+')}`)
+      }
   })
 
   it('fits every prize, alone or over a full outfit', () => {
-    const order = ['head', 'neck', 'float', 'ground', 'aura']
     for (const species of SPECIES)
-      for (const form of FORMS)
-        for (const { id } of PRIZES)
-          for (const [level, base] of [[], ['legend', 'mushrooms', 'moon', 'medal', 'crown']].entries()) {
-            const worn = outfitOf([...(base as Accessory[]), id]).sort(
-              (a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b))
-            )
-            const alone = outfitPixels('adult', form, species, [id])
-            expect(alone.front.length + alone.back.length, `${species}/${form}/${id}`).toBeGreaterThan(0)
-            const { back, front } = outfitPixels('adult', form, species, worn)
-            const face = bigFaceOf(bodyOf(species, 'adult'))!
-            const seen = new Set<string>()
-            for (const d of [...back, ...front]) {
-              expect(d.x >= 0 && d.x < SPRITE_SIZE && d.y >= 0 && d.y < SPRITE_SIZE).toBe(true)
-              const onFace =
-                d.x >= face.x * 2 && d.x < face.x * 2 + 12 && d.y >= face.y * 2 && d.y < face.y * 2 + 8
-              expect(onFace, `${species}/${form} ${id} L${level} on its face`).toBe(false)
-              expect(seen.has(`${d.x},${d.y}`)).toBe(false)
-              seen.add(`${d.x},${d.y}`)
-            }
-          }
+      for (const { id } of PRIZES)
+        for (const base of [[], ['legend', 'mushrooms', 'moon', 'medal', 'crown']] as Accessory[][]) {
+          const worn = sorted(outfitOf([...base, id]))
+          const alone = outfitPixels(species, [id])
+          expect(alone.front.length + alone.back.length, `${species}/${id}`).toBeGreaterThan(0)
+          const { back, front } = outfitPixels(species, worn)
+          expectClear(species, [...back, ...front], `${species} ${id}`)
+        }
   }, 30_000)
+})
+
+describe('decorations', () => {
+  const count = (o: { back: Dot[]; front: Dot[] }): number => o.back.length + o.front.length
+
+  it('appear every ten levels, each adding to the last', () => {
+    for (const species of SPECIES) {
+      let before = 0
+      for (const level of [10, 20, 30, 40, 50]) {
+        const n = count(outfitPixels(species, [], level))
+        expect(n, `${species} Lv${level}`).toBeGreaterThan(before)
+        before = n
+      }
+      // Between the tens nothing changes.
+      expect(outfitPixels(species, [], 47)).toEqual(outfitPixels(species, [], 40))
+      expect(outfitPixels(species, [], 99)).toEqual(outfitPixels(species, [], 50))
+    }
+  })
+
+  it('are drawn off its face, clear of each other and of what it wears', () => {
+    for (const species of SPECIES)
+      for (const worn of [[], ['legend', 'mushrooms', 'moon', 'medal', 'crown'], ['scarf']] as Accessory[][]) {
+        const { back, front } = outfitPixels(species, sorted(worn), 50)
+        expectClear(species, [...back, ...front], `${species} Lv50 ${worn.join('+')}`)
+      }
+  })
+
+  it('never cover the pet itself', () => {
+    for (const species of SPECIES) {
+      const pet = new Set(pixelsOf('ok', species).map((d) => `${d.x},${d.y}`))
+      const { back } = outfitPixels(species, [], 50)
+      for (const d of back) expect(pet.has(`${d.x},${d.y}`), species).toBe(false)
+    }
+  })
+
+  it('show what each tier is: a badge, a ribbon, sparkles, a halo, a glow', () => {
+    const at = (level: number): { back: Dot[]; front: Dot[] } => outfitPixels('cat', [], level)
+    // The glow is its own colour, a ring round the silhouette, from 50 on.
+    expect(at(40).back.some((d) => d.ch === 'g')).toBe(false)
+    const glow = at(50).back.filter((d) => d.ch === 'g')
+    expect(glow.length).toBeGreaterThan(40)
+    // Sparkles twinkle on the back layer (accent dots), from 30 on.
+    expect(at(20).back.filter((d) => d.ch === 'a')).toHaveLength(0)
+    expect(at(30).back.filter((d) => d.ch === 'a').length).toBeGreaterThan(0)
+    // The halo floats over its head.
+    const face = bigFaceOf(bodyOf('cat'))!
+    const halo = at(40).front.filter((d) => !at(30).front.some((e) => e.x === d.x && e.y === d.y))
+    expect(halo.length).toBe(DECOR_ART.halo.join('').replace(/\./g, '').length)
+    for (const d of halo) expect(d.y).toBeLessThan(face.y * 2)
+  })
+
+  it('cost a handful of runs, not a picture', () => {
+    for (const species of SPECIES) {
+      const { back, front } = outfitPixels(species, [], 50)
+      expect(runsOf(back).length + runsOf(front).length, species).toBeLessThan(200)
+    }
+  })
 })
 
 describe('runsOf', () => {
   it('merges a row of one colour into one run, and keeps every dot', () => {
-    const dots = pixelsOf('adult', 'radiant', 'happy', 'dragon')
+    const dots = pixelsOf('happy', 'dragon')
     const runs = runsOf(dots)
     expect(runs.length).toBeLessThan(dots.length / 2)
-    const back = runs.flatMap((r) =>
-      Array.from({ length: r.w }, (_, i) => `${r.x + i},${r.y},${r.ch}`)
-    )
+    const back = runs.flatMap((r) => Array.from({ length: r.w }, (_, i) => `${r.x + i},${r.y},${r.ch}`))
     expect(new Set(back)).toEqual(new Set(dots.map((d) => `${d.x},${d.y},${d.ch}`)))
   })
 })

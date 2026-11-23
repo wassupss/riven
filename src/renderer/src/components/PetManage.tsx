@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Egg, EyeOff, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
+import { PawPrint, EyeOff, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { MAX_PETS, petSubtitle, petTitle, type Hatch, type NestBrief } from '../state/pet'
 import { designOf, type CustomSpecies } from '../state/petSpecies'
@@ -8,8 +8,8 @@ import { Creature } from './PetDevice'
 // ---------------------------------------------------------------------------
 // The pet's own control panel ("내 펫"), opened from its right-click menu in the
 // card beside it. Everything about keeping the pets is here as plain buttons:
-// which one is out, rename, start over, let go, a new egg (random or one of the
-// keeper's own species), where it lives, on top, hide. Settings > 리븐펫 lists
+// which one is out, rename, start over (back to level 1), let go, a new pet
+// (random or one of the keeper's own species), where it lives, on top, hide. Settings > 리븐펫 lists
 // the same things with the same words in the same order (PetNestSettings).
 //
 // The actions on a pet act on the one that is out: show another one first to
@@ -54,9 +54,9 @@ export default function PetManage({
 }): JSX.Element {
   const t = useT()
   const [asking, setAsking] = useState<Danger | null>(null)
-  // What the next egg will be: a random draw (null), or one of the keeper's own.
-  const [eggPick, setEggPick] = useState<string | null>(null)
-  const egg = own.find((o) => o.id === eggPick) ?? null
+  // What the next pet will be: a random draw (null), or one of the keeper's own.
+  const [pick, setPick] = useState<string | null>(null)
+  const chosen = own.find((o) => o.id === pick) ?? null
   const shown = nest.pets[nest.active]
   // A question about one pet is not carried over to another (switched from
   // Settings meanwhile).
@@ -82,7 +82,7 @@ export default function PetManage({
         {nest.pets.map((p, i) => (
           <div key={`${p.bornAt}-${i}`} className={`pet-nest-row${i === nest.active ? ' on' : ''}`}>
             <span className="pet-mini">
-              <Creature stage={p.stage} form={p.form} species={p.species} mood="ok" chewing={false} branch={p.branch} />
+              <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
             </span>
             <span className="pet-nest-text">
               <b>{petTitle(p, t)}</b>
@@ -139,15 +139,15 @@ export default function PetManage({
         </div>
       )}
 
-      <div className="pet-manage-label">{t('pet.nest.newEgg')}</div>
+      <div className="pet-manage-label">{t('pet.nest.newPet')}</div>
       {own.length > 0 && (
         <div className="pet-chips" role="radiogroup" aria-label={t('pet.nest.species')}>
           <button
             type="button"
             role="radio"
-            aria-checked={!egg}
-            className={`pet-chip${!egg ? ' on' : ''}`}
-            onClick={() => setEggPick(null)}
+            aria-checked={!chosen}
+            className={`pet-chip${!chosen ? ' on' : ''}`}
+            onClick={() => setPick(null)}
           >
             {t('pet.nest.random')}
           </button>
@@ -156,9 +156,9 @@ export default function PetManage({
               key={o.id}
               type="button"
               role="radio"
-              aria-checked={egg?.id === o.id}
-              className={`pet-chip${egg?.id === o.id ? ' on' : ''}`}
-              onClick={() => setEggPick(o.id)}
+              aria-checked={chosen?.id === o.id}
+              className={`pet-chip${chosen?.id === o.id ? ' on' : ''}`}
+              onClick={() => setPick(o.id)}
             >
               {o.name}
             </button>
@@ -169,9 +169,9 @@ export default function PetManage({
         type="button"
         className="pet-btn primary wide"
         disabled={full}
-        onClick={() => onAdopt(egg ? { id: egg.id, design: designOf(egg) } : null)}
+        onClick={() => onAdopt(chosen ? { id: chosen.id, design: designOf(chosen) } : null)}
       >
-        <Egg size={12} />
+        <PawPrint size={12} />
         <span>{t('pet.nest.adopt')}</span>
       </button>
       {full && <p className="pet-manage-note">{t('pet.nest.full', { max: MAX_PETS })}</p>}

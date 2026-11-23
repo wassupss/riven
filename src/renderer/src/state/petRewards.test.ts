@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   PRIZES,
-  STAGE_XP,
   claimEvents,
   eventsOn,
   initialState,
@@ -13,11 +12,13 @@ import {
   type PetSave
 } from './pet'
 import { cardOf, decodeCard, encodeCard, fight, isUpset, type BattleCard } from './petBattle'
+import { statsOf, xpForLevel } from './petLevel'
 
 const day = (m: number, d: number): number => new Date(2026, m - 1, d, 12).getTime()
+/** A pet at level 5, the first level with a keepsake. */
 const hatched = (now: number, over: Partial<PetSave> = {}): PetSave => ({
   ...initialState(now),
-  xp: STAGE_XP[1],
+  xp: xpForLevel(5),
   ...over
 })
 const slotOf = (id: string): string | undefined =>
@@ -36,10 +37,9 @@ describe('festivals', () => {
     expect(eventsOn(day(7, 1))).toEqual([])
   })
 
-  it('an egg cannot join; a hatched pet joins once', () => {
+  it('any pet joins, a new one too, and only once', () => {
     const now = day(10, 23)
-    const egg = initialState(now)
-    expect(claimEvents(egg, now)).toBe(egg)
+    expect(claimEvents(initialState(now), now).events).toEqual(['halloween'])
     const s1 = claimEvents(hatched(now), now)
     expect(s1.events).toEqual(['halloween'])
     expect(claimEvents(s1, now + 86_400_000)).toBe(s1)
@@ -51,21 +51,21 @@ describe('prizes', () => {
   it('locked prizes cannot be worn; earned ones toggle', () => {
     const now = day(10, 23)
     const s0 = hatched(now)
-    expect(prizesOf(s0, now)).not.toContain('pumpkin')
-    expect(toggleWear(s0, 'pumpkin', now)).toBe(s0)
+    expect(prizesOf(s0)).not.toContain('pumpkin')
+    expect(toggleWear(s0, 'pumpkin')).toBe(s0)
     const s1 = claimEvents(s0, now)
-    expect(prizesOf(s1, now)).toContain('pumpkin')
-    const on = toggleWear(s1, 'pumpkin', now)
+    expect(prizesOf(s1)).toContain('pumpkin')
+    const on = toggleWear(s1, 'pumpkin')
     expect(on.worn).toEqual(['pumpkin'])
-    expect(toggleWear(on, 'pumpkin', now).worn).toEqual([])
+    expect(toggleWear(on, 'pumpkin').worn).toEqual([])
   })
 
   it('one prize per slot: a new hat replaces the old one', () => {
     const now = day(10, 23)
     const s = claimEvents(hatched(now, { battles: 1, battleWins: 1 }), now)
-    const a = toggleWear(s, 'bandana', now)
+    const a = toggleWear(s, 'bandana')
     expect(a.worn).toEqual(['bandana'])
-    const b = toggleWear(a, 'pumpkin', now)
+    const b = toggleWear(a, 'pumpkin')
     expect(b.worn).toEqual(['pumpkin'])
   })
 
@@ -76,13 +76,28 @@ describe('prizes', () => {
     expect(out.filter((a) => slotOf(a) === 'head')).toEqual(['pumpkin'])
   })
 
-  it('every keepsake comes with an award, the old level ones included', () => {
+  it('every keepsake comes with an award, the old care ones now with levels', () => {
     const now = day(10, 23)
-    expect(prizesOf(hatched(now), now)).toContain('sprout')
+    expect(prizesOf(initialState(now))).toEqual([])
+    expect(prizesOf(hatched(now))).toEqual(['sprout'])
+    expect(prizesOf(hatched(now, { xp: xpForLevel(20) }))).toEqual(expect.arrayContaining(['sprout', 'crown', 'heart']))
+    expect(prizesOf(hatched(now, { xp: xpForLevel(40) }))).toContain('sparkle')
     const fed = hatched(now, { diet: { opus: 1, sonnet: 1, haiku: 1, codex: 0, other: 0 } })
-    expect(prizesOf(fed, now)).toContain('medal')
+    expect(prizesOf(fed)).toContain('medal')
     const award = new Set(PRIZES.map((p) => p.award))
     expect(award.size).toBe(PRIZES.length)
+  })
+
+  it('a prize already on stays on, earned under the new rules or not', () => {
+    const now = Date.now()
+    // A v1 pet that won the sparkle by never falling ill, at a level that would not win it now.
+    const old = normalize({ version: 1, bornAt: now, xp: 900, everSick: false, worn: ['sparkle'] }, now)
+    expect(old.worn).toEqual(['sparkle'])
+    expect(prizesOf(old)).not.toContain('sparkle')
+    // Taking it off is allowed; putting it back waits until it is earned again.
+    const off = toggleWear(old, 'sparkle')
+    expect(off.worn).toEqual([])
+    expect(toggleWear(off, 'sparkle')).toBe(off)
   })
 
   it('old and junk saves come out clean', () => {
@@ -105,20 +120,15 @@ describe('upsets', () => {
   const card = (over: Partial<BattleCard> = {}): BattleCard => ({
     name: 'A',
     species: 'cat',
-    stage: 'adult',
-    form: 'base',
-    level: 10,
-    fullness: 80,
-    mood: 60,
-    sick: false,
+    level: over.level ?? 10,
+    stats: statsOf(over.level ?? 10, 'cat'),
     bornAt: 1,
     ...over
   })
 
-  it('a bigger stage or ten levels up is an upset', () => {
+  it('ten levels up is an upset', () => {
     expect(isUpset(card(), card({ level: 20 }))).toBe(true)
     expect(isUpset(card(), card({ level: 19 }))).toBe(false)
-    expect(isUpset(card({ stage: 'teen', level: 0 }), card())).toBe(true)
     expect(isUpset(card({ level: 30 }), card())).toBe(false)
   })
 
@@ -134,7 +144,7 @@ describe('upsets', () => {
     const plain = card({ name: 'P', bornAt: 9 })
     const dressed: BattleCard = { ...plain, worn: ['sword', 'pumpkin'] }
     expect(decodeCard(encodeCard(dressed))).toEqual(dressed)
-    const foe = card({ name: 'F', species: 'fox', level: 14, bornAt: 3 })
+    const foe = card({ name: 'F', species: 'fox', level: 14, stats: statsOf(14, 'fox'), bornAt: 3 })
     expect(fight(dressed, foe)).toEqual(fight(plain, foe))
     const forged = encodeCard({ ...plain, worn: ['pumpkin', 'nope' as never] })
     expect(decodeCard(forged)?.worn).toEqual(['pumpkin'])
@@ -142,7 +152,7 @@ describe('upsets', () => {
 
   it('the card carries the worn prizes', () => {
     const now = day(10, 23)
-    const s = toggleWear(claimEvents(hatched(now), now), 'pumpkin', now)
-    expect(cardOf(s, now)?.worn).toEqual(['pumpkin'])
+    const s = toggleWear(claimEvents(hatched(now), now), 'pumpkin')
+    expect(cardOf(s).worn).toEqual(['pumpkin'])
   })
 })

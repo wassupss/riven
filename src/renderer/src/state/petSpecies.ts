@@ -3,14 +3,13 @@ import { create } from 'zustand'
 // ---------------------------------------------------------------------------
 // Species the user made from a photo (see lib/petPhoto.ts for the image half
 // and components/petCustomArt.ts for the bodies). A custom species is a NEW
-// animal, not a reskin: its own silhouette at every stage, its own colours,
-// its own battle family, hatched from its own egg.
+// animal, not a reskin: its own silhouette, its own colours, its own battle
+// family and stats.
 //
-// What is kept is the DESIGN: the grown-up's dots on a 12x12 grid (the room a
+// What is kept is the DESIGN: the animal's dots on a 12x12 grid (the room a
 // 16x16 body has inside its outline), the five colours the photo was reduced
-// to, and where its face goes. Everything else (the hatchling, the child, the
-// teen, the adult forms, the egg's coat) is derived from that, the same way
-// for every machine, so a design is all that has to travel: in the shared
+// to, and where its face goes. Everything else is derived from that, the same
+// way for every machine, so a design is all that has to travel: in the shared
 // store file, in a pet's save as a snapshot, and in a battle code.
 //
 // The file is userData/store/pet-species.json, which the Electron and Tauri
@@ -19,7 +18,7 @@ import { create } from 'zustand'
 
 /** The art grid of a design: the inside of a 16x16 body, one dot of air and one of outline all round. */
 export const ART = 12
-/** Where the art sits on the 16x16 grid of the grown-up. */
+/** Where the art sits on the 16x16 grid of the body. */
 export const ART_AT = 2
 /** How many species one keeper can make. */
 export const MAX_CUSTOM = 24
@@ -57,7 +56,7 @@ export interface CustomDesign {
   colors: CustomColors
   /** ART rows of ART characters from ROLE_CHARS. */
   art: string[]
-  /** Top-left of the grown-up's 6x4 face window, on the art grid. */
+  /** Top-left of the 6x4 face window, on the art grid. */
   face: { x: number; y: number }
   /** Keep the photo as it is: no eyes or mouth are stamped on it. */
   noFace: boolean
@@ -65,7 +64,7 @@ export interface CustomDesign {
    * The faithful picture ("사진 충실 모드"), on species made since it came in:
    * the photo itself at 32x32 (or 48x48, 64x64) in up to 16 colours, drawn
    * in the pet's 32 css pixels with no face of its own. The 12x12 design above is still made and
-   * kept beside it: the egg's coat, the battle family and build read it, and
+   * kept beside it: the battle family and the stats' lean read it, and
    * an older riven that knows nothing of `photo` draws that instead.
    */
   photo?: PhotoArt

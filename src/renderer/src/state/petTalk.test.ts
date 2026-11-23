@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { answer, topicOf, type TalkFacts } from './petTalk'
 import { initialState } from './pet'
+import { xpForLevel } from './petLevel'
 
 const T0 = 1_700_000_000_000
 
@@ -29,7 +30,11 @@ const facts = (over: Partial<TalkFacts> = {}): TalkFacts => ({
 describe('topicOf', () => {
   it.each([
     ['안녕!', 'greeting'],
-    ['오늘 뭐 먹었어?', 'food'],
+    ['오늘 뭐 먹었어?', 'tokens'],
+    ['레벨 몇이야?', 'level'],
+    ['what level are you', 'level'],
+    ['스탯 보여줘', 'stats'],
+    ['how strong are you', 'stats'],
     ['지금 바빠?', 'busy'],
     ['아까 뭐 끝났어?', 'finished'],
     ['한도 얼마 남았어', 'limit'],
@@ -104,22 +109,44 @@ describe('answer', () => {
     expect(answer('바뀐 파일?', facts()).text).toBe('pet.talk.filesNone')
   })
 
-  it('names its own diet when asked what it ate', () => {
+  it("names today's tokens and which model did most of its work", () => {
     const pet = initialState(T0)
     pet.diet = { opus: 80, sonnet: 20, haiku: 0, codex: 0, other: 0 }
-    const a = answer('오늘 뭐 먹었어?', facts({ pet, todayTokens: 6_400_000 }))
+    const a = answer('오늘 토큰 얼마나 썼어?', facts({ pet, todayTokens: 6_400_000 }))
+    expect(a.topic).toBe('tokens')
     expect(a.text).toContain('pet.flavor.opus')
     expect(a.text).toContain('"pct":80')
+    expect(answer('뭐 먹었어?', facts()).text).toBe('pet.talk.tokensNone')
   })
 
-  it('admits an empty stomach', () => {
-    expect(answer('뭐 먹었어?', facts()).text).toBe('pet.talk.foodNone')
-  })
-
-  it('greets differently when it is hungry', () => {
-    const hungry = { ...initialState(T0), fullness: 5 }
-    expect(answer('안녕', facts({ pet: hungry })).text).toBe('pet.talk.hiHungry')
+  it('just says hi: it is never hungry, ill or asleep', () => {
     expect(answer('안녕', facts()).text).toBe('pet.talk.hi')
+    for (const q of ['배고파?', '아파?', '똥 쌌어?', '진화 언제 해?'])
+      expect(answer(q, facts()).text).not.toMatch(/hungry|sick|poop|evol|stage|branch/i)
+  })
+
+  it('tells its level and how far the next one is', () => {
+    const pet = { ...initialState(T0), xp: xpForLevel(12) + 10 }
+    const a = answer('레벨 몇이야?', facts({ pet }))
+    expect(a.topic).toBe('level')
+    expect(a.text).toBe(`pet.talk.level(${JSON.stringify({ n: 12, xp: xpForLevel(13) - xpForLevel(12) - 10 })})`)
+    expect(answer('level?', facts({ pet: { ...initialState(T0), xp: xpForLevel(99) } })).text).toContain('pet.talk.levelMax')
+  })
+
+  it('tells its stats and what it is best at', () => {
+    const pet = { ...initialState(T0), species: 'owl' as const, xp: xpForLevel(30) }
+    const a = answer('능력치 알려줘', facts({ pet }))
+    expect(a.topic).toBe('stats')
+    expect(a.text).toContain('"power":')
+    expect(a.text).toContain('"top":"pet.stat.smarts"')
+  })
+
+  it('tells what it is, its level and its age', () => {
+    const pet = { ...initialState(T0), species: 'fox' as const, xp: xpForLevel(7) }
+    const a = answer('너 누구야', facts({ pet, now: T0 + 3 * 60_000 }))
+    expect(a.topic).toBe('self')
+    expect(a.text).toContain('"species":"pet.species.fox"')
+    expect(a.text).toContain('"n":7')
   })
 
   it('offers help rather than guessing when it does not understand', () => {
@@ -132,7 +159,7 @@ describe('answer', () => {
       busy: ['web', 'api', 'riven', 'docs'].map((w) => ({ workspace: w, title: 'chat' }))
     }))
     // The inner call is nested inside the outer one's params, so its quotes come
-    // back escaped — the first two names, and a count of the rest.
+    // back escaped: the first two names, and a count of the rest.
     expect(a.text).toContain('pet.talk.andMore')
     expect(a.text).toContain('web, api')
     expect(a.text).toContain('n\\":2') // two more beyond the first pair

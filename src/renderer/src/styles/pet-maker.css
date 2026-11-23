@@ -203,7 +203,7 @@
   border: none;
 }
 
-/* How it grows: the same Creature every pet is drawn with. */
+/* The preview: the same Creature every pet is drawn with, at level 1 and 50. */
 .pm-stages {
   display: flex;
   flex-direction: column;

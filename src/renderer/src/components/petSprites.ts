@@ -1,46 +1,45 @@
-import { BRANCH_BY_ID, slotOf } from '../state/pet'
-import type { Accessory, AccessorySlot, BranchId, BuiltinSpecies, Form, Mood, Species, Stage } from '../state/pet'
+import { slotOf } from '../state/pet'
+import type { Accessory, AccessorySlot, BuiltinSpecies, Mood, Species } from '../state/pet'
+import { decorationsOf } from '../state/petLevel'
 import { customOf, isCustomId, type CustomDesign } from '../state/petSpecies'
-import { customBodies, customCoat, photoGrid } from './petCustomArt'
+import { customBody, photoGrid } from './petCustomArt'
 
 // ---------------------------------------------------------------------------
-// The pixel art. Every creature is authored as a 16×16 grid of characters, one
+// The pixel art. Every animal is authored as a 16x16 grid of characters, one
 // per dot, so the sprites are readable and editable as text. pixelsOf doubles
-// it to 32×32 and refines it there (rounded curves, a 1-dot outline, light and
-// shadow, an 8×8 face), and the renderer emits one <rect> per run of same-colour
+// it to 32x32 and refines it there (rounded curves, a 1-dot outline, light and
+// shadow, an 8x8 face), and the renderer emits one <rect> per run of same-colour
 // dots (shape-rendering: crispEdges, so real dots at any zoom).
 //
-// Faces are NOT baked into the bodies: four moods × eight bodies would be 32
-// grids to keep in sync. Each body instead declares where its face goes, and the
-// mood's 4×4 face is stamped on top (see pixelsOf).
+// A pet is always its animal, grown: there are no younger sizes and no eggs.
+// Faces are NOT baked into the bodies: each body declares where its face goes,
+// and the mood's face is stamped on top (see pixelsOf).
 //
 // Palette characters:
 //   .  empty        o  outline        b  body         s  shade (limbs)
-//   h  highlight    w  shell/white    e  eye          m  mouth      a  accent
-//   p  prop (droppings, the medicine cross, the game's arrows)
+//   h  highlight    w  white          e  eye          m  mouth      a  accent
+//   p  prop (what the watched pane is doing)
+//   g  the glow a level 50 pet has round it (see outfitPixels)
 //   A..P  the colours of a species' faithful picture (see photoParts)
 // ---------------------------------------------------------------------------
 
-/** The authored grids: 16×16, one character per dot, easy to read as text. */
+/** The authored grids: 16x16, one character per dot, easy to read as text. */
 export const GRID = 16
 /**
- * What is drawn: each authored dot becomes 2×2, then is refined at that size
+ * What is drawn: each authored dot becomes 2x2, then is refined at that size
  * (rounded corners, a 1-dot outline, shading, detailed faces; see pixelsOf).
- * At 16 the outline was as thick as an eye and every curve was a staircase.
  */
 export const SPRITE_SIZE = GRID * 2
 /** `l` rim light and `d` shadow only exist at the drawn size, made by shading. */
-export const PALETTE = '.obshwemapld'
+export const PALETTE = '.obshwemapldg'
 
 export interface Sprite {
   rows: string[]
-  /** Top-left dot where the 4×4 mood face is stamped; null for a faceless egg. */
+  /** Top-left dot where the 4x4 face is stamped. */
   face: { x: number; y: number } | null
-  /** Top-left dot where the strain's 6×2 crown is stamped; absent for an egg. */
-  crown?: Crown
   /**
-   * Top-left of the 6×4 window the grown-up's big face goes in. Defaults to one
-   * dot left of `face`, which is where it lands centred on most bodies.
+   * Top-left of the 6x4 window the big face goes in. Defaults to one dot left
+   * of `face`, which is where it lands centred on most bodies.
    */
   bigFace?: { x: number; y: number }
   /**
@@ -50,1259 +49,430 @@ export interface Sprite {
   hideFace?: boolean
 }
 
-// The shell is plain on purpose: what is printed on it is the strain's coat (see
-// COATS), so the draw you got is visible before it has hatched. It used to carry
-// a zigzag of its own, which every egg everywhere had.
-// The shell is plain: what is printed on it is the strain's coat (see COAT_RULES),
-// so the animal you drew is visible before it has hatched.
-const egg: Sprite = {
-  face: null,
+// ---------------------------------------------------------------------------
+// The animals: one grown silhouette each.
+//
+// Every grid is 16x16 and every face is a 4x4 window of plain body, which is what
+// petSprites.test.ts checks: a miscounted row is invisible in review.
+// ---------------------------------------------------------------------------
+
+// Pointed ears, a tail carried straight up.
+const cat: Sprite = {
+  face: { x: 6, y: 5 },
   rows: [
     '................',
-    '................',
-    '................',
-    '......oooo......',
-    '.....obbbbo.....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '....obbbbbbo....',
-    '.....obbbbo.....',
-    '......oooo......',
+    '...o........o...',
+    '..obo......obo..',
+    '..obbo....obbo..',
+    '...oobbbbbbboo..',
+    '..obbbbbbbbbbo..',
+    'o.obbbbbbbbbbo.o',
+    '.oobbbbbbbbbboo.',
+    'o.obbbbbbbbbbo.o',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '...obbbbbbbbo...',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbo...',
+    '....oooooooo....',
     '................'
   ]
 }
 
-// ---------------------------------------------------------------------------
-// The animals. One silhouette per strain, at three sizes: `baby` (just hatched,
-// sitting in the broken shell), `young` (the child; the teen is this plus limbs)
-// and `grown`. The adult FORM is not another body — it is a change made to the
-// grown one (see fatten / halo / tatter), so care and strain compose instead of
-// multiplying into twenty-four hand-drawn grids.
-//
-// Every grid is 16×16 and every face is a 4×4 window of plain body, which is what
-// petSprites.test.ts checks: a miscounted row is invisible in review.
-// ---------------------------------------------------------------------------
-
-interface Bodies {
-  baby: Sprite
-  young: Sprite
-  grown: Sprite
-}
-
-// Pointed ears, a tail carried straight up.
-const cat: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '.....o....o.....',
-      '....oobbbboo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....obbbbo.....',
-      '......oooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '....o......o....',
-      '...obo....obo...',
-      '....oobbbboo....',
-      '...obbbbbbbbo...',
-      '.o.obbbbbbbbo.o.',
-      '..oobbbbbbbboo..',
-      '.o.obbbbbbbbo.o.',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '...o........o...',
-      '..obo......obo..',
-      '..obbo....obbo..',
-      '...oobbbbbbboo..',
-      '..obbbbbbbbbbo..',
-      'o.obbbbbbbbbbo.o',
-      '.oobbbbbbbbbboo.',
-      'o.obbbbbbbbbbo.o',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '................'
-    ]
-  }
-}
-
 // Two long ears straight up, a round tail.
-const rabbit: Bodies = {
-  baby: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '......o..o......',
-      '.....obo.obo....',
-      '......oooo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....obbbbo.....',
-      '......oooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '....o...o.......',
-      '....obo.obo.....',
-      '....obo.obo.....',
-      '....oobbbboo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbboo..',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '....o....o......',
-      '....obo..obo....',
-      '....obo..obo....',
-      '....obo..obo....',
-      '...oobbbbbboo...',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbboo.',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '................'
-    ]
-  }
+const rabbit: Sprite = {
+  face: { x: 6, y: 6 },
+  rows: [
+    '....o....o......',
+    '....obo..obo....',
+    '....obo..obo....',
+    '....obo..obo....',
+    '...oobbbbbboo...',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbboo.',
+    '...obbbbbbbbo...',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbo...',
+    '....oooooooo....',
+    '................'
+  ]
 }
 
 // A beak, a tail of feathers, two thin legs. It faces left.
-const bird: Bodies = {
-  baby: {
-    face: { x: 6, y: 4 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '......oooo......',
-      '....hobbbbo.....',
-      '...hhobbbbo.....',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 3 },
-    rows: [
-      '................',
-      '................',
-      '......oooo......',
-      '.....obbbbo.....',
-      '...hobbbbbbo....',
-      '..hhobbbbbbo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbooo.',
-      '...obbbbbbbbo...',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '.....o...o......',
-      '....ooo.ooo.....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 3 },
-    rows: [
-      '................',
-      '.....oooooo.....',
-      '....obbbbbbo....',
-      '...obbbbbbbbo...',
-      '.hhobbbbbbbbo...',
-      'hhhobbbbbbbbo...',
-      '...obbbbbbbbbo..',
-      '...obbbbbbbbbboo',
-      '..obbbbbbbbbbboo',
-      '..obbbbbbbbbbo..',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '.....o...o......',
-      '....ooo.ooo.....',
-      '................',
-      '................'
-    ]
-  }
+const bird: Sprite = {
+  face: { x: 6, y: 3 },
+  rows: [
+    '................',
+    '.....oooooo.....',
+    '....obbbbbbo....',
+    '...obbbbbbbbo...',
+    '.hhobbbbbbbbo...',
+    'hhhobbbbbbbbo...',
+    '...obbbbbbbbbo..',
+    '...obbbbbbbbbboo',
+    '..obbbbbbbbbbboo',
+    '..obbbbbbbbbbo..',
+    '...obbbbbbbbo...',
+    '....oooooooo....',
+    '.....o...o......',
+    '....ooo.ooo.....',
+    '................',
+    '................'
+  ]
 }
 
 // No legs at all: a tail fin at the back, fins above and below.
-const fish: Bodies = {
-  baby: {
-    face: { x: 4, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '................',
-      '.....oooooo.....',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbboo.',
-      '..obbbbbbbbbbooo',
-      '...obbbbbbbboo..',
-      '.....oooooo.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 4, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '........o.......',
-      '.....oooboo.....',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbboo.',
-      '..obbbbbbbbbbooo',
-      '..obbbbbbbbbboo.',
-      '...obbbbbbbbo...',
-      '.....ooobooo....',
-      '........o.......',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 3, y: 6 },
-    bigFace: { x: 3, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '.........o......',
-      '........obo.....',
-      '.....ooooboo....',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbboo.',
-      '.obbbbbbbbbbbboo',
-      '.obbbbbbbbbbbboo',
-      '..obbbbbbbbbboo.',
-      '...obbbbbbbbo...',
-      '....oooobooo....',
-      '........obo.....',
-      '.........o......',
-      '................',
-      '................'
-    ]
-  }
+const fish: Sprite = {
+  face: { x: 3, y: 6 },
+  bigFace: { x: 3, y: 6 },
+  rows: [
+    '................',
+    '................',
+    '.........o......',
+    '........obo.....',
+    '.....ooooboo....',
+    '...obbbbbbbbo...',
+    '..obbbbbbbbbboo.',
+    '.obbbbbbbbbbbboo',
+    '.obbbbbbbbbbbboo',
+    '..obbbbbbbbbboo.',
+    '...obbbbbbbbo...',
+    '....oooobooo....',
+    '........obo.....',
+    '.........o......',
+    '................',
+    '................'
+  ]
 }
 
 // A small head over a wide shelled body, with four legs poking out.
-const turtle: Bodies = {
-  baby: {
-    face: { x: 6, y: 4 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '......oooo......',
-      '.....obbbbo.....',
-      '.....obbbbo.....',
-      '.....obbbbo.....',
-      '.....obbbbo.....',
-      '....oooooooo....',
-      '...oobbbbbboo...',
-      '...oobbbbbboo...',
-      '....oooooooo....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 3, y: 3 },
-    rows: [
-      '................',
-      '................',
-      '..oooo..........',
-      '.obbbbo.........',
-      '.obbbbo.........',
-      '.obbbboooooo....',
-      '.oobbbbbbbbbo...',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo...',
-      '..oobbbbbbbboo..',
-      '...oooooooooo...',
-      '....o.o..o.o....',
-      '....o.o..o.o....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 3, y: 2 },
-    bigFace: { x: 2, y: 2 },
-    rows: [
-      '................',
-      '..oooooo........',
-      '.obbbbbbo.......',
-      'obbbbbbbbo......',
-      'obbbbbbbbo......',
-      'obbbbbbbbooooo..',
-      '.obbbbbbbbbbbbo.',
-      '..oobbbbbbbbbbbo',
-      '..obbbbbbbbbbbbo',
-      '..obbbbbbbbbbbbo',
-      '...oobbbbbbbboo.',
-      '....oooooooooo..',
-      '....o.oo..oo.o..',
-      '....o.oo..oo.o..',
-      '................',
-      '................'
-    ]
-  }
+const turtle: Sprite = {
+  face: { x: 3, y: 2 },
+  bigFace: { x: 2, y: 2 },
+  rows: [
+    '................',
+    '..oooooo........',
+    '.obbbbbbo.......',
+    'obbbbbbbbo......',
+    'obbbbbbbbo......',
+    'obbbbbbbbooooo..',
+    '.obbbbbbbbbbbbo.',
+    '..oobbbbbbbbbbbo',
+    '..obbbbbbbbbbbbo',
+    '..obbbbbbbbbbbbo',
+    '...oobbbbbbbboo.',
+    '....oooooooooo..',
+    '....o.oo..oo.o..',
+    '....o.oo..oo.o..',
+    '................',
+    '................'
+  ]
 }
 
 // Antennae up top, legs down both sides.
-const bug: Bodies = {
-  baby: {
-    face: { x: 6, y: 4 },
-    rows: [
-      '................',
-      '................',
-      '.....o....o.....',
-      '......oooo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '..s.obbbbbbo.s..',
-      '....obbbbbbo....',
-      '.....obbbbo.....',
-      '......oooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '....o......o....',
-      '.....o....o.....',
-      '......oooo......',
-      '.....obbbbo.....',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '....oobbbboo....',
-      '......oooo......',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '...o........o...',
-      '....o......o....',
-      '.....o....o.....',
-      '......oooo......',
-      '....oobbbboo....',
-      '..sobbbbbbbbos..',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '....oobbbboo....',
-      '......oooo......',
-      '................',
-      '................'
-    ]
-  }
+const bug: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '...o........o...',
+    '....o......o....',
+    '.....o....o.....',
+    '......oooo......',
+    '....oobbbboo....',
+    '..sobbbbbbbbos..',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbo...',
+    '..sobbbbbbbbos..',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbo...',
+    '..sobbbbbbbbos..',
+    '....oobbbboo....',
+    '......oooo......',
+    '................',
+    '................'
+  ]
 }
 
 // Floppy ears down the sides of the head, and four legs.
-const dog: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '....oo....oo....',
-      '...obboooobbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '...oo......oo...',
-      '..obbo....obbo..',
-      '..obbbooooobbbo.',
-      '..obbbbbbbbbbbo.',
-      '..obbbbbbbbbbbo.',
-      '..obbbbbbbbbbbo.',
-      '...obbbbbbbbbo..',
-      '...obbbbbbbbbo..',
-      '...obbbbbbbbbo..',
-      '...ooooooooooo..',
-      '...o.oo..oo.o...',
-      '...o.oo..oo.o...',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 5, y: 5 },
-    rows: [
-      '................',
-      '..oo......oo....',
-      '.obbo....obbo...',
-      '.obbbooooobbbo..',
-      '.obbbbbbbbbbbo..',
-      '.obbbbbbbbbbbo..',
-      '.obbbbbbbbbbbo..',
-      '.obbbbbbbbbbbo..',
-      '.obbbbbbbbbbbo..',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo.o.',
-      '..obbbbbbbbboo..',
-      '..obbbbbbbbbo...',
-      '..ooooooooooo...',
-      '..o.oo...oo.o...',
-      '..o.oo...oo.o...'
-    ]
-  }
+const dog: Sprite = {
+  face: { x: 5, y: 5 },
+  rows: [
+    '................',
+    '..oo......oo....',
+    '.obbo....obbo...',
+    '.obbbooooobbbo..',
+    '.obbbbbbbbbbbo..',
+    '.obbbbbbbbbbbo..',
+    '.obbbbbbbbbbbo..',
+    '.obbbbbbbbbbbo..',
+    '.obbbbbbbbbbbo..',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo.o.',
+    '..obbbbbbbbboo..',
+    '..obbbbbbbbbo...',
+    '..ooooooooooo...',
+    '..o.oo...oo.o...',
+    '..o.oo...oo.o...'
+  ]
 }
 
 // Small, round ears, and cheeks wider than it is tall.
-const hamster: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '....oo....oo....',
-      '...obbo..obbo...',
-      '....oobbbboo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....oobbbboo....',
-      '......oooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '...oo....oo.....',
-      '..obbo..obbo....',
-      '..obbboobbbo....',
-      '...oobbbbbboo...',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...oobbbbbboo...',
-      '.....oooooo.....',
-      '....o.o..o.o....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '...oo....oo.....',
-      '..obbo..obbo....',
-      '..obbboobbbo....',
-      '...oobbbbbboo...',
-      '..obbbbbbbbbbo..',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...oobbbbbboo...',
-      '.....oooooo.....',
-      '....o.o..o.o....',
-      '................'
-    ]
-  }
+const hamster: Sprite = {
+  face: { x: 6, y: 6 },
+  rows: [
+    '................',
+    '...oo....oo.....',
+    '..obbo..obbo....',
+    '..obbboobbbo....',
+    '...oobbbbbboo...',
+    '..obbbbbbbbbbo..',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '...oobbbbbboo...',
+    '.....oooooo.....',
+    '....o.o..o.o....',
+    '................'
+  ]
 }
 
 // Upright, with a pale front, two flippers and two feet.
-const penguin: Bodies = {
-  baby: {
-    face: { x: 5, y: 4 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '....oooooo......',
-      '...obbbbbbo.....',
-      '..aobbbbbbo.....',
-      '...obbbbbbo.....',
-      '...obbbbbbo.....',
-      '....oooooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 5, y: 3 },
-    rows: [
-      '................',
-      '................',
-      '....oooooo......',
-      '...obbbbbbo.....',
-      '..aobbbbbbo.....',
-      '...obbbbbbo.....',
-      '..oobbbbbboo....',
-      '.obbbbbbbbbbo...',
-      '.obbbbbbbbbbo...',
-      '..obbbbbbbbo....',
-      '..obbbbbbbbo....',
-      '...oooooooo.....',
-      '..ooo....ooo....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 5, y: 2 },
-    rows: [
-      '................',
-      '....oooooo......',
-      '...obbbbbbo.....',
-      '..aobbbbbbo.....',
-      '...obbbbbbo.....',
-      '...obbbbbbbo....',
-      '..oobbbbbbbboo..',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...oooooooooo...',
-      '..ooo......ooo..',
-      '................'
-    ]
-  }
+const penguin: Sprite = {
+  face: { x: 5, y: 2 },
+  rows: [
+    '................',
+    '....oooooo......',
+    '...obbbbbbo.....',
+    '..aobbbbbbo.....',
+    '...obbbbbbo.....',
+    '...obbbbbbbo....',
+    '..oobbbbbbbboo..',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '...oooooooooo...',
+    '..ooo......ooo..',
+    '................'
+  ]
 }
 
 // Squat and wide, with eyes up top and legs splayed out at the bottom.
-const frog: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '....oo....oo....',
-      '...obboooobbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '...oo......oo...',
-      '..obo......obo..',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '...oo......oo...',
-      '..obbo....obbo..',
-      '..obbboooobbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..oobbbbbbbboo..',
-      '...oooooooooo...',
-      '..oo........oo..',
-      '.obbo......obbo.',
-      '.oo..........oo.',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '...oo......oo...',
-      '..obbo....obbo..',
-      '..obbboooobbbo..',
-      '.oobbbbbbbbbboo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.oobbbbbbbbbboo.',
-      '..oooooooooooo..',
-      '.oo..........oo.',
-      'obbo........obbo',
-      'obbo........obbo',
-      '.oo..........oo.',
-      '................'
-    ]
-  }
+const frog: Sprite = {
+  face: { x: 6, y: 6 },
+  rows: [
+    '................',
+    '...oo......oo...',
+    '..obbo....obbo..',
+    '..obbboooobbbo..',
+    '.oobbbbbbbbbboo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.oobbbbbbbbbboo.',
+    '..oooooooooooo..',
+    '.oo..........oo.',
+    'obbo........obbo',
+    'obbo........obbo',
+    '.oo..........oo.',
+    '................'
+  ]
 }
 
 // Wide and flat, two claws held up, legs down both sides.
-const crab: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '...oo......oo...',
-      '...obo....obo...',
-      '....oooooooo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '...o.o....o.o...',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '..oo........oo..',
-      '.obbo......obbo.',
-      '.obbo......obbo.',
-      '..oboooooooobo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..oobbbbbbbboo..',
-      '...oooooooooo...',
-      '..o.o.o..o.o.o..',
-      '..o.o.o..o.o.o..',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '.oo..........oo.',
-      'obbo........obbo',
-      'obbo........obbo',
-      '.oboooooooooobo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.oobbbbbbbbbboo.',
-      '..oooooooooooo..',
-      '.o.o.o....o.o.o.',
-      '.o.o.o....o.o.o.',
-      '................',
-      '................',
-      '................'
-    ]
-  }
+const crab: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '................',
+    '.oo..........oo.',
+    'obbo........obbo',
+    'obbo........obbo',
+    '.oboooooooooobo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.oobbbbbbbbbboo.',
+    '..oooooooooooo..',
+    '.o.o.o....o.o.o.',
+    '.o.o.o....o.o.o.',
+    '................',
+    '................',
+    '................'
+  ]
 }
 
 // Horns, a wing out one side, and a tail behind.
-const dragon: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '.....o....o.....',
-      '.....obooobo....',
-      '....obbbbbbbo...',
-      '....obbbbbbbo...',
-      '....obbbbbbbo...',
-      '....obbbbbbbo...',
-      '.....oooooooo...',
-      '..........o.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 5, y: 5 },
-    rows: [
-      '................',
-      '...o......o.....',
-      '...obo..obo.....',
-      '....oobbboo.....',
-      '..obbbbbbbbo....',
-      '..obbbbbbbbo.oo.',
-      '..obbbbbbbbooboo',
-      '..obbbbbbbbbbbbo',
-      '..obbbbbbbbooboo',
-      '...obbbbbbo..oo.',
-      '...oooooooo.....',
-      '.........o......',
-      '........oo......',
-      '.......oo.......',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 5, y: 5 },
-    rows: [
-      '..o........o....',
-      '..obo....obo....',
-      '...oobbbbboo....',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo.oo',
-      '..obbbbbbbbboobo',
-      '..obbbbbbbbbbbbo',
-      '..obbbbbbbbboobo',
-      '..obbbbbbbbbo.oo',
-      '...obbbbbbbo....',
-      '..sobbbbbbbos...',
-      '...ooooooooo....',
-      '..........o.....',
-      '.........oo.....',
-      '........oo......'
-    ]
-  }
+const dragon: Sprite = {
+  face: { x: 5, y: 5 },
+  rows: [
+    '..o........o....',
+    '..obo....obo....',
+    '...oobbbbboo....',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo.oo',
+    '..obbbbbbbbboobo',
+    '..obbbbbbbbbbbbo',
+    '..obbbbbbbbboobo',
+    '..obbbbbbbbbo.oo',
+    '...obbbbbbbo....',
+    '..sobbbbbbbos...',
+    '...ooooooooo....',
+    '..........o.....',
+    '.........oo.....',
+    '........oo......'
+  ]
 }
 
 // Big ears, and a brush of a tail curled up one side.
-const fox: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '.....o....o.....',
-      '....obo..obo....',
-      '....oobbbboo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo.o..',
-      '....obbbbbboobo.',
-      '.....obbbbbbbo..',
-      '......ooooooo...',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '...o......o.....',
-      '..obo....obo....',
-      '..oobbbbbboo....',
-      '..obbbbbbbbo....',
-      '..obbbbbbbbo..o.',
-      '..obbbbbbbbo.obo',
-      '..obbbbbbbbo.obo',
-      '..obbbbbbbboobbo',
-      '...obbbbbbbbbbo.',
-      '....oooooooooo..',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '...o.......o....',
-      '..obo.....obo...',
-      '..obbo...obbo...',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo...',
-      '..obbbbbbbbbo.o.',
-      '..obbbbbbbbboobo',
-      '..obbbbbbbbboobo',
-      '..obbbbbbbbbobbo',
-      '..obbbbbbbbbbbbo',
-      '...obbbbbbbbbbo.',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '................'
-    ]
-  }
+const fox: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '...o.......o....',
+    '..obo.....obo...',
+    '..obbo...obbo...',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo...',
+    '..obbbbbbbbbo.o.',
+    '..obbbbbbbbboobo',
+    '..obbbbbbbbboobo',
+    '..obbbbbbbbbobbo',
+    '..obbbbbbbbbbbbo',
+    '...obbbbbbbbbbo.',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbo...',
+    '....oooooooo....',
+    '................'
+  ]
 }
 
 // Ear tufts, folded wings, talons.
-const owl: Bodies = {
-  baby: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '.....o....o.....',
-      '.....oo..oo.....',
-      '....oobbbboo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '....o......o....',
-      '....oo....oo....',
-      '...oobbbbbboo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....obbbbbbo....',
-      '.....oo..oo.....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '...o........o...',
-      '...oo......oo...',
-      '..oobbbbbbbboo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '.sobbbbbbbbbbos.',
-      '.sobbbbbbbbbbos.',
-      '.sobbbbbbbbbbos.',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...obbbbbbbbo...',
-      '....oooooooo....',
-      '.....oo..oo.....',
-      '................'
-    ]
-  }
+const owl: Sprite = {
+  face: { x: 6, y: 6 },
+  rows: [
+    '................',
+    '...o........o...',
+    '...oo......oo...',
+    '..oobbbbbbbboo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '.sobbbbbbbbbbos.',
+    '.sobbbbbbbbbbos.',
+    '.sobbbbbbbbbbos.',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '...obbbbbbbbo...',
+    '....oooooooo....',
+    '.....oo..oo.....',
+    '................'
+  ]
 }
 
 // Round ears, a solid build, and two stubby legs.
-const bear: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '....oo....oo....',
-      '...obbo..obbo...',
-      '....oobbbboo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....obbbbo.....',
-      '......oooo......',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '...oo......oo...',
-      '..obbo....obbo..',
-      '...oobbbbbboo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbo..obbo...',
-      '...oooo..oooo...',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '..oo........oo..',
-      '.obbo......obbo.',
-      '..oobbbbbbbboo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '.sobbbbbbbbbbos.',
-      '.sobbbbbbbbbbos.',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbo..obbbo..',
-      '..ooooo..ooooo..',
-      '................'
-    ]
-  }
+const bear: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '................',
+    '..oo........oo..',
+    '.obbo......obbo.',
+    '..oobbbbbbbboo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '.sobbbbbbbbbbos.',
+    '.sobbbbbbbbbbos.',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbo..obbbo..',
+    '..ooooo..ooooo..',
+    '................'
+  ]
 }
 
 // A dome of a head and a skirt of curling arms.
-const octopus: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '......oooo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obobbobo....',
-      '....o.o..o.o....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '.....oooooo.....',
-      '....obbbbbbo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbbo..',
-      '..obo.obbo.obo..',
-      '.obo..obbo..obo.',
-      '.oo....oo....oo.',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '.....oooooo.....',
-      '....obbbbbbo....',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '.obbbbbbbbbbbbo.',
-      '.obo.obbbbo.obo.',
-      'obo..obbbbo..obo',
-      'oo..obo..obo..oo',
-      '....oo....oo....',
-      '................',
-      '................'
-    ]
-  }
+const octopus: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '................',
+    '.....oooooo.....',
+    '....obbbbbbo....',
+    '...obbbbbbbbo...',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '.obbbbbbbbbbbbo.',
+    '.obo.obbbbo.obo.',
+    'obo..obbbbo..obo',
+    'oo..obo..obo..oo',
+    '....oo....oo....',
+    '................',
+    '................'
+  ]
 }
 
 // A wide head fringed with pink gills, and a little paddle of a tail.
-const axolotl: Bodies = {
-  baby: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '................',
-      '....oooooooo....',
-      '...aobbbbbboa...',
-      '..a.obbbbbbo.a..',
-      '...aobbbbbboa...',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '.a..oooooooo..a.',
-      '..aobbbbbbbboa..',
-      '.a.obbbbbbbbo.a.',
-      '..aobbbbbbbboa..',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '....obbbbbbo....',
-      '....obbbbbbooo..',
-      '.....oooooobbo..',
-      '...........oo...',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 5 },
-    rows: [
-      '................',
-      '................',
-      'a..oooooooooo..a',
-      '.aobbbbbbbbbboa.',
-      'a.obbbbbbbbbbo.a',
-      '.aobbbbbbbbbboa.',
-      'a.obbbbbbbbbbo.a',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...obbbbbbbbo...',
-      '..sobbbbbbbbos..',
-      '...obbbbbbbbooo.',
-      '....oooooooobbo.',
-      '............oo..',
-      '................',
-      '................'
-    ]
-  }
+const axolotl: Sprite = {
+  face: { x: 6, y: 5 },
+  rows: [
+    '................',
+    '................',
+    'a..oooooooooo..a',
+    '.aobbbbbbbbbboa.',
+    'a.obbbbbbbbbbo.a',
+    '.aobbbbbbbbbboa.',
+    'a.obbbbbbbbbbo.a',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '...obbbbbbbbo...',
+    '..sobbbbbbbbos..',
+    '...obbbbbbbbooo.',
+    '....oooooooobbo.',
+    '............oo..',
+    '................',
+    '................'
+  ]
 }
 
 // A drop of jelly: a peak on top, settling wider as it grows.
-const slime: Bodies = {
-  baby: {
-    face: { x: 6, y: 6 },
-    rows: [
-      '................',
-      '................',
-      '................',
-      '.......oo.......',
-      '......obbo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '....obbbbbbo....',
-      '.....oooooo.....',
-      '.....w.ww.w.....',
-      '....wwwwwwww....',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  young: {
-    face: { x: 6, y: 7 },
-    rows: [
-      '................',
-      '................',
-      '.......oo.......',
-      '......obbo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '...obbbbbbbbo...',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '...oooooooooo...',
-      '................',
-      '................',
-      '................',
-      '................'
-    ]
-  },
-  grown: {
-    face: { x: 6, y: 7 },
-    rows: [
-      '................',
-      '.......oo.......',
-      '......obbo......',
-      '.....obbbbo.....',
-      '....obbbbbbo....',
-      '...obbbbbbbbo...',
-      '..obbbbbbbbbbo..',
-      '..obbbbbbbbbbo..',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '.obbbbbbbbbbbbo.',
-      '..oooooooooooo..',
-      '................',
-      '................',
-      '................'
-    ]
-  }
+const slime: Sprite = {
+  face: { x: 6, y: 7 },
+  rows: [
+    '................',
+    '.......oo.......',
+    '......obbo......',
+    '.....obbbbo.....',
+    '....obbbbbbo....',
+    '...obbbbbbbbo...',
+    '..obbbbbbbbbbo..',
+    '..obbbbbbbbbbo..',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '.obbbbbbbbbbbbo.',
+    '..oooooooooooo..',
+    '................',
+    '................',
+    '................'
+  ]
 }
 
-export const BODIES: Record<BuiltinSpecies, Bodies> = {
+export const BODIES: Record<BuiltinSpecies, Sprite> = {
   cat,
   rabbit,
   bird,
@@ -1323,50 +493,23 @@ export const BODIES: Record<BuiltinSpecies, Bodies> = {
   slime
 }
 
-/** Every grid in the art, flat, for the shape checks in the tests. */
-export const SPRITES: Record<string, Sprite> = {
-  egg,
-  ...Object.fromEntries(
-    Object.entries(BODIES).flatMap(([sp, b]) =>
-      (Object.keys(b) as Array<keyof Bodies>).map((size) => [`${sp}.${size}`, b[size]])
-    )
-  )
-}
-
-// Faces are drawn at the drawn size, over a body's 4×4 face window (so 8×8).
+// Faces are drawn at the drawn size, over a body's 4x4 face window (so 8x8).
 // Eyes two dots wide and three tall with a white glint, a blush under each, a
 // mouth with real corners. A smile puts its corners ABOVE its middle, a frown
 // the other way round, and sad eyes sit lower and flatter.
 export const FACES: Record<Mood, string[]> = {
   happy: ['we....we', 'ee....ee', 'ee....ee', '........', 'h.m..m.h', '...mm...', '........', '........'],
   ok: ['we....we', 'ee....ee', 'ee....ee', '........', 'h......h', '...mm...', '........', '........'],
-  hungry: ['we....we', 'ee....ee', 'ee....ee', '........', 'h..mm..h', '..mhhm..', '...mm...', '........'],
-  sad: ['........', '........', 'ee....ee', 'ee....ee', '........', '...mm...', '..m..m..', '........'],
-  // Ill: eyes squeezed shut, > <, and a wobbly mouth. The colour shift and the
-  // cross beside it carry the rest of the message.
-  sick: ['e......e', '.e....e.', 'e......e', '........', '........', '..m..m..', '...mm.m.', '........'],
-  // Asleep: lids closed in a gentle curve, the mouth relaxed. The Z does the rest.
-  asleep: ['........', '........', 'e.e..e.e', '.e....e.', '........', '...mm...', '........', '........']
+  sad: ['........', '........', 'ee....ee', 'ee....ee', '........', '...mm...', '..m..m..', '........']
 }
 
-// The grown-up's face, over a 6×4 window (so 12×8). A small face on a big body
-// is exactly what made adults read as uglier than the child they grew out of,
-// so from the teens on the eyes are big ovals with a glint, the way the eyes of
-// anything cute are.
+// The big face, over a 6x4 window (so 12x8), wherever it fits: a small face
+// on a big body reads as plain, so the eyes are big ovals with a glint.
 export const BIG_FACES: Record<Mood, string[]> = {
   happy: ['.ee......ee.', 'ewee....ewee', 'eeee....eeee', 'eeee....eeee', '.ee......ee.', 'hh..m..m..hh', '.....mm.....', '............'],
   ok: ['.ee......ee.', 'ewee....ewee', 'eeee....eeee', 'eeee....eeee', '.ee......ee.', 'hh........hh', '.....mm.....', '............'],
-  hungry: ['.ee......ee.', 'ewee....ewee', 'eeee....eeee', 'eeee....eeee', '.ee......ee.', 'hh...mm...hh', '....mhhm....', '.....mm.....'],
-  sad: ['............', '............', 'eeee....eeee', 'ewee....ewee', '.ee......ee.', '.w..........', '.w...mm.....', '....m..m....'],
-  sick: ['............', 'ee........ee', '..ee....ee..', 'ee........ee', '............', '............', '...m..mm....', '....mm..m...'],
-  asleep: ['............', '............', '............', 'e..e....e..e', '.ee......ee.', '............', '.....mm.....', '............']
+  sad: ['............', '............', 'eeee....eeee', 'ewee....ewee', '.ee......ee.', '.w..........', '.w...mm.....', '....m..m....']
 }
-
-// Small props drawn beside the creature rather than baked into its body, so they
-// can appear over any of them.
-export const POOP = ['..p..', '.ppp.', 'ppppp']
-export const ZZZ = ['ppp', '.pp', 'pp.', 'ppp']
-export const CROSS = ['.p.', 'ppp', '.p.']
 
 // Props for what the watched pane is doing: a book (reading), a pen (writing), a
 // prompt (running), a lens (searching), a globe (fetching).
@@ -1377,41 +520,17 @@ export const MIMES: Record<string, string[]> = {
   search: ['.pp.', 'p..p', '.pp.', '...p'],
   web: ['.pp.', 'pppp', 'pppp', '.pp.']
 }
-export const ARROW_LEFT = ['..p.', '.pp.', 'pppp', '.pp.', '..p.']
-export const ARROW_RIGHT = ['.p..', '.pp.', 'pppp', '.pp.', '.p..']
 
 // ---------------------------------------------------------------------------
-// Species — what a pet hatched as (see state/pet.ts).
+// Species marks. Each animal wears a coat stamped onto its body, the same
+// trick the faces use, and its colour comes from CSS (.pet-sp-* in pet.css),
+// mixed with the theme's accent so it reads as itself in any theme.
 //
-// Six strains without six sets of bodies: the strain is stamped ONTO whatever
-// body the pet is wearing, the same trick the faces use. Three marks:
-//
-//   coat   a 16×16 mask laid over the body. A dot only lands where the body
-//          already is, so one pattern fits every stage and every adult form
-//          without a single extra grid to keep in sync.
-//   crown  a 6×2 patch above the head — horns, an antenna, a tuft. This is the
-//          silhouette difference, so two strains are told apart in one glance
-//          even at the pet's own small size, with nothing else on screen.
-//   colour CSS, not dots (see .pet-sp-* in pet.css): the body hue is mixed with
-//          the theme's accent so a strain reads as itself in any theme.
-//
-// The egg wears its strain's coat too, which is the whole point — the draw is
-// visible the moment it appears instead of hours later at adulthood.
-// ---------------------------------------------------------------------------
-
-/** Where a body wants its strain's crown: top-left of a 6×2 patch. */
-export interface Crown {
-  x: number
-  y: number
-}
-
-// A coat is a RULE, not a picture. Six hand-drawn 16×16 masks had to line up
-// with seven different bodies (four of them adult forms of different widths) and
-// they did not: stripes cut through eyes, a ridge landed on a chin, spots read as
-// dirt. A rule measured against the body's own bounding box fits every one of
-// them — and the egg, which is the whole point of having strains at all.
-//
+// A coat is a RULE, not a picture: measured against the body's own bounding
+// box, so it fits the silhouette without a hand-drawn mask to keep in step.
 // 'h' is the highlight (a lighter shade of the body), 'a' the accent.
+// ---------------------------------------------------------------------------
+
 interface Box {
   x0: number
   x1: number
@@ -1426,7 +545,7 @@ export const COAT_RULES: Record<
   // Tabby bars down both flanks. Stripes right across, every other column, were
   // a barcode on a grown cat: the body was more stripe than cat.
   cat: (x, y, b) => ((x - b.x0 < 2 || b.x1 - x < 2) && (y - b.y0) % 2 === 0 ? 'h' : null),
-  // Pale underside — inset from the flanks, or it reads as a nappy rather than
+  // Pale underside, inset from the flanks, or it reads as a nappy rather than
   // as a belly.
   rabbit: (x, y, b) => (y >= b.y1 - 2 && x > b.x0 + 1 && x < b.x1 - 1 ? 'h' : null),
   // Speckled plumage. In the highlight colour, not the accent: amber confetti on
@@ -1466,293 +585,19 @@ export const COAT_RULES: Record<
   slime: (x, y) => ((x * 5 + y * 7) % 11 === 0 ? 'h' : null)
 }
 
-// ---- the adult forms, as changes made to the grown body ----
-//
-// A form used to be its own grid, which cannot work once a strain owns the
-// silhouette: four forms × eighteen animals is seventy-two bodies to draw and keep
-// in step. Each form is a transformation instead, so it composes with any animal.
-//
-// Every form has to be something worth growing into. The first versions were
-// punishments in disguise (a lumpy blob, a grey thing with red eyes), and the
-// adult was the stage players liked least.
-
 type Grid = string[][]
 const at = (g: Grid, x: number, y: number): string => g[y]?.[x] ?? '.'
-const extent = (g: Grid): Box | null => {
-  let x0 = GRID
-  let x1 = -1
-  let y0 = GRID
-  let y1 = -1
-  g.forEach((row, y) =>
-    row.forEach((ch, x) => {
-      if (ch === '.') return
-      if (x < x0) x0 = x
-      if (x > x1) x1 = x
-      if (y < y0) y0 = y
-      if (y > y1) y1 = y
-    })
-  )
-  return x1 < 0 ? null : { x0, x1, y0, y1 }
-}
 
-/**
- * Well fed: chubby. The middle column is doubled out to each side, so it gets
- * two dots rounder without its outline growing lumps. Fattening it all round
- * turned every ear and leg into a blob. Bodies already touching both edges get
- * a row taller under the face instead.
- */
-function fatten(g: Grid, face: { y: number }): void {
-  const box = extent(g)
-  if (!box) return
-  const left = box.x0 > 0
-  const right = box.x1 < GRID - 1
-  if (left || right) {
-    const cx = Math.floor((box.x0 + box.x1) / 2)
-    for (const row of g) {
-      const old = [...row]
-      for (let x = 0; x < row.length; x++) {
-        if (left && x < cx) row[x] = old[x + 1]
-        else if (right && x > cx) row[x] = old[x - 1]
-      }
-    }
-    return
-  }
-  if (box.y1 >= GRID - 1) return
-  const dup = face.y + 3
-  for (let y = box.y1 + 1; y > dup; y--) g[y] = [...g[y - 1]]
-}
-
-/**
- * Radiant: little four-point stars in the empty air around it. A dotted aura
- * traced round the silhouette was the first try, and it read as mould. Stars
- * go where there is room for them, up to three, apart. Runs on the drawn grid,
- * where a star has room for long arms and a white heart.
- */
-function sparkle(g: Grid): void {
-  const before = g.map((r) => [...r])
-  const roomy = (cx: number, cy: number): boolean => {
-    for (let dy = -3; dy <= 3; dy++)
-      for (let dx = -3; dx <= 3; dx++) if (at(before, cx + dx, cy + dy) !== '.') return false
-    return true
-  }
-  const spots: Array<[number, number]> = []
-  for (let y = 2; y < SPRITE_SIZE - 2; y++)
-    for (let x = 2; x < SPRITE_SIZE - 2; x++) if (roomy(x, y)) spots.push([x, y])
-  // Top corners first (a sparkle reads best up by the head), then anything.
-  const byCorner = (side: number) => (a: [number, number], b: [number, number]): number =>
-    a[1] + Math.abs(a[0] - side) - (b[1] + Math.abs(b[0] - side))
-  const picks: Array<[number, number]> = []
-  const far = (p: [number, number]): boolean =>
-    picks.every((q) => Math.abs(q[0] - p[0]) + Math.abs(q[1] - p[1]) >= 12)
-  for (const order of [byCorner(0), byCorner(SPRITE_SIZE - 1), byCorner(SPRITE_SIZE / 2)]) {
-    const p = [...spots].sort(order).find(far)
-    if (p) picks.push(p)
-  }
-  // The third star is a small one, so the three don't read as a pattern.
-  picks.forEach(([x, y], i) => {
-    const arm = i < 2 ? 2 : 1
-    for (let d = -arm; d <= arm; d++) {
-      g[y][x + d] = 'a'
-      g[y + d][x] = 'a'
-    }
-    g[y][x] = 'w'
-  })
-  if (picks.length > 0) return
-  // Packed edge to edge: a single glint wherever one fits.
-  for (let y = 0; y < SPRITE_SIZE; y++)
-    for (let x = 0; x < SPRITE_SIZE; x++) if (before[y][x] === '.' && (x + y) % 13 === 0) g[y][x] = 'a'
-}
-
-/**
- * A branch shows on the body: horns for the fighters and the dark line, a halo
- * for the sage, speed lines for the swift, a moon for the night owl, glints for
- * the steady one. Each tier makes the mark bigger, the third adds the stars,
- * and the hidden ends wear several at once. Runs on the drawn grid and only
- * ever paints empty air, so it never eats into the body or the face.
- */
-function branchMarks(g: Grid, branch: BranchId): void {
-  const b = BRANCH_BY_ID.get(branch)
-  if (!b) return
-  let x0 = SPRITE_SIZE
-  let x1 = -1
-  let y0 = SPRITE_SIZE
-  let y1 = -1
-  g.forEach((row, y) =>
-    row.forEach((ch, x) => {
-      if (ch === '.') return
-      if (x < x0) x0 = x
-      if (x > x1) x1 = x
-      if (y < y0) y0 = y
-      if (y > y1) y1 = y
-    })
-  )
-  if (x1 < 0) return
-  const put = (x: number, y: number, ch: string): void => {
-    if (g[y]?.[x] === '.') g[y][x] = ch
-  }
-  const tier = Math.min(3, b.tier)
-  // The top edge of the head, column by column: where horns and a halo sit.
-  const topAt = (x: number): number => {
-    for (let y = 0; y < SPRITE_SIZE; y++) if (g[y][x] !== '.') return y
-    return SPRITE_SIZE
-  }
-  const cx = Math.round((x0 + x1) / 2)
-  const span = x1 - x0
-  const horns = (ch: string): void => {
-    const len = tier + 1
-    for (const side of [-1, 1]) {
-      const hx = cx + side * Math.max(2, Math.round(span / 4))
-      const base = topAt(hx)
-      for (let i = 1; i <= len; i++) {
-        // Curved outwards as they climb, so they read as horns, not antennae.
-        const x = hx + side * Math.floor((i - 1) / 2)
-        put(x, base - i, ch)
-        if (i < len) put(x - side, base - i, ch === 'w' ? 'w' : 'o')
-      }
-    }
-  }
-  const halo = (): void => {
-    // Ears often reach the top row, so the halo floats over the middle of the
-    // head where there is air, as high as it can go.
-    const y = Math.max(0, topAt(cx) - 3)
-    const r = 2 + tier
-    for (let x = cx - r; x <= cx + r; x++) put(x, y + (Math.abs(x - cx) === r ? 1 : 0), 'a')
-  }
-  const speed = (): void => {
-    // Trailing behind it, on whichever side has the room.
-    const len = 2 + tier
-    const left = x0 >= SPRITE_SIZE - 1 - x1
-    const room = left ? x0 - 1 : SPRITE_SIZE - 2 - x1
-    const mid = Math.round((y0 + y1) / 2)
-    // A body wall to wall has no side to trail from: the streaks go overhead.
-    if (room < 3) {
-      for (const [i, y] of [0, 1].entries())
-        for (let k = 0; k < len + 1; k++) put(1 + i * 2 + k, y, 'l')
-      return
-    }
-    for (const [i, y] of [mid - 3, mid, mid + 3].entries()) {
-      const near = left ? x0 - 2 : x1 + 2
-      const n = len - (i === 1 ? 0 : 1)
-      for (let k = 0; k < n; k++) put(near + (left ? -k : k), y, 'l')
-    }
-  }
-  const moon = (): void => {
-    // A crescent up in the corner opposite the speed lines.
-    const r = 1 + tier
-    const mx = Math.min(SPRITE_SIZE - 2 - r, x1 + 2 + r)
-    const my = Math.max(r + 1, y0 - 1)
-    for (let y = -r; y <= r; y++)
-      for (let x = -r; x <= r; x++) {
-        const inDisc = x * x + y * y <= r * r
-        const inBite = (x - 1) * (x - 1) + (y + 1) * (y + 1) <= r * r
-        if (inDisc && !inBite) put(mx + x, my + y, 'a')
-      }
-  }
-  const glints = (): void => {
-    for (const x of [x0 - 2, x1 + 2]) {
-      const y = y0 + Math.round((y1 - y0) / 3)
-      put(x, y, 'w')
-      for (let d = 1; d < tier + 1; d++) {
-        put(x - d, y, 'l')
-        put(x + d, y, 'l')
-        put(x, y - d, 'l')
-        put(x, y + d, 'l')
-      }
-    }
-  }
-  switch (b.line ?? b.id) {
-    case 'battle':
-      horns('o')
-      break
-    case 'dark':
-      horns('m')
-      break
-    case 'sage':
-      halo()
-      break
-    case 'swift':
-      speed()
-      break
-    case 'night':
-      moon()
-      break
-    case 'balance':
-      glints()
-      break
-    case 'omega':
-      halo()
-      horns('m')
-      speed()
-      break
-    case 'apex':
-      halo()
-      horns('a')
-      moon()
-      glints()
-      break
-  }
-  if (b.tier >= 3) sparkle(g)
-}
-
-/**
- * Raised on neglect: a little ghost. Whatever it stood on is gone, and the hem
- * hangs in scallops. (Translucent and floating, in pet.css.) It keeps its own
- * colours and its coat: it is still the pet, just a sadder one.
- */
-function haunt(g: Grid): void {
-  // Body is 'b', and for a species made from a photo also its own colours.
-  const lastBody = g.reduce((last, row, y) => (row.some((c) => BODY_CHARS.includes(c)) ? y : last), -1)
-  if (lastBody < 0) return
-  const hem = lastBody + 1
-  for (let y = hem + 1; y < g.length; y++) g[y].fill('.')
-  // Every other lit dot, counted from the first: on a hem whose dots all sit on
-  // odd columns (a fish's tail fin) an x % 2 rule scalloped nothing.
-  if (hem < g.length) {
-    let n = 0
-    for (let x = 0; x < g[hem].length; x++) if (g[hem][x] !== '.' && n++ % 2 === 0) g[hem][x] = '.'
-  }
-}
-
-/** Teen: the young body with limbs put out to the sides. */
-function withLimbs(rows: string[]): string[] {
-  // An animal that already stands on something (bug, turtle) keeps what it has.
-  if (rows.some((r) => r.includes('s'))) return rows
-  const g = rows.map((r) => [...r])
-  const ys = g.flatMap((row, y) => (row.some((c) => BODY_CHARS.includes(c)) ? [y] : []))
-  const mid = ys[Math.floor(ys.length / 2)]
-  for (const y of [mid, mid + 1]) {
-    const row = g[y]
-    if (!row) continue
-    const first = row.findIndex((c) => c !== '.')
-    const last = row.length - 1 - [...row].reverse().findIndex((c) => c !== '.')
-    if (first > 0) row[first - 1] = 's'
-    if (last < row.length - 1) row[last + 1] = 's'
-  }
-  return g.map((r) => r.join(''))
-}
-
-/** Body dots: plain body, and the colours of a species made from a photo. */
-const BODY_CHARS = 'bnkcv'
 /** Coat marks: the built-in highlight and accent, and a photo's own markings. */
 const MARK_CHARS = 'hakcnvu'
 
-/** The bodies of an animal, built in or made from a photo (see petCustomArt.ts). */
-function bodiesOf(species: Species): Bodies {
+/** The body of an animal, built in or made from a photo (see petCustomArt.ts). */
+export function bodyOf(species: Species): Sprite {
   if (isCustomId(species)) {
     const d = customOf(species)
-    return d ? customBodies(d) : BODIES.cat
+    return d ? customBody(d) : BODIES.cat
   }
   return BODIES[species] ?? BODIES.cat
-}
-
-/** Which body a pet wears: its animal, at the size its stage calls for. */
-export function bodyOf(species: Species, stage: Stage): Sprite {
-  if (stage === 'egg') return egg
-  const b = bodiesOf(species)
-  if (stage === 'hatchling') return b.baby
-  if (stage === 'child') return b.young
-  if (stage === 'teen') return { ...b.young, rows: withLimbs(b.young.rows) }
-  return b.grown
 }
 
 /** Where the big face would go on a body, if its 6×4 window is all body. */
@@ -1831,7 +676,7 @@ const STRIPED: ReadonlySet<Species> = new Set<Species>(['cat'])
 /**
  * A coat, doubled, was a scatter of fat blocks. Its marks are pulled one dot
  * back from the outline (a mark run into the edge reads as a hole in it), and
- * stripes are drawn one dot thick. Never so far that a strain shows nothing.
+ * stripes are drawn one dot thick. Never so far that an animal shows nothing.
  */
 function refineCoat(g: Grid, coat: boolean[][], species: Species): void {
   const marked = (x: number, y: number): boolean => {
@@ -1887,56 +732,34 @@ function shade(g: Grid): void {
   )
 }
 
-/** The face a pet wears, where it goes on the drawn grid. */
-function faceOf(
-  stage: Stage,
-  sprite: Sprite,
-  mood: Mood
-): { x: number; y: number; w: number; rows: string[] } | null {
-  const big = stage === 'teen' || stage === 'adult' ? bigFaceOf(sprite) : null
+/** The face a pet wears, where it goes on the drawn grid: the big one wherever it fits. */
+function faceOf(sprite: Sprite, mood: Mood): { x: number; y: number; w: number; rows: string[] } | null {
+  const big = bigFaceOf(sprite)
   if (big) return { x: big.x * 2, y: big.y * 2, w: 12, rows: BIG_FACES[mood] ?? BIG_FACES.ok }
   if (!sprite.face) return null
   return { x: sprite.face.x * 2, y: sprite.face.y * 2, w: 8, rows: FACES[mood] ?? FACES.ok }
 }
 
-/** The lit dots of a pet: its body, wearing its strain, with its mood on top. */
-export function pixelsOf(
-  stage: Stage,
-  form: Form,
-  mood: Mood,
-  species: Species = 'cat',
-  branch?: BranchId | null
-): Dot[] {
-  // A faithful picture is drawn as it is (see photoPixels).
-  if (stage !== 'egg' && isCustomId(species)) {
+/** The lit dots of a pet: its body, wearing its coat, with its mood on top. */
+export function pixelsOf(mood: Mood, species: Species = 'cat'): Dot[] {
+  // A faithful picture is drawn as it is (see photoParts).
+  if (isCustomId(species)) {
     const d = customOf(species)
-    if (d?.photo) return photoPixels(d, stage, form, branch)
+    if (d?.photo) return photoParts(d).coarse
   }
-  const sprite = bodyOf(species, stage)
+  const sprite = bodyOf(species)
   const grid = sprite.rows.map((r) => r.split(''))
 
-  // From the teens on it gets the big, expressive face, wherever it fits. The
-  // window it is stamped into, on the authored grid:
-  const big = stage === 'teen' || stage === 'adult' ? bigFaceOf(sprite) : null
+  // The window the face is stamped into, on the authored grid.
+  const big = bigFaceOf(sprite)
   const window = big ? { ...big, w: 6 } : sprite.face ? { ...sprite.face, w: 4 } : null
 
-  // What its upbringing made of it, applied to whichever animal it is.
-  if (stage === 'adult') {
-    if (form === 'titan') fatten(grid, window ?? { y: 0 })
-    else if (form === 'wraith') haunt(grid)
-  }
-
-  // The coat, first. Only where there is body to mark (never over an outline,
-  // never outside the silhouette) and never within a dot of the face: a marking
-  // beside an eye reads as a bruise, not as a pattern.
-  // A species made from a photo wears the photo itself as its coat; only its
-  // egg needs one stamped on, projected from the grown-up's markings.
+  // The coat. Only where there is body to mark (never over an outline, never
+  // outside the silhouette) and never within a dot of the face: a marking
+  // beside an eye reads as a bruise, not as a pattern. A species made from a
+  // photo wears its own markings, so it has no rule.
   const custom = isCustomId(species) ? customOf(species) : null
-  const rule = isCustomId(species)
-    ? custom && stage === 'egg'
-      ? customCoat(custom)
-      : null
-    : COAT_RULES[species]
+  const rule = isCustomId(species) ? null : COAT_RULES[species]
   const coat = grid.map((row) => row.map(() => false))
   if (rule) {
     let x0 = GRID
@@ -1953,8 +776,7 @@ export function pixelsOf(
       })
     )
     // A dot of clearance around the face, so a marking never crowds an eye, but
-    // only where there is room for it. A just-hatched body is barely wider than
-    // its own face, and the margin left nowhere at all for its strain to show.
+    // only where there is room for it.
     const margin = x1 - x0 >= 9 ? 1 : 0
     const clear = (x: number, y: number): boolean =>
       !window ||
@@ -1975,15 +797,14 @@ export function pixelsOf(
           marked++
         })
       )
-      // A strain has to be visible at EVERY size. On the smallest bodies the face
-      // and its margin can cover the whole torso, leaving a belly or a sparse
-      // speckle with nowhere to land, so fall back to marking the flanks.
+      // An animal's coat has to show: where the face and its margin cover the
+      // whole torso, mark the flanks instead.
       if (marked === 0)
         grid.forEach((row, y) =>
           row.forEach((ch, x) => {
             if (ch !== 'b' || !clear(x, y)) return
             if ((x === x0 || x === x1) && y % 2 === 0) {
-              grid[y][x] = custom ? 'k' : 'h'
+              grid[y][x] = 'h'
               coat[y][x] = true
             }
           })
@@ -1997,15 +818,12 @@ export function pixelsOf(
   refineCoat(fine, coat, species)
   // Doubling rounds a coat's corners, and a corner beside the face can round
   // into it. The face stays clear.
-  const face = sprite.hideFace ? null : faceOf(stage, sprite, mood)
+  const face = sprite.hideFace ? null : faceOf(sprite, mood)
   if (face && !custom)
     for (let y = face.y; y < face.y + 8; y++)
       for (let x = face.x; x < face.x + face.w; x++)
         if (fine[y]?.[x] === 'h' || fine[y]?.[x] === 'a') fine[y][x] = 'b'
   shade(fine)
-  if (stage === 'adult' && branch) branchMarks(fine, branch)
-  // A third-tier branch already wears the stars; twice over is clutter.
-  if (stage === 'adult' && form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(fine)
 
   if (face) {
     face.rows.forEach((row, dy) =>
@@ -2026,82 +844,50 @@ export function pixelsOf(
   return dots
 }
 
-/**
- * A species' faithful picture (CustomDesign.photo) as lit dots on the 32
- * grid, what the rest of the pet code reads (where a hat fits, what a test
- * counts): the picture brought down to 32 (photoDrawing's `coarse`) with its
- * marks. What is drawn is photoDrawing's `picture`, at its own size.
- */
-function photoPixels(d: CustomDesign, stage: Exclude<Stage, 'egg'>, form: Form, branch?: BranchId | null): Dot[] {
-  const { coarse, marks } = photoParts(d, stage, form, branch)
-  return [...coarse, ...marks]
-}
-
 /** A faithful picture as drawn: see photoDrawing. */
 export interface PhotoDrawing {
   /** The picture's grid (32, 48 or 64): `picture` is on it. */
   size: number
-  /** The picture, outline and shell, one dot per grid dot. */
+  /** The picture with its outline, one dot per grid dot. */
   picture: Dot[]
-  /** The branch marks and a radiant one's stars, on the 32 grid. */
-  marks: Dot[]
 }
 
 /**
- * The stage's picture (petCustomArt photoGrid, cached) with no face; its mood
- * shows in how it moves (pet.css, .pet-pm). A grown-up's form and branch
- * still show: a titan is wider, a wraith fades out at the hem (both on the
- * picture's own grid, by about the same css pixels at any size), and the
- * branch marks and a radiant one's stars go in the air around it on the 32
- * grid, as on every pet, where they have room for their shapes.
+ * The picture (petCustomArt photoGrid, cached) with no face, on its own grid,
+ * and brought down to the 32 grid (`coarse`), which is what the rest of the
+ * pet code reads (where a hat fits, where a decoration has room).
  */
-function photoParts(
-  d: CustomDesign,
-  stage: Exclude<Stage, 'egg'>,
-  form: Form,
-  branch?: BranchId | null
-): PhotoDrawing & { coarse: Dot[] } {
-  const fine: Grid = photoGrid(d, stage).map((r) => [...r])
+function photoParts(d: CustomDesign): PhotoDrawing & { coarse: Dot[] } {
+  const cached = photoCache.get(d)
+  if (cached) return cached
+  const fine: Grid = photoGrid(d).map((r) => [...r])
   const n = fine.length
-  if (stage === 'adult') {
-    if (form === 'titan') widen(fine)
-    else if (form === 'wraith') fadeHem(fine)
-  }
   const coarseGrid = n === SPRITE_SIZE ? fine : toSprite(fine)
-  const marked = coarseGrid.map((r) => [...r])
-  if (stage === 'adult') {
-    if (branch) branchMarks(marked, branch)
-    if (form === 'radiant' && (BRANCH_BY_ID.get(branch ?? '')?.tier ?? 0) < 3) sparkle(marked)
-  }
-  const dotsOf = (g: Grid, keep: (x: number, y: number, ch: string) => boolean): Dot[] => {
+  const dotsOf = (g: Grid): Dot[] => {
     const dots: Dot[] = []
     g.forEach((row, y) =>
       row.forEach((ch, x) => {
-        if (ch !== '.' && keep(x, y, ch)) dots.push({ x, y, ch })
+        if (ch !== '.') dots.push({ x, y, ch })
       })
     )
     return dots
   }
-  const all = (): boolean => true
-  return {
-    size: n,
-    picture: dotsOf(fine, all),
-    coarse: dotsOf(coarseGrid, all),
-    // Marks only ever paint air, so a mark is a dot the picture left empty.
-    marks: dotsOf(marked, (x, y) => coarseGrid[y][x] === '.')
-  }
+  const parts = { size: n, picture: dotsOf(fine), coarse: dotsOf(coarseGrid) }
+  photoCache.set(d, parts)
+  return parts
 }
+const photoCache = new WeakMap<CustomDesign, PhotoDrawing & { coarse: Dot[] }>()
 
 /**
  * A faithful picture as the pet draws it (see Creature): the picture on its
- * own grid, and the marks around it on the 32 grid. Null for anything else.
+ * own grid. Null for anything else.
  */
-export function photoDrawing(stage: Stage, form: Form, species: Species, branch?: BranchId | null): PhotoDrawing | null {
-  if (stage === 'egg' || !isCustomId(species)) return null
+export function photoDrawing(species: Species): PhotoDrawing | null {
+  if (!isCustomId(species)) return null
   const d = customOf(species)
   if (!d?.photo) return null
-  const { size, picture, marks } = photoParts(d, stage, form, branch)
-  return { size, picture, marks }
+  const { size, picture } = photoParts(d)
+  return { size, picture }
 }
 
 /**
@@ -2139,59 +925,6 @@ function toSprite(fine: Grid): Grid {
   return out
 }
 
-/**
- * Titan, on a picture: about two css pixels wider each side, the middle
- * column repeated (as fatten does on the authored grid).
- */
-function widen(g: Grid): void {
-  const n = g.length
-  const passes = Math.round((2 * n) / SPRITE_SIZE)
-  for (let pass = 0; pass < passes; pass++) {
-    let x0 = n
-    let x1 = -1
-    g.forEach((row) =>
-      row.forEach((ch, x) => {
-        if (ch === '.') return
-        x0 = Math.min(x0, x)
-        x1 = Math.max(x1, x)
-      })
-    )
-    if (x1 < 0) return
-    const cx = Math.floor((x0 + x1) / 2)
-    const left = x0 > 0
-    const right = x1 < n - 1
-    if (!left && !right) return
-    for (const row of g) {
-      const old = [...row]
-      for (let x = 0; x < row.length; x++) {
-        if (left && x < cx) row[x] = old[x + 1]
-        else if (right && x > cx) row[x] = old[x - 1]
-      }
-    }
-  }
-}
-
-/**
- * Wraith, on a picture: its bottom rows (about three css pixels of them)
- * thin out to nothing, a dot at a time.
- */
-function fadeHem(g: Grid): void {
-  const k = g.length / SPRITE_SIZE
-  let hem = -1
-  g.forEach((row, y) => {
-    if (row.some((c) => c !== '.')) hem = y
-  })
-  const rows = Math.round(3 * k)
-  for (let r = 0; r < rows && hem - r >= 0; r++) {
-    const y = hem - r
-    // Every other dot on the last row(s), every third above, every fourth above that.
-    const every = 2 + Math.floor(r / k)
-    g[y].forEach((ch, x) => {
-      if (ch !== '.' && (x + y) % every === 0) g[y][x] = '.'
-    })
-  }
-}
-
 /** A row of same-coloured dots, drawn as one rect. */
 export interface Run extends Dot {
   w: number
@@ -2220,10 +953,9 @@ export function runsOf(dots: Dot[]): Run[] {
 }
 
 /**
- * Keepsakes a grown-up earns by levelling. Drawn as their own layer (see
- * Creature), so a crown's gold doesn't twinkle like the stars do, at the drawn
- * size. A hat sits on its head; the neckwear is made to fit (see neckwear) and
- * only its charm is drawn here; the rest find a free spot of air around it.
+ * Keepsakes, drawn as their own layer (see Creature) at the drawn size. A hat
+ * sits on its head; the neckwear is made to fit (see neckBand) and only its
+ * charm is drawn here; the rest find a free spot of air around it.
  */
 export const ACCESSORY_ART: Record<Accessory, string[]> = {
   sprout: ['hh...hh', 'hhh.hhh', '.hhshh.', '...s...'],
@@ -2336,12 +1068,16 @@ function nearestFit(
 
 /**
  * Something worn round the neck: a band wrapped round the body just under the
- * face, cut to its outline, with the item's charm (or a scarf's tail) on it.
+ * face, cut to its outline, with a charm (or a scarf's tail) on it. `band` is
+ * how many rows it is and `dot` what colour each of its dots is.
  */
-function neckwear(
-  id: Accessory,
+function neckBand(
   face: { x: number; y: number; w: number; rows: string[] },
-  body: Set<number>
+  body: Set<number>,
+  band: number,
+  dot: (x: number, dy: number) => string,
+  charm: string[],
+  charmX: number
 ): Dot[] {
   const from = face.y + face.rows.length
   // The first row under the face that is mostly body, where a collar would rest.
@@ -2353,21 +1089,50 @@ function neckwear(
   }
   if (y < 0) return []
   const dots: Dot[] = []
-  const band = id === 'scarf' ? 2 : 1
   for (let dy = 0; dy < band; dy++)
     for (let x = 0; x < SPRITE_SIZE; x++)
       if (body.has(keyOf(x, y + dy)) && Math.abs(x - (face.x + face.w / 2)) <= face.w)
-        dots.push({ x, y: y + dy, ch: id === 'medal' ? 'h' : id === 'scarf' && (x + dy) % 3 === 0 ? 'h' : 'm' })
+        dots.push({ x, y: y + dy, ch: dot(x, dy) })
   if (!dots.length) return []
-  const art = ACCESSORY_ART[id]
-  const w = art[0].length
-  // A scarf's tail hangs off one side; a bell or medal hangs in the middle.
-  const x0 =
-    id === 'scarf'
-      ? face.x + face.w - 3
-      : face.x + Math.floor((face.w - w) / 2)
-  return [...dots, ...stamp(art, x0, y + band)]
+  return [...dots, ...stamp(charm, charmX, y + band)]
 }
+
+/** A neck keepsake: a scarf hangs a tail off one side, a bell or medal hangs in the middle. */
+function neckwear(id: Accessory, face: { x: number; y: number; w: number; rows: string[] }, body: Set<number>): Dot[] {
+  const art = ACCESSORY_ART[id]
+  const band = id === 'scarf' ? 2 : 1
+  const x0 = id === 'scarf' ? face.x + face.w - 3 : face.x + Math.floor((face.w - art[0].length) / 2)
+  return neckBand(
+    face,
+    body,
+    band,
+    (x, dy) => (id === 'medal' ? 'h' : id === 'scarf' && (x + dy) % 3 === 0 ? 'h' : 'm'),
+    art,
+    x0
+  )
+}
+
+// ---- decorations ----
+// What levels bring (DECORATIONS in state/petLevel.ts), drawn with the
+// keepsakes: a badge at 10, a ribbon at 20, sparkles at 30, a halo at 40 and
+// a glow from 50. Static dots like the keepsakes; the sparkles twinkle on the
+// same layer the shines already use, so nothing new runs per frame.
+export const DECOR_ART = {
+  /** A rosette pinned beside it. */
+  badge: ['.aaa.', 'aawaa', '.aaa.', '.m.m.'],
+  /** The badge where there is no room for it. */
+  badgeMini: ['.a.', 'awa', 'm.m'],
+  /** The ribbon's knot, under its chin. */
+  ribbonKnot: ['m.m', '.h.', 'm.m'],
+  /** The ribbon as a bow by its head, when something else is round its neck. */
+  ribbonBow: ['mm.mm', '.mhm.', 'mm.mm'],
+  /** A ring floating over its head. */
+  halo: ['.aaaaa.', 'a.....a', '.aaaaa.'],
+  /** One twinkle. */
+  sparkle: ['.a.', 'awa', '.a.']
+}
+/** How many twinkles the sparkle decoration scatters round it. */
+export const DECOR_SPARKLES = 3
 
 /** Where a hat sits: centred over the face, its bottom row sunk into the outline of the head. */
 function headwear(
@@ -2377,7 +1142,7 @@ function headwear(
 ): Dot[] {
   const w = art[0].length
   const x0 = Math.max(0, Math.min(SPRITE_SIZE - w, face.x + Math.floor((face.w - w) / 2)))
-  // The top of the head under the keepsake, ignoring a radiant pet's stars.
+  // The top of the head under the keepsake, ignoring what floats around it.
   let top = SPRITE_SIZE
   for (const d of body) if (d.x >= x0 && d.x < x0 + w && d.y < top) top = d.y
   // Over a head that touches the top of the grid it sinks into the head
@@ -2388,34 +1153,27 @@ function headwear(
 }
 
 /**
- * Everything a grown-up wears, already placed: `back` (its shine, drawn
- * behind and left to twinkle) and `front` (the rest). Each piece is fitted in
- * turn around the pet and what it already has on, so nothing covers its face
- * or another piece, and a piece with nowhere to go is left off.
+ * Everything a pet wears and has earned, already placed: `back` (its shine
+ * and glow, drawn behind and left to twinkle) and `front` (the rest). Each
+ * piece is fitted in turn around the pet and what it already has on, so
+ * nothing covers its face or another piece, and a piece with nowhere to go is
+ * left off. What it wears is fitted first, then the decorations of its level.
  */
-export function outfitPixels(
-  stage: Stage,
-  form: Form,
-  species: Species,
-  worn: Accessory[]
-): { back: Dot[]; front: Dot[] } {
+export function outfitPixels(species: Species, worn: Accessory[], level = 0): { back: Dot[]; front: Dot[] } {
   const none = { back: [], front: [] }
-  if (!worn.length || stage !== 'adult') return none
-  const face = faceOf(stage, bodyOf(species, stage), 'ok')
+  const decor = decorationsOf(level)
+  if (!worn.length && !decor.length) return none
+  const face = faceOf(bodyOf(species), 'ok')
   if (!face) return none
-  const all = pixelsOf(stage, form, 'ok', species)
+  const all = pixelsOf('ok', species)
   const flesh = all.filter((d) => d.ch !== 'a' && d.ch !== 'w')
   const body = new Set(flesh.map((d) => keyOf(d.x, d.y)))
-  const taken = new Set(all.map((d) => keyOf(d.x, d.y)))
-  // The same without a radiant pet's stars, which a piece may cover if it must.
-  const bare = new Set(body)
+  const pet = new Set(all.map((d) => keyOf(d.x, d.y)))
+  const taken = new Set(pet)
   const back: Dot[] = []
   const front: Dot[] = []
   const put = (dots: Dot[], into = front): void => {
-    for (const d of dots) {
-      taken.add(keyOf(d.x, d.y))
-      bare.add(keyOf(d.x, d.y))
-    }
+    for (const d of dots) taken.add(keyOf(d.x, d.y))
     into.push(...dots)
   }
   const fit = (
@@ -2424,14 +1182,9 @@ export function outfitPixels(
     [minY, maxY] = [0, SPRITE_SIZE],
     into = front
   ): boolean => {
-    // Best with a dot of air round it (a twinkle may brush the pet), then
-    // snug against it, then over the stars rather than not at all.
-    const tries: Array<[Set<number>, number]> =
-      into === back
-        ? [[taken, 0], [bare, 0]]
-        : [[taken, 1], [taken, 0], [bare, 1], [bare, 0]]
-    for (const [set, margin] of tries) {
-      const at = nearestFit(art, anchor, set, minY, margin, maxY)
+    // Best with a dot of air round it (a twinkle may brush the pet), then snug against it.
+    for (const margin of into === back ? [0] : [1, 0]) {
+      const at = nearestFit(art, anchor, taken, minY, margin, maxY)
       if (at) {
         put(stamp(art, at.x, at.y), into)
         return true
@@ -2463,27 +1216,67 @@ export function outfitPixels(
   }
   const shine = slotted('aura')
   const aura = shine && AURA[shine]
+  let spot = 0
   if (aura) {
-    let spot = 0
     // A big twinkle with no room for it is a small one instead.
     for (let i = 0; i < aura.big; i++) {
       const at = AURA_SPOTS[spot++]
       if (!fit(ACCESSORY_ART.legend, at, undefined, back)) fit(ACCESSORY_ART.sparkle, at, undefined, back)
     }
-    for (let i = 0; i < aura.small; i++)
-      fit(ACCESSORY_ART.sparkle, AURA_SPOTS[spot++ % AURA_SPOTS.length], undefined, back)
+    for (let i = 0; i < aura.small; i++) fit(ACCESSORY_ART.sparkle, AURA_SPOTS[spot++ % AURA_SPOTS.length], undefined, back)
+  }
+
+  // ---- what its level brings ----
+  const has = new Set(decor)
+  if (has.has('halo')) {
+    // Over the middle of its head (over a hat, if it has one on).
+    const cx = face.x + Math.floor(face.w / 2)
+    fit(DECOR_ART.halo, [cx - 3, 0], [0, face.y])
+  }
+  if (has.has('ribbon')) {
+    // Round its neck; with a keepsake already there, a bow by its head.
+    const knot = DECOR_ART.ribbonKnot
+    const band = neck ? [] : neckBand(face, body, 1, (x) => (x % 4 === 0 ? 'h' : 'm'), knot, face.x + Math.floor((face.w - knot[0].length) / 2))
+    if (band.length) put(band)
+    else fit(DECOR_ART.ribbonBow, [Math.max(0, face.x - 6), Math.max(0, face.y - 4)], [0, face.y + face.rows.length])
+  }
+  if (has.has('badge')) {
+    // Pinned in the air low by its side, where nothing else usually is; on a
+    // pet that fills its lower half, wherever there is air, smaller if it must.
+    const low: [number, number] = [Math.floor(SPRITE_SIZE / 2), SPRITE_SIZE]
+    void (
+      fit(DECOR_ART.badge, [SPRITE_SIZE - 5, SPRITE_SIZE - 8], low) ||
+      fit(DECOR_ART.badge, [0, SPRITE_SIZE - 8], low) ||
+      fit(DECOR_ART.badge, [SPRITE_SIZE - 5, SPRITE_SIZE - 8]) ||
+      fit(DECOR_ART.badgeMini, [SPRITE_SIZE - 3, SPRITE_SIZE - 6])
+    )
+  }
+  if (has.has('sparkle'))
+    for (let i = 0; i < DECOR_SPARKLES; i++) fit(DECOR_ART.sparkle, AURA_SPOTS[(spot + i) % AURA_SPOTS.length], undefined, back)
+  if (has.has('glow')) {
+    // A soft ring one dot out from its silhouette, wherever there is air.
+    const glow: Dot[] = []
+    for (const k of pet) {
+      const x = k % SPRITE_SIZE
+      const y = (k - x) / SPRITE_SIZE
+      for (const [dx, dy] of N4) {
+        const nx = x + dx
+        const ny = y + dy
+        if (nx < 0 || ny < 0 || nx >= SPRITE_SIZE || ny >= SPRITE_SIZE) continue
+        const nk = keyOf(nx, ny)
+        if (taken.has(nk)) continue
+        taken.add(nk)
+        glow.push({ x: nx, y: ny, ch: 'g' })
+      }
+    }
+    back.push(...glow)
   }
   return { back, front }
 }
 
 /** One keepsake on its own, as `outfitPixels` would place it. */
-export function accessoryPixels(
-  stage: Stage,
-  form: Form,
-  species: Species,
-  accessory: Accessory | null
-): Dot[] {
+export function accessoryPixels(species: Species, accessory: Accessory | null): Dot[] {
   if (!accessory) return []
-  const { back, front } = outfitPixels(stage, form, species, [accessory])
+  const { back, front } = outfitPixels(species, [accessory])
   return [...back, ...front]
 }
