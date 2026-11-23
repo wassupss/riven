@@ -1,4 +1,4 @@
-import { PHOTO_CHARS } from '../state/petSpecies'
+import { PHOTO_CHARS } from './petPhotoGrid'
 import { extractJson, normalizeHex } from './petAi'
 import { MAX_COLORS, type PixelDoc } from './pixelEdit'
 

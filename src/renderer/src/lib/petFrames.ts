@@ -1,4 +1,4 @@
-import { PHOTO_CHARS, PHOTO_MAX_COLORS, minPhotoCells, photoSizeOf, type PhotoArt, type PhotoSize, PHOTO } from '../state/petSpecies'
+import { PHOTO_CHARS, PHOTO_MAX_COLORS, minPhotoCells, photoSizeOf, type PhotoArt, type PhotoSize, PHOTO } from './petPhotoGrid'
 import { extractJson } from './petAi'
 import { parsePixelObject } from './petAiPixels'
 import { isSituation, sanitizeMotionSet, type MotionCheck, type MotionSet, type Situation } from './petMotion'

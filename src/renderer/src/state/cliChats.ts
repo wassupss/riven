@@ -4,6 +4,7 @@ import { getActiveApi, hasInitialText } from '../dock/registry'
 import { t } from '../i18n'
 import { getAgentStatus, registerAgent, setAgentStatus, type AgentController } from './agents'
 import { useAskUser } from './askUser'
+import { emitCliTurnDone } from './cliTurnBus'
 import { publishWork, reportTaskFinished } from './chatWork'
 import { bgTaskOutcome } from '../lib/bgTaskOutcome'
 import { forgetCliChat, markCliChat } from './cliChatKeys'
@@ -40,7 +41,6 @@ export function wakeNotices(text: string): string[] | null {
   return wakes.get(wakeKey(text)) ?? null
 }
 const waiters = new Map<string, Array<(reply: string) => void>>()
-const turnListeners = new Set<(key: string, done: TurnDone) => void>()
 
 export function cliLive(key: string): CliLive | null {
   return live.get(key) ?? null
@@ -55,11 +55,7 @@ export function waitTurn(key: string): Promise<string> {
   })
 }
 
-/** Every finished CLI chat turn (the pet listens). */
-export function onCliTurnDone(fn: (key: string, done: TurnDone) => void): () => void {
-  turnListeners.add(fn)
-  return () => turnListeners.delete(fn)
-}
+export { onCliTurnDone } from './cliTurnBus'
 
 // ---- the ask queue mirror ------------------------------------------------------------
 
@@ -233,7 +229,7 @@ function onEvent(e: CliEvent): void {
     const list = waiters.get(key)
     waiters.delete(key)
     for (const w of list ?? []) w(done.error && !done.reply ? `(the turn failed: ${done.error})` : done.reply)
-    for (const fn of turnListeners) fn(key, done)
+    emitCliTurnDone(key, done)
     if (!done.interrupted) notifyDone(key, done)
   }
   if (e.kind === 'state' || e.kind === 'agents' || e.kind === 'exit') publishWork(key, l.dead ? null : liveWork(l, Date.now()))

@@ -23,7 +23,7 @@ import {
 import { useT, type TFn } from '../i18n'
 import { fmtTokens, tightestLimit, useUsage } from '../state/usage'
 import { useRoster, workspaceOfPane } from '../state/roster'
-import { onCliTurnDone } from '../state/cliChats'
+import { onCliTurnDone } from '../state/cliTurnBus'
 import { useSession, workspaceName } from '../state/session'
 import { useAgentEdits } from '../state/agentEdits'
 import { answer as talkAnswer } from '../state/petTalk'

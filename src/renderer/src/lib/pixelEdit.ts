@@ -1,4 +1,4 @@
-import { PHOTO, PHOTO_CHARS, PHOTO_MAX_COLORS, type PhotoArt, type PhotoSize } from '../state/petSpecies'
+import { PHOTO, PHOTO_CHARS, PHOTO_MAX_COLORS, type PhotoArt, type PhotoSize } from './petPhotoGrid'
 
 // ---------------------------------------------------------------------------
 // The pet maker's little pixel editor, the pure half (PetPixelEditor.tsx draws
