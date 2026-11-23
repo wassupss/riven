@@ -15,21 +15,34 @@
 //   (whole lines as they complete) and, between those, from the pty's screen
 //   (preview.rs, a tolerant heuristic). The JSONL version replaces it.
 //
-// Input is typed into the pty: a bracketed paste and Enter. Slash commands,
-// skills, /compact, /model all work because it is the CLI itself; anything
-// the chat view cannot draw (a picker, the trust dialog) is answered in the
-// terminal view, which attaches to the same pty by its key.
+// Input is typed into the pty: a bracketed paste and Enter (images as pasted
+// file paths, files as @-mentions). Slash commands, skills, /compact work
+// because it is the CLI itself. Questions come through the PermissionRequest
+// hook and are answered there; numbered menus on screen (plan approval, the
+// trust dialog) are drawn as cards and answered with keys; anything else is
+// answered in the terminal view, which attaches to the same pty by its key.
+//
+// The model and the permission mode are flags of the process: switching is
+// a restart with --resume at a turn boundary (life.rs), never /model, which
+// writes the person's global default. An idle session is parked (process
+// stopped) and resumed by the next message; a new CLI binary on disk
+// restarts it the same way.
 
+pub mod agents;
+pub mod attach;
 pub mod hooks;
+pub mod life;
 pub mod preview;
 pub mod transcript;
 
 #[cfg(test)]
 mod measure;
+#[cfg(test)]
+mod probe;
 
 use hooks::Decision;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
@@ -51,6 +64,13 @@ const READY_TIMEOUT: Duration = Duration::from_secs(20);
 // an Enter that arrives in the same read can be taken as part of it.
 const PASTE_SETTLE: Duration = Duration::from_millis(120);
 const MENU_SETTLE: Duration = Duration::from_millis(800);
+// Subagent folders are looked at this often while anything runs.
+const AGENTS_EVERY: Duration = Duration::from_secs(1);
+// The CLI binary is compared with what this process started from.
+const BIN_EVERY: Duration = Duration::from_secs(30);
+// A killed pty leaves the registry on the control thread: a restart under
+// the same key waits for that.
+const GONE_TIMEOUT: Duration = Duration::from_secs(3);
 
 // Inherited from a parent Claude Code (riven started from a Claude terminal
 // in development). A CLI that sees them thinks it is a child session: it
@@ -68,18 +88,36 @@ const SCRUB: &[&str] = &[
   "CLAUDE_PID",
 ];
 
-#[derive(Deserialize, Clone, Default)]
+#[derive(Deserialize, Clone, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct StartOpts {
   pub cwd: String,
   pub resume: Option<String>,
+  /// With `resume`: continue in a copy under a new id (--fork-session).
+  pub fork: Option<bool>,
   pub model: Option<String>,
   pub permission_mode: Option<String>,
   pub config_dir: Option<String>,
 }
 
+/// A message on its way into the TUI: text, and image files pasted after it.
+#[derive(Clone, Debug, Default)]
+pub struct Outgoing {
+  pub text: String,
+  pub images: Vec<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Ask {
+  Permission,
+  Question,
+}
+
 struct Pending {
   id: String,
+  ask: Ask,
+  tool: String,
+  input: Value,
   tx: mpsc::Sender<Decision>,
 }
 
@@ -87,10 +125,14 @@ struct Sess {
   key: String,
   label: String,
   session_id: String,
-  config_dir: Option<String>,
+  /// What the process runs with now (cwd, model, mode, profile); a restart
+  /// starts from it, resuming `session_id`.
+  opts: StartOpts,
   store: Store,
   tail: Tail,
   sent: Vec<String>,
+  /// The next items emit replaces what the page has (a fresh process).
+  fresh: bool,
   busy: bool,
   waiting: bool,
   ready: bool,
@@ -98,8 +140,11 @@ struct Sess {
   // The input box has been on screen at least once (startup is not a menu).
   box_seen: bool,
   menu_since: Option<Instant>,
+  menu: Option<preview::Menu>,
+  /// The plan of an ExitPlanMode waiting in the TUI's approval menu.
+  plan: Option<String>,
   started: Instant,
-  queue: Vec<String>,
+  queue: Vec<Outgoing>,
   // MessageDisplay: (message id, text so far) of the reply on screen.
   shown: Option<(String, String)>,
   preview: Option<String>,
@@ -109,6 +154,23 @@ struct Sess {
   terminal: bool,
   perms: Vec<Pending>,
   dead: bool,
+  /// The process was stopped for being idle; the next message resumes it.
+  parked: bool,
+  /// The permission mode the CLI reports in its hooks (plan mode entered by
+  /// the model, a plan approved into another mode).
+  mode: Option<String>,
+  /// Background agents/shells from the last Stop hook.
+  background: Vec<Value>,
+  last_active: Instant,
+  reconfigure: bool,
+  bin: Option<life::Fingerprint>,
+  bin_path: Option<PathBuf>,
+  bin_checked: Instant,
+  updated: bool,
+  agents: agents::Agents,
+  agents_polled: Instant,
+  /// Messages are typed one after another, never interleaved.
+  typing: Arc<tokio::sync::Mutex<()>>,
 }
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
@@ -126,6 +188,7 @@ fn lock(s: &Mutex<Sess>) -> MutexGuard<'_, Sess> {
 
 pub fn init(app: &AppHandle) {
   let _ = APP.set(app.clone());
+  attach::sweep();
 }
 
 fn emit(label: &str, payload: Value) {
@@ -139,9 +202,25 @@ fn emit_state(s: &Sess) {
     &s.label,
     json!({
       "key": s.key, "kind": "state", "busy": s.busy, "waiting": s.waiting, "ready": s.ready,
-      "blocked": s.blocked, "sessionId": s.session_id, "dead": s.dead, "terminal": s.terminal
+      "blocked": s.blocked, "sessionId": s.session_id, "dead": s.dead, "terminal": s.terminal,
+      "parked": s.parked, "mode": s.mode.clone().or_else(|| s.opts.permission_mode.clone()),
+      "model": s.opts.model, "background": s.background, "menu": s.menu, "plan": s.plan,
+      "restartPending": s.reconfigure || s.updated
     }),
   );
+}
+
+fn emit_ask(s: &Sess, p: &Pending) {
+  let kind = if p.ask == Ask::Question { "question" } else { "permission" };
+  emit(&s.label, json!({ "key": s.key, "kind": kind, "id": p.id, "tool": p.tool, "input": p.input }));
+}
+
+fn emit_agents(s: &Sess) {
+  emit(&s.label, json!({ "key": s.key, "kind": "agents", "agents": s.agents.snapshot() }));
+}
+
+fn emit_title(s: &Sess) {
+  emit(&s.label, json!({ "key": s.key, "kind": "meta", "title": s.store.title() }));
 }
 
 fn sq(s: &str) -> String {
@@ -165,10 +244,21 @@ fn settings_file() -> Result<PathBuf, String> {
   .clone()
 }
 
+/// The CLI's name for the mode the hooks report as "default" (2.1.330's
+/// --permission-mode takes "manual", not "default").
+fn mode_arg(m: &str) -> &str {
+  if m == "default" { "manual" } else { m }
+}
+
 /// The command line the hidden shell execs. MCP config and prompt are
 /// referenced as variables (the environment services/mcp computed for this
 /// pane), the same values a typed `claude` gets from riven's shell shim.
-pub fn command_line(real: Option<&str>, has_mcp: bool, settings: &str, opts: &StartOpts, session: &str, resume: bool) -> String {
+///
+/// The model and mode are per process flags: nothing here (or anywhere in
+/// the CLI chat) types /model, which would write the person's global
+/// default into ~/.claude/settings.json. Another model is a restart with
+/// --resume and --model.
+pub fn command_line(real: Option<&str>, has_mcp: bool, settings: &str, opts: &StartOpts, session: &str, resume_from: Option<&str>, fork: bool) -> String {
   let mut c = vec![real.map(sq).unwrap_or_else(|| "claude".into())];
   if has_mcp {
     c.push("--mcp-config \"$RIVEN_MCP_CONFIG\"".into());
@@ -179,28 +269,50 @@ pub fn command_line(real: Option<&str>, has_mcp: bool, settings: &str, opts: &St
     c.push(format!("--model {}", sq(m)));
   }
   if let Some(p) = opts.permission_mode.as_deref().filter(|p| !p.is_empty()) {
-    c.push(format!("--permission-mode {}", sq(p)));
+    c.push(format!("--permission-mode {}", sq(mode_arg(p))));
   }
-  c.push(format!("{} {}", if resume { "--resume" } else { "--session-id" }, sq(session)));
+  match resume_from {
+    // A fork names its new id up front, so the transcript to tail is known
+    // before the CLI writes it.
+    Some(from) if fork => c.push(format!("--resume {} --fork-session --session-id {}", sq(from), sq(session))),
+    Some(from) => c.push(format!("--resume {}", sq(from))),
+    None => c.push(format!("--session-id {}", sq(session))),
+  }
   c.join(" ")
 }
 
+/// Open a session for a pane, or reattach to the one it already has (a page
+/// reload: the page starts empty, so everything is sent again).
 pub async fn start(label: String, key: String, opts: StartOpts) -> Result<Value, String> {
   if let Some(s) = get(&key) {
-    // Reattach (page reload): the page starts empty, so send everything.
     let mut st = lock(&s);
     if !st.dead {
       st.label = label;
-      st.sent.clear();
       let items = st.store.branch();
       st.sent = items.iter().map(|i| i.key().to_string()).collect();
       emit(&st.label, json!({ "key": key, "kind": "items", "reset": true, "items": items }));
       emit_state(&st);
+      emit_title(&st);
+      emit_agents(&st);
+      for p in &st.perms {
+        emit_ask(&st, p);
+      }
+      if let Some(pv) = st.preview.clone() {
+        emit(&st.label, json!({ "key": key, "kind": "preview", "text": pv }));
+      }
       return Ok(json!({ "sessionId": st.session_id, "existed": true }));
     }
     drop(st);
     all().remove(&key);
   }
+  launch(label, key, opts, Vec::new()).await
+}
+
+fn transcript_exists(opts: &StartOpts, id: &str) -> bool {
+  transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), id).is_file() || transcript::find_by_id(opts.config_dir.as_deref(), id).is_some()
+}
+
+async fn launch(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing>) -> Result<Value, String> {
   if opts.cwd.is_empty() {
     return Err("no workspace folder".into());
   }
@@ -210,37 +322,66 @@ pub async fn start(label: String, key: String, opts: StartOpts) -> Result<Value,
       return Err("not a session id".into());
     }
   }
-  let session_id = resume.clone().unwrap_or_else(crate::services::chat::util::uuid);
+  // Only a conversation with a transcript can be resumed (a new chat that
+  // never got a message has none, and --resume would refuse it): such an id
+  // starts fresh under the same id.
+  let resume_from = resume.clone().filter(|r| transcript_exists(&opts, r));
+  let fork = opts.fork == Some(true) && resume_from.is_some();
+  let session_id = if fork { crate::services::chat::util::uuid() } else { resume.clone().unwrap_or_else(crate::services::chat::util::uuid) };
   let settings = settings_file()?;
   let extras = crate::services::mcp::pty_env(&key).await;
   let has_mcp = extras.contains_key("RIVEN_MCP_CONFIG");
   let real = extras.get("RIVEN_REAL_CLAUDE").cloned();
-  let cmd = command_line(real.as_deref(), has_mcp, &settings.to_string_lossy(), &opts, &session_id, resume.is_some());
+  let cmd = command_line(real.as_deref(), has_mcp, &settings.to_string_lossy(), &opts, &session_id, resume_from.as_deref(), fork);
   let path = transcript::transcript_path(&opts.cwd, opts.config_dir.as_deref(), &session_id);
+  let bin_path = real.map(PathBuf::from).or_else(|| crate::services::shell_env::which("claude"));
+  let kept = StartOpts { resume: None, fork: None, ..opts.clone() };
+  let now = Instant::now();
   let sess = Arc::new(Mutex::new(Sess {
     key: key.clone(),
     label: label.clone(),
     session_id: session_id.clone(),
-    config_dir: opts.config_dir.clone(),
+    opts: kept,
     store: Store::default(),
+    agents: agents::Agents::new(&path),
     tail: Tail::new(path),
     sent: Vec::new(),
+    fresh: true,
     busy: false,
     waiting: false,
     ready: false,
     blocked: None,
     box_seen: false,
     menu_since: None,
-    started: Instant::now(),
-    queue: Vec::new(),
+    menu: None,
+    plan: None,
+    started: now,
+    queue,
     shown: None,
     preview: None,
     landed: None,
     terminal: false,
     perms: Vec::new(),
     dead: false,
+    parked: false,
+    mode: None,
+    background: Vec::new(),
+    last_active: now,
+    reconfigure: false,
+    bin: bin_path.as_deref().and_then(life::fingerprint),
+    bin_path,
+    bin_checked: now,
+    updated: false,
+    agents_polled: now,
+    typing: Arc::new(tokio::sync::Mutex::new(())),
   }));
   all().insert(key.clone(), sess.clone());
+  {
+    let st = lock(&sess);
+    // Whatever the page shows belongs to the process before this one.
+    emit(&st.label, json!({ "key": key, "kind": "items", "reset": true, "items": [] }));
+    emit_state(&st);
+  }
   let launch = crate::services::pty::Launch { exec: true, env_remove: SCRUB };
   if let Err(e) = crate::services::pty::open_hidden(label, key.clone(), opts.cwd.clone(), cmd, COLS, ROWS, opts.config_dir.clone(), extras, launch).await {
     all().remove(&key);
@@ -250,20 +391,95 @@ pub async fn start(label: String, key: String, opts: StartOpts) -> Result<Value,
   Ok(json!({ "sessionId": session_id, "existed": false }))
 }
 
-// One loop per session: tail the transcript, watch the screen until the CLI
-// is ready, keep the streaming preview fresh while a turn runs.
+/// Stop the process of a pane but keep nothing else: the half of a restart
+/// before the new launch. Waits until the pty is gone from the registry, so
+/// the new one can take the same key.
+async fn halt(key: &str) {
+  if let Some(s) = all().remove(key) {
+    let mut st = lock(&s);
+    st.dead = true;
+    for p in st.perms.drain(..) {
+      let _ = p.tx.send(Decision::Terminal);
+    }
+  }
+  crate::services::pty::kill(key.to_string());
+  let t = Instant::now();
+  while crate::services::pty::exists(key) && t.elapsed() < GONE_TIMEOUT {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+  }
+}
+
+/// A new process for the pane: another conversation (resume, fork, new) or
+/// the same one with other flags. The page's own items are replaced by the
+/// new transcript.
+pub async fn restart(label: String, key: String, opts: StartOpts, queue: Vec<Outgoing>) -> Result<Value, String> {
+  halt(&key).await;
+  launch(label, key, opts, queue).await
+}
+
+// The same conversation in a new process (park/resume, model, mode, update).
+fn relaunch(st: &Sess, queue: Vec<Outgoing>) {
+  let opts = StartOpts { resume: Some(st.session_id.clone()), ..st.opts.clone() };
+  let (label, key) = (st.label.clone(), st.key.clone());
+  tauri::async_runtime::spawn(async move {
+    if let Err(e) = restart(label.clone(), key.clone(), opts, queue).await {
+      emit(&label, json!({ "key": key, "kind": "notice", "level": "error", "text": e }));
+    }
+  });
+}
+
+// One loop per process: tail the transcript, watch the screen, keep the
+// streaming preview fresh, and decide when to park or restart.
 async fn run(s: Arc<Mutex<Sess>>) {
   loop {
     let wait = {
       let mut st = lock(&s);
-      if st.dead {
+      if st.dead || st.parked {
         return;
       }
       pump(&mut st);
+      let snap = life::Snapshot {
+        dead: st.dead,
+        parked: st.parked,
+        busy: st.busy,
+        asking: !st.perms.is_empty(),
+        menu: st.blocked.is_some(),
+        terminal: st.terminal,
+        background: !st.background.is_empty() || st.agents.any_running(),
+        reconfigure: st.reconfigure,
+        updated: st.updated,
+        idle_for: st.last_active.elapsed(),
+      };
+      match life::next(&snap) {
+        life::Next::Stay => {}
+        life::Next::Park => {
+          park(&mut st);
+          return;
+        }
+        life::Next::Restart(why) => {
+          if why == life::Why::Update {
+            emit(&st.label, json!({ "key": st.key, "kind": "notice", "level": "update", "text": "updated" }));
+          }
+          st.dead = true;
+          let queue = std::mem::take(&mut st.queue);
+          relaunch(&st, queue);
+          return;
+        }
+      }
       if st.busy || !st.ready { TICK_BUSY } else { TICK_IDLE }
     };
     tokio::time::sleep(wait).await;
   }
+}
+
+fn park(st: &mut Sess) {
+  st.parked = true;
+  st.ready = false;
+  for p in st.perms.drain(..) {
+    let _ = p.tx.send(Decision::Terminal);
+  }
+  crate::services::pty::kill(st.key.clone());
+  emit_state(st);
 }
 
 fn pump(st: &mut Sess) {
@@ -271,7 +487,8 @@ fn pump(st: &mut Sess) {
   if !st.tail.path.is_file() {
     // Long cwds get a hashed folder name: find the session by its id.
     if st.started.elapsed() > Duration::from_secs(3) {
-      if let Some(p) = transcript::find_by_id(st.config_dir.as_deref(), &st.session_id) {
+      if let Some(p) = transcript::find_by_id(st.opts.config_dir.as_deref(), &st.session_id) {
+        st.agents = agents::Agents::new(&p);
         st.tail = Tail::new(p);
       }
     }
@@ -289,14 +506,19 @@ fn pump(st: &mut Sess) {
           st.store.ingest(&l);
         }
         st.sent.clear();
+        st.fresh = true;
       }
       Err(_) => {}
     }
   }
+  if st.store.take_title_dirty() {
+    emit_title(st);
+  }
   let mut landed_now = false;
   if st.store.take_dirty() {
     let items = st.store.branch();
-    let landed_text = match transcript::delta(&st.sent, &items) {
+    let d = if std::mem::take(&mut st.fresh) { Delta::Reset(items.clone()) } else { transcript::delta(&st.sent, &items) };
+    let landed_text = match d {
       Delta::None => false,
       Delta::Append(new) => {
         let text = new.iter().any(|i| matches!(i, Item::Text { .. }));
@@ -316,8 +538,27 @@ fn pump(st: &mut Sess) {
       set_preview(st, None);
     }
   }
-  // 2. The screen: is the CLI up, or is it asking something only the
-  // terminal view can answer?
+  // 2. Subagents, while anything may be running.
+  if (st.busy || st.agents.any_running() || !st.background.is_empty()) && st.agents_polled.elapsed() >= AGENTS_EVERY {
+    st.agents_polled = Instant::now();
+    if st.agents.poll() {
+      emit_agents(st);
+    }
+  }
+  // 3. The CLI binary: an update on disk restarts the session at the next
+  // turn boundary (life.rs), on the new version.
+  if st.bin_checked.elapsed() >= BIN_EVERY {
+    st.bin_checked = Instant::now();
+    if let (Some(path), Some(was)) = (&st.bin_path, &st.bin) {
+      let now = life::fingerprint(path);
+      if now.is_some() && now.as_ref() != Some(was) && !st.updated {
+        st.updated = true;
+        emit_state(st);
+      }
+    }
+  }
+  // 4. The screen: is the CLI up, or is it asking something only the
+  // terminal view (or a menu card) can answer?
   let screen = crate::services::pty::screen_text(&st.key);
   if landed_now {
     st.landed = screen.as_deref().and_then(preview::extract);
@@ -329,27 +570,30 @@ fn pump(st: &mut Sess) {
       st.box_seen = true;
       st.menu_since = None;
     } else if blocked.is_none() && st.box_seen && st.perms.is_empty() {
-      // The input box went away and no permission card explains it: a menu
-      // or dialog only the terminal view can answer. Not on the first
-      // frame of a redraw.
+      // The input box went away and no card explains it: a menu or dialog.
+      // Not on the first frame of a redraw.
       let since = *st.menu_since.get_or_insert_with(Instant::now);
       if since.elapsed() > MENU_SETTLE {
         blocked = Some("menu");
       }
     }
+    // A card is up for it (permission, question): the TUI's own copy of
+    // the dialog is not a second menu.
+    let menu = if blocked.is_some() && st.perms.is_empty() { preview::menu(screen) } else { None };
     let ready = boxed && blocked.is_none();
-    if blocked != st.blocked || ready != st.ready {
+    if blocked != st.blocked || ready != st.ready || menu != st.menu {
       st.blocked = blocked;
       st.ready = ready;
+      st.menu = menu;
       emit_state(st);
     }
   }
   if !st.queue.is_empty() && (st.ready || (st.blocked.is_none() && st.started.elapsed() > READY_TIMEOUT)) {
-    for text in std::mem::take(&mut st.queue) {
-      type_message(st, &text);
+    for m in std::mem::take(&mut st.queue) {
+      type_message(st, m);
     }
   }
-  // 3. The reply in flight.
+  // 5. The reply in flight.
   if st.busy {
     let from_screen = screen.as_deref().and_then(preview::extract).filter(|t| st.landed.as_deref() != Some(t.as_str()));
     let from_hook = st.shown.as_ref().map(|(_, t)| t.clone()).filter(|t| !t.trim().is_empty());
@@ -372,68 +616,184 @@ fn set_preview(st: &mut Sess, text: Option<String>) {
   }
 }
 
-fn type_message(st: &mut Sess, text: &str) {
-  let key = st.key.clone();
-  let text = text.replace("\r\n", "\n");
-  let command = text.starts_with('/') && !text.contains('\n');
-  // Prose always starts a turn. A slash command may not (/model opens a
-  // picker, /cost just prints): its UserPromptSubmit hook says if it did.
+/// The keystrokes for one message: the text as a bracketed paste (a slash
+/// command typed, so the CLI sees `/name` at the start of its input), then
+/// each image path as a paste of its own (the CLI turns it into
+/// "[Image #N]"), then Enter.
+pub fn message_writes(m: &Outgoing) -> (Vec<String>, bool) {
+  let text = m.text.replace("\r\n", "\n");
+  let command = m.images.is_empty() && text.starts_with('/') && !text.contains('\n');
+  let mut w = Vec::new();
+  if command {
+    w.push(text);
+  } else {
+    if !text.trim().is_empty() {
+      let sep = if m.images.is_empty() { "" } else { " " };
+      w.push(format!("\x1b[200~{text}{sep}\x1b[201~"));
+    }
+    for p in &m.images {
+      w.push(format!("\x1b[200~{p}\x1b[201~"));
+    }
+  }
+  (w, command)
+}
+
+fn type_message(st: &mut Sess, m: Outgoing) {
+  let (writes, command) = message_writes(&m);
+  if writes.is_empty() {
+    return;
+  }
+  // Prose always starts a turn. A slash command may not (/cost just
+  // prints): its UserPromptSubmit hook says if it did.
   if !command {
     st.busy = true;
   }
   st.waiting = false;
+  st.last_active = Instant::now();
   emit_state(st);
-  // A slash command is typed, so the CLI sees `/name` at the start of its
-  // input and runs it; prose goes in as one paste (multi-line safe).
-  let body = if command { text } else { format!("\x1b[200~{text}\x1b[201~") };
-  crate::services::pty::write(key.clone(), body);
+  let key = st.key.clone();
+  let typing = st.typing.clone();
   tauri::async_runtime::spawn(async move {
+    let _turn = typing.lock().await;
+    for (i, w) in writes.into_iter().enumerate() {
+      if i > 0 {
+        tokio::time::sleep(PASTE_SETTLE).await;
+      }
+      crate::services::pty::write(key.clone(), w);
+    }
     tokio::time::sleep(PASTE_SETTLE).await;
     crate::services::pty::write(key, "\r".into());
   });
 }
 
-pub fn send(key: &str, text: String) {
+pub fn send(key: &str, text: String, images: Vec<String>) {
   let Some(s) = get(key) else { return };
   let mut st = lock(&s);
-  if st.dead || text.trim().is_empty() {
+  let images: Vec<String> = images.into_iter().filter(|p| attach::is_image(p) && std::path::Path::new(p).is_file()).collect();
+  if st.dead || (text.trim().is_empty() && images.is_empty()) {
+    return;
+  }
+  let m = Outgoing { text, images };
+  st.last_active = Instant::now();
+  if st.parked {
+    // Back from idle: the same conversation in a new process, this
+    // message first.
+    st.dead = true;
+    relaunch(&st, vec![m]);
     return;
   }
   if !st.ready {
-    st.queue.push(text);
+    st.queue.push(m);
     return;
   }
-  type_message(&mut st, &text);
+  type_message(&mut st, m);
 }
 
 /// Esc: what the CLI takes as "stop this turn". No Stop hook follows an
 /// interrupt, so the turn is over as far as the view is concerned.
 pub fn interrupt(key: &str) {
   let Some(s) = get(key) else { return };
-  crate::services::pty::write(key.to_string(), "\x1b".into());
   let mut st = lock(&s);
+  if st.parked {
+    return;
+  }
+  crate::services::pty::write(key.to_string(), "\x1b".into());
   st.busy = false;
   st.shown = None;
+  st.last_active = Instant::now();
+  for p in st.perms.drain(..) {
+    let _ = p.tx.send(Decision::Terminal);
+  }
   set_preview(&mut st, None);
   emit_state(&st);
 }
 
-/// Raw keys for the CLI (a menu answered from the chat view: arrows, digits).
+/// Raw keys for the CLI (Esc on a menu, a key the chat view has no card for).
 pub fn keys(key: &str, data: String) {
-  if get(key).is_some() {
+  let Some(s) = get(key) else { return };
+  let mut st = lock(&s);
+  if !st.parked {
+    st.last_active = Instant::now();
+    st.menu_since = None;
     crate::services::pty::write(key.to_string(), data);
   }
 }
 
-pub fn stop(key: &str) {
-  let Some(s) = all().remove(key) else { return };
+/// Pick option `index` of the menu on screen (text: what to type into a
+/// text option such as "Tell Claude what to change").
+pub fn menu_pick(key: &str, index: usize, text: Option<String>) {
+  let Some(s) = get(key) else { return };
   let mut st = lock(&s);
-  st.dead = true;
-  for p in st.perms.drain(..) {
-    let _ = p.tx.send(Decision::Terminal);
+  let Some(m) = st.menu.take() else { return };
+  if index >= m.options.len() {
+    st.menu = Some(m);
+    return;
   }
-  drop(st);
+  let keys = preview::menu_keys(m.selected, index, text.as_deref().filter(|_| m.options[index].input));
+  st.last_active = Instant::now();
+  st.menu_since = None;
+  emit_state(&st);
+  let key = key.to_string();
+  tauri::async_runtime::spawn(async move {
+    if !keys.is_empty() {
+      crate::services::pty::write(key.clone(), keys);
+      tokio::time::sleep(PASTE_SETTLE).await;
+    }
+    crate::services::pty::write(key, "\r".into());
+  });
+}
+
+/// The header picked another model and/or mode: applied by a restart at
+/// the next turn boundary (life.rs). Never through /model, which would
+/// change the person's global default.
+pub fn reconfigure(key: &str, model: Option<String>, mode: Option<String>) {
+  let Some(s) = get(key) else { return };
+  let mut st = lock(&s);
+  if let Some(m) = model {
+    st.opts.model = Some(m).filter(|m| !m.is_empty());
+  }
+  if let Some(m) = mode {
+    st.opts.permission_mode = Some(m).filter(|m| !m.is_empty());
+    // What the hooks said belongs to the old process.
+    st.mode = None;
+  }
+  if st.parked {
+    // Nothing runs: the flags apply when the next message resumes it.
+    emit_state(&st);
+    return;
+  }
+  st.reconfigure = true;
+  emit_state(&st);
+}
+
+/// Rename the conversation this pane runs: /rename typed into the CLI, so
+/// it is the CLI that writes the title (it re-appends its own copy of the
+/// title later, which a line written from outside would lose to).
+pub fn rename(key: &str, title: &str) -> bool {
+  let name: String = title.split_whitespace().collect::<Vec<_>>().join(" ");
+  if name.is_empty() {
+    return false;
+  }
+  let Some(s) = get(key) else { return false };
+  let parked = lock(&s).parked;
+  if parked {
+    return false;
+  }
+  send(key, format!("/rename {name}"), Vec::new());
+  true
+}
+
+pub fn stop(key: &str) {
+  let s = all().remove(key);
+  if let Some(s) = s {
+    let mut st = lock(&s);
+    st.dead = true;
+    for p in st.perms.drain(..) {
+      let _ = p.tx.send(Decision::Terminal);
+    }
+  }
   crate::services::pty::kill(key.to_string());
+  attach::clear(key);
 }
 
 /// The terminal view took over (on) or gave the pty back (off). Off means
@@ -442,6 +802,7 @@ pub fn set_terminal(key: &str, on: bool) {
   let Some(s) = get(key) else { return };
   let mut st = lock(&s);
   st.terminal = on;
+  st.last_active = Instant::now();
   if !on {
     crate::services::pty::resize_now(key, COLS, ROWS);
   }
@@ -451,10 +812,37 @@ pub fn set_terminal(key: &str, on: bool) {
 pub fn answer(key: &str, id: &str, decision: &str) {
   let Some(s) = get(key) else { return };
   let mut st = lock(&s);
+  st.last_active = Instant::now();
   if let Some(i) = st.perms.iter().position(|p| p.id == id) {
     let p = st.perms.remove(i);
     let _ = p.tx.send(Decision::parse(decision));
   }
+}
+
+/// An AskUserQuestion answered from the chat view: `answers` maps question
+/// text to a label, labels, or typed text. None declines (the TUI's own
+/// picker takes over, reachable through the terminal view).
+pub fn answer_question(key: &str, id: &str, answers: Option<Map<String, Value>>) {
+  let Some(s) = get(key) else { return };
+  let mut st = lock(&s);
+  st.last_active = Instant::now();
+  if let Some(i) = st.perms.iter().position(|p| p.id == id) {
+    let p = st.perms.remove(i);
+    let d = match answers {
+      Some(a) => Decision::AllowWith(hooks::question_input(&p.input, &a)),
+      None => Decision::Terminal,
+    };
+    let _ = p.tx.send(d);
+  }
+}
+
+/// An image of a user message, for its thumbnail.
+pub fn image(key: &str, uuid: &str, index: usize) -> Option<String> {
+  let path = get(key).map(|s| lock(&s).tail.path.clone())?;
+  if !transcript::is_uuid(uuid) {
+    return None;
+  }
+  attach::image_in_transcript(&path, uuid, index)
 }
 
 pub fn on_pty_exit(key: &str, code: i32) {
@@ -471,8 +859,33 @@ pub fn on_pty_exit(key: &str, code: i32) {
 
 pub fn shutdown() {
   let keys: Vec<String> = all().keys().cloned().collect();
+  // Each pane's attachments go with it (stop).
   for k in keys {
     stop(&k);
+  }
+}
+
+/// Whether a finished tool call (PostToolUse) is the one a card asked about:
+/// the same input, or for a question the same questions (its input gains
+/// `answers` on the way).
+pub fn same_call(asked: &Value, done: &Value) -> bool {
+  asked == done || asked.get("questions").is_some_and(|q| Some(q) == done.get("questions"))
+}
+
+// A card that is still up for a call the CLI has moved past (answered in the
+// terminal view, or the turn ended): take it down and let its hook go.
+// `call`: the tool and input that just finished; None: every card.
+fn settle(st: &mut Sess, call: Option<(&str, &Value)>) {
+  let before = st.perms.len();
+  let (gone, keep): (Vec<Pending>, Vec<Pending>) =
+    std::mem::take(&mut st.perms).into_iter().partition(|p| call.is_none_or(|(t, input)| p.tool == t && same_call(&p.input, input)));
+  st.perms = keep;
+  for p in gone {
+    emit(&st.label, json!({ "key": st.key, "kind": "permissionDone", "id": p.id, "decision": "terminal" }));
+    let _ = p.tx.send(Decision::Terminal);
+  }
+  if st.perms.len() != before && st.perms.is_empty() {
+    st.waiting = false;
   }
 }
 
@@ -495,6 +908,17 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
   let Some(s) = get(pane) else { return (204, None) };
   let payload: Value = serde_json::from_str(body).unwrap_or(Value::Null);
   let mut st = lock(&s);
+  st.last_active = Instant::now();
+  // Subagent hooks (agent_id set) describe the subagent's tools, not the
+  // main conversation's state.
+  let sub = payload.get("agent_id").is_some_and(|a| !a.is_null());
+  if let Some(m) = payload.get("permission_mode").and_then(Value::as_str).filter(|_| !sub) {
+    if st.mode.as_deref() != Some(m) {
+      st.mode = Some(m.to_string());
+      emit_state(&st);
+    }
+  }
+  let tool = payload.get("tool_name").and_then(Value::as_str).unwrap_or("").to_string();
   match event {
     "UserPromptSubmit" => {
       st.busy = true;
@@ -507,6 +931,11 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
     "Stop" | "StopFailure" | "SessionEnd" => {
       st.busy = false;
       st.waiting = false;
+      st.plan = None;
+      settle(&mut st, None);
+      if let Some(bg) = payload.get("background_tasks").and_then(Value::as_array) {
+        st.background = bg.clone();
+      }
       emit_state(&st);
       if event == "StopFailure" {
         let msg = payload.get("error").map(|e| e.to_string()).unwrap_or_else(|| "turn failed".into());
@@ -517,7 +946,11 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
       st.waiting = true;
       emit_state(&st);
       let text = payload.get("message").and_then(Value::as_str).unwrap_or("");
-      emit(&st.label, json!({ "key": pane, "kind": "notice", "level": "waiting", "text": text }));
+      let level = match payload.get("notification_type").and_then(Value::as_str) {
+        Some("idle_prompt") => "idle",
+        _ => "waiting",
+      };
+      emit(&st.label, json!({ "key": pane, "kind": "notice", "level": level, "text": text }));
     }
     "MessageDisplay" => {
       let id = payload.get("message_id").and_then(Value::as_str).unwrap_or("").to_string();
@@ -530,26 +963,49 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
     "PreCompact" | "PostCompact" => {
       emit(&st.label, json!({ "key": pane, "kind": "notice", "level": "compact", "text": event }));
     }
+    "PreToolUse" if !sub && hooks::is_plan(&tool) => {
+      st.plan = payload.pointer("/tool_input/plan").and_then(Value::as_str).map(str::to_string);
+      emit_state(&st);
+    }
+    "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" if !sub => {
+      let input = payload.get("tool_input").cloned().unwrap_or(Value::Null);
+      settle(&mut st, Some((&tool, &input)));
+      if hooks::is_plan(&tool) {
+        st.plan = None;
+      }
+      emit_state(&st);
+    }
+    "PermissionRequest" if hooks::is_plan(&tool) => {
+      // The CLI ignores a hook's answer here; its approval menu is drawn by
+      // the chat view from the screen (and the plan from PreToolUse).
+      if st.plan.is_none() {
+        st.plan = payload.pointer("/tool_input/plan").and_then(Value::as_str).map(str::to_string);
+      }
+      emit_state(&st);
+    }
     "PermissionRequest" => {
       let id = crate::services::chat::util::uuid();
       let (tx, rx) = mpsc::channel();
-      st.perms.push(Pending { id: id.clone(), tx });
+      let ask = if hooks::is_question(&tool) { Ask::Question } else { Ask::Permission };
+      let p = Pending { id: id.clone(), ask, tool, input: payload.get("tool_input").cloned().unwrap_or(Value::Null), tx };
+      emit_ask(&st, &p);
+      st.perms.push(p);
       st.waiting = true;
-      emit(
-        &st.label,
-        json!({
-          "key": pane, "kind": "permission", "id": id,
-          "tool": payload.get("tool_name"), "input": payload.get("tool_input"),
-          "suggestions": payload.get("permission_suggestions")
-        }),
-      );
       emit_state(&st);
       drop(st);
       let d = rx.recv_timeout(Duration::from_secs(hooks::PERMISSION_TIMEOUT_SECS)).unwrap_or(Decision::Terminal);
       let mut st = lock(&s);
+      let was_open = st.perms.iter().any(|p| p.id == id);
       st.perms.retain(|p| p.id != id);
-      st.waiting = false;
-      emit(&st.label, json!({ "key": pane, "kind": "permissionDone", "id": id, "decision": format!("{d:?}").to_lowercase() }));
+      st.waiting = !st.perms.is_empty();
+      let name = match &d {
+        Decision::Allow | Decision::AllowWith(_) => "allow",
+        Decision::Deny => "deny",
+        Decision::Terminal => "terminal",
+      };
+      if was_open || name != "terminal" {
+        emit(&st.label, json!({ "key": pane, "kind": "permissionDone", "id": id, "decision": name }));
+      }
       emit_state(&st);
       return match hooks::permission_answer(d) {
         Some(v) => (200, Some(v.to_string())),
@@ -562,9 +1018,11 @@ pub fn hook(pane: Option<&str>, event: &str, body: &str) -> (u16, Option<String>
   if let Some(p) = payload.get("transcript_path").and_then(Value::as_str) {
     let p = PathBuf::from(p);
     if p != st.tail.path && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&st.session_id)) {
+      st.agents = agents::Agents::new(&p);
       st.tail = Tail::new(p);
       st.store = Store::default();
       st.sent.clear();
+      st.fresh = true;
     }
   }
   (204, None)
@@ -583,13 +1041,42 @@ mod tests {
   #[test]
   fn command_lines() {
     let o = StartOpts { cwd: "/w".into(), model: Some("haiku".into()), permission_mode: Some("acceptEdits".into()), ..Default::default() };
-    let c = command_line(Some("/bin/cl aude"), true, "/s/x.json", &o, "id-1", false);
+    let c = command_line(Some("/bin/cl aude"), true, "/s/x.json", &o, "id-1", None, false);
     assert_eq!(
       c,
       "'/bin/cl aude' --mcp-config \"$RIVEN_MCP_CONFIG\" --append-system-prompt \"$RIVEN_MCP_PROMPT\" --settings '/s/x.json' --model 'haiku' --permission-mode 'acceptEdits' --session-id 'id-1'"
     );
-    let r = command_line(None, false, "/s", &StartOpts { model: Some("default".into()), ..Default::default() }, "id", true);
+    let r = command_line(None, false, "/s", &StartOpts { model: Some("default".into()), ..Default::default() }, "id", Some("id"), false);
     assert_eq!(r, "claude --settings '/s' --resume 'id'");
+    // A fork names its new id; "default" is spelled the way 2.1.330 takes it.
+    let f = command_line(None, false, "/s", &StartOpts { permission_mode: Some("default".into()), ..Default::default() }, "new", Some("old"), true);
+    assert_eq!(f, "claude --settings '/s' --permission-mode 'manual' --resume 'old' --fork-session --session-id 'new'");
     assert_eq!(urlencode("chat-1 x"), "chat-1%20x");
+  }
+
+  #[test]
+  fn finished_calls_match_their_cards() {
+    let q = json!({ "questions": [{ "question": "Which fruit?" }] });
+    let done = json!({ "questions": [{ "question": "Which fruit?" }], "answers": { "Which fruit?": "Banana" } });
+    assert!(same_call(&q, &done));
+    assert!(same_call(&json!({ "command": "ls" }), &json!({ "command": "ls" })));
+    assert!(!same_call(&json!({ "command": "ls" }), &json!({ "command": "rm x" })));
+  }
+
+  #[test]
+  fn message_keystrokes() {
+    let (w, cmd) = message_writes(&Outgoing { text: "hi\r\nthere".into(), images: vec![] });
+    assert_eq!((w, cmd), (vec!["\x1b[200~hi\nthere\x1b[201~".to_string()], false));
+    let (w, cmd) = message_writes(&Outgoing { text: "/rename x".into(), images: vec![] });
+    assert_eq!((w, cmd), (vec!["/rename x".to_string()], true));
+    // Images: each path is a paste of its own after the text (the CLI turns
+    // a pasted image path into [Image #N]); a slash command with an image
+    // is just text.
+    let (w, cmd) = message_writes(&Outgoing { text: "/what is this".into(), images: vec!["/t/a b.png".into()] });
+    assert_eq!(w, vec!["\x1b[200~/what is this \x1b[201~".to_string(), "\x1b[200~/t/a b.png\x1b[201~".to_string()]);
+    assert!(!cmd);
+    let (w, _) = message_writes(&Outgoing { text: "  ".into(), images: vec!["/t/x.png".into()] });
+    assert_eq!(w, vec!["\x1b[200~/t/x.png\x1b[201~".to_string()]);
+    assert!(message_writes(&Outgoing::default()).0.is_empty());
   }
 }

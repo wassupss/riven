@@ -77,6 +77,9 @@ pub struct Store {
   leaf: Option<String>,
   /// Records seen since the last branch() (cheap "anything new?" check).
   dirty: bool,
+  custom_title: Option<String>,
+  ai_title: Option<String>,
+  title_dirty: bool,
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -147,6 +150,13 @@ fn user_text_items(uuid: &str, text: &str, images: u32, out: &mut Vec<Item>) {
     return;
   }
   let t = text.trim();
+  // A background task (subagent, shell) finished: the CLI hands its result
+  // to the model as a user turn nobody typed.
+  if t.starts_with("<task-notification>") {
+    let summary = tag(t, "summary").or_else(|| tag(t, "status")).unwrap_or("task finished").trim();
+    out.push(Item::Note { key: key(n), level: "task".into(), text: cut(summary, MAX_RESULT) });
+    return;
+  }
   if t.starts_with("[Request interrupted by user") {
     out.push(Item::Note { key: key(n), level: "interrupted".into(), text: t.into() });
     return;
@@ -268,10 +278,7 @@ fn parse_rec(v: &Value) -> Option<(String, Rec)> {
         });
       }
       Some("turn_duration") => items.push(Item::TurnEnd { key: key(0), duration_ms: v.get("durationMs").and_then(Value::as_u64).unwrap_or(0) }),
-      Some("api_error") => {
-        let text = s(v, "content").or_else(|| v.get("error").map(|e| e.to_string())).unwrap_or_else(|| "API error".into());
-        items.push(Item::Note { key: key(0), level: "error".into(), text: cut(&text, MAX_RESULT) });
-      }
+      Some("api_error") => items.push(api_error_note(v, key(0))),
       Some("local_command") | Some("informational") => {
         if let Some(text) = s(v, "content") {
           let shown = tag(&text, "local-command-stdout").unwrap_or(&text).trim().to_string();
@@ -289,10 +296,50 @@ fn parse_rec(v: &Value) -> Option<(String, Rec)> {
   Some((uuid, Rec { parent, logical_parent, items }))
 }
 
+// A failed API call the CLI is retrying (overload, rate limit, network):
+// "retry 2/10 in 4s" when the record says so, else just the error.
+fn api_error_note(v: &Value, key: String) -> Item {
+  let err = s(v, "content")
+    .or_else(|| v.pointer("/error/error/message").and_then(Value::as_str).map(str::to_string))
+    .or_else(|| v.pointer("/error/message").and_then(Value::as_str).map(str::to_string))
+    .or_else(|| v.get("error").filter(|e| !e.is_null()).map(|e| e.to_string()))
+    .unwrap_or_else(|| "API error".into());
+  let n = |k: &str| v.get(k).and_then(Value::as_u64);
+  match (n("retryAttempt"), n("maxRetries")) {
+    (Some(a), Some(m)) => {
+      let wait = n("retryInMs").map(|ms| format!(" ({:.0}s)", ms as f64 / 1000.0)).unwrap_or_default();
+      Item::Note { key, level: "retry".into(), text: cut(&format!("retry {a}/{m}{wait}: {err}"), MAX_RESULT) }
+    }
+    _ => Item::Note { key, level: "error".into(), text: cut(&err, MAX_RESULT) },
+  }
+}
+
 impl Store {
+  /// The session's name: the person's (/rename) over the CLI's own.
+  pub fn title(&self) -> Option<&str> {
+    self.custom_title.as_deref().or(self.ai_title.as_deref())
+  }
+
   /// Feed one complete line. Returns whether it was a conversation record.
   pub fn ingest(&mut self, line: &str) -> bool {
     let Ok(v) = serde_json::from_str::<Value>(line) else { return false };
+    match v.get("type").and_then(Value::as_str) {
+      Some("custom-title") => {
+        if let Some(t) = s(&v, "customTitle") {
+          self.title_dirty |= self.custom_title.as_deref() != Some(t.as_str());
+          self.custom_title = Some(t);
+        }
+        return false;
+      }
+      Some("ai-title") => {
+        if let Some(t) = s(&v, "aiTitle").or_else(|| s(&v, "title")) {
+          self.title_dirty |= self.ai_title.as_deref() != Some(t.as_str());
+          self.ai_title = Some(t);
+        }
+        return false;
+      }
+      _ => {}
+    }
     let Some((uuid, rec)) = parse_rec(&v) else { return false };
     self.recs.insert(uuid.clone(), rec);
     self.leaf = Some(uuid);
@@ -302,6 +349,10 @@ impl Store {
 
   pub fn take_dirty(&mut self) -> bool {
     std::mem::take(&mut self.dirty)
+  }
+
+  pub fn take_title_dirty(&mut self) -> bool {
+    std::mem::take(&mut self.title_dirty)
   }
 
   /// The conversation on screen: the chain from the leaf to the root, oldest
@@ -418,16 +469,10 @@ impl Tail {
   }
 }
 
-/// <config>/projects/<cwd with every non-alphanumeric char as '-'>. (The
-/// CLI's own rule; services/chat/history.rs only folds '/' and '.', which is
-/// the same for the common case.)
+/// <config>/projects/<cwd with every non-alphanumeric char as '-'>: the
+/// CLI's rule, shared with the session list (services/chat/history.rs).
 pub fn project_dir(cwd: &str, config_dir: Option<&str>) -> PathBuf {
-  let base = match config_dir.filter(|d| !d.is_empty()) {
-    Some(d) => PathBuf::from(d),
-    None => crate::services::paths::home().join(".claude"),
-  };
-  let enc: String = cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
-  base.join("projects").join(enc)
+  crate::services::chat::history::project_dir(cwd, config_dir)
 }
 
 /// Where the session's transcript is, or will be.
@@ -584,6 +629,27 @@ mod tests {
     let b = st.branch();
     assert_eq!(kinds(&b), ["note:command", "note:interrupted", "user:look"]);
     assert!(matches!(&b[2], Item::User { images: 1, .. }));
+  }
+
+  #[test]
+  fn titles_task_notes_and_retries() {
+    let mut st = Store::default();
+    st.ingest(r#"{"type":"ai-title","aiTitle":"Image color question","sessionId":"s"}"#);
+    assert_eq!(st.title(), Some("Image color question"));
+    assert!(st.take_title_dirty());
+    st.ingest(r#"{"type":"custom-title","customTitle":"mine","sessionId":"s"}"#);
+    st.ingest(r#"{"type":"ai-title","aiTitle":"later ai","sessionId":"s"}"#);
+    assert_eq!(st.title(), Some("mine"));
+    // As 2.1.330 writes a finished background agent.
+    st.ingest(r#"{"type":"user","uuid":"t1","parentUuid":null,"origin":{"kind":"task-notification"},"message":{"role":"user","content":"<task-notification>\n<task-id>a03</task-id>\n<status>completed</status>\n<summary>Agent \"Run echo\" completed</summary>\n</task-notification>"}}"#);
+    st.ingest(r#"{"type":"system","subtype":"api_error","uuid":"e1","parentUuid":"t1","retryAttempt":2,"maxRetries":10,"retryInMs":4100,"error":{"error":{"message":"Overloaded"}}}"#);
+    st.ingest(r#"{"type":"system","subtype":"api_error","uuid":"e2","parentUuid":"e1","content":"boom"}"#);
+    let b = st.branch();
+    assert_eq!(kinds(&b), ["note:task", "note:retry", "note:error"]);
+    let Item::Note { text, .. } = &b[0] else { panic!() };
+    assert_eq!(text, "Agent \"Run echo\" completed");
+    let Item::Note { text, .. } = &b[1] else { panic!() };
+    assert_eq!(text, "retry 2/10 (4s): Overloaded");
   }
 
   #[test]

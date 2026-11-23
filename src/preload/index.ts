@@ -141,6 +141,14 @@ const onChatEvent = multiplexed<ChatEvent>('chat:event')
 // CLI chat (experimental): the interactive CLI in a hidden pty
 // (services/clichat). Payload shapes: src/renderer/src/lib/cliChat.ts.
 const onCliChatEvent = multiplexed<{ key: string; kind: string } & Record<string, unknown>>('clichat:event')
+export interface CliChatStartOpts {
+  cwd: string
+  resume?: string
+  fork?: boolean
+  model?: string
+  permissionMode?: string
+  configDir?: string
+}
 
 export interface CliUpdateState {
   cmd: 'claude' | 'codex'
@@ -303,19 +311,35 @@ const api = {
     ): (() => void) => onPtyDone(cb)
   },
   cliChat: {
-    start: (
-      key: string,
-      opts: { cwd: string; resume?: string; model?: string; permissionMode?: string; configDir?: string }
-    ): Promise<{ sessionId: string; existed: boolean }> => ipcRenderer.invoke('clichat:start', key, opts),
-    send: (key: string, text: string): void => ipcRenderer.send('clichat:send', key, text),
-    // Raw keys for the CLI (a menu answered from the chat view).
+    start: (key: string, opts: CliChatStartOpts): Promise<{ sessionId: string; existed: boolean }> =>
+      ipcRenderer.invoke('clichat:start', key, opts),
+    // A new process for the pane: another conversation (resume / fork / new)
+    // or the same one again.
+    restart: (key: string, opts: CliChatStartOpts): Promise<{ sessionId: string; existed: boolean }> =>
+      ipcRenderer.invoke('clichat:restart', key, opts),
+    // Image paths are pasted after the text (the CLI attaches them).
+    send: (key: string, text: string, images?: string[]): void => ipcRenderer.send('clichat:send', key, text, images ?? []),
+    // Raw keys for the CLI (Esc on a menu).
     keys: (key: string, data: string): void => ipcRenderer.send('clichat:keys', key, data),
+    // Pick an option of the TUI menu on screen (text: for a text option).
+    menu: (key: string, index: number, text?: string): void => ipcRenderer.send('clichat:menu', key, index, text ?? null),
     interrupt: (key: string): void => ipcRenderer.send('clichat:interrupt', key),
     stop: (key: string): void => ipcRenderer.send('clichat:stop', key),
     // The terminal view took the pty over (on) or gave it back (off).
     terminal: (key: string, on: boolean): void => ipcRenderer.send('clichat:terminal', key, on),
     answer: (key: string, id: string, decision: 'allow' | 'deny' | 'terminal'): void =>
       ipcRenderer.send('clichat:answer', key, id, decision),
+    // AskUserQuestion: question text -> label(s) or typed text; null = answer in the terminal.
+    question: (key: string, id: string, answers: Record<string, string | string[]> | null): void =>
+      ipcRenderer.send('clichat:question', key, id, answers),
+    // Another model / mode: applied by a restart at the turn boundary.
+    reconfigure: (key: string, model?: string | null, mode?: string | null): void =>
+      ipcRenderer.send('clichat:reconfigure', key, model ?? null, mode ?? null),
+    rename: (key: string, title: string): Promise<boolean> => ipcRenderer.invoke('clichat:rename', key, title),
+    attach: (key: string, name: string, dataUrl: string): Promise<string> =>
+      ipcRenderer.invoke('clichat:attach', key, name, dataUrl),
+    image: (key: string, uuid: string, index: number): Promise<string | null> =>
+      ipcRenderer.invoke('clichat:image', key, uuid, index),
     onEvent: onCliChatEvent
   },
   chat: {

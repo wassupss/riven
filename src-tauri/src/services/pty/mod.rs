@@ -278,6 +278,12 @@ pub fn screen_text(key: &str) -> Option<String> {
   Some(lines[from..].join("\n"))
 }
 
+/// Whether a session is registered under this key (a kill takes it out on
+/// the control thread, so a restart under the same key waits for this).
+pub fn exists(key: &str) -> bool {
+  get(key).is_some()
+}
+
 /// Resize from Rust (a hidden session going back to its own width).
 pub fn resize_now(key: &str, cols: u16, rows: u16) {
   ctl(Op::Resize(key.to_string(), cols, rows));
@@ -606,12 +612,18 @@ fn finish(s: &Arc<Session>, code: i32) {
     st.timer += 1;
   }
   let mut m = sessions();
-  if m.get(&s.key).is_some_and(|x| Arc::ptr_eq(x, s)) {
+  // Still registered: the program ended by itself. A killed session left the
+  // registry already, and its key may belong to a new one by now (a CLI chat
+  // restarting under the same key), which must not hear this exit.
+  let natural = m.get(&s.key).is_some_and(|x| Arc::ptr_eq(x, s));
+  if natural {
     m.remove(&s.key);
   }
   drop(m);
-  set_working(&s.key, false);
-  crate::services::clichat::on_pty_exit(&s.key, code);
+  if natural {
+    set_working(&s.key, false);
+    crate::services::clichat::on_pty_exit(&s.key, code);
+  }
 }
 
 // ---- control --------------------------------------------------------------------
