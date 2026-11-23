@@ -1,7 +1,5 @@
 import { create } from 'zustand'
-
-// Just the pet (right-click for its menu), or the little handheld it lives in.
-export type PetChrome = 'bare' | 'device'
+import { migrateLegacyBg, sameKindBgs, sanitizeKindBgs, type PanelBgKinds } from './panelBackground'
 
 /** A phone the user approved for remote control (state/remote). */
 export interface RemoteDevice {
@@ -12,9 +10,32 @@ export interface RemoteDevice {
   addedAt: number
   // Expo push token, when the phone allowed notifications.
   pushToken?: string | null
+  // What this phone may do with terminals (state/remoteTerms). Absent = off,
+  // so every phone paired before these existed starts with neither. Only the
+  // computer's settings turn them on; no phone message touches them.
+  termView?: boolean
+  termInput?: boolean
+}
+
+/** One thing a phone typed into a terminal (state/remoteTerms), kept on this machine only. */
+export interface RemoteTermAudit {
+  at: number
+  device: string
+  deviceId: string
+  pane: string
+  paneKey: string
+  /** 'line' or the key pressed ('enter', '1', ...). */
+  what: string
+  /** The start of a typed line. */
+  preview?: string
+  ok: boolean
+  error?: string
 }
 
 export interface Settings {
+  // The default background of each panel kind that has one (state/
+  // panelBackground.ts). A panel's own override lives in its pane state.
+  panelBgs: PanelBgKinds
   theme: string
   editorKeymap: string
   editorFontFamily: string
@@ -36,9 +57,6 @@ export interface Settings {
   // eaten, how it grew — lives in pet.json, not here.)
   petShow: boolean
   petPos: { x: number; y: number } | null
-  // Nothing but the creature on a transparent background (its menu is a right
-  // click away), or the small handheld for those who asked for one.
-  petChrome: PetChrome
   // Living in its own window on the desktop instead of inside riven's. On by
   // default: a desk pet belongs on the desk.
   petDetached: boolean
@@ -57,6 +75,10 @@ export interface Settings {
   // terminal. Only Claude has a native chat driver so far; others fall back to a
   // terminal regardless.
   agentChatUI: boolean
+  // What a new chat pane runs: 'cli' = the interactive CLI (claude, codex)
+  // in a hidden pty drawn as a chat (services/clichat); 'native' = the
+  // headless stream-json driver (services/chat). Existing panes keep theirs.
+  chatEngine: 'cli' | 'native'
   // A fixed instruction appended to every agent chat (like CLAUDE.md but app-wide).
   // Mirrors native's `prompt.global`.
   globalPrompt: string
@@ -121,6 +143,8 @@ export interface Settings {
   // The account the identity above belongs to. Signing in as someone else
   // starts over: another account's phones must not reach this machine.
   remoteOwner: string
+  // What phones typed into terminals, newest last, capped (state/remoteTerms).
+  remoteTermAudit: RemoteTermAudit[]
   // Terminal behaviour, all of it things the terminal engine exposes directly.
   terminalCursorStyle: 'block' | 'bar' | 'underline'
   terminalCursorBlink: boolean
@@ -153,7 +177,6 @@ export const DEFAULT_SETTINGS: Settings = {
   usagePinned: false,
   petShow: true,
   petPos: null,
-  petChrome: 'bare',
   petDetached: true,
   petOnTop: false,
   petBreakMin: 60,
@@ -161,6 +184,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
   agentChatUI: true,
+  chatEngine: 'cli',
   globalPrompt: '',
   mcpDisabledTools: [],
   browserSearch: 'https://www.google.com/search?q={q}',
@@ -187,6 +211,7 @@ export const DEFAULT_SETTINGS: Settings = {
   remoteDeskSecret: '',
   remoteDevices: [],
   remoteOwner: '',
+  remoteTermAudit: [],
   terminalCursorStyle: 'block',
   terminalCursorBlink: true,
   terminalScrollback: 5000,
@@ -204,7 +229,8 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalFontSize: 12,
   terminalBackground: '#101113',
   terminalForeground: '#e3e5ea',
-  terminalCursor: '#ff7847'
+  terminalCursor: '#ff7847',
+  panelBgs: {}
 }
 
 interface SettingsState {
@@ -223,7 +249,10 @@ export const REMOVED_SETTINGS: ReadonlyArray<string> = [
   'aiCompleteModel',
   'aiApiKey',
   // The first remote-control build's shared secret, replaced by per-device keys.
-  'remoteKey'
+  'remoteKey',
+  // The pet's look ('bare' or the 'device' handheld; older builds also wrote
+  // 'full' and 'screen'). The handheld is gone: the pet is always just itself.
+  'petChrome'
 ]
 
 // Old default terminal-font stacks. Users who never customized the terminal font
@@ -250,8 +279,20 @@ const LEGACY_TERMINAL_FONTS = new Set([
 // Values an older build may still hold, read from settings.json at boot or
 // pulled from the cloud row (settingsSync), which an older build keeps writing.
 export function migrateLegacy(s: Settings): Settings {
-  // The pet's old card and screen-only sizes became the bare pet with a menu.
-  if (s.petChrome !== 'bare' && s.petChrome !== 'device') return { ...s, petChrome: 'bare' }
+  // A setting that no longer exists (an older build keeps writing petChrome to
+  // the synced row) is dropped, not carried along.
+  if (REMOVED_SETTINGS.some((k) => k in s)) {
+    const out = { ...s } as Record<string, unknown>
+    for (const k of REMOVED_SETTINGS) delete out[k]
+    s = out as unknown as Settings
+  }
+  // The first version's single background (panelBg*) becomes kind defaults.
+  s = migrateLegacyBg(s as unknown as Record<string, unknown>) as unknown as Settings
+  // A hand-edited or half-written background falls back to "none" rather than
+  // reaching the CSS as something unexpected.
+  const bgs = sanitizeKindBgs(s.panelBgs)
+  if (!s.panelBgs || !sameKindBgs(bgs, s.panelBgs) || Object.keys(bgs).length !== Object.keys(s.panelBgs).length)
+    s = { ...s, panelBgs: bgs }
   return s
 }
 
@@ -319,7 +360,9 @@ if (typeof window !== 'undefined')
     }
   })
 
-export async function loadSettings(): Promise<void> {
+/** Resolves to whether a settings.json was there and read (false: defaults). */
+export async function loadSettings(): Promise<boolean> {
   const saved = (await window.api.config.load('settings.json')) as Partial<Settings> | null
   useSettings.getState().hydrate(saved ?? {})
+  return saved !== null && typeof saved === 'object'
 }

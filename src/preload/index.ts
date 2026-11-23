@@ -138,6 +138,25 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
+// CLI chat (experimental): the interactive CLI in a hidden pty
+// (services/clichat). Payload shapes: src/renderer/src/lib/cliChat.ts.
+const onCliChatEvent = multiplexed<{ key: string; kind: string } & Record<string, unknown>>('clichat:event')
+export interface CliChatStartOpts {
+  cwd: string
+  resume?: string
+  fork?: boolean
+  model?: string
+  permissionMode?: string
+  configDir?: string
+  // The chat settings a chat launches with (see chat.start).
+  mcpDisabled?: string[]
+  toolsDenied?: string[]
+  autocompact?: string
+  globalPrompt?: string
+  agent?: string
+  /** 'codex' runs the interactive codex; claude otherwise. */
+  cli?: 'claude' | 'codex'
+}
 
 export interface CliUpdateState {
   cmd: 'claude' | 'codex'
@@ -250,6 +269,22 @@ const api = {
     seen: (id: string): void => ipcRenderer.send('pty:seen', id),
     onAgentSession: onPtyAgentSession,
     codexSessionTitle: (id: string): Promise<string | null> => ipcRenderer.invoke('pty:codexSessionTitle', id),
+    // A paired phone (state/remoteTerms.ts). The text is the model's tail, or
+    // null text when `since` is still current; null when there is no such
+    // terminal. Input is a fixed key or one line, checked again by main.
+    remoteText: (
+      id: string,
+      lines: number,
+      since: string
+    ): Promise<{ rev: string; text: string | null; agent: boolean } | null> =>
+      ipcRenderer.invoke('pty:remoteText', id, lines, since),
+    remoteInput: (id: string, input: { text: string } | { key: string }): Promise<boolean> =>
+      ipcRenderer.invoke(
+        'pty:remoteInput',
+        id,
+        'text' in input ? input.text : undefined,
+        'key' in input ? input.key : undefined
+      ),
     resize: (id: string, cols: number, rows: number): void =>
       ipcRenderer.send('pty:resize', id, cols, rows),
     kill: (id: string): void => ipcRenderer.send('pty:kill', id),
@@ -282,6 +317,41 @@ const api = {
     onDone: (
       cb: (e: { key: string; reason: 'finished' | 'needs_input'; summary?: string }) => void
     ): (() => void) => onPtyDone(cb)
+  },
+  cliChat: {
+    start: (key: string, opts: CliChatStartOpts): Promise<{ sessionId: string; existed: boolean }> =>
+      ipcRenderer.invoke('clichat:start', key, opts),
+    // A new process for the pane: another conversation (resume / fork / new)
+    // or the same one again.
+    restart: (key: string, opts: CliChatStartOpts): Promise<{ sessionId: string; existed: boolean }> =>
+      ipcRenderer.invoke('clichat:restart', key, opts),
+    // Image paths are pasted after the text (the CLI attaches them).
+    send: (key: string, text: string, images?: string[]): void => ipcRenderer.send('clichat:send', key, text, images ?? []),
+    // Into the running turn now (the queue's "send now"): typed, then the
+    // CLI's own send-now key; an ordinary message when no turn runs.
+    steer: (key: string, text: string, images?: string[]): void => ipcRenderer.send('clichat:steer', key, text, images ?? []),
+    // Raw keys for the CLI (Esc on a menu).
+    keys: (key: string, data: string): void => ipcRenderer.send('clichat:keys', key, data),
+    // Pick an option of the TUI menu on screen (text: for a text option).
+    menu: (key: string, index: number, text?: string): void => ipcRenderer.send('clichat:menu', key, index, text ?? null),
+    interrupt: (key: string): void => ipcRenderer.send('clichat:interrupt', key),
+    stop: (key: string): void => ipcRenderer.send('clichat:stop', key),
+    // The terminal view took the pty over (on) or gave it back (off).
+    terminal: (key: string, on: boolean): void => ipcRenderer.send('clichat:terminal', key, on),
+    answer: (key: string, id: string, decision: 'allow' | 'deny' | 'terminal'): void =>
+      ipcRenderer.send('clichat:answer', key, id, decision),
+    // AskUserQuestion: question text -> label(s) or typed text; null = answer in the terminal.
+    question: (key: string, id: string, answers: Record<string, string | string[]> | null): void =>
+      ipcRenderer.send('clichat:question', key, id, answers),
+    // Another model / mode: applied by a restart at the turn boundary.
+    reconfigure: (key: string, model?: string | null, mode?: string | null): void =>
+      ipcRenderer.send('clichat:reconfigure', key, model ?? null, mode ?? null),
+    rename: (key: string, title: string): Promise<boolean> => ipcRenderer.invoke('clichat:rename', key, title),
+    attach: (key: string, name: string, dataUrl: string): Promise<string> =>
+      ipcRenderer.invoke('clichat:attach', key, name, dataUrl),
+    image: (key: string, uuid: string, index: number): Promise<string | null> =>
+      ipcRenderer.invoke('clichat:image', key, uuid, index),
+    onEvent: onCliChatEvent
   },
   chat: {
     start: (
@@ -363,6 +433,11 @@ const api = {
       ipcRenderer.invoke('chat:sessionRename', cwd, id, title, configDir),
     sessionDelete: (cwd: string, id: string, configDir?: string): Promise<boolean> =>
       ipcRenderer.invoke('chat:sessionDelete', cwd, id, configDir),
+    // Codex's conversations in this folder (its rollouts), newest first.
+    codexSessions: (cwd: string): Promise<Array<{ id: string; title: string; mtime: number; messages: number }>> =>
+      ipcRenderer.invoke('chat:codexSessions', cwd),
+    // `codex delete --force <id>`: Codex removes the conversation itself.
+    codexSessionDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('chat:codexSessionDelete', id),
     agents: (
       cwd: string
     ): Promise<Array<{ name: string; description: string; source: 'project' | 'user' }>> =>
@@ -889,6 +964,8 @@ const api = {
     codex: (): Promise<{
       installed: boolean
       totalTokens: number
+      // The part of totalTokens that was cached input (missing from older builds).
+      cachedTokens?: number
       primary: { usedPct: number; resetsAt: string | null } | null
       primaryWindowMinutes: number | null
       secondary: { usedPct: number; resetsAt: string | null } | null
@@ -1231,6 +1308,14 @@ const api = {
     // Borrow the keyboard (renaming); the pet's window is non-focusable so that
     // it can never steal focus on its own.
     focusable: (on: boolean): Promise<void> => ipcRenderer.invoke('pet:focusable', on),
+    // Bring riven's window up with Settings open at `tab` (the pet's own window
+    // has no settings of its own).
+    openSettings: (tab: string): Promise<void> => ipcRenderer.invoke('pet:openSettings', tab),
+    onOpenSettings: (cb: (tab: string) => void): (() => void) => {
+      const l = (_e: unknown, tab: string): void => cb(tab)
+      ipcRenderer.on('pet:openSettings', l)
+      return () => ipcRenderer.removeListener('pet:openSettings', l)
+    },
     // Copy a friend-battle code (the pet window cannot use the page clipboard).
     copy: (text: string): Promise<void> => ipcRenderer.invoke('pet:copy', text),
     // A press of the pet's A / B / C, sent from wherever the shortcut fired and
@@ -1272,6 +1357,28 @@ const api = {
       return () => ipcRenderer.removeListener('pet:hidden', l)
     }
   },
+  // One-shot AI help for the pet maker and the decoration layout (Rust
+  // services/petai.rs): the CLI runs once with no tools and nothing saved.
+  petAi: {
+    run: (req: {
+      id: string
+      engine: 'claude' | 'codex'
+      model?: string
+      system: string
+      prompt: string
+      images?: string[]
+      timeoutMs?: number
+    }): Promise<{
+      ok: boolean
+      text?: string
+      error?: 'notInstalled' | 'timeout' | 'cancelled' | 'failed'
+      detail?: string
+      usage?: { input: number; output: number; cacheRead: number; cacheWrite: number }
+      ms?: number
+    }> => ipcRenderer.invoke('petAi:run', req),
+    cancel: (id: string): Promise<void> => ipcRenderer.invoke('petAi:cancel', id),
+    engines: (): Promise<{ claude: boolean; codex: boolean }> => ipcRenderer.invoke('petAi:engines')
+  },
   // The Claude models this account can use, from the CLI itself (see
   // main/modelCatalog). null when the CLI could not be asked.
   models: {
@@ -1287,6 +1394,14 @@ const api = {
     saveSync: (name: string, data: unknown): boolean =>
       ipcRenderer.sendSync('config:save-sync', name, data) === true,
     reveal: (name: string): Promise<void> => ipcRenderer.invoke('config:reveal', name)
+  },
+  // Panel background images, copied into userData/backgrounds (main/
+  // backgrounds.ts). import resolves to the stored file's name; gc deletes
+  // every stored image not in `keep` (the names still in use) and resolves to
+  // how many went.
+  background: {
+    import: (dataUrl: string): Promise<string> => ipcRenderer.invoke('background:import', dataUrl),
+    gc: (keep: string[]): Promise<number> => ipcRenderer.invoke('background:gc', keep)
   },
   // The renderer's own data as files, userData/store/<name>.json (see
   // main/store and renderer lib/fileStore). Saving null removes the file.

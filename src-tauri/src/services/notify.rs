@@ -132,7 +132,7 @@ fn trace(what: &str, pane: Option<&str>, title: &str) {
 }
 
 fn now_ms() -> f64 {
-  crate::services::chat::util::now_ms()
+  crate::services::util::now_ms()
 }
 
 /// Startup: route clicks back here, and (unless `quiet`, the background test

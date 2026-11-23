@@ -9,7 +9,7 @@
 // in progress (requestTimeout 0), 60s to send the headers, 65s keep-alive.
 
 use super::{call_tool, hooks, rpc_key, server, tool_defs, Call};
-use crate::services::chat::util;
+use crate::services::util;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -252,6 +252,19 @@ fn route(req: &Request, url: &url::Url, body: Option<Vec<u8>>, conn: &TcpStream)
     return Some((Response::empty(401), None));
   }
   let path = url.path();
+  if path == "/clichat" {
+    // A CLI chat session's hook (services/clichat). May block on a
+    // permission card; every connection has its own thread.
+    let body = String::from_utf8_lossy(&body.unwrap_or_default()).into_owned();
+    let event = query(url, "event").unwrap_or_default();
+    let agent = query(url, "agent");
+    let (status, json) = crate::services::clichat::hook(req.header("x-riven-pane"), agent.as_deref(), &event, &body);
+    let res = match json {
+      Some(b) => Response { status, headers: vec![("content-type", "application/json".into())], body: b.into_bytes() },
+      None => Response::empty(status),
+    };
+    return Some((res, None));
+  }
   if path != "/mcp" && path != "/hook" {
     return Some((Response::empty(404), None));
   }

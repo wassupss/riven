@@ -202,7 +202,7 @@ impl Serialize for Cell {
 
 /// A JS number for JSON (integral values without ".0").
 pub fn num(f: f64) -> Value {
-  crate::services::chat::util::jnum(f)
+  crate::services::util::jnum(f)
 }
 
 #[derive(Serialize, Clone, Debug)]

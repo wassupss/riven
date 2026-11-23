@@ -7,7 +7,7 @@
 // subscription login.
 
 use super::tools::{count_diff, tool_code, tool_detail, tool_path, EDIT_TOOLS};
-use super::util::{jnum, js_string, num_or0, slice, string_or, truthy};
+use crate::services::util::{jnum, js_string, num_or0, slice, string_or, truthy};
 use super::StartOpts;
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
@@ -104,7 +104,7 @@ impl Session {
     let mut st = self.lock();
     st.turn_busy = true;
     st.last_active = Instant::now();
-    let id = turn.unwrap_or_else(|| format!("main_{}", super::util::uuid()));
+    let id = turn.unwrap_or_else(|| format!("main_{}", crate::services::util::uuid()));
     st.turns.push_back(id.clone());
     if !st.saw_init {
       st.unsent.push((line.clone(), id));
@@ -121,7 +121,7 @@ impl Session {
 
   pub fn kill(&self) {
     if !self.exited.load(Ordering::SeqCst) {
-      super::util::sigterm(self.pid);
+      crate::services::util::sigterm(self.pid);
     }
   }
 }
@@ -149,14 +149,14 @@ fn note_background_report(st: &mut St) {
     return;
   }
   st.auto_turns += 1;
-  st.auto_turn_at = super::util::now_ms();
+  st.auto_turn_at = crate::services::util::now_ms();
 }
 
 const AUTO_TURN_WINDOW_MS: f64 = 60_000.0;
 
 fn claim_result(st: &mut St) -> Option<String> {
   if st.auto_turns > 0 {
-    if super::util::now_ms() - st.auto_turn_at < AUTO_TURN_WINDOW_MS {
+    if crate::services::util::now_ms() - st.auto_turn_at < AUTO_TURN_WINDOW_MS {
       st.auto_turns -= 1;
       return None;
     }
@@ -169,12 +169,12 @@ fn claim_result(st: &mut St) -> Option<String> {
 fn result_error(ev: &Value) -> String {
   if let Some(errs) = ev.get("errors").and_then(Value::as_array) {
     if let Some(e) = errs.iter().filter_map(Value::as_str).find(|e| !e.trim().is_empty()) {
-      return slice(super::util::first_line(e), 300);
+      return slice(crate::services::util::first_line(e), 300);
     }
   }
   if ev.get("subtype").and_then(Value::as_str) == Some("success") {
     if let Some(r) = ev.get("result").and_then(Value::as_str).filter(|r| !r.trim().is_empty()) {
-      return slice(super::util::first_line(r.trim()), 300);
+      return slice(crate::services::util::first_line(r.trim()), 300);
     }
   }
   string_or(ev.get("subtype"), "error")
@@ -227,7 +227,7 @@ pub fn handle_event(key: &str, st: &mut St, ev: &Value) -> Vec<Post> {
     let failed = !running && (ev.get("outcome").and_then(Value::as_str) == Some("error") || ev.get("exit_code").and_then(Value::as_f64).is_some_and(|c| c != 0.0));
     let error = if failed {
       let raw = [ev.get("stderr"), ev.get("output")].into_iter().find(|v| truthy(*v)).flatten().map(js_string).unwrap_or_default();
-      let first = slice(super::util::first_line(&raw), 200);
+      let first = slice(crate::services::util::first_line(&raw), 200);
       json!(if first.is_empty() { "failed".to_string() } else { first })
     } else {
       Value::Null

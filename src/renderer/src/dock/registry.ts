@@ -3,6 +3,7 @@ import { t } from '../i18n'
 import { isPaneBusy } from '../state/workspaceStatus'
 import { focusPane, focusEditor, requestPaneFocusOnOpen } from '../keybindings/focus'
 import { getSettings } from '../state/settings'
+import { chatEngine, type ChatEngine } from '../lib/chatEngine'
 import { useSession, setPaneState, clearPaneState, widForPane, flushSessionSaveSync } from '../state/session'
 import { renameAgent, getAgentStatus } from '../state/agents'
 import { useAgentGroups } from '../state/agentGroups'
@@ -330,7 +331,9 @@ export function addChat(
   // passes ITS OWN workspace so the pane never lands in the visible one.
   inWorkspace?: string | null,
   // Which agent backs the pane. Omitted = Claude Code.
-  cli?: 'claude' | 'codex'
+  cli?: 'claude' | 'codex',
+  // What runs it. Omitted = Settings' chatEngine (see chatEngineFor).
+  engine?: 'cli' | 'native'
 ): string {
   const target = dockAndWidFor(inWorkspace)
   if (!target) return ''
@@ -346,6 +349,7 @@ export function addChat(
     agent: agent || undefined,
     persona: persona || undefined,
     cli: cli === 'codex' ? 'codex' : undefined,
+    engine: chatEngineFor(cli, engine) === 'cli' ? 'cli' : undefined,
     // Newly created here, so it starts an empty conversation instead of adopting
     // the workspace's most recent session. Only panes born through addChat get
     // this; a pane restored from a saved layout keeps the old fallback.
@@ -372,6 +376,21 @@ export function addChat(
   })
   if (prevActive && prevActive !== id) api.getPanel(prevActive)?.api.setActive()
   return id
+}
+
+/** What runs a new chat pane (lib/chatEngine): explicit, else Settings' chatEngine. */
+export function chatEngineFor(cli?: 'claude' | 'codex', engine?: ChatEngine): ChatEngine {
+  return chatEngine(cli, engine, getSettings().chatEngine)
+}
+
+/** A chat pane on the CLI chat whatever the setting (the palette command). */
+export function addCliChat(inWorkspace?: string | null): string {
+  return addChat(undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, inWorkspace, 'claude', 'cli')
+}
+
+/** A chat pane on the headless chat whatever the setting (the palette command). */
+export function addNativeChat(): string {
+  return addChat(undefined, undefined, undefined, undefined, undefined, false, undefined, undefined, undefined, undefined, 'native')
 }
 
 // Rename a live pane's tab and re-pin the title so it survives a reload and

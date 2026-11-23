@@ -197,12 +197,28 @@ impl Vt {
     }
   }
 
+  /// The terminal as plain text for a paired phone (services/pty remote_text):
+  /// soft-wrapped rows joined back into their lines, so a long line (or a
+  /// secret in it) is one piece the phone reflows and the redaction sees whole.
+  pub fn text(&self) -> String {
+    self.format(true, true)
+  }
+
+  /// Scrollback + screen as plain text, one line per row.
+  pub fn plain_text(&self) -> String {
+    self.plain()
+  }
+
   fn plain(&self) -> String {
+    self.format(false, false)
+  }
+
+  fn format(&self, unwrap: bool, trim: bool) -> String {
     let opts = FormatterOptions {
       size: std::mem::size_of::<FormatterOptions>(),
       emit: FORMAT_PLAIN,
-      unwrap: false,
-      trim: false,
+      unwrap,
+      trim,
       extra: TerminalExtra {
         size: std::mem::size_of::<TerminalExtra>(),
         screen: ScreenExtra { size: std::mem::size_of::<ScreenExtra>(), ..Default::default() },
@@ -265,6 +281,15 @@ mod tests {
     vt.write(b"\x1b[3");
     assert!(vt.snapshot().is_ok());
     vt.resize(40, 10);
+  }
+
+  #[test]
+  fn text_joins_soft_wrapped_rows() {
+    let mut vt = Vt::new(10, 5, 100).unwrap();
+    vt.write(b"key=0123456789abcdef\r\nnext");
+    let text = vt.text();
+    assert!(text.contains("key=0123456789abcdef"), "{text:?}");
+    assert!(text.contains("next"));
   }
 }
 

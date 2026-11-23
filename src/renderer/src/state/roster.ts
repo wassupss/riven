@@ -3,6 +3,7 @@ import { activityOf, terminalRosterTitle, type Live, type PaneKind, type RosterE
 import { useSession } from './session'
 import { getSettings } from './settings'
 import { getAgentStatus } from './agents'
+import { isCliChat } from './cliChatKeys'
 
 // Every agent pane in every OPEN workspace — whether or not that workspace is
 // currently mounted.
@@ -98,8 +99,14 @@ function layoutPanes(): LayoutPane[] {
     const panels = layout?.panels
     if (!panels) continue
     for (const [id, p] of Object.entries(panels)) {
+      // A CLI chat (services/clichat) is a chat pane like any other here; the
+      // experimental 'clichat' panel kind is one too.
       const kind: PaneKind | null =
-        p?.contentComponent === 'chat' ? 'chat' : p?.contentComponent === 'terminal' ? 'terminal' : null
+        p?.contentComponent === 'chat' || p?.contentComponent === 'clichat'
+          ? 'chat'
+          : p?.contentComponent === 'terminal'
+            ? 'terminal'
+            : null
       if (!kind) continue
       out.push({ id, workspace: wid, kind, title: p?.title || id })
     }
@@ -177,9 +184,11 @@ export function startRoster(): () => void {
   )
   // A terminal's attention flag is main's, and main only clears it on pty:seen —
   // i.e. on a real interaction — so `finished` persists here for free.
-  const offStatus = window.api.pty.onStatus(({ key, busy, attention, hooked }) =>
-    patch(key, { busy, attention, hooked: !!hooked })
-  )
+  // A CLI chat's hidden pty reports here too (its hooks are a terminal
+  // agent's); its state comes from its own events (state/cliChats) instead.
+  const offStatus = window.api.pty.onStatus(({ key, busy, attention, hooked }) => {
+    if (!isCliChat(key)) patch(key, { busy, attention, hooked: !!hooked })
+  })
   const offTitle = window.api.pty.onTitle(({ key, title }) => patch(key, { title }))
 
   // Chat panes: main streams a turn's events regardless of whether the pane is

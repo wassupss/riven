@@ -59,5 +59,18 @@ pub fn pty_kill(id: String) {
 #[tauri::command]
 pub async fn pty_codex_session_title(id: serde_json::Value) -> Option<String> {
   let id = id.as_str()?.to_string();
-  tokio::task::spawn_blocking(move || crate::services::chat::read_codex_session_title(&id)).await.ok().flatten()
+  tokio::task::spawn_blocking(move || crate::services::agentcli::history::read_codex_session_title(&id)).await.ok().flatten()
+}
+
+// A paired phone looking at, or typing into, a terminal (state/remoteTerms.ts
+// decides who may; services/pty is the last gate on what).
+#[tauri::command]
+pub async fn pty_remote_text(id: String, lines: f64, since: String) -> Option<pty::RemoteText> {
+  let lines = if lines.is_finite() { lines.clamp(1.0, 500.0) as usize } else { 200 };
+  tokio::task::spawn_blocking(move || pty::remote_text(&id, lines, &since)).await.ok().flatten()
+}
+
+#[tauri::command]
+pub fn pty_remote_input(id: String, text: Option<String>, key: Option<String>) -> bool {
+  pty::remote_input(&id, text.as_deref(), key.as_deref())
 }

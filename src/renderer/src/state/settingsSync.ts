@@ -13,14 +13,19 @@ const TABLE = 'user_settings'
 // either; among them is the old inline-completion API key, a secret. Remote
 // control is per machine, and its key is a secret that lets a phone drive this
 // machine's agents: it must never leave the machine through sync.
+// Panel backgrounds name files in this machine's userData, which mean nothing
+// on another machine. (The first version's panelBg* keys are dropped on load,
+// see migrateLegacy, so a row an older build wrote cannot bring them back.)
 const SYNC_EXCLUDE: ReadonlySet<string> = new Set([
   'importedFonts',
+  'panelBgs',
   'remoteEnabled',
   'remoteChannel',
   'remoteDeskPublic',
   'remoteDeskSecret',
   'remoteDevices',
   'remoteOwner',
+  'remoteTermAudit',
   ...REMOVED_SETTINGS
 ])
 

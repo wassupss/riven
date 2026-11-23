@@ -21,6 +21,17 @@ interface UIState {
   setSettingsOpen: (v: boolean) => void
   settingsTab: SettingsTab
   openSettings: (tab?: SettingsTab) => void
+  /** Bumped to open Settings > 리븐펫 with the decoration layout of the shown pet open. */
+  petLayoutAsk: number
+  openPetLayout: () => void
+  /** Bumped to open Settings > 리븐펫 with the motion editor (움직임) of the shown pet open. */
+  petMotionAsk: number
+  openPetMotion: () => void
+  /** Set to open Settings > 리븐펫 with the species maker open on a new species; taken (cleared) by it. */
+  petMakerAsk: boolean
+  openPetMaker: () => void
+  /** The species maker is open over Settings: Escape is its, not Settings'. */
+  petMakerOpen: boolean
   // The entire left sidebar (workspaces + explorer + usage). ⌘B toggles this.
   showSidebar: boolean
   toggleSidebar: () => void
@@ -47,6 +58,13 @@ export const useUI = create<UIState>((set) => ({
   setSettingsOpen: (v) => set({ settingsOpen: v }),
   settingsTab: 'general',
   openSettings: (tab = 'general') => set({ settingsOpen: true, settingsTab: tab }),
+  petLayoutAsk: 0,
+  openPetLayout: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petLayoutAsk: s.petLayoutAsk + 1 })),
+  petMotionAsk: 0,
+  openPetMotion: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petMotionAsk: s.petMotionAsk + 1 })),
+  petMakerAsk: false,
+  openPetMaker: () => set({ settingsOpen: true, settingsTab: 'pet', petMakerAsk: true }),
+  petMakerOpen: false,
   showSidebar: true,
   toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
   metaHeld: false,

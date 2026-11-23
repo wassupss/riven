@@ -1,77 +1,303 @@
-/* Settings > RivenPet > species from photos (PetSpeciesSettings.tsx). Controls
-   are the shared ones (ui-btn, ui-seg, ui-input, ui-switch at --ctl-h); this
-   only lays them out and draws the photo, the cut-out and the dot grid. */
+/* The pet species maker (PetMaker.tsx, a modal of its own), its pixel editor
+   (PetPixelEditor.tsx) and the species list in Settings > 리븐펫
+   (PetSpeciesSettings.tsx). Controls are the shared ones (ui-btn, ui-seg,
+   ui-input, ui-switch at --ctl-h); this only lays them out and draws the
+   photo, the cut-out and the dots. */
 
-.pm {
+/* ---- the modal: start screen, or editor (middle) + side column, bottom bar ---- */
+.modal.pmk {
+  width: min(1080px, 94vw);
+  height: min(760px, 90vh);
+  max-width: none;
+  max-height: none;
+}
+.modal.pmk.start {
+  width: min(620px, 92vw);
+  height: auto;
+}
+.pmk .modal-header {
+  padding: 8px 10px 8px 16px;
+}
+.pmk-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+.pmk-main {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 4px 0 8px;
+  gap: 8px;
+  padding: 12px 16px;
 }
-.pm-body {
+.pmk-side {
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
+  flex-direction: column;
   gap: 16px;
-  align-items: flex-start;
+  padding: 12px 16px 16px;
+  border-left: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
 }
-.pm-stage {
-  flex: 0 0 auto;
-  width: 232px;
-  max-width: 45%;
+@media (max-width: 820px) {
+  .pmk-body {
+    grid-template-columns: minmax(0, 1fr) 236px;
+  }
+  .pmk-main,
+  .pmk-side {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
 }
-.pm-side {
-  flex: 1 1 0;
-  min-width: 0;
+@media (max-width: 620px) {
+  .pmk-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(300px, 1fr) auto;
+    overflow-y: auto;
+  }
+  .pmk-side {
+    overflow: visible;
+    border-left: none;
+    border-top: 1px solid var(--hairline);
+  }
+}
+
+/* The start: two big choices, and the whole of it takes a dropped image. */
+.pmk-start {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin: 12px;
+  padding: 12px;
+  border: 2px dashed transparent;
+  border-radius: var(--radius-md);
 }
-.pm-side .set-note {
-  margin: 0;
+.pmk-start.drag {
+  border-color: var(--accent);
+  background: var(--accent-muted);
 }
-.pm-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: var(--text-xs);
-  color: var(--fg-dim);
+.pmk-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
-.pm-field b {
-  color: var(--fg);
-  font-weight: 500;
+@media (max-width: 520px) {
+  .pmk-choices {
+    grid-template-columns: 1fr;
+  }
 }
-.pm-field input[type='range'] {
-  width: 100%;
-  accent-color: var(--accent);
-}
-.pm-switch {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-/* A photo not picked yet: one big target. */
-.pm-drop {
-  width: 100%;
-  aspect-ratio: 1;
+.pmk-choice {
+  min-height: 176px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 1px dashed var(--edge);
+  padding: 20px 16px;
+  border: 1px solid var(--edge);
   border-radius: var(--radius-md);
-  background: var(--hover);
+  background: var(--bg-2);
   color: var(--fg-dim);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  text-align: center;
   cursor: pointer;
+  transition:
+    border-color var(--dur-fast) ease,
+    background var(--dur-fast) ease,
+    color var(--dur-fast) ease;
 }
-.pm-drop:hover {
+.pmk-choice b {
   color: var(--fg);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.pmk-choice:hover {
   border-color: var(--accent-border);
+  background: var(--accent-muted);
+  color: var(--fg);
+}
+.pmk-choice:hover svg {
+  color: var(--accent);
+}
+.pmk-choice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-/* The photo with the crop square over it. */
+/* The canvas takes what room the column has left, as the largest square. */
+.pmk-stage {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.pmk-palette {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.pmk-palette .pm-swatch {
+  width: 24px;
+  height: 24px;
+}
+
+/* The side column's parts: preview, notes, the photo's conversion. */
+.pmk-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.pmk-sec-title {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg-dim);
+}
+.pmk-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 -4px;
+  padding: 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.pmk-sec-head:hover {
+  background: var(--hover);
+}
+.pmk-sec-head:focus-visible {
+  outline: 2px solid var(--accent);
+}
+.pmk-previews {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pmk-previews figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmk-real {
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+}
+.pmk-note {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmk-fields {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.pmk-fields:disabled {
+  opacity: 0.5;
+}
+.pmk-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmk-slider {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+.pmk-slider b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.pmk-slider input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.pmk-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pmk-thumb {
+  width: 100%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background:
+    repeating-conic-gradient(var(--hover-strong) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px,
+    var(--hover);
+}
+
+/* The bottom bar: the name, what happened, and the actions (the primary last). */
+.pmk-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline);
+}
+.pmk-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmk-name .ui-input {
+  width: 200px;
+}
+.pmk-msg {
+  min-width: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmk-ok {
+  color: var(--success);
+}
+.pmk-foot .ui-btn-primary {
+  min-width: 84px;
+}
+
+/* ---- the photo with the crop square over it, and the cut-out ---- */
 .pm-photo {
   position: relative;
   margin: 0 auto;
@@ -92,6 +318,7 @@
 }
 .pm-square.painting {
   cursor: crosshair;
+  touch-action: none;
 }
 .pm-crop {
   position: absolute;
@@ -101,38 +328,44 @@
   cursor: move;
   touch-action: none;
 }
+.pm-crop-handle {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: nwse-resize;
+  touch-action: none;
+}
+.pm-pixels {
+  image-rendering: pixelated;
+}
 
-/* The 12x12 dots: live beside the cut-out, editable on the last step. */
-.pm-mini,
-.pm-grid {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  aspect-ratio: 1;
-}
-.pm-mini {
-  width: 96px;
-  gap: 1px;
-}
-.pm-mini i,
-.pm-grid i {
-  display: block;
-  aspect-ratio: 1;
-  border-radius: 1px;
-}
+/* ---- the 12x12 dots of a species made before the faithful picture ---- */
 .pm-grid {
   position: relative;
-  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: repeat(12, 1fr);
   gap: 1px;
   padding: 1px;
+  box-sizing: border-box;
   border-radius: var(--radius-sm);
   background: var(--hairline);
   cursor: crosshair;
   touch-action: none;
   user-select: none;
 }
+.pm-grid i {
+  display: block;
+  border-radius: 1px;
+}
 /* Empty is a faint dot, so a dark colour is never mistaken for nothing. */
-.pm-grid i.empty,
-.pm-mini i:not([style]) {
+.pm-grid i.empty {
   background: radial-gradient(circle, var(--hover-strong) 0 22%, transparent 26%), var(--hover);
 }
 .pm-grid.face-tool {
@@ -146,11 +379,7 @@
   pointer-events: none;
 }
 
-/* The five colours: a swatch picks it as the brush, the dot below edits it. */
-.pm-tools {
-  display: flex;
-  gap: 6px;
-}
+/* ---- a colour: the swatch picks it, the dot on its corner edits it ---- */
 .pm-tool {
   position: relative;
   display: inline-flex;
@@ -163,8 +392,12 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+.pm-swatch:hover {
+  border-color: var(--fg-dim);
+}
 .pm-tool.on .pm-swatch {
   border: 2px solid var(--fg);
+  box-shadow: 0 0 0 2px var(--accent-muted);
 }
 .pm-color {
   position: absolute;
@@ -186,21 +419,7 @@
   border: none;
 }
 
-/* How it grows: the same Creature every pet is drawn with. */
-.pm-stages {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.pm-label {
-  font-size: var(--text-xs);
-  color: var(--fg-dim);
-}
-.pm-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+/* ---- a pet as a small picture (the previews and the lists) ---- */
 .pm-pet {
   width: 56px;
   height: 56px;
@@ -218,7 +437,86 @@
 .pm-item {
   justify-content: flex-start;
 }
-.pm-item .set-rowctl .ui-btn {
+/* A pet in Settings > 리븐펫 > 내 펫: picture, name, then at most two
+   buttons, the on-screen switch and the ⋯ menu, all on one line. The name
+   gives way (ellipsis) before the buttons do, so it never breaks a letter a
+   line. The switch sits just before ⋯ on every row, so they line up. */
+.pet-nest-item {
+  gap: 14px;
+  padding: 12px 0;
+}
+.pet-nest-item .set-rowinfo {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 3px;
+}
+.pet-nest-item .set-rowtitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Where the line is too short for both, the pill drops under the level
+   rather than squeezing it to a letter. */
+.pet-nest-item .set-rowdesc {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.pet-nest-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pet-nest-item .set-rowctl {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.pet-nest-item .set-rowctl .ui-switch {
+  margin-left: 4px;
+}
+/* A narrow Settings (a small window): the focused pet's two buttons keep
+   their icons only (named in their tooltip), so its name and level keep
+   room to be read instead of being cut to a letter. */
+.pet-nest-item {
+  container-type: inline-size;
+}
+@container (max-width: 460px) {
+  .pet-nest-item .pet-nest-icon {
+    width: var(--ctl-h);
+    padding: 0;
+  }
+  .pet-nest-item .pet-nest-label {
+    display: none;
+  }
+}
+/* Put away: the picture fades, the row stays as it is. */
+.pet-nest-item.off .pm-pet {
+  opacity: 0.45;
+}
+.pet-nest-shown {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.5;
+}
+/* Out on screen beside the focused one: the same pill, quieter. */
+.pet-nest-shown.dim {
+  background: var(--hover);
+  color: var(--fg-dim);
+  font-weight: 500;
+}
+.pm-item .set-rowctl .ui-btn-ghost {
   width: var(--ctl-h);
   padding: 0;
 }
@@ -228,14 +526,566 @@
   font-size: var(--text-xs);
   color: var(--danger);
 }
-.pm-foot {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
 .pm-gap {
   flex: 1;
 }
-.pm-side > .ui-btn {
-  align-self: flex-start;
+
+/* The decoration layout's two columns (PetLayoutEditor.tsx). */
+.pm-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.pm-stage {
+  flex: 0 0 auto;
+  width: 232px;
+  max-width: 45%;
+}
+.pm-side {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pm-side .set-note {
+  margin: 0;
+}
+
+/* ---- the pixel editor: a tool row, the canvas, the palette ---- */
+.pmx-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.pmx-bar .ui-seg-btn {
+  min-width: 28px;
+  padding: 0 8px;
+}
+.pmx-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 5px 4px;
+  background: var(--edge);
+}
+.pmx-btn {
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.pmk-main .pmx-btn {
+  width: 28px;
+  height: 28px;
+}
+.pmx-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+.pmx-btn.on {
+  background: var(--accent-muted);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+.pmx-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pmx-btn:focus-visible,
+.pm-swatch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The brush size, drawn as its own dot. */
+.pmx-dot {
+  display: inline-block;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pmx-view {
+  flex: none;
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  box-sizing: content-box;
+  background:
+    repeating-conic-gradient(var(--hover-strong) 0% 25%, transparent 0% 50%) 0 0 / 12px 12px,
+    var(--hover);
+}
+.pmx-view.zoomed {
+  overflow: auto;
+}
+.pmx-canvas {
+  display: block;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.pmx-canvas.tool-picker {
+  cursor: copy;
+}
+.pmx-canvas.tool-fill {
+  cursor: cell;
+}
+
+.pmx-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-style: dashed;
+  background: transparent;
+  color: var(--fg-dim);
+}
+.pmx-add:hover,
+.pmx-add.on {
+  color: var(--fg);
+  border-color: var(--accent);
+}
+.pmx-add-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+}
+.pmx-add-row code {
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.pmx-pick {
+  width: var(--ctl-h);
+  height: var(--ctl-h);
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+.pmx-pick::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.pmx-pick::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+/* The picture at the pet's own size (32 css pixels). */
+.pmx-real1 {
+  display: block;
+  width: 32px;
+  height: 32px;
+  image-rendering: pixelated;
+}
+.pmx-warn {
+  color: var(--warning);
+}
+
+/* A question asked in place (a full palette, hand work about to go). */
+.pmx-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.pmx-ask p {
+  margin: 0;
+}
+.pmx-ask-row {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* ---- the AI request (PetAiAsk): a request, the model, a run, a preview ---- */
+.pai {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+}
+.pai-head,
+.pai-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pai-head .ui-select {
+  width: auto;
+}
+/* The one-line form under the maker's palette: no box of its own. */
+.pai.compact {
+  padding: 0;
+  border: none;
+}
+.pai-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pai-icon {
+  flex: none;
+  color: var(--accent);
+}
+.pai-one {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pai-model {
+  flex: none;
+  width: auto;
+  font-size: var(--text-xs);
+}
+.pai-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.pai-note {
+  margin: 0;
+  opacity: 0.75;
+}
+.pai-error {
+  margin: 0;
+  color: var(--danger, #d9534f);
+}
+.pai-spin {
+  animation: pai-spin 1s linear infinite;
+}
+@keyframes pai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.pai-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pai-compare {
+  display: flex;
+  gap: 10px;
+}
+.pai-compare figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.pai-canvas {
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 장식 배치 (PetLayoutEditor): the pet large with handles, the list beside it ---- */
+.ple {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ple-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ple-stage {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 1;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  outline: none;
+}
+.ple-stage:focus-visible {
+  border-color: var(--accent);
+}
+.ple-stage > .pet-lcd {
+  position: absolute;
+  inset: 0;
+}
+.ple-handles {
+  position: absolute;
+  inset: 0;
+}
+.ple-handle {
+  position: absolute;
+  padding: 0;
+  border: 1px dashed transparent;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.ple-handle:hover,
+.ple-handle.moved {
+  border-color: var(--hairline);
+}
+.ple-handle.on {
+  border: 1px solid var(--accent);
+  background: var(--accent-muted);
+}
+.ple-handle:active {
+  cursor: grabbing;
+}
+.ple-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: var(--text-xs);
+}
+.ple-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ctl-h);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.ple-row:hover {
+  background: var(--hover);
+}
+.ple-row.on {
+  background: var(--accent-muted);
+}
+.ple-row.sub {
+  padding-left: 18px;
+}
+.ple-row.head {
+  opacity: 0.8;
+}
+.ple-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ple-name em {
+  margin-left: 6px;
+  font-style: normal;
+  color: var(--fg-dim);
+}
+.ple-tools {
+  display: flex;
+  gap: 2px;
+}
+.ple-mini {
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+}
+
+/* ---- 움직임 (PetMotionEditor.tsx, and the maker's frame strip) ---- */
+.pmk-body.wide-side {
+  grid-template-columns: minmax(0, 1fr) 360px;
+}
+@media (max-width: 820px) {
+  .pmk-body.wide-side {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+}
+@media (max-width: 620px) {
+  .pmk-body.wide-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.pmo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.pmo-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 520px;
+}
+.pmo-sits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pmo-sits .pet-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pmo-mark {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.pmo-stage {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pmo-pet {
+  width: 96px;
+  height: 96px;
+  flex: none;
+  padding: 8px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+}
+.pmo-stage-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.pmo-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+.pmo-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmo-field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.pmo-field .ui-select {
+  min-width: 0;
+}
+.pmo-num {
+  width: 100%;
+  min-width: 0;
+  padding-left: 4px;
+  padding-right: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.pmo-field.inline .pmo-num,
+.pmo-field .pmk-row .pmo-num {
+  width: 56px;
+}
+.pmo-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pmo-key {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) 26px;
+  gap: 4px;
+  align-items: center;
+}
+.pmo-key.head {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.pmo-key.head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pmo-key .pmx-btn {
+  width: 26px;
+  height: 26px;
+}
+.pmo-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+.pmo-frames-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+}
+.pmo-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+.pmo-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  padding: 3px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.pmo-thumb.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+.pmo-thumb-img {
+  width: 48px;
+  height: 48px;
+}
+.pmo-frame-btns .pmx-btn {
+  width: 28px;
+  height: 28px;
+}
+.pmo-ai {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.pmo-ai figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
 }

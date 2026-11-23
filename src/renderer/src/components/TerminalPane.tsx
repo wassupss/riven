@@ -12,6 +12,7 @@ import {
 } from '../keybindings/focus'
 import { useT } from '../i18n'
 import { useSettings, getSettings } from '../state/settings'
+import { usePanelBgOn } from '../dock/PanelBgHost'
 
 // The terminal palette derives from the active app theme (CSS vars) so the
 // terminal is part of the same visual system and recolors on theme switch —
@@ -130,6 +131,15 @@ export default function TerminalPane({
   const [restoring, setRestoring] = useState(true)
   const t = useT()
   const [query, setQuery] = useState('')
+  // Does this terminal's panel show a background image (dock/PanelBgHost)?
+  // Only then is the canvas the see-through kind, and only a flip swaps it.
+  const bgOn = usePanelBgOn()
+  const bgOnRef = useRef(bgOn)
+  bgOnRef.current = bgOn
+  const setTermBgRef = useRef<((on: boolean) => void) | null>(null)
+  useEffect(() => {
+    setTermBgRef.current?.(bgOn)
+  }, [bgOn])
 
   useEffect(() => {
     const container = containerRef.current
@@ -156,9 +166,15 @@ export default function TerminalPane({
         cursorBlink: cfg.terminalCursorBlink,
         cursorStyle: cfg.terminalCursorStyle,
         scrollback: Math.max(200, cfg.terminalScrollback),
-        theme: terminalTheme()
+        theme: terminalTheme(),
+        // A panel background image shows through the default background.
+        transparentBg: bgOnRef.current
       })
       liveTerm = term
+      // A no-op unless it flips (the options proxy skips equal values).
+      setTermBgRef.current = (on) => {
+        term.options.transparentBg = on
+      }
       // Dev/e2e only: the smoke harness (scripts/e2e-terminal-smoke.mjs) reads the
       // terminal through here, since the canvas leaves no text in the DOM.
       if (import.meta.env.DEV) {
@@ -525,9 +541,26 @@ export default function TerminalPane({
         if (existed) setTimeout(safeFit, 60)
       })()
 
+      // Only the settings a terminal draws with. Any other change (a slider in
+      // Settings dragged across, a toggle elsewhere) used to repaint every
+      // terminal for nothing.
+      const termKey = (s: ReturnType<typeof getSettings>): string =>
+        JSON.stringify([
+          s.terminalFontFamily,
+          s.terminalFontSize,
+          s.terminalCursorStyle,
+          s.terminalCursorBlink,
+          s.terminalScrollback,
+          s.theme,
+          s.uiScale
+        ])
+      let lastTermKey = termKey(getSettings())
       disposers.push(
         useSettings.subscribe(() => {
           const s = getSettings()
+          const k = termKey(s)
+          if (k === lastTermKey) return
+          lastTermKey = k
           term.options.fontFamily = s.terminalFontFamily
           term.options.fontSize = s.terminalFontSize
           // Everything that can change in place, changed in place: a setting
@@ -586,6 +619,7 @@ export default function TerminalPane({
         disposers.forEach((d) => d())
         searchRef.current = null
         refocusRef.current = null
+        setTermBgRef.current = null
         if (liveTerm === term) liveTerm = null
         if (import.meta.env.DEV) {
           const w = window as unknown as { __rivenTerms?: Record<string, GhosttyTerm> }

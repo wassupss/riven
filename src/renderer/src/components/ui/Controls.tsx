@@ -56,17 +56,24 @@ export function Select({
 export function Switch({
   checked,
   onChange,
-  disabled
+  disabled,
+  label,
+  title
 }: {
   checked: boolean
   onChange: (v: boolean) => void
   disabled?: boolean
+  /** Its accessible name, where no visible label sits beside it. */
+  label?: string
+  title?: string
 }): JSX.Element {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={label}
+      title={title}
       disabled={disabled}
       className={`ui-switch${checked ? ' on' : ''}`}
       onClick={() => onChange(!checked)}

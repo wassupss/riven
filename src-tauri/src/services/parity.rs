@@ -69,7 +69,7 @@ mod tests {
     );
     report.insert(
       "profileDirs".into(),
-      json!(fixture["profileIds"].as_array().unwrap().iter().map(|f| crate::services::chat::profile_dir(f.as_str().unwrap())).collect::<Vec<_>>()),
+      json!(fixture["profileIds"].as_array().unwrap().iter().map(|f| crate::services::agentcli::profile_dir(f.as_str().unwrap())).collect::<Vec<_>>()),
     );
     std::fs::write(out, serde_json::to_string_pretty(&Value::Object(report)).unwrap()).unwrap();
   }

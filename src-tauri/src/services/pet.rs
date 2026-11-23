@@ -66,13 +66,17 @@ fn js_round(v: f64) -> f64 {
   (v + 0.5).floor()
 }
 
+/// The widest the window grows: every pet out (the focused one and three
+/// beside it, about 530) with the pet panel's card open beside them (about 270).
+const MAX_WIDTH: f64 = 1000.0;
+
 /// pet:resize: the new frame (grown from the bottom edge, left edge kept), or
 /// None when it is already that size.
 pub fn resized(b: R, height: f64, width: Option<f64>, zoom: f64) -> Option<R> {
   let z = if zoom > 0.0 { zoom } else { 1.0 };
   let h = js_round(height * z).clamp(120.0, 1000.0);
   let w = match width {
-    Some(w) if w > 0.0 => js_round(w * z).clamp(100.0, 700.0),
+    Some(w) if w > 0.0 => js_round(w * z).clamp(100.0, MAX_WIDTH),
     _ => b.w,
   };
   if b.h == h && b.w == w {
@@ -318,6 +322,23 @@ pub fn is_on_top() -> bool {
   win().and_then(|w| w.is_always_on_top().ok()).unwrap_or(false)
 }
 
+/// Settings asked for from the pet (its own window has no settings of its
+/// own): riven's window comes up and opens them at `tab`.
+pub fn open_settings(tab: &str) {
+  let Some(app) = app() else { return };
+  let Some(label) = super::browser::app_window() else { return };
+  if let Some(w) = app.get_window(&label) {
+    if !crate::background() {
+      if w.is_minimized().unwrap_or(false) {
+        let _ = w.unminimize();
+      }
+      let _ = w.show();
+      let _ = w.set_focus();
+    }
+  }
+  crate::commands::emit_ipc(app, &label, "pet:openSettings", json!([tab]));
+}
+
 /// Renaming needs a keyboard: focusable for that moment, then given back.
 pub fn focusable(on: bool) {
   let Some(w) = win() else { return };
@@ -331,7 +352,7 @@ pub fn focusable(on: bool) {
 /// unfocused page). At most 4096 UTF-16 units, as text.slice(0, 4096).
 pub fn copy(text: &Value) {
   let Value::String(t) = text else { return };
-  let t = super::chat::util::utf16_prefix(t, 4096).to_string();
+  let t = super::util::utf16_prefix(t, 4096).to_string();
   use std::io::Write;
   if let Ok(mut c) = std::process::Command::new("/usr/bin/pbcopy").env("LANG", "en_US.UTF-8").stdin(std::process::Stdio::piped()).spawn() {
     if let Some(mut i) = c.stdin.take() {
@@ -394,7 +415,7 @@ mod tests {
     assert_eq!(resized(b, 400.0, None, 1.0), Some(R { x: 10.0, y: 430.0, w: 212.0, h: 400.0 }));
     assert_eq!(resized(b, 50.0, Some(90.0), 1.0), Some(R { x: 10.0, y: 710.0, w: 100.0, h: 120.0 }));
     assert_eq!(resized(b, 330.0, None, 1.0), None);
-    assert_eq!(resized(b, 2000.0, Some(900.0), 1.2), Some(R { x: 10.0, y: -170.0, w: 700.0, h: 1000.0 }));
+    assert_eq!(resized(b, 2000.0, Some(900.0), 1.2), Some(R { x: 10.0, y: -170.0, w: 1000.0, h: 1000.0 }));
     assert_eq!(resized(b, 300.4, Some(0.0), 1.0), Some(R { x: 10.0, y: 530.0, w: 212.0, h: 300.0 }));
     assert!(inside((10.0, 500.0), b));
     assert!(!inside((222.0, 500.0), b));

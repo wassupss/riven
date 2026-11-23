@@ -3,6 +3,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import { pathToFileURL } from 'url'
 import { isConfined } from './workspace'
+import { backgroundFile } from './backgrounds'
 
 // Serves workspace files to the renderer as media (images, video, audio, PDF).
 //
@@ -49,11 +50,25 @@ function allowOrigin(res: Response): Response {
 export function registerMediaProtocol(): void {
   protocol.handle(MEDIA_SCHEME, async (request) => {
     let file: string
+    let host = ''
     try {
       // riven-media://local/<uri-encoded absolute path>
-      file = decodeURIComponent(new URL(request.url).pathname.replace(/^\//, ''))
+      const u = new URL(request.url)
+      host = u.hostname
+      file = decodeURIComponent(u.pathname.replace(/^\//, ''))
     } catch {
       return allowOrigin(new Response('bad request', { status: 400 }))
+    }
+    // riven-media://bg/<name>: the panel background image (./backgrounds).
+    // Only a name of the shape it hands out, read from userData/backgrounds.
+    if (host === 'bg') {
+      const bg = backgroundFile(file)
+      if (!bg) return allowOrigin(new Response('not found', { status: 404 }))
+      try {
+        return allowOrigin(await net.fetch(pathToFileURL(bg).toString()))
+      } catch {
+        return allowOrigin(new Response('not found', { status: 404 }))
+      }
     }
     if (!file || !path.isAbsolute(file))
       return allowOrigin(new Response('bad path', { status: 400 }))

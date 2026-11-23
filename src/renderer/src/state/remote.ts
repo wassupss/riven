@@ -40,6 +40,7 @@ import { claudeCatalog } from './modelCatalog'
 import { useUsage, type AccountUsage } from './usage'
 import { modelLabel, modelsFor } from '../lib/models'
 import { t } from '../i18n'
+import { attachTerms, dropTermDevice, handleTermMsg, pushTerms } from './remoteTerms'
 
 // Remote control: the phone app (mobile/) drives this machine's agents through
 // a relay. See lib/remote/core for the protocol and its security model; this
@@ -631,6 +632,8 @@ function jobAction(d: RemoteDevice, m: Extract<PhoneMsg, { t: 'jobSet' | 'jobRun
 }
 
 function handle(d: RemoteDevice, m: PhoneMsg): void {
+  // Terminals have their own gatekeeping (remoteTerms.ts).
+  if (handleTermMsg(d, m)) return
   switch (m.t) {
     case 'hello':
       greet(d)
@@ -728,6 +731,7 @@ function connect(owner: string, id: string): () => void {
         watching.delete(did)
         lastWork.delete(did)
       }
+    for (const did of before) if (!present.includes(did)) dropTermDevice(did)
     for (const did of present)
       if (!before.has(did)) {
         const d = getSettings().remoteDevices.find((x) => x.id === did)
@@ -747,8 +751,20 @@ function connect(owner: string, id: string): () => void {
     })
   })
 
+  // Only phones present on this channel, only paired ones.
+  attachTerms(sendTo, () => {
+    const here = new Set(useRemote.getState().present)
+    return getSettings().remoteDevices.filter((d) => here.has(d.id))
+  })
   const offs = [
-    useRoster.subscribe(() => pushRoster()),
+    useRoster.subscribe(() => {
+      pushRoster()
+      pushTerms()
+    }),
+    // A pane opted in or out, a workspace opened or closed; a device's
+    // terminal access changed. pushTerms does nothing unless a phone asked.
+    useSession.subscribe(() => pushTerms()),
+    useSettings.subscribe(() => pushTerms()),
     useAgents.subscribe(() => pushRoster()),
     useAskUser.subscribe(() => pushAsks()),
     useJobs.subscribe(() => pushJobs()),
@@ -770,6 +786,7 @@ function connect(owner: string, id: string): () => void {
   ]
   return () => {
     offs.forEach((f) => f())
+    attachTerms(null, () => [])
     if (channel === ch) channel = null
     void sb.removeChannel(ch)
     lastRoster = ''

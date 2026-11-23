@@ -143,7 +143,7 @@ fn day_key(ms: f64) -> String {
 }
 
 fn today_key() -> String {
-  day_key(crate::services::chat::util::now_ms())
+  day_key(crate::services::util::now_ms())
 }
 
 fn local_day_key(iso: &str) -> String {
@@ -365,10 +365,10 @@ pub fn usage_today(config_dir: Option<&str>) -> Value {
   }
   let mut seen = std::collections::HashSet::new();
   let mut by_model: Vec<(String, [f64; 5])> = Vec::new();
-  let cutoff = crate::services::chat::util::now_ms() - 36.0 * 3600.0 * 1000.0;
+  let cutoff = crate::services::util::now_ms() - 36.0 * 3600.0 * 1000.0;
   for file in &files {
     let Ok(meta) = std::fs::metadata(file) else { continue };
-    let mtime = crate::services::chat::util::mtime_ms(&meta);
+    let mtime = crate::services::util::mtime_ms(&meta);
     if mtime < cutoff {
       continue;
     }
@@ -429,18 +429,21 @@ fn window(o: Option<&Value>) -> Value {
 }
 
 pub fn usage_codex() -> Value {
-  let mut out = json!({ "installed": false, "totalTokens": 0, "primary": null, "primaryWindowMinutes": null, "secondary": null });
+  let mut out = json!({ "installed": false, "totalTokens": 0, "cachedTokens": 0, "primary": null, "primaryWindowMinutes": null, "secondary": null });
   if std::fs::metadata(home().join(".codex")).is_err() {
     return out;
   }
   out["installed"] = json!(true);
   let today = today_key();
   let mut files = Vec::new();
-  let now = crate::services::chat::util::now_ms();
+  let now = crate::services::util::now_ms();
   for t in [now, now - 24.0 * 3600.0 * 1000.0] {
     walk_jsonl(&day_dir(t), &mut files, 4000);
   }
   let mut total = 0.0f64;
+  // The part of `total` that was cached input (Codex's input_tokens includes
+  // it), so the pet can weigh it like a Claude cache read.
+  let mut cached = 0.0f64;
   let mut newest = 0.0f64;
   for file in &files {
     let mut lines = Vec::new();
@@ -479,6 +482,7 @@ pub fn usage_codex() -> Value {
       let last = payload.get("info").and_then(|i| i.get("last_token_usage")).filter(|v| !v.is_null());
       if last.is_some() && local_day_key(ts) == today {
         total += n0(last, "input_tokens") + n0(last, "output_tokens") + n0(last, "reasoning_output_tokens") + n0(last, "cache_write_input_tokens");
+        cached += n0(last, "cached_input_tokens").min(n0(last, "input_tokens"));
       }
       let rl = payload.get("rate_limits").filter(|v| !v.is_null() && v.as_bool() != Some(false));
       let at = parse_iso(ts);
@@ -494,5 +498,6 @@ pub fn usage_codex() -> Value {
     }
   }
   out["totalTokens"] = jsnum(total);
+  out["cachedTokens"] = jsnum(cached);
   out
 }

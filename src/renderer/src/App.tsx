@@ -27,6 +27,7 @@ import { initBrowserEvents } from './state/browser'
 import { registerMcpToolHandler, __devDispatch } from './state/mcpTools'
 import { startTrayFeed } from './state/trayFeed'
 import { startRemote } from './state/remote'
+import { startCliChats } from './state/cliChats'
 import { startRoster, useRoster, rosterFor, markPaneSeen, busyWorkspaces } from './state/roster'
 import { useAgentGroups } from './state/agentGroups'
 import { nextMounted } from './state/mountPolicy'
@@ -46,6 +47,7 @@ import { applyTheme } from './state/themes'
 import { applyEditorKeymap, loadEditorKeymap } from './state/editorKeymaps'
 import { registerSnippets } from './editor/snippets'
 import { injectImportedFonts } from './state/fonts'
+import { collectBackgrounds } from './lib/panelBackground'
 import UsagePinned from './components/UsagePinned'
 import { keymap } from './keybindings/keys'
 import { registerDefaultActions } from './keybindings/actions'
@@ -141,14 +143,19 @@ export default function App(): JSX.Element {
     useUpdate.getState().init()
     void (async () => {
       await loadEnv()
-      await loadSettings()
+      const settingsRead = await loadSettings()
       injectImportedFonts()
       applyTheme(getSettings().theme)
       window.api.setZoom(getSettings().uiScale || 1)
       await loadEditorKeymap()
       applyEditorKeymap(getSettings().editorKeymap)
       await keymap.load()
-      await loadPersistedSessions()
+      const sessionsRead = await loadPersistedSessions()
+      // Remove stored panel backgrounds nothing names any more (kind defaults
+      // and every workspace's saved panes). Only when both files were actually
+      // read: a missing or unreadable one would make every image it names look
+      // unused.
+      if (settingsRead && sessionsRead) collectBackgrounds()
       // Seed the pane-id counter above every id this machine has ever persisted.
       // It lives in localStorage (per renderer origin) while the ids live in
       // sessions.json (shared), so without this a fresh counter re-issues an id
@@ -168,6 +175,9 @@ export default function App(): JSX.Element {
     // panels: the mounted set is LRU-bounded, and a pane going off screen would
     // otherwise take its status (and its very existence) with it.
     const offRoster = startRoster()
+    // CLI chat panes (services/clichat) feed the roster, notifications, the
+    // ask queue and delegation from one app-level listener.
+    const offCliChats = startCliChats()
     // The menu bar icon's list, from the roster just started.
     const offTray = startTrayFeed()
     // Remote control from a phone, when the user has turned it on (state/remote).
@@ -286,6 +296,7 @@ export default function App(): JSX.Element {
       clearInterval(presenceBeat)
       offMcp()
       offRoster()
+      offCliChats()
       offTray()
       offRemote()
       offBrowser()

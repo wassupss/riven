@@ -1,0 +1,358 @@
+/* CLI chat (experimental). Builds on the chat panel's classes (.chat-panel,
+   .chat-scroll, .chat-turn, .chat-composer); only what is new lives here.
+   Tokens only. */
+.cli-chat-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--edge);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  min-width: 0;
+}
+.cli-chat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: 0 0 auto;
+}
+.cli-chat-dot.busy {
+  background: var(--accent);
+}
+.cli-chat-dot.waiting {
+  background: var(--warning);
+}
+.cli-chat-dot.dead {
+  background: var(--danger);
+}
+.cli-chat-status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cli-chat-session {
+  font-family: var(--font-mono, monospace);
+  opacity: 0.7;
+}
+.cli-chat-spacer {
+  flex: 1 1 auto;
+}
+.cli-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cli-chat-btn:hover {
+  border-color: var(--fg-dim);
+}
+.cli-chat-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cli-chat-term {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cli-chat-term > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cli-chat-empty {
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  max-width: 520px;
+}
+.cli-chat-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cli-chat-command {
+  font-family: var(--font-mono, monospace);
+}
+.cli-chat-tool,
+.cli-chat-thinking {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  min-width: 0;
+}
+.cli-chat-tool > summary,
+.cli-chat-thinking > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.cli-chat-tool > summary::-webkit-details-marker,
+.cli-chat-thinking > summary::-webkit-details-marker {
+  display: none;
+}
+.cli-chat-chev {
+  flex: 0 0 auto;
+  transition: transform 0.12s;
+}
+details[open] > summary > .cli-chat-chev {
+  transform: rotate(90deg);
+}
+.cli-chat-tool-name {
+  color: var(--fg);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.cli-chat-tool-arg {
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cli-chat-tool.running .cli-chat-tool-name {
+  color: var(--accent);
+}
+.cli-chat-tool.error .cli-chat-tool-name {
+  color: var(--danger);
+}
+.cli-chat-tool-result,
+.cli-chat-perm-input {
+  margin: 6px 0 0 18px;
+  padding: 6px 8px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--bg-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
+.cli-chat-thinking-body {
+  margin: 6px 0 0 18px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.cli-chat-note {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cli-chat-note.error {
+  color: var(--danger);
+}
+.cli-chat-note.interrupted {
+  font-style: italic;
+}
+.cli-chat-compact {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  text-align: center;
+  border-top: 1px dashed var(--edge);
+  padding-top: 6px;
+}
+.cli-chat-usage {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+.cli-chat-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.75;
+}
+.cli-chat-working {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+/* An @mention handed to another pane (it is not part of this conversation). */
+.cli-chat-note.mention {
+  border-left: 2px solid var(--fg-dim);
+  padding-left: 8px;
+}
+.cli-chat-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.cli-chat-perm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.cli-chat-dot.parked {
+  background: var(--fg-dim);
+  opacity: 0.5;
+}
+.cli-chat-title {
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cli-chat-bg {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  white-space: nowrap;
+}
+.cli-chat-bar .chat-chip {
+  max-width: 140px;
+}
+.cli-chat-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* The person's message: thumbnails of its images, chips for @-files. */
+.cli-chat-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.cli-chat-thumb {
+  width: 120px;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--edge);
+  cursor: zoom-in;
+}
+.cli-chat-thumb.empty {
+  display: inline-block;
+  height: 60px;
+  background: var(--bg-3);
+}
+.cli-chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  margin: 0 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  vertical-align: baseline;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-attachment.cli-chat-file-att {
+  width: auto;
+  max-width: 220px;
+  display: flex;
+  align-items: center;
+  padding-right: 18px;
+}
+.chat-composer.drag-over {
+  outline: 1px dashed var(--accent);
+  outline-offset: -2px;
+}
+/* A subagent's progress under its Agent/Task call. */
+.cli-chat-agent {
+  margin: 4px 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+}
+.cli-chat-agent-head {
+  color: var(--accent);
+}
+.cli-chat-agent.done .cli-chat-agent-head {
+  color: var(--fg-dim);
+}
+.cli-chat-agent-last {
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cli-chat-agent-text {
+  color: var(--fg);
+}
+.cli-chat-note.task {
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+.cli-chat-note.retry,
+.cli-chat-note.update {
+  color: var(--warning);
+}
+.cli-chat-note.parked {
+  text-align: center;
+  padding: 6px 0;
+}
+/* Questions and TUI menus: the ask-inline card, a few additions. */
+.cli-chat-q + .cli-chat-q {
+  margin-top: 10px;
+}
+.cli-chat-q-header {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-3);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.cli-chat-opt-desc {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.cli-chat-check {
+  margin-right: 6px;
+}
+.cli-chat-plan {
+  max-height: 320px;
+  overflow: auto;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+}
+.cli-chat-sessions {
+  margin: 6px 10px 0;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+}
+.cli-chat-sessions .chat-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cli-chat-current {
+  color: var(--accent);
+}

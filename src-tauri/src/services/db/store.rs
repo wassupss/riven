@@ -128,7 +128,7 @@ pub fn save_connection(input: &Value, password: Option<Option<String>>) -> R<Val
   let mut c = input.as_object().cloned().unwrap_or_default();
   let has_id = c.get("id").is_some_and(|v| super::js::truthy(Some(v)));
   if !has_id {
-    c.insert("id".into(), Value::String(crate::services::chat::util::uuid()));
+    c.insert("id".into(), Value::String(crate::services::util::uuid()));
   }
   let id = id_of(&c);
   // Sealing may run `security` (and create the key): not under the store lock.

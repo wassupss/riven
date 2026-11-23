@@ -198,20 +198,30 @@ pub async fn pet_set_break(min: Option<Value>) -> CmdResult<()> {
 
 #[tauri::command]
 pub async fn pet_set_on_top(on: Option<Value>) -> CmdResult<()> {
-  let on = crate::services::chat::util::truthy(on.as_ref());
+  let on = crate::services::util::truthy(on.as_ref());
   blocking(move || pet::set_on_top(on)).await
 }
 
 #[tauri::command]
 pub async fn pet_ask_on_top(on: Option<Value>) -> CmdResult<()> {
-  let on = crate::services::chat::util::truthy(on.as_ref());
+  let on = crate::services::util::truthy(on.as_ref());
   blocking(move || pet::set_on_top(on)).await
 }
 
 #[tauri::command]
 pub async fn pet_focusable(on: Option<Value>) -> CmdResult<()> {
-  let on = crate::services::chat::util::truthy(on.as_ref());
+  let on = crate::services::util::truthy(on.as_ref());
   blocking(move || pet::focusable(on)).await
+}
+
+/// The pet's "Settings" button: bring riven's window up on that settings tab.
+#[tauri::command]
+pub async fn pet_open_settings(tab: Option<Value>) -> CmdResult<()> {
+  let tab = match tab {
+    Some(Value::String(t)) => t,
+    _ => "pet".to_string(),
+  };
+  blocking(move || pet::open_settings(&tab)).await
 }
 
 #[tauri::command]

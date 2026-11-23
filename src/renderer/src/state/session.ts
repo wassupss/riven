@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { evictWorkspace } from './agentEdits'
+import type { PanelBg } from './panelBackground'
 
 // The editor model store registers here (avoids a session ↔ modelStore import
 // cycle) so closeWorkspace can dispose models that were open only in the closed
@@ -35,6 +36,18 @@ export interface PaneState {
   // conversation — never adopt the workspace's most recent session (see the
   // adopt effect in ChatPanel). Set once at creation and kept for the pane's life.
   fresh?: boolean
+  // A terminal the user chose to show on paired phones (state/remoteTerms). Off
+  // unless turned on from the tab's menu; a phone cannot set it.
+  remoteShare?: boolean
+  // This panel's background (state/panelBackground PaneBg): absent = its
+  // kind's default, 'none', or its own. Saved here so it survives restarts and
+  // goes wherever the panel goes, a popped-out window included.
+  bg?: PanelBg | 'none'
+  // What runs the chat: 'cli' = the interactive CLI in a hidden pty
+  // (services/clichat, CliChatPanel); absent = the headless driver
+  // (services/chat, ChatPanel). Chosen at creation (Settings: chatEngine) and
+  // kept, so a saved layout reopens each pane the way it was made.
+  engine?: 'cli'
 }
 
 export interface Session {
@@ -132,7 +145,8 @@ export function loadPaneState(wid: string, chatKey: string): PaneState {
     // Which CLI the pane's conversation belongs to (a Codex chat pane, or the
     // agent a terminal was last running) — without it every pane reads as Claude.
     cli: rec?.cli ?? null,
-    persona: rec?.persona
+    persona: rec?.persona,
+    remoteShare: rec?.remoteShare === true
   }
 }
 export function setPaneState(wid: string, chatKey: string, patch: Partial<PaneState>): void {
@@ -518,7 +532,9 @@ useSession.subscribe((st) => {
   void window.api.workspace.setRoots(roots)
 })
 
-export async function loadPersistedSessions(): Promise<void> {
+/** Resolves to whether a sessions file was there and read (false: a fresh start). */
+export async function loadPersistedSessions(): Promise<boolean> {
   const data = (await window.api.sessions.load()) as PersistShape | null
   useSession.getState().hydrate(data ?? { openWorkspaces: [], activeWorkspace: null, sessions: {} })
+  return data !== null && typeof data === 'object'
 }

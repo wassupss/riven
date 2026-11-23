@@ -1,13 +1,14 @@
 import type { TFn } from '../i18n'
-import { dietOf, growthOf, HUNGRY_AT, speciesName, type PetSave } from './pet'
+import { dietOf, progressOf, speciesName, type PetSave } from './pet'
+import { statsOf, topStat } from './petLevel'
 import { customOf, isCustomId } from './petSpecies'
 
 // ---------------------------------------------------------------------------
 // What the pet says when you talk to it.
 //
 // Deliberately NOT a language model. Every answer here is read straight off what
-// riven already knows — today's usage, what is running, what just finished, the
-// plan limit, the files that changed — so a question costs nothing, answers
+// riven already knows: today's usage, what is running, what just finished, the
+// plan limit, the files that changed, so a question costs nothing, answers
 // instantly, works offline, and cannot make something up. The pet is a way to
 // ASK YOUR OWN WORKSPACE a question in words.
 //
@@ -21,7 +22,7 @@ export interface TalkFacts {
   busy: Array<{ workspace: string; title: string }>
   /** Turns that finished recently, newest first. */
   recent: Array<{ workspace: string; title: string; at: number; failed: boolean }>
-  /** Fresh tokens eaten today, and the split by model. */
+  /** Food tokens (see foodOf) worked today. */
   todayTokens: number
   /** The tightest plan window, if the account reports one. */
   limit: { usedPct: number; resetsAt: string | null } | null
@@ -36,7 +37,9 @@ export interface TalkFacts {
 
 export type TalkTopic =
   | 'greeting'
-  | 'food'
+  | 'tokens'
+  | 'level'
+  | 'stats'
   | 'busy'
   | 'finished'
   | 'limit'
@@ -46,13 +49,15 @@ export type TalkTopic =
   | 'unknown'
 
 // Keyword tables, Korean first because that is what the device speaks. Matching
-// is deliberately dumb — substring, no stemming: a pet that understands ten
+// is deliberately dumb (substring, no stemming): a pet that understands ten
 // questions reliably beats one that half-understands a hundred.
 const TOPICS: Array<{ topic: TalkTopic; words: string[] }> = [
   { topic: 'greeting', words: ['안녕', '하이', 'ㅎㅇ', 'hello', 'hi ', 'hey'] },
+  { topic: 'tokens', words: ['먹', '토큰', 'token', 'eat'] },
+  { topic: 'level', words: ['레벨', '렙', '경험치', 'level', 'lvl'] },
   {
-    topic: 'food',
-    words: ['먹', '밥', '토큰', '배고', '배부', 'token', 'eat', 'food', 'hungry', 'fed']
+    topic: 'stats',
+    words: ['능력', '스탯', '힘', '지능', '속도', '체력', 'stat', 'power', 'smart', 'speed', 'stamina', 'strong']
   },
   {
     topic: 'busy',
@@ -89,24 +94,43 @@ const listNames = (items: Array<{ workspace: string }>, t: TFn): string => {
   return t('pet.talk.andMore', { first: names.slice(0, 2).join(', '), n: names.length - 2 })
 }
 
-/** The pet's answer — one short line, in its own voice. */
+/** The pet's answer: one short line, in its own voice. */
 export function answer(question: string, f: TalkFacts): { topic: TalkTopic; text: string } {
   const { t } = f
   const topic = topicOf(question)
   switch (topic) {
     case 'greeting':
-      return { topic, text: f.pet.fullness < HUNGRY_AT ? t('pet.talk.hiHungry') : t('pet.talk.hi') }
+      return { topic, text: t('pet.talk.hi') }
 
-    case 'food': {
+    case 'tokens': {
       const diet = dietOf(f.pet)
-      if (f.todayTokens <= 0) return { topic, text: t('pet.talk.foodNone') }
+      if (f.todayTokens <= 0) return { topic, text: t('pet.talk.tokensNone') }
       return {
         topic,
-        text: t('pet.talk.food', {
+        text: t('pet.talk.tokens', {
           tokens: f.fmt(f.todayTokens),
           flavor: t(`pet.flavor.${diet.top}`),
           pct: Math.round(diet.share * 100)
         })
+      }
+    }
+
+    case 'level': {
+      const g = progressOf(f.pet.xp)
+      return {
+        topic,
+        text:
+          g.toNext > 0
+            ? t('pet.talk.level', { n: g.level, xp: g.toNext })
+            : t('pet.talk.levelMax', { n: g.level })
+      }
+    }
+
+    case 'stats': {
+      const s = statsOf(progressOf(f.pet.xp).level, f.pet.species, f.pet.diet, customOf(f.pet.species) ?? f.pet.custom)
+      return {
+        topic,
+        text: t('pet.talk.stats', { ...s, top: t(`pet.stat.${topStat(s)}`) })
       }
     }
 
@@ -158,20 +182,13 @@ export function answer(question: string, f: TalkFacts): { topic: TalkTopic; text
       }
 
     case 'self': {
-      const g = growthOf(f.pet, f.now)
       const text = t('pet.talk.self', {
         species: speciesName(f.pet.species, t, customOf(f.pet.species) ?? f.pet.custom),
-        stage: g.branch ? t(`pet.branch.${g.branch.id}`) : t(`pet.stage.${g.stage}`),
-        age: f.dur(f.now - f.pet.bornAt),
-        mood: t(`pet.mood.${f.pet.sick ? 'sick' : f.pet.fullness < HUNGRY_AT ? 'hungry' : 'ok'}`)
+        n: progressOf(f.pet.xp).level,
+        age: f.dur(f.now - f.pet.bornAt)
       })
-      // The way it grew up colours how it talks about itself, and one made from
-      // a photo knows where it came from.
-      const origin = isCustomId(f.pet.species) ? ` ${t('pet.talk.custom')}` : ''
-      return {
-        topic,
-        text: (g.branch ? `${text} ${t(`pet.talk.line.${g.branch.line ?? g.branch.id}`)}` : text) + origin
-      }
+      // One made from a photo knows where it came from.
+      return { topic, text: isCustomId(f.pet.species) ? `${text} ${t('pet.talk.custom')}` : text }
     }
 
     case 'help':

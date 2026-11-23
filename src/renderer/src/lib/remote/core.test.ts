@@ -18,7 +18,10 @@ import {
   fromUtf8,
   clipHistory,
   channelName,
-  parseTrigger
+  parseTrigger,
+  cleanTermLine,
+  TERM_KEYS,
+  TERM_LINE_MAX
 } from './core'
 
 const offer = {
@@ -213,5 +216,48 @@ describe('live work', () => {
     expect(m.toolList).toHaveLength(30)
     expect(m.toolList![0].detail.length).toBeLessThan(170)
     expect(m.tools).toBe(50)
+  })
+})
+
+describe('terminals', () => {
+  const input = (v: unknown): unknown => parsePhoneMsg({ t: 'termInput', reqId: 'r', termKey: 'term-1', input: v })
+
+  it('parses the list request and watch/unwatch, nothing more', () => {
+    // A phone asks for the list; it cannot say what it is allowed to see.
+    expect(parsePhoneMsg({ t: 'terms', allowed: true, view: true })).toEqual({ t: 'terms' })
+    expect(parsePhoneMsg({ t: 'termWatch', termKey: 'term-3' })).toEqual({ t: 'termWatch', termKey: 'term-3' })
+    expect(parsePhoneMsg({ t: 'termWatch', termKey: null })).toEqual({ t: 'termWatch', termKey: null })
+    expect(parsePhoneMsg({ t: 'termWatch', termKey: 3 })).toBeNull()
+    // There is no message that grants a capability or shares a pane.
+    expect(parsePhoneMsg({ t: 'termAccess', view: true, input: true })).toBeNull()
+    expect(parsePhoneMsg({ t: 'termShare', termKey: 'term-3', on: true })).toBeNull()
+  })
+
+  it('accepts only the fixed keys, never Ctrl+C or raw bytes', () => {
+    for (const key of TERM_KEYS)
+      expect(input({ kind: 'key', key })).toEqual({ t: 'termInput', reqId: 'r', termKey: 'term-1', input: { kind: 'key', key } })
+    for (const key of ['0', 'ctrl+c', '\x03', 'tab', 'left', 'ENTER', '\x1b[A']) expect(input({ kind: 'key', key })).toBeNull()
+    expect(input({ kind: 'raw', data: '\x03' })).toBeNull()
+    expect(input('\x03')).toBeNull()
+    expect(parsePhoneMsg({ t: 'termInput', termKey: 'term-1', input: { kind: 'key', key: '1' } })).toBeNull()
+  })
+
+  it('cleans a typed line: no control characters, no paste markers, bounded', () => {
+    expect(input({ kind: 'line', text: '  run tests\x1b[201~\r\nnext\x03\u202e  ' })).toEqual({
+      t: 'termInput',
+      reqId: 'r',
+      termKey: 'term-1',
+      input: { kind: 'line', text: 'run tests[201~next' }
+    })
+    expect(cleanTermLine('\x1b[200~hi\x1b[201~')).toBe('[200~hi[201~')
+    expect(cleanTermLine('a\u0085b\u009bc\u2028d')).toBe('abcd')
+    expect(input({ kind: 'line', text: '\r\n\x1b' })).toBeNull()
+    expect(input({ kind: 'line', text: 'x'.repeat(TERM_LINE_MAX) })).not.toBeNull()
+    expect(input({ kind: 'line', text: 'x'.repeat(TERM_LINE_MAX + 1) })).toBeNull()
+    expect(input({ kind: 'line', text: 'x'.repeat(TERM_LINE_MAX * 3) })).toBeNull()
+  })
+
+  it('drops kinds it does not know, which is how an older build treats these', () => {
+    expect(parsePhoneMsg({ t: 'termSomethingNew', termKey: 'term-1' })).toBeNull()
   })
 })

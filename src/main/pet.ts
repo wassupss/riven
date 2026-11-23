@@ -295,7 +295,17 @@ export function registerPetHandlers(): void {
     win.setFocusable(!!on)
     if (on) win.focus()
   })
-  // A battle code onto the clipboard. The renderer's own clipboard refuses an
+  // The pet's "Settings" button: riven's window (the first one that is not the
+  // pet's) comes up and opens Settings at that tab.
+  ipcMain.handle('pet:openSettings', (_e, tab: unknown) => {
+    const main = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w !== win)
+    if (!main) return
+    if (main.isMinimized()) main.restore()
+    main.show()
+    main.focus()
+    main.webContents.send('pet:openSettings', typeof tab === 'string' ? tab : 'pet')
+  })
+    // A battle code onto the clipboard. The renderer's own clipboard refuses an
   // unfocused page, and the floating pet is never focused.
   ipcMain.handle('pet:copy', async (_e, text: unknown) => {
     if (typeof text !== 'string') return

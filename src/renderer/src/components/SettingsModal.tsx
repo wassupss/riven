@@ -15,10 +15,12 @@ import RemoteSettings from './RemoteSettings'
 import { useRemote } from '../state/remote'
 import AboutTab from './AboutTab'
 import OsPermissions from './OsPermissions'
-import PetSpeciesSettings from './PetSpeciesSettings'
+import PetNestSettings from './PetNestSettings'
 import ModelOptions from './ModelOptions'
 import { useT } from '../i18n'
 import { BUILTIN_TOOLS } from '../lib/tools'
+import PanelBgEditor, { BgThumb } from './PanelBgEditor'
+import { PANEL_BG_KINDS, PANEL_BG_KIND_LABEL, withKindBg, type PanelBgKind } from '../state/panelBackground'
 import {
   SlidersHorizontal,
   Bot,
@@ -127,6 +129,39 @@ function ToggleRow({
     <Row title={title} desc={desc}>
       <Switch checked={checked} onChange={onChange} disabled={disabled} />
     </Row>
+  )
+}
+
+// Panel backgrounds: one default per panel kind. Each row shows the kind's
+// image (or "없음") and opens the shared editor below it; one panel's own
+// background is set from its tab's menu (dock/PanelBgDialog).
+function PanelBackgroundSettings(): JSX.Element {
+  const t = useT()
+  const kinds = useSettings((st) => st.settings.panelBgs)
+  const set = useSettings((st) => st.set)
+  const [open, setOpen] = useState<PanelBgKind | null>(null)
+
+  return (
+    <>
+      <div className="section-label">{t('bg.section')}</div>
+      <div className="set-rowdesc pbg-section-desc">{t('bg.sectionDesc')}</div>
+      {PANEL_BG_KINDS.map((k) => (
+        <div key={k} className={`pbg-kind${open === k ? ' open' : ''}`}>
+          <Row title={t(PANEL_BG_KIND_LABEL[k])}>
+            <BgThumb bg={kinds[k]} />
+            <Button onClick={() => setOpen(open === k ? null : k)} aria-expanded={open === k}>
+              {open === k ? t('common.close') : t('bg.edit')}
+            </Button>
+          </Row>
+          {open === k && (
+            <PanelBgEditor
+              value={kinds[k] ?? null}
+              onChange={(v) => set({ panelBgs: withKindBg(getSettings().panelBgs, k, v) })}
+            />
+          )}
+        </div>
+      ))}
+    </>
   )
 }
 
@@ -248,7 +283,8 @@ export default function SettingsModal(): JSX.Element | null {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      // The species maker over it takes its own Escape.
+      if (e.key === 'Escape' && !useUI.getState().petMakerOpen) {
         e.stopPropagation()
         setOpen(false)
       }
@@ -366,6 +402,8 @@ export default function SettingsModal(): JSX.Element | null {
                     </button>
                   ))}
                 </div>
+
+                <PanelBackgroundSettings />
 
                 <div className="section-label">{t('settings.usageSection')}</div>
                 <ToggleRow
@@ -588,31 +626,31 @@ export default function SettingsModal(): JSX.Element | null {
             )}
             {tab === 'pet' && (
               <>
-                <div className="section-label">{t('pet.title')}</div>
-                <ToggleRow
-                  title={t('settings.petShow')}
-                  desc={t('settings.petShowDesc')}
-                  checked={settings.petShow}
-                  onChange={(v) => upd('petShow', v)}
-                />
+                {/* The pet's own panel (its right-click menu > 내 펫) has the same
+                    controls with the same words; this is the overview. */}
+                <div className="section-label">{t('pet.display')}</div>
+                <ToggleRow title={t('pet.showPet')} checked={settings.petShow} onChange={(v) => upd('petShow', v)} />
                 {settings.petShow && (
-                  <ToggleRow
-                    title={t('settings.petDetached')}
-                    desc={t('settings.petDetachedDesc')}
-                    checked={settings.petDetached}
-                    onChange={(v) => upd('petDetached', v)}
-                  />
+                  <Row title={t('pet.where')}>
+                    <Segmented
+                      value={settings.petDetached ? 'outside' : 'inside'}
+                      options={[
+                        { value: 'inside', label: t('pet.where.inside') },
+                        { value: 'outside', label: t('pet.where.outside') }
+                      ]}
+                      onChange={(v) => upd('petDetached', v === 'outside')}
+                    />
+                  </Row>
                 )}
                 {/* Only its own window can be lifted above other apps. */}
                 {settings.petShow && settings.petDetached && (
-                  <ToggleRow
-                    title={t('settings.petOnTop')}
-                    desc={t('settings.petOnTopDesc')}
-                    checked={settings.petOnTop}
-                    onChange={(v) => upd('petOnTop', v)}
-                  />
+                  <ToggleRow title={t('pet.onTop')} checked={settings.petOnTop} onChange={(v) => upd('petOnTop', v)} />
                 )}
-                <Row title={t('settings.petBreak')} desc={t('settings.petBreakDesc')}>
+
+                <PetNestSettings />
+
+                <div className="section-label">{t('settings.petBreak')}</div>
+                <Row title={t('settings.petBreakEvery')} desc={t('settings.petBreakDesc')}>
                   <Select value={String(settings.petBreakMin)} onChange={(e) => upd('petBreakMin', Number(e.target.value))}>
                     {[30, 45, 60, 90, 120].map((n) => (
                       <option key={n} value={n}>
@@ -622,10 +660,6 @@ export default function SettingsModal(): JSX.Element | null {
                     <option value={0}>{t('settings.petBreakOff')}</option>
                   </Select>
                 </Row>
-
-                <div className="section-label">{t('pet.maker.section')}</div>
-                <PetSpeciesSettings />
-
               </>
             )}
 
@@ -694,6 +728,12 @@ export default function SettingsModal(): JSX.Element | null {
                   desc={t('settings.agentChatUIDesc')}
                   checked={settings.agentChatUI}
                   onChange={(v) => upd('agentChatUI', v)}
+                />
+                <ToggleRow
+                  title={t('settings.chatEngineCli')}
+                  desc={t('settings.chatEngineCliDesc')}
+                  checked={settings.chatEngine !== 'native'}
+                  onChange={(v) => upd('chatEngine', v ? 'cli' : 'native')}
                 />
                 <ToggleRow
                   title={t('settings.chatSuggest')}

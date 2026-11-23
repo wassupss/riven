@@ -23,3 +23,18 @@ pub async fn config_save(name: String, data: Value) -> CmdResult<()> {
 pub fn config_reveal(name: String) {
   fsx::reveal(&paths::user_file(&name));
 }
+
+// ---- background:import / background:remove ----------------------------------
+// Panel background images (services/backgrounds.rs, src/main/backgrounds.ts).
+
+#[tauri::command]
+pub async fn background_import(data_url: String) -> CmdResult<String> {
+  blocking(move || crate::services::backgrounds::import(&data_url)).await?
+}
+
+/// Delete every stored background not in `keep`, the names the page's settings
+/// and saved panes still use; returns how many went.
+#[tauri::command]
+pub async fn background_gc(keep: Vec<String>) -> CmdResult<usize> {
+  blocking(move || crate::services::backgrounds::collect(&keep)).await
+}

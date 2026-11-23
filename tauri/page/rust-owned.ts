@@ -18,6 +18,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'config:load': ['name'],
   'config:save': ['name', 'data'],
   'config:reveal': ['name'],
+  'background:import': ['dataUrl'],
+  'background:gc': ['keep'],
   // sessions
   'sessions:load': [],
   'sessions:save': ['data'],
@@ -65,6 +67,25 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pty:resize': ['id', 'cols', 'rows'],
   'pty:kill': ['id'],
   'pty:codexSessionTitle': ['id'],
+  // a paired phone (state/remoteTerms.ts)
+  'pty:remoteText': ['id', 'lines', 'since'],
+  'pty:remoteInput': ['id', 'text', 'key'],
+  // CLI chat, experimental (services/clichat). Events: 'clichat:event'.
+  'clichat:start': ['key', 'opts'],
+  'clichat:send': ['key', 'text', 'images'],
+  'clichat:steer': ['key', 'text', 'images'],
+  'clichat:keys': ['key', 'data'],
+  'clichat:interrupt': ['key'],
+  'clichat:stop': ['key'],
+  'clichat:terminal': ['key', 'on'],
+  'clichat:answer': ['key', 'id', 'decision'],
+  'clichat:restart': ['key', 'opts'],
+  'clichat:menu': ['key', 'index', 'text'],
+  'clichat:question': ['key', 'id', 'answers'],
+  'clichat:reconfigure': ['key', 'model', 'mode'],
+  'clichat:rename': ['key', 'title'],
+  'clichat:attach': ['key', 'name', 'dataUrl'],
+  'clichat:image': ['key', 'uuid', 'index'],
   // agent chat (services/chat). Stream events come back as 'chat:event'.
   'chat:start': ['key', 'opts'],
   'chat:send': ['key', 'text', 'images', 'turn'],
@@ -80,6 +101,8 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'chat:sessions': ['cwd', 'configDir'],
   'chat:sessionRename': ['cwd', 'id', 'title', 'configDir'],
   'chat:sessionDelete': ['cwd', 'id', 'configDir'],
+  'chat:codexSessions': ['cwd'],
+  'chat:codexSessionDelete': ['id'],
   'chat:agents': ['cwd'],
   'chat:sessionTranscript': ['cwd', 'id', 'configDir'],
   'chat:sessionTitle': ['cwd', 'id', 'configDir'],
@@ -273,7 +296,12 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   'pet:askOnTop': ['on'],
   'pet:isOnTop': [],
   'pet:focusable': ['on'],
-  'pet:copy': ['text']
+  'pet:copy': ['text'],
+  'pet:openSettings': ['tab'],
+  // the pet maker's one-shot AI (commands/petai.rs)
+  'petAi:run': ['req'],
+  'petAi:cancel': ['id'],
+  'petAi:engines': []
 }
 
 // ipcRenderer.sendSync channels, each with its async twin. Tauri has no

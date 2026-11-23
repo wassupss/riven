@@ -21,6 +21,7 @@ import { useGoals, findGoal, boardText, boardUpdateFor, clipPost, BOARD_CAP, typ
 import { classifyTerminalCommand } from '../lib/terminalCommand'
 import { addEdge, dropEdge, wouldCycle, type AskEdges } from '../lib/askGraph'
 import { REPLY_CAP, clipNotice, clipText } from '../lib/clip'
+import { wakeText } from '../lib/wake'
 
 // Delegations that are currently WAITING for an answer, as caller → target
 // edges. Only waiting ones: a fire-and-forget ask blocks nobody.
@@ -136,7 +137,9 @@ function resolveCtx(caller: Caller): Ctx {
   // user has customised (colouring a terminal tab puts term-N in it), so a
   // "is it in panes" test alone let ask_user queue against a terminal, where
   // nothing renders it and the call simply blocked until it timed out.
-  const chatPane = pane && pane.startsWith('chat-') ? pane : null
+  // (A CLI chat is a chat pane: chat-<id>, or clichat-<id> for the ones
+  // opened from the experimental command.)
+  const chatPane = pane && /^(chat|clichat)-/.test(pane) ? pane : null
   const ws = ((): string | null => {
     // widForPane falls back to the active workspace for an unknown pane; go
     // direct so attribution can fail honestly instead of hitting the screen.
@@ -654,7 +657,7 @@ async function askOneAgent(ref: string, message: string, wait: boolean, c: Ctx):
       const asked = message.length > 200 ? message.slice(0, 200) + '…' : message
       returnToCaller(
         caller,
-        `[백그라운드 위임 결과 · ${title}]\n맡긴 일: ${asked}\n\n${body}`,
+        wakeText(title, asked, body),
         `${title} · ${fmtElapsed(Date.now() - d.startedAt)}`
       )
     })

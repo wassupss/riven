@@ -2,7 +2,7 @@
 // about, and the code/diff shown when the line is expanded (agentChat.ts
 // toolDetail / toolPath / toolCode, which mirror the native app).
 
-use super::util::{clamp, s, shorten, truthy};
+use crate::services::util::{clamp, s, shorten, truthy};
 use serde_json::Value;
 
 /// Per-tool one-line detail, clamped to 120 UTF-16 units.

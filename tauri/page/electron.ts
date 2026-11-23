@@ -14,6 +14,7 @@ import { RUST_INVOKE, RUST_SYNC, rustCommand } from './rust-owned'
 type W = Window & {
   __RIVEN_WIN__?: string
   __RIVEN_MEDIA__?: string
+  __RIVEN_BG__?: string
   __rivenSettle?: () => Promise<unknown>
   __rivenUnloading?: boolean
   __TAURI_INTERNALS__?: {
@@ -26,6 +27,8 @@ const w = window as W
 const LABEL = w.__RIVEN_WIN__ ?? w.__TAURI_INTERNALS__?.metadata?.currentWindow?.label ?? ''
 // Workspace media, served by Rust on the page's own origin (page.rs).
 w.__RIVEN_MEDIA__ = '/__riven/media/{}'
+// The panel background image, from userData/backgrounds (page.rs).
+w.__RIVEN_BG__ = '/__riven/bg/{}'
 
 type Listener = (event: unknown, ...args: unknown[]) => void
 const listeners = new Map<string, Listener[]>()

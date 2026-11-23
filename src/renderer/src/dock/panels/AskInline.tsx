@@ -8,7 +8,7 @@ import { scrollWithin } from '../../lib/scrollWithin'
 // choice list never traps you into an answer that doesn't fit.
 export default function AskInline({ chatKey }: { chatKey: string }): JSX.Element | null {
   const t = useT()
-  const req = useAskUser((s) => s.pending.find((r) => r.chatKey === chatKey))
+  const req = useAskUser((s) => s.pending.find((r) => r.chatKey === chatKey && !r.mirror))
   const answer = useAskUser((s) => s.answer)
   const cancel = useAskUser((s) => s.cancel)
   const dismiss = useAskUser((s) => s.dismiss)

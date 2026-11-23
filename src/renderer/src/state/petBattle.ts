@@ -1,21 +1,6 @@
+import { PRIZES, isBuiltinSpecies, type BuiltinSpecies, type Accessory, type PetSave, type Species } from './pet'
+import { MAX_LEVEL, STATS, STAT_BASE, levelOf, statTotal, statsOf, type Stats } from './petLevel'
 import {
-  FORMS,
-  PRIZES,
-  HUNGRY_AT,
-  MAX_LEVEL,
-  STAGES,
-  growthOf,
-  isBuiltinSpecies,
-  type BuiltinSpecies,
-  type Form,
-  type Accessory,
-  type Mood,
-  type PetSave,
-  type Species,
-  type Stage
-} from './pet'
-import {
-  buildOfDesign,
   customOf,
   familyOfDesign,
   isCustomId,
@@ -30,33 +15,28 @@ import {
 // Friend battles. There is no server: a pet travels as a short code you paste
 // to a friend (a chat message is enough), and the fight is worked out on each
 // side from the two codes alone. Everything here is pure and deterministic, so
-// the same two codes give the same fight on both machines, frame for frame, and
+// the same two codes give the same fight on both machines, blow for blow, and
 // pasting the same friend again cannot reroll a loss into a win.
 //
+// A fight is level and stats (petLevel.ts) and the species' family matchup.
 // The checksum catches a typo or a half-copied code. It does not stop someone
 // who reads this file from forging a level 99 pet: without a server nothing
-// can, so a battle only ever moves the win/loss record, never growth.
+// can, so a battle only ever moves the win/loss record, never XP.
 // ---------------------------------------------------------------------------
 
-/** What a pet brings to a fight: who it is and how it is doing right now. */
+/** What a pet brings to a fight. */
 export interface BattleCard {
   name: string
   species: Species
-  stage: Stage
-  form: Form
   level: number
-  /** 0..100 snapshots: a hungry, gloomy or ill pet fights worse. */
-  fullness: number
-  mood: number
-  sick: boolean
+  stats: Stats
   /** Its birthday, which is how a keeper's own pets are told apart from a friend's. */
   bornAt: number
   /** Prizes it has on, so a friend sees it dressed up. Looks only, never strength. */
   worn?: Accessory[]
   /**
    * A species made from a photo travels with its design, so a friend who has
-   * never seen it can draw it, and both sides read the same family and build
-   * off it.
+   * never seen it can draw it, and both sides read the same family off it.
    */
   custom?: CustomDesign
 }
@@ -105,47 +85,39 @@ export function matchup(a: Species, b: Species, ca?: BattleCard, cb?: BattleCard
   return 1
 }
 
-/** The pet as it stands, ready to send. Eggs cannot fight and get null. */
-export function cardOf(s: PetSave, now: number): BattleCard | null {
-  const g = growthOf(s, now)
-  if (g.stage === 'egg') return null
+/** The pet as it stands, ready to send. */
+export function cardOf(s: PetSave): BattleCard {
   // The keeper's current design, or the pet's own snapshot of a deleted one.
   const design = isCustomId(s.species) ? (customOf(s.species) ?? s.custom ?? null) : null
+  const level = levelOf(s.xp).level
   return {
     name: s.name.slice(0, 24),
     species: s.species,
-    stage: g.stage,
-    form: g.form,
-    level: g.level,
-    fullness: Math.round(s.fullness),
-    mood: Math.round(s.mood),
-    sick: s.sick,
+    level,
+    stats: statsOf(level, s.species, s.diet, design),
     bornAt: Math.floor(s.bornAt),
     ...(s.worn.length ? { worn: [...s.worn] } : {}),
     ...(design ? { custom: design } : {})
   }
 }
 
-/**
- * Did the first card beat the odds? A friend's pet a whole stage ahead, or ten
- * levels up on it, is a giant worth bragging about.
- */
+/** Did the first card beat the odds? A friend's pet ten levels up on it is a giant worth bragging about. */
+export const UPSET_LEVELS = 10
 export function isUpset(mine: BattleCard, foe: BattleCard): boolean {
-  return STAGES.indexOf(foe.stage) > STAGES.indexOf(mine.stage) || foe.level >= mine.level + 10
-}
-
-/** The face a friend's pet wears, read off its card the way moodOf reads a save. */
-export function moodOfCard(c: BattleCard): Mood {
-  if (c.sick) return 'sick'
-  if (c.fullness <= 0 || c.mood < 25) return 'sad'
-  if (c.fullness < HUNGRY_AT) return 'hungry'
-  if (c.mood >= 70) return 'happy'
-  return 'ok'
+  return foe.level >= mine.level + UPSET_LEVELS
 }
 
 // ---- the code ----
+//
+// RP2.<data>.<check>: data is base64url JSON
+//   [name, species, level, power, smarts, speed, stamina, bornAt, worn?, design?]
+// RP1 (the tamagotchi's, [name, species, stage, form, level, fullness, mood,
+// sick, bornAt, worn?, design?]) still reads: its stage and level become the
+// level the same XP is now (see legacyLevel) and its stats are its species'
+// at that level. A code from a newer riven is refused as such (readCode).
 
-const PREFIX = 'RP1'
+const PREFIX = 'RP2'
+export const CODE_VERSION = 2
 
 /** A 32-bit avalanche over a string: the checksum, and the fight's seed. */
 export function hashOf(text: string): number {
@@ -170,24 +142,18 @@ const fromB64url = (b64: string): string => {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
 }
 
-// The fields that decide a fight. What it wears rides along after them as an
-// optional tenth, so codes from before prizes still read, and changing clothes
-// cannot change how a fight goes (see `fight`).
+// The fields that decide a fight. What it wears rides along after them, so
+// changing clothes cannot change how a fight goes (see `fight`).
 const fieldsOf = (c: BattleCard): unknown[] => [
   c.name,
   c.species,
-  STAGES.indexOf(c.stage),
-  c.form,
   c.level,
-  c.fullness,
-  c.mood,
-  c.sick ? 1 : 0,
+  ...STATS.map((s) => c.stats[s]),
   c.bornAt
 ]
 
-/** The code to send a friend: `RP1.<data>.<check>`. */
+/** The code to send a friend: `RP2.<data>.<check>`. */
 export function encodeCard(c: BattleCard): string {
-  // What it wears is the tenth field and a photo species' design the eleventh.
   const fields = c.custom
     ? [...fieldsOf(c), c.worn ?? [], packDesign(c.custom)]
     : c.worn?.length
@@ -197,66 +163,122 @@ export function encodeCard(c: BattleCard): string {
   return `${PREFIX}.${body}.${hashOf(body).toString(36)}`
 }
 
-const CODE_RE = /RP1\.([A-Za-z0-9_-]+)\.([0-9a-z]+)/
+const CODE_RE = /RP(\d+)\.([A-Za-z0-9_-]+)\.([0-9a-z]+)/
+
+const int = (v: unknown, lo: number, hi: number): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : null
+
+/** Unknown prizes (a newer riven's) are dropped rather than failing the code. */
+const dressedOf = (worn: unknown): Accessory[] =>
+  Array.isArray(worn) ? PRIZES.filter((p) => worn.includes(p.id)).map((p) => p.id) : []
+
+/** The tamagotchi's stage thresholds (kibble) and its grown-up level costs, for RP1 codes. */
+const OLD_STAGE_XP = [0, 10, 60, 250, 800]
+const OLD_LEVEL_COST = (lvl: number): number => 100 + 50 * (lvl - 1)
 
 /**
- * Read a friend's code, from whatever it was pasted along with ("here's mine:
- * RP1...!"). Null for anything that is not a whole, untouched, sensible pet.
+ * The level an RP1 pet would be now: the least kibble its stage (index 1..4)
+ * and grown-up level (0 before adult) took, read as XP (one for one, as a save
+ * is migrated in state/pet.ts).
  */
-export function decodeCard(text: string): BattleCard | null {
-  const m = CODE_RE.exec(text)
-  if (!m) return null
-  const [, body, check] = m
-  if (hashOf(body).toString(36) !== check) return null
-  let raw: unknown
-  try {
-    raw = JSON.parse(fromB64url(body))
-  } catch {
-    return null
-  }
-  if (!Array.isArray(raw) || raw.length < 9) return null
-  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt, worn, packed] = raw
-  // An animal made from a photo is only a pet with its design along.
+export function legacyLevel(stage: number, oldLevel: number): number {
+  let xp = OLD_STAGE_XP[stage] ?? 0
+  for (let l = 1; l < oldLevel; l++) xp += OLD_LEVEL_COST(l)
+  return levelOf(xp).level
+}
+
+/** Read a body as an RP2 card, or null. */
+function readV2(raw: unknown[]): BattleCard | null {
+  if (raw.length < 8) return null
+  const [name, species, level, power, smarts, speed, stamina, bornAt, worn, packed] = raw
   const custom = isCustomId(species) ? unpackDesign(packed) : null
-  const int = (v: unknown, lo: number, hi: number): number | null =>
-    typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi ? v : null
-  const stage = STAGES[int(stageIx, 1, STAGES.length - 1) ?? -1]
-  const lvl = int(level, 0, MAX_LEVEL)
-  const full = int(fullness, 0, 100)
-  const md = int(mood, 0, 100)
+  const lvl = int(level, 1, MAX_LEVEL)
   const born = int(bornAt, 0, Number.MAX_SAFE_INTEGER)
-  if (
-    typeof name !== 'string' ||
-    (!isBuiltinSpecies(species) && !custom) ||
-    !stage ||
-    !FORMS.includes(form as Form) ||
-    lvl === null ||
-    full === null ||
-    md === null ||
-    born === null ||
-    (sick !== 0 && sick !== 1)
-  )
+  if (typeof name !== 'string' || (!isBuiltinSpecies(species) && !custom) || lvl === null || born === null)
     return null
-  // A grown-up has a level and may have a form; nothing younger has either.
-  const adult = stage === 'adult'
-  if (adult !== lvl > 0 || (!adult && form !== 'base')) return null
-  // Unknown prizes (a newer riven's) are dropped rather than failing the code.
-  const dressed = Array.isArray(worn)
-    ? PRIZES.filter((p) => worn.includes(p.id)).map((p) => p.id)
-    : []
+  // Every pet's stats add up to the same total at a level, each at least the base.
+  const cap = statTotal(lvl)
+  const vals = [power, smarts, speed, stamina].map((v) => int(v, STAT_BASE, cap))
+  if (vals.some((v) => v === null)) return null
+  const stats = { power: vals[0]!, smarts: vals[1]!, speed: vals[2]!, stamina: vals[3]! }
+  if (STATS.reduce((n, s) => n + stats[s], 0) !== cap) return null
+  const dressed = dressedOf(worn)
   return {
     name: name.slice(0, 24),
     species: species as Species,
-    stage,
-    form: form as Form,
     level: lvl,
-    fullness: full,
-    mood: md,
-    sick: sick === 1,
+    stats,
     bornAt: born,
     ...(dressed.length ? { worn: dressed } : {}),
     ...(custom ? { custom } : {})
   }
+}
+
+const OLD_FORMS = ['base', 'radiant', 'sturdy', 'titan', 'wraith']
+
+/** Read a body as an RP1 (tamagotchi) card, as it would stand now, or null. */
+function readV1(raw: unknown[]): BattleCard | null {
+  if (raw.length < 9) return null
+  const [name, species, stageIx, form, level, fullness, mood, sick, bornAt, worn, packed] = raw
+  const custom = isCustomId(species) ? unpackDesign(packed) : null
+  const stage = int(stageIx, 1, OLD_STAGE_XP.length - 1)
+  const old = int(level, 0, MAX_LEVEL)
+  const born = int(bornAt, 0, Number.MAX_SAFE_INTEGER)
+  if (
+    typeof name !== 'string' ||
+    (!isBuiltinSpecies(species) && !custom) ||
+    stage === null ||
+    !OLD_FORMS.includes(form as string) ||
+    old === null ||
+    int(fullness, 0, 100) === null ||
+    int(mood, 0, 100) === null ||
+    (sick !== 0 && sick !== 1) ||
+    born === null
+  )
+    return null
+  // A grown-up had a level and maybe a form; nothing younger had either.
+  const adult = stage === OLD_STAGE_XP.length - 1
+  if (adult !== old > 0 || (!adult && form !== 'base')) return null
+  const lvl = legacyLevel(stage, old)
+  const dressed = dressedOf(worn)
+  return {
+    name: name.slice(0, 24),
+    species: species as Species,
+    level: lvl,
+    stats: statsOf(lvl, species as string, null, custom),
+    bornAt: born,
+    ...(dressed.length ? { worn: dressed } : {}),
+    ...(custom ? { custom } : {})
+  }
+}
+
+/**
+ * Read a friend's code, from whatever it was pasted along with ("here's mine:
+ * RP2...!"). `newer` is a code from a riven newer than this one; `bad` is
+ * anything that is not a whole, untouched, sensible pet.
+ */
+export function readCode(text: string): { card: BattleCard } | { error: 'bad' | 'newer' } {
+  const m = CODE_RE.exec(text)
+  if (!m) return { error: 'bad' }
+  const [, ver, body, check] = m
+  const version = Number(ver)
+  if (hashOf(body).toString(36) !== check) return { error: 'bad' }
+  if (version > CODE_VERSION) return { error: 'newer' }
+  let raw: unknown
+  try {
+    raw = JSON.parse(fromB64url(body))
+  } catch {
+    return { error: 'bad' }
+  }
+  if (!Array.isArray(raw)) return { error: 'bad' }
+  const card = version === 1 ? readV1(raw) : version === 2 ? readV2(raw) : null
+  return card ? { card } : { error: 'bad' }
+}
+
+/** A friend's card, or null for anything that is not one this riven can read. */
+export function decodeCard(text: string): BattleCard | null {
+  const r = readCode(text)
+  return 'card' in r ? r.card : null
 }
 
 /** Make a friend's animal drawable, when it is one made from a photo. */
@@ -275,61 +297,21 @@ export interface Fighter {
   crit: number
 }
 
-// How much fight each stage has in it, before any grown-up levels.
-const STAGE_POWER: Record<Stage, number> = { egg: 0, hatchling: 6, child: 12, teen: 20, adult: 30 }
-
 /**
- * A card's numbers. Levels count, but with diminishing returns (a square root),
- * so a lovingly raised level 20 can still take a swing at a level 60.
+ * A card's numbers, from its stats. Square roots, so stats (which grow
+ * straight with the level) give diminishing returns: a well-matched level 20
+ * can still take a swing at a level 60, and a level 60 has less than twice
+ * the HP of a level 5. Power hits, stamina takes it, speed swings first and
+ * dodges, smarts finds the weak spot (crits).
  */
 export function fighterOf(c: BattleCard): Fighter {
-  const power = STAGE_POWER[c.stage] + (c.level > 0 ? 6 * Math.sqrt(c.level) : 0)
-  let hp = 30 + power * 1.6
-  let atk = 8 + power * 0.5
-  let def = 4 + power * 0.25
-  let spd = 10 + power * 0.2
-  let crit = 0.08
-  // How it grew up shapes how it fights.
-  switch (c.form) {
-    case 'radiant':
-      spd *= 1.15
-      crit += 0.05
-      break
-    case 'sturdy':
-      def *= 1.3
-      hp *= 1.1
-      break
-    case 'titan':
-      hp *= 1.2
-      atk *= 1.1
-      spd *= 0.85
-      break
-    case 'wraith':
-      atk *= 1.25
-      def *= 0.8
-      break
-  }
-  // A species made from a photo: a round one is a little sturdier and slower,
-  // a lanky one quicker and harder hitting. Zero-sum (see buildOfDesign).
-  const design = isCustomId(c.species) ? designFor(c.species, c) : null
-  if (design) {
-    const t = buildOfDesign(design)
-    hp *= 1 + 0.08 * t
-    def *= 1 + 0.08 * t
-    atk *= 1 - 0.06 * t
-    spd *= 1 - 0.1 * t
-  }
-  // And how it is doing today: look after it before sending it out.
-  if (c.sick) atk *= 0.8
-  if (c.fullness < HUNGRY_AT) atk *= 0.9
-  if (c.mood >= 70) crit += 0.1
-  else if (c.mood < 25) crit = Math.max(0, crit - 0.05)
+  const r = (n: number): number => Math.sqrt(Math.max(0, n))
   return {
-    hp: Math.round(hp),
-    atk: Math.round(atk * 10) / 10,
-    def: Math.round(def * 10) / 10,
-    spd: Math.round(spd * 10) / 10,
-    crit
+    hp: Math.round(50 + 9 * r(c.stats.stamina)),
+    atk: Math.round((5 + 2.2 * r(c.stats.power)) * 10) / 10,
+    def: Math.round((1 + 0.9 * r(c.stats.stamina)) * 10) / 10,
+    spd: Math.round(r(c.stats.speed) * 10) / 10,
+    crit: Math.round((0.04 + (0.16 * c.stats.smarts) / (c.stats.smarts + 100)) * 1000) / 1000
   }
 }
 
@@ -351,7 +333,9 @@ export interface Bout {
 }
 
 export const MAX_BLOWS = 30
+/** The chance a blow lands between equally quick pets; speed moves it up to SPEED_DODGE either way. */
 export const HIT_CHANCE = 0.9
+export const SPEED_DODGE = 0.08
 export const CRIT_MULT = 1.6
 
 /** mulberry32: small, fast, and the same on every machine. */
@@ -397,7 +381,8 @@ function simulate(a: BattleCard, b: BattleCard, seed: number): Bout {
   while (blows.length < MAX_BLOWS && hp[0] > 0 && hp[1] > 0) {
     const me = turn
     const foe: 0 | 1 = me === 0 ? 1 : 0
-    const miss = rand() >= HIT_CHANCE
+    const edge = (f[me].spd - f[foe].spd) / Math.max(1, f[me].spd + f[foe].spd)
+    const miss = rand() >= HIT_CHANCE + SPEED_DODGE * edge
     const crit = !miss && rand() < f[me].crit
     let dmg = 0
     if (!miss) {

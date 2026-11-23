@@ -45,7 +45,7 @@ pub fn string(v: &Value) -> String {
 
 /// JS truthiness.
 pub fn truthy(v: Option<&Value>) -> bool {
-  crate::services::chat::util::truthy(v)
+  crate::services::util::truthy(v)
 }
 
 pub fn utf16_len(s: &str) -> usize {

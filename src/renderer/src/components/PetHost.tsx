@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSettings } from '../state/settings'
+import { useUI, type SettingsTab } from '../state/ui'
 import PetDevice from './PetDevice'
 
 // ---------------------------------------------------------------------------
@@ -49,10 +50,21 @@ export default function PetHost(): JSX.Element | null {
     // lives: bringing it back should return it to its own window, where the user
     // last had it.
     const offHidden = window.api.pet.onHidden(() => set({ petShow: false }))
+    // The floating pet's "설정 열기": main has brought this window up.
+    const offSettings = window.api.pet.onOpenSettings((tab) =>
+      tab === 'pet-layout'
+        ? useUI.getState().openPetLayout()
+        : tab === 'pet-motion'
+          ? useUI.getState().openPetMotion()
+          : tab === 'pet-maker'
+          ? useUI.getState().openPetMaker()
+          : useUI.getState().openSettings((tab || 'pet') as SettingsTab)
+    )
     return () => {
       offOnTop()
       offClosed()
       offHidden()
+      offSettings()
     }
   }, [set])
 

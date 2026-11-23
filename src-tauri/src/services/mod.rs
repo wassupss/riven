@@ -2,10 +2,13 @@
 // as Tauri commands for the page; the Node relay (main.rs dispatch) may call
 // them too while Node still runs the groups that are not moved yet.
 
+pub mod agentcli;
 pub mod atomic;
 pub mod auth;
+pub mod backgrounds;
 pub mod browser;
 pub mod chat;
+pub mod clichat;
 pub mod collate;
 pub mod db;
 pub mod debug;
@@ -22,6 +25,7 @@ pub mod notify;
 pub mod parity;
 pub mod paths;
 pub mod pet;
+pub mod petai;
 pub mod power;
 pub mod pty;
 pub mod search;
@@ -30,5 +34,6 @@ pub mod tools;
 pub mod tray;
 pub mod update;
 pub mod usage;
+pub mod util;
 pub mod watcher;
 pub mod workspace;

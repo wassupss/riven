@@ -28,7 +28,8 @@ import {
   speciesName,
   type PetSave
 } from './pet'
-import { cardOf, decodeCard, encodeCard, familyOf, fight, fighterOf, matchup, type BattleCard } from './petBattle'
+import { cardOf, decodeCard, encodeCard, familyOf, fight, matchup, type BattleCard } from './petBattle'
+import { statsOf } from './petLevel'
 import { answer, type TalkFacts } from './petTalk'
 
 const T0 = 1_700_000_000_000
@@ -155,11 +156,11 @@ describe('the family and build a photo gives', () => {
 describe('pets of a custom species', () => {
   const hatch = { id: ID, design: design() }
 
-  it('hatch from an egg of their own, with a snapshot of the design', () => {
+  it('arrive as their species, with a snapshot of the design', () => {
     const p = initialState(T0, hatch)
     expect(p.species).toBe(ID)
     expect(p.custom).toEqual(design())
-    expect(p.evolutions[0].stage).toBe('egg')
+    expect(p.xp).toBe(0)
     // A random draw stays among the built-in animals.
     for (let i = 0; i < 20; i++) expect(SPECIES).toContain(drawSpecies(i / 20))
   })
@@ -168,7 +169,10 @@ describe('pets of a custom species', () => {
     const n = normalizeNest(null, T0)
     const more = adopt(n, T0, hatch)
     expect(more.pets[1].species).toBe(ID)
-    expect(restart(n, T0, hatch).pets[0].species).toBe(ID)
+    // Starting one over keeps its species and its snapshot.
+    const again = restart(more, T0 + 1, 1)
+    expect(again.pets[1].species).toBe(ID)
+    expect(again.pets[1].custom).toEqual(design())
   })
 
   it('survive a reload, and the species being deleted', () => {
@@ -178,7 +182,7 @@ describe('pets of a custom species', () => {
     expect(back.custom).toEqual(design())
     // Nothing in the keeper's list: still drawable from its own snapshot.
     expect(customOf(ID)).toBeNull()
-    normalizeNest({ version: 2, active: 0, pets: [saved] }, T0)
+    expect(normalizeNest({ version: 2, active: 0, pets: [saved] }, T0).pets[0].species).toBe(ID)
   })
 
   it('fall back like an old save when the snapshot is missing', () => {
@@ -210,15 +214,11 @@ describe('custom species in battle', () => {
   const base: BattleCard = {
     name: '',
     species: 'cat',
-    stage: 'adult',
-    form: 'base',
     level: 10,
-    fullness: 80,
-    mood: 60,
-    sick: false,
+    stats: statsOf(10, 'cat'),
     bornAt: T0
   }
-  const mine: BattleCard = { ...base, name: '방울', species: ID, custom: design() }
+  const mine: BattleCard = { ...base, name: '방울', species: ID, stats: statsOf(10, ID, null, design()), custom: design() }
 
   it('travels with its design and comes back the same', () => {
     const code = encodeCard(mine)
@@ -233,7 +233,7 @@ describe('custom species in battle', () => {
 
   it('carries its design on a card made from the pet', () => {
     const p: PetSave = { ...initialState(T0, { id: ID, design: design() }), xp: 900 }
-    const c = cardOf(p, T0)!
+    const c = cardOf(p)
     expect(c.custom).toEqual(design())
     expect(decodeCard(encodeCard(c))!.custom).toEqual(design())
   })
@@ -249,17 +249,14 @@ describe('custom species in battle', () => {
     expect(familyOf(foe.species, foe)).toBe('sea')
   })
 
-  it('stays within the range of the built-in animals', () => {
-    const plain = fighterOf(base)
-    for (const art of [fill(() => 'b'), ROUND, fill((x) => (x >= 5 && x <= 6 ? 'b' : '.'))]) {
-      const f = fighterOf({ ...mine, custom: design({ art }) })
-      const power = (x: typeof f): number => x.hp * 0.2 + x.atk + x.def + x.spd * 0.5
-      expect(Math.abs(power(f) / power(plain) - 1)).toBeLessThan(0.08)
-      for (const k of ['hp', 'atk', 'def', 'spd'] as const) {
-        expect(f[k] / plain[k]).toBeGreaterThan(0.85)
-        expect(f[k] / plain[k]).toBeLessThan(1.15)
-      }
-    }
+  it('leans by its build, and adds up like any other pet', () => {
+    const round = statsOf(30, ID, null, design({ art: fill(() => 'b') }))
+    const lanky = statsOf(30, ID, null, design({ art: fill((x, y) => (x === y || x === 11 - y || (x >= 5 && x <= 6) ? 'b' : '.')) }))
+    expect(round.stamina).toBeGreaterThan(lanky.stamina)
+    expect(lanky.speed).toBeGreaterThan(round.speed)
+    const sum = (x: typeof round): number => x.power + x.smarts + x.speed + x.stamina
+    expect(sum(round)).toBe(sum(statsOf(30, 'cat')))
+    expect(sum(lanky)).toBe(sum(round))
   })
 
   it('is the same fight from either side', () => {

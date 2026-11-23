@@ -158,7 +158,7 @@ fn reply_of(hook: &str, payload: &Value) -> Option<String> {
   if hook != "Stop" {
     return None;
   }
-  payload.get("last_assistant_message").and_then(Value::as_str).filter(|s| !crate::services::chat::util::js_trim(s).is_empty()).map(str::to_string)
+  payload.get("last_assistant_message").and_then(Value::as_str).filter(|s| !crate::services::util::js_trim(s).is_empty()).map(str::to_string)
 }
 
 // ---- the route -----------------------------------------------------------------------------
@@ -175,7 +175,7 @@ fn parse(body: &str) -> Value {
   if body.is_empty() {
     return Value::Null;
   }
-  crate::services::chat::util::parse(body).unwrap_or(Value::Null)
+  crate::services::util::parse(body).unwrap_or(Value::Null)
 }
 
 /// POST /hook?pane=&event=&agent=. Always 204: a hook must never make the
@@ -236,7 +236,7 @@ pub fn handle(url: &url::Url, body: &str) -> (Response, Option<Box<dyn FnOnce()>
 /// A file an agent wrote, attributed to its pane: to every app page (each
 /// keeps only the panes its own layout owns).
 pub fn report_edit(edit: Value) {
-  crate::services::chat::broadcast("agent:fileEdit", edit);
+  crate::services::agentcli::broadcast("agent:fileEdit", edit);
 }
 
 // ---- the edit tracker (agentEdits.ts) ----------------------------------------------------------
@@ -259,7 +259,7 @@ fn read_for_diff(p: &Path) -> Option<String> {
 /// Codex's apply_patch carries a patch naming each file, relative to the
 /// session's cwd.
 pub fn edit_paths(payload: &Value) -> Vec<String> {
-  let Some(input) = payload.get("tool_input").filter(|v| crate::services::chat::util::truthy(Some(v))) else { return Vec::new() };
+  let Some(input) = payload.get("tool_input").filter(|v| crate::services::util::truthy(Some(v))) else { return Vec::new() };
   if input.is_object() || input.is_array() {
     let raw = input.get("file_path").filter(|v| !v.is_null()).or_else(|| input.get("notebook_path"));
     if let Some(Value::String(raw)) = raw {
@@ -278,7 +278,7 @@ pub fn edit_paths(payload: &Value) -> Vec<String> {
   let mut out: Vec<String> = Vec::new();
   for text in texts {
     for c in re.captures_iter(text) {
-      let f = crate::services::chat::util::js_trim(&c[1]);
+      let f = crate::services::util::js_trim(&c[1]);
       let p = if Path::new(f).is_absolute() {
         normalize(f)
       } else if let Some(cwd) = cwd {

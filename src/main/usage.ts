@@ -205,6 +205,8 @@ async function claudeToken(configDir?: string): Promise<string | null> {
 export interface CodexUsage {
   installed: boolean
   totalTokens: number
+  // The part of totalTokens that was cached input (input_tokens includes it).
+  cachedTokens: number
   primary: PlanLimit | null // usually the 30-day window
   primaryWindowMinutes: number | null
   secondary: PlanLimit | null
@@ -225,6 +227,7 @@ async function codexUsage(): Promise<CodexUsage> {
   const empty: CodexUsage = {
     installed: false,
     totalTokens: 0,
+    cachedTokens: 0,
     primary: null,
     primaryWindowMinutes: null,
     secondary: null
@@ -272,6 +275,7 @@ async function codexUsage(): Promise<CodexUsage> {
           (last.output_tokens ?? 0) +
           (last.reasoning_output_tokens ?? 0) +
           (last.cache_write_input_tokens ?? 0)
+        out.cachedTokens += Math.min(last.cached_input_tokens ?? 0, last.input_tokens ?? 0)
       }
       const rl = payload.rate_limits as Record<string, unknown> | undefined
       const at = new Date(ts).getTime() || 0

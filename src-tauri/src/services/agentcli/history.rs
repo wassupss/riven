@@ -4,10 +4,12 @@
 // CLI's /rename appends, and a delete removes the transcript file.
 //
 // Claude stores each session as <config>/projects/<encoded-cwd>/<id>.jsonl,
-// where the cwd's "/" and "." become "-". <config> is CLAUDE_CONFIG_DIR when
-// the pane runs under a profile, else ~/.claude.
+// where every character of the cwd that is not an ASCII letter or digit
+// becomes "-" (a cwd longer than the CLI's limit is cut and gets a hash
+// suffix, found by prefix). <config> is CLAUDE_CONFIG_DIR when the pane runs
+// under a profile, else ~/.claude.
 
-use super::util::{clamp, home, js_string, mtime_ms, slice, truthy};
+use crate::services::util::{clamp, home, js_string, mtime_ms, slice, truthy};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -15,13 +17,33 @@ use std::io::{BufRead, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// The CLI's folder name for a cwd: every char that is not [A-Za-z0-9] is
+/// "-" ("/a_b c" -> "-a-b-c"). Folding only "/" and "." (what this did
+/// before) missed every cwd with "_", " ", "~" or non-ASCII in it.
+pub fn encode_cwd(cwd: &str) -> String {
+  cwd.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Past this many chars the CLI cuts the folder name and appends a hash of
+/// the full path; the hash is the CLI's own, so such a folder is found by
+/// its prefix instead.
+const MAX_DIR_NAME: usize = 200;
+
 pub fn project_dir(cwd: &str, config_dir: Option<&str>) -> PathBuf {
   let base = match config_dir.filter(|d| !d.is_empty()) {
     Some(d) => PathBuf::from(d),
     None => home().join(".claude"),
   };
-  let enc: String = cwd.chars().map(|c| if c == '/' || c == '.' { '-' } else { c }).collect();
-  base.join("projects").join(enc)
+  let projects = base.join("projects");
+  let enc = encode_cwd(cwd);
+  if enc.len() <= MAX_DIR_NAME {
+    return projects.join(enc);
+  }
+  let prefix = format!("{}-", &enc[..MAX_DIR_NAME]);
+  let found = std::fs::read_dir(&projects)
+    .ok()
+    .and_then(|rd| rd.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with(&prefix))));
+  found.unwrap_or_else(|| projects.join(enc))
 }
 
 // ---- titles (sessionTitle.ts) --------------------------------------------------
@@ -34,13 +56,13 @@ pub struct TitleScan {
   pub messages: u64,
 }
 
-use super::util::js_trim;
+use crate::services::util::js_trim;
 
 pub fn scan_line(out: &mut TitleScan, line: &str) {
   if line.is_empty() {
     return;
   }
-  let Some(j) = super::util::parse(line) else { return };
+  let Some(j) = crate::services::util::parse(line) else { return };
   let ty = j.get("type").and_then(Value::as_str).unwrap_or("");
   if ty == "custom-title" {
     if let Some(t) = j.get("customTitle").and_then(Value::as_str).filter(|t| !js_trim(t).is_empty()) {
@@ -48,7 +70,8 @@ pub fn scan_line(out: &mut TitleScan, line: &str) {
     }
   }
   if out.ai.is_empty() && ty == "ai-title" {
-    if let Some(t) = j.get("title").and_then(Value::as_str).filter(|t| !js_trim(t).is_empty()) {
+    // 2.1.x writes "aiTitle"; older builds wrote "title".
+    if let Some(t) = j.get("aiTitle").or_else(|| j.get("title")).and_then(Value::as_str).filter(|t| !js_trim(t).is_empty()) {
       out.ai = js_trim(t).to_string();
     }
   }
@@ -197,7 +220,7 @@ fn list_sessions_now(dir: &Path) -> Vec<SessionSummary> {
       SessionSummary {
         id: id.to_string(),
         title: if title.is_empty() { "(제목 없음)".into() } else { title },
-        mtime: super::util::jnum(mtime),
+        mtime: crate::services::util::jnum(mtime),
         messages: scan.messages,
       },
     ));
@@ -208,7 +231,7 @@ fn list_sessions_now(dir: &Path) -> Vec<SessionSummary> {
 }
 
 // A session id is a filename and arrives from the page: checked, not trusted.
-fn is_session_id(id: &str) -> bool {
+pub fn is_session_id(id: &str) -> bool {
   let parts: Vec<&str> = id.split('-').collect();
   let lens = [8, 4, 4, 4, 12];
   parts.len() == 5 && parts.iter().zip(lens).all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
@@ -255,7 +278,7 @@ pub fn read_session_transcript(cwd: &str, id: &str, config_dir: Option<&str>) ->
   let Ok(raw) = crate::services::fsx::read_utf8(&full) else { return Vec::new() };
   let mut msgs = Vec::new();
   for line in raw.split('\n').filter(|l| !l.is_empty()) {
-    let Some(j) = super::util::parse(line) else { continue };
+    let Some(j) = crate::services::util::parse(line) else { continue };
     // A compaction stores its summary as a user message nobody said.
     if truthy(j.get("isCompactSummary")) || truthy(j.get("isVisibleInTranscriptOnly")) {
       continue;
@@ -340,7 +363,7 @@ fn list_desc(dir: &Path) -> Vec<String> {
   v
 }
 
-fn find_rollout(session_id: &str) -> Option<PathBuf> {
+pub fn find_rollout(session_id: &str) -> Option<PathBuf> {
   static FOUND: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
   let found = FOUND.get_or_init(Default::default);
   if let Some(p) = found.lock().unwrap().get(session_id).filter(|p| p.exists()) {
@@ -388,7 +411,7 @@ fn transcript_from_rollout(text: &str) -> Vec<Value> {
     if !line.contains("\"response_item\"") {
       continue;
     }
-    let Some(ev) = super::util::parse(line) else { continue };
+    let Some(ev) = crate::services::util::parse(line) else { continue };
     let Some(p) = ev.get("payload") else { continue };
     if ev.get("type").and_then(Value::as_str) != Some("response_item") || p.get("type").and_then(Value::as_str) != Some("message") {
       continue;
@@ -419,13 +442,13 @@ fn transcript_from_rollout(text: &str) -> Vec<Value> {
 // has no summarised title the way Claude Code does).
 fn title_from_rollout(text: &str) -> Option<String> {
   const TITLE_MAX: usize = 80;
-  let clip = |s: &str| if super::util::utf16_len(s) > TITLE_MAX { format!("{}\u{2026}", super::util::slice(s, TITLE_MAX - 1)) } else { s.to_string() };
+  let clip = |s: &str| if crate::services::util::utf16_len(s) > TITLE_MAX { format!("{}\u{2026}", crate::services::util::slice(s, TITLE_MAX - 1)) } else { s.to_string() };
   let first_line = |m: &str| m.split('\n').map(js_trim).find(|l| !l.is_empty()).map(str::to_string);
   for line in text.split('\n') {
     if !line.contains("user_message") {
       continue;
     }
-    let Some(ev) = super::util::parse(line) else { continue };
+    let Some(ev) = crate::services::util::parse(line) else { continue };
     if ev.get("type").and_then(Value::as_str) != Some("event_msg") || ev.pointer("/payload/type").and_then(Value::as_str) != Some("user_message") {
       continue;
     }
@@ -449,6 +472,101 @@ pub fn read_codex_session_title(session_id: &str) -> Option<String> {
   let mut buf = Vec::new();
   std::fs::File::open(file).ok()?.take(HEAD_BYTES).read_to_end(&mut buf).ok()?;
   title_from_rollout(&String::from_utf8_lossy(&buf))
+}
+
+/// Codex's names for its conversations (/rename): session_index.jsonl,
+/// one line per change, the last one for an id winning.
+fn codex_names() -> HashMap<String, String> {
+  let mut out = HashMap::new();
+  let Ok(text) = crate::services::fsx::read_utf8(&codex_home().join("session_index.jsonl")) else { return out };
+  for line in text.lines() {
+    let Some(v) = crate::services::util::parse(line) else { continue };
+    let id = ["id", "thread_id", "session_id"].iter().find_map(|k| v.get(*k).and_then(Value::as_str));
+    let name = ["thread_name", "name"].iter().find_map(|k| v.get(*k).and_then(Value::as_str)).map(js_trim);
+    if let (Some(id), Some(name)) = (id, name) {
+      if name.is_empty() {
+        out.remove(id);
+      } else {
+        out.insert(id.to_string(), name.to_string());
+      }
+    }
+  }
+  out
+}
+
+/// The name Codex keeps for a conversation (its own or one given with
+/// /rename), if any.
+pub fn codex_name(id: &str) -> Option<String> {
+  codex_names().remove(id)
+}
+
+/// The id and folder a rollout belongs to, from its first line.
+fn rollout_meta(first: &str) -> Option<(String, String)> {
+  let v = crate::services::util::parse(first)?;
+  if v.get("type").and_then(Value::as_str) != Some("session_meta") {
+    return None;
+  }
+  let p = v.get("payload")?;
+  let id = p.get("id").or_else(|| p.get("session_id")).and_then(Value::as_str)?.to_string();
+  let cwd = p.get("cwd").and_then(Value::as_str)?.to_string();
+  Some((id, cwd))
+}
+
+/// User and assistant messages of a rollout (what the resume list counts).
+fn rollout_messages(text: &str) -> u64 {
+  transcript_from_rollout(text).len() as u64
+}
+
+/// How many rollouts the list looks at, newest first: a folder's
+/// conversations are among the recent ones, and every file costs a read.
+const CODEX_SCAN_MAX: usize = 400;
+const CODEX_LIST_MAX: usize = 50;
+
+/// Codex conversations started in `cwd`, newest first, in the shape of the
+/// Claude list: the name given with /rename, else the first thing asked.
+pub fn list_codex_sessions(cwd: &str) -> Vec<SessionSummary> {
+  list_codex_sessions_in(&codex_home(), cwd)
+}
+
+fn list_codex_sessions_in(home: &Path, cwd: &str) -> Vec<SessionSummary> {
+  let root = home.join("sessions");
+  let want = cwd.trim_end_matches('/');
+  let names = if home == codex_home() { codex_names() } else { HashMap::new() };
+  let mut out = Vec::new();
+  let mut seen = 0usize;
+  'walk: for y in list_desc(&root) {
+    for m in list_desc(&root.join(&y)) {
+      for d in list_desc(&root.join(&y).join(&m)) {
+        let dir = root.join(&y).join(&m).join(&d);
+        for f in list_desc(&dir).into_iter().filter(|f| f.starts_with("rollout-") && f.ends_with(".jsonl")) {
+          seen += 1;
+          if seen > CODEX_SCAN_MAX || out.len() >= CODEX_LIST_MAX {
+            break 'walk;
+          }
+          let path = dir.join(&f);
+          let Ok(file) = std::fs::File::open(&path) else { continue };
+          let mut first = String::new();
+          if std::io::BufReader::new(file).read_line(&mut first).is_err() {
+            continue;
+          }
+          let Some((id, at)) = rollout_meta(&first) else { continue };
+          if at.trim_end_matches('/') != want {
+            continue;
+          }
+          let Ok(text) = crate::services::fsx::read_utf8(&path) else { continue };
+          let messages = rollout_messages(&text);
+          if messages == 0 {
+            continue;
+          }
+          let mtime = std::fs::metadata(&path).map(|m| mtime_ms(&m)).unwrap_or(0.0);
+          let title = names.get(&id).cloned().or_else(|| title_from_rollout(&text)).unwrap_or_else(|| "(제목 없음)".into());
+          out.push((mtime, SessionSummary { id, title, mtime: crate::services::util::jnum(mtime), messages }));
+        }
+      }
+    }
+  }
+  out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+  out.into_iter().map(|(_, s)| s).collect()
 }
 
 pub fn read_codex_transcript(session_id: &str) -> Vec<Value> {
@@ -519,6 +637,53 @@ mod tests {
     scan_line(&mut s, r#"{"type":"custom-title","customTitle":"Mine"}"#);
     assert_eq!(title_of(&s, 2), "Mi…");
     assert_eq!(s.messages, 1);
+  }
+
+  #[test]
+  fn codex_sessions_for_a_folder() {
+    let home = std::env::temp_dir().join(format!("riven-codex-list-{}", std::process::id()));
+    let day = home.join("sessions").join("2026").join("11").join("23");
+    std::fs::create_dir_all(&day).unwrap();
+    let meta = |id: &str, cwd: &str| format!(r#"{{"type":"session_meta","payload":{{"id":"{id}","cwd":"{cwd}"}}}}"#);
+    let user = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the build"}]}}"#;
+    let ctx = r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>x</environment_context>"}]}}"#;
+    let a = "0a1b2c3d-1111-2222-3333-444455556666";
+    let b = "0a1b2c3d-1111-2222-3333-444455557777";
+    let c = "0a1b2c3d-1111-2222-3333-444455558888";
+    std::fs::write(day.join(format!("rollout-2026-11-23T10-00-00-{a}.jsonl")), format!("{}\n{ctx}\n{user}\n", meta(a, "/w/proj"))).unwrap();
+    std::fs::write(day.join(format!("rollout-2026-11-23T11-00-00-{b}.jsonl")), format!("{}\n{user}\n", meta(b, "/w/other"))).unwrap();
+    // Only injected context: nothing anyone said, not listed.
+    std::fs::write(day.join(format!("rollout-2026-11-23T12-00-00-{c}.jsonl")), format!("{}\n{ctx}\n", meta(c, "/w/proj"))).unwrap();
+    let list = list_codex_sessions_in(&home, "/w/proj/");
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, a);
+    assert_eq!(list[0].title, "fix the build");
+    assert_eq!(list[0].messages, 1);
+  }
+
+  #[test]
+  fn cwd_encoding_matches_the_cli() {
+    // Folders as 2.1.330 names them (seen on disk): every non-alphanumeric
+    // char is "-", so "_", " " and non-ASCII fold too.
+    assert_eq!(encode_cwd("/private/tmp/a_b.c/ws"), "-private-tmp-a-b-c-ws");
+    assert_eq!(encode_cwd("/Users/me/my project~2"), "-Users-me-my-project-2");
+    assert_eq!(encode_cwd("/tmp/한글"), "-tmp---");
+    assert_eq!(project_dir("/w/x.y", Some("/cfg")), PathBuf::from("/cfg/projects/-w-x-y"));
+    let mut s = TitleScan::default();
+    scan_line(&mut s, r#"{"type":"ai-title","aiTitle":"New shape"}"#);
+    assert_eq!(title_of(&s, 60), "New shape");
+  }
+
+  #[test]
+  fn long_cwd_is_found_by_prefix() {
+    let base = std::env::temp_dir().join(format!("riven-hist-{}", std::process::id()));
+    let cwd = format!("/{}", "a".repeat(260));
+    let enc = encode_cwd(&cwd);
+    let dir = base.join("projects").join(format!("{}-1x2y3z", &enc[..MAX_DIR_NAME]));
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(project_dir(&cwd, Some(&base.to_string_lossy())), dir);
+    let _ = std::fs::remove_dir_all(&base);
   }
 
   #[test]

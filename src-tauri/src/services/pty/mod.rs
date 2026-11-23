@@ -23,7 +23,7 @@
 
 mod activity;
 pub mod stream;
-mod vt;
+pub(crate) mod vt;
 
 use activity::{Activity, Attention, HookEvent, State};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -232,7 +232,7 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
   let extras = crate::services::mcp::pty_env(&key).await;
   let cols = opts.cols.filter(|c| *c > 0.0).map(|c| c as u16).unwrap_or(80);
   let rows = opts.rows.filter(|r| *r > 0.0).map(|r| r as u16).unwrap_or(24);
-  let spawned = tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows)).await;
+  let spawned = tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows, Launch::default())).await;
   match spawned.map_err(|e| e.to_string()).and_then(|r| r) {
     Ok(()) => Opened { id: key, existed: false, error: None },
     Err(e) => {
@@ -243,7 +243,53 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
   }
 }
 
-fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u16, rows: u16) -> Result<(), String> {
+/// How a session other than a terminal pane launches (services/clichat).
+#[derive(Default)]
+pub struct Launch {
+  /// The command REPLACES the shell (`exec`): when it exits the session
+  /// ends, instead of dropping back to a prompt.
+  pub exec: bool,
+  /// Inherited variables the program must not see.
+  pub env_remove: &'static [&'static str],
+}
+
+/// Open a pty no terminal pane owns: the same login shell, environment and
+/// model as a terminal (so a CLI started here gets riven's MCP and hooks the
+/// way a typed one does), but the caller supplies the environment it has
+/// already computed and decides how the command ends. A terminal view can
+/// attach to it later by its key (pty_open with the same sessionKey).
+pub async fn open_hidden(label: String, key: String, cwd: String, command: String, cols: u16, rows: u16, config_dir: Option<String>, extras: HashMap<String, String>, launch: Launch) -> Result<bool, String> {
+  if let Some(s) = get(&key) {
+    lock(&s).sender = label;
+    return Ok(true);
+  }
+  let opts = OpenOpts { session_key: key, cwd, initial_command: Some(command), cols: None, rows: None, config_dir };
+  tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows, launch)).await.map_err(|e| e.to_string())??;
+  Ok(false)
+}
+
+/// The visible screen of a session's model, as plain text (rows lines).
+pub fn screen_text(key: &str) -> Option<String> {
+  let s = get(key)?;
+  let st = lock(&s);
+  let all = st.model.plain_text();
+  let lines: Vec<&str> = all.split('\n').collect();
+  let from = lines.len().saturating_sub(st.rows as usize);
+  Some(lines[from..].join("\n"))
+}
+
+/// Whether a session is registered under this key (a kill takes it out on
+/// the control thread, so a restart under the same key waits for this).
+pub fn exists(key: &str) -> bool {
+  get(key).is_some()
+}
+
+/// Resize from Rust (a hidden session going back to its own width).
+pub fn resize_now(key: &str, cols: u16, rows: u16) {
+  ctl(Op::Resize(key.to_string(), cols, rows));
+}
+
+fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u16, rows: u16, launch: Launch) -> Result<(), String> {
   let key = opts.session_key.clone();
   let shell = default_shell();
   // A LOGIN + INTERACTIVE shell like every real terminal emulator, so the full
@@ -252,7 +298,11 @@ fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u
   let mut args: Vec<String> = vec!["-l".into(), "-i".into()];
   if let Some(cmd) = opts.initial_command.as_deref().filter(|c| !c.is_empty()) {
     args.push("-c".into());
-    args.push(format!("{cmd}; exec {shell} -il"));
+    if launch.exec {
+      args.push(format!("exec {cmd}"));
+    } else {
+      args.push(format!("{cmd}; exec {shell} -il"));
+    }
   }
 
   let mut cmd = CommandBuilder::new(&shell);
@@ -265,6 +315,9 @@ fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u
   // the native chat in the same workspace run as the same account.
   if let Some(d) = opts.config_dir.as_deref().filter(|d| !d.is_empty()) {
     cmd.env("CLAUDE_CONFIG_DIR", d);
+  }
+  for k in launch.env_remove {
+    cmd.env_remove(k);
   }
   for (k, v) in &extras {
     cmd.env(k, v);
@@ -559,11 +612,18 @@ fn finish(s: &Arc<Session>, code: i32) {
     st.timer += 1;
   }
   let mut m = sessions();
-  if m.get(&s.key).is_some_and(|x| Arc::ptr_eq(x, s)) {
+  // Still registered: the program ended by itself. A killed session left the
+  // registry already, and its key may belong to a new one by now (a CLI chat
+  // restarting under the same key), which must not hear this exit.
+  let natural = m.get(&s.key).is_some_and(|x| Arc::ptr_eq(x, s));
+  if natural {
     m.remove(&s.key);
   }
   drop(m);
-  set_working(&s.key, false);
+  if natural {
+    set_working(&s.key, false);
+    crate::services::clichat::on_pty_exit(&s.key, code);
+  }
 }
 
 // ---- control --------------------------------------------------------------------
@@ -783,9 +843,10 @@ fn set_working(key: &str, on: bool) {
   }
 }
 
-/// How many terminal agents are working (Node's quit confirmation asks).
-pub fn working_count() -> usize {
-  WORKING.get_or_init(Default::default).lock().unwrap().len()
+/// The keys of the terminals whose CLI agent is working (the quit count
+/// leaves out the hidden ptys a CLI chat runs in: those count as chats).
+pub fn working_keys() -> Vec<String> {
+  WORKING.get_or_init(Default::default).lock().unwrap().iter().cloned().collect()
 }
 
 /// An agent hook for a pane, from the hook route (services/mcp/hooks.rs).
@@ -916,6 +977,127 @@ async fn probe_loop(s: Arc<Session>) {
   }
 }
 
+// ---- remote (a paired phone, see src/renderer/src/state/remoteTerms.ts) ---------
+//
+// The page decides WHO may look and type (the device's capabilities, the
+// pane's opt-in) and redacts what it sends. These two are the last gate and do
+// not trust the page either: text is only read from the model, and input is
+// limited to a fixed set of keys or one cleaned line, written only while an
+// agent is the terminal's foreground program. No raw bytes from a phone ever
+// reach a pty.
+
+/// Longest line a phone may type, in characters.
+const REMOTE_LINE_MAX: usize = 500;
+/// The pause between a typed line and its Enter (askAgent.ts says why).
+const REMOTE_ENTER_DELAY: Duration = Duration::from_millis(120);
+
+#[derive(Serialize)]
+pub struct RemoteText {
+  /// What the text reflects: parsed chunks and size. Equal = unchanged.
+  pub rev: String,
+  /// The last lines, or None when `rev` is what the caller already has.
+  pub text: Option<String>,
+  /// An agent is the foreground program right now.
+  pub agent: bool,
+}
+
+/// The tail of a terminal as plain text, for a phone watching it. Formats
+/// only when the model moved since `since`, so an idle watched pane costs a
+/// lock and a compare.
+pub fn remote_text(key: &str, lines: usize, since: &str) -> Option<RemoteText> {
+  let s = get(key)?;
+  let st = lock(&s);
+  if st.dead {
+    return None;
+  }
+  let rev = format!("{}:{}x{}", st.parsed, st.cols, st.rows);
+  let agent = st.agent_present;
+  if rev == since {
+    return Some(RemoteText { rev, text: None, agent });
+  }
+  let all = st.model.text();
+  drop(st);
+  Some(RemoteText { rev, text: Some(last_lines(&all, lines)), agent })
+}
+
+fn last_lines(all: &str, n: usize) -> String {
+  let trimmed = all.trim_end_matches(['\n', ' ']);
+  let lines: Vec<&str> = trimmed.split('\n').collect();
+  lines[lines.len().saturating_sub(n)..].join("\n")
+}
+
+/// The bytes of a key a phone may press: answering a prompt, nothing more.
+/// Ctrl+C and every other control key are deliberately absent.
+fn remote_key(k: &str) -> Option<&'static str> {
+  Some(match k {
+    "1" => "1",
+    "2" => "2",
+    "3" => "3",
+    "4" => "4",
+    "5" => "5",
+    "6" => "6",
+    "7" => "7",
+    "8" => "8",
+    "9" => "9",
+    "enter" => "\r",
+    "esc" => "\x1b",
+    "up" => "\x1b[A",
+    "down" => "\x1b[B",
+    _ => return None,
+  })
+}
+
+/// One line of prompt text with every control character gone: no ESC (so no
+/// bracketed-paste end marker or any other sequence), no CR/LF (so it cannot
+/// submit early or become two prompts), no C1, and no invisible or
+/// direction-changing format characters. None if nothing usable is left.
+fn clean_remote_line(t: &str) -> Option<String> {
+  let kept: String = t
+    .chars()
+    .filter(|&c| {
+      !c.is_control()
+        && !matches!(c, '\u{200B}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+    })
+    .collect();
+  let kept = kept.trim();
+  if kept.is_empty() || kept.chars().count() > REMOTE_LINE_MAX {
+    return None;
+  }
+  Some(kept.to_string())
+}
+
+/// Type into a terminal for a phone: exactly one of `text` (a line, then
+/// Enter) or `key` (one of remote_key's). False if refused.
+pub fn remote_input(key: &str, text: Option<&str>, k: Option<&str>) -> bool {
+  let (data, submit) = match (text, k) {
+    (Some(t), None) => match clean_remote_line(t) {
+      Some(c) => (c, true),
+      None => return false,
+    },
+    (None, Some(k)) => match remote_key(k) {
+      Some(b) => (b.to_string(), false),
+      None => return false,
+    },
+    _ => return false,
+  };
+  let Some(s) = get(key) else { return false };
+  {
+    let st = lock(&s);
+    if st.dead || !st.agent_present {
+      return false;
+    }
+  }
+  ctl(Op::Write(key.to_string(), data));
+  if submit {
+    let key = key.to_string();
+    tauri::async_runtime::spawn(async move {
+      tokio::time::sleep(REMOTE_ENTER_DELAY).await;
+      ctl(Op::Write(key, "\r".into()));
+    });
+  }
+  true
+}
+
 // ---- text -----------------------------------------------------------------------
 
 // Decode a read into whole characters. Invalid sequences become U+FFFD (as
@@ -981,6 +1163,22 @@ mod tests {
     assert!(carry.is_empty());
     assert_eq!(decode_utf8(&mut carry, b"x\xffy"), "x\u{FFFD}y");
     assert_eq!(utf16_len("a한😀"), 4);
+  }
+
+  #[test]
+  fn remote_input_is_cleaned_and_bounded() {
+    assert_eq!(clean_remote_line("  fix the bug  ").as_deref(), Some("fix the bug"));
+    // Bracketed-paste end marker, CR/LF, Ctrl+C, C1 and bidi overrides are gone.
+    assert_eq!(clean_remote_line("a\x1b[201~b\r\nc\x03\u{9b}d\u{202e}e").as_deref(), Some("a[201~bcde"));
+    assert_eq!(clean_remote_line("\x1b\r\n"), None);
+    assert!(clean_remote_line(&"x".repeat(REMOTE_LINE_MAX)).is_some());
+    assert!(clean_remote_line(&"x".repeat(REMOTE_LINE_MAX + 1)).is_none());
+    assert_eq!(remote_key("enter"), Some("\r"));
+    assert_eq!(remote_key("up"), Some("\x1b[A"));
+    assert_eq!(remote_key("0"), None);
+    assert_eq!(remote_key("ctrl+c"), None);
+    assert_eq!(remote_key("\x03"), None);
+    assert_eq!(last_lines("a\nb\nc\n\n", 2), "b\nc");
   }
 
   #[test]

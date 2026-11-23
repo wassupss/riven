@@ -5,7 +5,7 @@
 // review payloads go to gh on stdin, never on a command line.
 
 use super::{exec, spawn_io, DEFAULT_MAX_BUFFER};
-use crate::services::chat::util::{js_string, js_trim, resolve_bin, truthy, utf16_prefix};
+use crate::services::util::{js_string, js_trim, resolve_bin, truthy, utf16_prefix};
 use crate::services::collate::locale_compare;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
@@ -581,7 +581,7 @@ fn number_or0(v: Option<&Value>) -> Value {
       if t.is_empty() {
         json!(0)
       } else {
-        t.parse::<f64>().ok().map(crate::services::chat::util::jnum).unwrap_or(Value::Null)
+        t.parse::<f64>().ok().map(crate::services::util::jnum).unwrap_or(Value::Null)
       }
     }
     Some(_) => Value::Null,

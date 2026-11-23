@@ -127,9 +127,13 @@ pub fn korean(settings: Option<&str>) -> bool {
     .unwrap_or(true)
 }
 
-/// What quitting would cut off: chat turns running + terminal agents working.
+/// What quitting would cut off: chat turns running (the headless chat and the
+/// CLI chat) + terminal agents working. A CLI chat runs in a hidden pty that
+/// can look like a working terminal too: it is counted once, as a chat.
 pub fn busy() -> (usize, usize) {
-  (crate::services::chat::running_count(), crate::services::pty::working_count())
+  let chats = crate::services::chat::running_count() + crate::services::clichat::running_count();
+  let terms = crate::services::pty::working_keys().iter().filter(|k| !crate::services::clichat::owns(k)).count();
+  (chats, terms)
 }
 
 /// Cmd+Q, the tray's Quit, the Dock's Quit, logout. Asks first when agents

@@ -7,7 +7,10 @@ import { pathOf, loadPaneState, setPaneState } from '../../state/session'
 import { claudeConfigDirFor, getSettings } from '../../state/settings'
 import { useTabBadge } from '../../state/tabBadge'
 import { markPaneSeen } from '../../state/roster'
-import { t as staticT } from '../../i18n'
+import { t as staticT, useT } from '../../i18n'
+import { Smartphone } from 'lucide-react'
+import { stopAllRemoteTerminals, useRemoteTerms } from '../../state/remoteTerms'
+import '../../styles/remote-terms.css'
 import { resumeCommand, type TerminalCli } from '../../lib/agentResume'
 
 export interface TerminalParams {
@@ -47,6 +50,9 @@ export default function TerminalPanel({
   // result waiting to be read. Collapsing them made a finished CLI show the
   // same "needs you" dot forever instead of turning into done.
   const [attention, setAttention] = useState<'finished' | 'needs_input' | null>(null)
+  // Paired phones that have this terminal open right now (state/remoteTerms).
+  const remoteViewers = useRemoteTerms((s) => s.watched[sessionKey])
+  const tr = useT()
 
   // Auto-title state: remember the title we set so a manual rename disables it.
   const autoSetRef = useRef<string | null>(null)
@@ -261,6 +267,16 @@ export default function TerminalPanel({
           terminal had no ring at all, and "needs you" had its own ring that
           repainted every frame.) */}
       {(attention === 'finished' || attention === 'needs_input') && <span className="chat-ring" aria-hidden />}
+      {/* A phone has this terminal open: say so, and offer the off switch. */}
+      {remoteViewers && remoteViewers.length > 0 && (
+        <div className="term-remote-badge" role="status">
+          <Smartphone size={12} />
+          <span className="term-remote-text">{tr('remoteTerm.watching', { names: remoteViewers.join(', ') })}</span>
+          <button className="term-remote-stop" onClick={() => stopAllRemoteTerminals()} title={tr('remoteTerm.stopAllDesc')}>
+            {tr('remoteTerm.stopAll')}
+          </button>
+        </div>
+      )}
       <TerminalPane
         sessionKey={sessionKey}
         cwd={pathOf(workspace)}

@@ -84,10 +84,10 @@ pub async fn real_bin(cmd: &'static str) -> Option<String> {
   static CLAUDE: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
   static CODEX: tokio::sync::OnceCell<Option<String>> = tokio::sync::OnceCell::const_new();
   let cell = if cmd == "claude" { &CLAUDE } else { &CODEX };
-  cell.get_or_init(|| crate::services::chat::util::resolve_bin(cmd)).await.clone()
+  cell.get_or_init(|| crate::services::util::resolve_bin(cmd)).await.clone()
 }
 
-fn user_has_codex_instructions() -> bool {
+pub(crate) fn user_has_codex_instructions() -> bool {
   let home = std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| crate::services::paths::home().join(".codex"));
   let Ok(text) = std::fs::read_to_string(home.join("config.toml")) else { return false };
   regex::Regex::new(r"(?m)^\s*developer_instructions\s*=").map(|re| re.is_match(&text)).unwrap_or(false)

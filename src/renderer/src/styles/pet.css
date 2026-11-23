@@ -1,5 +1,6 @@
 /* =========================================================================
-   리븐펫 — a handheld virtual-pet device floating over the workbench.
+   리븐펫: a virtual pet floating over the workbench (or on the desktop, in
+   its own window). Just the creature; its menu and screens open beside it.
    Only design tokens (var(--…)) are used, so it follows every theme. All
    classes are prefixed `pet-`. Every animation is paused under `.pet-asleep`
    (window in the background) so an unwatched pet costs nothing.
@@ -10,7 +11,14 @@
   right: 16px;
   bottom: 42px; /* clear of the status bar */
   z-index: var(--z-float);
-  width: 202px;
+  /* The focused pet's width, the others' beside it (half of it), and the
+     space between them. --pet-n (set inline) is how many others are out, so
+     the device, and in its own window the window, is as wide as the row. */
+  --pet-w: 128px;
+  --pet-cw: calc(var(--pet-w) / 2);
+  --pet-gap: 4px;
+  width: calc(var(--pet-w) + var(--pet-n, 0) * (var(--pet-cw) + var(--pet-gap)));
+  padding-top: 15px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -24,106 +32,7 @@
   cursor: grabbing;
 }
 
-/* ---- the unit ----
-   A small desk terminal: a screen in a bezel, a deck under it carrying the name,
-   a power lamp and the three keys, and a little stand so it sits on the surface
-   rather than floating. Deliberately its own object — square-shouldered and
-   asymmetric, nothing like the round keychain toys this borrows its ideas from. */
-.pet-unit {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.pet-case {
-  width: 100%;
-  padding: 9px 9px 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  border-radius: 12px 12px 9px 9px;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 0.05), transparent 38%),
-    linear-gradient(180deg, var(--bg-3), color-mix(in srgb, var(--bg-2) 76%, black));
-  border: 1px solid var(--edge-strong);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
-    0 10px 24px rgb(0 0 0 / 0.45);
-}
-/* The strip under the screen: name on the left, lamp, keys on the right. */
-.pet-deck {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 1px;
-}
-.pet-logo {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  /* Printed on the case, not drawn on top of it. */
-  color: color-mix(in srgb, var(--fg) 26%, transparent);
-  text-shadow: 0 1px 0 rgb(0 0 0 / 0.5);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pet-led {
-  flex: 0 0 auto;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--success) 70%, transparent);
-}
-/* Asleep, the lamp dims like anything else left on standby. */
-.pet-asleep .pet-led {
-  background: color-mix(in srgb, var(--success) 35%, var(--bg));
-  box-shadow: none;
-}
-/* The stand: a neck under the case and a foot on the desk. One tone with the
-   case's underside — outlines here made it look like two loose bars. */
-.pet-stand {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  /* Tuck under the case's border so the neck grows out of it. */
-  margin-top: -1px;
-}
-.pet-stand::before {
-  content: '';
-  width: 22px;
-  height: 6px;
-  background: color-mix(in srgb, var(--bg-2) 72%, black);
-  border-left: 1px solid var(--edge);
-  border-right: 1px solid var(--edge);
-}
-.pet-stand i {
-  width: 62px;
-  height: 5px;
-  border-radius: 1px 1px 3px 3px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-3) 85%, black), color-mix(in srgb, var(--bg) 55%, black));
-  border: 1px solid var(--edge);
-  border-top: 0;
-  box-shadow: 0 4px 10px rgb(0 0 0 / 0.45);
-}
-
-/* ---- the menu strip ----
-   Segments of the screen, in one row along its foot. Each is the button for its
-   own function: point at one to see its name on the top line, press it to run
-   it. (They used to be printed, not pressed, and were worked by three keys on
-   the case; ten of those presses to clear one mess is how you get a pet nobody
-   touches.) */
-.pet-icons {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 1px;
-  padding: 2px 1px 0;
-  border-top: 1px solid rgb(255 255 255 / 0.06);
-}
+/* ---- care buttons (the menu's top row) ---- */
 .pet-ic {
   flex: 1 1 0;
   display: inline-flex;
@@ -135,7 +44,7 @@
   background: transparent;
   border: 1px solid transparent;
   border-radius: 2px;
-  /* An unlit segment is still visible — faint, but there. */
+  /* An unlit segment is still visible, faint, but there. */
   color: color-mix(in srgb, var(--fg) 30%, transparent);
   cursor: pointer;
 }
@@ -157,25 +66,6 @@
   border-color: var(--accent);
   color: var(--accent);
 }
-/* Where the A key's highlight is. It blinks, so it is obvious even at this size. */
-.pet-ic.picked {
-  border-color: var(--accent);
-  color: var(--accent);
-  animation: pet-blink 0.9s steps(1, end) infinite;
-}
-@keyframes pet-blink {
-  0%,
-  55% {
-    border-color: var(--accent);
-    background: var(--accent-muted);
-  }
-  56%,
-  100% {
-    border-color: transparent;
-    background: transparent;
-  }
-}
-
 /* The way out of whatever screen is up, on its own title line. */
 .pet-back {
   flex: 0 0 auto;
@@ -198,42 +88,33 @@
   color: var(--fg);
 }
 
-/* The pet's place in the yard. */
-.pet-actor {
-  display: contents;
-}
-
 /* ---- in its own window: fill it, and let the OS do the dragging ----
    -webkit-app-region does NOT inherit. Setting it on the root alone left every
-   visible pixel (the case covers the root entirely) computing to `none`, so the
+   visible pixel (the pet covers the root entirely) computing to `none`, so the
    window had no handle at all and would not move. Every descendant is made a
    handle explicitly, and the things you operate opt back out. */
+/* The focused pet is the width the window opens at (services/pet.rs WIDTH,
+   212, less #root's 4px padding each side); the window follows the device's
+   width from there (pet:resize), never the other way round. */
 .pet-detached {
   position: static;
-  width: 100%;
+  --pet-w: 204px;
   cursor: default;
 }
 .pet-detached,
 .pet-detached * {
   -webkit-app-region: drag;
 }
-/* On a transparent window a soft box-shadow is not a shadow — it is a grey
+/* On a transparent window a soft box-shadow is not a shadow, it is a grey
    smudge around the device, because there is nothing behind it to fall on.
-   (Measured: alpha 5–71 over the whole margin.) Keep the crisp inner lighting,
-   drop everything that blurs outward. */
-.pet-detached .pet-case {
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
-}
-.pet-detached .pet-stand i,
+   (Measured: alpha 5–71 over the whole margin.) Drop everything that blurs
+   outward. */
 .pet-detached .pet-card,
 .pet-detached .pet-balloon {
   box-shadow: none;
 }
 .pet-detached .pet-bare {
   filter: none;
-}
-.pet-detached.pet-chrome-bare {
-  width: 100%;
 }
 
 /* What you press, type in or scroll must stay clickable. */
@@ -246,21 +127,21 @@
 .pet-detached .pet-graph *,
 .pet-detached .pet-album,
 .pet-detached .pet-album *,
-.pet-detached .pet-dex,
-.pet-detached .pet-dex *,
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
-.pet-detached .pet-bare {
+.pet-detached .pet-bare,
+.pet-detached .pet-comp {
   -webkit-app-region: no-drag;
 }
+.pet-detached .pet-comp {
+  filter: none;
+}
 
-/* ---- chrome levels ---- */
-/* A screen of the bare pet's (stats, dex, a question...) opens in a card beside
-   it, made like the right-click menu: a plain panel, no glass, no bezel and no
-   icon strip, so nothing about it looks like the device. The screen's type is
-   sized for the device's little LCD, so the card's content is drawn at 1.4x,
-   which brings its 8-9px lines to the menu's reading size. */
+/* A screen of the bare pet's (stats, a battle, a question...) opens in a card beside
+   it, made like the right-click menu: a plain panel. The screens' type is sized
+   in 8-9px lines, so the card's content is drawn at 1.4x, which brings them to
+   the menu's reading size. */
 .pet-card {
   position: absolute;
   bottom: 0;
@@ -291,6 +172,246 @@
 /* As tall as what it shows, up to a cap; past that the list inside scrolls.
    A fixed height cut the status and settings pages off mid-row and left the
    album and the chat a big empty box. */
+/* ---- the pet panel ("내 펫", PetManage) ----
+   The one card drawn at reading size rather than as a zoomed screen: real
+   buttons with a word on them, the same look as riven's own (border, fill,
+   hover, pressed), sized alike. */
+.pet-card.manage {
+  width: 264px;
+  padding: 8px;
+}
+.pet-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 440px;
+  overflow-y: auto;
+  font-size: var(--text-xs);
+}
+.pet-manage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.pet-manage-head b {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.pet-manage-head .pet-back {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
+.pet-manage-label {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--edge);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.pet-manage-note {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.pet-nest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pet-nest-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.pet-nest-row.on {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+/* Put away: the picture fades, the row stays as it is. */
+.pet-nest-row.off .pet-mini {
+  opacity: 0.45;
+}
+.pet-nest-row .pet-switch {
+  margin-left: 2px;
+}
+.pet-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pet-mini {
+  flex: none;
+  width: 26px;
+  height: 26px;
+}
+.pet-mini .pet-lcd {
+  width: 100%;
+  height: 100%;
+}
+.pet-nest-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pet-nest-text b,
+.pet-nest-text span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pet-nest-text b {
+  font-weight: 600;
+}
+.pet-nest-text span {
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+.pet-tag {
+  flex: none;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pet-btns {
+  display: flex;
+  gap: 4px;
+}
+.pet-btns.three > .pet-btn,
+.pet-btns.two > .pet-btn {
+  flex: 1 1 0;
+}
+.pet-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pet-btn:hover:not(:disabled) {
+  background: var(--hover-strong);
+  border-color: var(--edge-strong);
+}
+.pet-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.pet-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.pet-btn.small {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+}
+.pet-btn.wide {
+  width: 100%;
+}
+.pet-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.pet-btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.pet-btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.pet-confirm p {
+  margin: 0 0 5px;
+  line-height: 1.4;
+}
+/* A pick of one: the new pet's species, where it lives. */
+.pet-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.pet-chip {
+  height: 22px;
+  max-width: 100%;
+  padding: 0 8px;
+  border: 1px solid var(--edge);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-chip:hover {
+  color: var(--fg);
+  border-color: var(--edge-strong);
+}
+.pet-chip.on {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+.pet-manage-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pet-manage-line > span {
+  color: var(--fg-dim);
+}
+.pet-switch {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--edge-strong);
+  border-radius: 9px;
+  background: var(--bg-3);
+  cursor: pointer;
+}
+.pet-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  transition: transform var(--dur-fast, 0.12s) ease;
+}
+.pet-switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.pet-switch.on i {
+  transform: translateX(12px);
+  background: var(--on-accent);
+}
 .pet-card .pet-screen {
   aspect-ratio: auto;
   height: auto;
@@ -310,11 +431,6 @@
 .pet-detached .pet-card * {
   -webkit-app-region: no-drag;
 }
-/* Creature only: no case, no glass, no gauges — just the pet, on nothing. */
-.pet-chrome-bare {
-  width: 128px;
-  padding-top: 15px;
-}
 .pet-bare {
   position: relative;
   /* Its own width, not its content's: the LCD inside is a size container
@@ -332,6 +448,40 @@
 .pet-bare .pet-lcd {
   width: 100%;
   height: auto;
+}
+
+/* ---- the pets out: the focused one, and the others beside it ----
+   One row on one floor (bottoms aligned, so they all stand on the same line
+   whatever the balloon over the focused one does). The others are half its
+   size and have no screens; a click makes one the focused pet. */
+.pet-stage {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pet-gap);
+  width: 100%;
+}
+.pet-main {
+  flex: 0 0 var(--pet-w);
+  width: var(--pet-w);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pet-comp {
+  position: relative;
+  flex: 0 0 var(--pet-cw);
+  width: var(--pet-cw);
+  cursor: pointer;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));
+  transition: transform var(--dur-fast, 0.12s) ease;
+}
+.pet-comp .pet-lcd {
+  width: 100%;
+  height: auto;
+}
+.pet-comp:hover {
+  transform: translateY(-2px);
 }
 
 /* ---- the right-click menu ----
@@ -435,16 +585,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* ---- the LCD, sunk into a bezel ---- */
-.pet-bezel {
-  width: 100%;
-  padding: 5px;
-  border-radius: 10px;
-  background: color-mix(in srgb, black 45%, var(--bg-2));
-  box-shadow:
-    inset 0 2px 5px rgb(0 0 0 / 0.55),
-    0 1px 0 rgb(255 255 255 / 0.05);
-}
+/* ---- a screen (stats, a battle, a question...), drawn in the card beside the pet ---- */
 .pet-screen {
   position: relative;
   display: flex;
@@ -468,19 +609,6 @@
     ),
     radial-gradient(120% 100% at 50% 0%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
     var(--well);
-}
-/* The creature's own space: whatever the strips don't take. It keeps its square
-   aspect (preserveAspectRatio), so a tall sprite is letterboxed, never clipped. */
-/* flex-basis 0, not auto: the sprite is square, so sizing this box from its
-   content made it as tall as the screen is wide and pushed the lower icon strip
-   off the glass. The SVG letterboxes itself inside whatever is left. */
-.pet-yard {
-  position: relative;
-  flex: 1 1 0;
-  min-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 .pet-lcd {
   width: 100%;
@@ -516,75 +644,6 @@
   overflow: visible;
 }
 /* The nest: a dot per pet in the corner, the one on screen filled. */
-.pet-nest {
-  position: absolute;
-  top: 1px;
-  left: 2px;
-  z-index: 1;
-  display: flex;
-  gap: 2px;
-}
-.pet-nest-dot {
-  width: 5px;
-  height: 5px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--accent-2) 30%, black);
-  background: transparent;
-  cursor: pointer;
-}
-.pet-nest-dot.on {
-  background: color-mix(in srgb, var(--accent-2) 30%, black);
-}
-.pet-nest-dot:hover:not(.on) {
-  background: var(--hover-strong);
-}
-/* What it has left lying about, and whether it needs a doctor. */
-.pet-floor {
-  position: absolute;
-  left: 2px;
-  right: 2px;
-  bottom: 0;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  pointer-events: none;
-}
-.pet-glyph {
-  display: block;
-  overflow: visible;
-}
-.pet-poop {
-  width: 10px;
-  height: 6px;
-}
-.pet-cross {
-  width: 7px;
-  height: 7px;
-}
-.pet-poop {
-  animation: pet-stink 2.2s steps(1, end) infinite;
-}
-.pet-poop .pet-px-p {
-  fill: color-mix(in srgb, var(--warning) 42%, black);
-}
-.pet-cross {
-  margin-right: auto;
-  animation: pet-twinkle 0.9s steps(1, end) infinite;
-}
-.pet-cross .pet-px-p {
-  fill: var(--danger);
-}
-@keyframes pet-stink {
-  0%,
-  50% {
-    transform: translateY(0);
-  }
-  51%,
-  100% {
-    transform: translateY(-1px);
-  }
-}
-
 /* ---- what it says ----
    A proper speech balloon above the device, in type you can actually read. It
    sits in the layout rather than floating, so in its own window the window can
@@ -624,27 +683,7 @@
     transform: translateY(3px);
   }
 }
-/* With no case to sit on, it hugs the creature more tightly. */
-.pet-balloon.bare {
-  margin-bottom: 3px;
-  padding: 4px 7px;
-  font-size: 10px;
-}
-
-/* Asleep: the Z hangs by its head and blinks slowly. */
-.pet-zzz {
-  position: absolute;
-  top: 8%;
-  right: 12%;
-  width: 9px;
-  height: 12px;
-  animation: pet-twinkle 1.8s steps(1, end) infinite;
-}
-.pet-zzz .pet-px-p {
-  fill: color-mix(in srgb, var(--info) 80%, white);
-}
-
-/* Growing up: the ring of dots flies outward and fades. It scales about the
+/* A level up: the ring of dots flies outward and fades. It scales about the
    box's centre, which is the viewBox's (16, 16) under xMidYMid meet. */
 .pet-burst {
   transform-origin: 50% 50%;
@@ -660,37 +699,13 @@
     opacity: 0;
   }
 }
-.pet-lcd.evolving .pet-sprite {
+.pet-lcd.cheer .pet-sprite {
   animation: pet-hop 0.25s steps(1, end) infinite;
-}
-/* A branch evolution: the new shape shows only as a flat silhouette that
-   flickers, faster as it goes, and then the class drops and it is revealed.
-   Fill rather than filter, so the species and diet tints are left alone. */
-.pet-lcd.whiteout .pet-px {
-  fill: var(--fg);
-}
-.pet-lcd.whiteout .pet-tw-reel,
-.pet-lcd.whiteout .pet-crumbs {
-  animation: none;
-}
-.pet-lcd.whiteout .pet-sprite {
-  animation: pet-whiteout 1.8s linear forwards;
-}
-@keyframes pet-whiteout {
-  0%, 12%, 30%, 44%, 56%, 66%, 74%, 80%, 86%, 90%, 94%, 97% {
-    opacity: 1;
-  }
-  6%, 21%, 37%, 50%, 61%, 70%, 77%, 83%, 88%, 92%, 95%, 99% {
-    opacity: 0.15;
-  }
-  100% {
-    opacity: 1;
-  }
 }
 
 /* ---- species colour ----
    The strain's hue, turned on the WHOLE sprite (the <svg>) while the diet tint
-   below turns the body group inside it — two nested elements, so the two
+   below turns the body group inside it, two nested elements, so the two
    compose instead of one winning. A hue turn rather than fixed colours, so a
    strain still belongs to whatever theme riven is wearing.
    'spot' is left alone: it is the colour the pet has always been. */
@@ -754,11 +769,11 @@
 .pet-lcd.pet-sp-slime {
   filter: hue-rotate(-110deg) saturate(1.2);
 }
-/* A dragon keeps riven's own violet — the one that was every pet's colour before
+/* A dragon keeps riven's own violet, the one that was every pet's colour before
    strains existed, now reserved for the showiest of them. */
 
-/* What it grew up eating tints it, on top of whatever form it took. A hue turn
-   rather than a colour swap, so it composes with radiant/titan/wraith. */
+/* Which models did its work tints it, on top of its species' colour. A hue
+   turn rather than a colour swap, so the two compose. */
 .pet-diet-sonnet .pet-sprite {
   filter: hue-rotate(-18deg);
 }
@@ -808,8 +823,7 @@
   padding: 2px 4px;
   text-align: center;
 }
-/* What you asked: quieter, and pushed to the right like a sent message. */
-/* The one text field on the device, sitting on the case under the glass. */
+/* The ask field, under the talk screen in the card. */
 .pet-ask {
   display: flex;
   align-items: center;
@@ -857,7 +871,7 @@
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
 
-/* The meter screen leads with the two bars. */
+/* The status screen leads with the four stats. */
 .pet-meters {
   flex-direction: column;
   gap: 2px;
@@ -887,12 +901,6 @@
   border: 1px solid transparent;
   border-radius: 3px;
 }
-/* The row B will act on. */
-.pet-row.picked {
-  border-color: var(--accent);
-  background: var(--accent-muted);
-  animation: pet-blink 0.9s steps(1, end) infinite;
-}
 .pet-row span {
   font-size: 9px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
@@ -907,24 +915,6 @@
 }
 .pet-row.danger b {
   color: var(--danger);
-}
-.pet-seg {
-  display: flex;
-  gap: 2px;
-}
-.pet-seg button {
-  padding: 1px 4px;
-  border: 1px solid var(--edge);
-  border-radius: 3px;
-  background: transparent;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-  font-size: 8px;
-  cursor: pointer;
-}
-.pet-seg button.on {
-  border-color: var(--accent-border);
-  background: var(--accent-muted);
-  color: var(--accent);
 }
 .pet-note {
   margin: 3px 0 0;
@@ -986,10 +976,6 @@
   color: var(--warning);
   opacity: 1;
 }
-.pet-award-note {
-  font-size: 8px;
-  color: color-mix(in srgb, var(--fg) 40%, transparent);
-  padding-top: 2px;
 }
 
 /* ---- the stats / graph / album screens ---- */
@@ -1063,7 +1049,7 @@
   align-items: center;
   gap: 2px;
 }
-/* Squared off on purpose: the whole device is made of dots. */
+/* Squared off on purpose: the whole pet is made of dots. */
 .pet-bar i {
   width: 100%;
   background: color-mix(in srgb, var(--accent) 72%, transparent);
@@ -1111,73 +1097,6 @@
   font-size: 8px;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
 }
-/* ---- the evolution tree ----
-   One row per line, read left to right: its first form, then the cared-for
-   pair (2a, 3a), then the neglected pair (2b, 3b). */
-.pet-dex {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 2px 0;
-}
-.pet-dex-head {
-  margin: 0 0 1px;
-  font-size: 8.5px;
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-}
-.pet-dex-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px;
-}
-/* Name on its own line so the five cells always fit the 110px device screen. */
-.pet-dex-name {
-  flex: 0 0 100%;
-  font-size: 8px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in srgb, var(--fg) 60%, transparent);
-}
-.pet-dex-cell {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 26px;
-  aspect-ratio: 1;
-  padding: 1px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgb(255 255 255 / 0.06);
-  border-radius: 3px;
-  background: rgb(0 0 0 / 0.15);
-  cursor: pointer;
-}
-.pet-dex-cell .pet-lcd {
-  width: 100%;
-  height: 100%;
-}
-.pet-dex-cell.on {
-  border-color: var(--accent);
-}
-.pet-dex-cell b {
-  font-size: 10px;
-  color: color-mix(in srgb, var(--fg) 30%, transparent);
-}
-/* Not met yet: the shape, and nothing else. */
-.pet-dex-cell:not(.seen) .pet-px {
-  fill: color-mix(in srgb, var(--fg) 16%, transparent);
-}
-.pet-dex-cell:not(.seen) .pet-tw-reel,
-.pet-dex-cell:not(.seen) .pet-crumbs {
-  animation: none;
-}
-.pet-dex-cell:not(.seen) .pet-lcd {
-  filter: none;
-}
 .pet-empty {
   margin: auto;
   font-size: 9px;
@@ -1218,12 +1137,17 @@
 .pet-px-d {
   fill: color-mix(in srgb, var(--accent-2) 82%, black);
 }
+/* The glow of a level 50 pet: a soft ring round its silhouette. */
+.pet-px-g {
+  fill: var(--warning);
+  fill-opacity: 0.32;
+}
 
 /* ---- a species made from a photo ----
    Its own colours, set on the box as variables (customVars in PetDevice.tsx),
    in place of the hue turn the built-in animals get. The outline, the limbs
    and the light and shadow are made from its body colour the way the built-in
-   ones are made from the accent. The egg below keeps the shell's colours. */
+   ones are made from the accent. */
 .pet-lcd.pet-sp-custom {
   filter: none;
 }
@@ -1264,31 +1188,27 @@
 .pet-px-u {
   fill: var(--pc-b, var(--accent-2));
 }
-
-/* Grown-up forms used to recolour the body here (grey with red eyes for the
-   neglected one), which is a lot of why adults read as a downgrade. A form is
-   now a change of shape in petSprites.ts; the pet keeps its own colours. */
-.pet-s-egg .pet-px-b {
-  fill: color-mix(in srgb, var(--fg) 78%, var(--accent-2));
-}
-.pet-s-egg .pet-px-o {
-  fill: color-mix(in srgb, var(--fg) 34%, black);
-}
-.pet-s-egg .pet-px-l {
-  fill: color-mix(in srgb, var(--fg) 92%, white);
-}
-.pet-s-egg .pet-px-d {
-  fill: color-mix(in srgb, var(--fg) 66%, var(--accent-2));
-}
-/* A photo species' egg is a shell of its own colour, pale as a shell is. */
-.pet-sp-custom.pet-s-egg .pet-px-b {
-  fill: color-mix(in srgb, var(--fg) 74%, var(--pc-b));
-}
-.pet-sp-custom.pet-s-egg .pet-px-l {
-  fill: color-mix(in srgb, var(--fg) 90%, var(--pc-b));
-}
-.pet-sp-custom.pet-s-egg .pet-px-d {
-  fill: color-mix(in srgb, var(--fg) 60%, var(--pc-b));
+/* A faithful picture's own colours (petCustomArt PHOTO_DOT), set per species
+   as --pp-A.. by customVars. Its colours are the photo's, so the diet's hue
+   turn is left off it. */
+.pet-px-A { fill: var(--pp-A); }
+.pet-px-B { fill: var(--pp-B); }
+.pet-px-C { fill: var(--pp-C); }
+.pet-px-D { fill: var(--pp-D); }
+.pet-px-E { fill: var(--pp-E); }
+.pet-px-F { fill: var(--pp-F); }
+.pet-px-G { fill: var(--pp-G); }
+.pet-px-H { fill: var(--pp-H); }
+.pet-px-I { fill: var(--pp-I); }
+.pet-px-J { fill: var(--pp-J); }
+.pet-px-K { fill: var(--pp-K); }
+.pet-px-L { fill: var(--pp-L); }
+.pet-px-M { fill: var(--pp-M); }
+.pet-px-N { fill: var(--pp-N); }
+.pet-px-O { fill: var(--pp-O); }
+.pet-px-P { fill: var(--pp-P); }
+.pet-lcd.pet-photo .pet-sprite {
+  filter: none;
 }
 
 /* ---- animation: whole-dot steps, never a smooth slide ---- */
@@ -1298,20 +1218,58 @@
 .pet-m-happy .pet-sprite {
   animation-duration: 0.9s;
 }
-.pet-m-hungry .pet-sprite,
 .pet-m-sad .pet-sprite {
   animation-duration: 2.8s;
-}
-/* The little ghost: see-through, and it drifts rather than hops. */
-.pet-f-wraith .pet-sprite {
-  opacity: 0.78;
-  animation: pet-float 3.2s steps(1, end) infinite;
 }
 .pet-sprite.chew {
   animation: pet-chew 0.3s steps(1, end) infinite;
 }
-.pet-s-egg .pet-sprite {
-  animation: pet-rock 2.4s steps(1, end) infinite;
+/* A faithful picture has no face to wear its mood, so it moves it: a happy
+   one skips (two quick hops), a sad one sinks a dot and looks from side to
+   side, a content one keeps the plain hop. Translates only, whole dots (see
+   pet-twinkle-reel for why nothing here scales). .pet-pm is left off while
+   something else moves it. */
+.pet-pm.pet-m-happy .pet-sprite:not(.chew) {
+  animation: pet-pm-skip 1.2s steps(1, end) infinite;
+}
+.pet-pm.pet-m-sad .pet-sprite:not(.chew) {
+  animation: pet-pm-sway 3.6s steps(1, end) infinite;
+}
+@keyframes pet-pm-skip {
+  0%,
+  15% {
+    transform: translateY(-6.25cqmin);
+  }
+  16%,
+  30% {
+    transform: translateY(0);
+  }
+  31%,
+  45% {
+    transform: translateY(-9.375cqmin);
+  }
+  46%,
+  100% {
+    transform: translateY(0);
+  }
+}
+@keyframes pet-pm-sway {
+  0%,
+  40% {
+    transform: translate(0, 3.125cqmin);
+  }
+  41%,
+  60% {
+    transform: translate(-3.125cqmin, 3.125cqmin);
+  }
+  61%,
+  80% {
+    transform: translate(0, 3.125cqmin);
+  }
+  81%,
+  100% {
+    transform: translate(3.125cqmin, 3.125cqmin);
+  }
 }
 /* The accent dots twinkle: same beat as pet-twinkle (lit, then 15% from 51%),
    but as a two-frame reel. .pet-tw is the window; the reel holds the lit dots
@@ -1342,6 +1300,38 @@
 .pet-crumbs {
   animation: pet-crumb 0.7s steps(4, end) infinite;
 }
+/* A picture's frames (the maker's 움직임, lib/petFrames.ts): the same trick as
+   the twinkle. .pet-fr is the window, the reel holds the 2 to 4 pictures one
+   window-height apart and steps up a picture at a time (the duration and
+   steps() are set inline from the frame count and fps). A translate of a
+   layer that stays on screen, so it costs what the twinkle does. */
+.pet-fr {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.pet-fr-reel {
+  position: absolute;
+  inset: 0;
+}
+.pet-fr-reel > .pet-layer {
+  bottom: auto;
+}
+@keyframes pet-fr-2 {
+  to {
+    transform: translateY(-200%);
+  }
+}
+@keyframes pet-fr-3 {
+  to {
+    transform: translateY(-300%);
+  }
+}
+@keyframes pet-fr-4 {
+  to {
+    transform: translateY(-400%);
+  }
+}
 
 /* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
    hopped by one: always whole dots. These move HTML boxes, so a dot is
@@ -1356,41 +1346,6 @@
     transform: translateY(-6.25cqmin);
   }
 }
-/* The ghost drifts a dot at a time, which the finer grid makes smooth. */
-@keyframes pet-float {
-  0%,
-  12% {
-    transform: translateY(0);
-  }
-  13%,
-  25% {
-    transform: translateY(-3.125cqmin);
-  }
-  26%,
-  37% {
-    transform: translateY(-6.25cqmin);
-  }
-  38%,
-  50% {
-    transform: translateY(-9.375cqmin);
-  }
-  51%,
-  62% {
-    transform: translateY(-12.5cqmin);
-  }
-  63%,
-  75% {
-    transform: translateY(-9.375cqmin);
-  }
-  76%,
-  87% {
-    transform: translateY(-6.25cqmin);
-  }
-  88%,
-  100% {
-    transform: translateY(-3.125cqmin);
-  }
-}
 @keyframes pet-chew {
   0%,
   50% {
@@ -1399,20 +1354,6 @@
   51%,
   100% {
     transform: translateY(6.25cqmin);
-  }
-}
-@keyframes pet-rock {
-  0%,
-  33% {
-    transform: translateX(-6.25cqmin);
-  }
-  34%,
-  66% {
-    transform: translateX(0);
-  }
-  67%,
-  100% {
-    transform: translateX(6.25cqmin);
   }
 }
 @keyframes pet-twinkle-reel {
@@ -1459,8 +1400,7 @@
 }
 
 /* ---- readouts printed on the glass ---- */
-.pet-screen-top,
-.pet-screen-bottom {
+.pet-screen-top {
   flex: 0 0 auto;
   display: flex;
   font-size: 9px;
@@ -1481,35 +1421,11 @@
   flex: 0 0 auto;
   color: var(--accent);
 }
-.pet-screen-mood.mood-hungry {
-  color: var(--warning);
-}
 .pet-screen-mood.mood-sad {
   color: var(--danger);
 }
 .pet-screen-mood.mood-ok {
   color: color-mix(in srgb, var(--fg) 55%, transparent);
-}
-.pet-screen-bottom {
-  flex-direction: column;
-  gap: 2px;
-}
-/* The stage and how far it is from the next one — printed on the glass, since
-   the case itself carries no text. */
-.pet-screen-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: 8px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
-}
-.pet-screen-foot span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pet-screen-foot span:first-child {
-  color: color-mix(in srgb, var(--fg) 70%, transparent);
 }
 
 .pet-gauge {
@@ -1519,6 +1435,8 @@
 }
 .pet-gauge-label {
   flex: 0 0 auto;
+  /* The four stat names line up, so their cells do too. */
+  min-width: 4.2em;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   font-size: 8px;
 }
@@ -1531,133 +1449,14 @@
   height: 4px;
   background: rgb(255 255 255 / 0.07);
 }
-.pet-cell.on.tone-food {
+.pet-cell.on {
   background: var(--accent);
 }
-.pet-cell.on.tone-mood {
-  background: var(--accent-2);
-}
-
-/* The ask field's own way out: it stays open while the pet answers on the glass. */
-.pet-ask-x {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: 3px;
-  color: color-mix(in srgb, var(--fg) 50%, transparent);
-  cursor: pointer;
-}
-.pet-ask-x:hover {
-  background: var(--hover-strong);
-  color: var(--fg);
-}
-
-/* ---- the three keys ----
-   Centred on the case, under the deck. They are the device's own controls and the
-   target of the keyboard shortcuts; the icon strip on the glass does the same
-   things in one press. */
-.pet-pad {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 5px 0 1px;
-}
-.pet-key {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 19px;
-  height: 19px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--fg) 22%, transparent);
-  border-radius: 50%;
-  /* Domed plastic: lit from above, with a shadow where it meets the case. */
-  background:
-    radial-gradient(70% 60% at 40% 26%, rgb(255 255 255 / 0.3), transparent 70%),
-    linear-gradient(180deg, color-mix(in srgb, var(--fg) 22%, var(--bg-3)), color-mix(in srgb, var(--bg) 60%, black));
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.18),
-    0 2px 3px rgb(0 0 0 / 0.5);
-  color: color-mix(in srgb, var(--fg) 55%, transparent);
-  cursor: pointer;
-}
-.pet-key:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-}
-.pet-key:active {
-  transform: translateY(1px);
-  box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.5);
-}
-.pet-key-cap {
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* ---- the deck ----
-   What is left on the face of the case now that the three buttons are gone: the
-   name, the power lamp, and a clock you can press for the clock screen. */
-.pet-clock-btn {
+.pet-gauge-num {
   margin-left: auto;
-  padding: 1px 4px;
-  font-family: var(--font-mono, monospace);
-  font-size: 9px;
-  letter-spacing: 0.02em;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 3px;
-  color: color-mix(in srgb, var(--fg) 45%, transparent);
-  cursor: pointer;
-}
-.pet-clock-btn:hover {
-  border-color: var(--accent-border);
-  color: var(--accent);
-}
-.pet-clock-btn.on {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ---- the details drawer ---- */
-.pet-stats {
-  margin: 0;
-  padding: 7px 2px 1px;
-  border-top: 1px solid var(--hairline);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.pet-stats > div {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.pet-stats dt {
-  color: var(--fg-dim);
-  font-size: 9px;
-}
-.pet-stats dd {
-  margin: 0;
-  font-size: 9px;
+  font-size: 8px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-.pet-stats .warn {
-  color: var(--warning);
-}
-/* Collapsed: the screen alone, pocket-sized. */
-.pet-collapsed {
-  width: 132px;
 }
 
 /* 리븐펫's own window: nothing but the device floats there, so the document has

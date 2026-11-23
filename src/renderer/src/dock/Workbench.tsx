@@ -15,13 +15,16 @@ import NotesPanel from './panels/NotesPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import DbPanel from './panels/DbPanel'
 import ChatPanel from './panels/ChatPanel'
+import { dropCliChat } from '../state/cliChats'
+import CliChatPanel, { type CliChatParams } from './panels/CliChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
 import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
+import PanelBgHost from './PanelBgHost'
 import RivenTab from './RivenTab'
 import ErrorBoundary from '../components/ErrorBoundary'
 import { MIN_PANEL_WIDTH } from './registry'
-import { useSession, flushSessionSaveSync, clearPaneState, workspaceName } from '../state/session'
+import { useSession, flushSessionSaveSync, clearPaneState, setPaneState, workspaceName } from '../state/session'
 import {
   setActiveApi,
   getActiveApi,
@@ -163,24 +166,29 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
     // crash shows an inline error INSTEAD of blanking the whole workspace dock.
     // HostScope: popups a panel opens render in the window the panel is drawn in
     // (a popped-out group is a separate window; see lib/hostWindow).
-    const boxed = (label: string, node: JSX.Element): JSX.Element => (
+    // PanelBgHost: the panel's background image (its own, else its kind's
+    // default), as CSS variables on a display: contents host; turning it on or
+    // off is a CSS change, no panel remounts.
+    const boxed = (label: string, props: IDockviewPanelProps, node: JSX.Element): JSX.Element => (
       <HostScope>
-        <ErrorBoundary label={label}>{node}</ErrorBoundary>
+        <PanelBgHost kind={label} workspace={workspace} panelId={props.api.id}>
+          <ErrorBoundary label={label}>{node}</ErrorBoundary>
+        </PanelBgHost>
       </HostScope>
     )
     return {
-      editor: () => boxed('editor', <EditorPanel workspace={workspace} />),
+      editor: (props: IDockviewPanelProps) => boxed('editor', props, <EditorPanel workspace={workspace} />),
       preview: (props: IDockviewPanelProps) =>
-        boxed('preview', <PreviewPanel workspace={workspace} api={props.api} />),
-      search: () => boxed('search', <SearchPanel workspace={workspace} />),
-      git: () => boxed('git', <GitPanel workspace={workspace} />),
-      changes: () => boxed('changes', <ChangesPanel workspace={workspace} />),
-      notes: () => boxed('notes', <NotesPanel workspace={workspace} />),
-      api: () => boxed('api', <ApiClientPanel />),
-      db: () => boxed('db', <DbPanel />),
-      agentgroup: () => boxed('agentgroup', <AgentGroupPanel workspace={workspace} />),
-      scheduler: () => boxed('scheduler', <SchedulerPanel workspace={workspace} />),
-      explorer: () => boxed('explorer', <ExplorerPanel workspace={workspace} />),
+        boxed('preview', props, <PreviewPanel workspace={workspace} api={props.api} />),
+      search: (props: IDockviewPanelProps) => boxed('search', props, <SearchPanel workspace={workspace} />),
+      git: (props: IDockviewPanelProps) => boxed('git', props, <GitPanel workspace={workspace} />),
+      changes: (props: IDockviewPanelProps) => boxed('changes', props, <ChangesPanel workspace={workspace} />),
+      notes: (props: IDockviewPanelProps) => boxed('notes', props, <NotesPanel workspace={workspace} />),
+      api: (props: IDockviewPanelProps) => boxed('api', props, <ApiClientPanel />),
+      db: (props: IDockviewPanelProps) => boxed('db', props, <DbPanel />),
+      agentgroup: (props: IDockviewPanelProps) => boxed('agentgroup', props, <AgentGroupPanel workspace={workspace} />),
+      scheduler: (props: IDockviewPanelProps) => boxed('scheduler', props, <SchedulerPanel workspace={workspace} />),
+      explorer: (props: IDockviewPanelProps) => boxed('explorer', props, <ExplorerPanel workspace={workspace} />),
       chat: (
         props: IDockviewPanelProps<{
           chatKey: string
@@ -190,21 +198,32 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       ) =>
         boxed(
           'chat',
-          <ChatPanel
-            workspace={workspace}
-            chatKey={props.params.chatKey}
-            pinnedTitle={props.params.pinnedTitle}
-            agent={props.params.agent}
-            setTitle={(title) => props.api.setTitle(title)}
-            api={props.api}
-          />
+          props,
+          // The pane's own engine (pane state, set when it was made): a saved
+          // layout's headless chats stay headless, CLI chats stay CLI chats.
+          useSession.getState().sessions[workspace]?.panes?.[props.params.chatKey]?.engine === 'cli' ? (
+            <CliChatPanel workspace={workspace} params={props.params} api={props.api} />
+          ) : (
+            <ChatPanel
+              workspace={workspace}
+              chatKey={props.params.chatKey}
+              pinnedTitle={props.params.pinnedTitle}
+              agent={props.params.agent}
+              setTitle={(title) => props.api.setTitle(title)}
+              api={props.api}
+            />
+          )
         ),
+      // Panes opened by the experimental command before CLI chats were chat
+      // panes (clichat-<id>): still restored.
+      clichat: (props: IDockviewPanelProps<CliChatParams>) =>
+        boxed('clichat', props, <CliChatPanel workspace={workspace} params={props.params} api={props.api} />),
       prdiff: (props: IDockviewPanelProps<PrDiffParams>) =>
-        boxed('prdiff', <PrDiffPanel params={props.params} />),
+        boxed('prdiff', props, <PrDiffPanel params={props.params} />),
       terminal: (props: IDockviewPanelProps<TerminalParams>) =>
-        boxed('terminal', <TerminalPanel workspace={workspace} params={props.params} api={props.api} />),
+        boxed('terminal', props, <TerminalPanel workspace={workspace} params={props.params} api={props.api} />),
       launcher: (props: IDockviewPanelProps) =>
-        boxed('launcher', <LauncherPanel workspace={workspace} api={props.api} />)
+        boxed('launcher', props, <LauncherPanel workspace={workspace} api={props.api} />)
     }
   }, [workspace])
 
@@ -320,8 +339,17 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             // closed terminal has to forget it — otherwise the record outlives
             // the pane, and "closed" would not mean closed.
             clearPaneState(workspace, panel.id)
+          } else if (panel.id.startsWith('clichat-')) {
+            window.api.cliChat.stop(panel.id)
+            dropCliChat(panel.id)
+            clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('chat-')) {
+            // A chat pane runs on the headless driver or the CLI chat
+            // (pane state `engine`); stopping the one it does not use is a
+            // no-op.
             window.api.chat.stop(panel.id)
+            window.api.cliChat.stop(panel.id)
+            dropCliChat(panel.id)
             // A team member's pane is the member's desk, not a throwaway chat:
             // what it did is the team's work, and the org chart reopens it
             // (reopenChat). So its conversation — session id, transcript,
@@ -329,6 +357,12 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             // A member dropped from its team later is cleaned up then (see
             // state/workspaceCleanup).
             if (!isTeamMember(workspace, panel.id)) clearPaneState(workspace, panel.id)
+          } else if (useSession.getState().sessions[workspace]?.panes?.[panel.id]?.bg !== undefined) {
+            // Other kinds keep no conversation, but a background picked for the
+            // panel is its own: a closed panel's goes with it (a singleton like
+            // 'git' reopened later starts from its kind's default), and the
+            // image becomes collectable.
+            setPaneState(workspace, panel.id, { bg: undefined })
           }
           // A pure close does NOT reliably fire onDidLayoutChange in dockview, so the
           // debounced/structural save below can miss it and the closed panel revives
@@ -548,7 +582,10 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       if (getActiveApi() === api) setActiveApi(null)
       for (const p of api.panels) {
         if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
-        else if (p.id.startsWith('chat-')) window.api.chat.stop(p.id)
+        else if (p.id.startsWith('chat-')) {
+          window.api.chat.stop(p.id)
+          window.api.cliChat.stop(p.id)
+        } else if (p.id.startsWith('clichat-')) window.api.cliChat.stop(p.id)
       }
     }
   }, [workspace])
