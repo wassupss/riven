@@ -1345,6 +1345,8 @@
 }
 .pet-gauge-label {
   flex: 0 0 auto;
+  /* The four stat names line up, so their cells do too. */
+  min-width: 4.2em;
   color: color-mix(in srgb, var(--fg) 45%, transparent);
   font-size: 8px;
 }
