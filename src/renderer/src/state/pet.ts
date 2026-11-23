@@ -862,21 +862,83 @@ export function archive(s: PetSave, now: number): AlbumEntry[] {
 }
 
 // ---------------------------------------------------------------------------
-// The nest: more than one pet at a time. Only the one out (the one on screen)
-// earns XP from the agents' work; the others wait where they were. Each keeps
-// its own save; the album is the keeper's, so it is shared and kept in step.
+// The nest: more than one pet at a time. Several can be out on screen at once
+// (`shown`, by birthday); the work is shared among them as food (splitFood),
+// and the ones put away wait where they were. One of those out is the focused
+// pet (`active`, 주인공): the one that speaks, whose panel, decorations and
+// motions the buttons act on, and it is always out. Each keeps its own save;
+// the album is the keeper's, so it is shared and kept in step.
 // ---------------------------------------------------------------------------
 
 /** How many pets can be kept at once. */
 export const MAX_PETS = 4
-/** The save format of pet.json. 2 was the tamagotchi nest, a bare pet before that. */
-export const NEST_VERSION = 3
+/**
+ * The save format of pet.json. 2 was the tamagotchi nest, a bare pet before
+ * that; 4 adds `shown` (a version 3 nest showed its active pet only, and so
+ * reads as showing that one).
+ */
+export const NEST_VERSION = 4
 
 export interface Nest {
   version: typeof NEST_VERSION
-  /** Which pet is shown and the buttons act on. */
+  /** The focused pet (주인공): the one that speaks and the buttons act on. Always shown. */
   active: number
+  /**
+   * The birthdays of the pets out on screen, in nest order, the focused one
+   * among them. Birthdays, not places: a place shifts when a pet is let go.
+   */
+  shown: number[]
   pets: PetSave[]
+}
+
+/**
+ * The pets out on screen, read defensively: birthdays of pets in the nest
+ * only, once each, in nest order, and always the focused one. A nest from
+ * before `shown` (or a broken one) shows its focused pet alone.
+ */
+export function shownOf(n: { pets: PetSave[]; active: number; shown?: unknown }): number[] {
+  const want = new Set(
+    Array.isArray(n.shown) ? n.shown.filter((b): b is number => typeof b === 'number' && Number.isFinite(b)) : []
+  )
+  const focus = n.pets[n.active]?.bornAt
+  const out: number[] = []
+  for (const p of n.pets) if ((want.has(p.bornAt) || p.bornAt === focus) && !out.includes(p.bornAt)) out.push(p.bornAt)
+  return out
+}
+
+/** Whether pet `i` is out on screen. */
+export function isShown(n: { pets: PetSave[]; active: number; shown?: unknown }, i: number): boolean {
+  const p = n.pets[i]
+  return !!p && shownOf(n).includes(p.bornAt)
+}
+
+const sameList = (a: readonly number[], b: readonly number[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i])
+
+/**
+ * Share one sample's food among the `k` pets out: each key's tokens split
+ * evenly, the remainder (fewer than k tokens) one each to the first ones, so
+ * the total is kept to the token and the same sample always splits the same
+ * way. Every pet's token carry (tokensToXp) keeps the small shares from being
+ * rounded away.
+ *
+ * Even shares for now; when the pet assistant team lands, each pet's share
+ * follows the work its role did instead.
+ */
+export function splitFood(deltas: Record<string, number>, k: number): Array<Record<string, number>> {
+  const n = Math.max(1, Math.floor(k))
+  const out: Array<Record<string, number>> = Array.from({ length: n }, () => ({}))
+  for (const [key, raw] of Object.entries(deltas)) {
+    const d = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0
+    if (d <= 0) continue
+    const each = Math.floor(d / n)
+    const extra = d % n
+    for (let i = 0; i < n; i++) {
+      const v = each + (i < extra ? 1 : 0)
+      if (v > 0) out[i][key] = v
+    }
+  }
+  return out
 }
 
 /** Give every pet the same album, the longest one any of them carries. */
@@ -897,26 +959,60 @@ export function normalizeNest(raw: unknown, now: number): Nest {
   // An empty nest is a broken save; it still gets someone.
   if (!list.length) list.push(null)
   const pets = shareAlbum(list.map((p) => normalize(p, now)))
-  const active = Math.floor(num(o?.active, 0))
-  return { version: NEST_VERSION, active: Math.min(pets.length - 1, Math.max(0, active)), pets }
+  // A pet is known by its birthday (what is out, a friend's battle record),
+  // so no two in a nest share one: a later twin is made a millisecond younger.
+  for (let i = 1; i < pets.length; i++) {
+    let b = pets[i].bornAt
+    while (pets.slice(0, i).some((p) => p.bornAt === b)) b += 1
+    if (b !== pets[i].bornAt) pets[i] = { ...pets[i], bornAt: b }
+  }
+  const active = Math.min(pets.length - 1, Math.max(0, Math.floor(num(o?.active, 0))))
+  // A version 3 nest has no list, and showed its active pet alone (shownOf).
+  return { version: NEST_VERSION, active, shown: shownOf({ pets, active, shown: o?.shown }), pets }
 }
 
-/** Bring out pet `i`. */
+/** Make pet `i` the focused one (주인공), bringing it out if it was put away. */
 export function show(n: Nest, i: number): Nest {
-  if (i === n.active || i < 0 || i >= n.pets.length) return n
-  return { ...n, active: i }
-}
-
-/** A new pet at level 1, brought out at once. Nothing happens when the nest is full. */
-export function adopt(n: Nest, now: number, hatch?: Hatch | null): Nest {
-  if (n.pets.length >= MAX_PETS) return n
-  const fresh = { ...initialState(now, hatch), album: n.pets[0]?.album ?? [] }
-  return { ...n, pets: [...n.pets, fresh], active: n.pets.length }
+  if (i < 0 || i >= n.pets.length) return n
+  const shown = shownOf({ pets: n.pets, active: i, shown: shownOf(n) })
+  if (i === n.active && sameList(shown, n.shown ?? [])) return n
+  return { ...n, active: i, shown }
 }
 
 /**
- * Let pet `i` (the shown one by default) go, into the album. Never the last one.
- * When it was the shown one, the next is brought out.
+ * Bring pet `i` out beside the others, or put it away. One pet is always out:
+ * the last one out stays. Putting the focused one away hands the focus to the
+ * first other one out.
+ */
+export function setShown(n: Nest, i: number, on: boolean): Nest {
+  const p = n.pets[i]
+  if (!p) return n
+  const cur = shownOf(n)
+  if (on) {
+    if (cur.includes(p.bornAt)) return n
+    return { ...n, shown: shownOf({ ...n, shown: [...cur, p.bornAt] }) }
+  }
+  if (!cur.includes(p.bornAt) || cur.length <= 1) return n
+  const rest = cur.filter((b) => b !== p.bornAt)
+  const active = i === n.active ? n.pets.findIndex((q) => q.bornAt === rest[0]) : n.active
+  return { ...n, active, shown: shownOf({ pets: n.pets, active, shown: rest }) }
+}
+
+/** A new pet at level 1, out at once as the focused one. Nothing happens when the nest is full. */
+export function adopt(n: Nest, now: number, hatch?: Hatch | null): Nest {
+  if (n.pets.length >= MAX_PETS) return n
+  // Its own birthday, even when two arrive in the same millisecond.
+  const bornAt = Math.max(now, ...n.pets.map((p) => p.bornAt + 1))
+  const fresh = { ...initialState(now, hatch), bornAt, album: n.pets[0]?.album ?? [] }
+  const pets = [...n.pets, fresh]
+  const active = n.pets.length
+  return { ...n, pets, active, shown: shownOf({ pets, active, shown: shownOf(n) }) }
+}
+
+/**
+ * Let pet `i` (the focused one by default) go, into the album. Never the last
+ * one. When it was the focused one, the focus goes to another one out, or,
+ * with none other out, to the next one, which comes out.
  */
 export function release(n: Nest, now: number, i: number = n.active): Nest {
   if (n.pets.length <= 1 || i < 0 || i >= n.pets.length) return n
@@ -925,8 +1021,15 @@ export function release(n: Nest, now: number, i: number = n.active): Nest {
     n.pets.filter((_, k) => k !== i),
     album
   )
-  if (i !== n.active) return { ...n, pets, active: i < n.active ? n.active - 1 : n.active }
-  return { ...n, pets, active: Math.min(n.active, pets.length - 1) }
+  const gone = n.pets[i].bornAt
+  const rest = shownOf(n).filter((b) => b !== gone)
+  let active: number
+  if (i !== n.active) active = i < n.active ? n.active - 1 : n.active
+  else {
+    const other = pets.findIndex((p) => rest.includes(p.bornAt))
+    active = other >= 0 ? other : Math.min(n.active, pets.length - 1)
+  }
+  return { ...n, pets, active, shown: shownOf({ pets, active, shown: rest }) }
 }
 
 /**
@@ -942,14 +1045,17 @@ export function restart(n: Nest, now: number, i: number = n.active): Nest {
     ...initialState(now, hatch),
     species: old.species,
     name: old.name,
-    // A new birthday is a new pet to friends' battle records; never the same one twice.
-    bornAt: Math.max(now, old.bornAt + 1)
+    // A new birthday is a new pet to friends' battle records; never the same
+    // one twice, and never one another pet in the nest has.
+    bornAt: Math.max(now, ...n.pets.map((p) => p.bornAt + 1))
   }
   const pets = shareAlbum(
     n.pets.map((p, k) => (k === i ? fresh : p)),
     album
   )
-  return { ...n, pets }
+  // Out on screen before, out on screen still, under its new birthday.
+  const shown = shownOf(n).map((b) => (b === old.bornAt ? fresh.bornAt : b))
+  return { ...n, pets, shown: shownOf({ pets, active: n.active, shown }) }
 }
 
 // ---------------------------------------------------------------------------
@@ -976,13 +1082,17 @@ export interface PetBrief {
   motion?: MotionSet
 }
 export interface NestBrief {
+  /** The focused pet (주인공). */
   active: number
+  /** The birthdays of the pets out on screen (shownOf). */
+  shown: number[]
   pets: PetBrief[]
 }
 
-export function briefOf(n: { pets: PetSave[]; active: number }): NestBrief {
+export function briefOf(n: { pets: PetSave[]; active: number; shown?: unknown }): NestBrief {
   return {
     active: n.active,
+    shown: shownOf(n),
     pets: n.pets.map((p) => ({
       bornAt: p.bornAt,
       name: p.name,
@@ -1016,7 +1126,10 @@ export interface PetRef {
 }
 export type PetCommand =
   | { op: 'adopt'; hatch: Hatch | null }
+  /** Make it the focused one (주인공), bringing it out if it was put away. */
   | ({ op: 'select' } & PetRef)
+  /** Bring it out beside the others (on), or put it away; one always stays out. */
+  | ({ op: 'setShown'; on: boolean } & PetRef)
   | ({ op: 'rename'; name: string } & PetRef)
   | ({ op: 'restart' } & PetRef)
   | ({ op: 'release' } & PetRef)
@@ -1044,6 +1157,8 @@ export function applyCommand(n: Nest, cmd: PetCommand, now: number): { nest: Nes
   switch (cmd.op) {
     case 'select':
       return { nest: show(n, cmd.index), result: 'ok' }
+    case 'setShown':
+      return { nest: setShown(n, cmd.index, cmd.on === true), result: 'ok' }
     case 'rename': {
       const name = String(cmd.name ?? '').trim().slice(0, PET_NAME_MAX)
       if (name === p.name) return { nest: n, result: 'ok' }
@@ -1082,37 +1197,49 @@ export function withPetMotion(s: PetSave, motion: unknown): PetSave {
 
 const FILE = 'pet.json'
 
+/** A level just reached, by which pet, for it to celebrate. */
+export interface LevelUp {
+  bornAt: number
+  level: number
+}
+
 interface PetStore {
-  /** The pet on screen: always `pets[active]`, kept so readers need not index. */
+  /** The focused pet: always `pets[active]`, kept so readers need not index. */
   pet: PetSave
   pets: PetSave[]
   active: number
+  /** The birthdays of the pets out on screen (shownOf), the focused one among them. */
+  shown: number[]
   loaded: boolean
   // Per-account daily totals as of the last sample. Deliberately NOT persisted:
   // after a restart every account is "new" again, so the day's already-counted
   // tokens are re-baselined instead of being credited twice.
   seen: Record<string, number>
   load: () => Promise<void>
-  /** Hand out a running seasonal event to the pet that is out. */
+  /** Hand out a running seasonal event to the focused pet. */
   tick: (now?: number) => void
   /**
    * Record a usage sample and credit the XP. Keys are foodTotals'
    * `<formula>:<account>::<flavor>`, so each model's tokens are tracked (and
-   * credited) separately. Only the pet that is out earns.
+   * credited) separately. The pets out share it (splitFood); the ones put
+   * away earn nothing.
    */
   sample: (totals: Record<string, number>, now?: number) => void
-  /** The level it has just reached, for the pet to celebrate. Cleared by ack. */
-  justLeveled: number | null
+  /**
+   * The level a pet has just reached, for it to celebrate: the focused one's
+   * when it was among them, else the first one out that did. Cleared by ack.
+   */
+  justLeveled: LevelUp | null
   ackLevel: () => void
   /** Back from a break of `rested` ms that interrupted a `worked` ms streak. */
   takeBreak: (worked: number, rested: number, nagMs?: number) => void
-  /** Put a friend battle on the shown pet's record; false when it already counted today. */
+  /** Put a friend battle on the focused pet's record; false when it already counted today. */
   recordBattle: (foeBornAt: number, result: 'win' | 'loss' | 'draw', upset?: boolean) => boolean
-  /** Put a won prize on the shown pet, or take it off. */
+  /** Put a won prize on the focused pet, or take it off. */
   wear: (id: Accessory) => void
   /** Bring the pets' snapshots of custom species up to date with the keeper's list. */
   syncCustom: (own: Array<{ id: string } & CustomDesign>) => void
-  /** Look after the nest: a new pet, switch, rename, start over, let go (see applyCommand). */
+  /** Look after the nest: a new pet, focus, show, rename, start over, let go (see applyCommand). */
   apply: (cmd: PetCommand) => PetResult
   /**
    * Forget the loaded nest, so the next load() reads pet.json again. Called when
@@ -1122,9 +1249,10 @@ interface PetStore {
   unload: () => void
 }
 
-const nestOf = (s: { pets: PetSave[]; active: number }): Nest => ({
+const nestOf = (s: { pets: PetSave[]; active: number; shown: number[] }): Nest => ({
   version: NEST_VERSION,
   active: s.active,
+  shown: s.shown,
   pets: s.pets
 })
 
@@ -1144,25 +1272,60 @@ export function flushPetSave(): void {
   void window.api.config.save(FILE, nestOf(usePet.getState()))
 }
 
+/**
+ * Feed the pets out one sample's food, shared among them (splitFood). The
+ * nest's pets as they are now, and the level ups it brought, the focused
+ * one's first. The same array when nobody gained.
+ */
+export function feedShown(
+  n: { pets: PetSave[]; active: number; shown?: unknown },
+  deltas: Record<string, number>,
+  now: number
+): { pets: PetSave[]; leveled: LevelUp[] } {
+  const out = shownOf(n)
+  const shares = splitFood(deltas, out.length)
+  let changed = false
+  const leveled: LevelUp[] = []
+  const pets = n.pets.map((before, i) => {
+    const k = out.indexOf(before.bornAt)
+    if (k < 0) return before
+    // One gain per flavour, so the diet records which model actually paid.
+    let p = before
+    for (const [key, d] of Object.entries(shares[k])) p = earn(p, d, now, flavorOf(key.split('::')[1] ?? ''))
+    if (p === before) return before
+    changed = true
+    const lvl = levelOf(p.xp).level
+    if (lvl > levelOf(before.xp).level) {
+      const up = { bornAt: p.bornAt, level: lvl }
+      if (i === n.active) leveled.unshift(up)
+      else leveled.push(up)
+    }
+    return p
+  })
+  return { pets: changed ? pets : n.pets, leveled }
+}
+
 export const usePet = create<PetStore>((set, get) => {
   /** Swap in a new nest and persist it. */
-  const commit = (n: { pets: PetSave[]; active: number }): void => {
+  const commit = (n: { pets: PetSave[]; active: number; shown?: unknown }): void => {
     noteSnapshots(n.pets)
-    set({ pets: n.pets, active: n.active, pet: n.pets[n.active] })
-    scheduleSave(nestOf(n))
+    const shown = shownOf(n)
+    set({ pets: n.pets, active: n.active, shown, pet: n.pets[n.active] })
+    scheduleSave(nestOf({ pets: n.pets, active: n.active, shown }))
   }
-  /** Replace the shown pet with what `fn` makes of it; nothing if unchanged. */
+  /** Replace the focused pet with what `fn` makes of it; nothing if unchanged. */
   const onActive = (fn: (p: PetSave) => PetSave): void => {
-    const { pets, active } = get()
+    const { pets, active, shown } = get()
     const next = fn(pets[active])
     if (next === pets[active]) return
-    commit({ pets: pets.map((p, i) => (i === active ? next : p)), active })
+    commit({ pets: pets.map((p, i) => (i === active ? next : p)), active, shown })
   }
   const first = initialState(Date.now())
   return {
     pet: first,
     pets: [first],
     active: 0,
+    shown: [first.bornAt],
     loaded: false,
     seen: {},
     justLeveled: null,
@@ -1172,7 +1335,7 @@ export const usePet = create<PetStore>((set, get) => {
       const raw = await window.api.config.load(FILE).catch(() => null)
       const n = normalizeNest(raw, Date.now())
       noteSnapshots(n.pets)
-      set({ pets: n.pets, active: n.active, pet: n.pets[n.active], loaded: true })
+      set({ pets: n.pets, active: n.active, shown: n.shown, pet: n.pets[n.active], loaded: true })
       // A save in an older format is written back in this one at once, so
       // Settings (which reads the file) sees the same pets.
       const old = raw as { version?: unknown } | null
@@ -1184,18 +1347,11 @@ export const usePet = create<PetStore>((set, get) => {
     sample: (totals, now = Date.now()) => {
       const { deltas, seen } = sampleAccounts(get().seen, totals)
       set({ seen })
-      onActive((before) => {
-        // One gain per flavour, so the diet records which model actually paid.
-        let p = before
-        for (const [key, delta] of Object.entries(deltas)) {
-          if (delta <= 0) continue
-          p = earn(p, delta, now, flavorOf(key.split('::')[1] ?? ''))
-        }
-        if (p === before) return p
-        const lvl = levelOf(p.xp).level
-        if (lvl > levelOf(before.xp).level) set({ justLeveled: lvl })
-        return p
-      })
+      const s = get()
+      const { pets, leveled } = feedShown(s, deltas, now)
+      if (pets === s.pets) return
+      if (leveled.length) set({ justLeveled: leveled[0] })
+      commit({ pets, active: s.active, shown: s.shown })
     },
     takeBreak: (worked, rested, nagMs) => onActive((p) => rest(p, worked, rested, Date.now(), nagMs)),
     recordBattle: (foeBornAt, result, upset) => {
@@ -1207,19 +1363,20 @@ export const usePet = create<PetStore>((set, get) => {
     syncCustom: (own) => {
       if (!get().loaded) return
       const pets = refreshCustom(get().pets, own)
-      if (pets !== get().pets) commit({ pets, active: get().active })
+      if (pets !== get().pets) commit({ pets, active: get().active, shown: get().shown })
     },
     apply: (cmd) => {
       const before = nestOf(get())
       const { nest, result } = applyCommand(before, cmd, Date.now())
-      if (nest.pets === before.pets && nest.active === before.active) return result
-      // A different pet out (or a new one where it was): nothing to celebrate
-      // from the one before, and a restarted pet must not earn today's earlier
-      // tokens, so the counters start again from here.
-      if (nest.active !== before.active || nest.pets[nest.active] !== before.pets[before.active]) {
+      if (nest.pets === before.pets && nest.active === before.active && sameList(shownOf(nest), before.shown))
+        return result
+      // A different pet in focus (or a new one where it was): nothing to
+      // celebrate from the one before.
+      if (nest.active !== before.active || nest.pets[nest.active] !== before.pets[before.active])
         set({ justLeveled: null })
-        if (cmd.op === 'restart' && cmd.index === before.active) set({ seen: {} })
-      }
+      // A restarted pet that is out must not earn today's earlier tokens, so
+      // the counters start again from here.
+      if (cmd.op === 'restart' && before.shown.includes(before.pets[cmd.index]?.bornAt ?? NaN)) set({ seen: {} })
       commit(nest)
       return result
     },

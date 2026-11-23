@@ -8,12 +8,13 @@ import { Creature } from './PetDevice'
 // ---------------------------------------------------------------------------
 // The pet's own control panel ("내 펫"), opened from its right-click menu in the
 // card beside it. Everything about keeping the pets is here as plain buttons:
-// which one is out, rename, start over (back to level 1), let go, a new pet
-// (random or one of the keeper's own species), where it lives, on top, hide. Settings > 리븐펫 lists
-// the same things with the same words in the same order (PetNestSettings).
+// which ones are out on screen and which of them is the focused one (주인공),
+// rename, start over (back to level 1), let go, a new pet (random or one of
+// the keeper's own species), where it lives, on top, hide. Settings > 리븐펫
+// lists the same things with the same words in the same order (PetNestSettings).
 //
-// The actions on a pet act on the one that is out: show another one first to
-// look after it. Starting over and letting go ask once, in place.
+// The actions on a pet act on the focused one: make another one 주인공 first
+// to look after it. Starting over and letting go ask once, in place.
 // ---------------------------------------------------------------------------
 
 type Danger = 'restart' | 'release'
@@ -26,6 +27,7 @@ export default function PetManage({
   note,
   onClose,
   onSelect,
+  onShow,
   onRename,
   onRestart,
   onRelease,
@@ -45,7 +47,10 @@ export default function PetManage({
   /** A word on what the last press did (a full nest...), or nothing. */
   note: string | null
   onClose: () => void
+  /** Make pet `i` the focused one (주인공). */
   onSelect: (i: number) => void
+  /** Bring pet `i` out on screen beside the others, or put it away. */
+  onShow: (i: number, on: boolean) => void
   onRename: () => void
   onRestart: () => void
   onRelease: () => void
@@ -66,11 +71,11 @@ export default function PetManage({
   // What the next pet will be: a random draw (null), or one of the keeper's own.
   const [pick, setPick] = useState<string | null>(null)
   const chosen = own.find((o) => o.id === pick) ?? null
-  const shown = nest.pets[nest.active]
+  const focused = nest.pets[nest.active]
   // A question about one pet is not carried over to another (switched from
   // Settings meanwhile).
-  const shownAt = shown?.bornAt
-  useEffect(() => setAsking(null), [shownAt])
+  const focusedAt = focused?.bornAt
+  useEffect(() => setAsking(null), [focusedAt])
   const full = nest.pets.length >= MAX_PETS
   const confirm = (): void => {
     if (asking === 'restart') onRestart()
@@ -88,24 +93,51 @@ export default function PetManage({
       </div>
 
       <div className="pet-nest-list">
-        {nest.pets.map((p, i) => (
-          <div key={`${p.bornAt}-${i}`} className={`pet-nest-row${i === nest.active ? ' on' : ''}`}>
-            <span className="pet-mini">
-              <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
-            </span>
-            <span className="pet-nest-text">
-              <b>{petTitle(p, t)}</b>
-              <span>{petSubtitle(p, t)}</span>
-            </span>
-            {i === nest.active ? (
-              <span className="pet-tag">{t('pet.nest.shown')}</span>
-            ) : (
-              <button type="button" className="pet-btn small" onClick={() => onSelect(i)}>
-                {t('pet.nest.show')}
+        {nest.pets.map((p, i) => {
+          const out = nest.shown.includes(p.bornAt)
+          // The one pet left out stays out.
+          const last = out && nest.shown.length <= 1
+          return (
+            <div
+              key={`${p.bornAt}-${i}`}
+              className={`pet-nest-row${i === nest.active ? ' on' : ''}${out ? '' : ' off'}`}
+            >
+              <span className="pet-mini">
+                <Creature species={p.species} mood="ok" chewing={false} level={p.level} />
+              </span>
+              <span className="pet-nest-text">
+                <b>{petTitle(p, t)}</b>
+                <span>{petSubtitle(p, t)}</span>
+              </span>
+              {i === nest.active ? (
+                <span className="pet-tag" title={t('pet.nest.focusHint')}>
+                  {t('pet.nest.focused')}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="pet-btn small"
+                  title={t('pet.nest.focusHint')}
+                  onClick={() => onSelect(i)}
+                >
+                  {t('pet.nest.focus')}
+                </button>
+              )}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={out}
+                aria-label={t('pet.nest.showToggle')}
+                title={last ? t('pet.nest.lastShown') : t('pet.nest.showToggle')}
+                disabled={last}
+                className={`pet-switch${out ? ' on' : ''}`}
+                onClick={() => onShow(i, !out)}
+              >
+                <i />
               </button>
-            )}
-          </div>
-        ))}
+            </div>
+          )
+        })}
       </div>
 
       {/* What you can do with the one that is out. */}
@@ -113,7 +145,7 @@ export default function PetManage({
         <div className="pet-confirm">
           <p>
             {t(asking === 'restart' ? 'pet.nest.restartConfirm' : 'pet.nest.releaseConfirm', {
-              name: shown ? petTitle(shown, t) : ''
+              name: focused ? petTitle(focused, t) : ''
             })}
           </p>
           <div className="pet-btns">

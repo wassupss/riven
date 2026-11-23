@@ -100,7 +100,7 @@ describe('the pet save', () => {
   it('the motion command, for that pet only, through the nest brief', () => {
     const a = { ...initialState(T0), bornAt: 5 }
     const b = { ...initialState(T0), bornAt: 6 }
-    const n = { version: 3 as const, active: 0, pets: [a, b] }
+    const n = { version: 4 as const, active: 0, shown: [5], pets: [a, b] }
     const r = applyCommand(n, { op: 'motion', index: 1, bornAt: 6, motion: { resting: hop } }, T0)
     expect(r.result).toBe('ok')
     expect(r.nest.pets[1].motion).toEqual({ resting: hop })

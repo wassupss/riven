@@ -26,6 +26,11 @@ import {
   release,
   rest,
   restart,
+  feedShown,
+  isShown,
+  setShown,
+  shownOf,
+  splitFood,
   sampleAccounts,
   show,
   speciesFromBirth,
@@ -707,6 +712,170 @@ describe('looking after the nest (applyCommand)', () => {
       ['a', 1, progressOf(900).level],
       ['b', 2, progressOf(900).level],
       ['c', 3, progressOf(900).level]
+    ])
+  })
+})
+
+describe('more than one pet out (shown)', () => {
+  const now = T0 + 48 * HOUR
+  const grown = (name: string, bornAt: number, xp = 900): PetSave => ({ ...base({ xp, bornAt }), name })
+  const nest = (active: number, shown?: unknown, k = 3): ReturnType<typeof normalizeNest> =>
+    normalizeNest(
+      { version: NEST_VERSION, active, shown, pets: Array.from({ length: k }, (_, i) => grown('abcd'[i], i + 1)) },
+      now
+    )
+  const ref = (n: ReturnType<typeof normalizeNest>, i: number): { index: number; bornAt: number } => ({
+    index: i,
+    bornAt: n.pets[i].bornAt
+  })
+
+  it('reads a version 3 nest as showing its active pet alone', () => {
+    const n = normalizeNest({ version: 3, active: 1, pets: [grown('a', 1), grown('b', 2), grown('c', 3)] }, now)
+    expect(n.version).toBe(NEST_VERSION)
+    expect(n.shown).toEqual([2])
+    // A bare pet from before the nest: itself.
+    expect(normalizeNest({ ...grown('a', 7) }, now).shown).toEqual([7])
+  })
+
+  it('sanitizes what is shown: known pets once each, in nest order, the focused one always', () => {
+    expect(nest(0, [3, 99, 3, 'x', null, 2]).shown).toEqual([1, 2, 3])
+    expect(nest(2, []).shown).toEqual([3])
+    expect(nest(1, 'nope').shown).toEqual([2])
+    expect(isShown(nest(0, [3]), 2)).toBe(true)
+    expect(isShown(nest(0, [3]), 1)).toBe(false)
+    expect(shownOf({ pets: [grown('a', 1)], active: 0 })).toEqual([1])
+  })
+
+  it('gives twins in a save birthdays of their own', () => {
+    const n = normalizeNest({ version: NEST_VERSION, active: 0, pets: [grown('a', 5), grown('b', 5), grown('c', 5)] }, now)
+    expect(n.pets.map((p) => p.bornAt)).toEqual([5, 6, 7])
+  })
+
+  it('brings a pet out and puts it away, never the last one out', () => {
+    let n = nest(0)
+    let r = applyCommand(n, { op: 'setShown', ...ref(n, 2), on: true }, now)
+    expect(r.result).toBe('ok')
+    expect(r.nest.shown).toEqual([1, 3])
+    expect(r.nest.active).toBe(0)
+    n = r.nest
+    // Already out: the same nest.
+    expect(applyCommand(n, { op: 'setShown', ...ref(n, 2), on: true }, now).nest).toBe(n)
+    r = applyCommand(n, { op: 'setShown', ...ref(n, 2), on: false }, now)
+    expect(r.nest.shown).toEqual([1])
+    // The only one out stays out.
+    const one = r.nest
+    expect(applyCommand(one, { op: 'setShown', ...ref(one, 0), on: false }, now).nest).toBe(one)
+    // A command about a pet that moved is refused.
+    expect(applyCommand(n, { op: 'setShown', index: 2, bornAt: 99, on: false }, now).result).toBe('stale')
+  })
+
+  it('putting the focused one away hands the focus to another one out', () => {
+    const n = nest(1, [1, 2, 3])
+    const r = applyCommand(n, { op: 'setShown', ...ref(n, 1), on: false }, now)
+    expect(r.nest.shown).toEqual([1, 3])
+    expect(r.nest.active).toBe(0)
+    expect(setShown(n, 5, false)).toBe(n)
+  })
+
+  it('focusing a pet brings it out, and keeps the others out', () => {
+    const n = nest(0, [1, 2])
+    const r = applyCommand(n, { op: 'select', ...ref(n, 2) }, now)
+    expect(r.nest.active).toBe(2)
+    expect(r.nest.shown).toEqual([1, 2, 3])
+    const again = applyCommand(r.nest, { op: 'select', ...ref(r.nest, 2) }, now)
+    expect(again.nest).toBe(r.nest)
+  })
+
+  it('a new pet comes out as the focused one, beside those already out', () => {
+    const n = nest(0, [1, 2])
+    const r = applyCommand(n, { op: 'adopt', hatch: null }, now)
+    expect(r.nest.active).toBe(3)
+    const born = r.nest.pets[3].bornAt
+    expect(r.nest.shown).toEqual([1, 2, born])
+    // Two in the same millisecond still get birthdays of their own.
+    const twice = adopt(adopt(normalizeNest(grown('a', now), now), now), now)
+    expect(new Set(twice.pets.map((p) => p.bornAt)).size).toBe(3)
+    expect(twice.shown).toEqual(twice.pets.map((p) => p.bornAt))
+  })
+
+  it('letting a pet go takes it off the screen, and the focus to another one out', () => {
+    const n = nest(1, [1, 2, 3])
+    let r = applyCommand(n, { op: 'release', ...ref(n, 1) }, now)
+    expect(r.nest.pets.map((p) => p.name)).toEqual(['a', 'c'])
+    expect(r.nest.shown).toEqual([1, 3])
+    expect(r.nest.active).toBe(0)
+    // Not the focused one: the focus stays on the same pet, at its new place.
+    r = applyCommand(n, { op: 'release', ...ref(n, 0) }, now)
+    expect(r.nest.active).toBe(0)
+    expect(r.nest.pets[0].name).toBe('b')
+    expect(r.nest.shown).toEqual([2, 3])
+    // The focused one, alone out: the next one comes out in its place.
+    const solo = nest(1, [2])
+    r = applyCommand(solo, { op: 'release', ...ref(solo, 1) }, now)
+    expect(r.nest.active).toBe(1)
+    expect(r.nest.shown).toEqual([3])
+  })
+
+  it('a pet started over stays out under its new birthday', () => {
+    const n = nest(0, [1, 3])
+    const r = applyCommand(n, { op: 'restart', ...ref(n, 2) }, now)
+    const born = r.nest.pets[2].bornAt
+    expect(born).not.toBe(3)
+    expect(r.nest.shown).toEqual([1, born])
+    // One put away stays put away.
+    const hidden = applyCommand(n, { op: 'restart', ...ref(n, 1) }, now)
+    expect(hidden.nest.shown).toEqual([1, 3])
+  })
+
+  it('carries what is shown in the brief', () => {
+    expect(briefOf(nest(0, [1, 3])).shown).toEqual([1, 3])
+  })
+
+  it('splits food evenly, the remainder one each to the first, the total kept', () => {
+    expect(splitFood({ x: 10 }, 3)).toEqual([{ x: 4 }, { x: 3 }, { x: 3 }])
+    expect(splitFood({ x: 2 }, 4)).toEqual([{ x: 1 }, { x: 1 }, {}, {}])
+    expect(splitFood({ x: 9, y: 1 }, 1)).toEqual([{ x: 9, y: 1 }])
+    expect(splitFood({ x: 5 }, 0)).toEqual([{ x: 5 }])
+    expect(splitFood({ x: -3, y: Number.NaN, z: 2.9 }, 2)).toEqual([{ z: 1 }, { z: 1 }])
+    for (const k of [1, 2, 3, 4])
+      for (const d of [1, 7, 999, 123_457]) {
+        const parts = splitFood({ a: d, b: d * 3 }, k)
+        expect(parts).toHaveLength(k)
+        expect(parts.reduce((n, p) => n + (p.a ?? 0), 0)).toBe(d)
+        expect(parts.reduce((n, p) => n + (p.b ?? 0), 0)).toBe(d * 3)
+        // Even: no two shares more than a token apart.
+        const as = parts.map((p) => p.a ?? 0)
+        expect(Math.max(...as) - Math.min(...as)).toBeLessThanOrEqual(1)
+      }
+  })
+
+  it('feeds only the pets out, sharing the sample among them', () => {
+    const fresh = (name: string, bornAt: number): PetSave => ({ ...base({ bornAt }), name })
+    const n = normalizeNest(
+      { version: NEST_VERSION, active: 0, shown: [1, 3], pets: [fresh('a', 1), fresh('b', 2), fresh('c', 3)] },
+      now
+    )
+    const key = `f${FOOD_FORMULA}:claude::opus`
+    const { pets } = feedShown(n, { [key]: XP_TOKENS * 4 + 1 }, now)
+    expect(pets[0].totalTokens).toBe(XP_TOKENS * 2 + 1)
+    expect(pets[2].totalTokens).toBe(XP_TOKENS * 2)
+    expect(pets[1]).toBe(n.pets[1])
+    expect(pets[0].diet.opus).toBe(2)
+    expect(pets[2].xp).toBe(2)
+    // Nothing to eat: the same pets.
+    expect(feedShown(n, {}, now).pets).toBe(n.pets)
+  })
+
+  it('reports every pet out that levelled, the focused one first', () => {
+    const near = (name: string, bornAt: number): PetSave => ({ ...base({ bornAt, xp: xpForLevel(2) - 1 }), name })
+    const n = normalizeNest(
+      { version: NEST_VERSION, active: 1, shown: [1, 2], pets: [near('a', 1), near('b', 2)] },
+      now
+    )
+    const { leveled } = feedShown(n, { [`f${FOOD_FORMULA}:claude::opus`]: XP_TOKENS * 2 }, now)
+    expect(leveled).toEqual([
+      { bornAt: 2, level: 2 },
+      { bornAt: 1, level: 2 }
     ])
   })
 })

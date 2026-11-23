@@ -66,13 +66,17 @@ fn js_round(v: f64) -> f64 {
   (v + 0.5).floor()
 }
 
+/// The widest the window grows: every pet out (the focused one and three
+/// beside it, about 530) with the pet panel's card open beside them (about 270).
+const MAX_WIDTH: f64 = 1000.0;
+
 /// pet:resize: the new frame (grown from the bottom edge, left edge kept), or
 /// None when it is already that size.
 pub fn resized(b: R, height: f64, width: Option<f64>, zoom: f64) -> Option<R> {
   let z = if zoom > 0.0 { zoom } else { 1.0 };
   let h = js_round(height * z).clamp(120.0, 1000.0);
   let w = match width {
-    Some(w) if w > 0.0 => js_round(w * z).clamp(100.0, 700.0),
+    Some(w) if w > 0.0 => js_round(w * z).clamp(100.0, MAX_WIDTH),
     _ => b.w,
   };
   if b.h == h && b.w == w {
@@ -411,7 +415,7 @@ mod tests {
     assert_eq!(resized(b, 400.0, None, 1.0), Some(R { x: 10.0, y: 430.0, w: 212.0, h: 400.0 }));
     assert_eq!(resized(b, 50.0, Some(90.0), 1.0), Some(R { x: 10.0, y: 710.0, w: 100.0, h: 120.0 }));
     assert_eq!(resized(b, 330.0, None, 1.0), None);
-    assert_eq!(resized(b, 2000.0, Some(900.0), 1.2), Some(R { x: 10.0, y: -170.0, w: 700.0, h: 1000.0 }));
+    assert_eq!(resized(b, 2000.0, Some(900.0), 1.2), Some(R { x: 10.0, y: -170.0, w: 1000.0, h: 1000.0 }));
     assert_eq!(resized(b, 300.4, Some(0.0), 1.0), Some(R { x: 10.0, y: 530.0, w: 212.0, h: 300.0 }));
     assert!(inside((10.0, 500.0), b));
     assert!(!inside((222.0, 500.0), b));

@@ -191,7 +191,7 @@ describe('saving it', () => {
   })
   it('changes what it wears and its layout in one command, for that pet only', () => {
     const p = { ...at(30), bornAt: 5 }
-    const n = { version: 3 as const, active: 0, pets: [p] }
+    const n = { version: 4 as const, active: 0, shown: [5], pets: [p] }
     const r = applyCommand(n, { op: 'decor', index: 0, bornAt: 5, worn: ['heart'], layout: { 'acc:heart': { x: 0.1, y: 0.2 } } }, T0)
     expect(r.result).toBe('ok')
     expect(r.nest.pets[0].worn).toEqual(['heart'])

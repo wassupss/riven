@@ -11,7 +11,13 @@
   right: 16px;
   bottom: 42px; /* clear of the status bar */
   z-index: var(--z-float);
-  width: 128px;
+  /* The focused pet's width, the others' beside it (half of it), and the
+     space between them. --pet-n (set inline) is how many others are out, so
+     the device, and in its own window the window, is as wide as the row. */
+  --pet-w: 128px;
+  --pet-cw: calc(var(--pet-w) / 2);
+  --pet-gap: 4px;
+  width: calc(var(--pet-w) + var(--pet-n, 0) * (var(--pet-cw) + var(--pet-gap)));
   padding-top: 15px;
   display: flex;
   flex-direction: column;
@@ -87,9 +93,12 @@
    visible pixel (the pet covers the root entirely) computing to `none`, so the
    window had no handle at all and would not move. Every descendant is made a
    handle explicitly, and the things you operate opt back out. */
+/* The focused pet is the width the window opens at (services/pet.rs WIDTH,
+   212, less #root's 4px padding each side); the window follows the device's
+   width from there (pet:resize), never the other way round. */
 .pet-detached {
   position: static;
-  width: 100%;
+  --pet-w: 204px;
   cursor: default;
 }
 .pet-detached,
@@ -121,8 +130,12 @@
 .pet-detached .pet-awards,
 .pet-detached .pet-awards *,
 .pet-detached .pet-talk,
-.pet-detached .pet-bare {
+.pet-detached .pet-bare,
+.pet-detached .pet-comp {
   -webkit-app-region: no-drag;
+}
+.pet-detached .pet-comp {
+  filter: none;
 }
 
 /* A screen of the bare pet's (stats, a battle, a question...) opens in a card beside
@@ -219,6 +232,17 @@
 .pet-nest-row.on {
   border-color: var(--accent-border);
   background: var(--accent-muted);
+}
+/* Put away: the picture fades, the row stays as it is. */
+.pet-nest-row.off .pet-mini {
+  opacity: 0.45;
+}
+.pet-nest-row .pet-switch {
+  margin-left: 2px;
+}
+.pet-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .pet-mini {
   flex: none;
@@ -424,6 +448,40 @@
 .pet-bare .pet-lcd {
   width: 100%;
   height: auto;
+}
+
+/* ---- the pets out: the focused one, and the others beside it ----
+   One row on one floor (bottoms aligned, so they all stand on the same line
+   whatever the balloon over the focused one does). The others are half its
+   size and have no screens; a click makes one the focused pet. */
+.pet-stage {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--pet-gap);
+  width: 100%;
+}
+.pet-main {
+  flex: 0 0 var(--pet-w);
+  width: var(--pet-w);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pet-comp {
+  position: relative;
+  flex: 0 0 var(--pet-cw);
+  width: var(--pet-cw);
+  cursor: pointer;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 0.55));
+  transition: transform var(--dur-fast, 0.12s) ease;
+}
+.pet-comp .pet-lcd {
+  width: 100%;
+  height: auto;
+}
+.pet-comp:hover {
+  transform: translateY(-2px);
 }
 
 /* ---- the right-click menu ----

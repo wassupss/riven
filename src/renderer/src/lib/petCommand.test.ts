@@ -5,6 +5,7 @@ import type { Hatch, NestBrief, PetCommand } from '../state/pet'
 const hatch = { id: 'u-test', design: { name: 'x' } } as unknown as Hatch
 const nest: NestBrief = {
   active: 0,
+  shown: [1],
   pets: [{ bornAt: 1, name: 'mochi', species: 'cat', level: 1, worn: [], prizes: [] }]
 }
 const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms))
