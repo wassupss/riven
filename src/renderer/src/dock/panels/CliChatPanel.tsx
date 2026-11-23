@@ -1,115 +1,35 @@
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import type { DockviewPanelApi } from 'dockview-core'
-import { ArrowUp, Square, SquareTerminal, MessageSquare, RotateCcw, ChevronRight } from 'lucide-react'
-import Markdown from '../../components/Markdown'
 import TerminalPane from '../../components/TerminalPane'
 import { useT } from '../../i18n'
 import { pathOf, loadPaneState, setPaneState } from '../../state/session'
-import { claudeConfigDirFor } from '../../state/settings'
-import {
-  buildTurns,
-  initialModel,
-  outgoing,
-  reduce,
-  tokens,
-  toolSummary,
-  type Block,
-  type CliEvent,
-  type Turn
-} from '../../lib/cliChat'
+import { claudeConfigDirFor, getSettings } from '../../state/settings'
+import { buildTurns, initialModel, lastModel, reduce, type AgentProgress, type CliEvent, type Turn } from '../../lib/cliChat'
+import { TurnView } from './clichat/TurnView'
+import { BlockedNotice, MenuCard, PermissionCard, QuestionCard } from './clichat/Cards'
+import Composer, { type ComposerHandle } from './clichat/Composer'
+import Header from './clichat/Header'
+import SessionPicker from './clichat/SessionPicker'
 import '../../styles/cli-chat.css'
 
 // Experimental CLI chat: the REAL interactive `claude`, run by Rust in a
 // hidden pty (services/clichat), drawn as a chat from its transcript. The
-// regular ChatPanel (headless driver) is untouched. Anything this view
-// cannot draw (a picker, the trust dialog) is answered in the terminal view,
-// which shows the same pty.
+// regular ChatPanel (headless driver) is untouched. Questions, plan approval
+// and the trust dialog are answered from cards here; anything else is
+// answered in the terminal view, which shows the same pty.
 
 export interface CliChatParams {
   chatKey: string
   sessionId?: string
 }
 
-const ToolRowView = memo(function ToolRowView({ block }: { block: Extract<Block, { kind: 'tool' }> }): JSX.Element {
-  const { tool } = block
-  const summary = toolSummary(tool.name, tool.input)
-  const state = tool.result ? (tool.result.isError ? 'error' : 'done') : 'running'
-  return (
-    <details className={`cli-chat-tool ${state}`}>
-      <summary>
-        <ChevronRight size={12} className="cli-chat-chev" />
-        <span className="cli-chat-tool-name">{tool.name}</span>
-        {summary && <span className="cli-chat-tool-arg">{summary}</span>}
-      </summary>
-      {tool.result && <pre className="cli-chat-tool-result">{tool.result.text || ' '}</pre>}
-    </details>
-  )
-})
+const NO_AGENTS: Record<string, AgentProgress> = {}
 
-const TurnView = memo(function TurnView({ turn }: { turn: Turn }): JSX.Element {
-  const t = useT()
-  return (
-    <>
-      {turn.user && (
-        <div className="chat-turn user">
-          <div className={`chat-user-bubble${turn.user.command ? ' cli-chat-command' : ''}`}>
-            {turn.user.text}
-            {turn.user.images > 0 && <span className="cli-chat-images"> [image ×{turn.user.images}]</span>}
-          </div>
-        </div>
-      )}
-      {(turn.blocks.length > 0 || turn.usage) && (
-        <div className="chat-turn assistant cli-chat-assistant">
-          {turn.blocks.map((b) => {
-            switch (b.kind) {
-              case 'text':
-                return (
-                  <div key={b.key} className="chat-assistant-text">
-                    <Markdown text={b.text} />
-                  </div>
-                )
-              case 'thinking':
-                return (
-                  <details key={b.key} className="cli-chat-thinking">
-                    <summary>
-                      <ChevronRight size={12} className="cli-chat-chev" />
-                      {t('clichat.thinking')}
-                    </summary>
-                    <div className="cli-chat-thinking-body">{b.text || t('clichat.thinkingHidden')}</div>
-                  </details>
-                )
-              case 'tool':
-                return <ToolRowView key={b.tool.key} block={b} />
-              case 'note':
-                return (
-                  <div key={b.key} className={`cli-chat-note ${b.level}`}>
-                    {b.text}
-                  </div>
-                )
-              case 'compact':
-                return (
-                  <div key={b.key} className="cli-chat-compact">
-                    {t('clichat.compact', { trigger: b.trigger, tokens: tokens(b.preTokens) })}
-                  </div>
-                )
-            }
-          })}
-          {turn.usage && (
-            <div className="cli-chat-usage">
-              {t('clichat.usage', {
-                n: turn.usage.requests,
-                read: tokens(turn.usage.cacheRead),
-                write: tokens(turn.usage.cacheWrite),
-                out: tokens(turn.usage.output)
-              })}
-              {turn.durationMs != null && ` · ${(turn.durationMs / 1000).toFixed(1)}s`}
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  )
-})
+// Only a turn with an Agent/Task call needs the agents map: every other turn
+// keeps a constant prop, so progress ticks do not re-render the transcript.
+function agentsFor(turn: Turn, agents: Record<string, AgentProgress>): Record<string, AgentProgress> {
+  return turn.blocks.some((b) => b.kind === 'tool' && agents[b.tool.toolId]) ? agents : NO_AGENTS
+}
 
 export default function CliChatPanel({
   workspace,
@@ -124,54 +44,76 @@ export default function CliChatPanel({
   const key = params.chatKey
   const [model, dispatch] = useReducer(reduce, undefined, initialModel)
   const [error, setError] = useState<string | null>(null)
-  const [input, setInput] = useState('')
   const [epoch, setEpoch] = useState(0) // bumped by "restart"
+  const [sessionsOpen, setSessionsOpen] = useState(false)
+  const pane0 = useMemo(() => loadPaneState(workspace, key), [workspace, key])
+  const [pickedModel, setPickedModel] = useState(pane0.model || 'default')
+  const [pickedMode, setPickedMode] = useState(pane0.mode || getSettings().defaultPermissionMode || 'acceptEdits')
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const composerRef = useRef<ComposerHandle>(null)
   const atBottom = useRef(true)
-  const composing = useRef(false)
   const cwd = pathOf(workspace)
   const configDir = claudeConfigDirFor(workspace)
   const { state } = model
 
+  const remember = useCallback(
+    (sessionId: string) => {
+      // Remembered so a restart of riven resumes this conversation.
+      setPaneState(workspace, key, { session: sessionId })
+      if (params.sessionId !== sessionId) api.updateParameters({ ...params, sessionId })
+    },
+    [workspace, key, api, params]
+  )
+
+  const opts = (extra: { resume?: string; fork?: boolean } = {}): Parameters<typeof window.api.cliChat.start>[1] => ({
+    cwd,
+    configDir,
+    model: pickedModel !== 'default' ? pickedModel : undefined,
+    permissionMode: pickedMode,
+    ...extra
+  })
+
   // Events first, then start: nothing the session says on start is missed.
+  // An existing session (page reload) is reattached, not restarted.
   useEffect(() => {
     const off = window.api.cliChat.onEvent((e) => {
       if (e.key === key) dispatch(e as unknown as CliEvent)
     })
     const resume = loadPaneState(workspace, key).session ?? params.sessionId
     window.api.cliChat
-      .start(key, { cwd, resume: resume ?? undefined, configDir })
+      .start(key, opts({ resume: resume ?? undefined }))
       .then((r) => {
         setError(null)
-        // Remembered so a restart of riven resumes this conversation.
-        setPaneState(workspace, key, { session: r.sessionId })
-        if (params.sessionId !== r.sessionId) api.updateParameters({ ...params, sessionId: r.sessionId })
+        remember(r.sessionId)
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
     return off
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, workspace, epoch])
 
+  // The session's name (/rename, else the CLI's own) on the tab, unless the
+  // person named the tab itself (a pinned title, registry.setChatTitle).
+  useEffect(() => {
+    if (model.title && !loadPaneState(workspace, key).title) api.setTitle(model.title)
+  }, [model.title, api, workspace, key])
+
+  // The id moves on a fork, and after a restart that started a new one.
+  useEffect(() => {
+    if (state.sessionId && state.sessionId !== loadPaneState(workspace, key).session) remember(state.sessionId)
+  }, [state.sessionId, workspace, key, remember])
+
   const turns = useMemo(() => buildTurns(model.items), [model.items])
+  const usedModel = useMemo(() => lastModel(model.items), [model.items])
 
   // Follow the conversation unless the person scrolled up to read.
   useEffect(() => {
     const el = scrollRef.current
     if (el && atBottom.current) el.scrollTop = el.scrollHeight
-  }, [turns, model.preview, model.permissions, state.busy])
+  }, [turns, model.preview, model.permissions, model.questions, state.busy, state.menu])
 
-  const submit = useCallback(() => {
-    const text = outgoing(inputRef.current?.value ?? input)
-    if (!text || state.dead) return
-    window.api.cliChat.send(key, text)
-    setInput('')
-    atBottom.current = true
-    if (inputRef.current) inputRef.current.style.height = 'auto'
-  }, [input, key, state.dead])
-
-  const toggleTerminal = (): void => {
-    const on = !state.terminal
-    window.api.cliChat.terminal(key, on)
+  const toggleTerminal = (): void => window.api.cliChat.terminal(key, !state.terminal)
+  const toTerminal = (): void => {
+    if (!state.terminal) window.api.cliChat.terminal(key, true)
   }
 
   const restart = (): void => {
@@ -179,17 +121,30 @@ export default function CliChatPanel({
     setEpoch((n) => n + 1)
   }
 
-  const status = state.dead
-    ? t('clichat.exited')
-    : state.blocked
-      ? ''
-      : !state.ready
-      ? t('clichat.starting')
-      : state.waiting
-        ? t('clichat.waiting')
-        : state.busy
-          ? t('clichat.working')
-          : ''
+  const openSession = (resume: string | undefined, fork = false): void => {
+    setSessionsOpen(false)
+    window.api.cliChat
+      .restart(key, opts({ resume, fork }))
+      .then((r) => {
+        setError(null)
+        remember(r.sessionId)
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+  }
+
+  const pickModel = (m: string): void => {
+    setPickedModel(m)
+    setPaneState(workspace, key, { model: m })
+    window.api.cliChat.reconfigure(key, m === 'default' ? '' : m, null)
+  }
+  const pickMode = (m: string): void => {
+    setPickedMode(m)
+    setPaneState(workspace, key, { mode: m })
+    window.api.cliChat.reconfigure(key, null, m)
+  }
+
+  const lastNotice = model.notices[model.notices.length - 1]
+  const showNotice = lastNotice && (lastNotice.level === 'error' || lastNotice.level === 'update') && Date.now() - lastNotice.at < 60_000
 
   return (
     <div
@@ -204,22 +159,31 @@ export default function CliChatPanel({
         }
       }}
     >
-      <div className="cli-chat-bar">
-        <span className={`cli-chat-dot${state.busy ? ' busy' : state.waiting ? ' waiting' : state.dead ? ' dead' : ''}`} />
-        <span className="cli-chat-status">{status}</span>
-        {state.sessionId && <span className="cli-chat-session">{state.sessionId.slice(0, 8)}</span>}
-        <span className="cli-chat-spacer" />
-        {state.dead ? (
-          <button className="cli-chat-btn" onClick={restart}>
-            <RotateCcw size={13} /> {t('clichat.restart')}
-          </button>
-        ) : (
-          <button className="cli-chat-btn" onClick={toggleTerminal}>
-            {state.terminal ? <MessageSquare size={13} /> : <SquareTerminal size={13} />}{' '}
-            {state.terminal ? t('clichat.showChat') : t('clichat.showTerminal')}
-          </button>
-        )}
-      </div>
+      <Header
+        state={state}
+        title={model.title}
+        usedModel={usedModel}
+        model={pickedModel}
+        mode={pickedMode}
+        configDir={configDir}
+        sessionsOpen={sessionsOpen}
+        onSessions={() => setSessionsOpen((o) => !o)}
+        onModel={pickModel}
+        onMode={pickMode}
+        onTerminal={toggleTerminal}
+        onRestart={restart}
+      />
+      {sessionsOpen && (
+        <SessionPicker
+          chatKey={key}
+          cwd={cwd}
+          configDir={configDir}
+          current={state.sessionId}
+          onOpen={(id, fork) => openSession(id, fork)}
+          onNew={() => openSession(undefined)}
+          onClose={() => setSessionsOpen(false)}
+        />
+      )}
 
       {state.terminal && !state.dead ? (
         <div className="cli-chat-term">
@@ -239,7 +203,7 @@ export default function CliChatPanel({
           >
             {turns.length === 0 && !model.preview && <div className="cli-chat-empty">{t('clichat.empty')}</div>}
             {turns.map((turn) => (
-              <TurnView key={turn.key} turn={turn} />
+              <TurnView key={turn.key} chatKey={key} turn={turn} agents={agentsFor(turn, model.agents)} />
             ))}
             {state.busy &&
               (model.preview ? (
@@ -253,77 +217,34 @@ export default function CliChatPanel({
                   <span className="chat-shimmer-text">{t('clichat.working')}</span>
                 </div>
               ))}
-            {state.blocked && (
-              <div className="cli-chat-blocked">
-                <span>{t(`clichat.blocked.${state.blocked}`)}</span>
-                <button className="cli-chat-btn" onClick={toggleTerminal}>
-                  <SquareTerminal size={13} /> {t('clichat.showTerminal')}
-                </button>
+            {state.menu ? (
+              <MenuCard chatKey={key} menu={state.menu} plan={state.plan ?? null} onTerminal={toTerminal} />
+            ) : (
+              state.blocked && <BlockedNotice blocked={state.blocked} onTerminal={toTerminal} />
+            )}
+            {model.questions.map((q) => (
+              <QuestionCard key={q.id} chatKey={key} q={q} onTerminal={toTerminal} />
+            ))}
+            {model.permissions.map((p) => (
+              <PermissionCard key={p.id} chatKey={key} p={p} onTerminal={toTerminal} />
+            ))}
+            {state.parked && <div className="cli-chat-note parked">{t('clichat.parkedNote')}</div>}
+            {showNotice && (
+              <div className={`cli-chat-note ${lastNotice.level}`}>
+                {lastNotice.level === 'update' ? t('clichat.updated') : lastNotice.text}
               </div>
             )}
-            {model.permissions.map((p) => (
-              <div key={p.id} className="chat-card cli-chat-perm">
-                <div className="chat-card-head">{t('clichat.perm.title', { tool: p.tool })}</div>
-                <pre className="cli-chat-perm-input">{toolSummary(p.tool, p.input) || JSON.stringify(p.input, null, 2)}</pre>
-                <div className="cli-chat-perm-actions">
-                  <button className="cli-chat-btn primary" onClick={() => window.api.cliChat.answer(key, p.id, 'allow')}>
-                    {t('clichat.perm.allow')}
-                  </button>
-                  <button className="cli-chat-btn" onClick={() => window.api.cliChat.answer(key, p.id, 'deny')}>
-                    {t('clichat.perm.deny')}
-                  </button>
-                  <button
-                    className="cli-chat-btn"
-                    onClick={() => {
-                      window.api.cliChat.answer(key, p.id, 'terminal')
-                      if (!state.terminal) window.api.cliChat.terminal(key, true)
-                    }}
-                  >
-                    {t('clichat.perm.terminal')}
-                  </button>
-                </div>
-              </div>
-            ))}
             {error && <div className="cli-chat-note error">{error}</div>}
           </div>
 
-          <div className="chat-composer">
-            <textarea
-              ref={inputRef}
-              className="chat-input"
-              value={input}
-              rows={1}
-              disabled={state.dead}
-              placeholder={t('clichat.placeholder')}
-              onChange={(e) => {
-                setInput(e.target.value)
-                const el = e.target
-                el.style.height = 'auto'
-                el.style.height = `${Math.min(el.scrollHeight, 168)}px`
-              }}
-              onCompositionStart={() => (composing.current = true)}
-              onCompositionEnd={() => (composing.current = false)}
-              onKeyDown={(e) => {
-                // Enter sends; never mid-IME (Korean) and never with Shift.
-                if (e.key === 'Enter' && !e.shiftKey && !composing.current && !e.nativeEvent.isComposing) {
-                  e.preventDefault()
-                  submit()
-                }
-              }}
-            />
-            <div className="chat-actions">
-              <div className="chat-actions-spacer" />
-              {state.busy ? (
-                <button className="chat-send stop" onClick={() => window.api.cliChat.interrupt(key)} title={t('clichat.interrupt')}>
-                  <Square size={11} fill="currentColor" />
-                </button>
-              ) : (
-                <button className="chat-send" onClick={submit} title={t('clichat.send')} disabled={state.dead}>
-                  <ArrowUp size={15} strokeWidth={2.5} />
-                </button>
-              )}
-            </div>
-          </div>
+          <Composer
+            ref={composerRef}
+            chatKey={key}
+            busy={state.busy}
+            dead={state.dead}
+            parked={!!state.parked}
+            onSent={() => (atBottom.current = true)}
+          />
         </>
       )}
     </div>

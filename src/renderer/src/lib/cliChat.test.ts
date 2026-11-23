@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { buildTurns, initialModel, outgoing, reduce, tokens, toolSummary, type CliEvent, type CliItem } from './cliChat'
+import {
+  buildTurns,
+  compose,
+  initialModel,
+  isImagePath,
+  lastModel,
+  mention,
+  modeValue,
+  outgoing,
+  questionAnswers,
+  questionsOf,
+  recordOf,
+  reduce,
+  tokens,
+  toolSummary,
+  userParts,
+  type Attachment,
+  type CliEvent,
+  type CliItem
+} from './cliChat'
 
 const K = 'clichat-1'
 
@@ -99,5 +118,95 @@ describe('helpers', () => {
     expect(outgoing('  hi  \n')).toBe('  hi')
     expect(outgoing(' / ')).toBeNull()
     expect(outgoing('/compact')).toBe('/compact')
+  })
+})
+
+describe('attachments', () => {
+  it('mentions files the way the CLI reads them', () => {
+    expect(mention('/w/src/a.ts')).toBe('@/w/src/a.ts')
+    // As sent in the live probe: a path with a space, quoted.
+    expect(mention('/t/att/notes file.txt')).toBe('@"/t/att/notes file.txt"')
+    expect(mention('/t/say "hi".md')).toBe('@"/t/say \\"hi\\".md"')
+    expect(isImagePath('/a/Shot.PNG') && isImagePath('x.jpeg') && !isImagePath('x.heic')).toBe(true)
+  })
+
+  it('composes text, file mentions and image pastes', () => {
+    const atts: Attachment[] = [
+      { id: '1', name: 'red square.png', path: '/t/red square.png', image: true },
+      { id: '2', name: 'notes file.txt', path: '/t/notes file.txt', image: false },
+      { id: '3', name: 'b.rs', path: '/w/b.rs', image: false }
+    ]
+    expect(compose('look at these  \n', atts)).toEqual({
+      text: 'look at these @"/t/notes file.txt" @/w/b.rs',
+      images: ['/t/red square.png']
+    })
+    expect(compose('', [atts[0]])).toEqual({ text: '', images: ['/t/red square.png'] })
+  })
+
+  it('draws a sent message: image markers out, mentions as chips', () => {
+    // The text 2.1.330 recorded for the probe's two messages.
+    expect(userParts('What color is this image? One word.[Image #1]')).toEqual([
+      { kind: 'text', text: 'What color is this image? One word.' }
+    ])
+    expect(userParts('Tell me the secret word in @"/t/att/notes file.txt" in one word.')).toEqual([
+      { kind: 'text', text: 'Tell me the secret word in ' },
+      { kind: 'file', path: '/t/att/notes file.txt', name: 'notes file.txt' },
+      { kind: 'text', text: ' in one word.' }
+    ])
+    expect(userParts('ask @alice about @src/x.ts')).toEqual([
+      { kind: 'text', text: 'ask @alice about ' },
+      { kind: 'file', path: 'src/x.ts', name: 'x.ts' }
+    ])
+    expect(userParts('[Image #1][Image #2]')).toEqual([])
+    expect(recordOf('b344ddc7-0072-4798-8816-d43ba2c73323:0')).toBe('b344ddc7-0072-4798-8816-d43ba2c73323')
+  })
+})
+
+describe('header, questions, agents', () => {
+  it('reads the model of the last reply and folds modes', () => {
+    expect(lastModel(turn)).toBe('haiku')
+    expect(lastModel([])).toBeNull()
+    expect(modeValue('manual')).toBe('default')
+    expect(modeValue(null)).toBe('default')
+    expect(modeValue('plan')).toBe('plan')
+  })
+
+  it('builds AskUserQuestion answers from the card', () => {
+    // The input 2.1.330 sent with its PermissionRequest (plus a multi-select).
+    const qs = questionsOf({
+      questions: [
+        { question: 'Which fruit do you prefer?', header: 'Fruit', multiSelect: false, options: [{ label: 'Apple' }, { label: 'Banana' }] },
+        { question: 'Sides?', multiSelect: true, options: [{ label: 'A' }, { label: 'B' }, { bad: 1 }] }
+      ]
+    })
+    expect(qs[1].options).toHaveLength(2)
+    expect(questionAnswers(qs, { 0: ['Banana'] }, {})).toBeNull()
+    expect(questionAnswers(qs, { 0: ['Banana'], 1: ['A', 'B'] }, {})).toEqual({
+      'Which fruit do you prefer?': 'Banana',
+      'Sides?': ['A', 'B']
+    })
+    expect(questionAnswers(qs, { 1: ['A'] }, { 0: ' Kiwi ', 1: 'C' })).toEqual({
+      'Which fruit do you prefer?': 'Kiwi',
+      'Sides?': ['A', 'C']
+    })
+    expect(questionsOf(null)).toEqual([])
+  })
+
+  it('keeps questions apart from permissions and indexes agents by their call', () => {
+    let m = reduce(initialModel(), { key: K, kind: 'question', id: 'q1', tool: 'AskUserQuestion', input: { questions: [] } })
+    m = reduce(m, { key: K, kind: 'permission', id: 'p1', tool: 'Bash', input: {} })
+    expect([m.questions.length, m.permissions.length]).toEqual([1, 1])
+    m = reduce(m, { key: K, kind: 'permissionDone', id: 'q1', decision: 'terminal' })
+    expect([m.questions.length, m.permissions.length]).toEqual([0, 1])
+    m = reduce(m, {
+      key: K,
+      kind: 'agents',
+      agents: [
+        { agentId: 'a1', toolId: 'toolu_1', description: 'Run echo', agentType: 'general-purpose', tools: 1, lastTool: 'Bash: echo', lastText: null, done: false }
+      ]
+    })
+    expect(m.agents.toolu_1.tools).toBe(1)
+    m = reduce(m, { key: K, kind: 'meta', title: 'Image color question' })
+    expect(m.title).toBe('Image color question')
   })
 })

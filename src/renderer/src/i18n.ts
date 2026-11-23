@@ -874,8 +874,8 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     en: 'The CLI is asking whether to trust this folder. Answer it in the terminal view.'
   },
   'clichat.blocked.menu': {
-    ko: 'CLI가 메뉴나 대화상자를 띄웠습니다. 터미널로 보기에서 답하세요.',
-    en: 'The CLI opened a menu or dialog. Answer it in the terminal view.'
+    ko: 'CLI가 챗 화면에서 그릴 수 없는 메뉴나 대화상자를 띄웠습니다. 터미널로 보기에서 답하세요.',
+    en: 'The CLI opened a menu or dialog this view cannot draw. Answer it in the terminal view.'
   },
   'clichat.blocked.login': {
     ko: 'CLI 로그인이 필요합니다. 터미널로 보기에서 진행하세요.',
@@ -892,6 +892,31 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     ko: '요청 {n} · 캐시 읽기 {read} · 캐시 쓰기 {write} · 출력 {out}',
     en: '{n} req · cache read {read} · cache write {write} · out {out}'
   },
+  'clichat.parked': { ko: '쉬는 중', en: 'Parked' },
+  'clichat.parkedNote': {
+    ko: '30분 동안 쓰지 않아 CLI를 멈췄습니다. 다음 메시지를 보내면 이 대화로 다시 시작합니다.',
+    en: 'The CLI was stopped after 30 idle minutes. The next message resumes this conversation.'
+  },
+  'clichat.parkedPlaceholder': { ko: '메시지를 보내면 대화를 이어서 시작합니다', en: 'Send a message to resume the conversation' },
+  'clichat.updated': {
+    ko: 'CLI가 업데이트되어 이 대화를 새 버전으로 다시 시작했습니다.',
+    en: 'The CLI was updated; this conversation restarted on the new version.'
+  },
+  'clichat.restartPending': { ko: '턴이 끝나면 재시작', en: 'Restarts after this turn' },
+  'clichat.background': { ko: '백그라운드 {n}개', en: '{n} in background' },
+  'clichat.modeTitle': { ko: '권한 모드 (바꾸면 CLI 재시작)', en: 'Permission mode (a change restarts the CLI)' },
+  'clichat.modelUsed': {
+    ko: '모델 (바꾸면 이 대화로 CLI 재시작, 전역 설정은 그대로). 마지막 응답: {model}',
+    en: 'Model (a change restarts the CLI on this conversation; global settings untouched). Last reply: {model}'
+  },
+  'clichat.mode.auto': { ko: '자동 모드', en: 'Auto mode' },
+  'clichat.session.new': { ko: '새 대화', en: 'New conversation' },
+  'clichat.session.current': { ko: '지금 대화', en: 'current' },
+  'clichat.menu.title': { ko: 'CLI가 선택을 기다립니다', en: 'The CLI is waiting for a choice' },
+  'clichat.menu.cancel': { ko: '취소 (Esc)', en: 'Cancel (Esc)' },
+  'clichat.agent.running': { ko: '서브에이전트 실행 중', en: 'Subagent running' },
+  'clichat.agent.done': { ko: '서브에이전트 완료', en: 'Subagent finished' },
+  'clichat.agent.tools': { ko: '도구 {n}회', en: '{n} tool calls' },
   'clichat.empty': {
     ko: '실험 기능: 실제 대화형 claude를 숨은 터미널에서 실행하고 대화 기록(JSONL)으로 화면을 그립니다. 슬래시 명령도 그대로 됩니다.',
     en: 'Experimental: runs the real interactive claude in a hidden terminal and draws this view from its transcript. Slash commands work as typed.'
