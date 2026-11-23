@@ -728,6 +728,11 @@ export const DICT: Record<string, { ko: string; en: string }> = {
     ko: 'AI 에이전트를 네이티브 챗으로 실행 (끄면 터미널 CLI)',
     en: 'Run AI agents in the native chat (off = terminal CLI)'
   },
+  'settings.chatEngineCli': { ko: '새 챗을 CLI 챗으로 열기', en: 'Open new chats as CLI chats' },
+  'settings.chatEngineCliDesc': {
+    ko: '실제 claude / codex CLI를 챗 화면으로 실행합니다. 끄면 기존 네이티브 챗(헤드리스). 이미 열린 챗은 그대로 유지됩니다.',
+    en: 'Runs the real claude / codex CLI behind the chat view. Off = the previous native (headless) chat. Open chats keep theirs.'
+  },
   'settings.terminalProfiles': { ko: '터미널 프로파일', en: 'Terminal profiles' },
   'settings.terminalProfilesHint': {
     ko: '패널 메뉴에서 새 터미널로 실행할 명령 프리셋입니다.',

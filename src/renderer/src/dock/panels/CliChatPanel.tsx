@@ -69,9 +69,7 @@ export default function CliChatPanel({
   const remember = useCallback(
     (sessionId: string) => {
       // Remembered so a restart of riven resumes this conversation.
-      // `fresh` only meant "do not adopt another conversation" until this
-      // pane had one of its own.
-      setPaneState(workspace, key, { session: sessionId, fresh: undefined })
+      setPaneState(workspace, key, { session: sessionId })
       if (params.sessionId !== sessionId) api.updateParameters({ ...params, sessionId })
     },
     [workspace, key, api, params]

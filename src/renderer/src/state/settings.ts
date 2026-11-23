@@ -75,6 +75,10 @@ export interface Settings {
   // terminal. Only Claude has a native chat driver so far; others fall back to a
   // terminal regardless.
   agentChatUI: boolean
+  // What a new chat pane runs: 'cli' = the interactive CLI (claude, codex)
+  // in a hidden pty drawn as a chat (services/clichat); 'native' = the
+  // headless stream-json driver (services/chat). Existing panes keep theirs.
+  chatEngine: 'cli' | 'native'
   // A fixed instruction appended to every agent chat (like CLAUDE.md but app-wide).
   // Mirrors native's `prompt.global`.
   globalPrompt: string
@@ -180,6 +184,7 @@ export const DEFAULT_SETTINGS: Settings = {
   terminalProfiles: [{ name: 'claude', command: 'claude' }],
   snippets: [{ prefix: 'clg', body: 'console.log($1)' }],
   agentChatUI: true,
+  chatEngine: 'cli',
   globalPrompt: '',
   mcpDisabledTools: [],
   browserSearch: 'https://www.google.com/search?q={q}',

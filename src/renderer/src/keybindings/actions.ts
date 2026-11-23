@@ -17,6 +17,7 @@ import {
   getActiveApi,
   addChat,
   addCliChat,
+  addNativeChat,
   openEditorSplit,
   openLauncher,
   activateTerminalById
@@ -215,14 +216,23 @@ export function registerDefaultActions(): void {
     def: 'Mod+Shift+a',
     run: () => addChat()
   })
-  // Experimental: no default chord, reachable from the palette only.
+  // Either chat engine whatever Settings say (no default chord, palette only):
+  // the old native chat stays reachable until it is retired.
   keymap.register({
     id: 'panel.cliChat',
-    label: '새 CLI 챗 (실험)',
+    label: '새 CLI 챗',
     category: RIVEN,
     context: 'riven',
     def: '',
     run: () => addCliChat()
+  })
+  keymap.register({
+    id: 'panel.nativeChat',
+    label: '새 네이티브 챗 (헤드리스)',
+    category: RIVEN,
+    context: 'riven',
+    def: '',
+    run: () => addNativeChat()
   })
   keymap.register({
     id: 'panel.popout',

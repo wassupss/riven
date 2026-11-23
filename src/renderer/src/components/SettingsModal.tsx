@@ -729,6 +729,12 @@ export default function SettingsModal(): JSX.Element | null {
                   onChange={(v) => upd('agentChatUI', v)}
                 />
                 <ToggleRow
+                  title={t('settings.chatEngineCli')}
+                  desc={t('settings.chatEngineCliDesc')}
+                  checked={settings.chatEngine !== 'native'}
+                  onChange={(v) => upd('chatEngine', v ? 'cli' : 'native')}
+                />
+                <ToggleRow
                   title={t('settings.chatSuggest')}
                   desc={t('settings.chatSuggestDesc')}
                   checked={settings.chatSuggest}

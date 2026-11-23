@@ -43,6 +43,11 @@ export interface PaneState {
   // kind's default, 'none', or its own. Saved here so it survives restarts and
   // goes wherever the panel goes, a popped-out window included.
   bg?: PanelBg | 'none'
+  // What runs the chat: 'cli' = the interactive CLI in a hidden pty
+  // (services/clichat, CliChatPanel); absent = the headless driver
+  // (services/chat, ChatPanel). Chosen at creation (Settings: chatEngine) and
+  // kept, so a saved layout reopens each pane the way it was made.
+  engine?: 'cli'
 }
 
 export interface Session {

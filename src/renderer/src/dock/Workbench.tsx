@@ -198,17 +198,23 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       ) =>
         boxed(
           'chat',
-          props,
-          <ChatPanel
-            workspace={workspace}
-            chatKey={props.params.chatKey}
-            pinnedTitle={props.params.pinnedTitle}
-            agent={props.params.agent}
-            setTitle={(title) => props.api.setTitle(title)}
-            api={props.api}
-          />
+          // The pane's own engine (pane state, set when it was made): a saved
+          // layout's headless chats stay headless, CLI chats stay CLI chats.
+          useSession.getState().sessions[workspace]?.panes?.[props.params.chatKey]?.engine === 'cli' ? (
+            <CliChatPanel workspace={workspace} params={props.params} api={props.api} />
+          ) : (
+            <ChatPanel
+              workspace={workspace}
+              chatKey={props.params.chatKey}
+              pinnedTitle={props.params.pinnedTitle}
+              agent={props.params.agent}
+              setTitle={(title) => props.api.setTitle(title)}
+              api={props.api}
+            />
+          )
         ),
-      // Experimental: the interactive CLI behind a chat view (services/clichat).
+      // Panes opened by the experimental command before CLI chats were chat
+      // panes (clichat-<id>): still restored.
       clichat: (props: IDockviewPanelProps<CliChatParams>) =>
         boxed('clichat', props, <CliChatPanel workspace={workspace} params={props.params} api={props.api} />),
       prdiff: (props: IDockviewPanelProps<PrDiffParams>) =>
