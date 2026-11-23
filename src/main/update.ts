@@ -39,8 +39,17 @@ export function registerUpdateHandlers(): void {
   const install = (): void => {
     void exportChromiumData('install').finally(() => autoUpdater.quitAndInstall(false, true))
   }
+  // A downloaded update also installs when the app quits (Squirrel), with no
+  // install() and so no last export: whatever changed between the download
+  // and that quit would stay behind. Refresh the copy every 2 minutes until
+  // then (it also covers a download that lands before the page can answer).
+  let refresh: NodeJS.Timeout | null = null
   autoUpdater.on('update-downloaded', (i) => {
     void exportChromiumData(`update ${i.version} downloaded`)
+    if (!refresh) {
+      refresh = setInterval(() => void exportChromiumData(`update ${i.version} pending`), 2 * 60_000)
+      refresh.unref()
+    }
     send({ state: 'downloaded', version: i.version })
     if (Notification.isSupported()) {
       const n = new Notification({
