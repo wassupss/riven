@@ -24,6 +24,11 @@ interface UIState {
   /** Bumped to open Settings > 리븐펫 with the decoration layout of the shown pet open. */
   petLayoutAsk: number
   openPetLayout: () => void
+  /** Set to open Settings > 리븐펫 with the species maker open on a new species; taken (cleared) by it. */
+  petMakerAsk: boolean
+  openPetMaker: () => void
+  /** The species maker is open over Settings: Escape is its, not Settings'. */
+  petMakerOpen: boolean
   // The entire left sidebar (workspaces + explorer + usage). ⌘B toggles this.
   showSidebar: boolean
   toggleSidebar: () => void
@@ -52,6 +57,9 @@ export const useUI = create<UIState>((set) => ({
   openSettings: (tab = 'general') => set({ settingsOpen: true, settingsTab: tab }),
   petLayoutAsk: 0,
   openPetLayout: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petLayoutAsk: s.petLayoutAsk + 1 })),
+  petMakerAsk: false,
+  openPetMaker: () => set({ settingsOpen: true, settingsTab: 'pet', petMakerAsk: true }),
+  petMakerOpen: false,
   showSidebar: true,
   toggleSidebar: () => set((s) => ({ showSidebar: !s.showSidebar })),
   metaHeld: false,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PawPrint, EyeOff, LayoutGrid, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
+import { PawPrint, EyeOff, ImagePlus, LayoutGrid, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { MAX_PETS, petSubtitle, petTitle, type Hatch, type NestBrief } from '../state/pet'
 import { designOf, type CustomSpecies } from '../state/petSpecies'
@@ -34,7 +34,8 @@ export default function PetManage({
   onOnTop,
   onHide,
   onOpenSettings,
-  onLayout
+  onLayout,
+  onMakeSpecies
 }: {
   nest: NestBrief
   detached: boolean
@@ -54,6 +55,8 @@ export default function PetManage({
   onOpenSettings: () => void
   /** The decoration layout of the one that is out (opens in Settings). */
   onLayout: () => void
+  /** The species maker (opens over Settings). */
+  onMakeSpecies: () => void
 }): JSX.Element {
   const t = useT()
   const [asking, setAsking] = useState<Danger | null>(null)
@@ -180,6 +183,10 @@ export default function PetManage({
       >
         <PawPrint size={12} />
         <span>{t('pet.nest.adopt')}</span>
+      </button>
+      <button type="button" className="pet-btn wide" onClick={onMakeSpecies}>
+        <ImagePlus size={12} />
+        <span>{t('pet.maker.create')}</span>
       </button>
       {full && <p className="pet-manage-note">{t('pet.nest.full', { max: MAX_PETS })}</p>}
       {note && <p className="pet-manage-note">{note}</p>}

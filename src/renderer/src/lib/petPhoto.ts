@@ -73,10 +73,105 @@ export function cropSquare(img: Rgba, crop: { x: number; y: number; size: number
   return { width: out, height: out, data }
 }
 
-/** The largest centred square of an image, the crop it starts with. */
-export function defaultCrop(w: number, h: number): { x: number; y: number; size: number } {
+export interface Crop {
+  x: number
+  y: number
+  size: number
+}
+
+/** The largest centred square of an image: the crop when no subject stands out. */
+export function defaultCrop(w: number, h: number): Crop {
   const size = Math.min(w, h)
   return { x: Math.floor((w - size) / 2), y: Math.floor((h - size) / 2), size }
+}
+
+/** The smallest crop side, in photo pixels. */
+export const MIN_CROP = 16
+
+/**
+ * A crop kept usable on a `w`x`h` photo: no smaller than MIN_CROP, no bigger
+ * than the photo's long side, and never more than half off it (the part off
+ * the photo is transparent, so it reads as background).
+ */
+export function clampCrop(c: Crop, w: number, h: number): Crop {
+  const size = Math.max(MIN_CROP, Math.min(Math.max(w, h), c.size))
+  return {
+    size,
+    x: Math.max(-size / 2, Math.min(w - size / 2, c.x)),
+    y: Math.max(-size / 2, Math.min(h - size / 2, c.y))
+  }
+}
+
+/** How much a picked photo's background is cut away by default (Lab distance). */
+export const DEFAULT_TOLERANCE = 18
+
+/** A box on a mask, inclusive, and how many of its dots are set. */
+export interface Box {
+  x0: number
+  y0: number
+  x1: number
+  y1: number
+  count: number
+}
+
+/** The bounding box of the largest four-connected piece of a mask, or null when it is empty. */
+export function subjectBox(mask: Uint8Array, w: number): Box | null {
+  const part = largestPart(mask, w)
+  let box: Box | null = null
+  for (let p = 0; p < part.length; p++) {
+    if (!part[p]) continue
+    const x = p % w
+    const y = (p - x) / w
+    if (!box) box = { x0: x, y0: y, x1: x, y1: y, count: 0 }
+    box.x0 = Math.min(box.x0, x)
+    box.x1 = Math.max(box.x1, x)
+    box.y0 = Math.min(box.y0, y)
+    box.y1 = Math.max(box.y1, y)
+    box.count++
+  }
+  return box
+}
+
+/**
+ * A square crop round a box on a `w`x`h` photo, with `margin` of the box's
+ * long side as air on every side (the cut-out reads the background off the
+ * crop's edges, so the subject must not touch them). Kept on the photo where
+ * it fits, centred on it where it does not.
+ */
+export function squareAround(box: { x0: number; y0: number; x1: number; y1: number }, w: number, h: number, margin = 0.12): Crop {
+  const bw = box.x1 - box.x0
+  const bh = box.y1 - box.y0
+  const size = Math.round(Math.max(MIN_CROP, Math.min(Math.max(w, h), Math.max(bw, bh) * (1 + 2 * margin))))
+  const place = (lo: number, span: number, room: number): number =>
+    size <= room ? Math.max(0, Math.min(room - size, Math.round(lo + span / 2 - size / 2))) : Math.round((room - size) / 2)
+  return { x: place(box.x0, bw, w), y: place(box.y0, bh, h), size }
+}
+
+/**
+ * The crop a picked photo starts with: a square round its subject (the
+ * largest piece that is not the background its edges are made of), found on
+ * a WORK-sized copy of the whole photo. The centred square when no subject
+ * stands out: nothing found, a speck, or nearly the whole photo.
+ */
+export function autoCrop(img: Rgba, tolerance = DEFAULT_TOLERANCE): Crop {
+  const { width: w, height: h } = img
+  const fallback = defaultCrop(w, h)
+  const side = Math.max(w, h)
+  // The whole photo in one square; the bands off it are transparent, so background.
+  const frame = { x: (w - side) / 2, y: (h - side) / 2, size: side }
+  const small = cropSquare(img, frame, WORK)
+  const box = subjectBox(foregroundOf(backgroundMask(small, tolerance)), WORK)
+  if (!box) return fallback
+  // The photo's own area on the small square.
+  const area = ((w * h) / (side * side)) * WORK * WORK
+  const boxArea = (box.x1 - box.x0 + 1) * (box.y1 - box.y0 + 1)
+  if (box.count < area * 0.01 || boxArea > area * 0.9) return fallback
+  const k = side / WORK
+  return squareAround(
+    { x0: frame.x + box.x0 * k, y0: frame.y + box.y0 * k, x1: frame.x + (box.x1 + 1) * k, y1: frame.y + (box.y1 + 1) * k },
+    w,
+    h
+  )
 }
 
 // ---- colour ----

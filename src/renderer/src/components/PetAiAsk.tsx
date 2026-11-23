@@ -5,11 +5,12 @@ import { Button, Select } from './ui/Controls'
 import { PET_AI_MODELS, saveModel, savedModel, startPetAi, usageTokens, type PetAiAnswer, type PetAiModel, type PetAiRun } from '../lib/petAi'
 
 // ---------------------------------------------------------------------------
-// The "AI에게 맡기기" box the pixel editor and the decoration layout share: a
+// The AI request box the pixel editor and the decoration layout share: a
 // request, the model, a run with its seconds and a stop button, and then a
 // preview the caller draws with [적용] [다시] [취소]. The call itself and the
 // checking of its answer are the caller's (`ask`), so this stays the same
-// for a picture and for a layout.
+// for a picture and for a layout. `compact` is the one-line form the species
+// maker puts under its palette: the request, the model in a small menu, a button.
 // ---------------------------------------------------------------------------
 
 /** What the caller makes of an answer: a result to preview, or why it was refused. */
@@ -29,7 +30,8 @@ export default function PetAiAsk<R>({
   check,
   preview,
   onApply,
-  disabled
+  disabled,
+  compact
 }: {
   title: string
   placeholder: string
@@ -41,6 +43,8 @@ export default function PetAiAsk<R>({
   preview: (result: R) => ReactNode
   onApply: (result: R) => void
   disabled?: boolean
+  /** One line: request, model menu, button (the title is the field's label). */
+  compact?: boolean
 }): JSX.Element {
   const t = useT()
   const [request, setRequest] = useState('')
@@ -105,19 +109,98 @@ export default function PetAiAsk<R>({
   }
 
   const models = PET_AI_MODELS.filter((m) => m !== 'codex' || codex)
+  const modelMenu = (
+    <Select
+      className={compact ? 'pai-model' : undefined}
+      aria-label={t('pet.ai.model')}
+      title={t('pet.ai.model')}
+      value={model}
+      disabled={running}
+      onChange={(e) => setModel(e.target.value as PetAiModel)}
+    >
+      {models.map((m) => (
+        <option key={m} value={m}>
+          {MODEL_LABEL[m]}
+        </option>
+      ))}
+    </Select>
+  )
+  const after = (
+    <>
+      {error && (
+        <p className="pai-error" role="alert">
+          {error}
+        </p>
+      )}
+      {result !== null && (
+        <div className="pai-preview">
+          {preview(result)}
+          {spent > 0 && <p className="pai-note">{t('pet.ai.tokens', { n: spent.toLocaleString() })}</p>}
+          <div className="pai-row">
+            <Button
+              variant="primary"
+              onClick={() => {
+                onApply(result)
+                setResult(null)
+              }}
+            >
+              <Check size={14} /> {t('pet.ai.apply')}
+            </Button>
+            <Button onClick={() => void go()}>
+              <RotateCw size={14} /> {t('pet.ai.again')}
+            </Button>
+            <Button variant="ghost" onClick={() => setResult(null)}>
+              <X size={14} /> {t('pet.ai.discard')}
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+
+  if (compact)
+    return (
+      <div className="pai compact">
+        <div className="pai-line">
+          <Sparkles size={14} className="pai-icon" aria-hidden="true" />
+          <input
+            className="ui-input pai-one"
+            value={request}
+            placeholder={placeholder}
+            aria-label={title}
+            title={title}
+            disabled={running}
+            maxLength={400}
+            onChange={(e) => setRequest(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                void go()
+              }
+            }}
+          />
+          {modelMenu}
+          {running ? (
+            <Button onClick={stop} aria-label={t('pet.ai.stop')} title={`${t('pet.ai.running', { s: secs })} ${t('pet.ai.stop')}`}>
+              <Loader2 size={14} className="pai-spin" /> {secs}s <Square size={11} />
+            </Button>
+          ) : (
+            <Button disabled={disabled || !request.trim()} onClick={() => void go()}>
+              {t('pet.ai.ask')}
+            </Button>
+          )}
+        </div>
+        {after}
+      </div>
+    )
+
   return (
     <div className="pai">
       <div className="pai-head">
         <Sparkles size={14} />
         <b>{title}</b>
         <span className="pm-gap" />
-        <Select aria-label={t('pet.ai.model')} title={t('pet.ai.model')} value={model} disabled={running} onChange={(e) => setModel(e.target.value as PetAiModel)}>
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {MODEL_LABEL[m]}
-            </option>
-          ))}
-        </Select>
+        {modelMenu}
       </div>
       <textarea
         className="pai-input"
@@ -154,34 +237,7 @@ export default function PetAiAsk<R>({
           </div>
         )
       )}
-      {error && (
-        <p className="pai-error" role="alert">
-          {error}
-        </p>
-      )}
-      {result !== null && (
-        <div className="pai-preview">
-          {preview(result)}
-          {spent > 0 && <p className="pai-note">{t('pet.ai.tokens', { n: spent.toLocaleString() })}</p>}
-          <div className="pai-row">
-            <Button
-              variant="primary"
-              onClick={() => {
-                onApply(result)
-                setResult(null)
-              }}
-            >
-              <Check size={14} /> {t('pet.ai.apply')}
-            </Button>
-            <Button onClick={() => void go()}>
-              <RotateCw size={14} /> {t('pet.ai.again')}
-            </Button>
-            <Button variant="ghost" onClick={() => setResult(null)}>
-              <X size={14} /> {t('pet.ai.discard')}
-            </Button>
-          </div>
-        </div>
-      )}
+      {after}
     </div>
   )
 }

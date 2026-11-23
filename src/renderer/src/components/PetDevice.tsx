@@ -1365,6 +1365,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
     if (detached) void window.api.pet.openSettings('pet-layout')
     else useUI.getState().openPetLayout()
   }
+  // So does the species maker (a modal over Settings).
+  const openMaker = (): void => {
+    if (detached) void window.api.pet.openSettings('pet-maker')
+    else useUI.getState().openPetMaker()
+  }
   const nestNote = (result: string): void =>
     setManageNote(result === 'full' ? t('pet.nest.full', { max: MAX_PETS }) : null)
   // Ask it something. Every answer is read off what riven already knows, so it
@@ -1830,6 +1835,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           onHide={hide}
           onOpenSettings={openSettings}
           onLayout={openLayout}
+          onMakeSpecies={openMaker}
         />
       ) : (
         <div className="pet-card-body">

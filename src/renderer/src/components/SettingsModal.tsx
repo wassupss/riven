@@ -283,7 +283,8 @@ export default function SettingsModal(): JSX.Element | null {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
+      // The species maker over it takes its own Escape.
+      if (e.key === 'Escape' && !useUI.getState().petMakerOpen) {
         e.stopPropagation()
         setOpen(false)
       }
