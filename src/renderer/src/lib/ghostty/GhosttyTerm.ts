@@ -440,9 +440,15 @@ export class GhosttyTerm {
 
     this.measure()
     this.sizeCanvas()
+    // Setting canvas.width/height clears the bitmap right away, and this
+    // callback runs after layout but before paint: a redraw left to the next
+    // animation frame lets the browser paint one blank frame, which flickers on
+    // every step of a split drag or window resize. Repaint in the same callback
+    // instead. Only when the bitmap was actually cleared; otherwise a frame is
+    // enough.
     this.ro = new ResizeObserver(() => {
-      this.sizeCanvas()
-      this.invalidate()
+      if (this.sizeCanvas()) this.paintNow()
+      else this.invalidate()
     })
     this.ro.observe(root)
     this.bindInput()
@@ -973,25 +979,27 @@ export class GhosttyTerm {
     this.invalidate()
   }
 
-  private sizeCanvas(): void {
+  // True when the canvas bitmap was (or may have been) reallocated, which
+  // clears it: the caller then owes a repaint before the browser paints.
+  private sizeCanvas(): boolean {
     const root = this.root
     const canvas = this.canvas
-    if (!root || !canvas) return
+    if (!root || !canvas) return false
     const dpr = window.devicePixelRatio || 1
     if (dpr !== this.dpr) {
       this.dpr = dpr
       this.measure()
-      return
+      return true
     }
     const w = Math.round(root.clientWidth * dpr)
     const h = Math.round(root.clientHeight * dpr)
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w
-      canvas.height = h
-      canvas.style.width = `${w / dpr}px`
-      canvas.style.height = `${h / dpr}px`
-    }
     this.full = true
+    if (canvas.width === w && canvas.height === h) return false
+    canvas.width = w
+    canvas.height = h
+    canvas.style.width = `${w / dpr}px`
+    canvas.style.height = `${h / dpr}px`
+    return true
   }
 
   // ---- drawing -----------------------------------------------------------------
@@ -999,6 +1007,18 @@ export class GhosttyTerm {
   private invalidate(): void {
     this.full = true
     this.schedule()
+  }
+
+  // Draw now, in place of any frame already queued. For the resize path only:
+  // everything else coalesces through schedule().
+  private paintNow(): void {
+    if (this.disposed || !this.ctx) return
+    if (this.raf) {
+      cancelAnimationFrame(this.raf)
+      this.raf = 0
+    }
+    this.full = true
+    this.draw()
   }
 
   private schedule(): void {
