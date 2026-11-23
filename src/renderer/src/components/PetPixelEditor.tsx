@@ -104,7 +104,8 @@ export default function PetPixelEditor({
   seed,
   onChange,
   side,
-  photo
+  photo,
+  onion
 }: {
   /** The picture to edit; a new `gen` replaces what is there (and its undo). */
   seed: { gen: number; doc: PixelDoc }
@@ -113,6 +114,8 @@ export default function PetPixelEditor({
   side: (parts: { real: ReactNode; status: ReactNode }) => ReactNode
   /** The square photo crop the picture was made from, if there is one (the AI sees it too). */
   photo?: Rgba | null
+  /** A picture shown faintly under this one (the frame before, when drawing frames). */
+  onion?: PixelDoc | null
 }): JSX.Element {
   const t = useT()
   const doc = useRef<PixelDoc>(cloneDoc(seed.doc))
@@ -157,6 +160,22 @@ export default function PetPixelEditor({
     if (v) accent.current = v
   }, [])
 
+  // The onion skin at its own size, made when it changes (never per stroke).
+  const onionSrc = useRef<HTMLCanvasElement | null>(null)
+  const onionOn = useRef(false)
+  useEffect(() => {
+    onionOn.current = !!onion
+    if (!onion) return
+    const c = (onionSrc.current ??= document.createElement('canvas'))
+    c.width = onion.n
+    c.height = onion.n
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    const img = ctx.createImageData(onion.n, onion.n)
+    img.data.set(rgbaOfDoc(onion, hexToRgb))
+    ctx.putImageData(img, 0, 0)
+  }, [onion])
+
   const paint = useCallback((): void => {
     frame.current = 0
     const d = doc.current
@@ -191,6 +210,11 @@ export default function PetPixelEditor({
     const k = W / N
     ctx.clearRect(0, 0, W, W)
     ctx.imageSmoothingEnabled = false
+    if (onionOn.current && onionSrc.current) {
+      ctx.globalAlpha = 0.3
+      ctx.drawImage(onionSrc.current, 0, 0, W, W)
+      ctx.globalAlpha = 1
+    }
     ctx.drawImage(src, 0, 0, W, W)
     const at = (i: number): number => Math.round(i * k) + 0.5
     if (grid && k >= 4) {
@@ -245,7 +269,7 @@ export default function PetPixelEditor({
       cv.height = px
     }
     schedule()
-  }, [css, schedule, version])
+  }, [css, schedule, version, onion])
 
   // ---- commits and undo ----
   // The maker's handler changes every render; the keys listener should not re-subscribe for it.

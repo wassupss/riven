@@ -898,6 +898,27 @@ export function photoDrawing(species: Species): PhotoDrawing | null {
 }
 
 /**
+ * A picture's animation frames (lib/petFrames.ts) drawn like the picture:
+ * each frame on the picture's grid with its outline, same colour characters.
+ * Cached per frame list (a species' saved frames are one object until they
+ * change), so a reel is worked out once per design, never per frame shown.
+ */
+export function frameDrawings(d: CustomDesign, frames: string[][]): PhotoDrawing[] {
+  const hit = frameCache.get(frames)
+  if (hit && hit.d === d) return hit.out
+  const out = frames.map((rows) => {
+    const p = d.photo ? { ...d.photo, rows } : undefined
+    const g = photoGrid({ ...d, ...(p ? { photo: p } : {}) })
+    const picture: Dot[] = []
+    g.forEach((row, y) => [...row].forEach((ch, x) => ch !== '.' && picture.push({ x, y, ch })))
+    return { size: g.length, picture }
+  })
+  frameCache.set(frames, { d, out })
+  return out
+}
+const frameCache = new WeakMap<string[][], { d: CustomDesign; out: PhotoDrawing[] }>()
+
+/**
  * A picture on a bigger grid (48, 64) brought onto the 32 one, for what reads
  * the pet's dots rather than drawing them: a dot is lit where any of the
  * picture is under it (so marks and keepsakes never land on the picture), in

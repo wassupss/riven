@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { sanitizeSpeciesMotion, type SpeciesMotion } from '../lib/petFrames'
 
 // ---------------------------------------------------------------------------
 // Species the user made from a photo (see lib/petPhoto.ts for the image half
@@ -116,6 +117,12 @@ export interface CustomSpecies extends CustomDesign {
   id: CustomSpeciesId
   createdAt: number
   updatedAt: number
+  /**
+   * How it moves (the maker's "움직임"): motion specs per situation and, for
+   * a picture, extra frames. Kept with the species only: designOf leaves it
+   * out, so neither a battle code nor a pet's snapshot carries it.
+   */
+  motion?: SpeciesMotion
 }
 
 export const isCustomId = (s: unknown): s is CustomSpeciesId => typeof s === 'string' && ID_RE.test(s)
@@ -193,7 +200,8 @@ export function sanitizeSpecies(raw: unknown): CustomSpecies | null {
   const o = raw as Record<string, unknown>
   if (!isCustomId(o.id)) return null
   const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
-  return { ...d, id: o.id, createdAt: num(o.createdAt), updatedAt: num(o.updatedAt) }
+  const motion = o.motion === undefined ? undefined : sanitizeSpeciesMotion(o.motion, d.photo)
+  return { ...d, id: o.id, createdAt: num(o.createdAt), updatedAt: num(o.updatedAt), ...(motion ? { motion } : {}) }
 }
 
 /** Only the design, for a snapshot or a battle code. */
@@ -430,6 +438,12 @@ interface SpeciesState {
 }
 
 const FILE = 'pet-species'
+/**
+ * The species file's format. 1: the designs; 2 adds a species' `motion`
+ * (optional, so a version 1 file reads unchanged, and an older riven reading
+ * a version 2 file just draws the designs).
+ */
+export const SPECIES_FILE_VERSION = 2
 const CHANNEL = 'riven-pet-species'
 
 let channel: BroadcastChannel | null = null
@@ -469,7 +483,7 @@ function persist(own: CustomSpecies[]): void {
   const api = storeApi()
   if (!api) return
   void api
-    .save(FILE, own.length ? { version: 1, species: own } : null)
+    .save(FILE, own.length ? { version: SPECIES_FILE_VERSION, species: own } : null)
     .catch((e) => console.error('[petSpecies] saving failed', e))
   // The other window (the floating pet, or the app) reads the file again.
   try {
@@ -535,6 +549,12 @@ export function forgetDesign(id: string): void {
   const transient = { ...st.transient }
   delete transient[id]
   useCustomSpecies.setState({ transient, rev: st.rev + 1 })
+}
+
+/** How one of the keeper's own species moves (none for a snapshot or a friend's). */
+export function motionOfSpecies(id: string): SpeciesMotion | undefined {
+  if (!isCustomId(id)) return undefined
+  return useCustomSpecies.getState().own.find((s) => s.id === id)?.motion
 }
 
 /** What a custom species looks like: the keeper's own first, then anything known for now. */

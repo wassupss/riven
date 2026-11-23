@@ -173,7 +173,7 @@ describe('saving it', () => {
     delete v2.layout
     const p = normalize(v2, T0 + 1)
     expect(p.version).toBe(PET_VERSION)
-    expect(PET_VERSION).toBe(3)
+    expect(PET_VERSION).toBe(4)
     expect('layout' in p).toBe(false)
     expect(p.worn).toEqual(['heart'])
     expect(p.xp).toBe(xpFor(30))
@@ -187,7 +187,7 @@ describe('saving it', () => {
   it('a whole nest written before layouts loads the same', () => {
     const n = normalizeNest({ version: 3, active: 0, pets: [{ ...at(12), version: 2 }] }, T0 + 1)
     expect(n.pets[0].layout).toBeUndefined()
-    expect(n.pets[0].version).toBe(3)
+    expect(n.pets[0].version).toBe(PET_VERSION)
   })
   it('changes what it wears and its layout in one command, for that pet only', () => {
     const p = { ...at(30), bornAt: 5 }

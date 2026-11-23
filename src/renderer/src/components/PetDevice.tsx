@@ -32,7 +32,10 @@ import { useSettings } from '../state/settings'
 import { promptInput } from './promptInput'
 import { chordFromEvent } from '../keybindings/keys'
 import { petKeyChords } from '../keybindings/petKeys'
-import { MIMES, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf, SPRITE_SIZE, type Run } from './petSprites'
+import { MIMES, frameDrawings, outfitPixels, photoDrawing, pixelsOf, runPaths, runsOf, SPRITE_SIZE, type Run } from './petSprites'
+import { motionAnimation, motionCss, motionName, situationOf, type MotionSet, type Situation } from '../lib/petMotion'
+import { holdMotion, releaseMotion } from '../lib/petMotionStyle'
+import type { FrameMap } from '../lib/petFrames'
 import {
   awardsOf,
   dietOf,
@@ -58,7 +61,7 @@ import {
 } from '../state/pet'
 import { STATS, XP_TOKENS, decorationsOf, nextDecoration, statsOf, topStat } from '../state/petLevel'
 import { layoutKey, type DecorLayout } from '../state/petLayout'
-import { customOf, hslOf, isCustomId, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
+import { customOf, hslOf, isCustomId, motionOfSpecies, useCustomSpecies, type CustomDesign } from '../state/petSpecies'
 import { PHOTO_DOT } from './petCustomArt'
 import { cardOf, encodeCard, fight, isUpset, noteCard, readCode, type BattleCard, type Bout } from '../state/petBattle'
 
@@ -214,7 +217,11 @@ export function Creature({
   level = 0,
   outfit: wearing,
   layout,
-  still
+  still,
+  situation,
+  motions,
+  frames,
+  replay
 }: {
   species: Species
   mood: Mood
@@ -230,6 +237,17 @@ export function Creature({
   layout?: DecorLayout
   /** Never moves about (the layout editor draws handles over it). */
   still?: boolean
+  /**
+   * What it is going through (lib/petMotion.ts situationOf). Left out, it is
+   * read off cheer, chewing and the mood, as it always was.
+   */
+  situation?: Situation
+  /** Its own motions: a situation with one here runs it instead of pet.css's. */
+  motions?: MotionSet
+  /** A picture's frames per situation (lib/petFrames.ts), shown in turn. */
+  frames?: FrameMap
+  /** Bumped to start its motion over (the editor's play button). */
+  replay?: number
 }): JSX.Element {
   // A species made from a photo: its design, which can change under the same
   // id (edited in settings), so the memos below are keyed on it too.
@@ -349,18 +367,80 @@ export function Creature({
   // A faithful picture has no face, so its mood is in how it moves (pet.css,
   // .pet-pm). Not while a level up is moving it.
   const moves = !!design?.photo && !cheer && !still
+  // A situation with a motion of its own: one @keyframes rule per spec, made
+  // when the spec changes and put in this document; CSS runs it. Inline, so
+  // it wins over the pet.css classes, which still apply wherever there is none
+  // (and .pet-asleep / reduced motion, being !important, still stop it).
+  const sit: Situation | null = still
+    ? null
+    : (situation ?? (cheer ? 'levelup' : chewing ? 'eat' : mood === 'happy' ? 'happy' : mood === 'ok' ? 'idle' : null))
+  const spec = sit ? motions?.[sit] : undefined
+  const motion = useMemo(() => {
+    if (!spec) return null
+    const name = motionName(spec)
+    return { name, css: motionCss(spec, name), anim: motionAnimation(spec, name) }
+  }, [spec])
+  const lcd = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const doc = lcd.current?.ownerDocument
+    if (!motion || !doc) return
+    holdMotion(doc, motion.name, motion.css)
+    return () => releaseMotion(doc, motion.name)
+  }, [motion])
+  // A picture's frames for this situation: worked out once per design and
+  // frame list (frameDrawings caches), then a reel of whole pictures slid a
+  // picture at a time by CSS steps() (pet.css .pet-fr): no timer, no render.
+  const frameSet = sit && design?.photo ? frames?.[sit] : undefined
+  const reel = useMemo(
+    () =>
+      frameSet && design
+        ? frameDrawings(design, frameSet.frames).map((f, i) => (
+            <svg
+              key={i}
+              className="pet-layer"
+              style={{ top: `${i * 100}%` }}
+              viewBox={`0 0 ${SPRITE_SIZE} ${SPRITE_SIZE}`}
+              shapeRendering="crispEdges"
+              aria-hidden="true"
+            >
+              <svg x="0" y="0" width={SPRITE_SIZE} height={SPRITE_SIZE} viewBox={`0 0 ${f.size} ${f.size}`} shapeRendering="crispEdges">
+                {pathsOf(runsOf(f.picture))}
+              </svg>
+            </svg>
+          ))
+        : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [frameSet, design]
+  )
+  const body = reel ? (
+    <div className="pet-fr">
+      <div
+        className="pet-fr-reel"
+        style={{ animation: `pet-fr-${reel.length} ${Math.round((reel.length * 1000) / frameSet!.fps)}ms steps(${reel.length}, end) infinite` }}
+      >
+        {reel}
+      </div>
+    </div>
+  ) : (
+    plate(picture ? [picture, ...dots(layers.bodyStill)] : dots(layers.bodyStill), 'pet-body')
+  )
   return (
     <div
+      ref={lcd}
       className={`pet-lcd pet-sp-${design ? 'custom' : species} pet-m-${mood}${flavor ? ` pet-diet-${flavor}` : ''}${cheer ? ' cheer' : ''}${design?.photo ? ' pet-photo' : ''}${moves ? ' pet-pm' : ''}`}
       style={design ? customVars(design) : undefined}
       aria-hidden="true"
     >
-      <div className={`pet-sprite${chewing ? ' chew' : ''}`}>
+      <div
+        key={replay}
+        className={`pet-sprite${chewing ? ' chew' : ''}`}
+        style={motion ? { animation: motion.anim } : undefined}
+      >
         {/* Its shine and glow behind it, left to twinkle, and the rest on top of it. */}
         {layers.auraStill.length > 0 && plate(dots(layers.auraStill))}
         {twinkle(dots(layers.auraLitA))}
         {twinkle(dots(layers.auraLitB), true)}
-        {plate(picture ? [picture, ...dots(layers.bodyStill)] : dots(layers.bodyStill), 'pet-body')}
+        {body}
         {twinkle(dots(layers.bodyLit))}
         {outfit.front.length > 0 && plate(dots(outfit.front))}
       </div>
@@ -1092,6 +1172,17 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
 
   const growth = useMemo(() => progressOf(pet.xp), [pet.xp])
   const mood: Mood = patted || cheer ? 'happy' : 'ok'
+  // How it moves now (lib/petMotion.ts): an agent waiting for you, one at
+  // work, a break, a pat. Its own motions over its species'; a situation with
+  // neither moves as pet.css always had it.
+  const waiting = useMemo(() => Object.values(live).some((l) => l.attention === 'needs_input'), [live])
+  const situation = situationOf({ cheer, chewing: chewing && awake, patted, resting: !!resting, waiting, working: busy.length > 0 })
+  useCustomSpecies((s) => s.rev)
+  const speciesMotion = motionOfSpecies(pet.species)
+  const motions = useMemo(
+    () => (speciesMotion?.specs || pet.motion ? { ...speciesMotion?.specs, ...pet.motion } : undefined),
+    [speciesMotion, pet.motion]
+  )
   const diet = useMemo(() => dietOf(pet), [pet])
   const stats = useMemo(
     () => statsOf(growth.level, pet.species, pet.diet, customOf(pet.species) ?? pet.custom),
@@ -1364,6 +1455,11 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
   const openLayout = (): void => {
     if (detached) void window.api.pet.openSettings('pet-layout')
     else useUI.getState().openPetLayout()
+  }
+  // And the pet's motion editor (움직임).
+  const openMotion = (): void => {
+    if (detached) void window.api.pet.openSettings('pet-motion')
+    else useUI.getState().openPetMotion()
   }
   // So does the species maker (a modal over Settings).
   const openMaker = (): void => {
@@ -1835,6 +1931,7 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           onHide={hide}
           onOpenSettings={openSettings}
           onLayout={openLayout}
+          onMotion={openMotion}
           onMakeSpecies={openMaker}
         />
       ) : (
@@ -1963,6 +2060,9 @@ export default function PetDevice({ detached }: { detached?: boolean }): JSX.Ele
           level={growth.level}
           outfit={outfit}
           layout={pet.layout}
+          situation={situation}
+          motions={motions}
+          frames={speciesMotion?.frames}
         />
         {/* What the pane you are watching is doing, acted out. */}
         {mime && <Glyph rows={MIMES[mime]} className={`pet-mime ${mime}`} />}

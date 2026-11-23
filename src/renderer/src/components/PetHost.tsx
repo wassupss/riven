@@ -54,7 +54,9 @@ export default function PetHost(): JSX.Element | null {
     const offSettings = window.api.pet.onOpenSettings((tab) =>
       tab === 'pet-layout'
         ? useUI.getState().openPetLayout()
-        : tab === 'pet-maker'
+        : tab === 'pet-motion'
+          ? useUI.getState().openPetMotion()
+          : tab === 'pet-maker'
           ? useUI.getState().openPetMaker()
           : useUI.getState().openSettings((tab || 'pet') as SettingsTab)
     )

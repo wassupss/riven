@@ -24,6 +24,9 @@ interface UIState {
   /** Bumped to open Settings > 리븐펫 with the decoration layout of the shown pet open. */
   petLayoutAsk: number
   openPetLayout: () => void
+  /** Bumped to open Settings > 리븐펫 with the motion editor (움직임) of the shown pet open. */
+  petMotionAsk: number
+  openPetMotion: () => void
   /** Set to open Settings > 리븐펫 with the species maker open on a new species; taken (cleared) by it. */
   petMakerAsk: boolean
   openPetMaker: () => void
@@ -57,6 +60,8 @@ export const useUI = create<UIState>((set) => ({
   openSettings: (tab = 'general') => set({ settingsOpen: true, settingsTab: tab }),
   petLayoutAsk: 0,
   openPetLayout: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petLayoutAsk: s.petLayoutAsk + 1 })),
+  petMotionAsk: 0,
+  openPetMotion: () => set((s) => ({ settingsOpen: true, settingsTab: 'pet', petMotionAsk: s.petMotionAsk + 1 })),
   petMakerAsk: false,
   openPetMaker: () => set({ settingsOpen: true, settingsTab: 'pet', petMakerAsk: true }),
   petMakerOpen: false,

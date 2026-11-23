@@ -11,14 +11,51 @@ import {
   type RefObject
 } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, ChevronRight, Eraser, ImagePlus, LayoutGrid, PawPrint, RotateCcw, Smile, SquareDashed, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Eraser,
+  ImagePlus,
+  LayoutGrid,
+  PawPrint,
+  Plus,
+  RotateCcw,
+  Smile,
+  SquareDashed,
+  Trash2,
+  Undo2,
+  X
+} from 'lucide-react'
 import { useT } from '../i18n'
 import { useHost } from '../lib/hostWindow'
 import { useUI } from '../state/ui'
 import { MAX_PETS } from '../state/pet'
-import { Button, Segmented, Switch, TextInput } from './ui/Controls'
+import { Button, NumberInput, Segmented, Switch, TextInput } from './ui/Controls'
 import { Creature } from './PetDevice'
 import PetPixelEditor from './PetPixelEditor'
+import PetMotionEditor, { useUndoable } from './PetMotionEditor'
+import PetAiAsk from './PetAiAsk'
+import { gridRows, rgbaOfDoc } from '../lib/petAiPixels'
+import { pngOf, scaleFor } from '../lib/petAi'
+import {
+  DEFAULT_FPS,
+  FRAME_LIMITS,
+  FRAMES_SYSTEM,
+  buildFramesPrompt,
+  cellsOfRows,
+  finishPhotoFrames,
+  packMotion,
+  parseFramesAnswer,
+  rebaseRows,
+  rowsOfCells,
+  type FrameMap,
+  type FrameSet
+} from '../lib/petFrames'
+import type { MotionSet, Situation } from '../lib/petMotion'
 import {
   ART,
   MIN_CELLS,
@@ -26,9 +63,11 @@ import {
   PHOTO,
   PHOTO_MAX_COLORS,
   PHOTO_SIZES,
+  type PhotoArt,
   ROLE_COLOR,
   buildOfDesign,
   cellsOf,
+  hexToRgb,
   familyOfDesign,
   forgetDesign,
   minPhotoCells,
@@ -158,18 +197,82 @@ function blankDesign(n: PhotoSize): CustomDesign {
  * small to keep.
  */
 function composePhoto(d: CustomDesign, redrawn: boolean, name: string): CustomDesign | null {
+  return composeWithFrames(d, redrawn, name, undefined)?.design ?? null
+}
+
+/**
+ * composePhoto for a picture with frames: the palette tidied over the picture
+ * and its frames together (finishPhotoFrames), so the frames still index it.
+ * With no frames it is exactly composePhoto (finishPhoto).
+ */
+function composeWithFrames(
+  d: CustomDesign,
+  redrawn: boolean,
+  name: string,
+  frames: FrameMap | undefined
+): { design: CustomDesign; frames: FrameMap | undefined } | null {
   const p = d.photo
-  if (!p) return sanitizeDesign({ ...d, name })
-  const photo = finishPhoto(
-    p.rows.map((r) => [...r]),
-    p.palette
-  )
-  if (!photo) return null
+  if (!p) {
+    const design = sanitizeDesign({ ...d, name })
+    return design ? { design, frames: undefined } : null
+  }
+  const fin = frames
+    ? finishPhotoFrames(p.rows, p.palette, frames)
+    : (() => {
+        const photo = finishPhoto(
+          p.rows.map((r) => [...r]),
+          p.palette
+        )
+        return photo ? { photo, frames: undefined } : null
+      })()
+  if (!fin) return null
+  const photo = fin.photo
   const made = redrawn ? designFromPicture(photo, name) : null
   // A picture too thin for a 12x12 of its own keeps the one it had (if any).
   const base = made && cellsOf(made.art) >= MIN_CELLS ? made : d
   if (cellsOf(base.art) < MIN_CELLS) return null
-  return sanitizeDesign({ ...base, name, noFace: true, photo })
+  const design = sanitizeDesign({ ...base, name, noFace: true, photo })
+  return design ? { design, frames: fin.frames } : null
+}
+
+/** The picture and every frame put on the palette `to` (by colour; what `to` lacks is appended). */
+function rebaseAll(
+  rows: string[],
+  frames: FrameMap | undefined,
+  from: string[],
+  to: string[]
+): { rows: string[]; frames: FrameMap | undefined; palette: string[] } {
+  const list: string[][] = [rows]
+  const where: Array<[Situation, number]> = []
+  for (const [s, f] of Object.entries(frames ?? {}) as Array<[Situation, FrameSet]>)
+    f.frames.forEach((g, i) => {
+      list.push(g)
+      where.push([s, i])
+    })
+  const r = rebaseRows(list, from, to)
+  let out: FrameMap | undefined
+  if (frames) {
+    out = {}
+    for (const [s, f] of Object.entries(frames) as Array<[Situation, FrameSet]>) out[s] = { fps: f.fps, frames: [...f.frames] }
+    where.forEach(([s, i], k) => (out![s]!.frames[i] = r.grids[k + 1]))
+  }
+  return { rows: r.grids[0], frames: out, palette: r.palette }
+}
+
+const samePalette = (a: string[], b: string[]): boolean => a.length === b.length && a.every((c, i) => c === b[i])
+
+/** A frame (or the picture) as a small canvas. */
+function FrameThumb({ rows, palette, label }: { rows: string[]; palette: string[]; label: string }): JSX.Element {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const n = rows.length
+  useEffect(() => {
+    const ctx = ref.current?.getContext('2d')
+    if (!ctx) return
+    const img = ctx.createImageData(n, n)
+    img.data.set(rgbaOfDoc({ n, cells: cellsOfRows(rows), palette }, hexToRgb))
+    ctx.putImageData(img, 0, 0)
+  }, [rows, palette, n])
+  return <canvas ref={ref} width={n} height={n} className="pm-pixels pmo-thumb-img" aria-label={label} />
 }
 
 /** A pet of the design, as a small picture, with what its level has earned it. */
@@ -276,6 +379,15 @@ export default function PetMaker({
   const [blank, setBlank] = useState(false)
   const [tool, setTool] = useState<Tool>('b')
 
+  // ---- 움직임: motion specs and frames ----
+  const motion = useUndoable<MotionSet | undefined>(editing?.motion?.specs)
+  const framesU = useUndoable<FrameMap | undefined>(editing?.motion?.frames)
+  const [moOpen, setMoOpen] = useState(false)
+  const [moSit, setMoSit] = useState<Situation>('idle')
+  // The frame of moSit on the canvas, or null for the picture itself.
+  const [frameSel, setFrameSel] = useState<number | null>(null)
+  const [onionOn, setOnionOn] = useState(true)
+
   // ---- the questions and what happened ----
   // "직접 그린 내용이 사라져요", asked in place before the picture is remade.
   const [ask, setAsk] = useState<{ run: () => void } | null>(null)
@@ -320,6 +432,9 @@ export default function PetMaker({
 
   const startPicture = (d: CustomDesign, drawn: boolean): void => {
     if (!d.photo) return
+    // A new picture (its size can differ): the frames drawn on the old one go.
+    framesU.reset(undefined)
+    setFrameSel(null)
     setDraft(d)
     setSeed((s) => ({ gen: (s?.gen ?? 0) + 1, doc: docOfPhoto(d.photo!) }))
     setEdited(false)
@@ -347,7 +462,12 @@ export default function PetMaker({
   // under a throwaway id. Deferred: remaking a drawn picture's 12x12 waits
   // for a quiet moment, never a stroke.
   const lazyDraft = useDeferredValue(draft)
-  const preview = useMemo(() => (lazyDraft ? composePhoto(lazyDraft, redrawn, '-') : null), [lazyDraft, redrawn])
+  const lazyFrames = useDeferredValue(framesU.value)
+  const previewSet = useMemo(
+    () => (lazyDraft ? composeWithFrames(lazyDraft, redrawn, '-', lazyFrames) : null),
+    [lazyDraft, redrawn, lazyFrames]
+  )
+  const preview = previewSet?.design ?? null
   useEffect(() => {
     if (preview) noteDesign(DRAFT_ID, preview)
   }, [preview])
@@ -495,21 +615,124 @@ export default function PetMaker({
     touch()
   }
 
+  const reseed = (doc: PixelDoc): void => setSeed((s) => ({ gen: (s?.gen ?? 0) + 1, doc }))
   const onPicture = (doc: PixelDoc): void => {
-    setDraft((d) => (d ? { ...d, photo: photoOfDoc(doc) } : d))
+    const old = draft?.photo
+    if (!draft || !old) return
+    const frames = framesU.value
+    if (frameSel !== null) {
+      // A frame was drawn on: it goes into its set; the picture and the other
+      // frames follow any change to the shared palette.
+      const set = frames?.[moSit]
+      if (!set) return
+      const r = samePalette(old.palette, doc.palette)
+        ? { rows: old.rows, frames, palette: doc.palette }
+        : rebaseAll(old.rows, frames, old.palette, doc.palette)
+      const next: FrameMap = { ...(r.frames ?? {}) }
+      const cur = next[moSit] ?? set
+      next[moSit] = { fps: cur.fps, frames: cur.frames.map((g, i) => (i === frameSel ? rowsOfCells(doc.n, doc.cells) : g)) }
+      framesU.replace(next)
+      setDraft({ ...draft, photo: { ...old, rows: r.rows, palette: r.palette } })
+      if (r.palette.length !== doc.palette.length) reseed({ ...doc, palette: r.palette })
+    } else {
+      let photo: PhotoArt = photoOfDoc(doc)
+      if (frames && !samePalette(old.palette, doc.palette)) {
+        const r = rebaseAll(photo.rows, frames, old.palette, doc.palette)
+        framesU.replace(r.frames)
+        if (r.palette.length !== doc.palette.length) {
+          photo = { ...photo, palette: r.palette }
+          reseed({ ...doc, palette: r.palette })
+        }
+      }
+      setDraft({ ...draft, photo })
+      setRedrawn(true)
+    }
     setEdited(true)
-    setRedrawn(true)
     setError(null)
     touch()
   }
+
+  // ---- the frame strip ----
+  const frameSet = framesU.value?.[moSit]
+  const frameCount = frameSet?.frames.length ?? 0
+  /** Put frame `i` of `sit` (null: the picture) on the canvas. */
+  const showFrame = (i: number | null, sit: Situation = moSit, fm: FrameMap | undefined = framesU.value): void => {
+    const p = draft?.photo
+    if (!p) return
+    const rows = i === null ? p.rows : fm?.[sit]?.frames[i]
+    if (!rows) return
+    setFrameSel(i)
+    reseed({ n: rows.length, cells: cellsOfRows(rows), palette: [...p.palette] })
+  }
+  const pickSituation = (s: Situation): void => {
+    setMoSit(s)
+    if (frameSel !== null) showFrame(null, s)
+  }
+  /** The frames of moSit replaced (null: none), as one undo step, then frame `select` shown. */
+  const putFrames = (set: FrameSet | null, select: number | null, key: string | null = null): void => {
+    const next: FrameMap = { ...(framesU.value ?? {}) }
+    if (set) next[moSit] = set
+    else delete next[moSit]
+    const fm = Object.keys(next).length ? next : undefined
+    framesU.set(fm, key)
+    setEdited(true)
+    touch()
+    if (select !== frameSel || key === null) showFrame(select, moSit, fm)
+  }
+  const addFrame = (): void => {
+    const p = draft?.photo
+    if (!p) return
+    if (!frameSet) return putFrames({ fps: DEFAULT_FPS, frames: [p.rows, p.rows] }, 0)
+    if (frameCount >= FRAME_LIMITS.count.max) return
+    putFrames({ ...frameSet, frames: [...frameSet.frames, p.rows] }, frameCount)
+  }
+  const dupFrame = (): void => {
+    if (!frameSet || frameSel === null || frameCount >= FRAME_LIMITS.count.max) return
+    const frames = [...frameSet.frames]
+    frames.splice(frameSel + 1, 0, frameSet.frames[frameSel])
+    putFrames({ ...frameSet, frames }, frameSel + 1)
+  }
+  const dropFrame = (): void => {
+    if (!frameSet || frameSel === null) return
+    const frames = frameSet.frames.filter((_, i) => i !== frameSel)
+    // Fewer than two is no animation: the set goes.
+    if (frames.length < FRAME_LIMITS.count.min) return putFrames(null, null)
+    putFrames({ ...frameSet, frames }, Math.max(0, frameSel - 1))
+  }
+  const moveFrame = (dir: -1 | 1): void => {
+    if (!frameSet || frameSel === null) return
+    const j = frameSel + dir
+    if (j < 0 || j >= frameCount) return
+    const frames = [...frameSet.frames]
+    ;[frames[frameSel], frames[j]] = [frames[j], frames[frameSel]]
+    putFrames({ ...frameSet, frames }, j)
+  }
+  const undoFrames = (): void => {
+    framesU.undo()
+    // What the canvas showed may be gone: back to the picture.
+    showFrame(null)
+    touch()
+  }
+  const onion = useMemo((): PixelDoc | null => {
+    const p = draft?.photo
+    if (!onionOn || frameSel === null || !p || !frameSet) return null
+    const rows = frameSel === 0 ? p.rows : frameSet.frames[frameSel - 1]
+    return rows ? { n: rows.length, cells: cellsOfRows(rows), palette: p.palette } : null
+  }, [onionOn, frameSel, frameSet, draft?.photo])
 
   // ---- save, and what comes next ----
   const save = (): void => {
     if (!draft) return
     const nm = name.trim() || nextName(taken, (n) => t('pet.maker.defaultName', { n }))
     let design: CustomDesign | null
+    let frames: FrameMap | undefined
     if (draft.photo) {
-      design = composePhoto(draft, redrawn, nm)
+      // The picture and its frames share at most 16 colours (a frame can bring its own).
+      const used = framesU.value ? finishPhotoFrames(draft.photo.rows, draft.photo.palette, framesU.value) : null
+      if (used && used.photo.palette.length > PHOTO_MAX_COLORS) return setError(t('pet.fr.tooManyColors', { max: PHOTO_MAX_COLORS }))
+      const made = composeWithFrames(draft, redrawn, nm, framesU.value)
+      design = made?.design ?? null
+      frames = made?.frames
       if (!design?.photo) {
         const min = minPhotoCells(photoSizeOf(draft.photo))
         const n = countDots(docOfPhoto(draft.photo).cells)
@@ -521,7 +744,14 @@ export default function PetMaker({
       if (!design) return setError(t('pet.maker.tooSmall'))
     }
     const now = Date.now()
-    const s: CustomSpecies = { ...design, id: target?.id ?? newCustomId(now), createdAt: target?.createdAt ?? now, updatedAt: now }
+    const moved = packMotion({ v: 1, ...(motion.value ? { specs: motion.value } : {}), ...(frames ? { frames } : {}) })
+    const s: CustomSpecies = {
+      ...design,
+      id: target?.id ?? newCustomId(now),
+      createdAt: target?.createdAt ?? now,
+      updatedAt: now,
+      ...(moved ? { motion: moved } : {})
+    }
     put(s)
     setTarget(s)
     setName(nm)
@@ -755,6 +985,160 @@ export default function PetMaker({
     </section>
   )
 
+  // 움직임: the situations' motions and, for a picture, its frames.
+  const frameStrip = draft?.photo && (
+    <div className="pmo-frames">
+      <div className="pmo-frames-head">
+        <b>{t('pet.fr.title')}</b>
+        <span className="pmk-note">{t('pet.fr.hint', { min: FRAME_LIMITS.count.min, max: FRAME_LIMITS.count.max })}</span>
+      </div>
+      <div className="pmo-strip" role="listbox" aria-label={t('pet.fr.title')}>
+        <button
+          type="button"
+          role="option"
+          aria-selected={frameSel === null}
+          className={`pmo-thumb${frameSel === null ? ' on' : ''}`}
+          onClick={() => showFrame(null)}
+        >
+          <FrameThumb rows={draft.photo.rows} palette={draft.photo.palette} label={t('pet.fr.picture')} />
+          <span>{t('pet.fr.picture')}</span>
+        </button>
+        {frameSet?.frames.map((rows, i) => (
+          <button
+            key={i}
+            type="button"
+            role="option"
+            aria-selected={frameSel === i}
+            className={`pmo-thumb${frameSel === i ? ' on' : ''}`}
+            onClick={() => showFrame(i)}
+          >
+            <FrameThumb rows={rows} palette={draft.photo!.palette} label={t('pet.fr.n', { n: i + 1 })} />
+            <span>{i + 1}</span>
+          </button>
+        ))}
+      </div>
+      <div className="pmk-row pmo-frame-btns">
+        <Button disabled={frameCount >= FRAME_LIMITS.count.max} onClick={addFrame} title={t('pet.fr.add')}>
+          <Plus size={14} /> {t('pet.fr.add')}
+        </Button>
+        <button type="button" className="pmx-btn" disabled={frameSel === null || frameCount >= FRAME_LIMITS.count.max} title={t('pet.fr.dup')} aria-label={t('pet.fr.dup')} onClick={dupFrame}>
+          <Copy size={14} />
+        </button>
+        <button type="button" className="pmx-btn" disabled={frameSel === null || frameSel === 0} title={t('pet.fr.left')} aria-label={t('pet.fr.left')} onClick={() => moveFrame(-1)}>
+          <ArrowLeft size={14} />
+        </button>
+        <button type="button" className="pmx-btn" disabled={frameSel === null || frameSel >= frameCount - 1} title={t('pet.fr.right')} aria-label={t('pet.fr.right')} onClick={() => moveFrame(1)}>
+          <ArrowRight size={14} />
+        </button>
+        <button type="button" className="pmx-btn" disabled={frameSel === null} title={t('pet.fr.drop')} aria-label={t('pet.fr.drop')} onClick={dropFrame}>
+          <Trash2 size={14} />
+        </button>
+        <button type="button" className="pmx-btn" disabled={!framesU.canUndo} title={t('pet.fr.undo')} aria-label={t('pet.fr.undo')} onClick={undoFrames}>
+          <Undo2 size={14} />
+        </button>
+      </div>
+      {frameSet && (
+        <div className="pmk-row">
+          <label className="pmo-field inline">
+            <span>{t('pet.fr.fps')}</span>
+            <NumberInput
+              className="pmo-num"
+              min={FRAME_LIMITS.fps.min}
+              max={FRAME_LIMITS.fps.max}
+              value={frameSet.fps}
+              onChange={(e) => {
+                const v = Math.round(Number(e.target.value))
+                if (!e.target.value || !Number.isFinite(v)) return
+                putFrames({ ...frameSet, fps: Math.max(FRAME_LIMITS.fps.min, Math.min(FRAME_LIMITS.fps.max, v)) }, frameSel, 'fps')
+              }}
+            />
+          </label>
+          <span className="pm-gap" />
+          <span className="pmk-note">{t('pet.fr.onion')}</span>
+          <Switch checked={onionOn} onChange={setOnionOn} />
+        </div>
+      )}
+      {frameSel !== null && <p className="pmk-note">{t('pet.fr.editing', { n: frameSel + 1, sit: t(`pet.mo.sit.${moSit}`) })}</p>}
+      <PetAiAsk<{ palette: string[]; frames: Uint8Array[]; fps: number }>
+        compact
+        title={t('pet.fr.aiTitle')}
+        placeholder={t('pet.fr.aiHint')}
+        build={(q) => {
+          const p = draft.photo!
+          const doc: PixelDoc = { n: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette }
+          const scale = scaleFor(doc.n)
+          return { system: FRAMES_SYSTEM, prompt: buildFramesPrompt(doc, gridRows(doc), q, scale), images: [pngOf(doc.n, doc.n, rgbaOfDoc(doc, hexToRgb), scale)] }
+        }}
+        check={(text) => {
+          const p = draft.photo!
+          const r = parseFramesAnswer(text, { n: p.rows.length, cells: cellsOfRows(p.rows), palette: p.palette })
+          if (r.ok) return { ok: true, result: { palette: r.palette, frames: r.frames, fps: r.fps } }
+          return r.frame ? { ok: false, reason: 'pet.fr.err.frame', vars: { n: r.frame, why: t(r.reason, r.vars) } } : r
+        }}
+        preview={(r) => (
+          <div className="pmo-strip">
+            {r.frames.map((cells, i) => (
+              <span key={i} className="pmo-thumb">
+                <FrameThumb rows={rowsOfCells(draft.photo!.rows.length, cells)} palette={r.palette} label={t('pet.fr.n', { n: i + 1 })} />
+                <span>{i + 1}</span>
+              </span>
+            ))}
+          </div>
+        )}
+        onApply={(r) => {
+          const p = draft.photo!
+          const n = p.rows.length
+          // The answer's palette is the picture's with any new colours after it.
+          setDraft({ ...draft, photo: { ...p, palette: r.palette } })
+          const next: FrameMap = { ...(framesU.value ?? {}), [moSit]: { fps: r.fps, frames: r.frames.map((c) => rowsOfCells(n, c)) } }
+          framesU.set(next)
+          setEdited(true)
+          touch()
+          setFrameSel(null)
+          reseed({ n, cells: cellsOfRows(p.rows), palette: r.palette })
+        }}
+      />
+    </div>
+  )
+  const motionSection = draft && (
+    <section className="pmk-sec">
+      <button
+        type="button"
+        className="pmk-sec-head"
+        aria-expanded={moOpen}
+        onClick={() => {
+          // Folding it away puts the picture back on the canvas.
+          if (moOpen && frameSel !== null) showFrame(null)
+          setMoOpen((o) => !o)
+        }}
+      >
+        {moOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span>{t('pet.mo.title')}</span>
+      </button>
+      {moOpen && (
+        <PetMotionEditor
+          species={DRAFT_ID as `u-${string}`}
+          photo={!!draft.photo}
+          value={motion.value}
+          onChange={(m, k) => {
+            motion.set(m, k)
+            touch()
+          }}
+          canUndo={motion.canUndo}
+          onUndo={() => {
+            motion.undo()
+            touch()
+          }}
+          situation={moSit}
+          onSituation={pickSituation}
+          frames={previewSet?.frames}
+        >
+          {frameStrip}
+        </PetMotionEditor>
+      )}
+    </section>
+  )
+
   const legacy = screen === 'edit' && draft && !draft.photo && (
     <>
       <div className="pmk-main">
@@ -856,6 +1240,7 @@ export default function PetMaker({
             />
           </div>
         </section>
+        {motionSection}
       </aside>
     </>
   )
@@ -972,11 +1357,12 @@ export default function PetMaker({
           </div>
         ) : (
           <>
-            <div className="pmk-body">
+            <div className={`pmk-body${moOpen ? ' wide-side' : ''}`}>
               {draft?.photo && seed && (
                 <PetPixelEditor
                   seed={seed}
                   onChange={onPicture}
+                  onion={onion}
                   photo={source ? sq : null}
                   side={({ real, status }) => (
                     <>
@@ -984,6 +1370,7 @@ export default function PetMaker({
                       {status}
                       {photoSection}
                       {canvasSection}
+                      {motionSection}
                     </>
                   )}
                 />

@@ -1242,6 +1242,38 @@
 .pet-crumbs {
   animation: pet-crumb 0.7s steps(4, end) infinite;
 }
+/* A picture's frames (the maker's 움직임, lib/petFrames.ts): the same trick as
+   the twinkle. .pet-fr is the window, the reel holds the 2 to 4 pictures one
+   window-height apart and steps up a picture at a time (the duration and
+   steps() are set inline from the frame count and fps). A translate of a
+   layer that stays on screen, so it costs what the twinkle does. */
+.pet-fr {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.pet-fr-reel {
+  position: absolute;
+  inset: 0;
+}
+.pet-fr-reel > .pet-layer {
+  bottom: auto;
+}
+@keyframes pet-fr-2 {
+  to {
+    transform: translateY(-200%);
+  }
+}
+@keyframes pet-fr-3 {
+  to {
+    transform: translateY(-300%);
+  }
+}
+@keyframes pet-fr-4 {
+  to {
+    transform: translateY(-400%);
+  }
+}
 
 /* A hop of two dots of the 32-dot grid, the same height the old 16-dot grid
    hopped by one: always whole dots. These move HTML boxes, so a dot is

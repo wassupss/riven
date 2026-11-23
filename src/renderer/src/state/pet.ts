@@ -11,6 +11,7 @@ import {
 } from './petSpecies'
 import { MAX_LEVEL, XP_TOKENS, levelOf } from './petLevel'
 import { sanitizeLayout, type DecorLayout } from './petLayout'
+import { sanitizeMotionSet, type MotionSet } from '../lib/petMotion'
 
 // ---------------------------------------------------------------------------
 // 리븐펫: a pet that levels up on the tokens riven's agents actually spend.
@@ -131,10 +132,12 @@ export type Mood = 'happy' | 'ok' | 'sad'
 
 /**
  * The save format of one pet. 1 was the tamagotchi (stages, hunger, care), 2
- * the levelling pet; 3 adds `layout` (where the keeper put its decorations).
- * A version 2 pet reads as it was, with the automatic placement.
+ * the levelling pet; 3 adds `layout` (where the keeper put its decorations);
+ * 4 adds `motion` (how this pet moves, over its species'). A version 2 pet
+ * reads as it was, with the automatic placement; a version 3 one moves as
+ * its species does.
  */
-export const PET_VERSION = 3
+export const PET_VERSION = 4
 
 export interface PetSave {
   version: typeof PET_VERSION
@@ -180,6 +183,12 @@ export interface PetSave {
    * the automatic placement; absent when nothing does. See state/petLayout.ts.
    */
   layout?: DecorLayout
+  /**
+   * How this pet moves where it differs from its species (the pet's
+   * "움직임"): motion specs per situation, never frames. Absent when none.
+   * Not in a battle code (cardOf reads the design and the numbers only).
+   */
+  motion?: MotionSet
   /** XP gained per model: what tilts its stats. */
   diet: Record<Flavor, number>
   /** XP gained per day, oldest first, at most HISTORY_DAYS entries. */
@@ -288,6 +297,7 @@ export function normalize(raw: unknown, now: number): PetSave {
   // without (hand-edited) cannot be drawn, so it falls back like an old save.
   const custom = isCustomId(o.species) ? sanitizeDesign(o.custom) : null
   const layout = sanitizeLayout(o.layout)
+  const motion = sanitizeMotionSet(o.motion)
   return {
     version: PET_VERSION,
     bornAt,
@@ -317,6 +327,7 @@ export function normalize(raw: unknown, now: number): PetSave {
       : [],
     worn: Array.isArray(o.worn) ? wornOf(o.worn) : [],
     ...(layout ? { layout } : {}),
+    ...(motion ? { motion } : {}),
     diet: FLAVORS.reduce(
       (d, f) => ({ ...d, [f]: count((o.diet as Record<string, unknown> | undefined)?.[f]) }),
       {} as Record<Flavor, number>
@@ -961,6 +972,8 @@ export interface PetBrief {
   worn: Accessory[]
   prizes: Accessory[]
   layout?: DecorLayout
+  /** Its own motion specs (the pet's 움직임). */
+  motion?: MotionSet
 }
 export interface NestBrief {
   active: number
@@ -978,7 +991,8 @@ export function briefOf(n: { pets: PetSave[]; active: number }): NestBrief {
       level: levelOf(p.xp).level,
       worn: p.worn,
       prizes: prizesOf(p),
-      ...(p.layout ? { layout: p.layout } : {})
+      ...(p.layout ? { layout: p.layout } : {}),
+      ...(p.motion ? { motion: p.motion } : {})
     }))
   }
 }
@@ -1008,6 +1022,8 @@ export type PetCommand =
   | ({ op: 'release' } & PetRef)
   /** The decoration layout's save: what it wears and where its decorations go (null: all automatic). */
   | ({ op: 'decor'; worn: Accessory[]; layout: DecorLayout | null } & PetRef)
+  /** The pet's own motion specs (null: as its species moves). */
+  | ({ op: 'motion'; motion: MotionSet | null } & PetRef)
 /**
  * ok: done. full: no room for another pet. last: the only pet is never let go.
  * stale: that pet is not where the command thought it was. none: no one
@@ -1043,7 +1059,21 @@ export function applyCommand(n: Nest, cmd: PetCommand, now: number): { nest: Nes
       if (next === p) return { nest: n, result: 'ok' }
       return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? next : q)) }, result: 'ok' }
     }
+    case 'motion': {
+      const next = withPetMotion(p, cmd.motion)
+      if (next === p) return { nest: n, result: 'ok' }
+      return { nest: { ...n, pets: n.pets.map((q, i) => (i === cmd.index ? next : q)) }, result: 'ok' }
+    }
   }
+}
+
+/** A pet with its own motion specs, read defensively (null or nothing valid: as its species). The same pet when nothing changed. */
+export function withPetMotion(s: PetSave, motion: unknown): PetSave {
+  const m = sanitizeMotionSet(motion)
+  if (JSON.stringify(m ?? null) === JSON.stringify(s.motion ?? null)) return s
+  const { motion: _old, ...rest } = s
+  void _old
+  return { ...rest, ...(m ? { motion: m } : {}) }
 }
 
 // ---------------------------------------------------------------------------

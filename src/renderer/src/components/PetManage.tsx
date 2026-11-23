@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PawPrint, EyeOff, ImagePlus, LayoutGrid, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
+import { PawPrint, EyeOff, ImagePlus, LayoutGrid, Move, Pencil, RotateCcw, Settings, Undo2, X } from 'lucide-react'
 import { useT } from '../i18n'
 import { MAX_PETS, petSubtitle, petTitle, type Hatch, type NestBrief } from '../state/pet'
 import { designOf, type CustomSpecies } from '../state/petSpecies'
@@ -35,6 +35,7 @@ export default function PetManage({
   onHide,
   onOpenSettings,
   onLayout,
+  onMotion,
   onMakeSpecies
 }: {
   nest: NestBrief
@@ -55,6 +56,8 @@ export default function PetManage({
   onOpenSettings: () => void
   /** The decoration layout of the one that is out (opens in Settings). */
   onLayout: () => void
+  /** How the one that is out moves (opens in Settings). */
+  onMotion: () => void
   /** The species maker (opens over Settings). */
   onMakeSpecies: () => void
 }): JSX.Element {
@@ -144,10 +147,16 @@ export default function PetManage({
           </button>
         </div>
       )}
-      <button type="button" className="pet-btn wide" onClick={onLayout}>
-        <LayoutGrid size={12} />
-        <span>{t('pet.layout.open')}</span>
-      </button>
+      <div className="pet-btns two">
+        <button type="button" className="pet-btn" onClick={onLayout}>
+          <LayoutGrid size={12} />
+          <span>{t('pet.layout.open')}</span>
+        </button>
+        <button type="button" className="pet-btn" onClick={onMotion}>
+          <Move size={12} />
+          <span>{t('pet.mo.open')}</span>
+        </button>
+      </div>
 
       <div className="pet-manage-label">{t('pet.nest.newPet')}</div>
       {own.length > 0 && (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LayoutGrid, PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
+import { LayoutGrid, Move, PawPrint, Pencil, RotateCcw, Undo2 } from 'lucide-react'
 import { useT } from '../i18n'
 import { onNest, requestPet } from '../lib/petCommand'
 import {
@@ -11,10 +11,13 @@ import {
   petTitle,
   type Hatch,
   type NestBrief,
+  type PetBrief,
   type PetCommand,
   type PetResult
 } from '../state/pet'
-import { designOf, isCustomId, noteDesign, useCustomSpecies, type CustomSpecies } from '../state/petSpecies'
+import { customOf, designOf, isCustomId, motionOfSpecies, noteDesign, useCustomSpecies, type CustomSpecies } from '../state/petSpecies'
+import PetMotionEditor, { useUndoable } from './PetMotionEditor'
+import type { MotionSet, Situation } from '../lib/petMotion'
 import { useSettings } from '../state/settings'
 import { Button, Select } from './ui/Controls'
 import { Creature } from './PetDevice'
@@ -45,6 +48,77 @@ function noteBriefs(b: NestBrief): void {
   for (const p of b.pets) if (p.custom && isCustomId(p.species)) noteDesign(p.species, p.custom)
 }
 
+/**
+ * One pet's own motions (움직임), over its species': the shared editor, with
+ * [저장] sending them where the nest lives. Frames belong to a homemade
+ * species (the maker); a pet only has motion specs.
+ */
+function PetMotionPanel({
+  pet,
+  onSave,
+  onClose
+}: {
+  pet: PetBrief
+  onSave: (motion: MotionSet | null) => Promise<boolean>
+  onClose: () => void
+}): JSX.Element {
+  const t = useT()
+  const u = useUndoable<MotionSet | undefined>(pet.motion)
+  const [sit, setSit] = useState<Situation>('idle')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+  useCustomSpecies((s) => s.rev)
+  const sm = motionOfSpecies(pet.species)
+  const photo = !!customOf(pet.species)?.photo
+  // Another pet (or the same one started over): start from what it has.
+  const { reset } = u
+  useEffect(() => {
+    reset(pet.motion)
+    setNote(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pet.bornAt, reset])
+  const dirty = JSON.stringify(u.value ?? null) !== JSON.stringify(pet.motion ?? null)
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    const ok = await onSave(u.value ?? null)
+    setBusy(false)
+    setNote(ok ? t('pet.mo.saved') : null)
+  }
+  return (
+    <div className="pmo-panel">
+      <PetMotionEditor
+        species={pet.species}
+        level={pet.level}
+        photo={photo}
+        base={sm?.specs}
+        value={u.value}
+        onChange={(m, k) => {
+          u.set(m, k)
+          setNote(null)
+        }}
+        canUndo={u.canUndo}
+        onUndo={u.undo}
+        situation={sit}
+        onSituation={setSit}
+        frames={sm?.frames}
+      />
+      <div className="pmk-row">
+        <Button variant="ghost" disabled={!u.value} onClick={() => u.set(undefined)}>
+          <RotateCcw size={14} /> {t('pet.mo.resetAll')}
+        </Button>
+        {note && <span className="pmk-note">{note}</span>}
+        <span className="pm-gap" />
+        <Button variant="ghost" onClick={onClose}>
+          {t('pet.layout.close')}
+        </Button>
+        <Button variant="primary" disabled={!dirty || busy} onClick={() => void save()}>
+          {t('pet.layout.save')}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export default function PetNestSettings(): JSX.Element {
   const t = useT()
   const shown = useSettings((s) => s.settings.petShow)
@@ -62,6 +136,16 @@ export default function PetNestSettings(): JSX.Element {
   useEffect(() => {
     if (layoutOpen) layoutRef.current?.scrollIntoView({ block: 'nearest' })
   }, [layoutOpen])
+  // The motion editor (움직임) of the pet that is out, the same way.
+  const [motionOpen, setMotionOpen] = useState(false)
+  const motionAsk = useUI((s) => s.petMotionAsk)
+  const motionRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (motionAsk) setMotionOpen(true)
+  }, [motionAsk])
+  useEffect(() => {
+    if (motionOpen) motionRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [motionOpen])
 
   const take = useCallback((b: NestBrief | null) => {
     if (!b) return
@@ -152,6 +236,9 @@ export default function PetNestSettings(): JSX.Element {
                 <Button onClick={() => setLayoutOpen((o) => !o)} aria-expanded={layoutOpen}>
                   <LayoutGrid size={14} /> {t('pet.layout.open')}
                 </Button>
+                <Button onClick={() => setMotionOpen((o) => !o)} aria-expanded={motionOpen}>
+                  <Move size={14} /> {t('pet.mo.open')}
+                </Button>
               </>
             ) : (
               <Button onClick={() => void run({ op: 'select', ...ref(i) })}>{t('pet.nest.show')}</Button>
@@ -207,6 +294,16 @@ export default function PetNestSettings(): JSX.Element {
             pet={nest.pets[nest.active]}
             onClose={() => setLayoutOpen(false)}
             onSave={async (worn, layout) => (await run({ op: 'decor', ...ref(nest.active), worn, layout })) === 'ok'}
+          />
+        </div>
+      )}
+      {motionOpen && nest?.pets[nest.active] && (
+        <div ref={motionRef}>
+          <div className="section-label">{t('pet.mo.titleFor', { name: petTitle(nest.pets[nest.active], t) })}</div>
+          <PetMotionPanel
+            pet={nest.pets[nest.active]}
+            onClose={() => setMotionOpen(false)}
+            onSave={async (motion) => (await run({ op: 'motion', ...ref(nest.active), motion })) === 'ok'}
           />
         </div>
       )}

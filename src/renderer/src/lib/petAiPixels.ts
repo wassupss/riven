@@ -78,9 +78,16 @@ const fail = (reason: string, vars?: Record<string, string | number>): PixelAnsw
  * dot uses are dropped.
  */
 export function parsePixelAnswer(text: string, current: PixelDoc): PixelAnswer {
-  const n = current.n
-  const j = extractJson(text) as { grid?: unknown; palette?: unknown } | null
+  const j = extractJson(text)
   if (!j) return fail('pet.ai.err.json')
+  return parsePixelObject(j, current)
+}
+
+/** parsePixelAnswer on an answer already parsed (one frame of several, say). */
+export function parsePixelObject(raw: unknown, current: PixelDoc): PixelAnswer {
+  const n = current.n
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return fail('pet.ai.err.json')
+  const j = raw as { grid?: unknown; palette?: unknown }
   // The palette: {char: hex}, or a list (slots 0-9, a-f).
   const keys = new Map<string, string>()
   const rawPal = j.palette
