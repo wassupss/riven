@@ -15,6 +15,7 @@ import NotesPanel from './panels/NotesPanel'
 import ApiClientPanel from './panels/ApiClientPanel'
 import DbPanel from './panels/DbPanel'
 import ChatPanel from './panels/ChatPanel'
+import CliChatPanel, { type CliChatParams } from './panels/CliChatPanel'
 import LauncherPanel from './panels/LauncherPanel'
 import PrDiffPanel, { type PrDiffParams } from './panels/PrDiffPanel'
 import TerminalPanel, { type TerminalParams } from './panels/TerminalPanel'
@@ -205,6 +206,9 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             api={props.api}
           />
         ),
+      // Experimental: the interactive CLI behind a chat view (services/clichat).
+      clichat: (props: IDockviewPanelProps<CliChatParams>) =>
+        boxed('clichat', <CliChatPanel workspace={workspace} params={props.params} api={props.api} />),
       prdiff: (props: IDockviewPanelProps<PrDiffParams>) =>
         boxed('prdiff', <PrDiffPanel params={props.params} />),
       terminal: (props: IDockviewPanelProps<TerminalParams>) =>
@@ -325,6 +329,9 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
             // A terminal's pane state now holds the CLI session it was in, so a
             // closed terminal has to forget it — otherwise the record outlives
             // the pane, and "closed" would not mean closed.
+            clearPaneState(workspace, panel.id)
+          } else if (panel.id.startsWith('clichat-')) {
+            window.api.cliChat.stop(panel.id)
             clearPaneState(workspace, panel.id)
           } else if (panel.id.startsWith('chat-')) {
             window.api.chat.stop(panel.id)
@@ -555,6 +562,7 @@ export default function Workbench({ workspace }: { workspace: string }): JSX.Ele
       for (const p of api.panels) {
         if (p.id.startsWith('term-')) window.api.pty.kill(p.id)
         else if (p.id.startsWith('chat-')) window.api.chat.stop(p.id)
+        else if (p.id.startsWith('clichat-')) window.api.cliChat.stop(p.id)
       }
     }
   }, [workspace])

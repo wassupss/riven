@@ -7,6 +7,7 @@ pub mod auth;
 pub mod backgrounds;
 pub mod browser;
 pub mod chat;
+pub mod clichat;
 pub mod collate;
 pub mod db;
 pub mod debug;

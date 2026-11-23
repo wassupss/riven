@@ -1,0 +1,203 @@
+/* CLI chat (experimental). Builds on the chat panel's classes (.chat-panel,
+   .chat-scroll, .chat-turn, .chat-composer); only what is new lives here.
+   Tokens only. */
+.cli-chat-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--edge);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  min-width: 0;
+}
+.cli-chat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+  flex: 0 0 auto;
+}
+.cli-chat-dot.busy {
+  background: var(--accent);
+}
+.cli-chat-dot.waiting {
+  background: var(--warning);
+}
+.cli-chat-dot.dead {
+  background: var(--danger);
+}
+.cli-chat-status {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cli-chat-session {
+  font-family: var(--font-mono, monospace);
+  opacity: 0.7;
+}
+.cli-chat-spacer {
+  flex: 1 1 auto;
+}
+.cli-chat-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--edge);
+  border-radius: var(--radius-sm);
+  background: var(--bg-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cli-chat-btn:hover {
+  border-color: var(--fg-dim);
+}
+.cli-chat-btn.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.cli-chat-term {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cli-chat-term > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.cli-chat-empty {
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  max-width: 520px;
+}
+.cli-chat-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cli-chat-command {
+  font-family: var(--font-mono, monospace);
+}
+.cli-chat-images {
+  color: var(--fg-dim);
+}
+.cli-chat-tool,
+.cli-chat-thinking {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  min-width: 0;
+}
+.cli-chat-tool > summary,
+.cli-chat-thinking > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  min-width: 0;
+}
+.cli-chat-tool > summary::-webkit-details-marker,
+.cli-chat-thinking > summary::-webkit-details-marker {
+  display: none;
+}
+.cli-chat-chev {
+  flex: 0 0 auto;
+  transition: transform 0.12s;
+}
+details[open] > summary > .cli-chat-chev {
+  transform: rotate(90deg);
+}
+.cli-chat-tool-name {
+  color: var(--fg);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+.cli-chat-tool-arg {
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.cli-chat-tool.running .cli-chat-tool-name {
+  color: var(--accent);
+}
+.cli-chat-tool.error .cli-chat-tool-name {
+  color: var(--danger);
+}
+.cli-chat-tool-result,
+.cli-chat-perm-input {
+  margin: 6px 0 0 18px;
+  padding: 6px 8px;
+  max-height: 240px;
+  overflow: auto;
+  background: var(--bg-2);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--fg);
+}
+.cli-chat-thinking-body {
+  margin: 6px 0 0 18px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+.cli-chat-note {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.cli-chat-note.error {
+  color: var(--danger);
+}
+.cli-chat-note.interrupted {
+  font-style: italic;
+}
+.cli-chat-compact {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  text-align: center;
+  border-top: 1px dashed var(--edge);
+  padding-top: 6px;
+}
+.cli-chat-usage {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  opacity: 0.8;
+}
+.cli-chat-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.75;
+}
+.cli-chat-working {
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+.cli-chat-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+.cli-chat-perm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

@@ -14,6 +14,7 @@
 pub mod app;
 pub mod browser;
 pub mod chat;
+pub mod clichat;
 pub mod config;
 pub mod db;
 pub mod debug;
@@ -193,6 +194,13 @@ pub fn handler() -> impl Fn(Invoke<Wry>) -> bool + Send + Sync + 'static {
     pty::pty_codex_session_title,
     pty::pty_remote_text,
     pty::pty_remote_input,
+    clichat::clichat_start,
+    clichat::clichat_send,
+    clichat::clichat_keys,
+    clichat::clichat_interrupt,
+    clichat::clichat_stop,
+    clichat::clichat_terminal,
+    clichat::clichat_answer,
     chat::chat_start,
     chat::chat_send,
     chat::chat_alive,

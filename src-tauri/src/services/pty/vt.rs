@@ -204,6 +204,11 @@ impl Vt {
     self.format(true, true)
   }
 
+  /// Scrollback + screen as plain text, one line per row.
+  pub fn plain_text(&self) -> String {
+    self.plain()
+  }
+
   fn plain(&self) -> String {
     self.format(false, false)
   }

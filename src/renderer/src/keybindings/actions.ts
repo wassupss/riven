@@ -16,6 +16,7 @@ import {
   ensureChanges,
   getActiveApi,
   addChat,
+  addCliChat,
   openEditorSplit,
   openLauncher,
   activateTerminalById
@@ -213,6 +214,15 @@ export function registerDefaultActions(): void {
     context: 'riven',
     def: 'Mod+Shift+a',
     run: () => addChat()
+  })
+  // Experimental: no default chord, reachable from the palette only.
+  keymap.register({
+    id: 'panel.cliChat',
+    label: '새 CLI 챗 (실험)',
+    category: RIVEN,
+    context: 'riven',
+    def: '',
+    run: () => addCliChat()
   })
   keymap.register({
     id: 'panel.popout',

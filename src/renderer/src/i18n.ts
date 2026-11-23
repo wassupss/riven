@@ -863,6 +863,49 @@ export const DICT: Record<string, { ko: string; en: string }> = {
   },
   'title.terminal': { ko: '터미널', en: 'Terminal' },
   'title.chat': { ko: '채팅', en: 'Chat' },
+  // CLI chat (experimental): the interactive CLI behind a chat view.
+  'action.panel.cliChat': { ko: '새 CLI 챗 (실험)', en: 'New CLI chat (experimental)' },
+  'clichat.title': { ko: 'CLI 챗', en: 'CLI chat' },
+  'clichat.placeholder': {
+    ko: '메시지 또는 /명령 (Enter 전송, Shift+Enter 줄바꿈)',
+    en: 'Message or /command (Enter to send, Shift+Enter for a new line)'
+  },
+  'clichat.starting': { ko: 'CLI 시작 중…', en: 'Starting the CLI…' },
+  'clichat.working': { ko: '작업 중…', en: 'Working…' },
+  'clichat.waiting': { ko: '응답을 기다리는 중', en: 'Waiting for you' },
+  'clichat.exited': { ko: 'CLI가 종료되었습니다', en: 'The CLI exited' },
+  'clichat.restart': { ko: '다시 시작', en: 'Restart' },
+  'clichat.showTerminal': { ko: '터미널로 보기', en: 'Show terminal' },
+  'clichat.showChat': { ko: '챗으로 보기', en: 'Back to chat' },
+  'clichat.interrupt': { ko: '중단 (Esc)', en: 'Interrupt (Esc)' },
+  'clichat.send': { ko: '보내기', en: 'Send' },
+  'clichat.blocked.trust': {
+    ko: '이 폴더를 신뢰할지 CLI가 묻고 있습니다. 터미널로 보기에서 답하세요.',
+    en: 'The CLI is asking whether to trust this folder. Answer it in the terminal view.'
+  },
+  'clichat.blocked.menu': {
+    ko: 'CLI가 메뉴나 대화상자를 띄웠습니다. 터미널로 보기에서 답하세요.',
+    en: 'The CLI opened a menu or dialog. Answer it in the terminal view.'
+  },
+  'clichat.blocked.login': {
+    ko: 'CLI 로그인이 필요합니다. 터미널로 보기에서 진행하세요.',
+    en: 'The CLI needs a login. Continue in the terminal view.'
+  },
+  'clichat.perm.title': { ko: '{tool} 실행 허용?', en: 'Allow {tool}?' },
+  'clichat.perm.allow': { ko: '허용', en: 'Allow' },
+  'clichat.perm.deny': { ko: '거부', en: 'Deny' },
+  'clichat.perm.terminal': { ko: '터미널에서 답하기', en: 'Answer in terminal' },
+  'clichat.thinking': { ko: '생각', en: 'Thinking' },
+  'clichat.thinkingHidden': { ko: '(내용 비공개)', en: '(content withheld)' },
+  'clichat.compact': { ko: '대화 압축됨 ({trigger}, {tokens} 토큰)', en: 'Conversation compacted ({trigger}, {tokens} tokens)' },
+  'clichat.usage': {
+    ko: '요청 {n} · 캐시 읽기 {read} · 캐시 쓰기 {write} · 출력 {out}',
+    en: '{n} req · cache read {read} · cache write {write} · out {out}'
+  },
+  'clichat.empty': {
+    ko: '실험 기능: 실제 대화형 claude를 숨은 터미널에서 실행하고 대화 기록(JSONL)으로 화면을 그립니다. 슬래시 명령도 그대로 됩니다.',
+    en: 'Experimental: runs the real interactive claude in a hidden terminal and draws this view from its transcript. Slash commands work as typed.'
+  },
   'title.launcher': { ko: '새 패널', en: 'New panel' },
   'tab.closePanel': { ko: '패널 닫기', en: 'Close panel' },
   'tab.closeAllTabs': { ko: '탭 전부 닫기', en: 'Close all tabs' },

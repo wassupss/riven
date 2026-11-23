@@ -374,6 +374,26 @@ export function addChat(
   return id
 }
 
+/**
+ * Experimental CLI chat: the interactive `claude` in a hidden pty, drawn as a
+ * chat (services/clichat). Its own panel kind, so the regular chat pane is
+ * untouched. `resume` reopens an existing conversation by its session id.
+ */
+export function addCliChat(resume?: string, inWorkspace?: string | null): string {
+  const api = dockFor(inWorkspace)
+  if (!api) return ''
+  const id = `clichat-${crypto.randomUUID()}`
+  api.addPanel({
+    id,
+    component: 'clichat',
+    title: t('clichat.title'),
+    params: { chatKey: id, sessionId: resume },
+    renderer: 'always',
+    position: placement(api)
+  })
+  return id
+}
+
 // Rename a live pane's tab and re-pin the title so it survives a reload and
 // never gets clobbered by an auto-generated title. This is the ONE rename path:
 // the agent-group editor, the MCP tools and a double-click on the tab itself all

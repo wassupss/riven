@@ -1049,6 +1049,7 @@ fn main() {
       services::shell_env::start();
       services::mcp::init(app.handle());
       services::pty::init(app.handle());
+      services::clichat::init(app.handle());
       services::chat::init(app.handle());
       services::lsp::init(app.handle());
       services::debug::init(app.handle());
@@ -1097,6 +1098,7 @@ fn main() {
     }
     RunEvent::Exit => {
       services::mcp::shutdown();
+      services::clichat::shutdown();
       services::pty::shutdown();
       services::chat::shutdown();
       services::lsp::shutdown();

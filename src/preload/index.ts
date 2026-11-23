@@ -138,6 +138,9 @@ export type ChatEvent = { turn?: string | null } & (
   | { key: string; kind: 'taskDone'; taskId: string; status: string; label: string }
 )
 const onChatEvent = multiplexed<ChatEvent>('chat:event')
+// CLI chat (experimental): the interactive CLI in a hidden pty
+// (services/clichat). Payload shapes: src/renderer/src/lib/cliChat.ts.
+const onCliChatEvent = multiplexed<{ key: string; kind: string } & Record<string, unknown>>('clichat:event')
 
 export interface CliUpdateState {
   cmd: 'claude' | 'codex'
@@ -298,6 +301,22 @@ const api = {
     onDone: (
       cb: (e: { key: string; reason: 'finished' | 'needs_input'; summary?: string }) => void
     ): (() => void) => onPtyDone(cb)
+  },
+  cliChat: {
+    start: (
+      key: string,
+      opts: { cwd: string; resume?: string; model?: string; permissionMode?: string; configDir?: string }
+    ): Promise<{ sessionId: string; existed: boolean }> => ipcRenderer.invoke('clichat:start', key, opts),
+    send: (key: string, text: string): void => ipcRenderer.send('clichat:send', key, text),
+    // Raw keys for the CLI (a menu answered from the chat view).
+    keys: (key: string, data: string): void => ipcRenderer.send('clichat:keys', key, data),
+    interrupt: (key: string): void => ipcRenderer.send('clichat:interrupt', key),
+    stop: (key: string): void => ipcRenderer.send('clichat:stop', key),
+    // The terminal view took the pty over (on) or gave it back (off).
+    terminal: (key: string, on: boolean): void => ipcRenderer.send('clichat:terminal', key, on),
+    answer: (key: string, id: string, decision: 'allow' | 'deny' | 'terminal'): void =>
+      ipcRenderer.send('clichat:answer', key, id, decision),
+    onEvent: onCliChatEvent
   },
   chat: {
     start: (

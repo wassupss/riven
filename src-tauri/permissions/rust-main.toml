@@ -60,6 +60,13 @@ permissions = [
   "allow-accounts-profile-dir",
   "allow-accounts-logout",
   "allow-accounts-list",
+  "allow-clichat-start",
+  "allow-clichat-send",
+  "allow-clichat-keys",
+  "allow-clichat-interrupt",
+  "allow-clichat-stop",
+  "allow-clichat-terminal",
+  "allow-clichat-answer",
   "allow-config-load",
   "allow-config-save",
   "allow-config-reveal",
@@ -533,6 +540,41 @@ commands.allow = ["accounts_logout"]
 identifier = "allow-accounts-list"
 description = "Allows accounts_list."
 commands.allow = ["accounts_list"]
+
+[[permission]]
+identifier = "allow-clichat-start"
+description = "Allows clichat_start."
+commands.allow = ["clichat_start"]
+
+[[permission]]
+identifier = "allow-clichat-send"
+description = "Allows clichat_send."
+commands.allow = ["clichat_send"]
+
+[[permission]]
+identifier = "allow-clichat-keys"
+description = "Allows clichat_keys."
+commands.allow = ["clichat_keys"]
+
+[[permission]]
+identifier = "allow-clichat-interrupt"
+description = "Allows clichat_interrupt."
+commands.allow = ["clichat_interrupt"]
+
+[[permission]]
+identifier = "allow-clichat-stop"
+description = "Allows clichat_stop."
+commands.allow = ["clichat_stop"]
+
+[[permission]]
+identifier = "allow-clichat-terminal"
+description = "Allows clichat_terminal."
+commands.allow = ["clichat_terminal"]
+
+[[permission]]
+identifier = "allow-clichat-answer"
+description = "Allows clichat_answer."
+commands.allow = ["clichat_answer"]
 
 [[permission]]
 identifier = "allow-config-load"

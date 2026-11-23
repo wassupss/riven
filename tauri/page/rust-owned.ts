@@ -70,6 +70,14 @@ export const RUST_INVOKE: Record<string, readonly string[]> = {
   // a paired phone (state/remoteTerms.ts)
   'pty:remoteText': ['id', 'lines', 'since'],
   'pty:remoteInput': ['id', 'text', 'key'],
+  // CLI chat, experimental (services/clichat). Events: 'clichat:event'.
+  'clichat:start': ['key', 'opts'],
+  'clichat:send': ['key', 'text'],
+  'clichat:keys': ['key', 'data'],
+  'clichat:interrupt': ['key'],
+  'clichat:stop': ['key'],
+  'clichat:terminal': ['key', 'on'],
+  'clichat:answer': ['key', 'id', 'decision'],
   // agent chat (services/chat). Stream events come back as 'chat:event'.
   'chat:start': ['key', 'opts'],
   'chat:send': ['key', 'text', 'images', 'turn'],

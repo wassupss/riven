@@ -23,7 +23,7 @@
 
 mod activity;
 pub mod stream;
-mod vt;
+pub(crate) mod vt;
 
 use activity::{Activity, Attention, HookEvent, State};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -232,7 +232,7 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
   let extras = crate::services::mcp::pty_env(&key).await;
   let cols = opts.cols.filter(|c| *c > 0.0).map(|c| c as u16).unwrap_or(80);
   let rows = opts.rows.filter(|r| *r > 0.0).map(|r| r as u16).unwrap_or(24);
-  let spawned = tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows)).await;
+  let spawned = tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows, Launch::default())).await;
   match spawned.map_err(|e| e.to_string()).and_then(|r| r) {
     Ok(()) => Opened { id: key, existed: false, error: None },
     Err(e) => {
@@ -243,7 +243,47 @@ pub async fn open(label: String, opts: OpenOpts) -> Opened {
   }
 }
 
-fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u16, rows: u16) -> Result<(), String> {
+/// How a session other than a terminal pane launches (services/clichat).
+#[derive(Default)]
+pub struct Launch {
+  /// The command REPLACES the shell (`exec`): when it exits the session
+  /// ends, instead of dropping back to a prompt.
+  pub exec: bool,
+  /// Inherited variables the program must not see.
+  pub env_remove: &'static [&'static str],
+}
+
+/// Open a pty no terminal pane owns: the same login shell, environment and
+/// model as a terminal (so a CLI started here gets riven's MCP and hooks the
+/// way a typed one does), but the caller supplies the environment it has
+/// already computed and decides how the command ends. A terminal view can
+/// attach to it later by its key (pty_open with the same sessionKey).
+pub async fn open_hidden(label: String, key: String, cwd: String, command: String, cols: u16, rows: u16, config_dir: Option<String>, extras: HashMap<String, String>, launch: Launch) -> Result<bool, String> {
+  if let Some(s) = get(&key) {
+    lock(&s).sender = label;
+    return Ok(true);
+  }
+  let opts = OpenOpts { session_key: key, cwd, initial_command: Some(command), cols: None, rows: None, config_dir };
+  tauri::async_runtime::spawn_blocking(move || spawn(label, opts, extras, cols, rows, launch)).await.map_err(|e| e.to_string())??;
+  Ok(false)
+}
+
+/// The visible screen of a session's model, as plain text (rows lines).
+pub fn screen_text(key: &str) -> Option<String> {
+  let s = get(key)?;
+  let st = lock(&s);
+  let all = st.model.plain_text();
+  let lines: Vec<&str> = all.split('\n').collect();
+  let from = lines.len().saturating_sub(st.rows as usize);
+  Some(lines[from..].join("\n"))
+}
+
+/// Resize from Rust (a hidden session going back to its own width).
+pub fn resize_now(key: &str, cols: u16, rows: u16) {
+  ctl(Op::Resize(key.to_string(), cols, rows));
+}
+
+fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u16, rows: u16, launch: Launch) -> Result<(), String> {
   let key = opts.session_key.clone();
   let shell = default_shell();
   // A LOGIN + INTERACTIVE shell like every real terminal emulator, so the full
@@ -252,7 +292,11 @@ fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u
   let mut args: Vec<String> = vec!["-l".into(), "-i".into()];
   if let Some(cmd) = opts.initial_command.as_deref().filter(|c| !c.is_empty()) {
     args.push("-c".into());
-    args.push(format!("{cmd}; exec {shell} -il"));
+    if launch.exec {
+      args.push(format!("exec {cmd}"));
+    } else {
+      args.push(format!("{cmd}; exec {shell} -il"));
+    }
   }
 
   let mut cmd = CommandBuilder::new(&shell);
@@ -265,6 +309,9 @@ fn spawn(label: String, opts: OpenOpts, extras: HashMap<String, String>, cols: u
   // the native chat in the same workspace run as the same account.
   if let Some(d) = opts.config_dir.as_deref().filter(|d| !d.is_empty()) {
     cmd.env("CLAUDE_CONFIG_DIR", d);
+  }
+  for k in launch.env_remove {
+    cmd.env_remove(k);
   }
   for (k, v) in &extras {
     cmd.env(k, v);
@@ -564,6 +611,7 @@ fn finish(s: &Arc<Session>, code: i32) {
   }
   drop(m);
   set_working(&s.key, false);
+  crate::services::clichat::on_pty_exit(&s.key, code);
 }
 
 // ---- control --------------------------------------------------------------------
